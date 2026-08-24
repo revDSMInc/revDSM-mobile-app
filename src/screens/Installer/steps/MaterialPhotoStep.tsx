@@ -126,14 +126,14 @@ export function MaterialPhotoStep({
             <Icon name="check" size={14} color="#fff" />
           </View>
           <Text
-            className="flex-1 text-xs font-bold"
+            className="flex-1 text-sm font-bold"
             style={{ color: colors.primary.main }}
           >
             {satisfiedLabel}
           </Text>
         </View>
       ) : (
-        <Text className="text-xs font-semibold mb-3" style={{ color: colors.textSecondary }}>
+        <Text className="text-sm font-semibold leading-6 mb-3" style={{ color: colors.textSecondary }}>
           {t('installer.materialHint')}
         </Text>
       )}
@@ -182,7 +182,7 @@ export function MaterialPhotoStep({
         <>
           <View className="flex-row items-center my-3" style={{ gap: 12 }}>
             <View className="flex-1 h-px" style={{ backgroundColor: colors.border }} />
-            <Text className="text-[11px] font-bold" style={{ color: colors.textSecondary }}>
+            <Text className="text-xs font-bold" style={{ color: colors.textSecondary }}>
               {t('installer.or')}
             </Text>
             <View className="flex-1 h-px" style={{ backgroundColor: colors.border }} />

@@ -9,6 +9,7 @@ import { queryClient } from '../services/api/queryClient';
 import { logLogout } from '../utils/activity-log/auth-log';
 import { clearPendingLogs } from '../services/api/LoggerService';
 import { clearActiveInstallerJob } from '../utils/activity-log/installer-log';
+import { endInstallerWorkSession } from '../utils/installer-work-session';
 
 
 export const useAuth = () => {
@@ -28,21 +29,28 @@ export const useAuth = () => {
       //    afterwards, it went up tokenless and the row never landed.
       logLogout(user);
 
-      // 2. Clear session from persistent storage & headers
+      // 2. Close any open installer work session — BEFORE the token goes.
+      //    Signing out is one of the commonest ways to leave a job, and the job
+      //    screen's own check-out fires after the header is cleared, so it went up
+      //    unauthenticated and was dropped. The office was left showing the crew as
+      //    still on the job.
+      await endInstallerWorkSession('logout');
+
+      // 3. Clear session from persistent storage & headers
       await setSessionHeader(null);
-      // 3. Disconnect the global socket before wiping auth state
+      // 4. Disconnect the global socket before wiping auth state
       SocketManager.disconnect();
-      // 4. Clear API cache (React Query)
+      // 5. Clear API cache (React Query)
       if (queryClient) queryClient.clear();
 
-      // 5. Wipe memory / Redux state
+      // 6. Wipe memory / Redux state
       dispatch(logoutAction());
 
-      // 6. Drop the installer job bound to the activity log, so the next session
+      // 7. Drop the installer job bound to the activity log, so the next session
       //    can't attach this user's job/lead context to its events.
       clearActiveInstallerJob();
 
-      // 7. Drop anything the logger is holding for a session that never opened, for
+      // 8. Drop anything the logger is holding for a session that never opened, for
       //    the same reason — the next person to sign in on this device must not
       //    inherit it.
       clearPendingLogs();

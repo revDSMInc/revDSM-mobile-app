@@ -359,7 +359,10 @@ export const AgreementSignatureModal = ({
           const filePath = `${RNFS.DocumentDirectoryPath}/agreement_signed_${agreementId}.pdf`;
           await RNFS.writeFile(filePath, base64data, 'base64');
 
-          FlashMessage.success('Success', 'Agreement signed successfully');
+          FlashMessage.success(
+            'Success',
+            'Agreement signed successfully\nYour finalized document is complete and a copy has been sent to you'
+          );
 
           onSuccess(filePath);
           onClose();

@@ -34,7 +34,11 @@ import {
 } from '../../hooks/useLeadMutation';
 import { LeadService, resolveLeadCalculatorId } from '../../services/api/leads';
 import { resolveS3Url } from '../../utils/s3-utils';
-import { getRawPhoneNumber } from '../../utils/phone-util';
+import { getRawPhoneNumber, formatUSPhoneNumber } from '../../utils/phone-util';
+import {
+  buildCustomerFieldChanges,
+  resolveCustomerLogIds,
+} from '../../utils/customer-detail-changes';
 import { parseApiError } from '../../utils/error-util';
 import { ConsentFormModal } from '../../widgets/modals/lead-center/ConsentFormModal';
 import { RoofWaiverModal } from '../../widgets/modals/lead-center/RoofWaiverModal';
@@ -718,6 +722,43 @@ export default function LeadCenterPage() {
     }
   };
 
+  // Web parity (`job-capture-images-sections/edit-customer-modal.js`): the three
+  // `customer_details` activity events the portal timeline expects — a `view` when the
+  // pencil opens the modal, one `change` per edited field, and a `submit` once the
+  // PATCH succeeds. Id resolution (`customerId` is NOT the lead id) lives in
+  // `utils/customer-detail-changes.ts`.
+  const logCustomerDetailsEvent = (
+    eventType: 'view' | 'submit',
+    action: string
+  ) => {
+    const uId = user?._id || user?.id;
+    if (!uId) return;
+    logEvent(eventType, {
+      user_id: uId,
+      created_by: uId,
+      module_type: 'customer_details',
+      meta: { ...resolveCustomerLogIds(lead), action },
+    });
+  };
+
+  // Web parity (`edit-customer-modal.js` `trackFieldChange`): one `change` row per field
+  // the rep actually altered, so the portal timeline reads "Changed First Name from X to
+  // Y" and not just "saved". The rules — including the formatting the baseline has to
+  // match — live in `utils/customer-detail-changes.ts`; this only emits them.
+  const logCustomerFieldChanges = (data: EditCustomerPayload) => {
+    const uId = user?._id || user?.id;
+    if (!uId) return;
+    const ids = resolveCustomerLogIds(lead);
+    buildCustomerFieldChanges(lead, data).forEach((change) => {
+      logEvent('change', {
+        user_id: uId,
+        created_by: uId,
+        module_type: 'customer_details',
+        meta: { ...ids, ...change },
+      });
+    });
+  };
+
   const handleCustomerSubmit = async (data: EditCustomerPayload) => {
     try {
       const customerId = lead.customerDetails?._id || lead.customerDetails?.id || lead?._id || lead?.id;
@@ -766,6 +807,13 @@ export default function LeadCenterPage() {
       });
 
       FlashMessage.success('Success', 'Customer details updated successfully.');
+      logCustomerDetailsEvent('submit', 'customer details saved');
+      // ⚠️ AFTER the `submit` row, on request. Web's field rows land BEFORE it (they are
+      // debounced off each keystroke, so they are already sent by the time Save is
+      // pressed) — mobile derives them from the saved payload, and the reporter wants the
+      // detail rows to read as the breakdown UNDER the save. `LoggerService` serialises
+      // its queue, so this call order is the order the portal receives them in.
+      logCustomerFieldChanges(data);
       refetch();
     } catch (error: any) {
       const apiError = error?.response?.data || error?.data || error;
@@ -1107,7 +1155,10 @@ export default function LeadCenterPage() {
                     {lead.customerDetails?.firstName} {lead.customerDetails?.lastName}
                   </Text>
                   <TouchableOpacity
-                    onPress={() => setShowEditCustomerModal(true)}
+                    onPress={() => {
+                      setShowEditCustomerModal(true);
+                      logCustomerDetailsEvent('view', 'edit customer details opened');
+                    }}
                     style={{ marginLeft: 6, paddingHorizontal: 4 }}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   >
@@ -1128,7 +1179,13 @@ export default function LeadCenterPage() {
                     color="#72BD00"
                   />
                   <Text className="ml-1 text-base font-semibold" style={{ color: '#72BD00' }}>
-                    {lead.customerDetails?.phone}
+                    {/* The record stores the number RAW or E.164 (`18757575799`), which is
+                        what the header used to print. `EditCustomerModal` seeds its own
+                        field through this same formatter, so the two surfaces now read the
+                        same. DISPLAY ONLY — `handleCall` / `handleTextMessage` /
+                        `handleCopyPhone` still read `customerDetails.phone` and dial through
+                        `getRawPhoneNumber`, so the tel:/sms: links are unchanged. */}
+                    {formatUSPhoneNumber(lead.customerDetails?.phone || '')}
                   </Text>
                 </TouchableOpacity>
                 <View className="flex-row items-center">
@@ -1240,6 +1297,13 @@ export default function LeadCenterPage() {
                 isRefreshing={isRefreshing}
                 onEditContract={fromMyDeals ? handleEditDealFromMyDeals : undefined}
                 drafts={dealDrafts}
+                // Resend / Cancel change the DRAFT; an Edit Phone/Email writes the
+                // CUSTOMER record, which the recipient line falls back to — so refetch
+                // both rather than only the drafts.
+                onDraftsChanged={() => {
+                  queryClient.invalidateQueries({ queryKey: ['lead-job-builder-drafts', lead?._id] });
+                  refetch();
+                }}
               />
             )}
             {activeTab === 'tools' && (

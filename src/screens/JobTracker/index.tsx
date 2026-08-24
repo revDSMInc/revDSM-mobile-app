@@ -224,31 +224,49 @@ export default function JobTrackerPage() {
       >
         <View className="px-4 py-3 pb-8">
           {/* Header Title & Back Button */}
-          <View className="flex-row items-center justify-between pb-3">
-            <View className="flex-row items-center">
-              <TouchableOpacity
-                onPress={() => navigation.goBack()}
-                className="mr-3 p-1 items-center justify-center"
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderWidth: 1,
-                  borderColor: 'rgba(0,0,0,0.06)',
-                  borderRadius: 8,
-                }}
-              >
-                <Feather
-                  name="arrow-left"
-                  size={14}
-                  color={isDark ? colors.text : colors.textSecondary}
-                />
-              </TouchableOpacity>
-              <View>
-                <Text className="text-sm font-medium" style={{ color: colors.text }}>
-                  Job Tracker
-                </Text>
-              </View>
+          {/* The back button and the title are DIRECT children of this row (the inner
+              `flex-row` grouping them was removed): grouped, the title could only ever
+              centre within that group, i.e. hard against the button. Flattened, the
+              flex-1 title block centres on the SCREEN. */}
+          {/* `pt-3 pb-6` on top of the container's `py-3` gives the 24px above / 24px
+              below that the Profile header gets from its `py-6`. The container's
+              HORIZONTAL padding is deliberately left at `px-4`: it wraps the whole
+              screen, not just this row, so matching Profile's `px-5` there would shift
+              the overview card and the job table too. */}
+          <View className="flex-row items-center pt-3 pb-6">
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              className="mr-3 p-1 items-center justify-center"
+              style={{
+                width: 32,
+                height: 32,
+                borderWidth: 1,
+                // Was a hardcoded `rgba(0,0,0,0.06)`, which is all but invisible on a
+                // dark background. `colors.border` is what the Profile header uses and
+                // is theme-aware.
+                borderColor: colors.border,
+                borderRadius: 8,
+              }}
+            >
+              <Feather
+                name="arrow-left"
+                size={14}
+                color={isDark ? colors.text : colors.textSecondary}
+              />
+            </TouchableOpacity>
+            <View className="flex-1" style={{ alignItems: 'center' }}>
+              {/* Matches the Profile header's `text-xl font-black` (was `text-sm
+                  font-medium`). The row's height is set by the 32px back button, which
+                  still clears a 20px title, so nothing reflows. */}
+              <Text className="text-xl font-black" style={{ color: colors.text }}>
+                Job Tracker
+              </Text>
             </View>
+            {/* Mirrors the back button's 32px box + its 12px `mr-3` so the flex-1 title
+                block is symmetric — same spacer as the Profile header. A spacer rather
+                than absolute positioning: it can never overlap the button's touch
+                target, and a longer title wraps in its own column. */}
+            <View style={{ width: 44 }} />
           </View>
 
           {/* Overview Section */}

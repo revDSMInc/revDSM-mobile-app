@@ -24,11 +24,6 @@ interface ContractDetailsCardProps {
   hasContract: boolean;
   isResulted: boolean;
   onAddDocument: (type: 'agreement' | 'orderSheet' | 'downPaymentReceipt') => void;
-  /**
-   * True when the lead has an addendum awaiting the customer's signature. Second
-   * source for the amber header — see the note beside `showPendingDraft`.
-   */
-  hasPendingAddendum?: boolean;
 }
 
 const cleanNumber = (val: any): number => {
@@ -54,7 +49,6 @@ export const ContractDetailsCard = ({
   hasContract,
   isResulted,
   onAddDocument,
-  hasPendingAddendum = false,
 }: ContractDetailsCardProps) => {
   const navigation = useNavigation<any>();
 
@@ -84,25 +78,21 @@ export const ContractDetailsCard = ({
   const statusStr = (lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '');
   const isDemo = statusStr === 'demo' || statusStr === 'demonosale';
 
-  // The card header IS the deal's pending-signature status, and it has TWO sources —
-  // the amber bar must show while EITHER is awaiting the customer, and flip back to
-  // the green `✓ … - LEAD RESULTED` the moment they approve:
+  // This header now reports ONE thing: a pending `leadDraft` — the draft an
+  // EditContractDetails save writes (`upsertLeadDraft` has exactly one caller). It
+  // keeps its `showStatus` gate, which is that flow's own opt-in.
   //
-  //  1. `leadDraft` — `GET lead/v1/{id}/draft`, created ONLY by an EditContractDetails
-  //     save (`upsertLeadDraft` has exactly one caller). Keeps its `showStatus` gate,
-  //     which is that flow's own opt-in.
-  //  2. `hasPendingAddendum` — a pending row in `GET lead/v1/{id}/job-builder-drafts`,
-  //     which is what the My Deals deal-edit wizard submits. The wizard does NOT write
-  //     a leadDraft, so before this the header stayed GREEN after an addendum while the
-  //     addendums list right below it read "Pending" — the two disagreed on one screen.
-  //
-  // ⚠️ No `showStatus` gate on the addendum arm: that flag belongs to the contract-edit
-  // draft shape and a job-builder draft does not carry it, so requiring it would make
-  // this branch permanently dead.
+  // ⚠️ A pending ADDENDUM deliberately no longer paints this header amber. It has its
+  // own section now — `AddendumRecipientCard`, rendered as a SEPARATE card above this
+  // one by `JobDocsSection`, carrying web `deal-banners.js`'s
+  // "PENDING ADDENDUM - AWAITING CUSTOMER SIGNATURE" bar plus the recipient and its
+  // Resend / Edit Phone / Edit Email controls. So while an addendum is out this card
+  // reads GREEN `✓ … - LEAD RESULTED` and the amber status sits above it, which is the
+  // requested design (and web's own — see the note in `DealBanners`).
   const draftStatus = String(leadDraft?.status || '').toLowerCase();
   const showLeadDraftPending =
     draftStatus === 'pending' && (leadDraft?.showStatus === true || leadDraft?.showStatus === 'true');
-  const showPendingDraft = showLeadDraftPending || hasPendingAddendum;
+  const showPendingDraft = showLeadDraftPending;
 
   return (
     <View

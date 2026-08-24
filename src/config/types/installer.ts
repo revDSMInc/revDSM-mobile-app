@@ -51,11 +51,21 @@ export interface PhotoTag {
    */
   hasRep: boolean;
   /**
-   * `_id` of the rep's `salesPhotos` entry this tag ghosts against. Sent as
-   * `salesPhotoId` when uploading the installer's pre/post shot, which is how the
-   * backend pairs the two images.
+   * `_id` of the reference photo this tag ghosts against. Sent with the installer's
+   * pre/post shot, which is how the backend pairs the two images.
+   *
+   * ⚠️ Which KEY it is sent under depends on `repPhotoSource` — see below.
    */
   repPhotoId?: string;
+  /**
+   * Collection `repPhotoId` belongs to, straight off the API row.
+   *
+   * The reference set holds rows from two: the rep's `salesPhotos` and the
+   * installer's own pre-install captures, which come back as `source: "installer"`.
+   * `utils/installer-upload.ts` › `matchedPhotoIdRef` turns this into the right key
+   * (`salesPhotoId` vs `preInstallPhotoId`) — nothing else should branch on it.
+   */
+  repPhotoSource?: string;
   /** Rep category this tag belongs to, e.g. "Flooring — EXT". Sent as `category`. */
   categoryLabel?: string;
   /**
@@ -92,6 +102,12 @@ export interface RepPhoto {
   timestampTaken?: string;
   coordinates?: { latitude: number; longitude: number };
   isAnnotated?: boolean;
+  /**
+   * Which collection this row came from — `"installer"` for a pre-install capture
+   * the crew took, otherwise the rep's sales photo. Decides the id key the paired
+   * shot is uploaded under; see `PhotoTag.repPhotoSource`.
+   */
+  source?: string;
 }
 
 /** One cell of a rep photo grid. `hasSalesPhoto` = there is something to ghost against. */
@@ -387,6 +403,8 @@ export interface InstallerStoredRecords {
   preExistingConditions?: PreExistingConditionsPayload;
   jobScopeVerification?: JobScopeVerificationPayload;
   materialReturnNothingToReturn?: boolean;
+  /** Step 6 · the certificate signed on a device — `stepData.coc`, read back. */
+  coc?: CocStepPayload;
 }
 
 export interface JobPagination {
@@ -521,12 +539,16 @@ export interface InstallerImageDeletePayload {
  * Which keys are present depends on the phase:
  *  - `pickup` / `return` → `subcategory` = the phase name
  *  - `preExisting`       → `conditionLabel` + `subcategory` = the flagged area
- *  - `pre` / `post`      → `salesPhotoId` (+ `category` / `subcategory` from the slot)
+ *  - `pre` / `post`      → `salesPhotoId` OR `preInstallPhotoId` (+ `category` /
+ *                          `subcategory` from the slot) — see `matchedPhotoIdRef`
  */
 export interface InstallerImageDescriptor {
   subcategory?: string;
   conditionLabel?: string;
+  /** Set when the paired reference row is the REP's photo. Mutually exclusive with `preInstallPhotoId`. */
   salesPhotoId?: string;
+  /** Set when the paired reference row is the installer's own pre-install capture. */
+  preInstallPhotoId?: string;
   category?: string;
   timestampTaken: string;
   coordinates?: GeoCoordinates | null;
@@ -540,6 +562,8 @@ export interface InstallerStoredImage {
   subcategory?: string;
   conditionLabel?: string;
   salesPhotoId?: string;
+  /** The `preInstallPhotoId` twin of `salesPhotoId` — a row can carry either. */
+  preInstallPhotoId?: string;
   category?: string;
   timestampTaken?: string;
   coordinates?: GeoCoordinates | null;
@@ -644,6 +668,67 @@ export interface JobScopeVerificationPayload {
  *
  * Every key is optional: one step's worth of data per request.
  */
+/** One uploaded signature, as `stepData.coc` references it. */
+export interface CocSignatureRef {
+  s3url: string;
+  bucketName?: string;
+}
+
+/**
+ * Who signed, from the certificate's relationship boxes.
+ *
+ * Mirrors the backend's `CocRelationshipType` enum verbatim. `spouse` is its own
+ * value rather than an `other: "spouse"` write-in — it is the commonest non-owner
+ * signer, and a free-text field spells it a dozen ways.
+ */
+export type CocRelationshipType = 'homeowner' | 'spouse' | 'other';
+
+/**
+ * `stepData.coc` — the Certificate of Completion signed on the device.
+ *
+ * Separate from `installerCocPhotos`, which carries the SCANNED pages of a paper
+ * certificate. A job can legitimately have either, or both.
+ */
+export interface CocStepPayload {
+  confirmations: {
+    is18OrOlder: boolean;
+    isHomeownerOrAuthorized: boolean;
+    installationCompletedAsPerContract: boolean;
+  };
+  customer: {
+    relationshipType: CocRelationshipType;
+    /** `null`, not `''`, when the signer is the homeowner — the contract asks for null. */
+    otherRelationship: string | null;
+  };
+  installerSignature?: CocSignatureRef;
+  customerSignature?: CocSignatureRef;
+}
+
+/**
+ * What the device keeps about a signed certificate.
+ *
+ * The payload plus what only the app needs: the strokes, so the step can redraw the
+ * signatures after a remount, and the two fields the form shows. `buildCocSignOffPayload`
+ * narrows this back to the wire shape — do not send this object as-is.
+ */
+export interface CocSignOff extends CocStepPayload {
+  jobNumber?: string;
+  date?: string;
+  signedAt?: string;
+  installerSignaturePaths?: string[];
+  customerSignaturePaths?: string[];
+  signatureSize?: { width: number; height: number };
+  /**
+   * Signed URLs for the two uploaded signature images.
+   *
+   * How a certificate signed on ANOTHER device (or before this install was
+   * reinstalled) shows its signatures: the strokes only exist where they were drawn,
+   * the images are what the server keeps. Short-lived — resolved on each hydrate.
+   */
+  installerSignatureUrl?: string;
+  customerSignatureUrl?: string;
+}
+
 export interface InstallerJobPatch {
   /** Step 1 · Pickup. */
   installerPickupPhotos?: StepPhotoRef[];
@@ -657,6 +742,8 @@ export interface InstallerJobPatch {
   installerPostInstallPhotos?: StepPhotoRef[];
   /** Step 6 · CoC — the scanned pages of the signed Certificate of Completion. */
   installerCocPhotos?: StepPhotoRef[];
+  /** Step 6 · CoC — the certificate signed on the device, with its two signatures. */
+  coc?: CocStepPayload;
   /** Step 7 · Return — the "used all material" flag and the returned-stock shots. */
   materialReturnNothingToReturn?: boolean;
   installerReturnPhotos?: StepPhotoRef[];
@@ -673,6 +760,7 @@ export const INSTALLER_PATCH_FIELDS: (keyof InstallerJobPatch)[] = [
   'jobScopeVerification',
   'installerPostInstallPhotos',
   'installerCocPhotos',
+  'coc',
   'materialReturnNothingToReturn',
   'installerReturnPhotos',
 ];
@@ -703,6 +791,13 @@ export interface InstallProgress {
   /** productId -> verification state. */
   scope: Record<string, ScopeStatus>;
   cocPages: CapturedPhoto[];
+  /**
+   * The certificate signed on the device, once submitted.
+   *
+   * Lives here rather than in the step so it survives a remount and so the step-data
+   * PATCH can be rebuilt from progress like every other step.
+   */
+  cocSignOff?: CocSignOff;
   /**
    * Evidence attached to a Can't Do Work / Not Hit result.
    *

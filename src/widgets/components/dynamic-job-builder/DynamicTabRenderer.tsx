@@ -26,7 +26,8 @@ import {
 import { isRequiredFieldValueMissing } from '../../../utils/dynamic-job-builder/engine/field-value-utils';
 import { isAllocationField, computeGridTotal, resolveLockedValue } from '../../../utils/dynamic-job-builder/engine/allocation-utils';
 import {
-  isLockedColorSuppressed,
+  findPairedColorFields,
+  hasEnteredQuantity,
   isPairedQuantityEmpty,
   resolveLockedColorFallbackDefault,
 } from '../../../utils/dynamic-job-builder/engine/locked-color-defaults';
@@ -322,7 +323,7 @@ interface DynamicTabRendererProps {
 function renderField(
   field: any,
   value: any,
-  onChange: (val: any) => void,
+  onFieldValueChange: (val: any) => void,
   ctx?: {
     readOnly?: boolean;
     dealCenterData?: any;
@@ -357,6 +358,25 @@ function renderField(
     state = {},
     editMode = false,
   } = ctx || {};
+
+  // Zeroing an Extras quantity clears the colour that belongs to it. Ticket:
+  // *"currently when user change the value from 1 to 0 the colour still available
+  // but i dont need color if the ground spout value is 0."* In the deal-edit
+  // wizard both fields are editable, so the read-only suppression in the locked
+  // branch below never runs — the colour has to be CLEARED, not just hidden, or a
+  // colour for an extra that is no longer on the job rides along into the
+  // addendum. `findPairedColorFields` scopes this to the Extras convention — the
+  // colour must FOLLOW A QUANTITY, so a combination's own picker (which follows a
+  // size/type toggle) is never cleared — and skips an unconditionally-required
+  // colour, which would otherwise disable Next. See `locked-color-defaults.ts`.
+  const onChange = (val: any) => {
+    onFieldValueChange(val);
+    if (hasEnteredQuantity(val) || !ctx?.onFieldChange) return;
+    findPairedColorFields(field, ctx?.sectionFields).forEach((colorField: any) => {
+      if (!hasEnteredQuantity(state?.[colorField.id])) return;
+      ctx.onFieldChange?.(colorField.id, '');
+    });
+  };
   // Selected controls are always green (normal-JB parity), not the vertical color.
   const verticalColor = SELECTED_ACCENT;
 
@@ -377,6 +397,22 @@ function renderField(
   // hasn't picked one — so a field that validation counts as complete (via
   // isDefaultColorActive) is not rendered blank.
   const resolveSwatchValue = () => {
+    // Same rule as the locked row, for the EDITABLE picker: a colour whose paired
+    // quantity is empty is not on the job, so it shows nothing — including a
+    // phantom already stored on a deal saved before this rule existed.
+    // NOT gated on `isFieldLocked` — the Extras colour is authored as a plain
+    // editable swatch on the live config, which is why the first pass did nothing
+    // on device. `isPairedQuantityEmpty` scopes it instead: it only pairs a colour
+    // that FOLLOWS A QUANTITY, so a combination's own picker (which follows a size
+    // or type toggle) is untouched.
+    if (field.required !== true) {
+      const quantityEmpty = isPairedQuantityEmpty(field, {
+        fields: ctx?.sectionFields,
+        state,
+        dealCenterData,
+      });
+      if (quantityEmpty) return '';
+    }
     if (value) return value;
     return (isDefaultColorActive(field, state, depCtx) ? field.defaultValue : '') || '';
   };
@@ -409,7 +445,7 @@ function renderField(
     // (`Replace Corner ▸ Color`) already shows, and the saved-state fallback below
     // is skipped too — a lead saved BEFORE this fix still carries the phantom
     // colour in its stored state.
-    const colorSuppressed = isLockedColorSuppressed(field, {
+    const colorSuppressed = isPairedQuantityEmpty(field, {
       fields: ctx?.sectionFields,
       state,
       dealCenterData,
@@ -709,9 +745,6 @@ function renderField(
         // CONDITION-RESOLVED one, never the raw `field.defaultValue` — and it is ''
         // when the colour's paired quantity is empty, so an unquoted Extra reads '—'
         // instead of the portal's default colour (`locked-color-defaults.ts`).
-        // This branch is ALSO reached with no `field.locked` (a colorSelection
-        // locked by `lockWhenNotRequired`), so the pairing test is used directly
-        // rather than through `isLockedColorSuppressed`.
         const quantityEmpty = isPairedQuantityEmpty(field, {
           fields: ctx?.sectionFields,
           state,

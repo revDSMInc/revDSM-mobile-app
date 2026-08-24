@@ -138,6 +138,16 @@ export const LeadEndpoints = {
     submit: (draftId: string) => `lead/v1/job-builder-draft/${draftId}/submit`,
     list: (leadId: string) => `lead/v1/${leadId}/job-builder-drafts`,
     summary: (draftId: string) => `lead/v1/job-builder-draft/${draftId}/public`,
+    // Rep actions on a draft that is already out for signature, from the Contract
+    // Details "PENDING ADDENDUM" card. `resend` re-notifies the customer at whatever
+    // contact their CUSTOMER record now holds (so "Edit Phone"/"Edit Email" update the
+    // customer first, then the rep resends); `cancel` voids the outstanding addendum.
+    resend: (draftId: string) => `lead/v1/job-builder-draft/${draftId}/resend`,
+    // The banner's own source of truth: the pending drafts PLUS the lead-level
+    // customer contact a resend would use. The lead payload carries a pending COUNT
+    // but no draft ids, so this is the only place those come from.
+    pending: (leadId: string) => `lead/v1/${leadId}/pending-addendums`,
+    cancel: (draftId: string) => `lead/v1/job-builder-draft/${draftId}/cancel`,
   },
 };
 
@@ -403,6 +413,36 @@ export const LeadService = {
   // Addendum drafts list + a single draft's public summary (Deal Detail addendums).
   getJobBuilderDrafts: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.jobBuilderDraft.list(leadId)),
+  // Re-send ONE draft's signature request. A single call covers BOTH channels — SMS
+  // and email go out together, so whichever address works gets through.
+  //
+  // `contact` is `{ customerPhone, customerEmail? }`. Omitting a field keeps whatever
+  // the draft already holds, so `customerEmail` is left OFF (not sent as '') when the
+  // customer has no email — sending a blank would overwrite a good stored address.
+  //
+  // Responds with `{ notifications: { sms, email } }`; anything other than 'sent' is a
+  // partial failure the caller must surface (see `describeResendResult`).
+  resendJobBuilderDraft: (
+    draftId: string,
+    contact?: { customerPhone?: string; customerEmail?: string }
+  ): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.jobBuilderDraft.resend(draftId), contact),
+  // Void an addendum that is still awaiting signature. The customer's review link
+  // stops working once the draft flips to `cancelled`.
+  //
+  // ⚠️ NO BODY — the draft id in the path is the entire request. Do not add one.
+  //
+  // Web additionally decrements the lead's local `pendingAddendumCount` on success.
+  // Mobile has no such field: every pending count here is derived from the drafts
+  // list itself (`pendingRecipientRows` / `hasPendingDraft`), so re-reading that list
+  // IS the update — which is what web's banner does separately anyway.
+  cancelJobBuilderDraft: (draftId: string): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.jobBuilderDraft.cancel(draftId)),
+  // Pending addendums for a lead + the customer contact a resend would go to.
+  // Read as `response.data.data`; every action on the card refetches it so the banner
+  // shows the state a further resend would act on.
+  getLeadPendingAddendums: (leadId: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.jobBuilderDraft.pending(leadId)),
   getDraftSummary: (draftId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.jobBuilderDraft.summary(draftId)),
   // Signed addendum PDF (customer signature + the updated contract details). The

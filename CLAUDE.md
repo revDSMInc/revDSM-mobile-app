@@ -356,6 +356,211 @@ unchanged. tsc 44 (baseline unchanged); all three touched files byte-identical t
 baselines (`tab-naming.ts` and `useDynamicCalculators.ts` clean, `CalculatorView.tsx` 118 problems /
 3 errors / 115 warnings).
 
+### "Send Addendum To" now blocks Submit on an incomplete phone number
+
+Ticket: *"add the validation for number, don't allow me submit addendum if phone number is below then
+10 numbers, like we set before."* The Review step's phone field took any length, so a rep could submit
+an addendum whose SMS had nowhere to land — the draft then sits `pending` forever, because the customer
+is never asked to sign.
+
+`customerPhoneError` follows the same shape as this screen's existing `contractPriceError` /
+`downPaymentError`: red border, message under the field, and the **Submit Addendum** button disabled.
+
+⚠️ **TEN digits here, not the ELEVEN Add New Lead and Edit Customer count.** Those two format through
+`formatUSPhoneNumber`, which emits its own `+1 ` prefix, so a complete value strips to 11. This field
+renders a **static `+1` label** beside the input and holds the LOCAL part only
+(`formatLocalUSPhone`, `maxLength={12}` = 10 digits + 2 dashes) — counting 11 here would reject every
+valid number.
+
+⚠️ **The phone gates SUBMIT only, never `Next · Review` on step 2.** The field lives on step 3, so
+gating Next would leave the rep on a screen with a dead button and nothing on it explaining why.
+
+**Empty and incomplete are separate messages** — *"Phone number is required to send the addendum."*
+vs *"Enter a complete 10-digit phone number."* — matching the Edit Customer treatment. An empty field
+is a real case: the seed comes from `lead.customerDetails.phone`, so blank means the lead carries no
+number at all, and the submit payload's fallback to that same field is blank too.
+
+Verified with 9 tests driving the real `formatLocalUSPhone` / `toE164USPhone`: every partial length 1–9
+blocked and ten accepted; the 10-vs-11 distinction asserted directly; all five stored shapes (raw,
+E.164, `1`-prefixed, parens, dashed) seeding to a passing value; a phone-less lead reading *required*
+rather than *incomplete*; a genuinely short stored number caught instead of silently sent; and the
+passing value converting to `+1XXXXXXXXXX` for the provider. tsc 44 (baseline unchanged); eslint
+0 errors, 137 warnings vs a HEAD baseline of 136 — the one added is `react-native/no-inline-styles` on
+the new error `Text`, the rule this file already carries 136 of.
+
+⚠️ Noted while testing: `formatLocalUSPhone` keeps the **LAST** ten digits when handed more (documented
+behaviour — it is what makes `+1…` / `1…` / already-formatted input normalise). So over-long input
+yields a *different* ten digits rather than a truncation of the first ten. `maxLength={12}` keeps it
+unreachable by typing; do not "fix" the formatter to slice from the front, or every E.164 seed breaks.
+
+### Addendum Review diffs a locationGrid CELL BY CELL, not by its total
+
+Ticket: *"I also notice this when i change in 3rd story — see I added 33, it's showing the summed-up
+value in Addendum Review. It should be like what I changed. Example: `Lighting · Location · 3rd Story`
+and behind it `33`."* The rep added **33** to Left Side / 3rd Story and the review read
+**`Lighting · Location  110 → 143`**.
+
+Both numbers were true and the row was still useless — **an addendum is read as "the original agreement
+PLUS what we added here and MINUS what we removed"**, so restating two totals leaves the customer to
+subtract, and (the reporter's original soffit complaint) invites reading a survivor's total as an
+addition. The review has to name what the rep touched.
+
+Cause is one line of `displayValue` in `dynamic-deal-diff.ts`: an object-valued field returned
+`gridTotal(v)`, so a whole 6×3 grid collapsed to a single number before the diff ever ran.
+
+**`readValues` now expands a grid into ONE ENTRY PER CELL**, keyed
+`` `${fieldId}${CELL_SEP}${rowKey}${CELL_SEP}${colKey}` ``, and the existing diff machinery compares
+cells with no further change. A row reads
+**`Lighting · Location · Left Side · 3rd Story   — → 33`**.
+
+- ⚠️ **`CELL_SEP` is U+0002 and must be written as the ESCAPE SEQUENCE** (``), never a raw
+  control byte — same rule as `SCOPE_SEP`: a literal one makes grep treat this file as binary.
+- **The ROW is kept as well as the column**, though the ticket's example named only "3rd Story":
+  without it, `Left Side / 3rd` and `Front / 3rd` are the same label on one screen.
+- **Blank and zero cells are dropped** (`Number(cell) > 0`). Without it every grid emits ~18 rows of
+  `0` and buries the one that changed; with it, clearing a cell correctly reads `22 → —`.
+- **`gridCellLabels` resolves the names through `resolveLocationGridConfig`** — the same resolver the
+  grid widget itself uses — so an authored custom grid and the `singleStory` variant both name their
+  cells as the rep saw them. An unknown key falls back to the raw coordinate rather than being dropped.
+- **`formatChangeFieldLabel` gained a trailing `cellLabel` segment**, after the combination chip:
+  `<section> · Combination #2 · <field> · <row> · <col>`.
+- **`describeCombo` names cells too**, so a removed combination is described by the measurements it
+  actually held rather than by a total.
+
+⚠️ **The group-meta lookup had to split cell keys as well.** It resolves a section's label by finding
+any labelled field among its combinations; a combination whose only labelled field is a GRID would
+otherwise resolve nothing and the ENTIRE group — every add/remove row in it — would be dropped as
+noise. Tested directly.
+
+Per-cell keys also **sharpen combination matching** for free: `comboSignature` / `overlapScore` now
+compare individual cells instead of one collapsed number, so two combinations that happen to share a
+grand total are no longer indistinguishable to the pairing pass.
+
+⚠️ The reporter re-sent the earlier *"removed the 85' black soffit, kept the 200' white"* description as
+context. That behaviour was fixed previously (see the combination-identity section) and is **asserted
+again here as a regression guard** — the removal emits exactly one `removed` row and none of the
+survivor's values appear as edits.
+
+Verified with 11 tests over a Lighting tab (tab-level grid) and a Soffit combination section: the
+ticket repro naming the cell, an explicit assertion that **no `110 → 143` total row is emitted**, an
+edited cell, a cleared cell, two grid rows staying separate, an untouched grid → `[]`, blank/zero cells
+never reported, a grid nested INSIDE a combination, a removed grid-only combination still reported, and
+the two soffit regression guards. tsc 44 (baseline unchanged); eslint identical to HEAD (2 pre-existing
+errors).
+
+⚠️ **`dynamic-deal-diff.ts` is a CRLF file.** A script that reads/writes it in text mode rewrites all
+466 lines to LF and buries the change in a whole-file diff — that happened here and had to be converted
+back. Use `newline=''` on both ends. (Same trap as `EditCustomerModal.tsx`; check `file <path>` before
+and after.)
+
+### ✅ ROOT CAUSE: the Addendum Review's "original" and the live build were ONE object graph
+
+Ticket: *"actually it's 48 but showing 4"*, then, decisively: *"i checked in iphone 14 pro max, still
+same issue — it only set it 48 when i save something in this component, even it's empty line or space."*
+
+**`hydrateJobStateForPersistence` SHARES object references with the state it is given** — a field's
+value object is carried across, not cloned — and `useDynamicJobBuilderSession` seeds its `useState`
+with that exact object (`if (initialJobState) return initialJobState`). So `initialState` (the diff's
+ORIGINAL) and the rep's live build were the same object graph, and **any in-place write anywhere in the
+~4k-line engine rewrote the "previous value" the review prints.** A `locationGrid` losing one column
+that way turns a saved total of **48 into 4** — the reported number, exactly.
+
+Proven, not inferred: driving the real `deserializeDynamicJobStateFromStorage` →
+`hydrateJobStateForPersistence` over a LeafFilter-shaped config asserts
+**`hydrated…grid === saved…grid`** (identity, not equality), and a single in-place `delete` of one
+column then drops the ORIGINAL's total from 48 to 4.
+
+**Fix — the builder gets a DEEP COPY** (`builderInitialState`, a JSON round-trip memoized on
+`initialState`); `initialJobState={builderInitialState}` replaces `initialJobState={initialState}`.
+`initialState` stays pristine for the diff.
+
+- **A JSON round-trip is the right clone**: this state is exactly what gets PUT to the API, so it is
+  plain JSON by construction — no Dates, functions or cycles.
+- **Memoized on `initialState`**, so identity changes at the same cadence as before. Safe because the
+  session's re-apply is keyed by **`draftToken` = (leadId, calcId)**, never by this object's identity —
+  a fresh copy therefore cannot clobber the rep's edits.
+- **It protects the query cache too.** `savedDynamicJobState` returns the sub-object of `lead` /
+  `savedOutcome` verbatim, so before this the engine's writes were also reaching into the cached lead
+  record. Tested.
+
+⚠️ **Not a display bug.** `buildChangeGroups` is submitted as **`buildChangeSummary`**, so the
+corrupted original was written onto the addendum **the customer signs**.
+
+> ⚠️ **Two earlier diagnoses of this same ticket were WRONG. Both are retired; do not revisit them.**
+> 1. *"iOS clips the trailing glyph of strike-through text."* `from` is not free text — for a
+>    `locationGrid` it is `displayValue()` → the grid **TOTAL**, so `"4"` was a wrong SUM and no width
+>    or font styling could ever move it. (The width framing was impossible anyway: the column measures
+>    ~246pt on an iPhone SE against ~12pt for `"48"`, and the row below rendered a *longer* struck
+>    value, `$2,000`, perfectly in the same screenshot.)
+> 2. *"the calculator query is still in flight, so the original is half-hydrated."* Real, and the
+>    `isCalculatorLoading` hold added for it is **kept** — the original genuinely does move while
+>    `dealCenterData` is empty, and a diff computed then must not be rendered OR submitted. But it was
+>    not this bug: the symptom survived on an iPhone 14 Pro Max and persisted indefinitely until a
+>    Fast Refresh, which is mutation, not a race.
+>
+> The tell that settled it: **only a Fast Refresh of THIS file fixed it, permanently and on any
+> device.** Fast Refresh discards `useMemo` caches, so a recompute from the pristine saved state gave
+> 48 while the cached (mutated) object gave 4. A pure memo cannot return two answers for one input —
+> so its OUTPUT was being written to.
+
+⚠️ **The engine treats state as shared-mutable in places.** Any future screen that both seeds the
+builder AND diffs against the same state must hand the builder a copy. `DynamicDealCenterScreen`
+(create path) is unaffected — it has no original to diff against.
+
+Verified with 7 tests: the reference sharing itself, the 48→4 corruption through it, the clone being a
+distinct graph, the same write no longer touching the original, the clone being value-identical (so the
+builder opens on the same build), the saved lead record protected, and `null` in → `null` out. tsc 44
+(baseline unchanged); eslint 0 errors, 136 warnings vs a HEAD baseline of 133 — the three added are
+`react-native/no-inline-styles` on the loading block from the previous pass, the same rule the file
+already carries 133 of.
+
+### Edit Customer accepted a phone number shorter than 10 digits
+
+Ticket: *"add the validation for phone number, currently i am able to save the number less then 10
+digit which is wrong, it should be same like we are doing in the add new lead."*
+
+`EditCustomerModal` checked only `!phone.trim()` — **present**, never **complete** — so `443-87` saved.
+Add New Lead (`widgets/modals/LeadCreate`) already had the rule; it is now here verbatim.
+
+**The rule counts ELEVEN digits, not ten.** Both fields format through
+`formatUSPhoneNumber`, which always emits the `+1 (XXX) XXX-XXXX` prefix, so a complete number strips
+to 11 digits — the ten local ones plus the country code. Writing `!== 10` here would reject every
+valid number.
+
+⚠️ **The SEED had to be formatted for the check to be safe**, and this is the half that is easy to
+miss. `phone` was seeded raw from `lead.customerDetails.phone`, which may be stored as bare digits or
+E.164 (`4438784937` / `+14438784937`) — 10 digits either way. Adding the length check alone would then
+have made an **untouched, perfectly valid record unsaveable**: open the modal, fix the address, and
+Save would refuse over a phone the rep never touched. `useState(formatUSPhoneNumber(...))` normalizes
+every stored shape to the one the field itself produces. (Same reasoning as the deal-edit "Send
+Addendum To" field, which formats its seed for the same reason.)
+
+⚠️ Consequence worth knowing: the submit payload now always carries the FORMATTED string. It already
+did whenever the rep touched the field (the `onChangeText` formats), so this only makes the untouched
+case consistent rather than introducing a new shape.
+
+**Empty and incomplete stay separate messages**, which is a small improvement on Add New Lead rather
+than a copy of it: `formatUSPhoneNumber` leaves `'+1 '` behind once the rep types and then clears the
+digits, and `.trim()` alone reads that as filled in. The required check is therefore
+`!phone.trim() || phoneDigits.length <= 1`, so a cleared field says *"Phone Number is required"* where
+Add New Lead would say *"complete 10-digit"*.
+
+Co-buyer phones were already validated at exactly **10** digits — correct and unchanged: they use
+`formatCoBuyerPhone`, which emits the local digits with **no** country code, and the field renders a
+static `+1` beside the input.
+
+Verified with 9 tests driving the real `formatUSPhoneNumber`: every partial length 1–9 rejected and ten
+accepted, the same verdicts as Add New Lead's own expression on each; all six stored shapes (raw,
+E.164, `1`-prefixed, parens, dashed, already-formatted) seeding to one accepted value; the raw seed
+proven to FAIL without the formatter; a genuinely short stored number still caught; empty vs the
+`'+1 '` residue both reading as *required*; and over-typing truncated by the formatter (with
+`maxLength={17}` backing it). tsc 44 (baseline unchanged); the file is byte-identical to its HEAD
+eslint baseline (4 warnings, 0 errors).
+
+⚠️ **This file is CRLF.** Editing it with a script that reads and writes in text mode rewrites all 776
+lines to LF and buries the change in a whole-file diff — that happened once here and had to be undone.
+Use `newline=''` on both the read and the write (or an editor that preserves endings).
+
 ### Investment Center spotlight: blurred backdrop, smaller card type, no strike-through
 
 Ticket, three unrelated items against the enlarged (spotlight) program cards:
@@ -2117,7 +2322,8 @@ on the job.
 
 **New pure `src/utils/dynamic-job-builder/engine/locked-color-defaults.ts`** holds the rule
 (`isColorField` / `hasEnteredQuantity` / `findPairedQuantityField` / `resolvePairedQuantityValue` /
-`isPairedQuantityEmpty` / `isLockedColorSuppressed` / `resolveLockedColorFallbackDefault`), for the
+`isQuantityLikeField` / `isPairedQuantityEmpty` / `findPairedColorFields` /
+`resolveLockedColorFallbackDefault`), for the
 reason `utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist: all three consumers pull in
 React Native or are untestable here, and "the extra isn't on the job" must mean one thing on all of
 them.
@@ -2130,9 +2336,13 @@ them.
   (`…__textvalue-uuu1l: 2`, `…__color-gem7v: "Forest Green"`). Structural fields (`sectionLabel`,
   `allocation`, `combinationSummary`, containers, `_`-keyed) are skipped, and a colour never pairs with
   another colour, so `Wedges / Straps / Modify Height` (which have no colour) are unaffected.
-- ⚠️ **Scoped to LOCKED colour slots.** An editable colour keeps its configured default as the
-  pre-selected swatch (web `resolveEffectiveColorBehavior`), and every combination colour (gutter runs,
-  downspouts) is editable — so neither is touched.
+- ⚠️ **Scoped by the PAIRING, not by `field.locked`.** The first pass gated every one of these on
+  `isFieldLocked(colour)` and did **nothing on device** — on the live config the Extras colour is
+  authored as a plain editable swatch (it renders read-only because the TAB is, not because it
+  carries the flag). The scope is instead `isQuantityLikeField`: the colour must FOLLOW A QUANTITY
+  (a `number`/`text` box, a `dcField`-bound or legacy `locked` field). A **combination's** colour
+  follows a SELECTION — gutter runs are `[size toggle, color]`, downspouts `[dsType toggle, dsColor]`
+  — so it never pairs and is never touched. That is the whole guard; there is no locked test left.
 - ⚠️ **`lockedWithColor` / any field with `colorKey` is NOT a colour slot**, and neither is a colour
   carrying its own `dcField`. Those resolve their own value from the calculator; suppressing them would
   blank a real measurement. Both are excluded in `isColorField` and both are tested.
@@ -2145,7 +2355,7 @@ Three call sites, one rule:
 | where | change |
 |---|---|
 | `DynamicTabRenderer` generic locked branch | `resolveLockedValue(…, { fallbackDefault })` + `—` when suppressed |
-| `DynamicTabRenderer` `colorSelection` locked branch | same, via `isPairedQuantityEmpty` — that branch is **also reached with no `field.locked`** (a colorSelection locked by `lockWhenNotRequired`), so it can't use `isLockedColorSuppressed` |
+| `DynamicTabRenderer` `colorSelection` locked branch | same — that branch is **also reached with no `field.locked`** (a colorSelection locked by `lockWhenNotRequired`) |
 | `hydrateFieldValue` (storage) | `fallbackDefault: ''` when suppressed → the field is EMPTIED, the same mechanism that drops a not-included product from storage |
 | `formatFieldSummaryValue` (`vertical-summary-utils`) | returns the `missing` variant, so the row never reaches the Job Summary |
 
@@ -2169,6 +2379,162 @@ seeding the colour (and still seeding it when quoted), and the summary row — t
 eslint-clean and all three touched files are byte-identical to their HEAD eslint baselines
 (`dynamic-job-state-storage` 3 errors, `vertical-summary-utils` clean, `DynamicTabRenderer` 24 problems).
 
+#### …and in the deal-edit wizard the colour is CLEARED, not just hidden
+
+Follow-up on the same pair, from the **My Deals ▸ Edit Job Build** flow: *"currently there is a value
+in the ground spout that is 1 — when user change the value from 1 to 0 than the colour should remove
+automatically. currently the colour still available but i dont need color if the ground spout value
+is 0."*
+
+Everything above is a **read** rule, and the edit wizard is the one surface where it cannot apply:
+`editMode` (web `unlockAll`) makes every calculator-locked field editable, so the locked branch — with
+all of its suppression — is never reached. The rep edits `Ground Spout` down to `0` in a real
+`TextField` while a real colour picker keeps showing `Black`, and that colour is stored state, so it
+goes into the **addendum**. Hiding it is not enough here; it has to be removed.
+
+- **`renderField`'s `onChange` is now wrapped** (the raw prop was renamed `onFieldValueChange`, so every
+  case inside picks the wrapper up automatically). When a field's new value is empty
+  (`hasEnteredQuantity` — `0` / `'0'` / `''` / an empty grid), it also writes `''` to each colour slot
+  that belongs to it, through the same `ctx.onFieldChange` the container already uses. Both writes are
+  functional state updaters, so they compose in one tick.
+- **New `findPairedColorFields(quantityField, fields)`** is the inverse of `findPairedQuantityField`:
+  the run of colour fields immediately FOLLOWING the quantity, stopping at the next non-colour field —
+  so `Ground Spout` can never reach into the `Replace Corner` pair below it.
+- ⚠️ **An unconditionally `required: true` colour is exempt** — emptying it would disable **Next**
+  with nothing on screen explaining why. (A `requiredWhen`-gated colour is safe: with the quantity
+  at 0 that rule is not met either.) A combination's picker needs no exemption — it follows a
+  SELECTION, so `isQuantityLikeField` never pairs it in the first place.
+- **`resolveSwatchValue` applies the same rule to the editable picker**, which is what covers a deal
+  **saved before any of this existed**: its stored `Black` sits on a 0 extra, and re-offering it as the
+  selected swatch would just re-submit the phantom. Same exemption.
+- **Nothing is written when there is no colour to clear** (`state[colorId]` already empty), so typing in
+  an Extras field can't dirty the draft on its own.
+
+##### …and the second reason it didn't fire: `dealCenterData` still reports the SOLD quantity
+
+QA came back with a screenshot of `Ground Spout 0` beside a black **Color** chip — the fix above,
+not working. Two causes, both now fixed, and the second one is the subtle half:
+
+1. the `locked`-flag scoping described in the round-1 section (retired for `isQuantityLikeField`), and
+2. **`resolvePairedQuantityValue` preferred the CALCULATOR whenever the state value looked empty.**
+   Its first line was `if (hasEnteredQuantity(fromState)) return fromState;`, so a state value of
+   **`0` fell through to `resolveLockedValue`** — and in the deal-edit wizard `dealCenterData` still
+   holds the quantity the deal was SOLD with (`1`). The rep types 0, the helper reads 1, and the
+   colour is judged to be on the job. It now returns any **explicit** state entry, `0` and `''`
+   included, and reads the calculator ONLY when the field has no entry at all (a build never
+   opened). Same principle `formatFieldSummaryValue` already documents: in edit mode the rep's live
+   value must win.
+
+Verified with 15 more tests in the same suite (38 total), driving the real helpers plus the exact
+side effect and the exact `resolveSwatchValue` expression: the ticket repro (`1 → 0` and `1 → ''`
+both clearing), the typed `0` outranking a calculator that still says `1`, the calculator still
+read when the build has no entry, the colour surviving `1 → 2`, the neighbouring pair untouched, a
+quantity that owns no colour, the walk stopping at the next quantity, an **unlocked** Extras colour
+now covered (the live-config case), a colour that follows a **toggle** left alone in both
+directions, the required exemption, the no-op write, and the editable picker painting nothing on a
+0 extra while still painting a saved colour once the quantity is back. tsc identical to baseline;
+`locked-color-defaults.ts` and `vertical-summary-utils.ts` are eslint-clean and the other two files
+are byte-identical to their HEAD baselines (storage 3 errors, `DynamicTabRenderer` 24 problems).
+
+### The Complete-Job payload now matches the backend's contract exactly
+
+Ticket: *"this is the actual payload that is used for the job submit — compare the already implemented
+payload with this provided payload and set the already implemented payload 100% same … all the fields
+should be populated properly that needs on the backend."* Two references, both in the repo root:
+
+| file | what it is |
+|---|---|
+| **`payload.dynamic.json`** | the backend dev's CONTRACT — key set, string money, the calculator key, and the four document groups |
+| **`web-job-builder.txt`** | a capture of a REAL web submit — the same shape with a real `LFCalculator` document (40 entries) |
+
+⚠️ The capture is hand-truncated at the agreement blob (`"blob":"type": "agreement"`), so it does not
+parse and its `jobState` is missing everything after `agreements` — the vertical/tab state was cut, not
+absent. Read it for `leadData` only.
+
+**New pure `src/screens/DynamicDealCenter/utils/job-submit-payload.ts`** assembles the body
+(`buildSubmitLeadData` / `buildCalculatorDocument` / `buildJobSubmitPayload` / `toPayloadAmount` /
+`toPayloadText`). `DynamicJobBuilderScreen.handleComplete` no longer builds it inline.
+
+#### What was wrong
+
+- **The calculator was usually missing entirely.** `leadData.LFCalculator` must be the FULL saved
+  calculator document (`_id`, `createdBy`, `appointmentId`, `entries[]`, `totals`, `price`,
+  `discountPercentage`, `createdAt`/`updatedAt`, …). Mobile attached the in-memory **`CalcTab`**, which
+  has none of those and whose `entries` is a **map keyed by field id, not an array** — and then dropped
+  the key altogether unless the tab happened to carry `createdBy`/`appointmentId`/`title`, which it
+  never does. So the submit went out with no calculator on the vast majority of jobs.
+  **`handleComplete` now reads the server copy** (`GET /lfcalculators/{id}` via
+  `LeadService.getCalculator`) and passes it through `buildCalculatorDocument`; the tab is a shaped
+  FALLBACK for a failed read (entries map flattened back to an array, ids filled from the submit
+  context), so the key is never partial and never absent.
+  ⚠️ The read goes through **`extractCalculatorDocument`**, because the response wrapper varies by
+  deployment — the repo already unwraps it four ways (`DynamicDealEditScreen`:
+  `body?.data?.calculator ?? body?.data ?? body?.calculator ?? body`). Anything without an `_id` is
+  treated as UNRESOLVED so the tab fallback runs: sending a wrapper as the calculator looks exactly
+  like "no calculator" from the backend. `handleComplete` also logs one line naming the attached
+  calculator (`[COMPLETE JOB] leadData calculator: _id=… entries=… source=server|local tab`), so the
+  question is answerable from a device trace.
+- **`leadData` carried the result modal's whole state.** It was `{ ...resultData }` plus mobile-only
+  keys, so it shipped `versatile` / `pineapple` / `resultType` / `demoReason` / `contractPrice`
+  alongside `status`, `installDate`, `timeWindow`, `calculatorId`, `appointmentId` — none of which is in
+  either reference. It is now assembled key by key.
+- **Money went out as NUMBERS.** Both references carry strings (`"originalContractPrice": "24900"`,
+  `"balance": "21900"`) — web's `formData` holds typed text. ⚠️ An unset amount is **`''`, never `0`**:
+  a zero reads as a real quoted figure on the portal.
+- **`paperWork` and `downPaymentReceipt` were never sent.** The contract lists four document groups; the
+  job builder produces only agreements and order sheets, so the other two go out as **empty arrays
+  rather than absent keys** — not the same thing to a partial-update handler.
+- **`lastPriceQuoted` / `originalContractPrice` were both filled from the same field.** Web
+  (`result-lead-modal.js`) sends `lastPriceQuoted` on a **Demo** only and `originalContractPrice` on a
+  **Sale** only; the other is blanked.
+
+#### The two judgement calls (answered by the reporter, not inferred)
+
+1. **The calculator goes out ONLY as `LFCalculator`** — web's spelling, and what web normalizes a
+   stored `lfCalculator` back to on read (`result-lead-modal.js:193`). ⚠️ A lowercase alias holding
+   the SAME object shipped briefly (the contract file and this repo's earlier note on
+   `LeadHandler.submitJobBuilder` both name the lowercase key) and was removed on sight: *"same
+   object sent in two different formats — make sure only upper case is sent"*. If the backend ever
+   turns out to read the lowercase key, **rename** this one rather than adding the second.
+   The *"lf calculator is not appended"* report was never about the key name — it was the missing
+   document below.
+   ⚠️ It is **never null** — web's last line before saving is *"ensure LFCalculator is at least an
+   empty object for backend validation"*, so an absent calculator goes out as `{}`.
+   ⚠️ `selectedAppointmentId` prefers the CALCULATOR's own `appointmentId`
+   (web: `targetCalc?.appointmentId || formData.selectedAppointmentId`).
+2. **`leadData.jobBuilder` is KEPT** — the one mobile-only key retained, so a backend that reads the
+   build from `leadData.jobBuilder` rather than from the top-level `jobState` still gets it. Everything
+   else listed above was removed.
+
+#### Deliberately NOT changed
+
+- **`_storageVersion` stays `1`.** The contract file shows `2`, but the real web capture shows `1` and
+  it is the serializer's own constant — bumping it is a storage-format change, not a payload field.
+- **`agreements[].type` is kept** (`{ name: '', file, type }`). The contract omits it; web's real
+  traffic sends it, and it is what tells the backend which group a document belongs to on the non-Sale
+  path, where agreements are filed AS order sheets.
+- **`explain` is kept.** The contract file omits it (it was empty in their sample); web sends it and it
+  carries the demo explanation.
+- **The lead-scoped outcome mirror right after the POST is untouched** — it has no fixed contract and is
+  what persists `versatile` / `pineapple` / the rest of the modal's fields, so removing them from the
+  POST loses nothing. It now attaches the same resolved calculator document.
+- **The legacy `screens/JobBuilder` submit** (non-dynamic, `isDynamic` false) builds its own payload and
+  was left alone — different contract, and the ticket is about the dynamic flow.
+
+Verified with 26 tests (`__tests__/screens/DynamicDealCenter/job-submit-payload.test.ts`) driving the
+real builders against both references verbatim: `leadData`'s exact key list **in order**, every dropped
+key asserted absent (modal-only and mobile-only), string money and `''`-not-`0`, the Sale/Demo
+blanking, the field-name mapping (`downPaymentMethod` → `paymentMethod`), the server calculator copied
+field for field with its `entries` array and `pricingAtTimeOfEntry` intact, the fallback producing the
+same shape from a tab, the entries map flattened, the uppercase key carrying the document with **no
+lowercase twin**, the `{}`-not-null fallback, the calculator's own `appointmentId` winning, every
+wrapper shape the unwrap
+accepts (and an id-less one rejected), the four document groups always present, and the
+`configSnapshotId` → `'dynamic'` fallback. tsc identical to baseline; the new util is eslint-clean and
+`DynamicJobBuilderScreen` drops from 3 errors to 2 (the removed `_dpm`/`_rawLF` unused destructure).
+
+⚠️ **Needs a device confirmation of the response**, since this is the first submit to carry a real
+calculator document — watch for a validation error naming `lfCalculator`.
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area
@@ -3302,6 +3668,800 @@ sections, an unsignable slide skipped and its section dropped when that empties 
 normalizer with and without a `thumbnail` block, and junk input (`undefined` / `null` / `{}`) as a
 no-op throughout. tsc 44 (baseline unchanged); eslint on `Pitchbook/index.tsx` back to its HEAD
 baseline of 13 pre-existing errors, and the three new files are clean.
+
+### Pitch Book slides pinch, double-tap and drag to zoom (ticket 380)
+
+Ticket: *"Pitch Book | need pinch and pull to zoom — you have to add zoom out zoom in
+functionality which we normally have while pinching."* A slide was a plain `<Image>` with
+`resizeMode="contain"`, so the fine print on a deck page (the confidential footer, a spec
+table) could not be read on a phone and there was no way to get closer to it.
+
+**New `src/widgets/common/ZoomableImage.tsx`** — a drop-in replacement for `<Image>` with
+the standard photo-viewer gesture set: **pinch** (anchored to the fingers), **double-tap**
+(toward the tapped point, and again to reset) and **drag** while zoomed. Wired into **all
+three** places a slide is painted — the inline card, and the fullscreen viewer's **portrait
+AND landscape** layouts — so the gesture is there wherever the rep sees the slide.
+
+`source` is an `ImageSourcePropType`, so the bundled `require()` decks (LeafFilter, Green
+Rooflines) and a **portal-authored `{ uri }` book** both work with no branching at the call
+site — the same property that let the dynamic pitch books be projected into the static decks'
+shape in the first place.
+
+⚠️ **`RooflineDeck` was NOT named in the ticket and is fixed too.** Its three slide render
+sites are the same code (differing only in `?.src` on the source), so fixing only the
+reported screen would have left the other half of the presentation flow without the gesture —
+the same reasoning as the inspection-photos ticket.
+
+#### The two things that had to be right
+
+⚠️ **A `Modal` is its own native view tree on Android**, so the app-root
+`GestureHandlerRootView` in `App.tsx` never reaches it and **none of the gestures fire in
+fullscreen** — which is the surface the ticket's screenshot shows. Both fullscreen modals
+now wrap their content in their own `GestureHandlerRootView` (`ImageGalleryModal` already
+does this for the same reason). In `Pitchbook` it replaced the modal's existing root `View`;
+`RooflineDeck` had no wrapper at all, so one was added.
+
+**Pan is enabled ONLY while zoomed.** At 1× a drag still belongs to whatever surrounds the
+image, so nothing this component does can swallow a scroll or a pager swipe. (The pitch book's
+own slide area is not inside a scroll view — the main layout is a fixed flex column — but the
+component is shared and must not depend on that.)
+
+**`resetKey={`${activeCategory}:${currentSlideIndex}`}`** snaps back to 1× on every slide
+change. Without it a rep advances mid-pitch and lands on the next slide already scrolled to
+some corner of the previous one's zoom.
+
+The wrapper **clips** (`overflow: 'hidden'`), so a zoomed slide can never paint over the page
+counter, the ✕, the arrows or the category tabs — all of which are absolutely-positioned
+siblings rendered after it, so they still take their taps first.
+
+#### The maths lives in the pure `src/utils/zoom-transform.ts`
+
+`clampZoomScale` / `panBound` / `zoomOrigin` / `anchoredTranslate` / `doubleTapTranslate` /
+`clampPan` — for the reason `utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist:
+the component pulls in react-native + reanimated and cannot be loaded under jest here, and
+these six expressions are the whole of what can be **silently** wrong. An anchor that drifts
+or a bound that lets a zoomed slide be flung off screen both present as "the zoom feels
+broken" and neither throws.
+
+- **Coordinate system**: offsets are SCREEN pixels from the CENTRE of the image box, because
+  that is how RN's `transform: [translateX, translateY, scale]` composes — the content scales
+  about its own centre first, then translates in parent units. A point `origin` from the centre
+  lands at `origin * scale + translate`, which is the identity every test asserts against.
+- **Anchoring** solves that for `translate`: `t = focal − origin × scale`, with
+  `origin = (focal − t_prev) / scale_prev` captured once at `onStart`. Capturing the origin from
+  the PREVIOUS transform is what makes a second pinch — one that starts from an already-panned,
+  already-zoomed state — stay under the fingers instead of jumping.
+- **`panBound` is 0 at 1×**, which is what re-centres the slide when the rep pinches all the way
+  out; no separate "snap back" branch is needed.
+
+⚠️ **Every export carries the `'worklet'` directive** so the gesture callbacks can call it on
+the UI thread; they stay ordinary functions on the JS thread, which is what keeps them testable.
+**This is the repo's first cross-file worklet** (every other one is an inline closure the plugin
+auto-workletizes), so it was verified rather than assumed: running the project's own babel
+config over both files shows **6 worklets in the util and 7 in the component**, each component
+callback capturing the helpers by name in its `__closure`. The plugin is present via
+`nativewind/babel` → `react-native-css-interop/babel`, which registers
+`react-native-worklets/plugin` unconditionally — it is **not** in `babel.config.js`, so don't
+conclude from that file that worklets are unprocessed.
+
+Verified with 16 tests driving the real helpers: the anchor identity (`origin × scale + t`
+returning the focal) from fit, from an already-panned 2× state, and back down to 1× where it
+re-centres; the clamp winning over the anchor when honouring it would pull the image's own edge
+inside the box, alongside the case that needs no clamp (a pinch from fit lands exactly ON the
+bound); double-tap zooming toward the tap rather than the centre, a centre tap staying centred,
+and a corner tap staying in bounds; the pan following the finger, pinned at both limits, and
+inert at 1×; the scale clamped at both ends; and a zero scale not dividing by zero. tsc 44
+(baseline unchanged); both new files eslint-clean, `Pitchbook/index.tsx` 12 errors / 56 warnings
+vs a HEAD baseline of 12 / 55 and `RooflineDeck/index.tsx` 11 / 55 vs 11 / 53 — the added ones
+are all `react-native/no-inline-styles`, the rule both files already carry 50+ of.
+
+⚠️ Needs a device check for the gesture feel itself (this repo cannot render-test): pinch and
+double-tap in **fullscreen portrait, fullscreen landscape and the inline card**, that the arrows
+and ✕ still take their taps over a zoomed slide, and that advancing a slide resets the zoom.
+
+### Inspection slot tick moved INSIDE the label (ticket 384)
+
+Ticket: *"The checkmark icon is absolutely positioned and vertically centered on the full
+button height… on two-line labels (like 'Roof Penetration / Vent Area') the icon drifts away
+from the text and ends up sitting near the button's edge instead of next to the label. This
+appears on BOTH iOS and Android."*
+
+The pill is `SlotButton` in **`widgets/components/lead-center/DynamicInspectionRenderer.tsx`**
+(not `DynamicInspectionView.tsx`, which the ticket names — that screen renders `CategoryBody`
+from the renderer). It is the ONE slot pill behind every layout — `PillGrid`, `CompassLayout`
+and the chip selector's nested bodies — and `DynamicMovePhotoModal` renders the same
+`CategoryBody`, so a single fix covers the tag flow and the move flow.
+
+⚠️ **Nothing was absolutely positioned** — the tick was already a flex-row sibling
+(`alignItems: 'center'`, `gap: 4`). The reported drift has a different cause, and it is why the
+prescribed fix would only have half-worked: **a wrapped `Text` takes the full width it was
+measured against**, so on a two-line label the label's box spans the whole pill, pinning the
+sibling tick to the left edge, and `alignItems: 'center'` then parks it vertically between the
+two lines. `alignItems: 'flex-start'` would have lifted it to line 1 and **left it at the edge**,
+which is the half the screenshot circles.
+
+**The tick is now the first glyph of the label itself**, so there is no second box to drift:
+
+```tsx
+<Text numberOfLines={2} style={{ flexShrink: 1, textAlign: 'center', … }}>
+  {filled && !isMoveSource && <Icon name="check" size={13} color="#fff" />}
+  {filled && !isMoveSource ? ' ' : ''}
+  {isMoveSource ? `FROM · ${slot.name}` : slot.name}
+</Text>
+```
+
+- **This is what the STATIC flow already does** — `LeadCenter/TagPhotoModal.tsx:600` builds
+  `` `✓ ${displayName}` `` as one string, which is exactly why that surface never had the bug.
+  The dynamic view now matches it.
+- **`Icon` renders a `Text`**, so nesting is legal, and `create-icon-set` applies
+  `fontWeight: 'normal'` as a style OVERRIDE — the glyph cannot be synthetically bolded by the
+  label's `fontWeight: '600'`, so it looks identical to before. (Checked in node_modules rather
+  than assumed; that override is what makes the nesting safe.)
+- **The row keeps `alignItems: 'center'`.** With the tick inline, that only governs the upload
+  spinner and the `photos.length` count badge, and centring those against the label block is
+  right — `flex-start` would push the badge to the top of a two-line pill.
+- `flexShrink: 1` on the label so the badge can never push it out of the pill.
+
+Single-line pills are unchanged: the run `✓ Roof Edge — Left Side` centres as one piece, where
+before the icon+label pair centred as a group with the same 4px gap.
+
+tsc 44 (baseline unchanged); eslint on the file identical to HEAD (63 problems, 0 errors).
+⚠️ Needs a device check — this repo cannot render-test, and the whole ticket is layout.
+
+⚠️ **`DynamicInspectionRenderer.tsx` is a CRLF file** (927 lines). Editing it with a script that
+reads/writes in text mode rewrites every line to LF and buries the change in a whole-file diff.
+Use `newline=''` on both ends. (Same trap as `EditCustomerModal.tsx` and `dynamic-deal-diff.ts`;
+check `file <path>` before and after — the diff here is 10 insertions / 1 deletion.)
+
+### ✅ ROOT CAUSE: mobile's drop-price payload was a SUBSET of the server's array
+
+Ticket: *"while adding or declining the drop price, from mobile when i add the drop price it's
+saving duplicate. issue is in the mismatch of the payload"*, then, decisively, the two payloads
+for the same calculator side by side: *"a huge difference it should be same like web."*
+
+**Two facts about `dropPrice` explain everything, and they compound:**
+
+1. It is a **subdocument array**: a row arriving WITH an `_id` updates that row, a row without one
+   is **filed as new**.
+2. The backend **merges rather than replaces**, so a row the payload OMITS is not deleted — it
+   survives on the server, invisible to the rep.
+
+Web sends the server's array **verbatim, every row, each with its `_id`**, plus the one new
+id-less round:
+
+```json
+{"dropPrice":[{"_id":"6a86b180…","dropedPrice":10000,…,"balance":0},
+              {"_id":"6a86b18a…","dropedPrice":10000,…,"balance":10000},
+              {"_id":"6a86b688…","dropedPrice":8000, …,"balance":0},
+              {"_id":"6a86b6a7…","dropedPrice":8000, …,"balance":8000},
+              {"_id":"6a86b7ce…","dropedPrice":9000, …},
+              {"_id":"6a86c408…","dropedPrice":9999, …},
+              {"dropedPrice":8888,"status":"accepted", …}]}   ← only the new round is id-less
+```
+
+Mobile sent **four rows for the same calculator** — one per distinct price, three ids, and the
+just-entered 9999 id-less **even though the server already held a 9999 row**. So each save both
+hid three rounds from itself and filed a fresh copy of the one it had lost track of.
+
+#### Fix 1 — adopt the `_id` the server assigns
+
+`flushSave` discarded the PUT response, so a round entered and then secured was saved id-less
+twice and filed twice. Three pure helpers in `utils/drop-prices.ts`:
+
+| | |
+|---|---|
+| `toDropPricePayload(drops)` | web's exact row shape, **`_id` included** |
+| `readServerDrops(response)` | the `dropPrice` rows out of whatever the API wraps them in |
+| `adoptServerDropIds(local, serverRows)` | copy each server `_id` onto the local row it belongs to |
+| `idlessDropSignature(drops)` | bounds the fallback read below |
+
+`flushSave` and `saveDisplacedSiblings` both adopt from their response. Adoption is deliberately
+**not marked dirty** — `_id` is absent from `tabSignature`'s `dropSig`, so it cannot mark the tab
+dirty, schedule a save, or make an in-flight save look superseded.
+
+⚠️ **Matching is by (price, status) among unclaimed server rows, NEVER by index.** On an
+already-corrupted record the server array is LONGER than the one we sent, so index alignment is
+exactly the assumption that cannot hold. Each server row is claimed at most once; an unmatched row
+is **left id-less**, because one more duplicate costs a row while a WRONG id overwrites another
+round. This is the rule `useCalculatorSummary.saveDropPriceToServer` already used in the CLASSIC
+deal center — which is why the duplicate was dynamic-only.
+
+**A bounded fallback read.** The PUT does not always echo the calculator back (the classic flow
+re-reads for the same reason), so a response carrying no `dropPrice` triggers one
+`getCalculator(tabId)`. `dropIdFetchTried` spends **at most one GET per distinct set of id-less
+rows**, so a deployment whose PUT never echoes cannot turn every debounced save into a request.
+
+#### Fix 2 — ⚠️ STOP COLLAPSING THE LIST. This is the half that made it "still same"
+
+Fix 1 alone did not close the ticket, and the second payload is why: `collapseDropsByPrice` kept
+**one row per price** on the write path, the read path AND every local update. Web keeps every
+round — its array holds two 10000 rows and two 8000 rows, because entering a drop and then
+actioning it are two records.
+
+That collapse is what produced the 4-vs-7 mismatch, and it also **re-created the id-less row**:
+merging the rep's freshly-entered 9999 with the server's existing 9999 could keep the copy without
+the `_id`, so the next save filed a second 9999. A helper written to hide duplicates was
+manufacturing them.
+
+- `collapseDropsByPrice` is **DELETED** — no call sites remain, and leaving a row-removing helper
+  in that file is the trap this ticket was about.
+- `dedupeDrops` is **off both paths**, surviving only as `RolloutView`'s local double-tap guard.
+  ⚠️ Its signature does not include `_id`, so on a save it could drop a genuinely distinct server
+  row; never reintroduce it to a hydrate or a payload.
+- `normalizeSingleAcceptedDrop` **stays on both paths** — it is web's single-accepted invariant and
+  is safe precisely because it rewrites a STATUS rather than removing a row.
+
+Also `toDropPricePayload` drops mobile's redundant **`price` mirror** (it duplicates `dropedPrice`
+and is not part of the stored shape; every local reader already falls back `price ?? dropedPrice`),
+and `openDrop` now seeds the entry row's **`paymentMethod` from the calculator** — web's entry rows
+read `"paymentMethod":"check"`, mobile's read `""`.
+
+⚠️ **`paymentMethods` (plural) is KEPT** though web does not send it: `DropOutcomeModal` re-opens a
+declined drop with those financing plans still added, so stripping it for exact parity would lose
+that state on reload. Omitted when empty rather than sent as `[]`.
+
+⚠️ **Expect existing test leads to show MORE rows than before.** Those rows are real and already on
+the server — web lists them too; mobile was hiding them while still leaving them there to be
+duplicated. A record corrupted before this fix does not self-heal, because healing means DELETING
+server rows and nothing on this screen may do that.
+
+Verified with 32 tests driving the real helpers over both of the ticket's payloads verbatim: the
+web array reproduced row-for-row with only the new round id-less; both same-price rounds kept; no
+server id ever omitted; the old collapse asserted to yield exactly the 4 rows the ticket reported,
+so the regression cannot return silently; the single-accepted rule rewriting a status without
+losing a row; the entry row's seeded method; the `price` mirror gone and `paymentMethods`
+kept/omitted; the `_id` surviving the write path; **the adoption repro** — the same round asserted
+id-less on the second save before adoption and carrying its id after; price+status matching
+preferring the accepted row at a shared price, the price-only fallback, no id used twice, an id
+already held never re-issued, an unmatched row left alone, id-less server rows ignored, adoption
+against a longer/misaligned array, same-reference return when nothing changes; the full
+enter→save→adopt→secure→save round trip leaving SEVEN rows with the new one updated in place; and
+the fallback guard's signature emptying once every row is filed. tsc 44 (baseline unchanged);
+`drop-prices.ts` and `useDynamicCalculators.ts` eslint-clean, `RolloutView.tsx` identical to HEAD
+(270 problems, 2 errors).
+
+⚠️ Needs a device check of the one thing tests cannot see: **whether the PUT response echoes
+`dropPrice`.** Watch for one `PUT /lfcalculators/{id}` per drop action, at most one
+`GET /lfcalculators/{id}` after the first, and a payload whose `dropPrice` is the server's array
+plus the new round.
+
+#### …and the follow-up that closed it: no save on OPEN, and a payload of only `dropPrice`
+
+Ticket, with a device trace of a `PUT /lfcalculators/{id}` fired while the drop sheet was merely
+open: *"still in backend duplicate secure price is going to create, i think the main issue is we are
+calling the api 2 times, when this modal open no need to call the api, api will call on the basis of
+selecting the 2 buttons Decline and Secure this price… also we only sending the changed data in the
+payload like web, but you are taking the extra things."* Both correct.
+
+**1. Opening the drop sheet wrote a row.** `openDrop` persisted the entered price as a `declined`
+row the instant it was typed — a deliberate earlier requirement (*"a drop must be SAVED THE INSTANT
+it is entered"*), now reversed by the same reporter. So one decision cost two writes: the twin on
+open, then the real row on Secure/Decline. `openDrop` now only sets `pendingDrop` and shows the
+modal; the row is created by the action the rep actually takes.
+
+Two things fell out of that and had to go with it:
+- ⚠️ **`resolveDropTargetIndex`'s scan for an existing row at this price is REMOVED.** It existed to
+  convert the pre-persisted twin. With nothing pre-persisted it would silently fold a genuinely new
+  round into an older one at the same price — and web keeps both (its array holds two 10000 rows).
+  `pendingDropIndex` alone decides: set when a row is re-opened via **Display** (edit in place),
+  `-1` for a fresh round (append).
+- ⚠️ **The double-tap guard moved from `dedupeDrops` to the BUTTON.** `DropOutcomeModal` now accepts
+  one Decline/Secure per opening (`submitted` ref, reset on `visible`). A guard that DELETES rows is
+  the very thing that made mobile's list a subset of the server's, so it cannot live on this path.
+  **`dedupeDrops` is deleted** — no call sites remain.
+
+**2. Drops now PUT `{ dropPrice: [...] }` and nothing else.** New `saveDropsNow` in
+`useDynamicCalculators` fires on the rep's action, and **`dropPrice` is gone from `buildPayload`** —
+the debounced whole-calculator save no longer carries it as a passenger. One writer, one payload,
+byte-comparable with web's.
+
+- **`tabSignature` no longer fingerprints drops.** With drops off the debounced path, a `dropSig`
+  would only mark the calculator dirty and fire a second, redundant whole-calculator request for a
+  change already persisted.
+- **`markDirty` is NOT called** by `handleSetDrops`, for the same reason.
+- **One request per calculator at a time**, with a newer list queued behind an in-flight one
+  (`dropSaveInFlight` / `dropSavePending`). Every request sends the WHOLE array, so latest-wins is
+  safe and a failed request is healed by the next drop action; **one** immediate retry covers the
+  transient case.
+- The response is fed straight to `adoptDropIds`, so the round's `_id` is adopted from the very
+  request that created it.
+
+⚠️ The rollout log's `lastDroppedPrice` still reads the entry BEFORE the target — its arithmetic is
+unchanged and still correct, but for a different reason: a new round is no longer in `drops` at log
+time, so its predecessor is the LAST existing entry (`drops.length - 1`), while an edited row's is
+the one before it. The comments were rewritten; don't "fix" the index.
+
+Verified with 9 further tests over the same rows: the body having exactly one key (`dropPrice`);
+every row sent with its `_id` and only the new round without; **opening the sheet leaving the list
+byte-identical**; Secure and Decline each appending exactly ONE row where the old flow left a twin
+beside it; a new round at an already-tried price staying its own row while **Display** still edits in
+place; the full open→Secure→adopt→re-secure round trip updating the same row; and a second Secure
+demoting the first by status while keeping both rows. tsc 44 (baseline unchanged); `drop-prices.ts`
+and `useDynamicCalculators.ts` eslint-clean, `RolloutView.tsx` identical to HEAD (270 problems,
+2 errors).
+
+⚠️ On device this should now read as **exactly one `PUT /lfcalculators/{id}` per Decline/Secure,
+none on opening the sheet**, with a body of `{"dropPrice":[…]}`.
+
+⚠️ **All three files are CRLF** (`drop-prices.ts`, `useDynamicCalculators.ts`, `RolloutView.tsx`).
+Use `newline=''` on both ends — same trap as `dynamic-deal-diff.ts` and `EditCustomerModal.tsx`.
+
+
+### Recent Leads chat opens on "All", not "Unresulted Leads"
+
+Ticket: *"by default it should be all when we land on this screen instead of Unresulted leads."*
+`ChatThreads` seeded `statusFilter: 'unresultedleads'` / `selectedStatus: 'Unresulted Leads'`, so the
+list opened already filtered and a rep with only resulted leads landed on **"No Leads Conversations
+found"** — an empty screen that reads as broken rather than filtered.
+
+Two seeds, now `'all'` / `'All'`. Nothing else changed: `useChatThreads` already treats `'all'` as "no
+status constraint" on **both** sides — the server query (`else if (statusFilter !== 'all')` before it
+sets `serverStatus`) and the client-side list filter.
+
+⚠️ **The two seeds must stay in sync.** The dropdown derives the key from the label
+(`opt.toLowerCase().replace(/ /g, '')`), so the pair has to be exactly what tapping the **All** row
+produces — seeding only the label would leave the list filtered while the control claimed otherwise.
+
+tsc 44 (baseline unchanged); eslint on `ChatThreads/index.tsx` identical to its HEAD baseline
+(15 warnings, 0 errors). ⚠️ The file is CRLF **and pure ASCII** — keep new comments ASCII (no warning
+emoji) and use `newline=''` on both ends.
+
+### Co-buyers moved below Address, with a "Same address as primary buyer?" tick
+
+Ticket: *"Add Co-Buyer should be below the address field; also inside the co-buyer box add check box
+with the title of “Same address as primary buyer?” — by checking it same address should be show inside
+the Co-Buyer box."*
+
+`EditCustomerModal` rendered the co-buyer cards and the **+ Add Co-Buyer** button between **Email** and
+**Address**. They now sit BELOW the Address field, and each card gained the tick plus its own **Address**
+box.
+
+⚠️ **The reorder is what makes the tick coherent, not just a layout preference.** The checkbox mirrors
+the primary buyer's Address; with the block above that field the rep would be asked to confirm "same as
+primary" before the primary address is on screen.
+
+⚠️ **THIS IS NOT A PORT — web has no co-buyer address at all.** `edit-customer-modal.js`'s
+`sanitizedCoBuyers` sends `firstName`/`lastName`/`phone`/`email` only, and there is no such checkbox on
+that side. **So `coBuyers[].address` is unverified against the backend**: if the sub-schema does not
+declare it, Mongoose drops it silently and the box will look right and read back EMPTY on the next
+open. Confirm the field is stored before treating this as done.
+
+⚠️ **`sameAsPrimary` is DERIVED on load, never persisted.** Storing a second flag beside the address
+gives the record two ways to disagree with itself, and the answer is already implied by the two
+addresses matching. `normalizeCoBuyers(coBuyers, primaryAddress)` does it (trim-compared).
+
+⚠️ **Two BLANK addresses are NOT "the same address".** The derivation requires a non-empty primary, so
+a co-buyer with nothing stored opens UNTICKED — otherwise every untouched record would render a
+confirmation the rep never gave.
+
+⚠️ **The mirrored address is DERIVED at every read (`coBuyerAddressOf`), never copied into
+`coBuyer.address`.** A stored mirror goes stale the moment the rep edits the primary address below —
+the co-buyer would keep the old street while the tick still claimed "same as primary buyer". Deriving
+also means unticking hands back whatever they had typed, and it is the same expression the SUBMIT
+payload uses, so the box and what is saved cannot diverge.
+
+- The co-buyer address input is **read-only while ticked** (grey `fieldBoxReadOnly`) — editable there
+  would silently contradict the tick.
+- **A new co-buyer starts UNTICKED.** Most co-buyers do share the address, so defaulting it on would
+  save a tap — but it would also write an address the rep never affirmed onto a record they may have
+  opened only to fix a name. One line to flip if reps prefer it.
+- `handleCoBuyerChange`'s `field` param was widened from `keyof CoBuyerDraft` to an explicit string
+  union — `sameAsPrimary` is a boolean and has its own `handleCoBuyerSameAddress`, so the old signature
+  would have typed a boolean field as taking a string.
+- `normalizeCoBuyers` is **exported solely so this rule is testable**; the modal itself does load under
+  jest (unusually for this repo), so no `utils/` extraction was needed.
+
+Verified with 8 tests over the real `normalizeCoBuyers` plus the exact derivation expression: a stored
+match ticking the box, an own-address co-buyer left unticked, **all four blank combinations staying
+unticked**, whitespace ignored on either side, a mirrored co-buyer FOLLOWING a later edit to the primary
+address, unticking restoring the typed value, the existing name/phone/email normalisation unchanged, and
+junk input as a no-op. tsc 44 (baseline unchanged); eslint identical to its HEAD baseline (4 warnings,
+0 errors). ⚠️ The file is CRLF — `newline=''` on both ends.
+
+⚠️ Needs a device check (this repo cannot render-test): the new order, the tick filling and greying the
+co-buyer Address, unticking restoring a typed one, and — the important one — that the address SURVIVES a
+save and reopen.
+
+### Ticket 409 — a resulted lead locks every rollout tab, and the resulted one offers Reset Job Builder
+
+Ticket: *"when a lead is resulted from one tab, the other tabs of the same lead remain active, allowing
+the user to result the lead again from another tab… Show a Reset Job Builder button on the resulted
+tab… Until the Job Builder is reset, all other tabs should remain disabled."*
+
+Once the lead carries a resulted calculator the WHOLE quote goes read-only on **every** tab — the item
+rows, Add Renders, the payment-plan picker, the COST/PAR/RETAIL tiles, the Rollout End Price field, the
+installers bar and the drops list all dim to `opacity: 0.6`, and `+ Nth Drop` / `Result Lead` grey out.
+The resulted tab swaps `Result Lead` for a red filled **Reset Job Builder**, which stays live.
+Resetting clears the result and unlocks everything.
+
+⚠️ **Dimming alone is not enough — `pointerEvents: 'none'` is what enforces it.** A first pass disabled
+only the two action buttons and QA came straight back (*"you forgot to disable the upper part… the only
+Reset Job Builder button should be pressable"*): without the wrapper the payment-plan sheet, Add Renders
+and the end-price input stay tappable behind the greying, so a rep can still re-quote a lead that is
+already resulted. Two wrappers do it — one around the main card, one around the installers bar + drops
+list. **The action row sits OUTSIDE the second wrapper**, because Reset Job Builder lives there and is
+the one control that must remain pressable. Mirrors the CLASSIC deal center, which already pairs
+`opacity: 0.6` with `pointerEvents` on `isJobBuilderSubmitted || isJobSubmittedOnOtherCalc`
+(`CalculatorSummary.tsx`).
+
+⚠️ The wrapped children were deliberately **left at their original indentation**. Re-indenting the ~280
+lines inside them would bury a 6-line change in a whole-file diff — the same trap the CRLF notes in this
+file warn about.
+
+⚠️ **"Disable other tabs" means the ACTIONS, not tab NAVIGATION — this is what web does and what the
+ticket's own reference screenshots show.** Web's `<Tab>` carries no `disabled` prop
+(`ViewAllCalculators.js`); the lock is entirely `isLocked` / `isDisabled` on the two buttons. The first
+reference image is a rep sitting on a NON-resulted tab with both buttons greyed, which is only
+reachable if switching tabs is still allowed. Blocking navigation would also hide the resulted tab —
+and with it the only Reset button. If reps do want navigation blocked, that is a deliberate divergence
+and needs its own decision.
+
+**Rules live in the pure `src/screens/DynamicDealCenter/utils/job-builder-submission.ts`**
+(`resolveSubmittedCalculatorId` / `describeCalculatorLock`), for the reason
+`utils/rehash-draft-calculators.ts` exists: `RolloutView.tsx` pulls in React Native and is untestable
+under jest here, and "which tab owns the result" must mean ONE thing to the button that locks and the
+button that unlocks — otherwise a rep is locked out with no tab offering the way back.
+
+⚠️ **It deliberately does NOT require `jobBuilder.status === 'submitted'`.** The ticket is *"after lead
+is RESULTED"*, and the outcome modal writes `selectedCalculatorId` **before** the job builder is
+completed — gating on the submitted status would leave exactly the window a rep would use to result a
+second tab. This matches web's `submittedCalculatorId` chain (`TabbedCalculator.js`), which is also
+status-free; the `jobBuilder.calculatorId` arm is web's second source and is what the CLASSIC mobile
+deal center reads (`CalculatorSummary.resultedCalculatorId`).
+
+⚠️ **Ids compare as STRINGS.** The id arrives both off the calculators list and off the lead record and
+those are not guaranteed to be the same type; a raw `===` silently reports "no tab owns this result",
+which unlocks everything and defeats the ticket. A blank/whitespace id resolves to `null` for the same
+reason — a truthy-looking lock that no tab can match would strand the rep.
+
+⚠️ **Reset Job Builder is NEVER disabled** (web: `disabled={isJobBuilderSubmittedTab ? false : isDisabled}`).
+It is the only way out of the locked state.
+
+- **`jobResetLocally` in `DynamicDealCenterScreen` unlocks immediately after the reset.** `lead` is a
+  nav-param snapshot, so the PUT clears the result on the server while the screen still holds the old
+  `jobBuilder` — without it the tabs stay locked right after the action meant to unlock them. Web does
+  the same locally (`setLead({ ...currentLead, jobBuilder: null })`).
+- **The confirm copy and the direct `LeadService.resetLead` call are lifted from the CLASSIC deal
+  center's `handleResetJobBuilder`** (`screens/DealCenter/index.tsx`), so both deal centers ask the same
+  question and hit the same endpoint (`PUT lead/v1/{id}/reset`).
+- ⚠️ **Only ONE hook was added** (`useState` for the reset flag). `submittedCalculatorId` is a plain
+  const and `handleResetJobBuilder` a plain function — every hook in this component sits after the
+  edit-mode early return (see `rehashBuild`), so each one widens that compromise; `queryClient` was
+  already in scope above the branch, which is why the service is called directly rather than through
+  `useResetLeadMutation`.
+
+Verified with 10 tests over the real helpers: an unresulted lead locking nothing, all five id shapes web
+reads, `leadData` winning the fallback order, the ticket repro (resulted tab → Reset, every other tab →
+locked), the no-status-gate case, string comparison of a non-string and a padded id, blank ids never
+producing an ownerless lock, **every locked state having exactly one tab able to unlock it**, the local
+reset unlocking without mutating the record, and an id-less calculator never mistaken for the resulted
+one. tsc 44 (baseline unchanged); the new util is eslint-clean, `RolloutView.tsx` is +2
+`react-native/no-inline-styles` + 1 for the read-only wrapper (the rule it already carries 268
+of) and `DynamicDealCenterScreen.tsx`
+is +1 `react-hooks/rules-of-hooks` — the single added `useState`, joining the 19 the file already
+carries for the documented reason.
+
+⚠️ Needs a device check (this repo cannot render-test): result a lead from one tab, reopen the deal
+center, confirm every tab's two buttons are greyed, the resulted tab shows the red Reset, and that
+resetting re-enables Result Lead everywhere.
+
+### A drop price EQUAL to the rollout price is rejected
+
+Ticket: *"you have to add one more validation here while we are adding the drop price, user also will
+not able to add drop price which equal to the rollout price"*, with the exact copy
+**"Drop Price cannot be added because it is the same as the Rollout Price."**
+
+`openDrop` (`screens/DynamicDealCenter/components/RolloutView.tsx`) already floored the drop at the
+COST tile and capped it at the rollout end price, but the cap was a strict `v > priceNum` — so entering
+the rollout price itself sailed through and opened the Secure/Decline sheet. Securing it then filed a
+negotiation round that dropped nothing.
+
+⚠️ **The equality test needs its OWN branch BEFORE the `>` check**, not a widening of that check to
+`>=`: *"cannot exceed rollout end price"* is a confusing thing to say about a number that does not
+exceed it, and the ticket specifies different copy.
+
+- Placed AFTER the cost floor, so a drop that is both below cost and equal to the rollout price still
+  reports the cost problem first — that ordering only matters for a rollout priced under its own cost,
+  which the end-price validation already prevents.
+- **Strict `===` is safe here**: both sides are `parseFloat` of a digits-only string, so `333` and
+  `333.00` compare equal.
+- `openDrop` is the ONLY entry point — the input's `onSubmitEditing`, its iOS `onBlur` commit and the
+  add button all funnel through it, and the **Display** re-negotiation path reuses an existing row's
+  stored price rather than a typed one, so it cannot reach this.
+
+tsc 44 (baseline unchanged); eslint on `RolloutView.tsx` identical to its HEAD baseline (270 problems:
+2 errors / 268 warnings). ⚠️ The file is CRLF — `newline=''` on both ends.
+
+### Signing an agreement says the customer got a copy
+
+Ticket: *"while we are submitting the agreement we have to show these messages as well in the splash
+which are coming in the response"*, against the `agreementSent` block the sign flow leaves on the
+outcome (`sms` / `email`, each with `to` / `status` / `message`).
+
+**Shipped as a STATIC second line, at the reporter's direction** — the signature success flash now reads
+
+```
+Success
+Agreement signed successfully
+Your finalized document is complete and a copy has been sent to you
+```
+
+One `FlashMessage.success` in `AgreementSignatureModal.handleSubmit`, the message on a `\n` after the
+existing line. That is the whole change.
+
+⚠️ **A live, per-channel version of this was built and then REMOVED on request** (*"just forget this and
+remove the changes… instead just add this message"*). If it is ever wanted again, these are the facts
+that cost the most to establish — do not re-derive them:
+
+- **`/sign` returns the PDF as a BLOB** (`responseType: 'blob'`), so the signing response cannot carry
+  the delivery result. The block rides on `GET lead/v1/{leadId}/outcome/{calcId}` instead.
+- **`agreementSent` is a SIBLING of `outcome`** (`data.data.agreementSent` beside `data.data.outcome`),
+  so `unwrapOutcome` — which returns `body.data.outcome` — cannot see it. It has to be read off the raw
+  body.
+- **The send finishes ASYNCHRONOUSLY.** In a captured payload the outcome's `updatedAt` is **3.5 s
+  after** the agreement row's `createdAt`, so a read taken moments after signing legitimately finds the
+  document and no delivery block. Any polling window has to clear that comfortably.
+- ⚠️ **A flash raised while the signature modal is still up renders BEHIND it.** A native `Modal` is its
+  own view tree above the RN root and the app-wide `<FlashMessage />` lives at that root (`App.tsx`).
+  The existing success message only gets away with it because `onClose()` fires in the same instant;
+  anything raised a few hundred ms later (i.e. after a network read) is drawn under a modal that is
+  still dismissing and is never seen. **This is why the live version reported nothing on device**, and
+  why the static line above works — it is raised in the same tick as the close.
+- **One banner, not two.** `react-native-flash-message` shows a single banner and a second `show()`
+  REPLACES the first, so a delivery notice cannot be appended after the success message; it has to be
+  folded into it.
+- **Web has no equivalent** — `grep agreementSent` over the sales frontend is empty.
+
+⚠️ Noted while tracing, NOT fixed: a failing number was sent to the provider as **`+1 (454) 684-8848`**
+— the display-formatted string, not E.164. `formatUSPhoneNumber` emits exactly that shape and (per the
+Edit Customer ticket) the submit payload always carries the formatted value, so the backend may be
+handing Twilio a string it cannot parse. Area code `454` is also unassigned in the NANP, so that one
+number may simply be invalid — the two explanations are not distinguishable from a single sample. Worth
+its own ticket with a KNOWN-GOOD number: the deal-edit "Send Addendum To" field already converts through
+`toE164USPhone`, and this path has no equivalent.
+
+tsc 44 (baseline unchanged); `AgreementSignatureModal.tsx` is at its HEAD eslint baseline (41 problems),
+and `message.ts`, `SummarySection.tsx`, `outcome-documents.ts` and `DynamicJobBuilderScreen.tsx` are
+back to their pre-feature state (the first two verified byte-identical against `3d5dbea^`).
+
+### The draft autosave could persist a state SNAPSHOT, losing the agreement
+
+Ticket: *"when i create lead and come to summary, i click schedule appointment — after adding the date
+and time it automatically opens the modal asking to generate the agreement. In that scenario, when I
+submit the agreement the agreement is not going in the payload. It only goes when I generate it from
+the Agreements card."* Two `PUT lead/v1/{id}/outcome/{calcId}` bodies were supplied; both carry
+`jobBuilder.status: 'draft'`, i.e. they are **autosaves**, not the Complete-Job submit.
+
+The two payloads are the whole diagnosis. Both hold the same `scheduleTime`
+(`8/22/2026 · 8:00 AM - 12:00 PM`) and the same vertical state; only one carries
+`dynamicJobState.agreements`. **`scheduleTime` present and `agreements` absent in ONE body is only
+possible if that body was serialized from a snapshot taken between the two writes** — both land on the
+same object through `updateRootState`, which is a functional updater, so nothing can drop one and keep
+the other.
+
+**Cause: `performAutoSave` closed over `jobState`, and its own in-flight guard re-invoked THAT closure.**
+
+```js
+if (saveInFlightRef.current) { needsFollowUpRef.current = true; return; }
+…
+} finally {
+  saveInFlightRef.current = false;
+  if (needsFollowUpRef.current) { needsFollowUpRef.current = false; void performAutoSave(); }
+  //                                                                     ^ recurses into THIS closure
+}
+```
+
+A save coalesced while another was in flight therefore re-sent the state **as it stood when the FIRST
+save started**. The scheduler flow is the one that reliably has a save in flight: scheduling writes
+`scheduleTime` and arms a save, and the agreement is generated on top of that — so the agreement write
+is the one that gets coalesced away. Generating from the Agreements card has no preceding write, so
+its save runs on a fresh closure and the agreement survives. Same class of bug the calculator engine
+already fixed (`useDynamicCalculators` reads the current tab from `tabsRef`, *"like web's
+`entriesRef.current`"*).
+
+Three changes, all in `DynamicJobBuilderScreen`:
+
+- **New `jobStateRef`**, and `performAutoSave` serializes from `jobStateRef.current`. Whichever closure
+  ends up running now sends what the rep actually has.
+- **The follow-up fires through `performAutoSaveRef.current()`**, not the `performAutoSave` identifier
+  — the latter recurses into the captured closure, so it also re-sent stale `initialConfig` /
+  `dealCenterData`.
+- **The debounce effect now names `jobState` directly** and fires through the ref.
+
+⚠️ **`jobState` had to come OUT of `performAutoSave`'s dependency list and INTO the effect's.** It was
+only ever there to make the callback's identity change so the 2 s timer re-armed on each edit — and
+that is precisely what tied the re-arm to a closure carrying a snapshot. Moving it makes the trigger
+explicit; the effect also lists everything else `performAutoSave` reads, so a save is still re-armed
+when `dealCenterData` settles, exactly as before. Do not "simplify" the effect back down to
+`[performAutoSave, …]`, and do not silence the `exhaustive-deps` warning that appears if `jobState` is
+left in the callback — the rule is right, the dependency really is unused there now.
+
+⚠️ **Only the DRAFT was affected, not the submitted job.** `handleComplete` serializes `jobState`
+directly at submit time, so the finished deal always carried the agreement; what was lost was the
+draft on the server between generating and completing — so a reopen (or web) saw a deal with no
+agreement, which is the same failure the "documents ride ALONG WITH the draft" comment in
+`performAutoSave` already warns about.
+
+⚠️ **Ruled out by reading, do not re-investigate:** `updateRootState` (functional, cannot clobber a
+sibling key); both flows sharing ONE `DynamicAgreementDialog` and one `handleAgreementGenerated`; and
+the scheduler's `onGenerate`, which is a plain synchronous call plus `handleModalClose()`.
+
+> ⚠️ **This fix is CORRECT and is KEPT, but it did NOT close the ticket** — the reporter came back with
+> the same payload. And one line of the paragraph above was wrong: *"the session's draft re-apply …
+> runs once on mount and the `commitUploaded` query invalidation cannot re-trigger it."* On a
+> **brand-new lead** it never ran on mount at all, and that is the actual bug. See below.
+
+tsc 44 (baseline unchanged); eslint on the file is back to its exact baseline (49 problems, 2 errors).
+
+#### ✅ ROOT CAUSE: on a NEW lead the draft restore never LATCHED, so a later refetch overwrote the signature
+
+Same ticket, reporter's second pass — *"when we came first time in summary after making the new lead …
+from this flow by clicking it, we came this card (Modal: Job Booked) and after pressing Generate Dynamic
+agreement, when we submit agreement, agreements is not going to sent in the payload"*. The emphasis on
+**first time in summary after making the new lead** is the whole answer: the state was not being
+serialized from a stale snapshot, it was being **reset out from under the save**.
+
+`useDynamicJobBuilderSession`'s restore effect opened with
+
+```js
+if (!initialJobState) return;          // ← before ANY latching
+…
+if (lastDraftTokenRef.current === draftToken) return;
+lastDraftTokenRef.current = draftToken;   // only ever reached with a real draft
+```
+
+so a lead whose outcome GET found **nothing** — every new lead — never wrote `lastDraftTokenRef`, and
+the session stayed open to a restore **forever**. The first draft to arrive at any later moment was then
+applied unconditionally.
+
+One does arrive, and the agreement itself summons it. `commitUploaded` (`SummaryFinalizeCards`) ends with
+`queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] })`, so **filing the agreement
+REFETCHES the draft** — and by then the server holds the draft the 2 s autosave wrote when the
+appointment was scheduled, which carries `scheduleTime` and **no `agreements`**. That draft is restored
+over the just-signed agreement, and the next autosave persists the state without it. Exactly the payload
+in the ticket.
+
+**Why the Agreements-card flow looked fine:** that card is gated on `isAppointmentSet`, so it is
+overwhelmingly used on a deal **reopened** after the appointment was already saved. There the mount-time
+GET finds a draft, the token latches, and the later invalidation is a no-op. Both entry points share one
+`handleAgreementGenerated` — the difference was never the flow, only whether a draft existed at mount.
+
+⚠️ **And it was never limited to that one flow.** `useLeadReports` invalidates the same
+`['leadOutcome', leadId]` key in two places, so on a new lead ANY of those could restore a doc-less draft
+over live work.
+
+**Fix — latch on the READ SETTLING, not on a truthy draft.** New `draftSettled?: boolean` option; the
+screen passes `isEdit ? undefined : isOutcomeFetched`. Once the GET has settled the token is written
+**whether or not it found anything**, because a settled-empty read means there is nothing to restore
+*ever*: from then on, every byte the server holds was written by this session.
+
+- **`draftSettled === undefined` keeps the old behaviour**, so no other caller can be changed by this.
+  (`DynamicJobBuilderScreen` is the only one that passes `draftToken` at all; edit mode passes neither.)
+- **`draftSettled === false` WAITS rather than latching**, which is what preserves the blank-tab fix
+  above it: a draft that lands after an early write is still applied, exactly as before.
+- The legacy (token-less) path keeps its own `if (!initialJobState) return;` — its rule is
+  "apply until the rep's first real edit", which is a different invariant and is untouched.
+
+⚠️ **The `['leadOutcome']` invalidation in `commitUploaded` was deliberately LEFT IN PLACE.** With the
+latch it is harmless, and it is not the defect — the defect is that a restore was possible at all that
+late. Removing it would only hide the class of bug from the one call site that happened to expose it.
+
+Verified by driving the REAL hook through `react-test-renderer` (this is possible for a hook — it is
+`@testing-library/react-native`'s `render` that returns no queries here, so *component* tests are still
+out): the ticket repro asserted **failing under the old rule and passing under the new one** (fresh lead
+→ scheduleTime + agreements written → a scheduleTime-only draft refetched → the agreement survives), the
+blank-tab case still applying a late draft over an early write, a reopened deal still restoring on first
+load and then ignoring a re-fetch of the same draft, and edit mode unchanged. tsc 44 (baseline
+unchanged); eslint 49 problems / 2 errors across both files — the screen's exact HEAD baseline, and the
+session hook clean.
+
+⚠️ Still wants a device check. Repro: create a lead, reach Summary, **Schedule Appointment → Generate
+Dynamic Agreement**, sign, then watch the next `PUT …/outcome/{calcId}` and confirm
+`jobBuilder.dynamicJobState.agreements` is present alongside `scheduleTime`.
+
+### Edit Customer Details now logs opened / per-field change / saved
+
+Ticket: *"you have to add logs while we are opening customer details from pencil like web / also you
+have to add when we edit anything"*, with both web payloads supplied verbatim. Opening the Lead Center
+pencil and saving it emitted **nothing** on mobile, so the portal timeline had the events for a web edit
+and a blank for a mobile one.
+
+Three events, ported from web `sections/job/components/job-capture-images-sections/edit-customer-modal.js`:
+
+| when | `action_type` | `meta.action` |
+|---|---|---|
+| the pencil opens the modal | `view` | `edit customer details opened` |
+| per field the rep altered | `change` | `customer field changed` |
+| the PATCH succeeds | `submit` | `customer details saved` |
+
+All three carry `module_type: 'customer_details'` and `meta.customerId` / `meta.leadId`; the `change`
+rows add `fieldLabel` / `fieldName` / `fieldValue` / `fieldCategory` / `oldValue` / `newValue` — the
+ticket's payloads exactly. The ids resolve through ONE helper so no two rows can disagree about which
+record they name.
+
+⚠️ **The `change` rows fire on SAVE, not while typing — a deliberate divergence, and the requested
+one** (*"you have to call this as well when we Save Changes"*). Web debounces each keystroke
+(`useDebounce(changedValue, 2000)`) from inside the modal, so a web row can describe an edit the rep
+then abandoned; mobile diffs the submitted payload against the record, so a row only ever describes a
+change that PERSISTED.
+
+⚠️ **They are emitted AFTER the `submit` row** (*"this log should be call after the submit log"*), so
+the timeline reads opened → saved → changed. That is the OPPOSITE of web, where the debounced rows are
+already sent by the time Save is pressed; on mobile the detail rows are wanted as the breakdown *under*
+the save. `LoggerService` serialises its queue, so the call order is the order the portal receives.
+
+⚠️ **`meta.resetCycle` is added SERVER-side, not by the client.** A payload comparison filed against
+this ticket showed mobile's stored row carrying `resetCycle: 0` where web's did not — but the two
+objects were not the same kind: web's was the REQUEST BODY and mobile's the STORED RECORD (it also
+carried `_id`, `user_activity_log_id`, `created_at`, `updated_at`, `__v`). `grep -rn resetCycle src/`
+finds it only in `utils/activity-log/calculator-log.ts` and `hooks/useDealCalculator.ts`, both of which
+send it deliberately for CALCULATOR logs; nothing on this path does. Mobile sends exactly web's nine
+meta keys. Compare two records or two request bodies before chasing a difference here.
+
+⚠️ **The rules live in the pure `src/utils/customer-detail-changes.ts`**
+(`resolveCustomerLogIds` / `buildCustomerFieldChanges`), for the reason `utils/addendum-drafts.ts` and
+`utils/inspection-photos.ts` exist: `LeadCenter/index.tsx` pulls in React Native and is untestable under
+jest here, and the one thing that can be **silently** wrong — reporting a field the rep never touched —
+leaves no trace except a wrong row on the portal.
+
+⚠️ **Each baseline must reproduce EXACTLY how `EditCustomerModal` seeds that field.** `phone` is the one
+that bites: it is stored raw or E.164 (`4438784937` / `+14438784937`) and the modal seeds it through
+`formatUSPhoneNumber`, so diffing against the STORED string would log a phone edit on **every** save.
+`address` falls back to `lead.fullAddress` for the same reason. (Same trap the modal's own length
+validation hit — see the Edit Customer phone-validation section above.)
+
+⚠️ **Co-buyers are not logged** — web does not track them either; `handleCoBuyerChange` only flips
+`hasUnsavedChanges`.
+
+⚠️ **`customerId` is the CUSTOMER record's id, a DIFFERENT document from the lead** — the ticket's own
+payload shows `…3a94` vs `…3a97`. `handleCustomerSubmit` resolves the PATCH url with
+`lead.customerDetails._id || …id || lead._id || lead.id`, and **that lead-id fallback must not leak into
+the log**: the portal joins on this id, so a lead id there reports the wrong record. The emitter reads
+the customer record only and sends `null` when the lead genuinely carries none (web reads
+`customerData._id` with no fallback at all).
+
+- **The `view` fires on the PENCIL, not in the modal.** Web fires it from an
+  `useEffect(… [open, customerData])`; mobile's modal is mounted by `{showEditCustomerModal && …}`, so
+  the press handler is the same moment and needs no new prop threaded into `EditCustomerModal`.
+- **The `submit` fires AFTER the PATCH resolves**, next to the success flash — web's own position. On
+  the button press it would log edits that then failed to save.
+- ⚠️ Both read the PRE-save `lead`. `handleCustomerSubmit` calls them after its optimistic `setLead`,
+  which is safe because a state setter does not mutate the closure's binding — but that is exactly what
+  the diff depends on, so a future caller that re-reads the lead from the cache first would compare a
+  record against itself and log nothing.
+- **`logEvent` needs no change** — it already emits `{user_id, action_type, module_type, created_by,
+  meta}` and only auto-attaches `meta.leadId` when absent, which it isn't here.
+
+#### …and the header phone is formatted the same way
+
+Follow-up on the same screen: *"number is not showing in proper formate, can you formate it like it's
+showing in the edit customer modal?"* The Lead Center header printed `18757575799` while the modal
+directly below it read `+1 (875) 757-5799` — the header rendered `lead.customerDetails.phone` verbatim
+and the record stores it raw or E.164. It now renders through the same `formatUSPhoneNumber` the modal
+seeds with, so the two agree.
+
+⚠️ **DISPLAY ONLY.** `handleCall` / `handleTextMessage` / `handleCopyPhone` still read
+`customerDetails.phone` and dial through `getRawPhoneNumber`, so the `tel:` / `sms:` links and the
+copied string are unchanged.
+
+⚠️ A NON-US stored number will be reshaped by this (the formatter keeps the last 10 digits after an
+optional leading `1`). That is not new behaviour being introduced — `EditCustomerModal` already seeds
+its field through the same function, so the header now merely matches what the rep is shown when they
+open it. Verified across all six stored shapes, an empty phone still rendering nothing, and a partial
+number degrading to `+1 (875) 757` rather than blanking.
+
+⚠️ **One web event is still NOT ported**: a `view` / `edit customer details modal closed` fired from
+web's **Cancel** button. Left out because the ticket did not ask for it; it is a one-liner on the
+modal's `onClose` if the portal wants it.
+
+Verified with 11 tests driving the real `buildCustomerFieldChanges` + `formatUSPhoneNumber`: the ticket
+repro emitting its payload verbatim, an untouched form emitting nothing, **all five stored phone shapes
+surviving a no-op save** with the naive stored-string comparison asserted to produce the phantom row
+that guard prevents, a real phone edit reported in the format the rep saw, several edits emitting
+several rows in web's field order, the `fullAddress` fallback, a cleared field reported as an emptying
+rather than skipped, a co-buyer-only edit emitting nothing, and junk input as a no-op rather than a
+throw. tsc 44 (baseline unchanged); `customer-detail-changes.ts` is eslint-clean and
+`LeadCenter/index.tsx` is identical to its HEAD baseline (40 problems: 16 errors / 24 warnings).
 
 ---
 

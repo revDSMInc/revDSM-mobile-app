@@ -11,7 +11,12 @@ import type { ContractDetails, JobPacket, SoldProduct } from '../../../config/ty
 // engine shipping Intl data — see `utils/currency`.
 const currency = (n?: number) => formatCurrency(n);
 
-/** Line height of a product spec line — also the height of its bullet's centring box. */
+/**
+ * Line height of a product spec line — also the height of its bullet's centring box.
+ *
+ * 20 on the 14 px (`text-sm`) spec line. Same pairing as `VerifyScopeStep`, and it has to
+ * stay in step with the font size or every dot drifts off the middle of its line.
+ */
 const LINE_HEIGHT = 20;
 
 interface Props {
@@ -81,13 +86,13 @@ export function JobReferenceCards({
             <View className="flex-1">
               <Text
                 numberOfLines={1}
-                className="text-[13px] font-bold"
+                className="text-sm font-bold"
                 style={{ color: colors.text }}
               >
                 {packet.fileName}
               </Text>
               {!!packet.pages && (
-                <Text className="text-[11px] font-semibold" style={{ color: colors.textSecondary }}>
+                <Text className="text-xs font-semibold" style={{ color: colors.textSecondary }}>
                   {t('installer.pages', { count: packet.pages })}
                 </Text>
               )}
@@ -166,7 +171,11 @@ export function JobReferenceCards({
               >
                 <View className="flex-row items-center mb-1">
                   <Icon name="package-variant-closed" size={14} color={accent} />
-                  <Text className="ml-1.5 text-sm font-bold" style={{ color: colors.text }}>
+                  {/* One step under the card's own "Products" heading, which is
+                      `font-black` — so bold at the same 16 px, not black. Verify Job Scope
+                      renders this product as a card in its own right and titles it
+                      `text-base font-black` there. */}
+                  <Text className="ml-1.5 text-base font-bold" style={{ color: colors.text }}>
                     {p.name}
                   </Text>
                 </View>
@@ -184,7 +193,7 @@ export function JobReferenceCards({
                       />
                     </View>
                     <Text
-                      className="flex-1 text-xs font-semibold"
+                      className="flex-1 text-sm font-semibold"
                       style={{ color: colors.text, lineHeight: LINE_HEIGHT }}
                     >
                       {line}

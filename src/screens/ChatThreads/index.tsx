@@ -43,10 +43,15 @@ export default function ChatThreadsScreen({ navigation }: any) {
 
   const [mainTab, setMainTab] = useState<'myleads' | 'channels'>('myleads');
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('unresultedleads');
+  // Land on ALL, so the screen opens on every conversation instead of hiding resulted
+  // leads behind a filter the rep never chose. These two seeds must stay in sync: the
+  // dropdown derives the key from the label (`opt.toLowerCase().replace(/ /g, '')`), so
+  // they are exactly what tapping the 'All' row produces. `useChatThreads` already reads
+  // 'all' as "no status constraint" on both the server query and the client-side filter.
+  const [statusFilter, setStatusFilter] = useState('all');
   const [filterUnread, setFilterUnread] = useState(false);
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
-  const [selectedStatus, setSelectedStatus] = useState('Unresulted Leads');
+  const [selectedStatus, setSelectedStatus] = useState('All');
   const [showCreateChannel, setShowCreateChannel] = useState(false);
 
   useEffect(() => {

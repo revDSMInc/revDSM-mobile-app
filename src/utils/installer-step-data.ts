@@ -24,6 +24,9 @@ import {
   INSTALLER_PATCH_FIELDS,
   type CapturedPhoto,
   type DiscrepancyCategory,
+  type CocRelationshipType,
+  type CocSignOff,
+  type CocStepPayload,
   type InstallProgress,
   type InstallerJobPatch,
   type JobScopeVerificationPayload,
@@ -317,6 +320,53 @@ export const buildScopeStepData = (
  * add several pages in one pass and a rescan has to slot back in at the right place —
  * an index would renumber every page after it.
  */
+/**
+ * `stepData.coc` from a signed certificate.
+ *
+ * Narrows the stored record to the four keys the contract names and nothing else —
+ * the strokes, the job number and the date the device also keeps are for the screen,
+ * not for the wire.
+ *
+ * ⚠️ `otherRelationship` is NULL for a homeowner, never `''`: the contract sends null,
+ * and an empty string reads as "Other, and they did not say".
+ *
+ * ⚠️ A signature is omitted rather than sent empty when its upload has not produced an
+ * `s3url`. A `{ s3url: "" }` would look like a stored image that resolves to nothing.
+ */
+export const buildCocSignOffPayload = (
+  signOff?: CocSignOff | null
+): CocStepPayload | null => {
+  if (!signOff) return null;
+
+  const relationshipType: CocRelationshipType =
+    signOff.customer?.relationshipType === 'other'
+      ? 'other'
+      : signOff.customer?.relationshipType === 'spouse'
+      ? 'spouse'
+      : 'homeowner';
+  const isOther = relationshipType === 'other';
+  const other = (signOff.customer?.otherRelationship ?? '').trim();
+
+  const payload: CocStepPayload = {
+    confirmations: {
+      is18OrOlder: !!signOff.confirmations?.is18OrOlder,
+      isHomeownerOrAuthorized: !!signOff.confirmations?.isHomeownerOrAuthorized,
+      installationCompletedAsPerContract:
+        !!signOff.confirmations?.installationCompletedAsPerContract,
+    },
+    customer: {
+      relationshipType,
+      // Only `other` has anything to write in — the enum says the rest.
+      otherRelationship: isOther && other ? other : null,
+    },
+  };
+
+  if (signOff.installerSignature?.s3url) payload.installerSignature = signOff.installerSignature;
+  if (signOff.customerSignature?.s3url) payload.customerSignature = signOff.customerSignature;
+
+  return payload;
+};
+
 export const buildCocStepData = (
   progress: InstallProgress,
   options: StepDataOptions = {}
@@ -325,9 +375,16 @@ export const buildCocStepData = (
     ...ref,
     subcategory: 'coc',
   }));
-  return photos.length || options.includeEmptyPhotos
-    ? { installerCocPhotos: photos }
-    : null;
+
+  const patch: InstallerJobPatch = {};
+  if (photos.length || options.includeEmptyPhotos) patch.installerCocPhotos = photos;
+
+  // The two halves of this step are independent: a job can be signed on the device,
+  // scanned on paper, or both, and neither may wipe the other.
+  const coc = buildCocSignOffPayload(progress.cocSignOff);
+  if (coc) patch.coc = coc;
+
+  return Object.keys(patch).length ? patch : null;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

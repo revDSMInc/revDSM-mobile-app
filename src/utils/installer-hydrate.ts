@@ -24,6 +24,7 @@ import { PEC_AREAS } from '../constants/installer';
 import type {
   CapturedPhoto,
   InstallProgress,
+  CocSignOff,
   InstallerStoredImage,
   InstallerStoredRecords,
   PECEntry,
@@ -56,6 +57,11 @@ export const storedPhotoAssets = (
     ...records.preInstallPhotos,
     ...records.postInstallPhotos,
     ...(records.preExistingConditions?.conditions ?? []).flatMap((c) => c.photos ?? []),
+    // The certificate's two signatures — the form shows them back, so they need a
+    // signed URL like any other stored image.
+    ...[records.coc?.installerSignature, records.coc?.customerSignature].filter(
+      Boolean
+    ),
   ];
 
   const seen = new Set<string>();
@@ -147,7 +153,14 @@ const toScopeStatus = (item: any): ScopeStatus | null => {
 };
 
 export interface HydrateOptions {
-  /** `salesPhotoId` → tag id, so a matched shot lands back on the slot it came from. */
+  /**
+   * Reference photo id → tag id, so a matched shot lands back on the slot it came from.
+   *
+   * Keyed by the id itself, NOT by which field carried it: the same row is sent as
+   * `salesPhotoId` or `preInstallPhotoId` depending on its `source`
+   * (`utils/installer-upload.ts` › `matchedPhotoIdRef`), and both spellings must land
+   * on the same tag.
+   */
   tagIdBySalesPhotoId?: Map<string, string>;
   /**
    * Fallback for a shot with NO `salesPhotoId`: the stored `subcategory` → tag id.
@@ -165,6 +178,23 @@ export interface HydrateOptions {
 
 /** Case/space-insensitive, so a label lookup isn't defeated by "Back-Left " vs "back-left". */
 export const subcategoryKey = (value?: string): string => (value ?? '').trim().toLowerCase();
+
+/** The s3urls the signed certificate claims as its two signatures. */
+export const cocSignatureUrls = (signOff?: CocSignOff): Set<string> =>
+  new Set(
+    [signOff?.installerSignature?.s3url, signOff?.customerSignature?.s3url].filter(
+      Boolean
+    ) as string[]
+  );
+
+/**
+ * Is this stored CoC image one of the certificate's signatures rather than a page?
+ *
+ * A page with no `s3url` has not been uploaded, so it cannot be a signature — it is
+ * a local scan and is always kept.
+ */
+export const isCocSignatureImage = (s3url?: string, signatureUrls?: Set<string>): boolean =>
+  !!s3url && !!signatureUrls?.has(s3url);
 
 /**
  * Merges the server's record into local progress. Returns `previous` unchanged when
@@ -206,15 +236,68 @@ export const mergeServerProgress = (
   }
 
   // ── CoC pages ─────────────────────────────────────────────────────────────
-  const refreshedCoc = withRefreshedUris(previous.cocPages, urls);
-  const cocAdditions = missingFrom(refreshedCoc, records.cocPhotos, urls);
+  //
+  // ⚠️ The two SIGNATURES come back in this same array. They are uploaded with the
+  // phase and subcategory the backend specified for this step (`coc`/`coc`), which is
+  // exactly what a scanned page carries — so nothing in the stored row tells them
+  // apart. Without this they hydrate as pages: the grid shows the signatures, the Done
+  // button counts them, and the tile's ✕ would delete a signature off the certificate.
+  //
+  // The certificate itself is the discriminator: it records which two s3urls are its
+  // signatures. (A device with no stored sign-off — a reinstall, or cleared storage —
+  // has nothing to match on and will show them as pages again; naming them in the
+  // upload is the only real fix, and that needs the backend to agree a subcategory.)
+  // ── The signed certificate ────────────────────────────────────────────────
+  //
+  // Restored from the server so the form can be reopened with what was actually
+  // filed — including on a device that never signed it. The strokes are NOT on the
+  // server (they only exist where they were drawn), so the images stand in for them:
+  // `installerSignatureUrl` / `customerSignatureUrl`.
+  //
+  // The DEVICE's own record wins where it has one: it holds the strokes, and it is
+  // also the newer of the two for the installer who has just signed.
+  const storedCoc = records.coc;
+  if (storedCoc) {
+    const merged: CocSignOff = {
+      ...storedCoc,
+      ...(previous.cocSignOff ?? {}),
+      // Signature refs come from whichever side has them, server first — a re-upload
+      // is what the server holds, and the device copy may predate it.
+      installerSignature:
+        storedCoc.installerSignature ?? previous.cocSignOff?.installerSignature,
+      customerSignature:
+        storedCoc.customerSignature ?? previous.cocSignOff?.customerSignature,
+      installerSignatureUrl: urls[storedCoc.installerSignature?.s3url ?? ""],
+      customerSignatureUrl: urls[storedCoc.customerSignature?.s3url ?? ""],
+    };
+    if (JSON.stringify(merged) !== JSON.stringify(previous.cocSignOff)) {
+      changed = true;
+      next.cocSignOff = merged;
+    }
+  }
+
+  const signatureUrls = cocSignatureUrls(next.cocSignOff ?? previous.cocSignOff);
+
+  // Pruned on BOTH sides. Filtering only the server additions leaves the ones a
+  // previous open already merged into progress — they are in MMKV, so they survive
+  // every relaunch and the fix would look like it had done nothing.
+  const keptCoc = signatureUrls.size
+    ? previous.cocPages.filter((page) => !isCocSignatureImage(page.s3url, signatureUrls))
+    : previous.cocPages;
+  const cocServerPages = signatureUrls.size
+    ? records.cocPhotos.filter((image) => !isCocSignatureImage(image.s3url, signatureUrls))
+    : records.cocPhotos;
+
+  const refreshedCoc = withRefreshedUris(keptCoc, urls);
+  const cocAdditions = missingFrom(refreshedCoc, cocServerPages, urls);
   if (cocAdditions.length > 0 || refreshedCoc !== previous.cocPages) {
     changed = true;
     next.cocPages = [...refreshedCoc, ...cocAdditions].sort(byTakenAt);
   }
 
   // ── Matched pre/post shots ────────────────────────────────────────────────
-  // Keyed by the rep photo each pairs with (`salesPhotoId`), which is stable and exact.
+  // Keyed by the reference photo each pairs with (`salesPhotoId` / `preInstallPhotoId`),
+  // which is stable and exact.
   // `subcategory` is the fallback, and only that: it is written by two different paths
   // (the upload puts the tag LABEL there, the step PATCH the tag ID), so it is matched
   // through a map that carries both spellings and drops any that are ambiguous.
@@ -238,12 +321,12 @@ export const mergeServerProgress = (
       });
 
       serverImages.forEach((image) => {
+        // Either id field identifies the same reference row — see the map's own note.
+        const referenceId = image.salesPhotoId || image.preInstallPhotoId;
         const tagId =
-          (image.salesPhotoId
-            ? tagIdBySalesPhotoId?.get(image.salesPhotoId)
-            : undefined) ??
+          (referenceId ? tagIdBySalesPhotoId?.get(referenceId) : undefined) ??
           // Only reached for a shot the rep set can't identify — an added tag. A row
-          // that HAS a `salesPhotoId` is never resolved this way, so the weaker key
+          // that HAS a reference id is never resolved this way, so the weaker key
           // can't override the exact one.
           tagIdBySubcategory?.get(subcategoryKey(image.subcategory));
         // An already-filled slot is left alone: the local shot is the newer one.

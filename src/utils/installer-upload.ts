@@ -11,7 +11,9 @@
  * accepts:
  *   pickup / return → `{ subcategory: <phase>, timestampTaken }`
  *   preExisting     → `{ conditionLabel, subcategory, timestampTaken }`
- *   pre / post      → `{ salesPhotoId, category, subcategory, timestampTaken }`
+ *   pre / post      → `{ <id key>, category, subcategory, timestampTaken }`, where the
+ *                     id key is `salesPhotoId` or `preInstallPhotoId` — see
+ *                     `matchedPhotoIdRef`
  * `coordinates` is appended to all of them when the device can produce a fix.
  */
 
@@ -137,7 +139,40 @@ export const preExistingDescriptor = (
 });
 
 /**
- * A matched ghost shot. `salesPhotoId` is the rep photo this one pairs with — the
+ * Is the tag ghosting an INSTALLER capture rather than the rep's sales photo?
+ *
+ * Read off the API row's own `source` field, case- and whitespace-insensitively —
+ * anything that is not `"installer"` (including a row that carries no `source` at all,
+ * which is every pre-existing record) is treated as a sales photo, so the historic
+ * behaviour is the default.
+ */
+export const isInstallerSourcedPhoto = (source?: string): boolean =>
+  (source ?? '').trim().toLowerCase() === 'installer';
+
+/**
+ * The id key the paired reference photo must be sent under.
+ *
+ * ⚠️ The reference set (`job.preInstallPhotos`) holds rows from TWO collections and
+ * each row says which it came from. An id from the installer's own pre-install capture
+ * sent as `salesPhotoId` points the backend at a row that does not exist in the sales
+ * collection — the upload still succeeds, so nothing looks wrong on the device, and the
+ * before/after pairing simply never forms on the portal.
+ *
+ * Exactly one key is ever emitted, and NEITHER when the tag has no reference photo (a
+ * free shot on a tag the rep never covered) — an explicit `undefined` id would read as
+ * a claim that the row exists.
+ */
+export const matchedPhotoIdRef = (
+  tag: PhotoTag
+): Pick<InstallerImageDescriptor, 'salesPhotoId' | 'preInstallPhotoId'> => {
+  if (!tag.repPhotoId) return {};
+  return isInstallerSourcedPhoto(tag.repPhotoSource)
+    ? { preInstallPhotoId: tag.repPhotoId }
+    : { salesPhotoId: tag.repPhotoId };
+};
+
+/**
+ * A matched ghost shot. The id ref is the reference photo this one pairs with — the
  * link the portal uses to show them side by side.
  */
 export const matchedPhotoDescriptor = (
@@ -145,7 +180,7 @@ export const matchedPhotoDescriptor = (
   photo: CapturedPhoto,
   coordinates: GeoCoordinates | null
 ): InstallerImageDescriptor => ({
-  salesPhotoId: tag.repPhotoId,
+  ...matchedPhotoIdRef(tag),
   category: tag.categoryLabel,
   subcategory: tag.label,
   timestampTaken: photo.takenAt,
@@ -169,7 +204,7 @@ export const cocDescriptor = (
   coordinates,
 });
 
-/** A free shot with no rep counterpart — carries the section, no `salesPhotoId`. */
+/** A free shot with no rep counterpart — carries the section, no reference id. */
 export const extraPhotoDescriptor = (
   section: PhotoSection,
   photo: CapturedPhoto,

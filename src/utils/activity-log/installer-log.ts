@@ -40,6 +40,7 @@ import type {
   InstallerJob,
   InstallStepKey,
   InstallStepStatus,
+  CocRelationshipType,
   InstallerResultType,
   SoldProduct,
 } from '../../config/types/installer';
@@ -604,8 +605,109 @@ export const logDiscrepancyReported = (
 
 const COC = INSTALLER_STEP_MODULES.coc;
 
+/** The three attestations, by the key they are filed under in `stepData.coc`. */
+type CocConfirmationKey =
+  | 'is18OrOlder'
+  | 'isHomeownerOrAuthorized'
+  | 'installationCompletedAsPerContract';
+
+type CocSignatureSlot = 'installer' | 'customer';
+
 export const logCocCompleted = (user: any, totalPages: number) =>
   emit(user, LOG_ACTIONS.SUBMIT, COC, { totalPages, action: 'coc_completed' });
+
+/**
+ * The certificate form was opened, and how it was reached.
+ *
+ * `source` is the useful half: `auto` is the step opening on it, `edit` is a rep going
+ * back into a certificate that already exists, and `scan_cancelled` is the form coming
+ * back after the scanner was dismissed with nothing captured. A run of `edit`s on one
+ * job is a signature that would not take.
+ */
+export const logCocFormOpened = (
+  user: any,
+  source: 'auto' | 'edit' | 'scan_cancelled'
+) => emit(user, LOG_ACTIONS.OPEN, COC, { source, action: 'coc_form_opened' });
+
+/**
+ * The form was left without submitting.
+ *
+ * `via` separates the two ways out — the footer Cancel and the header ✕ — and `signed`
+ * says whether a certificate was already on file, which is the difference between
+ * "changed their mind" and "walked away from an unsigned job".
+ */
+export const logCocFormDismissed = (
+  user: any,
+  meta: { via: 'cancel' | 'close'; signed: boolean }
+) => emit(user, LOG_ACTIONS.CLOSE, COC, { ...meta, action: 'coc_form_dismissed' });
+
+/** One of the certificate's three attestations was ticked or un-ticked. */
+export const logCocConfirmationToggled = (
+  user: any,
+  meta: { confirmation: CocConfirmationKey; checked: boolean }
+) => emit(user, LOG_ACTIONS.TOGGLE, COC, { ...meta, action: 'coc_confirmation_toggled' });
+
+/**
+ * Who the signer said they are.
+ *
+ * `relationship: null` is the box being UN-ticked — the certificate goes back to having
+ * no answer, which is a real state and blocks submit.
+ */
+export const logCocRelationshipSelected = (
+  user: any,
+  meta: { relationship: CocRelationshipType | null; otherRelationship?: string }
+) => emit(user, LOG_ACTIONS.SELECT, COC, { ...meta, action: 'coc_relationship_selected' });
+
+/** The signature pad was opened for one of the two lines. */
+export const logCocSignaturePadOpened = (user: any, who: CocSignatureSlot) =>
+  emit(user, LOG_ACTIONS.OPEN, COC, { who, action: 'coc_signature_pad_opened' });
+
+/**
+ * A signature was SAVED on the pad.
+ *
+ * Distinct from the image upload that follows it (`logInstallerPhotoUploaded`, which
+ * carries the s3url and byte size): this is the moment it was drawn, and it is the one
+ * that still appears if the upload never lands.
+ */
+export const logCocSignatureSaved = (
+  user: any,
+  meta: { who: CocSignatureSlot; strokes: number; replaced: boolean }
+) => emit(user, LOG_ACTIONS.SAVE, COC, { ...meta, action: 'coc_signature_saved' });
+
+/** Cleared the pad mid-signature — the line is still unsigned afterwards. */
+export const logCocSignatureCleared = (user: any, who: CocSignatureSlot) =>
+  emit(user, LOG_ACTIONS.DELETE, COC, { who, action: 'coc_signature_cleared' });
+
+/** Left the pad without saving — whatever was drawn is discarded. */
+export const logCocSignaturePadCancelled = (user: any, who: CocSignatureSlot) =>
+  emit(user, LOG_ACTIONS.CLOSE, COC, { who, action: 'coc_signature_pad_cancelled' });
+
+/** Paper Fallback — the crew went to the scanner instead of signing on the device. */
+export const logCocPaperFallback = (user: any) =>
+  emit(user, LOG_ACTIONS.CLICK, COC, { action: 'coc_paper_fallback' });
+
+/** A scanner pass, and what it produced. `pages: 0` is a cancelled scan. */
+export const logCocScanned = (user: any, meta: { pages: number; totalPages: number }) =>
+  emit(user, LOG_ACTIONS.ADD, COC, { ...meta, action: 'coc_pages_scanned' });
+
+/**
+ * The certificate signed on the device.
+ *
+ * The two signature IMAGES log themselves through the upload path
+ * (`logInstallerPhotoUploaded`, which carries the s3url and byte size). This is the
+ * form itself: what was attested, by whom, and against which job number — none of
+ * which appears in a photo log.
+ */
+export const logCocSigned = (
+  user: any,
+  meta: {
+    jobNumber?: string;
+    date?: string;
+    relationship?: string;
+    relationshipOther?: string;
+    signatureCount: number;
+  }
+  ) => emit(user, LOG_ACTIONS.SUBMIT, COC, { ...meta, action: 'coc_signed' });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result

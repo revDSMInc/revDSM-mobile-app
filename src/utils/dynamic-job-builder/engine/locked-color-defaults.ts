@@ -39,6 +39,9 @@ import { resolveConditionalDefault } from './dependency-engine';
  * by `migrateLegacyColorField`, but un-migrated configs still reach here. */
 export const COLOR_FIELD_TYPES = new Set(['swatch', 'color', 'colorSelection', 'customColor']);
 
+/** Field types whose value is a typed quantity rather than a selection. */
+const QUANTITY_FIELD_TYPES = new Set(['number', 'text', 'locked', 'lockedWithColor', 'inputWithColor']);
+
 /** Structural / non-value fields, which can never be a colour's subject. */
 const NON_PAIRABLE_FIELD_TYPES = new Set([
   'sectionLabel',
@@ -81,10 +84,29 @@ export function hasEnteredQuantity(value: any): boolean {
 }
 
 /**
+ * A field that holds a QUANTITY — a typed number/text box, a calculator-driven
+ * (`dcField`) value, or a legacy `locked` field.
+ *
+ * WARNING: a toggle / dropdown / grid / room picker is NOT one, and that is what
+ * keeps this rule to the Extras convention without testing the colour's `locked`
+ * flag: a COMBINATION's colour follows a SELECTION (gutter runs ->
+ * `[size toggle, color]`, downspouts -> `[dsType toggle, dsColor]`), so it never
+ * pairs here and is never cleared behind the rep's back.
+ */
+export function isQuantityLikeField(field: any): boolean {
+  if (!field?.id || isColorField(field)) return false;
+  const type = field.widget || field.inputType || field.type;
+  if (NON_PAIRABLE_FIELD_TYPES.has(type)) return false;
+  if (field.key && String(field.key).startsWith('_')) return false;
+  if (QUANTITY_FIELD_TYPES.has(type)) return true;
+  return Boolean(field.dcField || field.dcFields?.length);
+}
+
+/**
  * The quantity field a colour slot belongs to: the nearest PRECEDING field in
- * the same list that is neither a colour nor a structural field. Returns null
- * when the colour opens the list (nothing to pair with) — the caller then keeps
- * the configured default untouched.
+ * the same list, provided it holds a quantity. Returns null when the colour
+ * opens the list, or when the field above it is a SELECTION rather than a
+ * quantity — the caller then leaves the colour completely alone.
  */
 export function findPairedQuantityField(colorField: any, fields: any[] = []): any | null {
   if (!colorField?.id || !Array.isArray(fields)) return null;
@@ -98,29 +120,74 @@ export function findPairedQuantityField(colorField: any, fields: any[] = []): an
     const type = candidate.widget || candidate.inputType || candidate.type;
     if (NON_PAIRABLE_FIELD_TYPES.has(type)) continue;
     if (candidate.key && String(candidate.key).startsWith('_')) continue;
-    return candidate;
+    return isQuantityLikeField(candidate) ? candidate : null;
   }
   return null;
 }
 
-/** The paired field's current quantity: the rep's / hydrated state value first,
- * then the calculator value its `dcField` resolves to. */
+/**
+ * The colour slot(s) a quantity owns: the run of colour fields immediately
+ * FOLLOWING it, stopping at the next non-colour field. The inverse of
+ * `findPairedQuantityField`, used to clear a colour when its quantity is
+ * zeroed in the deal-edit wizard (where both fields are editable).
+ *
+ * WARNING: the source must be `isQuantityLikeField` — that, not the colour's
+ * `locked` flag, is what scopes this to the Extras convention. The first pass
+ * gated on `isFieldLocked(colour)` and did nothing on the real config, where the
+ * Extras colour is authored as a plain editable swatch.
+ */
+export function findPairedColorFields(quantityField: any, fields: any[] = []): any[] {
+  if (!isQuantityLikeField(quantityField) || !Array.isArray(fields)) return [];
+  const index = fields.findIndex((f) => f?.id === quantityField.id);
+  if (index === -1) return [];
+
+  const paired: any[] = [];
+  for (let i = index + 1; i < fields.length; i += 1) {
+    const candidate = fields[i];
+    if (!candidate?.id) continue;
+    if (!isColorField(candidate)) break;
+    // An unconditionally-required colour is left alone: emptying it would block
+    // the tab's Next with nothing on screen explaining why.
+    if (candidate.required === true) continue;
+    paired.push(candidate);
+  }
+  return paired;
+}
+
+/**
+ * The paired field's current quantity.
+ *
+ * WARNING: an EXPLICIT state entry wins even when it is `0` or blank. In the
+ * deal-edit wizard the rep edits a calculator-driven quantity down to 0 while
+ * `dealCenterData` still reports the SOLD value (1), so preferring the calculator
+ * whenever state looked empty made the colour survive the very edit this rule
+ * exists for. Same principle as `formatFieldSummaryValue`: in edit mode the rep's
+ * live value must win. The calculator is read only when the field has no state
+ * entry at all (a build that has never been opened).
+ */
 export function resolvePairedQuantityValue(field: any, state: any = {}, dealCenterData: any = {}) {
   if (!field?.id) return undefined;
 
-  const fromState = state?.[field.id] !== undefined ? state[field.id] : (field.key ? state?.[field.key] : undefined);
-  if (hasEnteredQuantity(fromState)) return fromState;
+  const byId = state?.[field.id];
+  if (byId !== undefined && byId !== null) return byId;
+  const byKey = field.key ? state?.[field.key] : undefined;
+  if (byKey !== undefined && byKey !== null) return byKey;
 
-  if (isFieldLocked(field)) return resolveLockedValue(field, dealCenterData);
-  return fromState;
+  if (isFieldLocked(field) || field.dcField || field.dcFields?.length) {
+    return resolveLockedValue(field, dealCenterData);
+  }
+  return undefined;
 }
 
 /**
  * True when a colour slot has a paired quantity and that quantity is empty —
- * i.e. the colour describes an extra that isn't on the job. Says nothing about
- * whether the field is locked; callers that are already inside a locked branch
- * (a colorSelection locked by `lockWhenNotRequired`, which carries no
- * `field.locked`) use this directly.
+ * i.e. the colour describes an extra that isn't on the job.
+ *
+ * WARNING: deliberately says NOTHING about `field.locked`. The first pass had a
+ * locked-only variant of this and it did nothing on the live config, where the
+ * Extras colour is authored as a plain swatch (and is rendered read-only by the
+ * tab, not by its own flag). The pairing itself — a colour that FOLLOWS A
+ * QUANTITY — is the whole scope.
  */
 export function isPairedQuantityEmpty(
   field: any,
@@ -134,14 +201,6 @@ export function isPairedQuantityEmpty(
   return !hasEnteredQuantity(resolvePairedQuantityValue(paired, state, dealCenterData));
 }
 
-/** `isPairedQuantityEmpty` for an authored-locked colour field. */
-export function isLockedColorSuppressed(
-  field: any,
-  ctx: { fields?: any[]; state?: any; dealCenterData?: any } = {}
-): boolean {
-  return isFieldLocked(field) && isPairedQuantityEmpty(field, ctx);
-}
-
 /**
  * The `fallbackDefault` to hand `resolveLockedValue` for a colour field — '' for
  * a suppressed slot (so it resolves to '—' rather than the configured default),
@@ -152,6 +211,6 @@ export function resolveLockedColorFallbackDefault(
   field: any,
   { fields = [], state = {}, dealCenterData = {}, depCtx }: { fields?: any[]; state?: any; dealCenterData?: any; depCtx?: any } = {}
 ) {
-  if (isLockedColorSuppressed(field, { fields, state, dealCenterData })) return '';
+  if (isPairedQuantityEmpty(field, { fields, state, dealCenterData })) return '';
   return resolveConditionalDefault(field, state, depCtx || { dealCenterData });
 }

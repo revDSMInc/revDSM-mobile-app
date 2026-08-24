@@ -27,6 +27,12 @@ import {
   dropUnnamedAgreements,
 } from './utils/outcome-documents';
 import { buildDocumentPayloads } from './utils/document-payloads';
+import {
+  buildCalculatorDocument,
+  buildJobSubmitPayload,
+  buildSubmitLeadData,
+  extractCalculatorDocument,
+} from './utils/job-submit-payload';
 import { canCompleteJobBuilder, finalizeBlockedReason as computeFinalizeBlockedReason } from './utils/finalize-gate';
 import { useAuth } from '../../hooks/useAuth';
 import { logRolloutAndDropSummary } from '../../utils/activity-log/rollout-summary';
@@ -355,6 +361,11 @@ function DynamicJobBuilderInner({
     //     upload) do NOT restore over the rep's in-progress edits.
     // Edit mode keeps its existing behaviour — its state arrives as a prop.
     draftToken: isEdit ? undefined : `${leadId || ''}:${calcId || ''}`,
+    // Lets the restore latch even when this lead has NO saved draft yet — without it
+    // a brand-new lead stayed permanently open to a late draft, and the refetch that
+    // `commitUploaded` triggers after signing restored a doc-less draft OVER the
+    // agreement the rep had just signed. See the effect in useDynamicJobBuilderSession.
+    draftSettled: isEdit ? undefined : isOutcomeFetched,
   });
 
   const { jobState, updateTabState, updateRootState, clearRootState, lockedTabIdsByVertical } = session;
@@ -408,6 +419,21 @@ function DynamicJobBuilderInner({
   // Blocks the debounced auto-save while a document upload is mid-flight so we
   // don't race the outcome PUT (mirrors normal JB's isDocUploadingRef).
   const isDocUploadingRef = useRef(false);
+
+  // The LIVE job state, for `performAutoSave` to serialize from.
+  //
+  // ⚠️ `performAutoSave` is a `useCallback` that closes over `jobState`, and its
+  // in-flight guard re-invokes THE SAME CLOSURE as a follow-up. So a save that was
+  // coalesced while another was in flight re-sent the state as it stood when the
+  // FIRST save started — silently dropping anything written in between. That is how a
+  // draft could persist `scheduleTime` and not the `agreements` written moments later
+  // (the reported "agreement is not in the payload"): both writes landed on the same
+  // object, but the payload was serialized from a snapshot taken before the second.
+  //
+  // Same fix the calculator save engine already carries (`useDynamicCalculators`
+  // reads the current tab from `tabsRef`, "like web's `entriesRef.current`").
+  const jobStateRef = useRef(jobState);
+  jobStateRef.current = jobState;
 
   // Hydrate previously-saved (server) documents into the display state once the
   // outcome + secure URLs resolve — so a reopened job shows its agreement/order
@@ -513,7 +539,15 @@ function DynamicJobBuilderInner({
       // mobile. Stripping them here meant every 2s autosave OVERWROTE the saved draft
       // with a doc-less copy, so a web-attached agreement disappeared from the deal on
       // the next open, and a mobile-attached one was never visible to web at all.
-      const dynamicJobState = serializeDynamicJobStateForStorage(jobState || {}, initialConfig, dealCenterData);
+      // From the REF, never the closure — see `jobStateRef`. `jobState` stays in this
+      // callback's dependency list so the 2 s debounce still re-arms on every edit;
+      // the ref only guarantees that whichever closure ends up running sends what the
+      // rep actually has now.
+      const dynamicJobState = serializeDynamicJobStateForStorage(
+        jobStateRef.current || {},
+        initialConfig,
+        dealCenterData
+      );
       const configId = (initialConfig as any)?.id || null;
       // Web parity (JobBuilderContext.buildSavePayload): persist which sections
       // already had their auto-populated fields logged, so a reopen dedups them
@@ -556,23 +590,33 @@ function DynamicJobBuilderInner({
     } finally {
       saveInFlightRef.current = false;
       // A save requested while this one was in flight → run one follow-up now.
+      // ⚠️ Through the REF, not `performAutoSave` — calling the identifier here recurses
+      // into THIS closure, i.e. the one captured when this save started, so the
+      // follow-up re-sent stale `initialConfig` / `dealCenterData` too.
       if (needsFollowUpRef.current) {
         needsFollowUpRef.current = false;
-        void performAutoSave();
+        void performAutoSaveRef.current();
       }
     }
-  }, [leadId, jobState, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded]);
+  }, [leadId, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded]);
 
   // Keep the latest saver in a ref so the unmount flush calls the current closure.
   const performAutoSaveRef = useRef(performAutoSave);
   performAutoSaveRef.current = performAutoSave;
 
+  // Debounce. `jobState` is the real trigger and is now named here directly — it used
+  // to reach this effect only as part of `performAutoSave`'s identity, which is what
+  // tied the re-arm to a closure that also carried a SNAPSHOT of the state. The rest of
+  // the list is everything `performAutoSave` reads, so a save is still re-armed when any
+  // of them settles (e.g. `dealCenterData`), exactly as before.
+  //
+  // ⚠️ Fires through the REF so the timer always runs the CURRENT closure.
   useEffect(() => {
     if (!leadId || !initialFetchDoneRef.current || embedded) return;
     autoSaveDirtyRef.current = true;
-    const timer = setTimeout(() => void performAutoSave(), 2000);
+    const timer = setTimeout(() => void performAutoSaveRef.current(), 2000);
     return () => clearTimeout(timer);
-  }, [performAutoSave, leadId, embedded]);
+  }, [jobState, leadId, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded]);
 
   // Unmount flush: if a debounced edit is still pending, persist it immediately so
   // a value changed then quickly navigated away from is not lost (web parity).
@@ -1106,56 +1150,70 @@ function DynamicJobBuilderInner({
       // "Both leadData and jobState are required in the request body".
       const rd = (calculatorResultData || {}) as any;
       const result = isSale ? 'Sale' : 'Demo';
-      // Web parity: the outcome uses `paymentMethod` for the down payment method
-      // (not `downPaymentMethod` as in the result modal's state). Map them here so
-      // the spread of `...rd` doesn't send the wrong key name.
-      // Also strip `LFCalculator`: mobile attaches the in-memory `CalcTab` for the
-      // local rollout/drop activity summary, but that tab lacks the backend
-      // subdocument's required `createdBy`/`appointmentId` — spreading it into these
-      // saves 500s the backend ("Validation failed: LFCalculator.createdBy is
-      // required, ..."). Re-add only a full backend doc; otherwise omit (stored null).
-      const { downPaymentMethod: _dpm, LFCalculator: _rawLF, ...rdWithoutDpm } = rd;
-      const validLFCalculator =
-        _rawLF && typeof _rawLF === 'object' && _rawLF.createdBy && _rawLF.appointmentId && _rawLF.title
-          ? _rawLF
-          : undefined;
-      const payload = {
-        leadData: {
-          ...rdWithoutDpm,
-          paymentMethod: rd.downPaymentMethod,
-          result,
-          status: result,
-          jobBuilder: jobBuilderWrapper,
-          calculatorId: calcId || rd.calculatorId || null,
-          selectedCalculatorId: calcId || rd.calculatorId || null,
-          selectedAppointmentId: rd.selectedAppointmentId || leadId,
-          appointmentId: rd.appointmentId || leadId,
-          installDate: jobState?.scheduleTime?.date,
-          timeWindow: jobState?.scheduleTime?.timeWindow,
-          originalContractPrice: rd.contractPrice ?? rd.originalContractPrice,
-          lastPriceQuoted: rd.contractPrice ?? rd.lastPriceQuoted,
-          // `POST /lead/v1/{leadId}/job-builder` reads the calculator from the
-          // LOWERCASE `lfCalculator` key (LeadHandler.submitJobBuilder). The uppercase
-          // `LFCalculator` the frontend historically sent is SILENTLY IGNORED, so the
-          // calculator never landed on the submitted job. Send lowercase (what the
-          // handler reads) and keep uppercase for any consumer still reading it.
-          ...(validLFCalculator && {
-            lfCalculator: validLFCalculator,
-            LFCalculator: validLFCalculator,
-          }),
-        },
+      const submitCalculatorId = calcId || rd.calculatorId || null;
+
+      // The calculator document the payload must carry (`leadData.LFCalculator`).
+      // Read the SERVER copy: it is the only source with `_id` / `createdBy` /
+      // `appointmentId` / `createdAt` and the full entries ARRAY the backend's
+      // reference payload shows. The in-memory tab (`rd.LFCalculator`) is only the
+      // fallback — see `buildCalculatorDocument`. A failed read is non-fatal: the
+      // fallback still produces the complete shape.
+      let calculatorServerDoc: any = null;
+      if (submitCalculatorId) {
+        try {
+          const calcRes = await LeadService.getCalculator(submitCalculatorId);
+          calculatorServerDoc = extractCalculatorDocument(calcRes?.data);
+        } catch (e: any) {
+          console.warn('[DynamicJobBuilder] could not read the calculator for the submit payload:', e?.message || e);
+        }
+      }
+      const lfCalculatorDoc = buildCalculatorDocument(calculatorServerDoc, rd.LFCalculator, {
+        calculatorId: submitCalculatorId,
+        appointmentId: rd.selectedAppointmentId || rd.appointmentId || null,
+        leadId,
+        enteredBy: (authUser as any)?._id || (authUser as any)?.id || null,
+      });
+
+      // `leadData` is assembled to the backend's documented key set (see
+      // `utils/job-submit-payload.ts`) rather than spread from the result modal's
+      // state — the modal carries extra fields (versatile / pineapple / resultType)
+      // that are not part of this contract and reach the backend through the
+      // lead-scoped outcome mirror below.
+      const leadDataPayload = buildSubmitLeadData({
+        resultData: rd,
+        result,
+        calculatorDocument: lfCalculatorDoc,
+        selectedCalculatorId: submitCalculatorId,
+        selectedAppointmentId: rd.selectedAppointmentId || leadId,
+        jobBuilder: jobBuilderWrapper,
+      });
+
+      const payload = buildJobSubmitPayload({
+        leadData: leadDataPayload,
         jobState: dynamicJobState,
-        isDynamic: true,
         configId,
-        configSnapshotId: configId || 'dynamic',
         // Web parity (TabbedCalculator `action === 'complete'`): the submit carries the
         // documents at the TOP LEVEL as base64 PDFs — `{ name: '', file, type }` — next
-        // to the serialized jobState, with BOTH keys always present. Built from
-        // jobState.agreements / .orderSheets, and on a non-Sale result the agreements
-        // are filed as order sheets (web's `data.leadData?.result === 'Sale'` branch).
+        // to the serialized jobState. Built from jobState.agreements / .orderSheets, and
+        // on a non-Sale result the agreements are filed as order sheets (web's
+        // `data.leadData?.result === 'Sale'` branch). `paperWork` and
+        // `downPaymentReceipt` are the backend's other two document groups; the job
+        // builder produces neither, so they go out EMPTY rather than absent.
         agreements: documentPayloads.agreements,
         orderSheets: documentPayloads.orderSheets,
-      };
+      });
+
+      // One line naming the calculator that went into `leadData`, so "LFCalculator is
+      // not appended" is answerable from a device trace without reading the whole
+      // (elided) payload below.
+      console.log(
+        '[COMPLETE JOB] leadData calculator:',
+        lfCalculatorDoc?._id
+          ? `_id=${lfCalculatorDoc._id} title=${lfCalculatorDoc.title} entries=${
+              (lfCalculatorDoc.entries || []).length
+            } source=${calculatorServerDoc ? 'server' : 'local tab'}`
+          : 'NONE — no calculator id resolved and no local tab'
+      );
 
       // Full Complete-Job payload (POST /lead/v1/{leadId}/job-builder). The document
       // bodies are elided — stringifying multi-MB base64 for a log line is exactly the
@@ -1189,6 +1247,16 @@ function DynamicJobBuilderInner({
       const outcomeCalcId = calcId || rd.calculatorId || null;
       if (leadId && outcomeCalcId) {
         try {
+          // The outcome mirror keeps the modal's FULL field set (versatile /
+          // pineapple / resultType and the rest): unlike the /job-builder POST it has
+          // no fixed contract, and it is what persists those fields.
+          // `downPaymentMethod` is renamed to `paymentMethod` below, and the
+          // in-memory calculator TAB must never be spread in — it lacks the
+          // subdocument's required `createdBy`/`appointmentId` and 500s the backend.
+          // The resolved `lfCalculatorDoc` is attached instead.
+          const rdWithoutDpm = Object.fromEntries(
+            Object.entries(rd).filter(([k]) => k !== 'downPaymentMethod' && k !== 'LFCalculator')
+          );
           const outcomePayload: Record<string, any> = {
             ...rdWithoutDpm,
             paymentMethod: rd.downPaymentMethod,
@@ -1197,7 +1265,7 @@ function DynamicJobBuilderInner({
             selectedCalculatorId: outcomeCalcId,
             selectedAppointmentId: rd.selectedAppointmentId || leadId,
             jobBuilder: jobBuilderWrapper,
-            ...(validLFCalculator && { LFCalculator: validLFCalculator }),
+            ...(lfCalculatorDoc && { LFCalculator: lfCalculatorDoc }),
             // ⚠️ The base64 agreements / order sheets are DELIBERATELY NOT ATTACHED here.
             // This is a considered divergence from web (TabbedCalculator.js L1073-1074),
             // because MOBILE FILES ITS DOCUMENTS EAGERLY and web does not:
@@ -1353,6 +1421,9 @@ function DynamicJobBuilderInner({
     [leadId, calcId, jobState, initialConfig, dealCenterData, calculatorResultData]
   );
 
+  // Re-read the lead's stored documents WITHOUT uploading anything. Used after the
+  // server-side agreement sign, which files its own LeadOutcomeDocument — adopting
+  // that row is what keeps a generated agreement from being stored twice.
   // Re-read the lead's stored documents WITHOUT uploading anything. Used after the
   // server-side agreement sign, which files its own LeadOutcomeDocument — adopting
   // that row is what keeps a generated agreement from being stored twice.

@@ -607,12 +607,20 @@ export default function ProfilePage() {
                   color={isDark ? colors.text : colors.textSecondary}
                 />
               </TouchableOpacity>
-              <View className="flex-1" style={{alignItems:'center'}}>
+              <View className="flex-1" style={{ alignItems: 'center' }}>
                 <Text className="text-xl font-black" style={{ color: colors.text }}>
                   Account Settings
                 </Text>
-    
               </View>
+              {/* Mirrors the back button's 32px box + its 12px `mr-3`, so the flex-1
+                  title block is symmetric and the title lands on the SCREEN's centre
+                  line (the Upload-photo circle below it) rather than the centre of the
+                  space left over beside the button.
+
+                  A spacer rather than absolute positioning: it can never overlap the
+                  back button's touch target, and a longer title still wraps inside its
+                  own column instead of running underneath it. */}
+              <View style={{ width: 44 }} />
             </View>
           </View>
 
