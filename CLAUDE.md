@@ -3642,6 +3642,62 @@ tsc 44 (baseline unchanged); eslint on `ChatThreads/index.tsx` identical to its 
 (15 warnings, 0 errors). ⚠️ The file is CRLF **and pure ASCII** — keep new comments ASCII (no warning
 emoji) and use `newline=''` on both ends.
 
+### Co-buyers moved below Address, with a "Same address as primary buyer?" tick
+
+Ticket: *"Add Co-Buyer should be below the address field; also inside the co-buyer box add check box
+with the title of “Same address as primary buyer?” — by checking it same address should be show inside
+the Co-Buyer box."*
+
+`EditCustomerModal` rendered the co-buyer cards and the **+ Add Co-Buyer** button between **Email** and
+**Address**. They now sit BELOW the Address field, and each card gained the tick plus its own **Address**
+box.
+
+⚠️ **The reorder is what makes the tick coherent, not just a layout preference.** The checkbox mirrors
+the primary buyer's Address; with the block above that field the rep would be asked to confirm "same as
+primary" before the primary address is on screen.
+
+⚠️ **THIS IS NOT A PORT — web has no co-buyer address at all.** `edit-customer-modal.js`'s
+`sanitizedCoBuyers` sends `firstName`/`lastName`/`phone`/`email` only, and there is no such checkbox on
+that side. **So `coBuyers[].address` is unverified against the backend**: if the sub-schema does not
+declare it, Mongoose drops it silently and the box will look right and read back EMPTY on the next
+open. Confirm the field is stored before treating this as done.
+
+⚠️ **`sameAsPrimary` is DERIVED on load, never persisted.** Storing a second flag beside the address
+gives the record two ways to disagree with itself, and the answer is already implied by the two
+addresses matching. `normalizeCoBuyers(coBuyers, primaryAddress)` does it (trim-compared).
+
+⚠️ **Two BLANK addresses are NOT "the same address".** The derivation requires a non-empty primary, so
+a co-buyer with nothing stored opens UNTICKED — otherwise every untouched record would render a
+confirmation the rep never gave.
+
+⚠️ **The mirrored address is DERIVED at every read (`coBuyerAddressOf`), never copied into
+`coBuyer.address`.** A stored mirror goes stale the moment the rep edits the primary address below —
+the co-buyer would keep the old street while the tick still claimed "same as primary buyer". Deriving
+also means unticking hands back whatever they had typed, and it is the same expression the SUBMIT
+payload uses, so the box and what is saved cannot diverge.
+
+- The co-buyer address input is **read-only while ticked** (grey `fieldBoxReadOnly`) — editable there
+  would silently contradict the tick.
+- **A new co-buyer starts UNTICKED.** Most co-buyers do share the address, so defaulting it on would
+  save a tap — but it would also write an address the rep never affirmed onto a record they may have
+  opened only to fix a name. One line to flip if reps prefer it.
+- `handleCoBuyerChange`'s `field` param was widened from `keyof CoBuyerDraft` to an explicit string
+  union — `sameAsPrimary` is a boolean and has its own `handleCoBuyerSameAddress`, so the old signature
+  would have typed a boolean field as taking a string.
+- `normalizeCoBuyers` is **exported solely so this rule is testable**; the modal itself does load under
+  jest (unusually for this repo), so no `utils/` extraction was needed.
+
+Verified with 8 tests over the real `normalizeCoBuyers` plus the exact derivation expression: a stored
+match ticking the box, an own-address co-buyer left unticked, **all four blank combinations staying
+unticked**, whitespace ignored on either side, a mirrored co-buyer FOLLOWING a later edit to the primary
+address, unticking restoring the typed value, the existing name/phone/email normalisation unchanged, and
+junk input as a no-op. tsc 44 (baseline unchanged); eslint identical to its HEAD baseline (4 warnings,
+0 errors). ⚠️ The file is CRLF — `newline=''` on both ends.
+
+⚠️ Needs a device check (this repo cannot render-test): the new order, the tick filling and greying the
+co-buyer Address, unticking restoring a typed one, and — the important one — that the address SURVIVES a
+save and reopen.
+
 ### Ticket 409 — a resulted lead locks every rollout tab, and the resulted one offers Reset Job Builder
 
 Ticket: *"when a lead is resulted from one tab, the other tabs of the same lead remain active, allowing
