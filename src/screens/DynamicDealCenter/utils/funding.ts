@@ -22,6 +22,7 @@ import {
   newPaymentId,
   toWholeDollars,
   type FundingApplicationClosed,
+  type FundingArchivedPlan,
   type FundingDecision,
   type FundingKind,
   type FundingMethodType,
@@ -126,6 +127,133 @@ export interface PaymentRow {
   auto?: boolean;
   /** Mirrors the server row — a decided row is a locked fact, not an input. */
   decision?: Decision | null;
+
+  /**
+   * ── mirrored lender state, for the method CHIP ────────────────────────────
+   * A decision alone cannot say what the chip has to say: "Approved" and
+   * "Approved & activated" are different facts to a rep, and a row whose link has
+   * gone out but has no answer yet is "Pending lender decision" rather than "Not
+   * yet submitted". All three come off the server row, so they are mirrored here
+   * rather than read through a second lookup — that way the chip and the amount
+   * beside it can never describe two different moments.
+   */
+  linkSent?: boolean;
+  activated?: boolean;
+
+  /**
+   * Plans this row has been swapped away from, newest first — the archived block
+   * under the chip, and what `restore` addresses by `archivedId`.
+   */
+  archived?: FundingArchivedPlan[];
+
+  /**
+   * ── drift ─────────────────────────────────────────────────────────────────
+   * The lender is committed to `baseline`; the job now needs `liveUsage`.
+   *
+   * ⚠️ Re-priced by an addendum is exactly how a row drifts, so this is the deal-edit
+   * wizard's normal case rather than an edge one. Shown under the amount as
+   * `Prior $X` + the delta, so the rep can see that the number on screen is not yet
+   * the number the lender agreed to.
+   */
+  baseline?: number | null;
+  liveUsage?: number | null;
+  drifted?: boolean;
+}
+
+/**
+ * What the method chip says about a row, and in which colour.
+ *
+ * Pure and in one place because the chip is the only thing on the pricing screen
+ * that reports a THIRD PARTY's position. Getting it wrong does not look like a
+ * rendering bug — it looks like the lender said something they did not.
+ *
+ * ⚠️ Order matters: `declined` outranks everything (a declined row is not "pending"
+ * merely because a link also went out), and `activated` only qualifies an approval.
+ */
+export type LenderTone = 'neutral' | 'pending' | 'approved' | 'declined';
+
+export function lenderState(
+  row: PaymentRow,
+  /**
+   * Is this line carried by a LENDER (a financing plan) rather than paid in cash or
+   * by card?
+   *
+   * ⚠️ It only changes the un-submitted case, and it changes it for a real reason: a
+   * financing balance with no application out yet is genuinely OUTSTANDING — somebody
+   * has to send it — where a check the install crew collects needs nothing from
+   * anyone. Painting both amber would make "needs attention" mean nothing; painting
+   * both grey would hide the one line that does.
+   */
+  financing?: boolean
+): { tone: LenderTone; sub: string } {
+  if (row.decision === 'declined') return { tone: 'declined', sub: 'Declined by lender' };
+  if (row.decision === 'full' || row.decision === 'short') {
+    return {
+      tone: 'approved',
+      sub: row.activated
+        ? 'Approved & activated'
+        : row.decision === 'short'
+          ? 'Approved in part'
+          : 'Approved',
+    };
+  }
+  if (row.linkSent) return { tone: 'pending', sub: 'Pending lender decision' };
+  return { tone: financing ? 'pending' : 'neutral', sub: 'Not yet submitted' };
+}
+
+/**
+ * Does this row have a lender position worth reporting?
+ *
+ * Kept separate from `showsChip` below: a DECIDED row must show its verdict wherever
+ * it sits, including on a line the rep added by hand.
+ */
+export function hasLenderState(row: PaymentRow): boolean {
+  return Boolean(row.decision || row.linkSent || row.activated);
+}
+
+/**
+ * Does this line render the **chip** (name + status + Swap) instead of the method
+ * dropdown?
+ *
+ * ⚠️ This is the mockup's own split, and it is structural rather than stateful:
+ * `autoRowHtml` draws the chip for the REMAINDER row, `simpleRowHtml` draws a
+ * dropdown for every other line. So the Down Payment reads `$500 · MC/VISA ⌄ ·
+ * Remove` while the Balance reads `$2,363 · GreenSky · Approved & activated · Swap`
+ * — which is exactly what the two screenshots show side by side.
+ *
+ * ⚠️ It first shipped gated on `hasLenderState` alone, and that is what dropped
+ * **Swap** from the Balance line entirely: a deal seeded from the sale has a method
+ * but no lender activity yet, so the row fell through to a plain dropdown and the
+ * archived shelf had no way to be reached. The auto row is the one the shelf belongs
+ * to, so the auto row is the one that must carry the control.
+ *
+ * A decided row is included wherever it sits, because a verdict is not something to
+ * hide behind a chevron.
+ */
+export function showsChip(row: PaymentRow): boolean {
+  return Boolean(row.auto) || hasLenderState(row);
+}
+
+/**
+ * The drift line under a drifted row's amount, or `null` when there is nothing to
+ * say.
+ *
+ * ⚠️ Requires a REAL baseline: the server sets `drifted` from its own comparison, and
+ * a row that has one without the other would otherwise render `Prior $0`, which
+ * reads as the lender having committed to nothing.
+ */
+export function driftNote(row: PaymentRow): { prior: string; delta: string; up: boolean } | null {
+  if (!row.drifted) return null;
+  const prior = Number(row.baseline);
+  const live = Number(row.liveUsage);
+  if (!Number.isFinite(prior) || !Number.isFinite(live) || prior <= 0) return null;
+  const diff = live - prior;
+  if (diff === 0) return null;
+  return {
+    prior: `Prior $${money(prior)}`,
+    delta: `${diff > 0 ? '+' : '−'}$${money(Math.abs(diff))}`,
+    up: diff > 0,
+  };
 }
 
 /** A message shown above the Balance group after a decision comes back. */
@@ -463,6 +591,14 @@ export function hydrateRowsFromRecord(
     method: planKeyForLabel(plans, p.method),
     methodLabel: p.method,
     decision: p.decision,
+    // Mirrored so the chip, the drift note and the archived shelf all read from the
+    // same row the amount came off — see `lenderState` / `driftNote`.
+    linkSent: p.linkSent,
+    activated: p.activated,
+    archived: p.archived,
+    baseline: p.baseline,
+    liveUsage: p.liveUsage,
+    drifted: p.drifted,
   }));
   const lastOpenBalance = [...rows].reverse().find((r) => r.kind === 'bal' && !r.decision);
   if (lastOpenBalance) lastOpenBalance.auto = true;

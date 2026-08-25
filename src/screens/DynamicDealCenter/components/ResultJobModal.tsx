@@ -1002,6 +1002,7 @@ export function ResultJobModal({
                   onMarkCollected={funding.markCheckCollected}
                   onChargeCard={funding.chargeCard}
                   onActivate={funding.activateLoan}
+                  onReactivate={funding.reactivateLoan}
                   onEditPayments={goResult}
                   onResultAsBankDecline={() => handleSetResult('bank_decline')}
                   onUndoBankDecline={() => handleSetResult('sale')}

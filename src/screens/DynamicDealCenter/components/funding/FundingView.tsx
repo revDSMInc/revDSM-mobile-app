@@ -53,6 +53,11 @@ interface Props {
   onMarkCollected: (pid: string) => void;
   onChargeCard: (pid: string) => void;
   onActivate: (pid: string) => void;
+  /**
+   * Re-settle a drifted loan (`POST …/reactivate`). Optional: without it a drifted
+   * row still SAYS so, it just cannot be closed from here.
+   */
+  onReactivate?: (pid: string) => void;
   onEditPayments: () => void;
   onResultAsBankDecline: () => void;
   onUndoBankDecline: () => void;
@@ -118,6 +123,7 @@ export function FundingView({
   onMarkCollected,
   onChargeCard,
   onActivate,
+  onReactivate,
   onEditPayments,
   onResultAsBankDecline,
   onUndoBankDecline,
@@ -142,6 +148,7 @@ export function FundingView({
       onMarkCollected={() => onMarkCollected(p.pid)}
       onChargeCard={() => onChargeCard(p.pid)}
       onActivate={() => onActivate(p.pid)}
+      onReactivate={onReactivate ? () => onReactivate(p.pid) : undefined}
       onSync={() => onSyncOne(p.pid)}
       onEditPayments={onEditPayments}
       onResultAsBankDecline={onResultAsBankDecline}

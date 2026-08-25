@@ -60,6 +60,14 @@ interface Props {
   onEditPayments: () => void;
   /** Offered only when a lender declined and the job could close as one. */
   onResultAsBankDecline: () => void;
+  /**
+   * Re-settle a DRIFTED loan against what the job needs now (`POST …/reactivate`).
+   *
+   * ⚠️ Omit it and the drift is still REPORTED but not actionable — which is the
+   * right degradation, because a rep who cannot see that the lender is committed to
+   * a different number will quote the one on screen.
+   */
+  onReactivate?: () => void;
 }
 
 /** Full-width action. `alt` is the outlined secondary used for recovery paths. */
@@ -117,11 +125,30 @@ export function PaymentFundingCard({
   onSync,
   onEditPayments,
   onResultAsBankDecline,
+  onReactivate,
 }: Props) {
   const steps = FLOW[p.type] || [];
   const finished = doneFor(p, covered);
   const isOpenShort = openShort(p, covered);
   const shortfall = p.decision === 'short' && p.requested != null ? p.requested - (p.approvedAmt || 0) : 0;
+  /**
+   * The settled-vs-live gap, or `null` when there is nothing to reconcile.
+   *
+   * ⚠️ Requires a real `baseline` AND an actual difference: the server sets
+   * `drifted` from its own comparison, and a row carrying the flag without a
+   * baseline would render "PRIOR $0", which reads as the lender having committed to
+   * nothing. Declined rows are excluded because `reactivate` refuses them — offering
+   * a button that can only 409 is worse than showing no button.
+   */
+  const drift =
+    p.drifted && p.decision !== 'declined' && Number(p.baseline) > 0 && Number(p.liveUsage) !== Number(p.baseline)
+      ? {
+          prior: Number(p.baseline),
+          live: Number(p.liveUsage),
+          diff: Number(p.liveUsage) - Number(p.baseline),
+          up: Number(p.liveUsage) > Number(p.baseline),
+        }
+      : null;
   /** The homeowner closed the hosted page. The row is back at unsent — see `funding.ts`. */
   const closed = isApplicationClosed(p);
   const closedNote = applicationClosedNote(p);
@@ -212,6 +239,49 @@ export function PaymentFundingCard({
           refuses it (spec §5.10). */}
       {p.type === 'cc' && p.kind === 'down' && p.step >= 2 && !p.charged && (
         <ActionButton label={`Charge $${p.amount.toLocaleString()}`} onPress={onChargeCard} busy={isBusy} />
+      )}
+
+      {/* ── drift ──
+          The lender is committed to `baseline`; the job now needs `liveUsage`. An
+          addendum that moves the contract price does this every time, so on the
+          deal-edit flow it is the normal case, not an edge one.
+
+          ⚠️ Shown as PRIOR → NEW rather than as the new figure alone: until the row
+          is re-settled the amount on this card is NOT what the lender agreed to, and
+          a single number cannot say that. The button is the only thing that closes
+          the gap — `reactivate` is refused on a declined row and 409s when the two
+          already match, so it is offered only while both are true here. */}
+      {drift && !bankDeclined && (
+        <View style={{ marginTop: 12, paddingHorizontal: 13, paddingVertical: 12, backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#F1F5F9', borderRadius: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: onReactivate ? 10 : 0 }}>
+            <View>
+              <Text style={{ fontSize: 10.5, fontWeight: '700', letterSpacing: 0.3, color: '#94A3B8' }}>PRIOR</Text>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: FUND.TEXT, marginTop: 2 }}>${drift.prior.toLocaleString()}</Text>
+            </View>
+            <Text style={{ fontSize: 14, color: '#CBD5E1' }}>→</Text>
+            <View>
+              <Text style={{ fontSize: 10.5, fontWeight: '700', letterSpacing: 0.3, color: '#94A3B8' }}>NEW</Text>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: FUND.TEXT, marginTop: 2 }}>${drift.live.toLocaleString()}</Text>
+            </View>
+            <View style={{ marginLeft: 'auto', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: drift.up ? FUND.AMBER_BG : '#E0F2FE' }}>
+              <Text style={{ fontSize: 12.5, fontWeight: '800', color: drift.up ? '#B45309' : '#0369A1' }}>
+                {drift.up ? '+' : '−'}${Math.abs(drift.diff).toLocaleString()}
+              </Text>
+            </View>
+          </View>
+          {!!onReactivate && (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={onReactivate}
+              disabled={isBusy}
+              style={{ borderRadius: 11, paddingVertical: 12, alignItems: 'center', backgroundColor: isBusy ? '#94A3B8' : '#0C2618' }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '800', letterSpacing: 0.2, color: '#fff' }}>
+                Reactivate loan for ${drift.live.toLocaleString()}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       )}
 
       {p.type === 'bank' && !p.activated && (p.decision === 'full' || (p.decision === 'short' && !isOpenShort)) && (

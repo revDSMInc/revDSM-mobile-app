@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlashMessage } from '../../../config/message';
+import SocketManager from '../../../services/SocketManager';
 import {
   FundingService,
   classifyFundingError,
@@ -18,6 +19,8 @@ import {
   logFundingLinkRequested,
   logFundingLinkSent,
   logFundingLoanActivated,
+  logFundingLoanReactivated,
+  logFundingPlanRestored,
   logFundingPaymentSynced,
   logFundingPaymentsSaved,
   logFundingResultChanged,
@@ -99,6 +102,18 @@ export interface FundingLogContext {
 }
 
 export function useFunding(leadId?: string, companyId?: string, logCtx?: FundingLogContext) {
+  /**
+   * The rep, sent as the `userId` header on EVERY funding call.
+   *
+   * ⚠️ Not decoration, and not the same thing as the activity log: the funding API
+   * keeps its own audit trail (`collectedBy`, each `events[].by`), and without this
+   * header every action on the record is attributed to "RevDSM" (system) — a check
+   * marked collected by a rep would then carry no name anywhere.
+   *
+   * Read off `logCtx` rather than added as a fourth argument, so no caller can hand
+   * one identity to the logs and a different one to the API.
+   */
+  const actorId = logCtx?.userId;
   const [record, setRecord] = useState<FundingRecord | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -153,6 +168,36 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
   }, []);
 
   /**
+   * ── live updates ──────────────────────────────────────────────────────────
+   * `funding-updated` carries the COMPLETE record on every state change, so the
+   * screen never has to poll for one — the homeowner finishing a hosted page, or a
+   * lender answering, arrives here rather than on the rep's next tap of Sync.
+   *
+   * ⚠️ **The event is COMPANY-scoped** (room `company:${companyId}`), so it fires for
+   * every lead in the company. Without the `leadId` filter this screen would adopt
+   * a DIFFERENT job's funding record over its own — and because `apply` replaces
+   * wholesale, the rep would be looking at someone else's payments with no error
+   * anywhere. The filter is the whole safety of this subscription.
+   *
+   * ⚠️ Payload shape is tolerated both ways (`{ funding }` or the record itself):
+   * this is the one thing here that has never been driven against a live server, and
+   * guessing wrong would otherwise mean silently ignoring every update.
+   */
+  useEffect(() => {
+    if (!leadId) return;
+    const off = SocketManager.on('funding-updated', (payload: any) => {
+      const next: FundingRecord | null = payload?.funding ?? payload?.data?.funding ?? payload ?? null;
+      if (!next || typeof next !== 'object') return;
+      // Compared as STRINGS: the id arrives off a socket payload and off a nav
+      // param, and those are not guaranteed to be the same type — a raw `!==` would
+      // silently drop every update.
+      if (String(next.leadId || '') !== String(leadId)) return;
+      apply(next);
+    });
+    return off;
+  }, [leadId, apply]);
+
+  /**
    * The payment a per-row log line is about, read from the record as it stands
    * BEFORE the action runs.
    *
@@ -172,7 +217,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
   const refetch = useCallback(async (): Promise<FundingRecord | null> => {
     if (!leadId) return null;
     try {
-      const res = await FundingService.getFunding(leadId, companyId);
+      const res = await FundingService.getFunding(leadId, companyId, actorId);
       const next = res.data?.data?.funding ?? null;
       apply(next);
       return next;
@@ -181,7 +226,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       if (__DEV__) console.warn('[funding] refetch failed', e);
       return null;
     }
-  }, [leadId, companyId, apply]);
+  }, [leadId, companyId, actorId, apply]);
 
   /**
    * Report a failure the way its status code says it should be reported, and
@@ -274,7 +319,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
     // minutes while re-asking on every `false`.
     setPaymentsSetupError(null);
     try {
-      const res = await FundingService.getFunding(leadId, companyId);
+      const res = await FundingService.getFunding(leadId, companyId, actorId);
       const next = res.data?.data?.funding ?? null;
       apply(next);
       return next;
@@ -284,7 +329,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
     } finally {
       setIsLoading(false);
     }
-  }, [leadId, companyId, apply, report]);
+  }, [leadId, companyId, actorId, apply, report]);
 
   /**
    * Re-read a single row. The mutating endpoints all return the whole record, so
@@ -294,7 +339,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
     async (pid: string) => {
       if (!leadId) return null;
       try {
-        const res = await FundingService.getPayment(leadId, pid, companyId);
+        const res = await FundingService.getPayment(leadId, pid, companyId, actorId);
         const payment = res.data?.data?.payment;
         if (!payment || !recordRef.current) return payment ?? null;
         apply({
@@ -307,7 +352,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         return null;
       }
     },
-    [leadId, companyId, apply, report]
+    [leadId, companyId, actorId, apply, report]
   );
 
   // ── writes ───────────────────────────────────────────────────────────────
@@ -329,7 +374,16 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       setIsSaving(true);
       try {
         const res = await run('Save payments', () =>
-          FundingService.savePayments(leadId!, { contractPrice, payments }, companyId)
+          // ⚠️ `payMode` rides along so the STRUCTURE is STORED rather than guessed
+          // back off the rows: `inferPayMode` cannot tell a contract paid in full by
+          // one down row from an upfront one. Omitting it leaves the stored value
+          // alone, which is why it was invisible until now.
+          FundingService.savePayments(
+            leadId!,
+            { contractPrice, payments, payMode: payMode === 'upfront' ? 'upfront' : 'split' },
+            companyId,
+            actorId
+          )
         );
         // The one row that records what the contract was actually split into, so it
         // carries the whole breakdown — this list IS the deal as filed.
@@ -346,7 +400,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         setIsSaving(false);
       }
     },
-    [run, leadId, companyId, logBase]
+    [run, leadId, companyId, actorId, logBase]
   );
 
   /**
@@ -358,7 +412,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
   const fetchLink = useCallback(
     async (pid: string): Promise<FundingActionResult<{ url: string }>> => {
       const payment = paymentFor(pid);
-      const res = await run('Payment link', () => FundingService.getLink(leadId!, pid, companyId), { pid });
+      const res = await run('Payment link', () => FundingService.getLink(leadId!, pid, companyId, actorId), { pid });
       // ⚠️ The url is NEVER passed to the logger, and `logFundingLinkRequested` does
       // not accept one — it is a bearer credential scoped to this payment.
       logFundingLinkRequested({
@@ -375,7 +429,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       setPaymentsSetupError(null);
       return OK(res.message, { url: res.data?.url || '' });
     },
-    [run, leadId, companyId, logBase, paymentFor]
+    [run, leadId, companyId, actorId, logBase, paymentFor]
   );
 
   /**
@@ -390,7 +444,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       const payment = paymentFor(pid);
       const res = await run(
         'Send link',
-        () => FundingService.markLinkSent(leadId!, pid, { channel, destination }, companyId),
+        () => FundingService.markLinkSent(leadId!, pid, { channel, destination }, companyId, actorId),
         { pid }
       );
       logFundingLinkSent({
@@ -405,14 +459,14 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       if (res.ok) setPaymentsSetupError(null);
       return res;
     },
-    [run, leadId, companyId, logBase, paymentFor]
+    [run, leadId, companyId, actorId, logBase, paymentFor]
   );
 
   /** Ask the processor/lender what happened. The main way card and loan rows advance. */
   const syncPayment = useCallback(
     async (pid: string): Promise<FundingActionResult> => {
       const payment = paymentFor(pid);
-      const res = await run('Sync', () => FundingService.syncPayment(leadId!, pid, companyId), { pid });
+      const res = await run('Sync', () => FundingService.syncPayment(leadId!, pid, companyId, actorId), { pid });
       // ⚠️ `res.message` is the SERVER's own wording — `No change yet`, `Lender
       // approved in full`, `Lender declined`. It is the whole point of this row:
       // the verdict belongs to the third party, so the timeline must carry what
@@ -426,15 +480,21 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       });
       return res;
     },
-    [run, leadId, companyId, logBase, paymentFor]
+    [run, leadId, companyId, actorId, logBase, paymentFor]
   );
 
   /**
-   * Sync every row that has something to poll.
+   * Sync every pollable row — **one request**, not a loop.
    *
-   * There is no bulk endpoint, so this fans out per row — sequentially, because
-   * each response carries the WHOLE record and parallel writes would race, with
-   * the last one home overwriting the others' results.
+   * ⚠️ This used to fan out per row through `syncPayment`, which has two problems the
+   * bulk endpoint exists to solve. Each response carries the WHOLE record, so a
+   * sequential loop leaves the screen describing several different moments as it
+   * goes; and one lender being unreachable aborted the rest of the sweep. The
+   * endpoint polls them all, never fails on one row, and returns the failures
+   * itemised in `problems` alongside the single final record.
+   *
+   * The pollable set is still computed locally, but only to decide whether the call
+   * is worth making at all and to log a count — the SERVER decides what it polls.
    */
   const syncAll = useCallback(async (): Promise<FundingActionResult> => {
     const rows = (recordRef.current?.payments || []).filter(
@@ -442,29 +502,83 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
     );
     if (!rows.length) return OK();
     setSyncingAll(true);
-    // One row for the sweep itself; each `syncPayment` below logs its own outcome,
-    // so the timeline reads "synced all 3" followed by what each of the three said.
     logFundingSyncAll({ ...logBase, paymentCount: rows.length });
     try {
-      for (const p of rows) {
-        // eslint-disable-next-line no-await-in-loop
-        await syncPayment(p.pid);
+      const res = await run('Sync all', () => FundingService.syncAll(leadId!, companyId, actorId));
+      // ⚠️ `problems` is per row and does NOT make the sweep a failure — the other
+      // rows really were refreshed. Surfaced as information so the rep knows which
+      // one to chase, rather than as an error that would suggest nothing happened.
+      const problems = (res.data as any)?.problems;
+      if (res.ok && Array.isArray(problems) && problems.length) {
+        FlashMessage.info('Some rows could not be checked', problems.join('\n'));
       }
-      return OK();
+      return res;
     } finally {
       setSyncingAll(false);
     }
-  }, [syncPayment, logBase]);
+  }, [run, leadId, companyId, actorId, logBase]);
+
+  /**
+   * Re-settle a DRIFTED loan against what the job needs now.
+   *
+   * This is the case an addendum creates every time it moves the contract price: the
+   * lender is still committed to `baseline` while the job now needs `liveUsage`, and
+   * until this lands the screen would otherwise show a figure nobody has agreed to.
+   *
+   * ⚠️ Snapshot the two amounts BEFORE the call — the response is the mutated record,
+   * so reading `baseline` afterwards gives the new value on both sides of the log and
+   * the row reads "changed from X to X".
+   */
+  const reactivateLoan = useCallback(
+    async (pid: string): Promise<FundingActionResult> => {
+      const payment = paymentFor(pid);
+      const row = (recordRef.current?.payments || []).find((p) => p.pid === pid);
+      const from = row?.baseline ?? undefined;
+      const to = row?.liveUsage ?? undefined;
+      const res = await run('Reactivate loan', () => FundingService.reactivateLoan(leadId!, pid, companyId, actorId), {
+        pid,
+      });
+      logFundingLoanReactivated({ ...logBase, payment, from, to, ok: res.ok, error: res.error?.message });
+      return res;
+    },
+    [run, leadId, companyId, actorId, logBase, paymentFor]
+  );
+
+  /**
+   * Bring an archived plan back onto a row.
+   *
+   * ⚠️ **Symmetric** — whatever is current is archived in exchange — so both plans are
+   * read off the record BEFORE the call and logged together. Recording only the one
+   * restored would leave no trace of what it displaced.
+   *
+   * ⚠️ Addressed by `archivedId`, never by position: the shelf reorders on every swap.
+   */
+  const restoreArchivedPlan = useCallback(
+    async (pid: string, archivedId: string): Promise<FundingActionResult> => {
+      const payment = paymentFor(pid);
+      const row = (recordRef.current?.payments || []).find((p) => p.pid === pid);
+      const restored = (row?.archived || []).find((a) => a.archivedId === archivedId)?.method;
+      const displaced = row?.method;
+      const res = await run(
+        'Restore plan',
+        () => FundingService.restoreArchivedPlan(leadId!, pid, archivedId, companyId, actorId),
+        { pid }
+      );
+      logFundingPlanRestored({ ...logBase, payment, restored, displaced, ok: res.ok, error: res.error?.message });
+      return res;
+    },
+    [run, leadId, companyId, actorId, logBase, paymentFor]
+  );
 
   /** Processor confirmation, out of band. `sync` is the normal path (spec §5.6). */
   const markCardOnFile = useCallback(
     async (pid: string): Promise<FundingActionResult> => {
       const payment = paymentFor(pid);
-      const res = await run('Card on file', () => FundingService.markCardOnFile(leadId!, pid, companyId), { pid });
+      const res = await run('Card on file', () => FundingService.markCardOnFile(leadId!, pid, companyId, actorId), { pid });
       logFundingCardOnFile({ ...logBase, payment, ok: res.ok, error: res.error?.message });
       return res;
     },
-    [run, leadId, companyId, logBase, paymentFor]
+    [run, leadId, companyId, actorId, logBase, paymentFor]
   );
 
   /**
@@ -473,10 +587,10 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
    */
   const recordDecision = useCallback(
     (pid: string, decision: FundingDecision, approvedAmt?: number) =>
-      run('Lender decision', () => FundingService.recordDecision(leadId!, pid, { decision, approvedAmt }, companyId), {
+      run('Lender decision', () => FundingService.recordDecision(leadId!, pid, { decision, approvedAmt }, companyId, actorId), {
         pid,
       }),
-    [run, leadId, companyId]
+    [run, leadId, companyId, actorId]
   );
 
   /** Activate an approved loan. 409 if declined, undecided, or short and uncovered. */
@@ -486,7 +600,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       // Captured before the call: on a partial approval the activated figure is the
       // APPROVED one, not the row's `amount`, and it is what the job is funded for.
       const approvedAmt = (recordRef.current?.payments || []).find((p) => p.pid === pid)?.approvedAmt ?? undefined;
-      const res = await run('Activate loan', () => FundingService.activateLoan(leadId!, pid, companyId), { pid });
+      const res = await run('Activate loan', () => FundingService.activateLoan(leadId!, pid, companyId, actorId), { pid });
       logFundingLoanActivated({
         ...logBase,
         payment,
@@ -496,7 +610,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       });
       return res;
     },
-    [run, leadId, companyId, logBase, paymentFor]
+    [run, leadId, companyId, actorId, logBase, paymentFor]
   );
 
   /**
@@ -508,7 +622,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
   const chargeCard = useCallback(
     async (pid: string): Promise<FundingActionResult> => {
       const payment = paymentFor(pid);
-      const res = await run('Charge card', () => FundingService.chargeCard(leadId!, pid, companyId), { pid });
+      const res = await run('Charge card', () => FundingService.chargeCard(leadId!, pid, companyId, actorId), { pid });
       // ⚠️ A decline is logged as loudly as a charge, and separately: on a `402` the
       // row is left un-charged and nothing moved, so a retry is a genuine second
       // attempt — a timeline showing only successes would hide a run of declines.
@@ -522,14 +636,14 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       if (res.ok) FlashMessage.success('Charged', res.message || 'The card was charged.');
       return res;
     },
-    [run, leadId, companyId, logBase, paymentFor]
+    [run, leadId, companyId, actorId, logBase, paymentFor]
   );
 
   /** Rep attestation that a down-payment check was physically taken. */
   const markCheckCollected = useCallback(
     async (pid: string): Promise<FundingActionResult> => {
       const payment = paymentFor(pid);
-      const res = await run('Collect check', () => FundingService.markCheckCollected(leadId!, pid, companyId), {
+      const res = await run('Collect check', () => FundingService.markCheckCollected(leadId!, pid, companyId, actorId), {
         pid,
       });
       // ⚠️ The only step in the module with no third-party verification — it is the
@@ -537,7 +651,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       logFundingCheckCollected({ ...logBase, payment, ok: res.ok, error: res.error?.message });
       return res;
     },
-    [run, leadId, companyId, logBase, paymentFor]
+    [run, leadId, companyId, actorId, logBase, paymentFor]
   );
 
   /**
@@ -557,7 +671,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       bankDecline: submitted?.result === 'bankDecline',
     };
     try {
-      const res = await FundingService.submitFunding(leadId, companyId);
+      const res = await FundingService.submitFunding(leadId, companyId, actorId);
       apply(res.data?.data?.funding);
       setServerBlockers(null);
       logFundingSubmitted({ ...logBase, ...shape, ok: true });
@@ -581,7 +695,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
     } finally {
       setIsSubmitting(false);
     }
-  }, [leadId, companyId, apply, refetch, report, logBase]);
+  }, [leadId, companyId, actorId, apply, refetch, report, logBase]);
 
   /**
    * Set the job outcome.
@@ -591,7 +705,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
    */
   const setResult = useCallback(
     async (result: FundingResult): Promise<FundingActionResult> => {
-      const res = await run('Result', () => FundingService.setResult(leadId!, result, companyId));
+      const res = await run('Result', () => FundingService.setResult(leadId!, result, companyId, actorId));
       // ⚠️ A Bank Decline is a lender's verdict the rep is acting on, not an opinion
       // — and it cannot be undone once the funding is submitted. Both directions are
       // logged, including a refused switch, since that says the server had no
@@ -599,7 +713,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       logFundingResultChanged({ ...logBase, result, ok: res.ok, error: res.error?.message });
       return res;
     },
-    [run, leadId, companyId, logBase]
+    [run, leadId, companyId, actorId, logBase]
   );
 
   /**
@@ -634,6 +748,8 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
     markCardOnFile,
     recordDecision,
     activateLoan,
+    reactivateLoan,
+    restoreArchivedPlan,
     chargeCard,
     markCheckCollected,
     submit,

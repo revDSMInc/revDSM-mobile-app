@@ -424,6 +424,60 @@ export const logFundingLoanActivated = (
     ...(o.ok ? {} : { outcome: 'failed', ...(o.error ? { error: o.error } : {}) }),
   });
 
+/**
+ * A DRIFTED loan was re-settled against what the job needs now.
+ *
+ * ⚠️ Its own event rather than a second `funding_loan_activated`: the lender was
+ * already committed to `from`, and this records that they have been asked to commit
+ * to `to` instead. A timeline that showed two identical "activated" rows would hide
+ * the fact that the amount moved — which is the only thing that happened.
+ */
+export const logFundingLoanReactivated = (
+  o: FundingLogBase & {
+    payment: FundingLogPayment;
+    /** The settled amount before this call (the row's `baseline`). */
+    from?: number;
+    /** What the job needs now (the row's `liveUsage`). */
+    to?: number;
+    ok: boolean;
+    error?: string;
+  },
+) =>
+  fire('update', o, {
+    action: o.ok ? 'funding_loan_reactivated' : 'funding_loan_reactivate_failed',
+    ...paymentMeta(o.payment),
+    ...(o.from !== undefined ? { previousAmount: o.from } : {}),
+    ...(o.to !== undefined ? { newAmount: o.to } : {}),
+    ...(o.ok ? {} : { outcome: 'failed', ...(o.error ? { error: o.error } : {}) }),
+  });
+
+/**
+ * An archived plan was brought back onto a row.
+ *
+ * ⚠️ The restore is SYMMETRIC — whatever was current goes onto the shelf in
+ * exchange — so this row names BOTH plans. Recording only the one restored would
+ * leave no record of what was displaced, and the next restore would look like it
+ * came from nowhere.
+ */
+export const logFundingPlanRestored = (
+  o: FundingLogBase & {
+    payment: FundingLogPayment;
+    /** The plan being brought back. */
+    restored?: string;
+    /** The plan it displaced, which is now archived in its place. */
+    displaced?: string;
+    ok: boolean;
+    error?: string;
+  },
+) =>
+  fire('update', o, {
+    action: o.ok ? 'funding_plan_restored' : 'funding_plan_restore_failed',
+    ...paymentMeta(o.payment),
+    ...(o.restored ? { restoredMethod: o.restored } : {}),
+    ...(o.displaced ? { displacedMethod: o.displaced } : {}),
+    ...(o.ok ? {} : { outcome: 'failed', ...(o.error ? { error: o.error } : {}) }),
+  });
+
 // ── result and submit ──────────────────────────────────────────────────────
 
 /**

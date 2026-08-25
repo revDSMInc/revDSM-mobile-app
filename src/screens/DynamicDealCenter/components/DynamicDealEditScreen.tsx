@@ -1870,11 +1870,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 </Text>
               )}
 
-              {/* PAYMENT — the contract and everything paying it, in the same recessed
-                  panel the Result Lead sheet uses. The panel colour is not decoration:
-                  PaymentRowsGroup notches its title out of FUND.PANEL, so the label
-                  only reads correctly on that background. */}
-              <View style={{ backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 18, paddingHorizontal: 12, paddingTop: 14, paddingBottom: 4, marginTop: 4, marginBottom: 12 }}>
+              {/* PAYMENT — the contract and everything paying it.
+                  ⚠️ Deliberately NOT the Result Lead sheet's recessed FUND.PANEL block.
+                  The My Deals mockup puts a plain bold heading over free-standing
+                  lines directly on this card, so the groups render `layout="plain"`
+                  and the panel would be a second, competing container around them. */}
+              <View style={{ marginTop: 4, marginBottom: 4 }}>
                 {/* How the contract is being paid. Locked once a payment has started
                     — see switchPayMode. */}
                 <SegmentedChoice<PayMode>
@@ -1904,6 +1905,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                     {decisionBanners}
                     <PaymentRowsGroup
                       title="Upfront"
+                      layout="plain"
+                      onRestore={funding.restoreArchivedPlan}
                       total={downTotal}
                       rows={upRows}
                       allRows={activeRows}
@@ -1934,6 +1937,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   <>
                     <PaymentRowsGroup
                       title="Down Payment"
+                      layout="plain"
+                      onRestore={funding.restoreArchivedPlan}
                       total={downTotal}
                       rows={downRows}
                       allRows={activeRows}
@@ -1954,6 +1959,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
                     <PaymentRowsGroup
                       title="Balance"
+                      layout="plain"
+                      onRestore={funding.restoreArchivedPlan}
                       total={balanceTotal}
                       rows={balRows}
                       allRows={activeRows}
@@ -2030,6 +2037,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
               onMarkCollected={funding.markCheckCollected}
               onChargeCard={funding.chargeCard}
               onActivate={funding.activateLoan}
+              onReactivate={funding.reactivateLoan}
               onEditPayments={goPricing}
               onResultAsBankDecline={() => handleSetFundingResult('bank_decline')}
               onUndoBankDecline={() => handleSetFundingResult('sale')}

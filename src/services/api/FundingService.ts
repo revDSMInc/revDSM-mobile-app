@@ -101,8 +101,108 @@ export interface FundingPaymentRow {
   syncedAt?: string | null;
   /** Set once a lender decision lands; the row's amount/method/kind then freeze. */
   lockedAt?: string | null;
-  /** Opaque provider bag — do not read or display. */
-  providerState?: unknown;
+
+  /**
+   * ── drift ────────────────────────────────────────────────────────────────
+   * `baseline` is the amount as of the last settlement (the original approval, or
+   * the last reactivation); `liveUsage` is what the job needs NOW after the rep
+   * re-priced it. `drifted` is the server's own comparison of the two.
+   *
+   * ⚠️ This is the whole reason `reactivate` exists, and it is the case the deal-edit
+   * wizard creates constantly: an addendum that moves the contract price moves what
+   * the loan has to carry, and until the row is re-settled the lender is still
+   * committed to the OLD number. Reading `drifted` is what lets the screen say so
+   * instead of quietly showing a figure the lender has not agreed to.
+   */
+  baseline?: number | null;
+  liveUsage?: number | null;
+  drifted?: boolean;
+
+  /** The lender's ceiling — a short approval may still be raised up to this. */
+  approvedCeiling?: number | null;
+  /** How many times the card has been charged (every attempt, declines included). */
+  chargeAttempts?: number;
+  /** Who marked a check collected. Read-only. */
+  collectedBy?: { userId?: string; name?: string; role?: string } | null;
+  /** The most recent card decline, with the processor's advice. Read-only. */
+  lastDecline?: FundingDecline | null;
+
+  /**
+   * Plans this row has been swapped away from, **newest first** — full snapshots,
+   * so nothing is lost when the rep replaces a lender.
+   *
+   * ⚠️ `restore` is SYMMETRIC: whatever is current goes onto the shelf in exchange,
+   * so a restore can itself be undone. That is why this is a list of snapshots
+   * rather than a single "previous".
+   */
+  archived?: FundingArchivedPlan[];
+
+  /** Per-row stage log — see `FundingRowEvent`. */
+  events?: FundingRowEvent[];
+
+  /** Opaque provider bag. ⚠️ Only `cardBrand` / `cardLast4` are safe to display. */
+  providerState?: { cardBrand?: string; cardLast4?: string; [k: string]: unknown } | null;
+}
+
+/**
+ * One archived plan on a row, as `POST …/restore` addresses it.
+ *
+ * ⚠️ Restore is keyed by `archivedId`, never by position: the list is symmetric, so
+ * a restore pushes the current plan on and the indices all move.
+ */
+export interface FundingArchivedPlan {
+  archivedId: string;
+  method: string;
+  type?: FundingMethodType;
+  amount?: number;
+  decision?: FundingDecision | null;
+  approvedAmt?: number | null;
+  archivedAt?: string;
+  [k: string]: unknown;
+}
+
+/**
+ * A card decline, kept on the row after the 402 has been dismissed.
+ *
+ * ⚠️ `action` is the field that matters — it decides which button the screen may
+ * offer next. `providerMessage` is Stripe's own wording and is for LOGS: the
+ * decline codes must never be repeated to the cardholder.
+ */
+export interface FundingDecline {
+  declineCode?: string;
+  action?: 'retry' | 'new_card' | 'recapture_card' | 'contact_issuer';
+  retryable?: boolean;
+  /** Safe to show the rep. */
+  message?: string;
+  /** ⚠️ For logs only — never shown to the cardholder. */
+  providerMessage?: string;
+  at?: string;
+}
+
+/**
+ * One stage of a row as it completed.
+ *
+ * ⚠️ Deduplicated by the server EXCEPT `chargeFailed`, which records every attempt
+ * — so the count of those is a real retry count, not a rendering artefact.
+ *
+ * ⚠️ Deliberately SEPARATE from `attemptHistory`: that one is per JOB and
+ * lender-facing (what was asked, what was granted); this is per ROW and mechanical.
+ * Folding them together loses which row a stage belonged to.
+ */
+export interface FundingRowEvent {
+  type:
+    | 'linkSent'
+    | 'cardOnFile'
+    | 'charged'
+    | 'chargeFailed'
+    | 'decision'
+    | 'activated'
+    | 'collected'
+    | 'deposited'
+    | 'applicationClosed';
+  at?: string;
+  by?: { userId?: string; name?: string; role?: string } | null;
+  [k: string]: unknown;
 }
 
 /**
@@ -148,6 +248,14 @@ export interface FundingRecord {
   contractPrice: number;
   /** Persisted but never read or written by any endpoint. Ignore it (spec §3). */
   contractPriceUnlocked?: boolean;
+  /**
+   * The saved structure. ⚠️ Read it rather than inferring one: `inferPayMode` only
+   * guesses from the rows, and a contract paid in full with a single down row is
+   * indistinguishable from an upfront one that way.
+   *
+   * Omitting it from a `PUT` leaves the stored structure alone.
+   */
+  payMode?: 'split' | 'upfront';
   status: FundingRecordStatus;
   submittedAt?: string | null;
   submittedBy?: string | null;
@@ -170,6 +278,40 @@ export interface FundingUpsertRow {
 }
 
 type FundingResponse = AxiosResponse<FundingEnvelope<{ funding: FundingRecord }>>;
+
+/**
+ * `sync-all` answers with the record PLUS what the sweep did.
+ *
+ * ⚠️ `problems` is per row and never fails the call — one lender being unreachable
+ * must not stop the other two rows being refreshed, which is the whole reason this
+ * exists as one endpoint instead of a loop over `sync`.
+ */
+export interface FundingSyncAllResult {
+  funding: FundingRecord;
+  /** How many rows were pollable and got asked. */
+  polled?: number;
+  /** How many came back different. */
+  changed?: number;
+  /** Per-row failures, already worded for display. */
+  problems?: string[];
+}
+
+type FundingSyncAllResponse = AxiosResponse<FundingEnvelope<FundingSyncAllResult>>;
+
+/**
+ * The company's down-payment ceiling.
+ *
+ * ⚠️ The SERVER enforces this (it is the `422` a `PUT` can now answer with), so the
+ * app does not have to. Reading it is purely so the rep sees the ceiling beside the
+ * input instead of discovering it by being refused.
+ */
+export interface DownPaymentLimit {
+  /** Percent of the contract price, e.g. `50`. */
+  maxPercentage?: number;
+  /** Optional per-state overrides, keyed by state code. */
+  states?: Record<string, number>;
+  [k: string]: unknown;
+}
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -320,20 +462,48 @@ export const FundingEndpoints = {
   activate: (leadId: string, pid: string) => `${row(leadId, pid)}/activate`,
   charge: (leadId: string, pid: string) => `${row(leadId, pid)}/charge`,
   checkCollected: (leadId: string, pid: string) => `${row(leadId, pid)}/check-collected`,
+  /** Re-settle a drifted row against what the job needs now. */
+  reactivate: (leadId: string, pid: string) => `${row(leadId, pid)}/reactivate`,
+  /** Bring an archived plan back. Symmetric — the current plan goes onto the shelf. */
+  restore: (leadId: string, pid: string) => `${row(leadId, pid)}/restore`,
+  /** Every pollable row in ONE call. Lead-scoped, not row-scoped. */
+  syncAll: (leadId: string) => `${base(leadId)}/sync-all`,
   submit: (leadId: string) => `${base(leadId)}/submit`,
   result: (leadId: string) => `${base(leadId)}/result`,
 } as const;
 
-/** Every funding call carries the company header. */
-const cfg = (companyId?: string) => (companyId ? { headers: { companyid: companyId } } : undefined);
+/**
+ * The company's down-payment ceiling. ⚠️ NOT under the funding base — it is a
+ * company config read, and it needs no permission beyond the JWT.
+ */
+export const DOWN_PAYMENT_LIMIT_ENDPOINT = '/company/v1/down-payment-limit/sales';
+
+/**
+ * Headers every funding call carries.
+ *
+ * `companyid` is REQUIRED — the API answers `400` without it, and scoping is by
+ * lead within that company (a lead outside it is a `404`, never a `403`).
+ *
+ * ⚠️ `userId` is what puts the REP in the audit trail. It is optional to the API,
+ * but absent it every action on the record is attributed to "RevDSM" (system) — so a
+ * check marked collected, a card charged and a loan activated all lose the name of
+ * the person who did them. It is sent on every call for that reason, not just the
+ * ones that obviously write.
+ */
+const cfg = (companyId?: string, userId?: string) => {
+  const headers: Record<string, string> = {};
+  if (companyId) headers.companyid = companyId;
+  if (userId) headers.userId = userId;
+  return Object.keys(headers).length ? { headers } : undefined;
+};
 
 export const FundingService = {
   /**
    * The whole record. Safe to call on first open — with nothing saved yet the
    * server answers with a synthetic empty record (no `_id`) rather than a 404.
    */
-  getFunding: (leadId: string, companyId?: string): Promise<FundingResponse> =>
-    api.get(FundingEndpoints.record(leadId), cfg(companyId)),
+  getFunding: (leadId: string, companyId?: string, userId?: string): Promise<FundingResponse> =>
+    api.get(FundingEndpoints.record(leadId), cfg(companyId, userId)),
 
   /**
    * Create or replace the payment rows — the save for the whole pricing screen.
@@ -354,17 +524,19 @@ export const FundingService = {
    */
   savePayments: (
     leadId: string,
-    payload: { contractPrice: number; payments: FundingUpsertRow[] },
-    companyId?: string
-  ): Promise<FundingResponse> => api.put(FundingEndpoints.record(leadId), payload, cfg(companyId)),
+    payload: { contractPrice: number; payments: FundingUpsertRow[]; payMode?: 'split' | 'upfront' },
+    companyId?: string,
+    userId?: string
+  ): Promise<FundingResponse> => api.put(FundingEndpoints.record(leadId), payload, cfg(companyId, userId)),
 
   /** One row. ⚠️ Returns `data.payment`, not `data.funding`. */
   getPayment: (
     leadId: string,
     pid: string,
-    companyId?: string
+    companyId?: string,
+    userId?: string
   ): Promise<AxiosResponse<FundingEnvelope<{ payment: FundingPaymentRow }>>> =>
-    api.get(FundingEndpoints.payment(leadId, pid), cfg(companyId)),
+    api.get(FundingEndpoints.payment(leadId, pid), cfg(companyId, userId)),
 
   /**
    * The hosted-page URL. **Marks nothing** — call it when the send modal opens.
@@ -383,9 +555,10 @@ export const FundingService = {
   getLink: (
     leadId: string,
     pid: string,
-    companyId?: string
+    companyId?: string,
+    userId?: string
   ): Promise<AxiosResponse<FundingEnvelope<{ url: string; funding: FundingRecord }>>> =>
-    api.post(FundingEndpoints.link(leadId, pid), undefined, cfg(companyId)),
+    api.post(FundingEndpoints.link(leadId, pid), undefined, cfg(companyId, userId)),
 
   /**
    * Record that a send actually happened → Link Sent (step 1). Cards and loans only.
@@ -404,13 +577,14 @@ export const FundingService = {
     leadId: string,
     pid: string,
     body: { channel: FundingChannel; destination?: string },
-    companyId?: string
+    companyId?: string,
+    userId?: string
   ): Promise<FundingResponse> =>
     api.post(
       FundingEndpoints.linkSent(leadId, pid),
       // The spec is explicit that QR must omit `destination`, not send it empty.
       body.channel === 'qr' ? { channel: 'qr' } : { channel: body.channel, destination: body.destination },
-      cfg(companyId)
+      cfg(companyId, userId)
     ),
 
   /**
@@ -420,8 +594,8 @@ export const FundingService = {
    * The spec says to prefer `sync` in normal operation; this exists for a webhook
    * or an explicit out-of-band confirmation.
    */
-  markCardOnFile: (leadId: string, pid: string, companyId?: string): Promise<FundingResponse> =>
-    api.post(FundingEndpoints.cardOnFile(leadId, pid), { cardOnFile: true }, cfg(companyId)),
+  markCardOnFile: (leadId: string, pid: string, companyId?: string, userId?: string): Promise<FundingResponse> =>
+    api.post(FundingEndpoints.cardOnFile(leadId, pid), { cardOnFile: true }, cfg(companyId, userId)),
 
   /**
    * Record a lender decision directly. Financing only. Appends to `attemptHistory`
@@ -437,12 +611,13 @@ export const FundingService = {
     leadId: string,
     pid: string,
     body: { decision: FundingDecision; approvedAmt?: number },
-    companyId?: string
+    companyId?: string,
+    userId?: string
   ): Promise<FundingResponse> =>
     api.post(
       FundingEndpoints.decision(leadId, pid),
       body.decision === 'short' ? body : { decision: body.decision },
-      cfg(companyId)
+      cfg(companyId, userId)
     ),
 
   /**
@@ -452,8 +627,18 @@ export const FundingService = {
    * The 200 `message` says what landed: `No change yet`, `Card confirmed on file`,
    * `Lender approved in full` / `…part of the request` / `Lender declined`.
    */
-  syncPayment: (leadId: string, pid: string, companyId?: string): Promise<FundingResponse> =>
-    api.post(FundingEndpoints.sync(leadId, pid), undefined, cfg(companyId)),
+  syncPayment: (leadId: string, pid: string, companyId?: string, userId?: string): Promise<FundingResponse> =>
+    api.post(FundingEndpoints.sync(leadId, pid), undefined, cfg(companyId, userId)),
+
+  /**
+   * Poll EVERY pollable row in one request.
+   *
+   * ⚠️ Prefer this over a loop of `syncPayment`: one row failing never fails the
+   * sweep (the failures come back itemised in `problems`), where a loop stops — or
+   * worse, half-completes and leaves the screen describing a mix of two moments.
+   */
+  syncAll: (leadId: string, companyId?: string, userId?: string): Promise<FundingSyncAllResponse> =>
+    api.post(FundingEndpoints.syncAll(leadId), undefined, cfg(companyId, userId)),
 
   /**
    * Activate an approved loan → `activated: true`, step 3.
@@ -461,8 +646,35 @@ export const FundingService = {
    * `409` when there is no decision yet, when the loan was declined, or when a
    * short approval's shortfall is still unassigned (cover it with `savePayments`).
    */
-  activateLoan: (leadId: string, pid: string, companyId?: string): Promise<FundingResponse> =>
-    api.post(FundingEndpoints.activate(leadId, pid), undefined, cfg(companyId)),
+  activateLoan: (leadId: string, pid: string, companyId?: string, userId?: string): Promise<FundingResponse> =>
+    api.post(FundingEndpoints.activate(leadId, pid), undefined, cfg(companyId, userId)),
+
+  /**
+   * Re-settle a DRIFTED row against what the job needs now — the lender is
+   * re-committed to `liveUsage` and `baseline` moves to match.
+   *
+   * The guards are worth pre-empting in the UI rather than discovering: bank rows
+   * only, a decision must already exist, it is refused on a declined row, and it
+   * answers `409` when the row already matches (i.e. `drifted` is false).
+   */
+  reactivateLoan: (leadId: string, pid: string, companyId?: string, userId?: string): Promise<FundingResponse> =>
+    api.post(FundingEndpoints.reactivate(leadId, pid), undefined, cfg(companyId, userId)),
+
+  /**
+   * Bring an archived plan back onto a row.
+   *
+   * ⚠️ **Symmetric**: whatever is current is archived in exchange, so nothing is
+   * lost and the restore can itself be undone. Addressed by `archivedId` and never
+   * by position — the list reorders on every swap.
+   */
+  restoreArchivedPlan: (
+    leadId: string,
+    pid: string,
+    archivedId: string,
+    companyId?: string,
+    userId?: string
+  ): Promise<FundingResponse> =>
+    api.post(FundingEndpoints.restore(leadId, pid), { archivedId }, cfg(companyId, userId)),
 
   /**
    * Charge a card that is on file. ⚠️ **This moves real money.**
@@ -471,15 +683,15 @@ export const FundingService = {
    * install. `200 Card already charged` is idempotent success. On `402` the row is
    * NOT marked charged and nothing moved, so a retry is a genuine new attempt.
    */
-  chargeCard: (leadId: string, pid: string, companyId?: string): Promise<FundingResponse> =>
-    api.post(FundingEndpoints.charge(leadId, pid), undefined, cfg(companyId)),
+  chargeCard: (leadId: string, pid: string, companyId?: string, userId?: string): Promise<FundingResponse> =>
+    api.post(FundingEndpoints.charge(leadId, pid), undefined, cfg(companyId, userId)),
 
   /**
    * Mark a down-payment check physically taken → `collected: true`, step 1.
    * The only step in the system with no third-party verification.
    */
-  markCheckCollected: (leadId: string, pid: string, companyId?: string): Promise<FundingResponse> =>
-    api.post(FundingEndpoints.checkCollected(leadId, pid), undefined, cfg(companyId)),
+  markCheckCollected: (leadId: string, pid: string, companyId?: string, userId?: string): Promise<FundingResponse> =>
+    api.post(FundingEndpoints.checkCollected(leadId, pid), undefined, cfg(companyId, userId)),
 
   /**
    * Submit the funding.
@@ -489,8 +701,8 @@ export const FundingService = {
    * **rendered verbatim** so the rep sees what is missing rather than a generic
    * "not ready". A `bankDecline` result submits immediately with no blocker check.
    */
-  submitFunding: (leadId: string, companyId?: string): Promise<FundingResponse> =>
-    api.post(FundingEndpoints.submit(leadId), undefined, cfg(companyId)),
+  submitFunding: (leadId: string, companyId?: string, userId?: string): Promise<FundingResponse> =>
+    api.post(FundingEndpoints.submit(leadId), undefined, cfg(companyId, userId)),
 
   /**
    * Set the job outcome. Also updates the lead's status, upserts `LeadOutcome`
@@ -500,8 +712,21 @@ export const FundingService = {
    * `Declined` entry in `attemptHistory`, so the app must not offer it until one
    * exists, and it cannot be undone once the funding is submitted.
    */
-  setResult: (leadId: string, result: FundingResult, companyId?: string): Promise<FundingResponse> =>
-    api.post(FundingEndpoints.result(leadId), { result }, cfg(companyId)),
+  setResult: (leadId: string, result: FundingResult, companyId?: string, userId?: string): Promise<FundingResponse> =>
+    api.post(FundingEndpoints.result(leadId), { result }, cfg(companyId, userId)),
+
+  /**
+   * The company's maximum down payment, so the rep can be shown the ceiling
+   * instead of being refused at Confirm by the `PUT`'s `422`.
+   *
+   * ⚠️ Advisory ONLY. The server is the enforcer; a client-side cap that disagreed
+   * with it would either block a legal down payment or promise an illegal one.
+   */
+  getDownPaymentLimit: (
+    companyId?: string,
+    userId?: string
+  ): Promise<AxiosResponse<FundingEnvelope<DownPaymentLimit>>> =>
+    api.get(DOWN_PAYMENT_LIMIT_ENDPOINT, cfg(companyId, userId)),
 };
 
 /**
