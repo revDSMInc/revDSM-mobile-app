@@ -183,7 +183,7 @@ function buildLeadHeading(leadDetails: any, leadId: string): string {
  * unassigned or window-less job degrades to what IS known instead of reading as a
  * broken row.
  */
-function buildInstallerLeadHeading(leadDetails: any, leadId: string): string {
+export function buildInstallerLeadHeading(leadDetails: any, leadId: string): string {
   const assignment = leadDetails?.installerAssignment;
   // `leadId` is the same fallback the sale branch uses, so a job whose number has not
   // been issued yet is still identified rather than opening with the customer name.
@@ -203,7 +203,7 @@ function getStatusProps(status?: string) {
 }
 
 /** Human lead id — issued leads carry `leadId`, self-gens carry `selfGenLeadId`. */
-function getLeadIdDisplay(leadDetails: any) {
+export function getLeadIdDisplay(leadDetails: any) {
   return leadDetails?.leadId || leadDetails?.selfGenLeadId || 'N/A';
 }
 

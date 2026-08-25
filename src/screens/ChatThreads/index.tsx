@@ -21,6 +21,8 @@ import {
   ChannelThreadItem,
   DateSectionHeader,
   groupChatsByLeadDate,
+  buildInstallerLeadHeading,
+  getLeadIdDisplay,
 } from '../../widgets/components/chat/ThreadItems';
 import { useChatThreads } from '../../hooks/useChatThreads';
 import CreateChannelModal from '../../widgets/modals/chat/CreateChannelModal';
@@ -144,15 +146,21 @@ export default function ChatThreadsScreen({ navigation }: any) {
     navigation.navigate('ChatDetail', {
       leadId: item.leadDetails?._id,
       chatId: item._id || item.id,
-      customerName: (() => {
-        const dateStr = item.leadDetails?.leadDate
-          ? format(new Date(item.leadDetails.leadDate), 'MM.dd.yy')
-          : '';
-        return (
-          `${item.leadDetails?.office || ''} Lead ${dateStr} - ${item.leadDetails?.leadId || 'N/A'}`.trim() ||
-          'Discussion'
-        );
-      })(),
+      // The header inside the chat must read as the row that opened it. An installer
+      // row is `{jobNumber} {lastName} {timeWindow}`, so the same builder produces the
+      // title here - imported rather than re-derived, since two copies of this string
+      // is exactly how the list and the header came to disagree.
+      customerName: isInstaller
+        ? buildInstallerLeadHeading(item.leadDetails, getLeadIdDisplay(item.leadDetails))
+        : (() => {
+            const dateStr = item.leadDetails?.leadDate
+              ? format(new Date(item.leadDetails.leadDate), 'MM.dd.yy')
+              : '';
+            return (
+              `${item.leadDetails?.office || ''} Lead ${dateStr} - ${item.leadDetails?.leadId || 'N/A'}`.trim() ||
+              'Discussion'
+            );
+          })(),
       chatType: 'lead',
       initialParticipants: item.participants || [],
       previewImage: item.leadDetails?.previewImage,
