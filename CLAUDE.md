@@ -4446,8 +4446,44 @@ has none, a one-field pair staying a plain row alongside untouched flat rows, an
 producing nothing.
 
 tsc 44 (baseline unchanged); `dynamic-deal-diff.ts` is identical to its HEAD eslint baseline (2
-pre-existing errors) and `DynamicDealEditScreen.tsx` is at 147 warnings, all `react-native/no-inline-styles`
+pre-existing errors) and `DynamicDealEditScreen.tsx` is at 148 warnings, all `react-native/no-inline-styles`
 — the only rule that file carries.
+
+##### …and an edited combination is described in FULL, not only by what moved
+
+Follow-up: *"see in 2 boxes leaf filter profile and gutter opening width is not showing."* `Combination
+#3` (an ADD) listed all five of its measurements; `#1` and `#2` (edits) listed three each, because a
+pair only ever emitted rows for fields that CHANGED. The two identifying fields — `Gutter Opening
+Width(4&5)` and `LeafFilter Profile` — were already sold, so they were absent, and the two cards became
+indistinguishable from each other.
+
+**New `comboFieldsForPair(orig, next, …)`** returns the whole combination in config order, with `from`
+on the measurements that moved and **`unchanged: true`** on the rest. The renderer paints an unchanged
+value neutral `#334155` — green would read as newly entered.
+
+- ⚠️ **Carried on the pair's FIRST row only**, not on every changed field, so one combination
+  contributes one breakdown to the payload.
+- ⚠️ **Display only, again.** `field`/`from`/`to` on the individual rows are untouched — they are what
+  the customer signs, and they still list only real changes. Asserted directly.
+- **A cleared measurement is kept** (value `—`) rather than vanishing, so dropping a footage to nothing
+  still reads as a removal.
+- `groupComboRows` falls back to the changed rows when no breakdown is present, so nothing breaks on a
+  row set that predates this.
+
+⚠️ **`comboFields`' cell separator changed from `' '` to `' · '`**, matching `formatChangeFieldLabel`.
+The two joins differed, so an ADDED combination read `Measurements Front · 2nd Story` while an edited
+one read `Measurements · Front · 2nd Story` — the same field, two ways, on one screen. This also flows
+into `describeCombo`, i.e. into the submitted addendum's text; it is a separator, not a value.
+
+⚠️ **A pair that changed ONE field still stays a plain row.** The "a card holding a single value is
+heavier" reasoning no longer strictly applies now that the card is always full, but widening it would
+re-card edits nobody reported — left alone deliberately.
+
+Verified with 6 tests: the repro (all five measurements named, the three untouched ones flagged, only
+the two real edits carrying a `from`), the SIGNED rows asserted unchanged and the breakdown counted
+once, a cleared measurement still reported, an added combination still carrying no previous values and
+no `unchanged` flags, both card kinds naming a grid cell identically, and an untouched build producing
+nothing.
 
 ### Lead Center pulls to refresh
 

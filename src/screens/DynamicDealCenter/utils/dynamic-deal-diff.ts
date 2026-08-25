@@ -321,6 +321,14 @@ export interface ComboField {
    * an EDIT of an existing combination; an added/removed one has nothing to compare to.
    */
   from?: string;
+  /**
+   * This measurement did not change — carried so an EDITED combination is still
+   * described in full. Without them the card lists only what moved, and a combination
+   * whose gutter width and profile were already set becomes unidentifiable: two cards
+   * reading `Gutter Profile / LeafFilter Color / Measurements` with no way to tell
+   * which product each is. Rendered plainly, so nothing reads as newly entered.
+   */
+  unchanged?: boolean;
 }
 
 export interface BuildChange {
@@ -419,7 +427,12 @@ function comboFields(
     if (!resolved) return;
     // A grid cell names its coordinate, so a removed combination is described by the
     // measurements it actually held ("Location Left Side · 3rd Story 33").
-    const label = [(resolved.meta.label || '').trim(), resolved.cellLabel].filter(Boolean).join(' ');
+    // ⚠️ ` · `, matching `formatChangeFieldLabel`. The two joins used to differ, so an
+    // ADDED combination read `Measurements Front · 2nd Story` while an edited one read
+    // `Measurements · Front · 2nd Story` — the same field, two ways, on one screen.
+    const label = [(resolved.meta.label || '').trim(), resolved.cellLabel]
+      .filter(Boolean)
+      .join(' · ');
     rows.push({ order: resolved.meta.order ?? Number.MAX_SAFE_INTEGER, label, value });
   });
   // Stable: equal orders (a field the map never saw) keep their read order.
@@ -427,6 +440,41 @@ function comboFields(
     .map((r, i) => ({ ...r, i }))
     .sort((a, b) => a.order - b.order || a.i - b.i)
     .map(({ label, value }) => ({ label, value }));
+}
+
+/**
+ * An EDITED combination in full: every measurement it now holds, in config order, with
+ * `from` on the ones that moved and `unchanged` on the rest.
+ *
+ * ⚠️ Cleared measurements are kept too (value `—`), or dropping a footage to nothing
+ * would simply vanish from the card rather than reading as a removal.
+ */
+function comboFieldsForPair(
+  orig: ComboSnapshot,
+  next: ComboSnapshot,
+  scopeId: string,
+  labels: Record<string, FieldLabelMeta>
+): ComboField[] {
+  const rows: Array<{ order: number; i: number; field: ComboField }> = [];
+  const keys = [...new Set([...Object.keys(next.values), ...Object.keys(orig.values)])];
+  keys.forEach((fieldKey, i) => {
+    const resolved = resolveKeyMeta(scopeId, fieldKey, labels);
+    if (!resolved) return;
+    const label = [(resolved.meta.label || '').trim(), resolved.cellLabel]
+      .filter(Boolean)
+      .join(' · ');
+    const fromVal = orig.values[fieldKey] || '';
+    const toVal = next.values[fieldKey] || '';
+    rows.push({
+      order: resolved.meta.order ?? Number.MAX_SAFE_INTEGER,
+      i,
+      field:
+        fromVal === toVal
+          ? { label, value: toVal || '—', unchanged: true }
+          : { label, value: toVal || '—', from: fromVal || '—' },
+    });
+  });
+  return rows.sort((a, b) => a.order - b.order || a.i - b.i).map((r) => r.field);
 }
 
 /**
@@ -616,11 +664,15 @@ export function groupComboRows(changes: BuildChange[]): ReviewEntry[] {
       addBlock(head, {
         title: chip,
         kind: 'change',
-        rows: run.map((c) => ({
-          label: c.field.slice(prefix ? prefix.length + 3 : 0) || c.field,
-          value: c.to,
-          from: c.from,
-        })),
+        // The whole combination when the diff supplied it, so the card still names the
+        // product; the changed rows alone are the fallback for a row set that predates it.
+        rows:
+          run.find((c) => c.comboFields?.length)?.comboFields ||
+          run.map((c) => ({
+            label: c.field.slice(prefix ? prefix.length + 3 : 0) || c.field,
+            value: c.to,
+            from: c.from,
+          })),
       });
       continue;
     }
@@ -745,6 +797,15 @@ export function computeDynamicBuildChanges(
       // their rows reads `LeafFilter · <field>` and the label alone cannot tell them
       // apart. Without this key the renderer would merge two gutter sizes into one card.
       const comboKey = `${groupKey}#${ni}`;
+      // ⚠️ Carried on the pair's FIRST row only — once per combination, not once per
+      // changed field. Display only: the review renders the whole combination from it
+      // while `field`/`from`/`to` on the individual rows stay what the customer signs.
+      let comboAll: ComboField[] | undefined = comboFieldsForPair(
+        origCombos[oi],
+        nextCombos[ni],
+        scopeId,
+        labels
+      );
       // ⚠️ CONFIG order, not the stored object's. The keys come from two combinations
       // merged into a Set, so their order is neither what the rep entered nor stable
       // between two combinations of the same section — the same defect `comboFields`
@@ -768,7 +829,9 @@ export function computeDynamicBuildChanges(
             from: fromVal || '—',
             to: toVal || '—',
             comboKey,
+            ...(comboAll ? { comboFields: comboAll } : null),
           });
+          comboAll = undefined;
         });
     });
 
