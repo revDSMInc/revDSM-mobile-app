@@ -42,7 +42,12 @@ import {
   parsePrice,
   type Tiers,
 } from '../utils/dynamic-deal-pricing';
-import { computeDynamicBuildChanges, type BuildChangeKind } from '../utils/dynamic-deal-diff';
+import {
+  computeDynamicBuildChanges,
+  groupComboRows,
+  type BuildChangeKind,
+  type ComboBlock,
+} from '../utils/dynamic-deal-diff';
 import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
@@ -2081,9 +2086,23 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 {buildChangeGroups.map((group) => (
                   <View key={group.vertical} style={{ marginBottom: 10 }}>
                     <Text style={{ fontSize: 11, fontWeight: '900', color: '#64748B', marginBottom: 4 }}>{group.vertical}</Text>
-                    {group.changes.map((c, i) => (
-                      <ReviewRow key={`${c.field}-${i}`} label={c.field} from={c.from} to={c.to} kind={c.kind} />
-                    ))}
+                    {groupComboRows(group.changes).map((entry, i) =>
+                      entry.blocks ? (
+                        <ComboSectionCard
+                          key={`${entry.label}-${i}`}
+                          label={entry.label}
+                          blocks={entry.blocks}
+                        />
+                      ) : (
+                        <ReviewRow
+                          key={`${entry.change.field}-${i}`}
+                          label={entry.change.field}
+                          from={entry.change.from}
+                          to={entry.change.to}
+                          kind={entry.change.kind}
+                        />
+                      )
+                    )}
                   </View>
                 ))}
                 {scheduleChanged && (
@@ -2517,6 +2536,64 @@ function TierRow({ tiers, highlight }: { tiers: Tiers; highlight?: boolean }) {
   );
 }
 
+/**
+ * One section's combinations, laid out as the portal's build card lays them out: a
+ * bordered panel headed by the section, holding `Combination #1`, `Combination #2`, …
+ * each as a tinted table of its measurements.
+ *
+ * Every combination of a section sits in ONE panel — two panels for one section read as
+ * two products, which is the thing this replaced.
+ */
+function ComboSectionCard({ label, blocks }: { label: string; blocks: ComboBlock[] }) {
+  return (
+    <View style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+      {!!label && <Text style={styles.comboSectionTitle}>{label}</Text>}
+      <View style={styles.comboOuter}>
+        {blocks.map((block, bi) => {
+          // A combination dropped from (or added to) the build is not an edit of a
+          // value, so it must not read as one — the eyebrow names the operation, and a
+          // removal's values stay neutral rather than showing a green "new value" the
+          // rep never entered.
+          const eyebrow =
+            block.kind === 'removed' ? 'REMOVED' : block.kind === 'added' ? 'ADDED' : 'UPDATED';
+          const valueColor = block.kind === 'removed' ? '#94A3B8' : '#15803D';
+          return (
+            <View key={`${block.title}-${bi}`} style={bi ? styles.comboBlockSpaced : undefined}>
+              <View style={styles.comboBlockHead}>
+                <Text style={styles.comboBlockTitle}>{block.title}</Text>
+                <Text
+                  style={[
+                    styles.comboBlockKind,
+                    block.kind === 'removed' ? { color: '#DC2626' } : null,
+                  ]}
+                >
+                  {eyebrow}
+                </Text>
+              </View>
+              <View style={styles.comboCard}>
+                {block.rows.map((f, i) => (
+                  <View key={`${f.label}-${i}`} style={styles.comboRow}>
+                    {/* `flexShrink` on BOTH columns, so a long label wraps instead of
+                        shunting the value off the right edge of a phone. */}
+                    <Text style={styles.comboLabel}>{f.label}</Text>
+                    <View style={{ flexShrink: 1 }}>
+                      {/* Only an EDIT has a previous value; an em dash means the field
+                          was empty before, and striking one reads as "something was
+                          there". */}
+                      {!!f.from && f.from !== '—' && <Text style={styles.comboFrom}>{f.from}</Text>}
+                      <Text style={[styles.comboValue, { color: valueColor }]}>{f.value}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 function ReviewRow({
   label,
   from,
@@ -2528,13 +2605,12 @@ function ReviewRow({
   to: string;
   kind?: BuildChangeKind;
 }) {
-  // A whole combination dropped from (or added to) the build is not an edit of a
-  // value, so it must not read as one — the eyebrow names the operation instead
-  // of the generic "NEW", and a removal's value column stays neutral rather than
-  // showing a green "new value" the rep never entered.
+  // A combination the diff could not break out (no resolvable values) still lands here,
+  // so the operation eyebrows are kept.
   const eyebrow = kind === 'removed' ? 'REMOVED' : kind === 'added' ? 'ADDED' : 'NEW';
   const eyebrowColor = kind === 'removed' ? '#DC2626' : '#94A3B8';
   const valueColor = kind === 'removed' ? '#94A3B8' : '#15803D';
+
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
       {/* `minWidth: 0` is the flexbox guard that lets this column actually shrink
@@ -2569,6 +2645,72 @@ function ReviewRow({
 // card: a white rounded panel with a hairline border, a soft shadow, and
 // full-width stacked actions.
 const styles = StyleSheet.create({
+  // The portal's build card: a soft tinted panel holding one row per measurement.
+  comboCard: {
+    backgroundColor: '#E6F4F7',
+    borderWidth: 1,
+    borderColor: '#CFE7EC',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  comboRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+  },
+  comboLabel: {
+    flexShrink: 1,
+    paddingRight: 12,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  comboValue: {
+    flexShrink: 1,
+    fontSize: 12,
+    fontWeight: '800',
+    textAlign: 'right',
+  },
+  comboFrom: {
+    fontSize: 11,
+    color: '#DC2626',
+    textAlign: 'right',
+    textDecorationLine: 'line-through',
+  },
+  comboSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 8,
+  },
+  comboOuter: {
+    borderWidth: 1,
+    borderColor: '#CFE7EC',
+    borderRadius: 14,
+    backgroundColor: '#F8FCFD',
+    padding: 12,
+  },
+  comboBlockSpaced: {
+    marginTop: 14,
+  },
+  comboBlockHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  comboBlockTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  comboBlockKind: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#94A3B8',
+  },
   dateCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,

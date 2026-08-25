@@ -204,8 +204,8 @@ export default function InstallerJobDetail() {
     addExtraPhoto,
     setScopeStatus,
     addCocPage,
+    rememberCocSignature,
     setCocSignOff,
-    removeCocPage,
     addResultPhoto,
     removeResultPhoto,
     clearResultPhotos,
@@ -605,6 +605,8 @@ export default function InstallerJobDetail() {
             s3url: patch.s3url,
             bucketName: patch.bucketName,
           };
+          // Filed as a signature the moment the url exists — see the hook.
+          rememberCocSignature(patch.s3url);
         }
       });
       // Kept so the sign-off can WAIT for it. `waitForUploads` drains the request
@@ -612,7 +614,7 @@ export default function InstallerJobDetail() {
       // only ordering that guarantees the ref is on hand when the PATCH is built.
       cocSignatureTasks.current.push(task);
     },
-    [upload]
+    [upload, rememberCocSignature]
   );
 
 
@@ -949,22 +951,11 @@ export default function InstallerJobDetail() {
     if (uploaded.length) await deleteStoredImages('result', uploaded);
   }, [progressRef, upload, clearResultPhotos, deleteStoredImages]);
 
-  /** Removing a CoC page — identical to the material path now that pages are stored. */
-  const handleRemoveCocPage = useCallback(
-    async (pageId: string) => {
-      const uploading =
-        progressRef.current.cocPages.find((p) => p.id === pageId)?.uploadStatus ===
-        'uploading';
-      if (uploading) await upload.waitForUploads();
-
-      const page = progressRef.current.cocPages.find((p) => p.id === pageId);
-      removeCocPage(pageId);
-
-      await deleteStoredImages('coc', [page]);
-      await sendStepData('coc', { includeEmptyPhotos: true });
-    },
-    [progressRef, removeCocPage, upload, deleteStoredImages, sendStepData]
-  );
+  /*
+   * `handleRemoveCocPage` was REMOVED with the CoC page tiles — they held its only
+   * trigger (the ✕ on a tile), so it had no caller left. `removeCocPage` on the
+   * progress hook is untouched if a delete path is ever needed again.
+   */
 
   /**
    * Steps whose completion has already been logged this visit.
@@ -1309,7 +1300,16 @@ export default function InstallerJobDetail() {
         progress.postExtras
       ),
       measure: scopeNote,
-      coc: progress.cocPages.length
+      // A certificate signed on the device OUTRANKS the page count, and is not
+      // phrased as one: the customer filled the form in, so the timeline says what
+      // happened rather than counting scans of a paper copy that was never made.
+      //
+      // ⚠️ It is also the honest reading when both exist — a page count beside a
+      // signed certificate invited the row to be read as "6 pages of THIS", which is
+      // what the duplicated-signature bug made it say.
+      coc: progress.cocSignOff
+        ? 'Submitted'
+        : progress.cocPages.length
         ? `${progress.cocPages.length} page${progress.cocPages.length > 1 ? 's' : ''} scanned`
         : null,
     };
@@ -1971,7 +1971,6 @@ export default function InstallerJobDetail() {
         job={job}
         pages={progress.cocPages}
         onAddPage={handleCocPage}
-        onRemovePage={handleRemoveCocPage}
         onSignature={handleCocSignature}
         onSignOff={handleCocSignOff}
         signOff={progress.cocSignOff}

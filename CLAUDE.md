@@ -4592,16 +4592,13 @@ rows add `fieldLabel` / `fieldName` / `fieldValue` / `fieldCategory` / `oldValue
 ticket's payloads exactly. The ids resolve through ONE helper so no two rows can disagree about which
 record they name.
 
-⚠️ **The `change` rows fire on SAVE, not while typing — a deliberate divergence, and the requested
-one** (*"you have to call this as well when we Save Changes"*). Web debounces each keystroke
-(`useDebounce(changedValue, 2000)`) from inside the modal, so a web row can describe an edit the rep
-then abandoned; mobile diffs the submitted payload against the record, so a row only ever describes a
-change that PERSISTED.
-
-⚠️ **They are emitted AFTER the `submit` row** (*"this log should be call after the submit log"*), so
-the timeline reads opened → saved → changed. That is the OPPOSITE of web, where the debounced rows are
-already sent by the time Save is pressed; on mobile the detail rows are wanted as the breakdown *under*
-the save. `LoggerService` serialises its queue, so the call order is the order the portal receives.
+> ⚠️ **SUPERSEDED — the two paragraphs that stood here are now WRONG and are retired.** They said the
+> `change` rows fire on SAVE and land AFTER the `submit` row, both of which were the requested
+> behaviour at the time. The reporter reversed it — *"we implemented the change log in wrong way,
+> once we will write any input after a second that log will call"* — so the rows are now **debounced
+> off the rep's typing inside the modal**, exactly as web does, and therefore land BEFORE the submit
+> row. See "…and the change rows are DEBOUNCED off typing" below. The `view` and `submit` rows are
+> unchanged.
 
 ⚠️ **`meta.resetCycle` is added SERVER-side, not by the client.** A payload comparison filed against
 this ticket showed mobile's stored row carrying `resetCycle: 0` where web's did not — but the two
@@ -4675,6 +4672,301 @@ several rows in web's field order, the `fullAddress` fallback, a cleared field r
 rather than skipped, a co-buyer-only edit emitting nothing, and junk input as a no-op rather than a
 throw. tsc 44 (baseline unchanged); `customer-detail-changes.ts` is eslint-clean and
 `LeadCenter/index.tsx` is identical to its HEAD baseline (40 problems: 16 errors / 24 warnings).
+
+#### …and the change rows are DEBOUNCED off typing, not derived on save
+
+Reversal of the requirement above: *"adding denouncing like web, i mean we implemented the change log
+in wrong way — once we will write any input after a second that log will call"*, with a devtools
+capture of web's own `change` row.
+
+The save-time derivation is **gone**. `buildCustomerFieldChanges` is still exported from
+`utils/customer-detail-changes.ts` but is **NO LONGER WIRED** (a note on it says so) — the rows are now
+produced by a debounced tracker inside `EditCustomerModal` itself, a port of web's
+`trackFieldChange` / `useDebounce(changedValue, 2000)` / flush-effect trio.
+
+| | web | mobile (now) |
+|---|---|---|
+| queue | `pendingChangesRef` array, filtered per field | `pendingChangesRef` **map keyed by fieldName** — same "last write per field wins" |
+| baseline | `lastValuesRef`, seeded on open, advanced on flush | identical (`seedTrackedValues`) |
+| trigger | `useDebounce(changedValue, 2000)` | one `setTimeout` ref, `FIELD_CHANGE_DEBOUNCE_MS = 2000` |
+
+⚠️ **A `setTimeout` ref, not a `useDebounce` hook.** Web's `setChangedValue(entry)` re-renders the
+whole modal on **every keystroke** purely to drive the debounce. The timer does the same job with no
+render, which matters more here — this modal re-renders a Places autocomplete and up to three co-buyer
+blocks.
+
+⚠️ **The timer fires through `flushFieldChangesRef.current()`, never the identifier.** The flush reads
+`user` and `lead`; a captured stale closure would log against the wrong ids. Same trap
+`performAutoSaveRef` exists for in `DynamicJobBuilderScreen`.
+
+⚠️ **Two flush points web does not have, because mobile can lose the pending row where web cannot.**
+The modal is unmounted on close (`{showEditCustomerModal && …}`), which clears the timer — so an edit
+made inside the last 2 s before Save or Cancel would vanish. `handleSave` flushes before `onSubmit`,
+and a mount effect returns `flushFieldChangesRef.current` as its cleanup. The save flush is also what
+puts the change rows **ahead of** the `submit` row, which is web's natural ordering.
+
+⚠️ **The baselines advance even when there is no `user_id` to log as.** Otherwise the next flush would
+report an `oldValue` the rep moved on from two edits ago.
+
+⚠️ **Deliberate divergence: a row whose value came back to where it started is dropped.** Type a letter
+and delete it inside the window and web still logs `Testa → Testa`. Skipping can only remove noise.
+
+⚠️ **The silent GPS auto-fill is NOT tracked.** `applyCurrentLocation(prompt)` runs once on mount with
+`prompt: false` when the customer has no address on file; only the crosshair TAP (`prompt: true`) is an
+edit the rep made. The typed / cleared / picked-from-suggestions paths are all tracked.
+
+##### Co-buyers are tracked by the same machinery
+
+Mobile-only — web calls `trackFieldChange` for the five primary fields and **nothing** for co-buyers
+(`grep` shows no co-buyer call sites). Rows carry `fieldCategory: 'co_buyer'`,
+`action: 'co-buyer field changed'`, a `coBuyerNumber`, and `fieldName: coBuyer_<N>_<field>`.
+
+- ⚠️ **`N` is 1-BASED in the key, matching `coBuyerNumber` and the "Co-Buyer N" heading.** It shipped
+  0-based beside a 1-based number for one pass; that is an off-by-one a reader of the payload has no
+  way to spot.
+- ⚠️ **The key is POSITIONAL, because a co-buyer has no `_id` until the customer record is saved.**
+  `handleRemoveCoBuyer` therefore **flushes first** (so pending edits are attributed while the indexes
+  still mean what they did) and then **re-seeds every co-buyer baseline** against the new positions —
+  without that, the co-buyer who shifts up inherits the removed one's values and their next edit
+  reports a change against a stranger.
+- **Ticking "Same address as primary buyer?" emits an address change**, because the tracked value is
+  the DERIVED address (`coBuyerAddressOf`), not the flag.
+- **Two structural rows**: `view` / `add co-buyer opened` on the `+` button, and `change` /
+  `co-buyer removed` on Remove. The removal row carries `removedCoBuyer` (the name) as well as the
+  number, since the number shifts the moment another is removed and cannot identify who left.
+- **`meta.is_co_buyer: true` on the add row**, requested by the portal side. It is a **constant** —
+  that row only ever fires from the `+ Add Co-Buyer` button — and exists so the portal can attribute
+  the event to the co-buyer without pattern-matching on `action`. Not sent on the other rows, which
+  already carry `fieldCategory: 'co_buyer'`.
+
+**`CO-BUYER-ACTIVITY-LOGS.md` (repo root) is the payload reference handed to the backend**, since the
+portal does not render these `meta.action` values yet. Keep it in step with this code.
+
+##### …and the co-buyer Address searches Places, like the primary one
+
+Follow-up: *"see the address in co-buyer, it should be search same like the above one — no suggestion
+showing for co-buyer address field."* The box was a plain `TextInput`; a rep typed `Lahore` and nothing
+was offered, while the primary field directly above it listed suggestions.
+
+It now runs the same machinery — the 600 ms debounce, `fetchPlacePredictions`, the `predictionList`
+rows, the inline spinner — with three differences that matter:
+
+- ⚠️ **ONE prediction list for all three co-buyers, scoped by `coBuyerSearchIndex`.** Only the focused
+  box can be typing, and keying the list to that index is what makes it impossible to drop a suggestion
+  into a DIFFERENT co-buyer's address. The list renders only under `coBuyerSearchIndex === index`.
+- ⚠️ **No `geocodePlaceId` call.** `CoBuyerPayload` carries an address and no coordinates, so the
+  primary field's follow-up geocode would be a request whose result is discarded.
+- **A pick goes through `handleCoBuyerChange`**, so it is debounce-logged exactly like a typed address
+  rather than bypassing the tracker.
+
+⚠️ **`coBuyerSkipSearchRef` is armed in `onChangeText`, NOT in `handleCoBuyerChange`** — the pick
+handler calls that same function, so arming it there would make a chosen suggestion immediately search
+itself and reopen the list underneath showing the address back. Same rule, same reason, as the
+primary's `skipSearchRef`.
+
+⚠️ **`closeCoBuyerAddressSearch()` fires on remove and on ticking "Same address as primary buyer?"**
+The search is scoped by POSITION, so an open list would survive a removal and belong to whoever shifted
+up into that slot; and a mirrored box is read-only, so anything still being offered for it is unpickable.
+
+⚠️ The query reads `coBuyers[i].address` — the RAW typed value, never `coBuyerAddressOf` — so a
+mirrored co-buyer cannot make the primary's address search itself.
+
+tsc 44 (baseline unchanged); `EditCustomerModal.tsx` is at its HEAD eslint baseline (4 warnings,
+0 errors). ⚠️ Needs a device check (this repo cannot render-test): suggestions appearing under the
+co-buyer box, a pick landing in the right co-buyer with two of them on screen, and no stale list left
+behind after Remove.
+
+Also in this pass, on request: **`floatingLabelText` dropped its `fontWeight: '600'`** so the input
+titles render at normal weight, matching web. ⚠️ That weight predates the co-buyer ticket (it is
+`'600'` at `58c577b^` too) — it was not a regression from moving the co-buyer block, so don't go
+looking for one.
+
+⚠️ Needs a device check (this repo cannot render-test): type in a field and confirm ONE `change` row
+lands ~2 s later carrying the whole edit, that a burst across several fields flushes together, that
+Save no longer emits a second copy of each row, and that removing co-buyer 1 does not attribute
+co-buyer 2's next edit to the wrong person.
+
+tsc 44 (baseline unchanged); `EditCustomerModal.tsx` is byte-identical to its HEAD eslint baseline
+(4 warnings, 0 errors), `LeadCenter/index.tsx` to its own (40 problems: 16 errors / 24 warnings), and
+`customer-detail-changes.ts` is clean.
+
+### The `inspection_photo` view log on "Start Taking Photos" is gone
+
+Ticket: *"there is one extra log going to call while we press the Start Taking Photos button — remove
+that log"*, with the captured payload: `action_type: view` / `module_type: inspection_photo` /
+`meta: { leadId }` and **no `action`**.
+
+⚠️ **It was NOT in `JobDocsSection.tsx`**, where the button lives. `handleStartTakingPhotos` only sets
+`showDynamicCapture`, and the log was a **mount effect inside `DynamicInspectionView`**
+(*"Log a view event on mount (parity with the legacy inspection modal)"*). Removed, along with its
+now-unused `logEvent` import; `useAuth`/`user` stay (line ~120 still reads the id).
+
+⚠️ So it fired on **every** mount of the dynamic inspection view, not only from this button —
+`DynamicMovePhotoModal` renders the same `CategoryBody`, but the log was on the VIEW, so the button was
+simply the reported path. Nothing else in `JobDocsSection` was touched; its own `upload` and `submit`
+rows are unrelated and remain.
+
+The bare `meta` in the capture is the tell: the effect passed no `meta` at all, and `LoggerService`
+auto-attaches the stored `leadId` for any module not in `ExcludedModuleTypes`. A log with no `action`
+cannot be rendered as anything on the portal timeline, which is why it read as noise.
+
+tsc 44 (baseline unchanged); `DynamicInspectionView.tsx` is byte-identical to its HEAD eslint baseline
+(123 problems, 0 errors) — the dropped import and the dropped `eslint-disable` cancel out.
+
+### Addendum Review renders a combination as the portal's TABLE, in config field order
+
+Ticket: *"you have to set the my ui same like web"*, with the Review step's two
+**Combination Added** rows circled beside the portal's Lead Details build card.
+
+An added/removed combination was one run-on green sentence —
+`Type PARTIAL · Vinyl Soffit Footage 200 · Soffit Type HIDDEN VENT VINYL · Color White` — which wraps
+to four lines on a phone and has to be read word by word to find a single measurement. The portal shows
+the same combination as a labelled table, so mobile now does too.
+
+**Two defects, and the second is the one that isn't cosmetic.**
+
+1. **No structure.** `ReviewRow` gained an optional **`comboFields`**; when present it renders the label
+   + eyebrow on top and a tinted card beneath holding one `label ⟷ value` row per measurement
+   (`styles.comboCard` / `comboRow` / `comboLabel` / `comboValue`). The plain-row path is untouched, so
+   ordinary field edits, Contract Price, Install Date and the payment-method rows are unchanged.
+2. ⚠️ **The two combinations of ONE section listed their fields in DIFFERENT orders.** The screenshot's
+   first row reads `Type · Footage · Soffit Type · Color` and its sibling
+   `Color · Soffit Type · Type · Footage` — the same four fields, so the two read as different products.
+   `describeCombo` walked `Object.entries(combo.values)`, i.e. **whatever order the stored object
+   happens to hold**, which is not the order the rep filled them in and is not stable between siblings.
+
+**The order now comes from the CONFIG.** `FieldLabelMeta` gained an `order`, stamped by a counter as
+`buildFieldLabelMap` walks the config, and the new **`comboFields()`** sorts on it — so a combination is
+listed exactly as the portal's card lists it. The sort is stable (ties keep read order), and a field the
+label map never saw sorts last rather than being dropped.
+
+⚠️ **`describeCombo` is KEPT and is now DERIVED from `comboFields`.** It is not display-only — that
+string is what `buildChangeSummary` puts on the addendum **the customer signs**. Deriving it means the
+table and the signed document can never describe one combination differently; it also picks up the
+ordering fix for free.
+
+⚠️ **`comboFields` is set ONLY on `added`/`removed` rows**, and `from`/`to` stay authoritative. An
+ordinary field edit has no breakdown, so `ReviewRow` falls through to the existing two-column layout —
+asserted, so a future change here can't silently reshape every row on the screen.
+
+The card is a soft tint (`#EFF8FA` on `#CFE7EC`) rather than the mobile review's usual slate, matching
+the portal card the ticket points at and separating a whole-combination row from the field rows around
+it. A **removal keeps its grey values** (`valueColor`), since nothing new was entered.
+
+Verified by driving the REAL `computeDynamicBuildChanges` over a Vinyl Soffit section whose second
+combination is stored key-scrambled: both added rows breaking out into config order, the scrambled one
+no longer Color-first, its derived `to` string reordering with it, a removed combination carrying the
+breakdown too, and an ordinary edit carrying **none**. The pre-fix code was run from `git show HEAD:` in
+the same harness and emits the ticket's screenshot string verbatim
+(`Color Musket Brown · Soffit Type HIDDEN VENT VINYL · Type PARTIAL · Vinyl Soffit Footage 100`), so the
+repro is asserted against the real defect rather than a reconstruction of it.
+
+tsc 44 (baseline unchanged); `dynamic-deal-diff.ts` is identical to its HEAD eslint baseline (2
+pre-existing errors) and `DynamicDealEditScreen.tsx` goes 144 → 148 warnings, all four
+`react-native/no-inline-styles` — the only rule that file carries, 144 of them already.
+
+⚠️ Needs a device check (this repo cannot render-test): that a long measurement label wraps inside the
+card instead of pushing its value off the right edge.
+
+#### …and every combination of a section shares ONE block, edited or added
+
+Follow-up, same screen: *"you set the design but for leaffilter it's showing same, fix that too."* Seven
+loose rows — `LeafFilter · Gutter Profile`, `LeafFilter · LeafFilter Color`,
+`LeafFilter · Measurements · Left Side · 1st Story` … — sat directly above a tidy
+`Fascia Boards · Combination Added` card. Same tab, same kind of edit, two different-looking answers.
+
+**Settled from the captured build (`sale-portal-api-response.txt`), not by reading the labels.** The
+LeafFilter tab holds **four UNLABELLED sections, each carrying ONE combination**
+(`section_1782373742457__section-4`, `section_1782386890583__section-5`, …). So:
+
+- a section whose combination existed already is **PAIRED**, and a pair emits one row per changed
+  field — the loose rows;
+- a section that had none is an **ADD**, and gets the card;
+- `isMulti` is false for every one of them (one combo each), so **no `Combination #N` chip**, and with
+  no section label the prefix falls back to the TAB — every row reads `LeafFilter · <field>` and the
+  label alone cannot tell two gutter sizes apart.
+
+**`groupComboRows` now produces the portal's shape: one bordered panel per section, holding
+`Combination #1`, `Combination #2`, … as tinted tables** (`ComboSectionCard`). An edit's rows carry the
+previous value struck through above the new one (`ComboField.from`, set only on an edit); an add or a
+removal says so in its own eyebrow inside the block.
+
+⚠️ **One panel per section, not one per combination.** The first pass emitted a separate card per
+combination and the reporter sent it straight back — *"you are making 2 blocks, it should be one block
+like web."* Two panels under one heading read as two products. `addBlock` therefore appends to the
+panel already open when the section head matches, and `splitComboHead` strips a trailing
+`Combination #N` from the head so two combinations of the SAME section can merge instead of each
+opening its own.
+
+⚠️ **Merging is by the section HEAD, so two LABELLED sections never merge** — `Vinyl Soffit` and
+`Porch Ceiling` stay separate panels. The LeafFilter sections merge precisely because they are
+unlabelled and all fall back to the tab name, which is also why they looked identical in the first
+place. Tested both ways.
+
+**Blocks are numbered the portal's way**: the authored `Combination #N` chip wins where the diff
+carries one (a section holding several combinations), and the rest are numbered by position — so a
+panel never repeats one title.
+
+⚠️ **The grouping is DISPLAY ONLY and the `BuildChange` rows stay separate.** They are what
+`buildChangeSummary` puts on the addendum **the customer signs** — collapsing them into one row would
+change the signed document. That is also why the helper lives beside the diff rather than replacing it.
+
+⚠️ **`comboKey` (`<groupKey>#<comboIndex>`) is what makes the grouping safe.** With four unlabelled
+sections all rendering `LeafFilter · …`, grouping on the label would merge two different gutter sizes
+into one card. It rides along in the submitted payload as an additive key, like `comboFields`.
+
+⚠️ **A pair that changed only ONE field stays a plain row.** A card holding a single value is heavier
+than the row it replaces, and it keeps an ordinary one-field edit reading exactly as it did before.
+
+⚠️ **The pairs loop now sorts its fields by config `order` too.** They came from
+`new Set([...Object.keys(from), ...Object.keys(to)])`, i.e. neither the order the rep entered nor
+anything stable between two combinations — the same defect the section above fixes for an added
+combination. This **reorders rows within `buildChangeSummary`**; the same rows are present, and the
+order now matches the portal's build card.
+
+⚠️ `groupComboRows` / `commonLabelPrefix` live in `utils/dynamic-deal-diff.ts`, not the screen, for the
+usual reason — `DynamicDealEditScreen.tsx` pulls in React Native and cannot be loaded under jest, and
+the prefix walk is exactly the kind of thing that fails silently (it stops one segment short of
+consuming a label whole, or a row would have no name left).
+
+Verified with 8 tests over the captured shape: the repro (two edited sections folding into ONE panel of
+two combinations, in config order, with the grid cells named), an ADDED combination joining that same
+panel, two labelled sections staying separate, a section's own two combinations keeping their authored
+chips, a removal reporting its own kind inside the block, an edit keeping its struck `from` while an add
+has none, a one-field pair staying a plain row alongside untouched flat rows, and an untouched build
+producing nothing.
+
+tsc 44 (baseline unchanged); `dynamic-deal-diff.ts` is identical to its HEAD eslint baseline (2
+pre-existing errors) and `DynamicDealEditScreen.tsx` is at 147 warnings, all `react-native/no-inline-styles`
+— the only rule that file carries.
+
+### Lead Center pulls to refresh
+
+Ticket: *"add pull to refresh option here, currently we have no pull to refresh option."* The screen's
+`ScrollView` bounced but had no `RefreshControl`, so a pull opened a blank gap and did nothing.
+
+**No new fetching was written** — `useLeadCenterData` already exposes `refetch`, and the screen's
+`useFocusEffect` already knew what "refresh this screen" means. `handlePullToRefresh` performs exactly
+those three, in the same order: invalidate `['revrender-runs', leadId]`, invalidate
+`['lead-job-builder-drafts', leadId]`, then `await refetch()`. Keeping them identical is the point — a
+pull and a re-focus must not be able to leave the screen in different states.
+
+⚠️ **The control has its OWN `pullRefreshing` flag; it deliberately does NOT reuse the hook's
+`isRefreshing`.** That one is also true for the mount hydrate and every focus refetch, so binding it to
+`RefreshControl.refreshing` would spin the control each time the rep merely navigated BACK to this
+screen — a refresh animation for something they didn't ask for.
+
+⚠️ `refetch` early-returns while one is already in flight (`hydrateInFlightRef`), so pulling in the
+instant after a focus refetch closes the spinner immediately. The data still refreshes — the in-flight
+fetch is the same request — only the animation is short. Do not "fix" this by removing the guard; it is
+what stops a fast re-focus from stacking calls.
+
+The Map tab navigates to `MapDetail` rather than rendering a map inside this `ScrollView` (only
+`job_docs` and `tools` render inline), so there is no gesture to conflict with. `stickyHeaderIndices`
+is unaffected — the control sits above the sticky child.
+
+tsc 44 (baseline unchanged); `LeadCenter/index.tsx` is identical to its HEAD eslint baseline
+(40 problems: 16 errors / 24 warnings).
 
 ---
 

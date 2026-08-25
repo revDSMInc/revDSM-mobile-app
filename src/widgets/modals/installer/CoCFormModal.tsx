@@ -316,8 +316,16 @@ export function CoCFormModal({
     setShowExitConfirm(true);
   };
 
+  /**
+   * Any ticked box answers the question, so Submit unlocks on the tick.
+   *
+   * Only `other` needs more: it is the write-in line, and an unfilled one names
+   * nobody. `spouse` is a first-class enum value (not an `other` write-in), so it
+   * stands on its own exactly as `homeowner` does.
+   */
   const relationshipNamed =
     relationship === 'homeowner' ||
+    relationship === 'spouse' ||
     (relationship === 'other' && formData.relationshipOther.trim().length > 0);
 
   const canSubmit =
@@ -423,9 +431,25 @@ export function CoCFormModal({
     </View>
   );
 
-  /** The certificate's tick boxes — square, filled green, exactly as sales draws them. */
-  const renderCheck = (checked: boolean, label: string, onToggle: () => void) => (
-    <TouchableOpacity className="flex-row mb-3" activeOpacity={0.8} onPress={onToggle}>
+  /**
+   * The certificate's tick boxes — square, filled green, exactly as sales draws them.
+   *
+   * ⚠️ `inline` is for the relationship row, whose three one-word answers sit side
+   * by side. It drops the row margin and, crucially, the label's `flex-1` — in a
+   * horizontal parent that would make each box claim an equal third and spread the
+   * ticks across the width instead of keeping each label against its own box.
+   */
+  const renderCheck = (
+    checked: boolean,
+    label: string,
+    onToggle: () => void,
+    inline = false
+  ) => (
+    <TouchableOpacity
+      className={`flex-row items-center ${inline ? 'mr-5 mb-2' : 'mb-3'}`}
+      activeOpacity={0.8}
+      onPress={onToggle}
+    >
       <View
         className="w-6 h-6 rounded-md border-2 items-center justify-center mr-2"
         style={{
@@ -435,7 +459,9 @@ export function CoCFormModal({
       >
         {checked && <MaterialIcon name="check" size={14} color="white" />}
       </View>
-      <Text className="flex-1 text-[#1C252E] text-sm leading-6">{label}</Text>
+      <Text className={`text-[#1C252E] text-sm leading-6 ${inline ? '' : 'flex-1'}`}>
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 
@@ -569,18 +595,93 @@ export function CoCFormModal({
             keyboardShouldPersistTaps="handled"
             bottomOffset={24}
           >
-            {/* The certificate's opening line */}
-            <View className="mb-6 rounded-lg p-3" style={{ backgroundColor: '#919EAB14' }}>
-              <Text className="font-semibold text-xs mb-2" style={{ color: '#1C252E' }}>
+            {/*
+              The page's description line, sitting directly above the Job # box.
+
+              It was a grey callout card, which read as an aside to be skimmed past. It
+              is the instruction the whole certificate rests on — walk the job with the
+              customer BEFORE signing — so it is plain text at the head of the form, in
+              the reading position, not boxed off to one side of it.
+            */}
+            <View className="mb-6">
+              <Text className="font-semibold text-sm mb-1" style={{ color: '#1C252E' }}>
                 {t('installer.cocFormDisclaimerTitle')}
               </Text>
-              <Text className="text-xs" style={{ color: '#637381' }}>
+              <Text className="text-xs leading-5" style={{ color: '#637381' }}>
                 {t('installer.cocFormDisclaimerBody')}
               </Text>
             </View>
 
+            {/*
+              Order is the SIGNING order the certificate is read in, not the paper
+              form's two-up layout: identify the job, date it, say who is signing,
+              make the three attestations, then the customer signs and the installer
+              counter-signs last. Requested by the field team.
+            */}
+
+            {/* Job # */}
+            {renderField(t('installer.cocFieldJobNumber'), jobNumber)}
+
+            {/* Date */}
+            {renderField(t('installer.cocFieldDate'), signedDate, undefined, 'calendar-range')}
+
+            {/* Relationship to homeowner */}
+            <View className="mb-6">
+              <Text className="text-[#000000] font-semibold text-xs mb-3">
+                {t('installer.cocRelationshipLabel')}
+              </Text>
+              {/*
+                One row, and it WRAPS: the three labels are short enough to sit side by
+                side, but a longer translation must fall to a second line rather than
+                push a tick box off the card.
+              */}
+              <View className="flex-row flex-wrap items-center">
+                {renderCheck(
+                  relationship === 'homeowner',
+                  t('installer.cocRelationshipHomeowner'),
+                  () => selectRelationship('homeowner'),
+                  true
+                )}
+                {renderCheck(
+                  relationship === 'spouse',
+                  t('installer.cocRelationshipSpouse'),
+                  () => selectRelationship('spouse'),
+                  true
+                )}
+                {renderCheck(
+                  relationship === 'other',
+                  t('installer.cocRelationshipOther'),
+                  () => selectRelationship('other'),
+                  true
+                )}
+              </View>
+              {/*
+                The paper's write-in line, which only exists once "Other" is ticked.
+
+                ⚠️ The wrapper's marginTop is REQUIRED, not cosmetic. `floatingLabel` is
+                absolutely positioned at `top: -8`, so it is drawn OUTSIDE the field box
+                and over whatever sits above it — here the tick row, which only carries
+                8px of its own margin. Without the clearance the label lands on top of
+                "Homeowner / Spouse / Other".
+
+                ⚠️ And it gets its OWN label: reusing `cocRelationshipLabel` printed
+                "Relationship to homeowner" a second time, directly under the section
+                heading of the same name, so the field looked like a stray duplicate of
+                the block it belongs to rather than the answer to it.
+              */}
+              {relationship === 'other' && (
+                <View style={styles.otherFieldWrap}>
+                  {renderField(
+                    t('installer.cocRelationshipOtherSpecify'),
+                    formData.relationshipOther,
+                    (text) => setFormData((prev) => ({ ...prev, relationshipOther: text }))
+                  )}
+                </View>
+              )}
+            </View>
+
             {/* The three attestations — all required, as on paper. */}
-            <View className="mb-4">
+            <View className="mb-6">
               {renderCheck(attest.adult, t('installer.cocAttestAdult'), () =>
                 toggleAttest('adult', 'is18OrOlder')
               )}
@@ -592,40 +693,11 @@ export function CoCFormModal({
               )}
             </View>
 
-            {/* Installer's Signature ── Job # */}
-            {renderSignature('installer', t('installer.cocInstallerSignature'))}
-            {renderField(t('installer.cocFieldJobNumber'), jobNumber)}
-
-            {/* Customer's Signature ── Date */}
+            {/* Customer's Signature */}
             {renderSignature('customer', t('installer.cocCustomerSignature'))}
-            {renderField(t('installer.cocFieldDate'), signedDate, undefined, 'calendar-range')}
 
-            {/* Relationship to homeowner */}
-            <View className="mb-8">
-              <Text className="text-[#000000] font-semibold text-xs mb-3">
-                {t('installer.cocRelationshipLabel')}
-              </Text>
-              {renderCheck(
-                relationship === 'homeowner',
-                t('installer.cocRelationshipHomeowner'),
-                () => selectRelationship('homeowner')
-              )}
-              {renderCheck(
-                relationship === 'spouse',
-                t('installer.cocRelationshipSpouse'),
-                () => selectRelationship('spouse')
-              )}
-              {renderCheck(relationship === 'other', t('installer.cocRelationshipOther'), () =>
-                selectRelationship('other')
-              )}
-              {/* The paper's write-in line, which only exists once "Other" is ticked. */}
-              {relationship === 'other' &&
-                renderField(
-                  t('installer.cocRelationshipLabel'),
-                  formData.relationshipOther,
-                  (text) => setFormData((prev) => ({ ...prev, relationshipOther: text }))
-                )}
-            </View>
+            {/* Installer's Signature */}
+            {renderSignature('installer', t('installer.cocInstallerSignature'))}
 
             {/* Footer */}
             <View className="flex-row justify-end pb-12" style={{ gap: 12 }}>
@@ -924,6 +996,8 @@ const styles = StyleSheet.create({
   },
   sigSaveText: { fontWeight: '700', fontSize: 13 },
   fieldWrap: { marginBottom: 20, position: 'relative' },
+  /** Clearance for the absolutely-positioned floating label — see the call site. */
+  otherFieldWrap: { marginTop: 12 },
   floatingLabel: {
     position: 'absolute',
     top: -8,

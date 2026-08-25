@@ -446,6 +446,30 @@ export function useInstallProgress(
   );
 
   /**
+   * Records an s3url as a certificate SIGNATURE, so it is never taken for a page.
+   *
+   * ⚠️ Called when the upload RESOLVES, not at the next server merge. The merge
+   * can only see the pair `cocSignOff` currently names, so an installer who signs
+   * twice before the job is re-opened would leave the first pair unrecorded — and
+   * unrecorded is exactly what makes a signature come back as a page.
+   */
+  const rememberCocSignature = useCallback(
+    (s3url: string) =>
+      commit((p) =>
+        !s3url || (p.cocSignatureS3Urls ?? []).includes(s3url)
+          ? p
+          : {
+              ...p,
+              cocSignatureS3Urls: [...(p.cocSignatureS3Urls ?? []), s3url],
+              // Prune immediately: this device may already have merged the image as
+              // a page on an earlier open, and that copy lives in MMKV.
+              cocPages: p.cocPages.filter((page) => page.s3url !== s3url),
+            }
+      ),
+    [commit]
+  );
+
+  /**
    * The certificate signed on the device.
    *
    * Whole-record replace, not a merge: re-signing supersedes what was there, and a
@@ -547,6 +571,7 @@ export function useInstallProgress(
     setScopeStatus,
     addCocPage,
     removeCocPage,
+    rememberCocSignature,
     setCocSignOff,
     addResultPhoto,
     removeResultPhoto,

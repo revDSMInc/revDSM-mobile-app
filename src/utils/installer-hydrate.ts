@@ -276,16 +276,30 @@ export const mergeServerProgress = (
     }
   }
 
-  const signatureUrls = cocSignatureUrls(next.cocSignOff ?? previous.cocSignOff);
+  // ⚠️ The CURRENT pair is not enough, and that was the bug: `cocSignOff` holds only
+  // the latest signatures, so every RE-SIGN orphaned the previous pair and it came
+  // back from the server as a page. A job signed three times showed six "pages",
+  // each a duplicate of a signature already drawn on the card above them.
+  //
+  // The remembered set is therefore unioned with the current pair and persisted, so
+  // a superseded signature stays known for the life of the job.
+  const knownSignatures = new Set(previous.cocSignatureS3Urls ?? []);
+  cocSignatureUrls(next.cocSignOff ?? previous.cocSignOff).forEach((url) =>
+    knownSignatures.add(url)
+  );
+  if (knownSignatures.size !== (previous.cocSignatureS3Urls ?? []).length) {
+    changed = true;
+    next.cocSignatureS3Urls = [...knownSignatures];
+  }
 
   // Pruned on BOTH sides. Filtering only the server additions leaves the ones a
   // previous open already merged into progress — they are in MMKV, so they survive
   // every relaunch and the fix would look like it had done nothing.
-  const keptCoc = signatureUrls.size
-    ? previous.cocPages.filter((page) => !isCocSignatureImage(page.s3url, signatureUrls))
+  const keptCoc = knownSignatures.size
+    ? previous.cocPages.filter((page) => !isCocSignatureImage(page.s3url, knownSignatures))
     : previous.cocPages;
-  const cocServerPages = signatureUrls.size
-    ? records.cocPhotos.filter((image) => !isCocSignatureImage(image.s3url, signatureUrls))
+  const cocServerPages = knownSignatures.size
+    ? records.cocPhotos.filter((image) => !isCocSignatureImage(image.s3url, knownSignatures))
     : records.cocPhotos;
 
   const refreshedCoc = withRefreshedUris(keptCoc, urls);
