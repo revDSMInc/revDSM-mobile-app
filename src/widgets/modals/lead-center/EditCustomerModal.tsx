@@ -379,6 +379,10 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     const next = coBuyers.filter((_, i) => i !== index);
     setCoBuyers(next);
 
+    // The address search is scoped by POSITION too, so an open suggestion list would
+    // now belong to whoever shifted up into that slot.
+    closeCoBuyerAddressSearch();
+
     // Re-seed every co-buyer baseline against the NEW positions. Without this the
     // co-buyer that shifts up inherits the removed one's values and their next edit
     // reports a change against a stranger.
@@ -413,6 +417,9 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     setCoBuyers((prev) =>
       prev.map((coBuyer, i) => (i === index ? { ...coBuyer, sameAsPrimary: checked } : coBuyer))
     );
+    // A mirrored box is read-only, so anything the search was offering for it is now
+    // unpickable and must not stay on screen.
+    if (checked) closeCoBuyerAddressSearch();
     // The tick changes what the co-buyer's Address box READS, so it is an address
     // change like any other — the log tracks the derived value, not the flag.
     trackFieldChange(
@@ -437,6 +444,7 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
 
   const handleCoBuyerChange = (index: number, field: 'firstName' | 'lastName' | 'phone' | 'email' | 'address', value: string) => {
     const nextValue = field === 'phone' ? formatCoBuyerPhone(value) : value;
+    if (field === 'address') setCoBuyerSearchIndex(index);
     setCoBuyers((prev) =>
       prev.map((coBuyer, i) => (i === index ? { ...coBuyer, [field]: nextValue } : coBuyer))
     );
@@ -503,6 +511,55 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     trackFieldChange('address', prediction.description, 'Address', CUSTOMER_FIELD_CATEGORY);
     const coords = await geocodePlaceId(prediction.placeId);
     setAddressCoords(coords ?? undefined);
+  };
+
+  // ── Co-buyer address autocomplete ──────────────────────────────────────────
+  // The same Places search as the primary field above, which a co-buyer's box did not
+  // have — a rep typed "Lahore" into it and nothing was offered.
+  //
+  // ⚠️ ONE prediction list for all three co-buyers, scoped by the index being searched.
+  // Only the focused box can be typing, and keying the list to that index is what makes
+  // it impossible to drop a suggestion into a DIFFERENT co-buyer's address.
+  const [coBuyerSearchIndex, setCoBuyerSearchIndex] = useState<number | null>(null);
+  const [coBuyerPredictions, setCoBuyerPredictions] = useState<PlacePrediction[]>([]);
+  const [coBuyerSearching, setCoBuyerSearching] = useState(false);
+  // Same job as `skipSearchRef`: suppress the search for values the rep did not type,
+  // so a picked suggestion does not immediately search itself and reopen the list
+  // underneath showing the same address back.
+  const coBuyerSkipSearchRef = useRef(true);
+
+  const coBuyerSearchQuery =
+    coBuyerSearchIndex == null ? '' : coBuyers[coBuyerSearchIndex]?.address || '';
+
+  useEffect(() => {
+    const query = coBuyerSearchQuery.trim();
+    if (coBuyerSkipSearchRef.current || query.length < 3) {
+      setCoBuyerPredictions([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setCoBuyerSearching(true);
+      const results = await fetchPlacePredictions(query);
+      setCoBuyerPredictions(results);
+      setCoBuyerSearching(false);
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [coBuyerSearchQuery]);
+
+  /** Drop any open suggestion list and disarm the search. */
+  const closeCoBuyerAddressSearch = () => {
+    coBuyerSkipSearchRef.current = true;
+    setCoBuyerPredictions([]);
+    setCoBuyerSearchIndex(null);
+  };
+
+  const handlePickCoBuyerPrediction = (index: number, prediction: PlacePrediction) => {
+    coBuyerSkipSearchRef.current = true;
+    setCoBuyerPredictions([]);
+    // Through the normal change path, so the pick is tracked like a typed address.
+    handleCoBuyerChange(index, 'address', prediction.description);
   };
 
   /**
@@ -956,14 +1013,39 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
                     >
                       <TextInput
                         value={coBuyerAddressOf(coBuyer)}
-                        onChangeText={(t) => handleCoBuyerChange(index, 'address', t)}
+                        onChangeText={(t) => {
+                          coBuyerSkipSearchRef.current = false;
+                          handleCoBuyerChange(index, 'address', t);
+                        }}
                         placeholder="Street, town or city"
                         placeholderTextColor="#919EAB"
                         style={styles.fieldInput}
                         editable={!submitting && !coBuyer.sameAsPrimary}
                         multiline
                       />
+                      {coBuyerSearching && coBuyerSearchIndex === index && (
+                        <ActivityIndicator size="small" color={colors.primary.main} />
+                      )}
                     </View>
+
+                    {/* Scoped to the co-buyer being searched, so the list can only ever
+                        drop its pick into the box it opened under. */}
+                    {coBuyerSearchIndex === index && coBuyerPredictions.length > 0 && (
+                      <View style={styles.predictionList}>
+                        {coBuyerPredictions.slice(0, 5).map((prediction) => (
+                          <TouchableOpacity
+                            key={prediction.placeId}
+                            onPress={() => handlePickCoBuyerPrediction(index, prediction)}
+                            style={styles.predictionRow}
+                          >
+                            <Icon name="map-marker-outline" size={14} color="#919EAB" />
+                            <Text style={styles.predictionText} numberOfLines={2}>
+                              {prediction.description}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
                   </View>
                 </View>
               ))}
