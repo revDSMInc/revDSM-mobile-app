@@ -806,18 +806,37 @@ function ReviewPair({
           </Text>
           {/* A fixed 4:3 frame rather than `flex-1`: inside a ScrollView a flex child has
               no height to fill, so both photos would collapse to nothing. */}
+          {/* ⚠️ An empty reference frame goes BLACK with a plain statement, not the house
+              ghost. The ghost is a shooting aid - it belongs over a live camera, where it
+              shows where to stand. Here there is nothing to line up against, so drawing a
+              house reads as a photo that failed to load rather than one that was never
+              taken, and the tinted frame made it look like content. */}
           <View
             className="rounded-xl overflow-hidden"
-            style={{ aspectRatio: 4 / 3, backgroundColor: tagTint(tag.id) }}
+            style={{
+              aspectRatio: 4 / 3,
+              backgroundColor: referenceUri ? tagTint(tag.id) : '#000000',
+            }}
           >
             {referenceUri ? (
               <TaggerImage uri={referenceUri} tint={tagTint(tag.id)} />
+            ) : tag.repPhotoS3Url ? (
+              // ⚠️ The photo EXISTS and its key is still being signed (`awaitingReference`).
+              // Saying "no photo" here would be a lie that resolves itself a second later,
+              // so this arm stays a spinner and carries no message.
+              <TaggerImageSpinner />
             ) : (
-              <>
-                <HouseGhost opacity={0.9} />
-                {/* Only when a key is still being signed — see `awaitingReference`. */}
-                {!!tag.repPhotoS3Url && <TaggerImageSpinner />}
-              </>
+              <View className="flex-1 items-center justify-center px-6">
+                <Text
+                  className="text-center text-sm font-bold text-white/70"
+                  // ⚠️ Phase-dependent: in POST the reference is the installer's OWN pre
+                  // shot, not the rep's, so naming the sale side there would be wrong.
+                >
+                  {phase === 'pre'
+                    ? t('installer.noRepSalePhoto')
+                    : t('installer.noPreInstallPhoto')}
+                </Text>
+              </View>
             )}
           </View>
         </View>

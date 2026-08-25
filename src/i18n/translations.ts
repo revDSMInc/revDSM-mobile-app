@@ -247,6 +247,10 @@ export const en = {
     /** Same pill before the step is finishable — there is no Done to point at yet. */
     scrollForMore: 'More tags below',
     repSale: 'REP (SALE)',
+    /** Empty reference frame in the review pair - the sale side never shot this tag. */
+    noRepSalePhoto: 'No Pre-Install Photo From Sale Side',
+    /** Same frame in the POST phase, where the reference is the installer's own pre shot. */
+    noPreInstallPhoto: 'No Pre-Install Photo',
     tagMatched: '{tag} — Matched',
     extraShotHint: "Free shot — no ghost. Document anything the rep didn't.",
     looksGood: 'Looks Good',
@@ -504,6 +508,8 @@ export const es: TranslationTree = {
     scrollForDone: 'Desliza hacia abajo para Listo',
     scrollForMore: 'Más etiquetas abajo',
     repSale: 'REPRESENTANTE (VENTA)',
+    noRepSalePhoto: 'Sin foto previa a la instalacion del lado de ventas',
+    noPreInstallPhoto: 'Sin foto previa a la instalacion',
     tagMatched: '{tag} — Coincide',
     extraShotHint: 'Foto libre — sin guía. Documenta lo que el representante no captó.',
     looksGood: 'Se ve bien',
