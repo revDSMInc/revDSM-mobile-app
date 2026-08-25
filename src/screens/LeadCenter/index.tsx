@@ -141,27 +141,29 @@ export default function LeadCenterPage() {
     setSectionImages,
   } = useLeadCenterData(initialLead, user, { appointmentStarted });
 
-  // ── My Deals: Contract Details pencil keeps the deal-edit flow ──────────────
-  // Opened from My Deals, this screen is the same sold-lead Lead Center, but the
-  // Contract Details pencil must still launch the 4-step dynamic deal-edit wizard
-  // (Install Date → Job Build → Job Price → Review & Submit) instead of the inline
-  // Edit Contract Details modal. Undefined on the normal lead path, so Lead Center
-  // behaves exactly as before there.
-  const handleEditDealFromMyDeals = useCallback(() => {
+  // ── Contract Details pencil opens the 4-step deal-edit wizard ───────────────
+  // Install Date → Job Build → Job Price → Review & Submit, replacing the inline
+  // "Edit Contract Details — select what to edit" modal.
+  //
+  // ⚠️ BOTH entry points now, not just My Deals. This screen IS the sold-lead Lead
+  // Center either way, so a deal reached from Sold Leads and the same deal reached
+  // from My Deals were offering two different editors for one record — and only the
+  // wizard raises an ADDENDUM, which is what a submitted deal's changes have to be.
+  //
+  // The pencil is rendered by `ContractDetailsCard` only past its `hasContract`
+  // guard (sale / demo), so this is unreachable on a lead with no contract to edit.
+  //
+  // ⚠️ A LEGACY (non-dynamic) deal keeps the inline modal, because the wizard cannot
+  // open a build that is not there. It replaced an "Edit on web" flash that left such
+  // a deal with no editor at all on device; the modal edits contract pricing and the
+  // schedule, which is exactly what that flash was refusing to do.
+  const isDynamicDeal = Boolean(
+    lead?.jobBuilder?.isDynamic || lead?.jobBuilder?.dynamicJobState || lead?.isDynamic
+  );
+
+  const handleEditDeal = useCallback(() => {
     const leadId = lead?._id || lead?.id || lead?.leadId;
     if (!leadId) return;
-    // Mobile ships only the dynamic editor; a legacy deal can't be edited on device.
-    const isDynamicDeal = Boolean(
-      lead?.jobBuilder?.isDynamic || lead?.jobBuilder?.dynamicJobState || lead?.isDynamic
-    );
-    if (!isDynamicDeal) {
-      FlashMessage.show(
-        'Edit on web',
-        'This deal uses the legacy job builder. Please edit it from the web app.',
-        'info'
-      );
-      return;
-    }
     navigation.navigate('DynamicDealCenter', {
       lead,
       mode: 'edit',
@@ -1300,7 +1302,7 @@ export default function LeadCenterPage() {
                 onOpenPdf={handleOpenPdf}
                 secureUrls={secureUrls}
                 isRefreshing={isRefreshing}
-                onEditContract={fromMyDeals ? handleEditDealFromMyDeals : undefined}
+                onEditContract={isDynamicDeal ? handleEditDeal : undefined}
                 drafts={dealDrafts}
                 // Whether the drafts query has SETTLED (success or handled error).
                 // The pending-addendum card holds its first paint until it has, so a

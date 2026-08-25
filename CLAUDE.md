@@ -110,16 +110,13 @@ and **Msg Ops/IM**). Only the *edit* behaviour differs, and no result buttons ar
 - **Entry point**: `MyDeals.openDeal` navigates to **`LeadCenter` with `{ lead, fromMyDeals: true }`**
   (was `DealDetail`). `fromMyDeals?: boolean` was added to the `LeadCenter` params in
   `RootStackParamList` (`src/navigation/index.tsx`).
-- **The pencil keeps the My Deals flow.** On the normal lead path the Contract Details pencil
-  opens the inline `EditContractDetailsModal`; from My Deals it must still launch the **4-step
-  dynamic deal-edit wizard** (Install Date → Job Build → Job Price → Review & Submit). So
-  `JobDocsSection` gained an optional **`onEditContract?: () => void`** prop that overrides
-  `ContractDetailsCard`'s `setShowEditModal`; `LeadCenter` passes
-  `onEditContract={fromMyDeals ? handleEditDealFromMyDeals : undefined}`. `handleEditDealFromMyDeals`
-  (in `LeadCenter/index.tsx`) is the port of the old `DealDetail.onEdit`: legacy (non-dynamic) deal →
-  "Edit on web" flash; dynamic deal → `navigate('DynamicDealCenter', { lead, mode:'edit',
-  calculatorResultData: { calculatorId, appointmentId } })` with the same multi-shape id resolution.
-  **Undefined on the normal lead path, so Lead Center is unchanged there.**
+- **The pencil opens the 4-step deal-edit wizard.** `JobDocsSection` has an optional
+  **`onEditContract?: () => void`** prop that overrides `ContractDetailsCard`'s `setShowEditModal`;
+  `LeadCenter` passes `onEditContract={isDynamicDeal ? handleEditDeal : undefined}`, and
+  `handleEditDeal` navigates to `DynamicDealCenter` with
+  `{ lead, mode:'edit', calculatorResultData: { calculatorId, appointmentId } }` (multi-shape id
+  resolution, ported from the old `DealDetail.onEdit`). See "The Contract Details pencil opens the
+  deal-edit wizard on BOTH entry points" below — it is **no longer gated on `fromMyDeals`**.
 - **Header title is entry-aware**: `{fromMyDeals ? 'Deal' : 'Lead Center'}` (`LeadCenter/index.tsx`).
 - **My Deals shows the global `MainHeader`** (added to the `showHeader` list in
   `navigation/index.tsx`) so its frame matches the screen it navigates into. Because the
@@ -4484,6 +4481,42 @@ the two real edits carrying a `from`), the SIGNED rows asserted unchanged and th
 once, a cleared measurement still reported, an added combination still carrying no previous values and
 no `unchanged` flags, both card kinds naming a grid cell identically, and an untouched build producing
 nothing.
+
+### The Contract Details pencil opens the deal-edit wizard on BOTH entry points
+
+Ticket: *"Make my deals flow also on the resulted lead sale page … instead of opening this modal take
+me to same my deal flow."* On a resulted SALE opened from Sold Leads, the Contract Details pencil
+opened the inline **Edit Contract Details — Select what to edit** sheet (Contract Pricing / Schedule
+Date); from My Deals the same pencil on the same screen opened the 4-step wizard.
+
+`onEditContract` was gated on `fromMyDeals`. It is now gated on whether the deal is DYNAMIC, so one
+record has one editor however the rep reached it. That matters beyond consistency: **only the wizard
+raises an ADDENDUM**, which is what a change to a submitted deal has to be — the inline modal writes a
+`leadDraft` instead, and the two produce different documents for the same edit.
+
+⚠️ **A legacy (non-dynamic) deal still gets the inline modal**, and that is a deliberate improvement on
+the My Deals behaviour rather than a copy of it. `handleEditDealFromMyDeals` used to flash *"Edit on
+web — this deal uses the legacy job builder"* and return, which on the normal lead path would have left
+such a deal with **no editor at all on device**. The wizard cannot open a build that is not there; the
+modal edits contract pricing and the schedule, which is exactly what that flash was refusing to do. So
+the dynamic test moved OUT of the handler and onto the prop, and the flash is gone from both paths.
+
+⚠️ **`isDynamicDeal` is now the single source of truth** for that decision — it was previously computed
+inside the handler, where it could only refuse, never choose.
+
+Unreachable without a contract: `ContractDetailsCard` renders the pencil only past its `hasContract`
+guard (sale / demo), so a reset / no-demo / not-hit lead — which shows the "No contract details
+available" placeholder — has no pencil to press.
+
+`handleEditDealFromMyDeals` was renamed **`handleEditDeal`**; the old name would have read as
+My-Deals-only on the path that is now every path. `fromMyDeals` is still used, for the header title
+(`Deal` vs `Lead Center`) and the deal-only `DealBanners`.
+
+tsc 44 (baseline unchanged); `LeadCenter/index.tsx` is identical to its HEAD eslint baseline
+(40 problems: 16 errors / 24 warnings).
+
+⚠️ Needs a device check (this repo cannot render-test): the pencil on a resulted SALE from Sold Leads
+landing on step 1 of the wizard, and a legacy deal still opening the inline modal rather than nothing.
 
 ### Lead Center pulls to refresh
 
