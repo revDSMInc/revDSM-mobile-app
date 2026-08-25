@@ -376,9 +376,19 @@ function SwipeDeleteAction({ drag, onDelete }: { drag: any; onDelete: () => void
   );
 }
 
-function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existingDrop, isLowesLead, plans, dropAddCategories, onSecure, onDecline, onPlanSelected, onClose }: {
+function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 0, method, calculatorMethod, existingDrop, isLowesLead, plans, dropAddCategories, onSecure, onDecline, onPlanSelected, onClose }: {
   visible: boolean;
   dropPrice: number;
+  /**
+   * Screens the calculator carries, and what they cost.
+   *
+   * ⚠️ DISPLAY ONLY. Web (`DropPriceModal.js`) shows `droppedPrice + screensCost` as the
+   * headline and keeps `droppedPrice` for everything that computes — the balance, the
+   * down-payment cap, the plan-minimum checks and what Secure/Decline records. Folding
+   * the screens into `dropPrice` instead would quietly re-price the negotiation.
+   */
+  screensCount?: number;
+  screensCost?: number;
   method: string;
   /** The lead / calculator BASE payment method (deal-center pick, e.g. AMEX). Kept
    * separate from `method` (which is the active/pre-select plan and can become a
@@ -504,7 +514,8 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
                 </View>
                 <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 2, marginBottom: 8 }}>UPDATED PRICE</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <Text style={{ fontSize: 34, fontWeight: '900', color: '#1C252E' }}>{fmt(dropPrice)}</Text>
+                  {/* Web parity: the headline is the drop PLUS the screens it includes. */}
+                  <Text style={{ fontSize: 34, fontWeight: '900', color: '#1C252E' }}>{fmt(dropPrice + screensCost)}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     {badges.map((b) => {
                       const sel = selectedPlan === b.key;
@@ -516,6 +527,11 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
                     })}
                   </View>
                 </View>
+                {screensCount > 0 && (
+                  <Text style={{ fontSize: 12, fontWeight: '500', color: '#6B7280', marginTop: 6 }}>
+                    ({screensCount} screens - {fmt(screensCost)} included)
+                  </Text>
+                )}
               </View>
 
               {/* Add Down Payment → Down Payment + Balance */}
@@ -2027,6 +2043,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       <DropOutcomeModal
         visible={showDropModal}
         dropPrice={pendingDrop}
+        screensCount={screensCount}
+        screensCost={rolloutResult.screensCost}
         // Pre-select the ACTIVE payment method when opening a fresh drop: the plan
         // from the currently-accepted drop if one exists, else the calculator's
         // method. So the popup opens with the method the rep is already on (shown in
