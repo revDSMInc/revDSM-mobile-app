@@ -3867,6 +3867,51 @@ accepted drop elsewhere, then confirm one `PUT /lfcalculators/{B}` with `{"dropP
 exactly one `accepted` row, and that the submit's `rollout_and_drop_summary` names calculator B with
 `resultStatus: "Sale"` and the real `noOfRollouts`.
 
+### The Job Tracker calendar could not go back a month
+
+Ticket: *"inside the sale, when we open the deal center, at the last of the screen there is a Job
+Tracker button; when we click on it the dialogue appears, and when we click on the Install Date box
+this calendar appears — in which previous dates are disabled. Make it enable the previous months and
+years and days."*
+
+`CustomDatePicker` (`screens/JobTracker/components/`) disabled its BACK chevron on the current month:
+
+```tsx
+disabled={isSameMonth(currentMonth, new Date())}
+style={{ opacity: isSameMonth(currentMonth, new Date()) ? 0.3 : 1 }}
+```
+
+⚠️ **That one chevron was the whole restriction.** The day grid never disabled anything (every day of
+the rendered month is tappable — which is why 1–24 August read as normal black text in the report's
+screenshot, not greyed), and the year list already spans `currentYear + 5` down to `currentYear - 24`.
+So "previous days" and "previous years" needed no change; they were simply unreachable, because the
+only way back was a chevron that switched itself off the moment you landed on today's month.
+
+Removed. Nothing else gates a past date — there is no min-date prop and no validation on the way out
+(`AddEditJobModal` only requires that an install date is PRESENT, unless `toBeDetermined`).
+
+⚠️ **This picker has FOUR consumers, and the block was wrong for every one of them** — worth knowing
+before anyone "restores" it as a safety rail:
+
+| where | field | why past dates matter |
+|---|---|---|
+| `AddEditJobModal` | Install Date | a job can legitimately be back-dated |
+| `AddEditJobModal` | **Date Sold** | a PAST date by definition — it defaults to today, so a sale made last week could not be recorded at all |
+| `JobTracker/index.tsx` | sold / payout filters | date RANGES, almost always looking backwards |
+| `MapFiltersModal` | two date filters | same |
+
+If a future field genuinely needs a floor, give the component a `minDate` prop and pass it from that
+call site — do not put the rule back inside the shared picker.
+
+⚠️ Noted while here, NOT changed (out of the ticket's scope): `currentMonth` is seeded with
+`new Date()`, not with `initialDate`. So editing a job whose install date is in October opens the
+calendar on the CURRENT month rather than October's. Harmless now that navigation is unrestricted, but
+it is an extra two taps every time.
+
+tsc error set byte-identical; eslint on the file goes 4 problems → 3 (the removed inline `opacity`
+style takes its own warning with it), the 2 remaining errors being the file's pre-existing unused
+`StyleSheet` / `isDark`.
+
 ### A drop price EQUAL to the rollout price is rejected
 
 Ticket: *"you have to add one more validation here while we are adding the drop price, user also will
