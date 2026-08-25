@@ -3912,6 +3912,27 @@ tsc error set byte-identical; eslint on the file goes 4 problems → 3 (the remo
 style takes its own warning with it), the 2 remaining errors being the file's pre-existing unused
 `StyleSheet` / `isDark`.
 
+### The Job Tracker Status chip was a one-tap server write
+
+Ticket: *"inside the job tracker, when we click on unpaid status it changes to paid, or when we
+click on paid it changes to unpaid — that is wrong, there is no click on status. Make the click
+disabled from this field."*
+
+The Paid/Unpaid chip in each row was a `TouchableOpacity` calling `useJobTracker.toggleStatus`,
+which is not local state — it `PATCH`es the server (`JobService.updateStatus`) and refetches. So a
+stray tap while scrolling a long list changed a real payment status, with no confirmation and no
+undo. It is now a plain `View` with the same `w-24 items-center` box, so the layout is unchanged.
+
+⚠️ **Nothing is lost.** The row's ⋮ menu already carries **"Change Status"**, which opens a
+dropdown (Unpaid / Paid) behind a Cancel/Update confirmation and calls `JobService.updateStatus`
+itself. The chip was a duplicate of that, minus the confirmation.
+
+⚠️ `toggleStatus` is KEPT on the hook but now has zero consumers, and carries a note saying so. If
+a one-tap toggle is ever wanted back, put a confirm in front of it rather than re-attaching it to
+the chip.
+
+tsc error set byte-identical; eslint on `JobTracker/index.tsx` unchanged at 29 problems (the
+destructured `toggleStatus` was removed with its last use, so no unused-var error was added).
 ### A drop price EQUAL to the rollout price is rejected
 
 Ticket: *"you have to add one more validation here while we are adding the drop price, user also will

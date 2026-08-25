@@ -56,6 +56,18 @@ export const useJobTracker = (selectedYear: number) => {
     fetchJobs();
   }, [fetchJobs]);
 
+  /**
+   * Flip a job between paid and unpaid.
+   *
+   * ⚠️ DELIBERATELY NOT WIRED TO ANYTHING. It used to sit on the Status chip in the
+   * Job Tracker list, so a stray tap while scrolling PATCHed the server and flipped a
+   * real payment status with no confirmation and no undo. The chip is read-only now.
+   *
+   * The deliberate path is the row menu's "Change Status", which opens a dropdown
+   * with a Cancel/Update confirmation and calls `JobService.updateStatus` directly.
+   * If a one-tap toggle is ever wanted back, put a confirm in front of it — do not
+   * re-attach this to the chip.
+   */
   const toggleStatus = async (job: JobEntry) => {
     const newStatus = job.status === 'paid' ? 'unpaid' : 'paid';
     try {
