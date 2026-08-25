@@ -1281,8 +1281,19 @@ export default function InstallerJobDetail() {
           Object.values(x).reduce((sum, list) => sum + (list?.length ?? 0), 0);
         return n > 0 ? `${n} photo${n > 1 ? 's' : ''} taken` : null;
       }
-      const n = required.filter((id) => m[id]).length;
-      return n > 0 ? `${n}/${required.length} shots matched` : null;
+      // ⚠️ The denominator is the required set UNION what was actually matched, not the
+      // required set alone. A tag the rep skipped is not "required" (it has no reference
+      // to ghost against), but the tagger still lets the installer shoot it - and once
+      // they have, it is part of this pass.
+      //
+      // Counting only the required set made one screen contradict itself: a pre pass of
+      // three shots read "2/2 shots matched" while the Post row directly below measured
+      // against those same three and read "2/3". The union cannot make a finished step
+      // look unfinished - every id it adds comes FROM `m`, so it lifts both halves of
+      // the fraction by one.
+      const ids = Array.from(new Set([...required, ...Object.keys(m)]));
+      const n = ids.filter((id) => m[id]).length;
+      return n > 0 ? `${n}/${ids.length} shots matched` : null;
     };
 
     const settled = productIds.filter((id) => progress.scope[id]?.state !== 'pending' && progress.scope[id]);

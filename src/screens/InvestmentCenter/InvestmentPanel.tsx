@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, Image, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, RefreshControl, Platform, Pressable, Dimensions } from 'react-native';
 import { format } from 'date-fns';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -24,6 +24,12 @@ import { buildInvestmentJobScope } from '../DynamicDealCenter/utils/investment-j
 import { formatAmountInput, stripAmount } from '../DynamicDealCenter/utils/format-amount';
 import { ProgramCard } from './ProgramCard';
 import { OptInConfirmModal } from './OptInConfirmModal';
+import { describeFullPackage } from '../DynamicDealCenter/utils/tab-naming';
+import {
+  FullPackageTitle,
+  FullPackageInfoModal,
+  type PackageAnchorRect,
+} from '../DynamicDealCenter/components/FullPackageBadge';
 import { AddPlanModal } from './AddPlanModal';
 import { SpotlightOverlay, SpotlightState, SpotlightRect } from './SpotlightOverlay';
 import { triggerHaptic } from '../../utils/haptics';
@@ -388,6 +394,34 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   // present, otherwise the product/category names. Shown as bullet points below the
   // heading (was a "·"-joined subtitle line for the product names).
   const inclusions = jobScope.length > 0 ? jobScope : productNames;
+
+  /**
+   * Is this calculator a FULL PACKAGE (Gutter + guard + Soffit + Trim wrap)?
+   *
+   * When it is, the box + ⓘ REPLACES the inclusions list above — the same swap the
+   * Deal Center makes wherever it would otherwise spell the combination out as
+   * `G+Versa+S+FWrap`. Same rule and same source of truth (`describeFullPackage`
+   * over this calculator's own live entries), so a calculator cannot present as a
+   * package on one surface and as a list of its parts on another.
+   *
+   * ⚠️ It replaces the list on BOTH its branches — the product-name fallback AND
+   * real job-scope descriptions. That is the requirement as given ("i need to show
+   * the box with information icon"), and it means a package's scope sentences are
+   * not shown on this screen at all; the ⓘ card carries what it includes instead.
+   * A calculator that is NOT a package still lists everything exactly as before.
+   */
+  const packageInfo = useMemo(
+    () => describeFullPackage(calculator.entries || {}, verticals || []),
+    [calculator.entries, verticals],
+  );
+  // Anchored to the tapped ⓘ so the card opens directly beneath it rather than at
+  // a fixed screen edge — the panel scrolls, so the position is only knowable now.
+  const [packageInfoVisible, setPackageInfoVisible] = useState(false);
+  const [packageAnchor, setPackageAnchor] = useState<PackageAnchorRect | null>(null);
+  const openPackageInfo = useCallback((rect: PackageAnchorRect | null) => {
+    setPackageAnchor(rect);
+    setPackageInfoVisible(true);
+  }, []);
 
   // ── Renders: resolve fresh secure URLs (stored ones may have expired) ────────
   const renders: any[] = useMemo(
@@ -761,7 +795,22 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       <View style={{ marginBottom: 18 }}>
         <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', textAlign: 'center', marginBottom: 10 }}>Includes the Following:</Text>
         <View style={{ height: 2, backgroundColor: '#16324F', borderRadius: 1, marginBottom: 14 }} />
-        {inclusions.length === 0 ? (
+        {packageInfo.isFullPackage ? (
+          /* A full package: the box + ⓘ stands in for the whole list, and the ⓘ
+             carries the breakdown (Gutter / Soffit / FWrap / (Versa OR VMax)).
+             Centred, at presentation size — this is the customer-facing surface,
+             so the glyphs are larger here than the 14pt tab strip. */
+          <View style={{ alignItems: 'center', paddingVertical: 4 }}>
+            <FullPackageTitle
+              isFullPackage
+              extras={packageInfo.extras}
+              size={22}
+              color="#1C252E"
+              iconColor="#16A34A"
+              onInfo={openPackageInfo}
+            />
+          </View>
+        ) : inclusions.length === 0 ? (
           <Text style={{ fontSize: 12, color: '#94A3B8', textAlign: 'center', fontStyle: 'italic' }}>
             Job scope will appear once products are configured.
           </Text>
@@ -807,6 +856,14 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           {inHomeCardEl}
         </Pressable>
       </View>
+
+      {/* Its own `Modal`: the panel renders inside a navigable SCREEN, so there is
+          no host sheet to stack inside. Positioned against the ⓘ that was tapped. */}
+      <FullPackageInfoModal
+        visible={packageInfoVisible}
+        onClose={() => setPackageInfoVisible(false)}
+        anchorRect={packageAnchor}
+      />
 
       <OptInConfirmModal
         visible={showConfirm}

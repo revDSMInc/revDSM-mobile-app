@@ -2193,6 +2193,205 @@ footer, and the Review step listing no payment rows on a deal opened and left al
 ⚠️ `DynamicDealEditScreen.tsx` and `funding-log.ts` are both CRLF — use `newline=''`
 on both ends (same trap as `dynamic-deal-diff.ts`).
 
+### REVDSM-1160 — the funding routes mobile wasn't calling, and the mockup's row design
+
+Reference: **`funding-data/Funding-my-deals-endpoint-data.md`** (the backend's own
+mobile API doc) plus the screenshot of `funding-data/Funding-UI-Mokap-My-Deals-Code.txt`
+rendered — the Down Payment line and the Balance line circled. *"the new endpoints for
+the My Deals flow where we call the saved down payment and balance method that we store
+in the sale section … also make sure the design is exactly match with the image."*
+
+The saved sale was already being read (`funding.load()` → `hydrateRowsFromRecord`), but
+four routes were missing, the record was being read through a type that dropped half its
+fields, and the rows rendered as the Result Lead sheet draws them rather than as the
+mockup does.
+
+#### The four routes that were missing
+
+| | why it matters here |
+|---|---|
+| `POST …/{pid}/reactivate` | Re-settle a **drifted** row. An addendum that moves the contract price moves what the loan must carry — this is the deal-edit wizard's NORMAL case, not an edge one |
+| `POST …/{pid}/restore` | The mockup's **Swap** shelf. Body `{ archivedId }`, and ⚠️ **symmetric** — the current plan goes onto the shelf in exchange, so a restore can itself be undone |
+| `POST …/funding/sync-all` | One call for every pollable row |
+| `GET /company/v1/down-payment-limit/sales` | The ceiling the `PUT`'s new `422` enforces |
+
+⚠️ **`sync-all` REPLACED a loop, and the loop was the bug.** `syncAll` used to call
+`syncPayment` per row. Every response carries the WHOLE record, so a sequential loop
+leaves the screen describing several different moments as it goes, and one unreachable
+lender aborted the rest of the sweep. The endpoint polls them all and returns the
+failures itemised in `problems[]` — surfaced as `FlashMessage.info`, deliberately **not**
+as an error: the other rows really were refreshed, and calling the sweep a failure would
+suggest nothing happened.
+
+⚠️ **`mock-provider` is still NOT added, and must not be.** The doc lists it; this repo
+removed it on request and a test asserts its absence (see "⛔ REMOVED: the Scenario
+Simulator"). `check-deposited` is also left out — the doc itself flags it as a manager
+action taken at the office days later, which is not a rep-app screen.
+
+#### `userId` is now sent on every funding call
+
+`cfg()` sends `companyid` **and** `userId`. Absent the second, the API attributes every
+action on the record to *"RevDSM" (system)* — so a check marked collected, a card charged
+and a loan activated all lose the name of the person who did them, in the API's own audit
+trail (`collectedBy`, each `events[].by`). ⚠️ It is read off `useFunding`'s `logCtx`
+rather than added as a fourth hook argument, so no caller can hand one identity to the
+activity log and a different one to the API.
+
+#### `payMode` is now SENT on save
+
+⚠️ It is a real persisted field and was never being written. `inferPayMode` can only read
+the structure back off the rows, and a contract paid in full by one down row is
+indistinguishable from an upfront one that way. Omitting it from the `PUT` leaves the
+stored value alone, which is why the omission was invisible.
+
+#### The record type was dropping the fields the design needs
+
+`FundingPaymentRow` gained `baseline` / `liveUsage` / `drifted`, `archived[]`,
+`approvedCeiling`, `chargeAttempts`, `collectedBy`, `lastDecline`, `events[]`, and a
+narrowed `providerState` (⚠️ only `cardBrand` / `cardLast4` are safe to display). New
+`FundingArchivedPlan` / `FundingDecline` / `FundingRowEvent` / `FundingSyncAllResult` /
+`DownPaymentLimit`.
+
+⚠️ **`events[]` is per ROW and `attemptHistory` is per JOB** — kept separate because
+folding them loses which row a stage belonged to. `chargeFailed` is the one event the
+server does NOT deduplicate, so a count of those is a real retry count.
+
+#### The chip, and what it is allowed to claim
+
+`PaymentRow` mirrors `linkSent` / `activated` / `archived` / the three drift fields, and
+two pure helpers in `utils/funding.ts` decide what the chip says: **`lenderState(row)`**
+→ `{ tone, sub }` and **`hasLenderState(row)`**.
+
+⚠️ **Order matters and is tested.** `declined` outranks everything — a declined row is
+not "pending" merely because a link also went out — and `activated` only ever qualifies
+an *approval*, so `{ decision: 'declined', activated: true }` still reads red. This is the
+only control on the pricing screen that reports a THIRD PARTY's position: getting it
+wrong doesn't look like a rendering bug, it looks like the lender said something they
+did not.
+
+⚠️ **Which lines draw the chip is STRUCTURAL, not stateful — `showsChip(row)`.** The
+mockup's `autoRowHtml` draws it for the REMAINDER row and `simpleRowHtml` draws a
+dropdown for every other line, which is exactly what the two screenshots show: the Down
+Payment reads `$500 · MC/VISA ⌄ · Remove` while the Balance reads `$2,363 · GreenSky ·
+Approved & activated · Swap`. A DECIDED row joins it wherever it sits — a lender's
+verdict does not belong behind a chevron.
+
+> ⚠️ **This first shipped gated on `hasLenderState` alone and that was WRONG — it is the
+> "Swap is missing on mobile" bug.** The reasoning recorded here was that the chip
+> replaces the dropdown, so a row the rep still has to pick a method for must keep one.
+> True in the abstract, and it missed the case that actually occurs: a balance seeded
+> from the SALE already has a method but no lender activity, so it fell through to a
+> plain dropdown — and with the chip went **Swap** and the **archived shelf**, i.e. the
+> only controls that can change the plan or restore an archived one. The remainder row
+> is the row the shelf belongs to, so it is the row that must carry the control; Swap
+> opens the same catalogue the dropdown does, so nothing is unpickable. Asserted with
+> the repro (a check-balance sale hydrating to `auto: true` → `showsChip` true).
+
+⚠️ **`lenderState` takes a `financing` flag, and it only changes the un-submitted case.**
+A financing balance with no application out yet is genuinely OUTSTANDING — somebody has
+to send it — so it reads amber, matching the mockup's chip. A check the install crew
+collects needs nothing from anyone and stays grey. Painting both amber would make "needs
+attention" mean nothing; painting both grey would hide the one line that does.
+
+⚠️ **Swap is suppressed on a locked row** (amount and method are frozen server-side) and
+becomes **Close** while its picker is open — it is a toggle, not a second control.
+
+⚠️ **The mockup is visibly cramped at 390px** — the plan name truncates to `Gre…` and the
+status wraps under the button. Reproduced structurally but not pixel-for-pixel: on a chip
+row the amount column drops to 29% (it is READ-ONLY text there, never an input, so it
+does not need an input's width), the status line may take two lines rather than being
+clipped, and the Swap button is `flexShrink: 0` — it is the last thing that may be
+squeezed, being the only way to change the method on that row.
+
+**`driftNote(row)`** is the `Prior $2,863` / `−$500` line under a drifted amount. It
+requires a REAL baseline: the server sets `drifted` from its own comparison, and a row
+carrying the flag without a baseline would render *"Prior $0"* — which reads as the
+lender having committed to nothing.
+
+#### `PaymentRowsGroup` gained a second layout, not a second component
+
+**`layout="plain"`** is the My Deals mockup: a bold `Down Payment` / `Balance` heading over
+free-standing bordered lines, a bordered **Remove** button in place of the ✕, the lender
+chip (status dot + name + `Approved & activated` + **Swap**) in place of the dropdown once
+a row has a lender position, the dashed **ARCHIVED METHODS** shelf with **Restore**, and a
+green `+ Add payment method`. `layout="panel"` (the default) is unchanged, so the Result
+Lead sheet is byte-identical.
+
+⚠️ **A prop rather than a fork.** Everything that can be got WRONG here — the auto row's
+arithmetic, the below-minimum gate, when a row may be removed, what the chip may claim —
+is shared. Two components would give two screens two different answers to those, which is
+the exact class of bug this module keeps hitting.
+
+⚠️ **The `FUND.PANEL` wrapper was REMOVED from the deal-edit pricing block.** It existed
+only because `panel` notches its title out of that colour; with `plain` headings it became
+a second, competing container around the lines. The mockup has no panel.
+
+⚠️ **Swap opens the same catalogue the dropdown does.** It is not a different picker — a
+second plan list is how the two would drift apart, and it is what makes the chip safe on
+a row whose method has not been chosen yet (the name then reads *Select payment method*).
+
+#### Drift on the funding card
+
+`PaymentFundingCard` renders the mockup's `reactivate-summary`: **PRIOR → NEW** with the
+delta badge, over a **Reactivate loan for $X** button (`onReactivate`, optional — omit it
+and the drift is still *reported*, just not actionable, which is the right degradation).
+
+⚠️ Gated on `drifted && decision !== 'declined' && baseline > 0 && liveUsage !== baseline`,
+because `reactivate` is refused on a declined row and `409`s when the two already match —
+offering a button that can only fail is worse than showing none.
+
+#### The socket
+
+`useFunding` subscribes to **`funding-updated`** and adopts the record it carries, so a
+homeowner finishing a hosted page or a lender answering lands on screen without the rep
+tapping Sync.
+
+⚠️ **The event is COMPANY-scoped** (room `company:${companyId}`), so it fires for every
+lead in the company. Without the `leadId` filter this screen would adopt a DIFFERENT job's
+record over its own — and `apply` replaces wholesale, so the rep would be looking at
+someone else's payments with no error anywhere. Compared as STRINGS, for the same reason
+the resulted-calculator lock does: the id arrives off a socket payload and off a nav param
+and those are not guaranteed to be the same type.
+
+⚠️ The payload shape is tolerated three ways (`{ funding }`, `{ data: { funding } }`, or
+the record itself) because `MOBILE-FUNDING-CATCHUP.md` — which the doc names as the source
+for it — **is not in this repo**. Guessing wrong would mean silently ignoring every update.
+
+#### Already correct, so left alone
+
+⚠️ The doc's *"the swallowed 422 on save — fix that before anything else"* does **not**
+apply to mobile. `classifyFundingError` maps `422 → 'rule'` and `report` raises a
+`FlashMessage.warning`, so a refused Confirm has always said why here. That note is about
+the web client.
+
+Two new activity-log emitters, both routed through `fire()` like the other 18 so the flow
+prefix cannot be forgotten: **`logFundingLoanReactivated`** (its own event, not a second
+`funding_loan_activated` — two identical "activated" rows would hide that the amount
+moved, which is the only thing that happened) and **`logFundingPlanRestored`** (names BOTH
+plans, because the restore is symmetric and recording only the one restored leaves no
+trace of what it displaced).
+
+Verified with 34 tests (`__tests__/screens/DynamicDealCenter/funding-endpoints-1160.test.ts`):
+every new route path under the lead-scoped base with `sync-all` asserted lead-scoped and
+the limit read asserted NOT under `/lead/`, ids url-encoded so a slash cannot escape a
+path, `restore` addressed by `archivedId`, the two bodiless posts, `companyid` present and
+`userId` present (and each omitted rather than sent empty), `payMode` on the save, all
+seven chip states including the two precedence guards, six drift cases including the
+no-baseline and already-matching guards and junk input, and the sale-record hydrate —
+methods back as plan keys, `pid` preserved, the chip reading *Approved & activated*, the
+archived shelf, drift carried through, a short approval showing what was GRANTED, and an
+empty record hydrating to nothing. tsc 44 (baseline unchanged); `FundingService.ts`,
+`utils/funding.ts`, `useFunding.ts`, `funding-log.ts` and the new test are eslint-clean,
+`PaymentRowsGroup.tsx` (62) and `PaymentFundingCard.tsx` (33) carry only
+`react-native/no-inline-styles`. Suite 603 passing, 1 pre-existing failure
+(`installer-card-state`, unrelated).
+
+⚠️ Needs a device check — none of this has been driven against a running server, and the
+doc itself flags archive/restore, sync-all and the down-payment cap as *"unit-tested but
+never walked through HTTP"*: the Swap chip and shelf on a real approved row, Restore,
+Reactivate on a drifted loan, `sync-all`'s `problems[]`, and — the one with no
+documentation at all — whether `funding-updated` arrives without an explicit room join.
+
 ### Rehash with no job scope opens the entry form, not a locked $0 receipt
 
 Ticket: *"in the rehash module when the lead having `isRehashed: true` … if the lead is in the rehash
@@ -2361,7 +2560,7 @@ horizontal ScrollView with drag-reorder, and Android clips children drawn outsid
 bounds, so an overhanging badge is a coin-flip on whether it renders. For the same reason the popover
 is a `Modal` rather than an inline absolutely-positioned card.
 
-**All FOUR places that print the name carry the badge** (follow-ups: *"the bottom logic is working
+**Every place that prints the name carries the badge** (follow-ups: *"the bottom logic is working
 perfectly but when we go to the next screen … top shows the combination of the letters"*, then *"here
 is still missing the box"* against the two card headings):
 
@@ -2373,6 +2572,46 @@ is still missing the box"* against the two card headings):
 | rollout step — quote card heading | `PremiumQuoteCard` |
 | "Result Job \<name\>" — Sale/Demo chooser | `ResultJobChooser` |
 | Result Lead sheet — the `Calculator` block | `ResultJobModal` |
+| **Investment Center — "Includes the Following" list** | `InvestmentPanel.tsx` — REPLACES the list, see below |
+| **Investment Center — calculator tab strip** | `InvestmentCenter/index.tsx`, via its own `packageByCalcId` |
+
+⚠️ The **Investment Center** was added last, and it is TWO surfaces, not one (*"inside the investment
+center when we get this combination of the products, instead of this show the box with information icon
+same as we implement in the sale side"*, then, against the panel's own list, *"still show the products,
+that is not my requirement — i need to show the box with information icon"*). It is the presentation
+surface, so a calculator that reads as a package while quoting must read as one in front of the
+customer too.
+
+**The panel's "Includes the Following" list is the important one.** `InvestmentPanel`'s
+`inclusions = jobScope.length > 0 ? jobScope : productNames` renders the job-scope descriptions when
+the company has them and the bare product/category names (`Gutters · LeafFilter · Soffit · Fascia`)
+when it does not. On a full package the whole list is now REPLACED by a centred box + ⓘ at `size={22}`
+— presentation size, not the 14pt of a tab.
+
+⚠️ **It replaces BOTH branches — including real job-scope sentences — and that was the explicit
+answer to a direct question**, not an inference. So a package's scope copy ("Install Gutters and
+Downspouts", "Installation: Align, pitch, install hidden hangers every 20-25\"…") does not appear on
+this screen at all; the ⓘ card carries what it includes instead. Restricting it to the product-name
+fallback was offered and declined. A calculator that is NOT a package still lists everything exactly
+as before, so nothing changes for the ordinary lead.
+
+**The tab strip is the second surface.** It is a plain `ScrollView` of `TouchableOpacity` tabs (not
+`HorizontalDraggableTabs`), so it calls `describeFullPackage` itself and renders `FullPackageTitle`
+for BOTH branches — passing `title` means a non-package tab is byte-identical to the `<Text>` it
+replaced. Inactive tabs grey the box and the ⓘ with the rest of the tab (rollout-strip parity).
+
+⚠️ The strip renders **only when `visible.length > 1`**, and `visible` drops unpriced and
+bare-numbered calculators — so a lead presenting a SINGLE package shows no strip, which is why the
+reporter's second screenshot had no badge anywhere until the panel was covered too. The panel is the
+surface that is always present.
+
+⚠️ Both mount **`FullPackageInfoModal`**, not the Overlay: `InvestmentCenter` is a NAVIGABLE SCREEN,
+so there is no host modal to stack inside. (The Overlay form exists for the two Result surfaces, which
+are already inside one.) They keep SEPARATE anchor state — the strip's ⓘ is at the top of the screen
+and the panel's is mid-scroll, and one shared anchor would open the card against the wrong one.
+
+⚠️ `InvestmentPanel` prints `calculator.title` nowhere — it reads it only for an activity log — so
+the strip and the inclusions list are the screen's only two occurrences.
 
 Each computes it by calling `isFullPackageSelection` on the calculator's OWN entries, so no screen can
 read as a package while another reads as letters, and none of them needs a flag threaded through.
@@ -4937,8 +5176,44 @@ has none, a one-field pair staying a plain row alongside untouched flat rows, an
 producing nothing.
 
 tsc 44 (baseline unchanged); `dynamic-deal-diff.ts` is identical to its HEAD eslint baseline (2
-pre-existing errors) and `DynamicDealEditScreen.tsx` is at 147 warnings, all `react-native/no-inline-styles`
+pre-existing errors) and `DynamicDealEditScreen.tsx` is at 148 warnings, all `react-native/no-inline-styles`
 — the only rule that file carries.
+
+##### …and an edited combination is described in FULL, not only by what moved
+
+Follow-up: *"see in 2 boxes leaf filter profile and gutter opening width is not showing."* `Combination
+#3` (an ADD) listed all five of its measurements; `#1` and `#2` (edits) listed three each, because a
+pair only ever emitted rows for fields that CHANGED. The two identifying fields — `Gutter Opening
+Width(4&5)` and `LeafFilter Profile` — were already sold, so they were absent, and the two cards became
+indistinguishable from each other.
+
+**New `comboFieldsForPair(orig, next, …)`** returns the whole combination in config order, with `from`
+on the measurements that moved and **`unchanged: true`** on the rest. The renderer paints an unchanged
+value neutral `#334155` — green would read as newly entered.
+
+- ⚠️ **Carried on the pair's FIRST row only**, not on every changed field, so one combination
+  contributes one breakdown to the payload.
+- ⚠️ **Display only, again.** `field`/`from`/`to` on the individual rows are untouched — they are what
+  the customer signs, and they still list only real changes. Asserted directly.
+- **A cleared measurement is kept** (value `—`) rather than vanishing, so dropping a footage to nothing
+  still reads as a removal.
+- `groupComboRows` falls back to the changed rows when no breakdown is present, so nothing breaks on a
+  row set that predates this.
+
+⚠️ **`comboFields`' cell separator changed from `' '` to `' · '`**, matching `formatChangeFieldLabel`.
+The two joins differed, so an ADDED combination read `Measurements Front · 2nd Story` while an edited
+one read `Measurements · Front · 2nd Story` — the same field, two ways, on one screen. This also flows
+into `describeCombo`, i.e. into the submitted addendum's text; it is a separator, not a value.
+
+⚠️ **A pair that changed ONE field still stays a plain row.** The "a card holding a single value is
+heavier" reasoning no longer strictly applies now that the card is always full, but widening it would
+re-card edits nobody reported — left alone deliberately.
+
+Verified with 6 tests: the repro (all five measurements named, the three untouched ones flagged, only
+the two real edits carrying a `from`), the SIGNED rows asserted unchanged and the breakdown counted
+once, a cleared measurement still reported, an added combination still carrying no previous values and
+no `unchanged` flags, both card kinds naming a grid cell identically, and an untouched build producing
+nothing.
 
 ### Lead Center pulls to refresh
 

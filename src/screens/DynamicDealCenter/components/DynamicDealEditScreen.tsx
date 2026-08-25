@@ -2581,7 +2581,17 @@ function ComboSectionCard({ label, blocks }: { label: string; blocks: ComboBlock
                           was empty before, and striking one reads as "something was
                           there". */}
                       {!!f.from && f.from !== '—' && <Text style={styles.comboFrom}>{f.from}</Text>}
-                      <Text style={[styles.comboValue, { color: valueColor }]}>{f.value}</Text>
+                      {/* An untouched measurement is there to NAME the combination, not to
+                          report a change, so it stays neutral — green would read as newly
+                          entered. */}
+                      <Text
+                        style={[
+                          styles.comboValue,
+                          { color: f.unchanged ? '#334155' : valueColor },
+                        ]}
+                      >
+                        {f.value}
+                      </Text>
                     </View>
                   </View>
                 ))}

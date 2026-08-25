@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../hooks/useAuth';
+import { useUserRole } from '../../hooks/useUserRole';
 import { useTheme } from '../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/Ionicons';
 import SafeBottomSpacer from '../../widgets/common/SafeBottomSpacer';
@@ -20,12 +21,15 @@ import {
   ChannelThreadItem,
   DateSectionHeader,
   groupChatsByLeadDate,
+  buildInstallerLeadHeading,
+  getLeadIdDisplay,
 } from '../../widgets/components/chat/ThreadItems';
 import { useChatThreads } from '../../hooks/useChatThreads';
 import CreateChannelModal from '../../widgets/modals/chat/CreateChannelModal';
 import ChatService from '../../services/api/ChatService';
 import SocketManager from '../../services/SocketManager';
 import { FlashMessage } from '../../config/message';
+import { sanitizeForLog } from '../../utils/sanitize-for-log';
 
 const STATUS_OPTIONS = [
   'All',
@@ -36,9 +40,28 @@ const STATUS_OPTIONS = [
   'No Sales',
 ];
 
+/**
+ * The INSTALLER's own filter list.
+ *
+ * An installer only ever meets a lead that has already been sold and scheduled, so
+ * 'Unresulted Leads' (no outcome yet) and 'No Sales' (lost) name states that cannot
+ * reach them - both filter to an empty list for this role. What is left is the
+ * install lifecycle, which is the whole of what an installer tracks.
+ *
+ * NOTE 'All' is deliberately kept, so an installer always has a way back to every
+ * conversation once they have narrowed it.
+ */
+const INSTALLER_STATUS_OPTIONS = [
+  'All',
+  'Pending Install',
+  'Installing Today',
+  'Already Installed',
+];
+
 export default function ChatThreadsScreen({ navigation }: any) {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
+  const { isInstaller } = useUserRole();
   const insets = useSafeAreaInsets();
 
   const [mainTab, setMainTab] = useState<'myleads' | 'channels'>('myleads');
@@ -48,11 +71,22 @@ export default function ChatThreadsScreen({ navigation }: any) {
   // dropdown derives the key from the label (`opt.toLowerCase().replace(/ /g, '')`), so
   // they are exactly what tapping the 'All' row produces. `useChatThreads` already reads
   // 'all' as "no status constraint" on both the server query and the client-side filter.
+  //
+  // NOTE this is now the right seed for BOTH roles, so no `isInstaller` branch is
+  // needed here. The installer list drops 'Unresulted Leads' (see
+  // INSTALLER_STATUS_OPTIONS), so seeding an installer to it would have opened the
+  // screen on a filter absent from its own menu, over a list that is always empty for
+  // that role. 'All' is in both lists and is the only seed correct for either.
   const [statusFilter, setStatusFilter] = useState('all');
   const [filterUnread, setFilterUnread] = useState(false);
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState('All');
   const [showCreateChannel, setShowCreateChannel] = useState(false);
+
+  // Which list the dropdown offers. Both start with the same All row the seed above
+  // uses, so a role change under a signed-in session cannot strand `selectedStatus` on
+  // a label its own list no longer holds.
+  const statusOptions = isInstaller ? INSTALLER_STATUS_OPTIONS : STATUS_OPTIONS;
 
   useEffect(() => {
     const unsub = SocketManager.on('team-channel-created', (data: any) => {
@@ -82,19 +116,51 @@ export default function ChatThreadsScreen({ navigation }: any) {
 
   const leadSections = useMemo(() => groupChatsByLeadDate(filteredChats), [filteredChats]);
 
+  // TEMPORARY diagnostic - dumps exactly what the list is RENDERING, which is the
+  // filtered/searched set, not the raw API response. Fires once the fetch settles and
+  // again whenever the displayed set changes (tab, status filter, search, unread).
+  //
+  // NOTE each row goes through `sanitizeForLog` but the ARRAY IS LEFT WHOLE. Passing
+  // the array itself would cap it at LOG_MAX_ARRAY (20) and hide the very rows being
+  // inspected; sanitizing per row still truncates long strings and nested arrays, so a
+  // chat carrying a document blob cannot push megabytes across the DevTools websocket.
+  useEffect(() => {
+    if (!__DEV__ || loading) return;
+    const rows: any[] = mainTab === 'myleads' ? filteredChats : filteredChannels;
+    console.log(
+      `[chatThreads] displayed ${mainTab}: ${rows.length} row(s) ` +
+        `(status=${statusFilter}, unread=${filterUnread}, search=${searchQuery || "none"})`,
+      rows.map((r) => sanitizeForLog(r))
+    );
+  }, [
+    loading,
+    mainTab,
+    filteredChats,
+    filteredChannels,
+    statusFilter,
+    filterUnread,
+    searchQuery,
+  ]);
+
   const navigateToChat = (item: any) => {
     navigation.navigate('ChatDetail', {
       leadId: item.leadDetails?._id,
       chatId: item._id || item.id,
-      customerName: (() => {
-        const dateStr = item.leadDetails?.leadDate
-          ? format(new Date(item.leadDetails.leadDate), 'MM.dd.yy')
-          : '';
-        return (
-          `${item.leadDetails?.office || ''} Lead ${dateStr} - ${item.leadDetails?.leadId || 'N/A'}`.trim() ||
-          'Discussion'
-        );
-      })(),
+      // The header inside the chat must read as the row that opened it. An installer
+      // row is `{jobNumber} {lastName} {timeWindow}`, so the same builder produces the
+      // title here - imported rather than re-derived, since two copies of this string
+      // is exactly how the list and the header came to disagree.
+      customerName: isInstaller
+        ? buildInstallerLeadHeading(item.leadDetails, getLeadIdDisplay(item.leadDetails))
+        : (() => {
+            const dateStr = item.leadDetails?.leadDate
+              ? format(new Date(item.leadDetails.leadDate), 'MM.dd.yy')
+              : '';
+            return (
+              `${item.leadDetails?.office || ''} Lead ${dateStr} - ${item.leadDetails?.leadId || 'N/A'}`.trim() ||
+              'Discussion'
+            );
+          })(),
       chatType: 'lead',
       initialParticipants: item.participants || [],
       previewImage: item.leadDetails?.previewImage,
@@ -209,7 +275,7 @@ export default function ChatThreadsScreen({ navigation }: any) {
                     zIndex: 999,
                   }}
                 >
-                  {STATUS_OPTIONS.map((opt) => (
+                  {statusOptions.map((opt) => (
                     <TouchableOpacity
                       key={opt}
                       onPress={() => {
@@ -297,7 +363,11 @@ export default function ChatThreadsScreen({ navigation }: any) {
           onScrollBeginDrag={() => setShowStatusDropdown(false)}
           renderSectionHeader={({ section: { title } }) => <DateSectionHeader label={title} />}
           renderItem={({ item }) => (
-            <LeadChatThreadItem chat={item} onPress={() => navigateToChat(item)} />
+            <LeadChatThreadItem
+              chat={item}
+              onPress={() => navigateToChat(item)}
+              installerView={isInstaller}
+            />
           )}
           ListFooterComponent={<SafeBottomSpacer height={40} />}
           ListEmptyComponent={emptyState}

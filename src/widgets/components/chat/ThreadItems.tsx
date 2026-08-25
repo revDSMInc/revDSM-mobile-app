@@ -165,6 +165,37 @@ function buildLeadHeading(leadDetails: any, leadId: string): string {
   return `Lead ${formatShortDate(leadDetails?.leadDate)} ${leadTime}`.trim();
 }
 
+/**
+ * The INSTALLER's heading: `{jobNumber} {lastName} {timeWindow}` - e.g.
+ * "1272 test two 8AM-12PM". All three come off the job the crew is being sent to:
+ * `installerAssignment.jobNumber`, `customerDetails.lastName` and
+ * `installerAssignment.timeWindow`.
+ *
+ * WARNING deliberate divergence from web, and it is NOT enough to reorder
+ * `buildLeadHeading`'s branches. That function already carries a
+ * `{jobNumber} {lastName} {date}` arm, but the `status === 'sale'` arm above it
+ * catches every install job (an installer only ever sees sold leads), so the arm is
+ * unreachable in practice. Web has the same ordering on purpose - a sales rep reads
+ * the office-prefixed job number ("OR1272") - so the installer gets its own builder
+ * rather than the shared one being re-ordered underneath sales.
+ *
+ * Each segment is dropped when missing rather than rendering a blank or "N/A", so an
+ * unassigned or window-less job degrades to what IS known instead of reading as a
+ * broken row.
+ */
+export function buildInstallerLeadHeading(leadDetails: any, leadId: string): string {
+  const assignment = leadDetails?.installerAssignment;
+  // `leadId` is the same fallback the sale branch uses, so a job whose number has not
+  // been issued yet is still identified rather than opening with the customer name.
+  const jobNumber = String(assignment?.jobNumber || leadId || "").trim();
+  const lastName = String(leadDetails?.customerDetails?.lastName || "").trim();
+  const timeWindow = String(assignment?.timeWindow || "").trim();
+
+  const heading = [jobNumber, lastName, timeWindow].filter(Boolean).join(" ");
+  // Nothing known at all - fall back to the shared builder rather than an empty row.
+  return heading || buildLeadHeading(leadDetails, leadId);
+}
+
 /** Status chip label + colours, via web's `STATUS_CONFIG` (unmapped → notResulted). */
 function getStatusProps(status?: string) {
   const config = STATUS_CONFIG[status || ''] || STATUS_CONFIG.notResulted;
@@ -172,7 +203,7 @@ function getStatusProps(status?: string) {
 }
 
 /** Human lead id — issued leads carry `leadId`, self-gens carry `selfGenLeadId`. */
-function getLeadIdDisplay(leadDetails: any) {
+export function getLeadIdDisplay(leadDetails: any) {
   return leadDetails?.leadId || leadDetails?.selfGenLeadId || 'N/A';
 }
 
@@ -214,13 +245,15 @@ function LeadThreadThumbnail({ leadDetails }: { leadDetails: any }) {
 }
 
 // ─── LeadChatThreadItem ───────────────────────────────────────────────────────
-export function LeadChatThreadItem({ chat, onPress }: any) {
+export function LeadChatThreadItem({ chat, onPress, installerView }: any) {
   const { colors } = useTheme();
   const { leadDetails, unreadCount, recentMessages, lastMessageAt } = chat;
 
   const lastMsg = recentMessages?.[0];
   const leadIdDisplay = getLeadIdDisplay(leadDetails);
-  const heading = buildLeadHeading(leadDetails, leadIdDisplay);
+  const heading = installerView
+    ? buildInstallerLeadHeading(leadDetails, leadIdDisplay)
+    : buildLeadHeading(leadDetails, leadIdDisplay);
   const status = getStatusProps(leadDetails?.status);
   const timeAgo = useMemo(
     () => formatLastMessageAgo(lastMessageAt || chat?.updatedAt || chat?.createdAt),
