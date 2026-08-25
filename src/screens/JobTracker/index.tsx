@@ -148,7 +148,6 @@ export default function JobTrackerPage() {
     refreshing,
     onRefresh,
     fetchJobs,
-    toggleStatus,
     searchQuery,
     setSearchQuery,
     soldDateFilter,
@@ -787,10 +786,14 @@ export default function JobTrackerPage() {
                                 <Text className="w-40 text-[13px] font-medium text-text-primary">
                                   {job.title || (job as any).calculator?.title || (job as any).calculator?.name || 'N/A'}
                                 </Text>
-                                <TouchableOpacity
-                                  onPress={() => toggleStatus(job)}
-                                  className="w-24 items-center"
-                                >
+                                {/* Status is READ-ONLY here. This cell used to be a
+                                    TouchableOpacity calling `toggleStatus`, which PATCHes
+                                    the server (`JobService.updateStatus`) — so a stray tap
+                                    while scrolling the row flipped a job between Paid and
+                                    Unpaid for real, with no confirmation and no undo. A
+                                    payment status is not something to change by brushing
+                                    against it in a list. */}
+                                <View className="w-24 items-center">
                                   {(() => {
                                     const colors = getStatusColors(job.status);
                                     return (
@@ -807,7 +810,7 @@ export default function JobTrackerPage() {
                                       </View>
                                     );
                                   })()}
-                                </TouchableOpacity>
+                                </View>
 
                                 <View className="w-12 flex-row justify-end">
                                   <TouchableOpacity

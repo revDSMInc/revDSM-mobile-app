@@ -110,16 +110,13 @@ and **Msg Ops/IM**). Only the *edit* behaviour differs, and no result buttons ar
 - **Entry point**: `MyDeals.openDeal` navigates to **`LeadCenter` with `{ lead, fromMyDeals: true }`**
   (was `DealDetail`). `fromMyDeals?: boolean` was added to the `LeadCenter` params in
   `RootStackParamList` (`src/navigation/index.tsx`).
-- **The pencil keeps the My Deals flow.** On the normal lead path the Contract Details pencil
-  opens the inline `EditContractDetailsModal`; from My Deals it must still launch the **4-step
-  dynamic deal-edit wizard** (Install Date → Job Build → Job Price → Review & Submit). So
-  `JobDocsSection` gained an optional **`onEditContract?: () => void`** prop that overrides
-  `ContractDetailsCard`'s `setShowEditModal`; `LeadCenter` passes
-  `onEditContract={fromMyDeals ? handleEditDealFromMyDeals : undefined}`. `handleEditDealFromMyDeals`
-  (in `LeadCenter/index.tsx`) is the port of the old `DealDetail.onEdit`: legacy (non-dynamic) deal →
-  "Edit on web" flash; dynamic deal → `navigate('DynamicDealCenter', { lead, mode:'edit',
-  calculatorResultData: { calculatorId, appointmentId } })` with the same multi-shape id resolution.
-  **Undefined on the normal lead path, so Lead Center is unchanged there.**
+- **The pencil opens the 4-step deal-edit wizard.** `JobDocsSection` has an optional
+  **`onEditContract?: () => void`** prop that overrides `ContractDetailsCard`'s `setShowEditModal`;
+  `LeadCenter` passes `onEditContract={isDynamicDeal ? handleEditDeal : undefined}`, and
+  `handleEditDeal` navigates to `DynamicDealCenter` with
+  `{ lead, mode:'edit', calculatorResultData: { calculatorId, appointmentId } }` (multi-shape id
+  resolution, ported from the old `DealDetail.onEdit`). See "The Contract Details pencil opens the
+  deal-edit wizard on BOTH entry points" below — it is **no longer gated on `fromMyDeals`**.
 - **Header title is entry-aware**: `{fromMyDeals ? 'Deal' : 'Lead Center'}` (`LeadCenter/index.tsx`).
 - **My Deals shows the global `MainHeader`** (added to the `showHeader` list in
   `navigation/index.tsx`) so its frame matches the screen it navigates into. Because the
@@ -4597,6 +4594,72 @@ accepted drop elsewhere, then confirm one `PUT /lfcalculators/{B}` with `{"dropP
 exactly one `accepted` row, and that the submit's `rollout_and_drop_summary` names calculator B with
 `resultStatus: "Sale"` and the real `noOfRollouts`.
 
+### The Job Tracker calendar could not go back a month
+
+Ticket: *"inside the sale, when we open the deal center, at the last of the screen there is a Job
+Tracker button; when we click on it the dialogue appears, and when we click on the Install Date box
+this calendar appears — in which previous dates are disabled. Make it enable the previous months and
+years and days."*
+
+`CustomDatePicker` (`screens/JobTracker/components/`) disabled its BACK chevron on the current month:
+
+```tsx
+disabled={isSameMonth(currentMonth, new Date())}
+style={{ opacity: isSameMonth(currentMonth, new Date()) ? 0.3 : 1 }}
+```
+
+⚠️ **That one chevron was the whole restriction.** The day grid never disabled anything (every day of
+the rendered month is tappable — which is why 1–24 August read as normal black text in the report's
+screenshot, not greyed), and the year list already spans `currentYear + 5` down to `currentYear - 24`.
+So "previous days" and "previous years" needed no change; they were simply unreachable, because the
+only way back was a chevron that switched itself off the moment you landed on today's month.
+
+Removed. Nothing else gates a past date — there is no min-date prop and no validation on the way out
+(`AddEditJobModal` only requires that an install date is PRESENT, unless `toBeDetermined`).
+
+⚠️ **This picker has FOUR consumers, and the block was wrong for every one of them** — worth knowing
+before anyone "restores" it as a safety rail:
+
+| where | field | why past dates matter |
+|---|---|---|
+| `AddEditJobModal` | Install Date | a job can legitimately be back-dated |
+| `AddEditJobModal` | **Date Sold** | a PAST date by definition — it defaults to today, so a sale made last week could not be recorded at all |
+| `JobTracker/index.tsx` | sold / payout filters | date RANGES, almost always looking backwards |
+| `MapFiltersModal` | two date filters | same |
+
+If a future field genuinely needs a floor, give the component a `minDate` prop and pass it from that
+call site — do not put the rule back inside the shared picker.
+
+⚠️ Noted while here, NOT changed (out of the ticket's scope): `currentMonth` is seeded with
+`new Date()`, not with `initialDate`. So editing a job whose install date is in October opens the
+calendar on the CURRENT month rather than October's. Harmless now that navigation is unrestricted, but
+it is an extra two taps every time.
+
+tsc error set byte-identical; eslint on the file goes 4 problems → 3 (the removed inline `opacity`
+style takes its own warning with it), the 2 remaining errors being the file's pre-existing unused
+`StyleSheet` / `isDark`.
+
+### The Job Tracker Status chip was a one-tap server write
+
+Ticket: *"inside the job tracker, when we click on unpaid status it changes to paid, or when we
+click on paid it changes to unpaid — that is wrong, there is no click on status. Make the click
+disabled from this field."*
+
+The Paid/Unpaid chip in each row was a `TouchableOpacity` calling `useJobTracker.toggleStatus`,
+which is not local state — it `PATCH`es the server (`JobService.updateStatus`) and refetches. So a
+stray tap while scrolling a long list changed a real payment status, with no confirmation and no
+undo. It is now a plain `View` with the same `w-24 items-center` box, so the layout is unchanged.
+
+⚠️ **Nothing is lost.** The row's ⋮ menu already carries **"Change Status"**, which opens a
+dropdown (Unpaid / Paid) behind a Cancel/Update confirmation and calls `JobService.updateStatus`
+itself. The chip was a duplicate of that, minus the confirmation.
+
+⚠️ `toggleStatus` is KEPT on the hook but now has zero consumers, and carries a note saying so. If
+a one-tap toggle is ever wanted back, put a confirm in front of it rather than re-attaching it to
+the chip.
+
+tsc error set byte-identical; eslint on `JobTracker/index.tsx` unchanged at 29 problems (the
+destructured `toggleStatus` was removed with its last use, so no unused-var error was added).
 ### A drop price EQUAL to the rollout price is rejected
 
 Ticket: *"you have to add one more validation here while we are adding the drop price, user also will
@@ -5214,6 +5277,42 @@ the two real edits carrying a `from`), the SIGNED rows asserted unchanged and th
 once, a cleared measurement still reported, an added combination still carrying no previous values and
 no `unchanged` flags, both card kinds naming a grid cell identically, and an untouched build producing
 nothing.
+
+### The Contract Details pencil opens the deal-edit wizard on BOTH entry points
+
+Ticket: *"Make my deals flow also on the resulted lead sale page … instead of opening this modal take
+me to same my deal flow."* On a resulted SALE opened from Sold Leads, the Contract Details pencil
+opened the inline **Edit Contract Details — Select what to edit** sheet (Contract Pricing / Schedule
+Date); from My Deals the same pencil on the same screen opened the 4-step wizard.
+
+`onEditContract` was gated on `fromMyDeals`. It is now gated on whether the deal is DYNAMIC, so one
+record has one editor however the rep reached it. That matters beyond consistency: **only the wizard
+raises an ADDENDUM**, which is what a change to a submitted deal has to be — the inline modal writes a
+`leadDraft` instead, and the two produce different documents for the same edit.
+
+⚠️ **A legacy (non-dynamic) deal still gets the inline modal**, and that is a deliberate improvement on
+the My Deals behaviour rather than a copy of it. `handleEditDealFromMyDeals` used to flash *"Edit on
+web — this deal uses the legacy job builder"* and return, which on the normal lead path would have left
+such a deal with **no editor at all on device**. The wizard cannot open a build that is not there; the
+modal edits contract pricing and the schedule, which is exactly what that flash was refusing to do. So
+the dynamic test moved OUT of the handler and onto the prop, and the flash is gone from both paths.
+
+⚠️ **`isDynamicDeal` is now the single source of truth** for that decision — it was previously computed
+inside the handler, where it could only refuse, never choose.
+
+Unreachable without a contract: `ContractDetailsCard` renders the pencil only past its `hasContract`
+guard (sale / demo), so a reset / no-demo / not-hit lead — which shows the "No contract details
+available" placeholder — has no pencil to press.
+
+`handleEditDealFromMyDeals` was renamed **`handleEditDeal`**; the old name would have read as
+My-Deals-only on the path that is now every path. `fromMyDeals` is still used, for the header title
+(`Deal` vs `Lead Center`) and the deal-only `DealBanners`.
+
+tsc 44 (baseline unchanged); `LeadCenter/index.tsx` is identical to its HEAD eslint baseline
+(40 problems: 16 errors / 24 warnings).
+
+⚠️ Needs a device check (this repo cannot render-test): the pencil on a resulted SALE from Sold Leads
+landing on step 1 of the wizard, and a legacy deal still opening the inline modal rather than nothing.
 
 ### Lead Center pulls to refresh
 
