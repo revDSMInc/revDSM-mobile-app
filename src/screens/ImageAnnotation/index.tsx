@@ -71,6 +71,9 @@ export default function ImageAnnotationScreen() {
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [containerLayout, setContainerLayout] = useState<{ width: number; height: number } | null>(null);
   const [pendingTextPos, setPendingTextPos] = useState<{ px: number; py: number } | null>(null);
+  // Live pinch scale of the canvas, reported by `AnnotationCanvas`'s ScrollView.
+  // Only the drawing MOVE needs it — see `onPanResponderMove`.
+  const [zoomScale, setZoomScale] = useState<number>(1);
 
   useEffect(() => {
     const userId = user?._id || user?.id;
@@ -200,6 +203,7 @@ export default function ImageAnnotationScreen() {
     activeSize,
     photoId,
     canvasLayout,
+    zoomScale,
   });
 
   useEffect(() => {
@@ -210,6 +214,7 @@ export default function ImageAnnotationScreen() {
       activeSize,
       photoId,
       canvasLayout,
+      zoomScale,
     };
   });
 
@@ -245,10 +250,17 @@ export default function ImageAnnotationScreen() {
         }
       },
       onPanResponderMove: (evt, gestureState) => {
-        const { activeTool, canvasLayout } = stateRef.current;
+        const { activeTool, canvasLayout, zoomScale } = stateRef.current;
         if (activeTool === 'draw' && activeStrokeRef.current) {
-          const curX = startXRef.current + gestureState.dx;
-          const curY = startYRef.current + gestureState.dy;
+          // ⚠️ `gestureState.dx/dy` are SCREEN pixels, while `startXRef` came from
+          // `locationX` — which is already in the canvas's own untransformed space,
+          // because iOS hit-tests through the scroll view's zoom transform. Mixing the
+          // two only worked while the canvas could never be zoomed WHILE drawing; now
+          // that the zoom persists into Draw, the delta has to be divided by the scale
+          // or a stroke runs N times as far as the finger.
+          const scale = zoomScale > 0 ? zoomScale : 1;
+          const curX = startXRef.current + gestureState.dx / scale;
+          const curY = startYRef.current + gestureState.dy / scale;
           const px = Math.max(0, Math.min(1, curX / canvasLayout.width));
           const py = Math.max(0, Math.min(1, curY / canvasLayout.height));
           const updatedStroke = {
@@ -798,6 +810,7 @@ export default function ImageAnnotationScreen() {
                 setShowStylePanel={setShowStylePanel}
                 handleDeleteTextNote={handleDeleteTextNote}
                 handleMoveText={handleMoveText}
+                onZoomChange={setZoomScale}
               />
             </View>
 
