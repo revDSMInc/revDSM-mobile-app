@@ -5504,7 +5504,7 @@ horizontal ScrollView with drag-reorder, and Android clips children drawn outsid
 bounds, so an overhanging badge is a coin-flip on whether it renders. For the same reason the popover
 is a `Modal` rather than an inline absolutely-positioned card.
 
-**All FOUR places that print the name carry the badge** (follow-ups: *"the bottom logic is working
+**Every place that prints the name carries the badge** (follow-ups: *"the bottom logic is working
 perfectly but when we go to the next screen … top shows the combination of the letters"*, then *"here
 is still missing the box"* against the two card headings):
 
@@ -5516,6 +5516,46 @@ is still missing the box"* against the two card headings):
 | rollout step — quote card heading | `PremiumQuoteCard` |
 | "Result Job \<name\>" — Sale/Demo chooser | `ResultJobChooser` |
 | Result Lead sheet — the `Calculator` block | `ResultJobModal` |
+| **Investment Center — "Includes the Following" list** | `InvestmentPanel.tsx` — REPLACES the list, see below |
+| **Investment Center — calculator tab strip** | `InvestmentCenter/index.tsx`, via its own `packageByCalcId` |
+
+⚠️ The **Investment Center** was added last, and it is TWO surfaces, not one (*"inside the investment
+center when we get this combination of the products, instead of this show the box with information icon
+same as we implement in the sale side"*, then, against the panel's own list, *"still show the products,
+that is not my requirement — i need to show the box with information icon"*). It is the presentation
+surface, so a calculator that reads as a package while quoting must read as one in front of the
+customer too.
+
+**The panel's "Includes the Following" list is the important one.** `InvestmentPanel`'s
+`inclusions = jobScope.length > 0 ? jobScope : productNames` renders the job-scope descriptions when
+the company has them and the bare product/category names (`Gutters · LeafFilter · Soffit · Fascia`)
+when it does not. On a full package the whole list is now REPLACED by a centred box + ⓘ at `size={22}`
+— presentation size, not the 14pt of a tab.
+
+⚠️ **It replaces BOTH branches — including real job-scope sentences — and that was the explicit
+answer to a direct question**, not an inference. So a package's scope copy ("Install Gutters and
+Downspouts", "Installation: Align, pitch, install hidden hangers every 20-25\"…") does not appear on
+this screen at all; the ⓘ card carries what it includes instead. Restricting it to the product-name
+fallback was offered and declined. A calculator that is NOT a package still lists everything exactly
+as before, so nothing changes for the ordinary lead.
+
+**The tab strip is the second surface.** It is a plain `ScrollView` of `TouchableOpacity` tabs (not
+`HorizontalDraggableTabs`), so it calls `describeFullPackage` itself and renders `FullPackageTitle`
+for BOTH branches — passing `title` means a non-package tab is byte-identical to the `<Text>` it
+replaced. Inactive tabs grey the box and the ⓘ with the rest of the tab (rollout-strip parity).
+
+⚠️ The strip renders **only when `visible.length > 1`**, and `visible` drops unpriced and
+bare-numbered calculators — so a lead presenting a SINGLE package shows no strip, which is why the
+reporter's second screenshot had no badge anywhere until the panel was covered too. The panel is the
+surface that is always present.
+
+⚠️ Both mount **`FullPackageInfoModal`**, not the Overlay: `InvestmentCenter` is a NAVIGABLE SCREEN,
+so there is no host modal to stack inside. (The Overlay form exists for the two Result surfaces, which
+are already inside one.) They keep SEPARATE anchor state — the strip's ⓘ is at the top of the screen
+and the panel's is mid-scroll, and one shared anchor would open the card against the wrong one.
+
+⚠️ `InvestmentPanel` prints `calculator.title` nowhere — it reads it only for an activity log — so
+the strip and the inclusions list are the screen's only two occurrences.
 
 Each computes it by calling `isFullPackageSelection` on the calculator's OWN entries, so no screen can
 read as a package while another reads as letters, and none of them needs a flag threaded through.

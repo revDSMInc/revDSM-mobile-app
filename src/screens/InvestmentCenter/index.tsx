@@ -13,6 +13,12 @@ import { useSubmitDigitalConsentMutation, useFinalizeConsentUploadMutation, useU
 import { ConsentFormModal } from '../../widgets/modals/lead-center/ConsentFormModal';
 import { PaperFallbackModal } from '../../widgets/modals/lead-center/PaperFallbackModal';
 import { InvestmentPanel } from './InvestmentPanel';
+import { describeFullPackage } from '../DynamicDealCenter/utils/tab-naming';
+import {
+  FullPackageTitle,
+  FullPackageInfoModal,
+  type PackageAnchorRect,
+} from '../DynamicDealCenter/components/FullPackageBadge';
 import { queryClient } from '../../services/api/queryClient';
 import { useAuth } from '../../hooks/useAuth';
 import {
@@ -218,6 +224,33 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   );
   const active = visible.find((t) => t.id === activeTabId) || visible[0];
 
+  /**
+   * Which of these calculators is a FULL PACKAGE (Gutter + guard + Soffit + Trim
+   * wrap), and what it carries beyond one.
+   *
+   * The tab then shows the package icon + ⓘ in place of the derived
+   * `G+Versa+S+FWrap` name — the same swap the Deal Center makes on its rollout
+   * strip, its footer tabs and its two Result surfaces. Same rule and same source
+   * of truth (`describeFullPackage` over each calculator's own live entries), so a
+   * calculator cannot read as a package while presenting and as letters while
+   * quoting.
+   */
+  const packageByCalcId = useMemo(() => {
+    const map: Record<string, { isFullPackage: boolean; extras: string }> = {};
+    visible.forEach((t) => {
+      map[t.id] = describeFullPackage(t.entries || {}, verticals || []);
+    });
+    return map;
+  }, [visible, verticals]);
+  // Anchored to the tapped ⓘ so the card opens directly beneath it. A tab strip
+  // scrolls and reorders, so the icon's position is only knowable at tap time.
+  const [packageInfoVisible, setPackageInfoVisible] = useState(false);
+  const [packageAnchor, setPackageAnchor] = useState<PackageAnchorRect | null>(null);
+  const openPackageInfo = useCallback((rect: PackageAnchorRect | null) => {
+    setPackageAnchor(rect);
+    setPackageInfoVisible(true);
+  }, []);
+
   // ── Opt-in handoff → Result Lead (Sale) in the Dynamic Deal Center ───────────
   const handleOptIn = useCallback(
     (calculatorId: string, opts: { price: number; paymentMethod?: string; downPayment?: number }) => {
@@ -351,7 +384,21 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
                       onPress={() => setActiveTabId(t.id)}
                       style={{ paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 2, borderBottomColor: isActive ? '#16A34A' : 'transparent', flexDirection: 'row', alignItems: 'center', gap: 6 }}
                     >
-                      <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '900', color: isActive ? '#1C252E' : '#94A3B8',paddingBottom:4 }}>{t.title}</Text>
+                      {/* A full package shows the box + ⓘ instead of the four-part
+                          name; the ⓘ carries the breakdown the letters used to spell
+                          out. An inactive tab greys both with the rest of the tab so
+                          it doesn't out-shout the selected one (rollout-strip parity). */}
+                      <FullPackageTitle
+                        isFullPackage={packageByCalcId[t.id]?.isFullPackage || false}
+                        extras={packageByCalcId[t.id]?.extras}
+                        title={t.title}
+                        size={14}
+                        color={isActive ? '#1C252E' : '#94A3B8'}
+                        iconColor={isActive ? '#16A34A' : '#94A3B8'}
+                        infoColor={isActive ? '#00B8D9' : '#94A3B8'}
+                        onInfo={openPackageInfo}
+                        style={{ paddingBottom: 4 }}
+                      />
                       <Ionicons name="checkmark" size={14} color={isActive ? '#16A34A' : '#CBD5E1'} />
                     </TouchableOpacity>
                   );
@@ -407,6 +454,15 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
           )}
         </>
       )}
+
+      {/* Rendered as its own `Modal`: this is a navigable SCREEN, not a sheet, so
+          there is no host modal to stack inside (that is what the Overlay form is
+          for). Positioned against the ⓘ that was tapped. */}
+      <FullPackageInfoModal
+        visible={packageInfoVisible}
+        onClose={() => setPackageInfoVisible(false)}
+        anchorRect={packageAnchor}
+      />
 
       <ConsentFormModal
         visible={showConsent}
