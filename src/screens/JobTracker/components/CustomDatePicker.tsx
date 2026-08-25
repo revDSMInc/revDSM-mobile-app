@@ -76,11 +76,18 @@ export const CustomDatePicker = ({ visible, onClose, onSelect, initialDate }: Pr
 
                 {view === 'calendar' && (
                   <View className="flex-row items-center gap-6">
-                    <TouchableOpacity
-                      onPress={prevMonth}
-                      disabled={isSameMonth(currentMonth, new Date())}
-                      style={{ opacity: isSameMonth(currentMonth, new Date()) ? 0.3 : 1 }}
-                    >
+                    {/* Back a month is ALWAYS available. It used to be disabled on the
+                        current month, which made every past date unreachable: the day
+                        grid never disabled anything, so the chevron was the only thing
+                        standing between the rep and a date in the past.
+
+                        That is wrong for all four fields this picker serves. Job Tracker
+                        Install Date can legitimately be back-dated; Date Sold is a PAST
+                        date by definition (it defaults to today, and a sale made last
+                        week could not be recorded at all); and the Job Tracker sold /
+                        payout filters and the Map filters are date RANGES, which are
+                        almost always looking backwards. */}
+                    <TouchableOpacity onPress={prevMonth}>
                       <Feather name="chevron-left" size={20} color={colors.textSecondary} />
                     </TouchableOpacity>
                     <TouchableOpacity onPress={nextMonth}>
