@@ -64,21 +64,21 @@ export default function ChatThreadsScreen({ navigation }: any) {
 
   const [mainTab, setMainTab] = useState<'myleads' | 'channels'>('myleads');
   const [searchQuery, setSearchQuery] = useState('');
-  // WARNING the seed is role-dependent, and this is not cosmetic. An installer whose
-  // list no longer offers 'Unresulted Leads' would otherwise OPEN on it: the closed
-  // dropdown would show a label absent from its own menu, over a list that is always
-  // empty for this role (an installer only sees sold leads) - which reads as a broken
-  // screen, not a filtered one. They land on 'All' instead.
+  // Land on ALL, so the screen opens on every conversation instead of hiding resulted
+  // leads behind a filter the rep never chose. These two seeds must stay in sync: the
+  // dropdown derives the key from the label (`opt.toLowerCase().replace(/ /g, '')`), so
+  // they are exactly what tapping the 'All' row produces. `useChatThreads` already reads
+  // 'all' as "no status constraint" on both the server query and the client-side filter.
   //
-  // These two seeds must stay in sync: the dropdown derives the key from the label
-  // (`opt.toLowerCase().replace(/ /g, '')`), so they are exactly what tapping that row
-  // produces. `useChatThreads` already reads 'all' as "no status constraint".
-  const [statusFilter, setStatusFilter] = useState(isInstaller ? 'all' : 'unresultedleads');
+  // NOTE this is now the right seed for BOTH roles, so no `isInstaller` branch is
+  // needed here. The installer list drops 'Unresulted Leads' (see
+  // INSTALLER_STATUS_OPTIONS), so seeding an installer to it would have opened the
+  // screen on a filter absent from its own menu, over a list that is always empty for
+  // that role. 'All' is in both lists and is the only seed correct for either.
+  const [statusFilter, setStatusFilter] = useState('all');
   const [filterUnread, setFilterUnread] = useState(false);
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
-  const [selectedStatus, setSelectedStatus] = useState(
-    isInstaller ? 'All' : 'Unresulted Leads'
-  );
+  const [selectedStatus, setSelectedStatus] = useState('All');
   const [showCreateChannel, setShowCreateChannel] = useState(false);
 
   // Which list the dropdown offers. Both start with the same All row the seed above

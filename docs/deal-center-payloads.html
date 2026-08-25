@@ -1,0 +1,1896 @@
+<title>Deal Center Wire Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500;700&display=swap">
+
+<style>
+  :root {
+    --ground: #F4F6F9;
+    --surface: #FFFFFF;
+    --surface-2: #EDF0F5;
+    --ink: #14161C;
+    --ink-2: #4A5261;
+    --ink-3: #737D8E;
+    --rule: #DCE1E9;
+    --rule-2: #C6CDD8;
+    --web: #2F4B8C;
+    --web-soft: #E8EDF8;
+    --mobile: #0F766E;
+    --mobile-soft: #E2F1EF;
+    --flag: #9A5116;
+    --flag-soft: #FAEEE2;
+    --gone: #A32A22;
+    --code-bg: #F7F8FB;
+    --shadow: 0 1px 2px rgba(20, 22, 28, .05), 0 8px 24px -12px rgba(20, 22, 28, .12);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0E1116;
+      --surface: #161A21;
+      --surface-2: #1D222B;
+      --ink: #E6EAF1;
+      --ink-2: #A8B1C0;
+      --ink-3: #7D8798;
+      --rule: #262C37;
+      --rule-2: #333B48;
+      --web: #93AEE6;
+      --web-soft: #1B2436;
+      --mobile: #63C4B8;
+      --mobile-soft: #142B28;
+      --flag: #DFA469;
+      --flag-soft: #2A2119;
+      --gone: #E58C84;
+      --code-bg: #11151B;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 28px -14px rgba(0, 0, 0, .7);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0E1116;
+    --surface: #161A21;
+    --surface-2: #1D222B;
+    --ink: #E6EAF1;
+    --ink-2: #A8B1C0;
+    --ink-3: #7D8798;
+    --rule: #262C37;
+    --rule-2: #333B48;
+    --web: #93AEE6;
+    --web-soft: #1B2436;
+    --mobile: #63C4B8;
+    --mobile-soft: #142B28;
+    --flag: #DFA469;
+    --flag-soft: #2A2119;
+    --gone: #E58C84;
+    --code-bg: #11151B;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 28px -14px rgba(0, 0, 0, .7);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  /* ── masthead ─────────────────────────────────────────────── */
+
+  .masthead {
+    padding: 64px 0 36px;
+    border-bottom: 2px solid var(--ink);
+  }
+
+  .kicker {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 14px;
+  }
+
+  h1 {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: clamp(34px, 6vw, 58px);
+    font-weight: 800;
+    letter-spacing: -.03em;
+    line-height: 1.02;
+    text-wrap: balance;
+    margin: 0 0 18px;
+  }
+
+  .standfirst {
+    font-size: 19px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    max-width: 62ch;
+    margin: 0;
+  }
+
+  .standfirst strong { color: var(--ink); font-weight: 600; }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 22px;
+    margin-top: 28px;
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    color: var(--ink-2);
+  }
+
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+  .swatch { width: 22px; height: 4px; border-radius: 2px; display: inline-block; }
+
+  /* ── stage index ──────────────────────────────────────────── */
+
+  nav.index {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: color-mix(in srgb, var(--ground) 92%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 48px;
+  }
+
+  nav.index ol {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 12px 24px;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  nav.index a {
+    color: var(--ink-2);
+    text-decoration: none;
+    display: inline-flex;
+    gap: 7px;
+    padding: 3px 0;
+    border-bottom: 2px solid transparent;
+  }
+
+  nav.index a:hover, nav.index a:focus-visible {
+    color: var(--ink);
+    border-bottom-color: var(--web);
+    outline: none;
+  }
+
+  nav.index .n {
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-3);
+  }
+
+  /* ── stage ────────────────────────────────────────────────── */
+
+  section.stage { margin: 0 0 64px; scroll-margin-top: 64px; }
+
+  .stage-head {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--rule-2);
+    margin-bottom: 28px;
+  }
+
+  .stage-num {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--web);
+    letter-spacing: -.02em;
+    padding-top: 6px;
+  }
+
+  .stage-head h2 {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: clamp(21px, 3vw, 27px);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    margin: 0;
+    flex: 1;
+  }
+
+  .stage-head p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--ink-3);
+    max-width: 34ch;
+    line-height: 1.45;
+  }
+
+  /* ── request card ─────────────────────────────────────────── */
+
+  article.req {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    box-shadow: var(--shadow);
+    margin-bottom: 22px;
+    overflow: hidden;
+  }
+
+  .req-head {
+    padding: 16px 20px 14px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface-2);
+  }
+
+  .verb-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+
+  .verb {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    padding: 3px 7px;
+    border-radius: 3px;
+    background: var(--ink);
+    color: var(--surface);
+  }
+
+  .verb.get { background: var(--ink-3); }
+  .verb.del { background: var(--gone); color: var(--surface); }
+
+  .path {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 13.5px;
+    font-weight: 500;
+    word-break: break-all;
+  }
+
+  .fires {
+    font-size: 14.5px;
+    color: var(--ink-2);
+    margin: 0;
+    max-width: 90ch;
+  }
+
+  .chip {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    padding: 3px 7px;
+    border-radius: 3px;
+    border: 1px solid currentColor;
+  }
+
+  .chip.diverges { color: var(--flag); background: var(--flag-soft); }
+  .chip.parity { color: var(--mobile); background: var(--mobile-soft); }
+  .chip.only-m { color: var(--mobile); background: var(--mobile-soft); }
+  .chip.only-w { color: var(--web); background: var(--web-soft); }
+
+  /* two-panel diff */
+
+  .panes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--rule);
+  }
+
+  .pane { background: var(--surface); padding: 0; min-width: 0; }
+
+  .pane-label {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    padding: 10px 20px 9px;
+    border-top: 3px solid;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: baseline;
+  }
+
+  .pane.w .pane-label { border-top-color: var(--web); color: var(--web); }
+  .pane.m .pane-label { border-top-color: var(--mobile); color: var(--mobile); }
+
+  .pane-label .src {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--ink-3);
+    text-align: right;
+  }
+
+  pre {
+    margin: 0;
+    padding: 4px 20px 20px;
+    overflow-x: auto;
+    background: var(--surface);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    line-height: 1.62;
+    color: var(--ink);
+    tab-size: 2;
+  }
+
+  pre .c { color: var(--ink-3); font-style: italic; }
+  pre .add { color: var(--mobile); font-weight: 500; }
+  pre .miss { color: var(--gone); }
+  pre .k { color: var(--ink); }
+  pre .s { color: var(--web); }
+
+  .pane.m pre .s { color: var(--mobile); }
+
+  .none {
+    padding: 4px 20px 22px;
+    font-size: 14.5px;
+    color: var(--ink-2);
+    font-style: italic;
+  }
+
+  /* delta note */
+
+  .delta {
+    border-top: 1px solid var(--rule);
+    padding: 15px 20px 16px;
+    background: var(--surface);
+    display: flex;
+    gap: 13px;
+    align-items: flex-start;
+  }
+
+  .delta-tag {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--flag);
+    padding-top: 4px;
+    white-space: nowrap;
+  }
+
+  .delta p { margin: 0 0 8px; font-size: 15px; line-height: 1.55; max-width: 88ch; }
+  .delta p:last-child { margin-bottom: 0; }
+  .delta code, .fires code, td code, .prose code {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: .87em;
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: .5px 4px;
+  }
+
+  /* ── tables ───────────────────────────────────────────────── */
+
+  .tablewrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    margin-bottom: 22px;
+  }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+
+  thead th {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--ink-3);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--rule-2);
+    white-space: nowrap;
+    background: var(--surface-2);
+  }
+
+  tbody td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono, th.mono {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+  td.w { color: var(--web); }
+  td.m { color: var(--mobile); }
+
+  .prose { max-width: 72ch; }
+  .prose p { margin: 0 0 14px; }
+  .prose h3 {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    margin: 26px 0 10px;
+  }
+
+  .warn {
+    border-left: 3px solid var(--flag);
+    background: var(--flag-soft);
+    padding: 14px 18px;
+    border-radius: 0 5px 5px 0;
+    margin: 0 0 22px;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .warn strong { font-weight: 600; }
+
+  footer.foot {
+    margin-top: 72px;
+    padding-top: 22px;
+    border-top: 2px solid var(--ink);
+    font-size: 13.5px;
+    color: var(--ink-3);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    font-family: "Archivo", system-ui, sans-serif;
+  }
+
+  @media (max-width: 900px) {
+    .panes { grid-template-columns: 1fr; }
+    .stage-head { flex-wrap: wrap; }
+    .stage-head p { max-width: none; }
+  }
+</style>
+
+<nav class="index" aria-label="Stages">
+  <ol>
+    <li><a href="#s0"><span class="n">00</span> Reads</a></li>
+    <li><a href="#s1"><span class="n">01</span> Bootstrap</a></li>
+    <li><a href="#s2"><span class="n">02</span> Tabs</a></li>
+    <li><a href="#s3"><span class="n">03</span> Field autosave</a></li>
+    <li><a href="#s4"><span class="n">04</span> Rollout</a></li>
+    <li><a href="#s5"><span class="n">05</span> Drops</a></li>
+    <li><a href="#s6"><span class="n">06</span> Result &amp; draft</a></li>
+    <li><a href="#s7"><span class="n">07</span> Documents</a></li>
+    <li><a href="#s8"><span class="n">08</span> Complete Job</a></li>
+    <li><a href="#s9"><span class="n">09</span> Activity logs</a></li>
+    <li><a href="#ledger"><span class="n">△</span> Divergence ledger</a></li>
+  </ol>
+</nav>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="kicker">revDSM Sales · Dynamic Deal Center</p>
+    <h1>Deal Center Wire Reference</h1>
+    <p class="standfirst">
+      Every request the deal center fires, from opening a lead to Complete Job, with the
+      <strong>web</strong> body and the <strong>mobile</strong> body side by side. Read in flow order —
+      the stages are the rep's path through the screen, and each card names the moment the request
+      leaves the device.
+    </p>
+    <div class="legend">
+      <span><i class="swatch" style="background: var(--web)"></i> web · <code>mhalt-revDSM-sales-frontend</code></span>
+      <span><i class="swatch" style="background: var(--mobile)"></i> mobile · <code>mhalt-revdsm-mobile</code></span>
+      <span><i class="swatch" style="background: var(--flag)"></i> the two differ</span>
+    </div>
+  </header>
+
+  <p class="warn" style="margin-top: 32px">
+    <strong>Scope.</strong> This is the <em>dynamic</em> (schema-driven) deal center — web
+    <code>sections/deal-center/</code> vs mobile <code>screens/DynamicDealCenter/</code>. The classic
+    calculator (<code>sections/lf-calculator/</code> · mobile <code>screens/DealCenter/</code>) shares
+    the same endpoints but builds its own bodies and is not covered here. Every payload below was read
+    out of the source, not reconstructed from a trace; the file and symbol are printed on each panel.
+  </p>
+
+  <!-- ══════════════════════════════════════════════ 00 -->
+  <section class="stage" id="s0">
+    <div class="stage-head">
+      <span class="stage-num">00</span>
+      <h2>Reads</h2>
+      <p>No bodies. Listed because a divergence here changes every payload downstream.</p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Endpoint</th><th>Carries</th><th>Web</th><th>Mobile</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">GET /calculator-form-schemas/deal-center</td>
+            <td>System&nbsp;A — the priced calculator schema (<code>categories[].fields[].price</code>)</td>
+            <td class="w">useGetCalculatorFormSchemas</td>
+            <td class="m">useCalculatorSchema</td>
+          </tr>
+          <tr>
+            <td class="mono">GET /company/v1/job-builder-products</td>
+            <td>System&nbsp;B — job-builder verticals / tabs / fields</td>
+            <td class="w">useJobBuilder</td>
+            <td class="m">useDynamicCalculatorSchemas</td>
+          </tr>
+          <tr>
+            <td class="mono">GET /payment-plans/v1/sales/provider-plans</td>
+            <td>Payment plans, bank fees, <code>minPrice</code></td>
+            <td class="w">useGetPaymentPlans</td>
+            <td class="m">useDealPricing</td>
+          </tr>
+          <tr>
+            <td class="mono">GET /company/v1/discount-config/sales</td>
+            <td>Pre-order tiers + Sr&nbsp;+&nbsp;Vet %</td>
+            <td class="w">useGetDiscountConfig</td>
+            <td class="m">useDealPricing</td>
+          </tr>
+          <tr>
+            <td class="mono">GET /appointments?lead_date={leadDate}</td>
+            <td>Resolve the lead's appointment</td>
+            <td class="w">job-capture-images-view</td>
+            <td class="m">resolveAppointmentId</td>
+          </tr>
+          <tr>
+            <td class="mono">GET /appointments/{apptId}/lfcalculators</td>
+            <td>The tab strip — every calculator with its <code>entries</code>, <code>dropPrice</code>, <code>price</code></td>
+            <td class="w">useGetAppointmentsCalculators</td>
+            <td class="m">LeadService.getCalculators</td>
+          </tr>
+          <tr>
+            <td class="mono">GET /lfcalculators/{id}</td>
+            <td>One calculator document</td>
+            <td class="w">getLfCalculatorById</td>
+            <td class="m">getCalculator — read at submit for <code>leadData.LFCalculator</code></td>
+          </tr>
+          <tr>
+            <td class="mono">GET /lead/v1/{leadId}/outcome/{calcId}</td>
+            <td>The saved outcome + <code>jobBuilder.dynamicJobState</code> + <code>leadOutcomeDocuments</code></td>
+            <td class="w">getCalculatorJobBuilderOutcome</td>
+            <td class="m">getLeadOutcomeByCalculator</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="warn">
+      <strong>The lead-scoped <code>GET/PUT /lead/v1/{leadId}/outcome</code> is mobile-forbidden.</strong>
+      Web still uses it for its submit mirror (<code>updateJobBuilder</code>); on mobile it was removed
+      app-wide — <code>LeadEndpoints</code> has no entry for it — because it 404s on device. Mobile always
+      resolves a calculator id (<code>resolveLeadCalculatorId</code>) and uses the calculator-scoped route.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════════════ 01 -->
+  <section class="stage" id="s1">
+    <div class="stage-head">
+      <span class="stage-num">01</span>
+      <h2>Bootstrap</h2>
+      <p>Opening the deal center on a lead that has never had one.</p>
+    </div>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">POST</span>
+          <span class="path">/appointments</span>
+          <span class="chip diverges">Differs</span>
+        </div>
+        <p class="fires">Only when no appointment matches the lead by <code>leadId</code> or <code>selfGenLeadId</code>.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">job-capture-images-view.js<br>→ addAppointment</span></div>
+<pre>{
+  <span class="k">"title"</span>: <span class="s">"Jane Doe"</span>,        <span class="c">// firstName + " " + lastName, trimmed</span>
+  <span class="k">"address"</span>: <span class="s">"12 Elm St, …"</span>,  <span class="c">// selectedJob.fullAddress</span>
+  <span class="k">"leadId"</span>: <span class="s">"504"</span>,           <span class="c">// human lead id</span>
+  <span class="k">"selfGenLeadId"</span>: <span class="s">"6a8299…"</span>  <span class="c">// lead._id</span>
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">useDynamicCalculators.ts<br>→ resolveAppointmentId</span></div>
+<pre>{
+  <span class="k">"title"</span>: <span class="s">"Jane Doe"</span>,        <span class="c">// customerTitleOf(lead) — falls back to "Lead"</span>
+  <span class="k">"address"</span>: <span class="s">"12 Elm St, …"</span>,  <span class="c">// fullAddress || address || ""</span>
+  <span class="k">"leadId"</span>: <span class="s">"504"</span>,
+  <span class="k">"selfGenLeadId"</span>: <span class="s">"6a8299…"</span>
+}</pre>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Delta</span>
+        <div>
+          <p>Same four keys. Two behavioural differences: mobile's <code>title</code> falls back to the
+          literal <code>"Lead"</code> when the customer has no name, and mobile <strong>adopts a 409</strong>
+          — the backend answers <em>"This lead already has an appointment"</em> with the existing
+          <code>appointmentId</code>, which mobile uses instead of failing. Web surfaces the error.</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">POST</span>
+          <span class="path">/appointments/{apptId}/lfcalculators</span>
+          <span class="chip diverges">Differs</span>
+        </div>
+        <p class="fires">The <strong>first</strong> calculator — the appointment resolved but holds none.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">job-capture-images-view.js<br>→ addLfCalculator</span></div>
+<pre>{
+  <span class="k">"title"</span>: <span class="s">"Jane Doe"</span>,  <span class="c">// the CUSTOMER, not "1"</span>
+  <span class="k">"price"</span>: 0
+}</pre>
+          <p class="none">Two keys. <code>entries</code> arrive on the first debounced save.</p>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">useDynamicCalculators.ts<br>→ createRemoteTab</span></div>
+<pre>{
+  <span class="k">"title"</span>: <span class="s">"Jane Doe"</span>,       <span class="c">// customerNameOf(lead) || "1"</span>
+  <span class="k">"position"</span>: 1,
+  <span class="add">"entries"</span>: [ <span class="c">/* EVERY schema field, inputValue 0 — see 03 */</span> ],
+  <span class="add">"totals"</span>: { <span class="k">"cost"</span>: 0, <span class="k">"par"</span>: 0, <span class="k">"retail"</span>: 0 },
+  <span class="add">"schemaSnapshotId"</span>: <span class="s">"6a71a118…"</span>,
+  <span class="add">"leadId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="add">"enteredBy"</span>: <span class="s">"6a1f…"</span>,
+  <span class="add">"enteredAt"</span>: <span class="s">"2026-08-24T18:02:11.004Z"</span>
+}</pre>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Delta</span>
+        <div>
+          <p>Mobile seeds the full field list at create; web creates the record bare and fills it on the
+          first save. Both converge after one edit, and both name the first calculator after the
+          <strong>customer</strong> — that stored title is what every calculator activity log then carries
+          (<code>calculatorTitle</code>), which is why creating it as <code>"1"</code> was a portal bug.</p>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ══════════════════════════════════════════════ 02 -->
+  <section class="stage" id="s2">
+    <div class="stage-head">
+      <span class="stage-num">02</span>
+      <h2>Tabs</h2>
+      <p>Add, duplicate, rename, delete, reorder.</p>
+    </div>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">POST</span>
+          <span class="path">/appointments/{apptId}/lfcalculators</span>
+          <span class="chip parity">Parity</span>
+        </div>
+        <p class="fires">The <strong>＋</strong> button. Both title it with the next position, never the customer.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">tab-action-utils.js → addTab</span></div>
+<pre>{
+  <span class="k">"title"</span>: <span class="s">"2"</span>,                 <span class="c">// String(length + 1)</span>
+  <span class="k">"position"</span>: 2,
+  <span class="k">"discountPercentage"</span>: 25,      <span class="c">// only if user.defaultPercentage</span>
+  <span class="k">"paymentMethod"</span>: <span class="s">"check"</span>,      <span class="c">// only if a default resolves</span>
+  <span class="k">"paymentMethodLabel"</span>: <span class="s">"Check"</span>,
+  <span class="k">"entries"</span>: [ <span class="c">/* all fields, zeroed */</span> ],
+  <span class="k">"totals"</span>: { <span class="k">"cost"</span>: 0, <span class="k">"par"</span>: 0, <span class="k">"retail"</span>: 0 },
+  <span class="k">"schemaSnapshotId"</span>: <span class="s">"6a71a118…"</span>,
+  <span class="k">"enteredAt"</span>: <span class="s">"2026-08-24T…"</span>,
+  <span class="k">"enteredBy"</span>: <span class="s">"6a1f…"</span>
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">useDynamicCalculators.ts → handleAddTab</span></div>
+<pre>{
+  <span class="k">"title"</span>: <span class="s">"2"</span>,
+  <span class="k">"position"</span>: 2,
+  <span class="k">"entries"</span>: [ <span class="c">/* all fields, zeroed */</span> ],
+  <span class="k">"totals"</span>: { <span class="k">"cost"</span>: 0, <span class="k">"par"</span>: 0, <span class="k">"retail"</span>: 0 },
+  <span class="k">"schemaSnapshotId"</span>: <span class="s">"6a71a118…"</span>,
+  <span class="add">"leadId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="k">"enteredBy"</span>: <span class="s">"6a1f…"</span>,
+  <span class="k">"enteredAt"</span>: <span class="s">"2026-08-24T…"</span>,
+  <span class="k">"discountPercentage"</span>: 25,      <span class="c">// same two conditions as web</span>
+  <span class="k">"paymentMethod"</span>: <span class="s">"check"</span>,
+  <span class="k">"paymentMethodLabel"</span>: <span class="s">"Check"</span>
+}</pre>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Delta</span>
+        <div><p>Only <code>leadId</code>, which web omits here and sends on every subsequent save.</p></div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">POST</span>
+          <span class="path">/appointments/{apptId}/lfcalculators</span>
+          <span class="chip diverges">Differs</span>
+        </div>
+        <p class="fires">Duplicate, from the tab's long-press / context menu.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">tab-action-utils.js<br>→ handleDuplicateSubmit</span></div>
+<pre>{
+  <span class="c">// the SOURCE record spread in, minus:</span>
+  <span class="c">// _id, appointmentId, createdAt, updatedAt,</span>
+  <span class="c">// createdBy, isRolloutConfirmed, dropPrice</span>
+  <span class="k">"entries"</span>: [ <span class="c">/* copied */</span> ],
+  <span class="k">"totals"</span>: { … },
+  <span class="k">"price"</span>: <span class="s">""</span>,                    <span class="c">// blanked</span>
+  <span class="k">"position"</span>: 3,
+  <span class="k">"title"</span>: <span class="s">"⚠️ G+LF ⚠️"</span>,          <span class="c">// " (2)" appended only to dodge the unique-title 409</span>
+  <span class="k">"originalCalculatorId"</span>: <span class="s">"6a82…"</span>,
+  <span class="k">"duplicateLog"</span>: {
+    <span class="k">"user_id"</span>: <span class="s">"6a1f…"</span>, <span class="k">"created_by"</span>: <span class="s">"6a1f…"</span>,
+    <span class="k">"module_type"</span>: <span class="s">"calculator"</span>,
+    <span class="k">"actionType"</span>: <span class="s">"duplicate"</span>,
+    <span class="k">"meta"</span>: { <span class="k">"leadId"</span>, <span class="k">"sourceCalculatorId"</span>,
+      <span class="k">"sourceCalculatorTitle"</span>, <span class="k">"newCalculatorTitle"</span>,
+      <span class="k">"appointmentId"</span>, <span class="k">"position"</span>,
+      <span class="k">"action"</span>: <span class="s">"calculator_duplicated"</span> }
+  }
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">useDynamicCalculators.ts<br>→ handleDuplicateTab</span></div>
+<pre>{
+  <span class="k">"title"</span>: <span class="s">"3"</span>,                     <span class="c">// numeric placeholder; the ⚠️ name is DERIVED</span>
+  <span class="k">"position"</span>: 3,
+  <span class="k">"entries"</span>: [ <span class="c">/* deep copy of the source */</span> ],
+  <span class="k">"totals"</span>: { … },
+  <span class="k">"schemaSnapshotId"</span>: <span class="s">"6a71a118…"</span>,
+  <span class="k">"leadId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="k">"enteredBy"</span>: <span class="s">"6a1f…"</span>,
+  <span class="k">"enteredAt"</span>: <span class="s">"2026-08-24T…"</span>,
+  <span class="k">"originalCalculatorId"</span>: <span class="s">"6a82…"</span>,
+  <span class="k">"duplicateLog"</span>: { <span class="c">/* identical shape to web */</span> }
+}</pre>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Delta</span>
+        <div>
+          <p><strong>Web copies the source record; mobile copies only the entries.</strong> Web's spread
+          carries <code>paymentMethod</code>, <code>downPayment</code>, <code>discountPercentage</code>,
+          <code>selectedRenders</code> and anything else on the row; mobile re-derives those from the rep's
+          defaults and lets the first save write the rest. Both exclude <code>dropPrice</code> — a
+          duplicate starts its negotiation clean.</p>
+          <p>Both hand the <code>calculator_duplicated</code> log to the POST rather than firing it
+          afterwards, so the backend attributes it to the NEW calculator's id.</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PUT</span>
+          <span class="path">/lfcalculators/{id}</span>
+          <span class="chip only-w">Web only</span>
+        </div>
+        <p class="fires">Rename, from the tab menu.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">tab-action-utils.js → renameTab</span></div>
+<pre>{
+  <span class="c">// the WHOLE source record echoed back, with:</span>
+  <span class="k">"title"</span>: <span class="s">"Front elevation"</span>
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">—</span></div>
+          <p class="none">The dynamic tab menu offers Duplicate and Delete only. A calculator's name is
+          derived from its entered values (<code>tab-naming.ts</code>) and persisted by the autosave in
+          stage 03, so there is no rename request.</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb del">DELETE</span>
+          <span class="path">/lfcalculators/{id}</span>
+          <span class="chip parity">Parity</span>
+        </div>
+        <p class="fires">Delete a tab. No body on either side.</p>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Note</span>
+        <div><p>Web's helper takes the <code>appointmentId</code> as its first argument, but only to
+        revalidate its SWR cache — it never reaches the wire.</p></div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PUT</span>
+          <span class="path">/lfcalculators/positions</span>
+          <span class="chip parity">Parity</span>
+        </div>
+        <p class="fires">Drag-reorder the tab strip. The body is a <strong>bare array</strong>, not an object.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">tab-action-utils.js → updateTabOrder</span></div>
+<pre>[
+  { <span class="k">"id"</span>: <span class="s">"6a82…a1"</span>, <span class="k">"position"</span>: 0 },
+  { <span class="k">"id"</span>: <span class="s">"6a82…b2"</span>, <span class="k">"position"</span>: 1 }
+]</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">LeadService.reorderCalculators</span></div>
+<pre>[
+  { <span class="k">"id"</span>: <span class="s">"6a82…a1"</span>, <span class="k">"position"</span>: 0 },
+  { <span class="k">"id"</span>: <span class="s">"6a82…b2"</span>, <span class="k">"position"</span>: 1 }
+]</pre>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ══════════════════════════════════════════════ 03 -->
+  <section class="stage" id="s3">
+    <div class="stage-head">
+      <span class="stage-num">03</span>
+      <h2>Field autosave</h2>
+      <p>The busiest request in the app. Debounced 1500&nbsp;ms on both platforms.</p>
+    </div>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PUT</span>
+          <span class="path">/lfcalculators/{id}</span>
+          <span class="chip diverges">Differs</span>
+        </div>
+        <p class="fires">Every field edit, coalesced. Both keep a per-calculator in-flight guard with a
+        follow-up save, read the latest state from a ref rather than a closure, and flush any dirty
+        calculator on unmount.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">DealCenterContext.js<br>→ buildSavePayload</span></div>
+<pre>{
+  <span class="k">"entries"</span>: [ <span class="c">/* ALL fields — see below */</span> ],
+  <span class="k">"totals"</span>: { <span class="k">"cost"</span>: 4820, <span class="k">"par"</span>: 6266, <span class="k">"retail"</span>: 9640 },
+  <span class="k">"title"</span>: <span class="s">"G+LF"</span>,            <span class="c">// omitted when it resolves empty</span>
+  <span class="k">"schemaSnapshotId"</span>: <span class="s">"6a71a118…"</span>,
+  <span class="k">"leadId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="k">"enteredBy"</span>: <span class="s">"6a1f…"</span>,
+  <span class="k">"enteredAt"</span>: <span class="s">"2026-08-24T18:11:40.552Z"</span>
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">useDynamicCalculators.ts<br>→ buildPayload</span></div>
+<pre>{
+  <span class="k">"title"</span>: <span class="s">"G+LF"</span>,            <span class="c">// always sent (resolveSafeTitle)</span>
+  <span class="k">"entries"</span>: [ <span class="c">/* ALL fields */</span> ],
+  <span class="k">"totals"</span>: { <span class="k">"cost"</span>: 4820, <span class="k">"par"</span>: 6266, <span class="k">"retail"</span>: 9640 },
+  <span class="add">"isRolloutConfirmed"</span>: false,
+  <span class="add">"price"</span>: 8195,
+  <span class="add">"pricemarkup"</span>: <span class="s">"PAR + 31%"</span>,
+  <span class="add">"priceScopeSig"</span>: <span class="s">"a1f3…"</span>,     <span class="c">// mobile-only: scope the price was set against</span>
+  <span class="add">"paymentMethod"</span>: <span class="s">"gs2521"</span>,
+  <span class="add">"downPayment"</span>: 500,
+  <span class="add">"discountPercentage"</span>: 25,
+  <span class="add">"selectedRenders"</span>: [ … ],
+  <span class="add">"oneYearMonthlyPlan"</span>: { … } | null,
+  <span class="add">"inHome"</span>: { … } | null,       <span class="c">// mobile-only</span>
+  <span class="k">"schemaSnapshotId"</span>: <span class="s">"6a71a118…"</span>,
+  <span class="k">"leadId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="k">"enteredBy"</span>: <span class="s">"6a1f…"</span>,
+  <span class="k">"enteredAt"</span>: <span class="s">"2026-08-24T18:11:40.552Z"</span>
+}</pre>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Delta</span>
+        <div>
+          <p><strong>This is the single biggest shape difference in the deal center.</strong> Web writes
+          the rollout fields as their own targeted PUTs the moment each control changes (stage 04);
+          mobile folds them into this one debounced body. Net traffic is lower on mobile, but every save
+          re-asserts the rollout state — so a stale local value can overwrite a server one, and the
+          fields are only as fresh as the debounce.</p>
+          <p><code>dropPrice</code> is <strong>deliberately absent from both</strong>: drops are written
+          by their own request (stage 05). <code>priceScopeSig</code> and <code>inHome</code> exist only
+          on mobile — the first drives the "job scope changed, review the end price" warning, the second
+          persists the Investment Center's In-Home monthly shortlist.</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb get">SHAPE</span>
+          <span class="path">entries[] — one element</span>
+          <span class="chip parity">Byte-identical</span>
+        </div>
+        <p class="fires">Both persist the <strong>entire flattened field list across every product</strong>,
+        not just the touched fields: untouched fields ride along at <code>inputValue: 0</code> with their
+        schema price captured in <code>pricingAtTimeOfEntry</code>. A real payload is 100+ entries with a
+        handful non-zero.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">calculator-items-format-util.js<br>→ buildAllEntriesFromSchema · DealCenterContext → buildEntry</span></div>
+<pre>{
+  <span class="k">"fieldId"</span>: <span class="s">"field_1782365732617_cgzrz"</span>,
+  <span class="k">"categoryId"</span>: <span class="s">"cat_gutters"</span>,
+  <span class="k">"sectionId"</span>: <span class="s">"section_main"</span>,   <span class="c">// section-less → `${categoryId}__direct`</span>
+  <span class="k">"productName"</span>: <span class="s">"Gutter Roofline"</span>,
+  <span class="k">"name"</span>: <span class="s">"gutter6Ft1"</span>,           <span class="c">// legacy alias</span>
+  <span class="k">"label"</span>: <span class="s">"6\" Gutter/DS/E"</span>,
+  <span class="k">"unit"</span>: <span class="s">"ft"</span>,
+  <span class="k">"inputValue"</span>: 444,
+  <span class="k">"computed"</span>: { <span class="k">"cost"</span>: 3552, <span class="k">"par"</span>: 4618, <span class="k">"retail"</span>: 7104 },
+  <span class="k">"pricingAtTimeOfEntry"</span>: { <span class="k">"cost"</span>: <span class="s">"8"</span>, <span class="k">"par"</span>: <span class="s">"10.4"</span>, <span class="k">"retail"</span>: <span class="s">"16"</span> }
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">utils/build-all-entries.ts<br>→ buildAllEntriesFromSchema</span></div>
+<pre>{
+  <span class="k">"fieldId"</span>: <span class="s">"field_1782365732617_cgzrz"</span>,
+  <span class="k">"categoryId"</span>: <span class="s">"cat_gutters"</span>,
+  <span class="k">"sectionId"</span>: <span class="s">"section_main"</span>,
+  <span class="k">"productName"</span>: <span class="s">"Gutter Roofline"</span>,
+  <span class="k">"name"</span>: <span class="s">"gutter6Ft1"</span>,
+  <span class="k">"label"</span>: <span class="s">"6\" Gutter/DS/E"</span>,
+  <span class="k">"unit"</span>: <span class="s">"ft"</span>,
+  <span class="k">"inputValue"</span>: 444,
+  <span class="k">"computed"</span>: { <span class="k">"cost"</span>: 3552, <span class="k">"par"</span>: 4618, <span class="k">"retail"</span>: 7104 },
+  <span class="k">"pricingAtTimeOfEntry"</span>: { <span class="k">"cost"</span>: <span class="s">"8"</span>, <span class="k">"par"</span>: <span class="s">"10.4"</span>, <span class="k">"retail"</span>: <span class="s">"16"</span> }
+}</pre>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Note</span>
+        <div><p>Mobile's <code>sanitizeCalculatorPayload</code> had to be widened so the descriptor
+        strings (<code>unit</code>, <code>label</code>, <code>productName</code>, <code>sectionId</code>,
+        <code>categoryId</code>, <code>fieldId</code>) keep <code>""</code> instead of being coerced to
+        <code>0</code> on the way out.</p></div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PUT</span>
+          <span class="path">/lfcalculators/{siblingId}</span>
+          <span class="chip parity">Parity</span>
+        </div>
+        <p class="fires">A displaced sibling's auto-rename. The backend enforces a unique title per
+        appointment, so when this calculator's derived size shifts (SM → LG) the siblings that still hold
+        the new title are re-titled <strong>first</strong>, in a collision-free order, with a temp-title
+        step to break A↔B cycles.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">DealCenterContext.js → saveDisplacedSiblings</span></div>
+<pre>{ <span class="c">/* that sibling's own full save payload */</span>, <span class="k">"title"</span>: <span class="s">"G+LF (MD)"</span> }</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">useDynamicCalculators.ts → saveDisplacedSiblings</span></div>
+<pre>{ <span class="c">/* that sibling's own full buildPayload */</span>, <span class="k">"title"</span>: <span class="s">"G+LF (MD)"</span> }</pre>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ══════════════════════════════════════════════ 04 -->
+  <section class="stage" id="s4">
+    <div class="stage-head">
+      <span class="stage-num">04</span>
+      <h2>Rollout</h2>
+      <p>End price, confirm, and the six per-control writes. Same endpoint, opposite strategies.</p>
+    </div>
+
+    <p class="warn">
+      <strong>Read this stage as one divergence, not eight.</strong> Web fires a <em>targeted</em>
+      <code>PUT /lfcalculators/{id}</code> per control, carrying only that control's keys. Mobile has no
+      targeted write at all: each handler marks the calculator dirty and the field rides the next
+      debounced whole-calculator save from stage 03. The keys and values are the same; the request
+      boundaries are not.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Control</th><th>Web — its own PUT body</th><th>Mobile — key added to the debounced body</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>End price (blur)</td>
+            <td class="mono">{ price, pricemarkup, isRolloutConfirmed: false }</td>
+            <td class="mono">price, pricemarkup, priceScopeSig</td>
+          </tr>
+          <tr>
+            <td>Confirm Rollouts</td>
+            <td class="mono">{ isRolloutConfirmed: true, price, pricemarkup }</td>
+            <td class="mono">isRolloutConfirmed, price, pricemarkup, priceScopeSig</td>
+          </tr>
+          <tr>
+            <td>Auto-confirm (10 min idle)</td>
+            <td class="mono">{ isRolloutConfirmed: true, price, pricemarkup }</td>
+            <td class="mono">same three, via the debounce</td>
+          </tr>
+          <tr>
+            <td>Payment method</td>
+            <td class="mono">{ paymentMethod, paymentMethodLabel }</td>
+            <td class="mono">paymentMethod <em>only</em></td>
+          </tr>
+          <tr>
+            <td>Pre-order discount %</td>
+            <td class="mono">{ discountPercentage }</td>
+            <td class="mono">discountPercentage</td>
+          </tr>
+          <tr>
+            <td>Down payment</td>
+            <td class="mono">{ downPayment }</td>
+            <td class="mono">downPayment</td>
+          </tr>
+          <tr>
+            <td>Add Renders</td>
+            <td class="mono">{ selectedRenders: [ … ] }</td>
+            <td class="mono">selectedRenders</td>
+          </tr>
+          <tr>
+            <td>1-Year monthly plan</td>
+            <td class="mono">{ oneYearMonthlyPlan: { … } }</td>
+            <td class="mono">oneYearMonthlyPlan</td>
+          </tr>
+          <tr>
+            <td>In-Home monthly shortlist</td>
+            <td class="mono" style="color: var(--gone)">— not persisted</td>
+            <td class="mono">inHome: { planKey, addedPlans[], apr, monthlyPayment, grandTotal, optInProgram }</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PUT</span>
+          <span class="path">/lfcalculators/{id}</span>
+          <span class="chip parity">Same object</span>
+        </div>
+        <p class="fires">The 1-Year Program monthly plan — the one rollout object with internal structure.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">shared/PricingSharedUI.js → persist</span></div>
+<pre>{
+  <span class="k">"oneYearMonthlyPlan"</span>: {
+    <span class="k">"mode"</span>: <span class="s">"match"</span>,        <span class="c">// match | default | custom</span>
+    <span class="k">"planKey"</span>: <span class="s">"gs2521"</span>,     <span class="c">// null unless custom</span>
+    <span class="k">"apr"</span>: 9.99,
+    <span class="k">"monthlyPayment"</span>: 184,
+    <span class="k">"grandTotal"</span>: 8195,
+    <span class="k">"isDefault"</span>: false
+  }
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">OneYearMonthlyPlan.tsx → onOneYearMonthlyChange<br>→ folded into buildPayload</span></div>
+<pre>{
+  <span class="c">/* …the whole calculator… */</span>
+  <span class="k">"oneYearMonthlyPlan"</span>: {
+    <span class="k">"mode"</span>: <span class="s">"match"</span>,
+    <span class="k">"planKey"</span>: <span class="s">"gs2521"</span>,
+    <span class="k">"apr"</span>: 9.99,
+    <span class="k">"monthlyPayment"</span>: 184,
+    <span class="k">"grandTotal"</span>: 8195,
+    <span class="k">"isDefault"</span>: false
+  }
+}</pre>
+        </div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PUT</span>
+          <span class="path">/company/user/update-default-lf-calculator-settings</span>
+          <span class="chip parity">Parity</span>
+        </div>
+        <p class="fires">The "Set as Default" switch beside the payment-method picker and the pre-order
+        selector. Writes the <strong>rep's</strong> default, not the calculator's.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">api/appointments.js → updateCalculatorsSetting</span></div>
+<pre>{ <span class="k">"defaultPaymentMethod"</span>: <span class="s">"gs2521"</span> }
+<span class="c">// or</span>
+{ <span class="k">"defaultPercentage"</span>: 25 }</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">SettingsService.updateCalculatorsSetting</span></div>
+<pre>{ <span class="k">"defaultPaymentMethod"</span>: <span class="s">"gs2521"</span> }
+<span class="c">// or</span>
+{ <span class="k">"defaultPercentage"</span>: 25 }</pre>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ══════════════════════════════════════════════ 05 -->
+  <section class="stage" id="s5">
+    <div class="stage-head">
+      <span class="stage-num">05</span>
+      <h2>Drops</h2>
+      <p>The negotiation ladder. One request per Decline / Secure, never on opening the sheet.</p>
+    </div>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PUT</span>
+          <span class="path">/lfcalculators/{id}</span>
+          <span class="chip parity">Same body</span>
+        </div>
+        <p class="fires">Secure This Price, Decline, or Unselect. The body carries <strong>one key</strong>
+        and the <strong>whole array</strong> — every round, each with its <code>_id</code>.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">ViewAllCalculators.js<br>→ handleSecurePrice / handleDeclinePrice</span></div>
+<pre>{
+  <span class="k">"dropPrice"</span>: [
+    { <span class="k">"_id"</span>: <span class="s">"6a86b180…"</span>, <span class="k">"dropedPrice"</span>: 10000,
+      <span class="k">"status"</span>: <span class="s">"declined"</span>, <span class="k">"paymentMethod"</span>: <span class="s">"check"</span>,
+      <span class="k">"pricemarkup"</span>: <span class="s">"PAR + 8%"</span>,
+      <span class="k">"downPayment"</span>: 0, <span class="k">"balance"</span>: 10000 },
+    { <span class="k">"dropedPrice"</span>: 8888,           <span class="c">// no _id → filed as new</span>
+      <span class="k">"status"</span>: <span class="s">"accepted"</span>, <span class="k">"paymentMethod"</span>: <span class="s">"gs2521"</span>,
+      <span class="k">"pricemarkup"</span>: <span class="s">"COST + 12%"</span>,
+      <span class="k">"downPayment"</span>: 500, <span class="k">"balance"</span>: 8388 }
+  ]
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">useDynamicCalculators.ts → saveDropsNow<br>utils/drop-prices.ts → toDropPricePayload</span></div>
+<pre>{
+  <span class="k">"dropPrice"</span>: [
+    { <span class="k">"_id"</span>: <span class="s">"6a86b180…"</span>, <span class="k">"dropedPrice"</span>: 10000,
+      <span class="k">"status"</span>: <span class="s">"declined"</span>, <span class="k">"paymentMethod"</span>: <span class="s">"check"</span>,
+      <span class="k">"pricemarkup"</span>: <span class="s">"PAR + 8%"</span>,
+      <span class="k">"downPayment"</span>: 0, <span class="k">"balance"</span>: 10000 },
+    { <span class="k">"dropedPrice"</span>: 8888,
+      <span class="k">"status"</span>: <span class="s">"accepted"</span>, <span class="k">"paymentMethod"</span>: <span class="s">"gs2521"</span>,
+      <span class="k">"pricemarkup"</span>: <span class="s">"COST + 12%"</span>,
+      <span class="k">"downPayment"</span>: 500, <span class="k">"balance"</span>: 8388,
+      <span class="add">"paymentMethods"</span>: [<span class="s">"gs2521"</span>, <span class="s">"wf3672"</span>] <span class="c">// omitted when empty</span>
+    }
+  ]
+}</pre>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Rules</span>
+        <div>
+          <p><strong><code>dropPrice</code> is a merge-by-<code>_id</code> subdocument array.</strong> A row
+          that arrives with an <code>_id</code> updates that row; a row without one is filed as new; a row
+          the payload <em>omits</em> is not deleted — it survives on the server, invisible to the rep. So
+          nothing on either read or write path may drop a row, and mobile adopts the ids the server assigns
+          (matched by price + status among unclaimed rows, never by index) so a re-save updates in place.</p>
+          <p><strong>At most one row may be <code>accepted</code>.</strong> Web enforces it in four places
+          inside <code>handleSecurePrice</code>; mobile centralises it in
+          <code>normalizeSingleAcceptedDrop</code> and runs it on both sides of the wire, so a record
+          already corrupted is repaired on open.</p>
+          <p><strong>Mobile adds one rule web does not have:</strong> resulting a calculator whose every
+          drop is <code>declined</code> secures the last round first. Without it the sold calculator carries
+          no record of what the customer agreed to, and the portal board reads the accepted drop on a
+          <em>sibling</em> calculator as the sold job. <code>paymentMethods</code> is kept for the same
+          reason — re-opening a declined drop restores the financing plans it was negotiated with.</p>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ══════════════════════════════════════════════ 06 -->
+  <section class="stage" id="s6">
+    <div class="stage-head">
+      <span class="stage-num">06</span>
+      <h2>Result &amp; draft</h2>
+      <p>The outcome record. Calculator-scoped on both platforms.</p>
+    </div>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PUT</span>
+          <span class="path">/lead/v1/{leadId}/outcome/{calcId}</span>
+          <span class="chip diverges">Differs</span>
+        </div>
+        <p class="fires">Web: every edit in the Result Lead modal, debounced. Mobile: nothing — the modal's
+        answers are held in memory (<code>calculatorResultData</code>) and first written by the job-builder
+        draft below.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">result-lead-modal.js<br>→ handleUpdateJobBuilder (cleanLeadData)</span></div>
+<pre>{
+  <span class="k">"oneLeg"</span>: <span class="s">"No"</span>,
+  <span class="k">"result"</span>: <span class="s">"Sale"</span>,
+  <span class="k">"reason"</span>: <span class="s">""</span>,
+  <span class="k">"explain"</span>: <span class="s">""</span>,
+  <span class="k">"lastPriceQuoted"</span>: <span class="s">""</span>,          <span class="c">// Demo only</span>
+  <span class="k">"originalContractPrice"</span>: <span class="s">"24,900"</span>, <span class="c">// Sale only — typed text</span>
+  <span class="k">"downPayment"</span>: <span class="s">"3,000"</span>,
+  <span class="k">"paymentMethod"</span>: <span class="s">"check"</span>,        <span class="c">// the DOWN-payment method</span>
+  <span class="k">"balancePaymentMethod"</span>: <span class="s">"gs2521"</span>,
+  <span class="k">"balance"</span>: <span class="s">"21,900"</span>,
+  <span class="k">"LFCalculator"</span>: { <span class="c">/* full calculator doc, {} fallback */</span> },
+  <span class="k">"selectedCalculatorId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="k">"selectedAppointmentId"</span>: <span class="s">"6a8298…"</span>,
+  <span class="k">"jobBuilder"</span>: { <span class="c">/* whatever the outcome already held */</span> }
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">—</span></div>
+          <p class="none">No request at result time. Picking Sale/Demo and pressing Build Job writes only
+          the timeline milestone (stage 08) and an activity log; the outcome fields land with the first
+          draft autosave, seconds later, inside the job builder.</p>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Delta</span>
+        <div>
+          <p>Consequence worth knowing: <strong>on web a lead has an outcome row the moment the modal is
+          touched; on mobile it appears once the job builder opens.</strong> A rep who abandons the modal
+          leaves a Sale-flavoured outcome behind on web and nothing on mobile.</p>
+          <p>Web's money fields are the <em>typed</em> strings, commas included
+          (<code>"24,900"</code>). Mobile normalises through <code>toPayloadAmount</code> at submit, so it
+          sends <code>"24900"</code> — and <code>""</code>, never <code>0</code>, for an unset amount.</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PUT</span>
+          <span class="path">/lead/v1/{leadId}/outcome/{calcId}</span>
+          <span class="chip diverges">Differs</span>
+        </div>
+        <p class="fires">The job-builder <strong>draft</strong> autosave — every build edit, debounced
+        2000&nbsp;ms on both platforms.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">JobBuilderContext.js<br>→ buildSavePayload</span></div>
+<pre>{
+  <span class="c">// …the result modal's whole formData spread in…</span>
+  <span class="k">"selectedCalculatorId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="k">"selectedAppointmentId"</span>: <span class="s">"6a8298…"</span>,
+  <span class="k">"jobBuilder"</span>: {
+    <span class="k">"dynamicJobState"</span>: { <span class="c">/* serialized, storage keys */</span> },
+    <span class="k">"configId"</span>: <span class="s">"6a2f8f64…"</span>,
+    <span class="k">"configSnapshotId"</span>: <span class="s">"6a2f8f64…"</span>,
+    <span class="k">"calculatorType"</span>: <span class="s">"dynamic"</span>,
+    <span class="k">"status"</span>: <span class="s">"draft"</span>,
+    <span class="k">"autoFieldsLogged"</span>: { <span class="s">"tab_gutters"</span>: true }
+  },
+  <span class="k">"LFCalculator"</span>: { <span class="c">/* only when non-empty */</span> }
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">DynamicJobBuilderScreen.tsx → performAutoSave<br>utils/build-outcome-payload.ts</span></div>
+<pre>{
+  <span class="k">"selectedCalculatorId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="k">"oneLeg"</span>: <span class="s">"No"</span>,
+  <span class="k">"result"</span>: <span class="s">"Sale"</span>,
+  <span class="k">"reason"</span>: <span class="s">""</span>,                     <span class="c">// demoReason</span>
+  <span class="k">"explain"</span>: <span class="s">""</span>,                    <span class="c">// reasonExplanation</span>
+  <span class="k">"lastPriceQuoted"</span>: 24900,
+  <span class="k">"originalContractPrice"</span>: 24900,     <span class="c">// numbers here, strings at submit</span>
+  <span class="k">"downPayment"</span>: 3000,
+  <span class="k">"paymentMethod"</span>: <span class="s">"check"</span>,
+  <span class="k">"balancePaymentMethod"</span>: <span class="s">"gs2521"</span>,
+  <span class="k">"balance"</span>: 21900,
+  <span class="k">"LFCalculator"</span>: { <span class="c">/* only when it has createdBy + appointmentId + title */</span> },
+  <span class="k">"selectedAppointmentId"</span>: <span class="s">"6a8298…"</span>,
+  <span class="add">"versatile"</span>: false,               <span class="c">// mobile-only</span>
+  <span class="add">"pineapple"</span>: false,               <span class="c">// mobile-only</span>
+  <span class="k">"jobBuilder"</span>: { <span class="c">/* identical wrapper to web, status "draft" */</span> }
+}</pre>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Delta</span>
+        <div>
+          <p><strong><code>versatile</code> / <code>pineapple</code> do not exist in the web sales app
+          at all</strong> — zero occurrences. They come from mobile's outcome modal and are carried so
+          they rehydrate on reopen.</p>
+          <p><strong>Mobile gates <code>LFCalculator</code>.</strong> The backend subdocument requires
+          <code>createdBy</code>, <code>appointmentId</code> and <code>title</code>; the in-memory tab has
+          none of them, and sending a partial one 500s the whole PUT. So mobile attaches the document only
+          when it is the real server copy (read once and cached per calculator id). Web always has the real
+          document from its SWR list, so it never needed the guard.</p>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ══════════════════════════════════════════════ 07 -->
+  <section class="stage" id="s7">
+    <div class="stage-head">
+      <span class="stage-num">07</span>
+      <h2>Documents</h2>
+      <p>Agreements and order sheets. The clearest architectural split in the flow.</p>
+    </div>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PUT</span>
+          <span class="path">/lead/v1/{leadId}/outcome/{calcId}</span>
+          <span class="chip only-m">Mobile only</span>
+        </div>
+        <p class="fires">The moment a document is scanned or an agreement is generated — <strong>not</strong>
+        at submit.</p>
+      </div>
+      <div class="panes">
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">DynamicJobBuilderScreen.tsx → handleUploadDocs</span></div>
+<pre>{
+  <span class="k">"result"</span>: <span class="s">"Sale"</span>,
+  <span class="k">"status"</span>: <span class="s">"Sale"</span>,
+  <span class="k">"selectedCalculatorId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="k">"jobBuilder"</span>: { <span class="c">/* the serialized state, status "draft" */</span> },
+  <span class="k">"agreements"</span>: [                <span class="c">// or "orderSheets"</span>
+    { <span class="k">"name"</span>: <span class="s">""</span>, <span class="k">"file"</span>: <span class="s">"JVBERi0xLjQ…"</span>, <span class="k">"type"</span>: <span class="s">"agreement"</span> }
+  ]
+}</pre>
+        </div>
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">dynamic-job-builder.js</span></div>
+          <p class="none">No upload here. Web keeps the files on <code>jobState.agreements</code> /
+          <code>.orderSheets</code> as durable local references and converts them to base64 PDFs only at
+          Complete Job (stage 08).</p>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Delta</span>
+        <div>
+          <p><strong>This is why mobile's submit mirror drops its documents.</strong> On mobile every
+          document is already a <code>LeadOutcomeDocument</code> row by submit time — filed by this
+          request, or by the <code>/sign</code> endpoint for a generated agreement. Re-sending the bytes at
+          submit (as web does) filed a <em>second</em> row: identical <code>base64Data</code> and byte size,
+          distinct <code>_id</code> and <code>filePath</code>, and an empty <code>name</code> — the
+          duplicate agreement reported from the field.</p>
+          <p>The trade-off is the other direction: mobile pays a multi-MB upload per scan and web pays it
+          once, at the end.</p>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ══════════════════════════════════════════════ 08 -->
+  <section class="stage" id="s8">
+    <div class="stage-head">
+      <span class="stage-num">08</span>
+      <h2>Complete Job</h2>
+      <p>Three requests, in this order, on both platforms.</p>
+    </div>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">POST</span>
+          <span class="path">/lead/v1/{leadId}/job-builder</span>
+          <span class="chip diverges">Differs</span>
+        </div>
+        <p class="fires">The submit. Requires both <code>leadData</code> and <code>jobState</code> at the
+        top level or it 400s.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">TabbedCalculator.js<br>→ payload (action "complete")</span></div>
+<pre>{
+  <span class="k">"leadData"</span>: { <span class="c">/* the result modal's formData — the 13 keys in 06 */</span> },
+  <span class="k">"jobState"</span>: { <span class="c">/* serialized dynamic job state */</span> },
+  <span class="k">"agreements"</span>: [ { <span class="k">"name"</span>: <span class="s">""</span>, <span class="k">"file"</span>: <span class="s">"JVBER…"</span>, <span class="k">"type"</span>: <span class="s">"agreement"</span> } ],
+  <span class="k">"orderSheets"</span>: [ { <span class="k">"name"</span>: <span class="s">""</span>, <span class="k">"file"</span>: <span class="s">"JVBER…"</span>, <span class="k">"type"</span>: <span class="s">"orderSheet"</span> } ],
+  <span class="k">"isDynamic"</span>: true,
+  <span class="k">"configId"</span>: <span class="s">"6a2f8f64…"</span>,
+  <span class="k">"configSnapshotId"</span>: <span class="s">"6a2f8f64…"</span>
+}
+<span class="c">// On a non-Sale result the agreements are filed AS order sheets.</span></pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">utils/job-submit-payload.ts<br>→ buildJobSubmitPayload / buildSubmitLeadData</span></div>
+<pre>{
+  <span class="k">"leadData"</span>: {
+    <span class="k">"oneLeg"</span>: <span class="s">"No"</span>,
+    <span class="k">"result"</span>: <span class="s">"Sale"</span>,
+    <span class="k">"reason"</span>: <span class="s">""</span>,
+    <span class="k">"explain"</span>: <span class="s">""</span>,
+    <span class="k">"lastPriceQuoted"</span>: <span class="s">""</span>,           <span class="c">// Demo only</span>
+    <span class="k">"originalContractPrice"</span>: <span class="s">"24900"</span>,  <span class="c">// Sale only, STRING, "" never 0</span>
+    <span class="k">"downPayment"</span>: <span class="s">"3000"</span>,
+    <span class="k">"paymentMethod"</span>: <span class="s">"check"</span>,
+    <span class="k">"balancePaymentMethod"</span>: <span class="s">"gs2521"</span>,
+    <span class="k">"balance"</span>: <span class="s">"21900"</span>,
+    <span class="k">"LFCalculator"</span>: { <span class="c">/* the FULL server document, {} never null */</span> },
+    <span class="k">"selectedCalculatorId"</span>: <span class="s">"6a8299…"</span>,
+    <span class="k">"selectedAppointmentId"</span>: <span class="s">"6a8298…"</span>, <span class="c">// calc's own appointmentId wins</span>
+    <span class="add">"jobBuilder"</span>: { <span class="c">/* the same wrapper, status "submitted" */</span> }
+  },
+  <span class="k">"jobState"</span>: { … },
+  <span class="k">"agreements"</span>: [ { <span class="k">"name"</span>: <span class="s">""</span>, <span class="k">"file"</span>: <span class="s">"JVBER…"</span>, <span class="k">"type"</span>: <span class="s">"agreement"</span> } ],
+  <span class="k">"orderSheets"</span>: [ … ],
+  <span class="add">"paperWork"</span>: [],                  <span class="c">// always present, per the backend contract</span>
+  <span class="add">"downPaymentReceipt"</span>: [],
+  <span class="k">"isDynamic"</span>: true,
+  <span class="k">"configId"</span>: <span class="s">"6a2f8f64…"</span>,
+  <span class="k">"configSnapshotId"</span>: <span class="s">"6a2f8f64…"</span>   <span class="c">// falls back to "dynamic"</span>
+}</pre>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Delta</span>
+        <div>
+          <p><strong>Mobile assembles <code>leadData</code> key by key; web spreads the modal's state.</strong>
+          Web's <code>formData</code> happens to be exactly the 13 contract keys, so the two agree — but
+          anything the modal gains would ride along on web and be dropped on mobile. Mobile adds
+          <code>jobBuilder</code> (so a backend reading the build from <code>leadData</code> still finds
+          it) and the two empty document groups the backend contract lists.</p>
+          <p><strong>Money is a string on both</strong>, and mobile's <code>toPayloadAmount</code> emits
+          <code>""</code> for an unset amount — a <code>0</code> reads as a real quoted figure on the
+          portal. <code>lastPriceQuoted</code> is Demo-only and <code>originalContractPrice</code>
+          Sale-only; the other is blanked, not carried over.</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PUT</span>
+          <span class="path">web: /lead/v1/{leadId}/outcome &nbsp;·&nbsp; mobile: /lead/v1/{leadId}/outcome/{calcId}</span>
+          <span class="chip diverges">Differs</span>
+        </div>
+        <p class="fires">The outcome mirror, immediately after the POST. Non-fatal on both — the job is
+        already submitted.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">TabbedCalculator.js → updateJobBuilder<br>LEAD-scoped</span></div>
+<pre>{
+  <span class="c">// …data.leadData spread in…</span>
+  <span class="k">"selectedCalculatorId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="k">"selectedAppointmentId"</span>: <span class="s">"6a8298…"</span>,
+  <span class="k">"jobBuilder"</span>: {
+    <span class="k">"dynamicJobState"</span>: { … },
+    <span class="k">"configId"</span>: <span class="s">"6a2f8f64…"</span>,
+    <span class="k">"configSnapshotId"</span>: <span class="s">"6a2f8f64…"</span>,
+    <span class="k">"calculatorType"</span>: <span class="s">"dynamic"</span>,
+    <span class="k">"status"</span>: <span class="s">"submitted"</span>
+  },
+  <span class="k">"agreements"</span>: [ <span class="c">/* base64 AGAIN, when non-empty */</span> ],
+  <span class="k">"orderSheets"</span>: [ <span class="c">/* base64 AGAIN */</span> ],
+  <span class="k">"LFCalculator"</span>: { <span class="c">/* the resolved calculator */</span> }
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">DynamicJobBuilderScreen.tsx → handleComplete<br>CALCULATOR-scoped</span></div>
+<pre>{
+  <span class="c">// …the result modal's full field set…</span>
+  <span class="k">"paymentMethod"</span>: <span class="s">"check"</span>,          <span class="c">// renamed from downPaymentMethod</span>
+  <span class="k">"result"</span>: <span class="s">"Sale"</span>,
+  <span class="k">"status"</span>: <span class="s">"Sale"</span>,
+  <span class="k">"selectedCalculatorId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="k">"selectedAppointmentId"</span>: <span class="s">"6a8298…"</span>,
+  <span class="k">"versatile"</span>: false,
+  <span class="k">"pineapple"</span>: false,
+  <span class="k">"jobBuilder"</span>: { <span class="c">/* same wrapper, status "submitted" */</span> },
+  <span class="k">"LFCalculator"</span>: { <span class="c">/* the resolved server document */</span> }
+  <span class="miss">// NO agreements / orderSheets — see stage 07</span>
+}</pre>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Delta</span>
+        <div>
+          <p>Two differences, both deliberate. <strong>The route:</strong> web's mirror is lead-scoped,
+          mobile's is calculator-scoped, because the bare lead-scoped route 404s on device.
+          <strong>The documents:</strong> dropped on mobile, since they are already filed (stage 07) and
+          re-sending them created a duplicate agreement row.</p>
+          <p>Do <em>not</em> remove the call itself on either platform — it is the only write that persists
+          the outcome <strong>fields</strong> (contract price, down payment, oneLeg, reason, explain,
+          payment methods, <code>LFCalculator</code>). The eager document PUT sends a much smaller set.</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PATCH</span>
+          <span class="path">/lead/v1/{leadId}/timeline-progress</span>
+          <span class="chip diverges">Differs</span>
+        </div>
+        <p class="fires">Portal milestone flags. Fire-and-forget on mobile — nothing the rep is about to
+        see reads them.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">ResultJobModal.js · job-builder-modal.js</span></div>
+<pre><span class="c">// at the Sale/Demo pick</span>
+{ <span class="k">"salesProcess"</span>: <span class="s">"completed"</span>, <span class="k">"leadResulted"</span>: <span class="s">"active"</span> }
+
+<span class="c">// at complete — STATIC flow only; the dynamic
+// deal center makes no timeline call at submit</span>
+{ <span class="k">"jobBuild"</span>: <span class="s">"complete"</span> }</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">DynamicDealCenterScreen.tsx · DynamicJobBuilderScreen.tsx</span></div>
+<pre><span class="c">// at Build Job</span>
+{ <span class="k">"salesProcess"</span>: <span class="s">"completed"</span>,
+  <span class="k">"leadResulted"</span>: <span class="s">"completed"</span>,   <span class="c">// NOT "active"</span>
+  <span class="k">"jobBuild"</span>: <span class="s">"active"</span> }
+
+<span class="c">// at Complete Job</span>
+{ <span class="k">"salesProcess"</span>: <span class="s">"completed"</span>,
+  <span class="k">"leadResulted"</span>: <span class="s">"completed"</span>,
+  <span class="k">"jobBuild"</span>: <span class="s">"complete"</span> }</pre>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Delta</span>
+        <div>
+          <p>Mobile sends <code>leadResulted: "completed"</code> at Build Job on purpose. Web's dynamic
+          flow only ever sends <code>"active"</code> there and never flips it, so the portal's Forever
+          Record showed "Lead Resulted — in progress" indefinitely; the milestone's Complete gate is
+          <code>status === "completed"</code>.</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">PUT</span>
+          <span class="path">/lead/v1/{leadId}/reset</span>
+          <span class="chip parity">Parity</span>
+        </div>
+        <p class="fires">Reset Job Builder, on the resulted calculator. No body on either side. Both then
+        clear the lead's <code>jobBuilder</code> / <code>selectedCalculatorId</code> in local state so the
+        tabs unlock before the refetch lands.</p>
+      </div>
+    </article>
+  </section>
+
+  <!-- ══════════════════════════════════════════════ 09 -->
+  <section class="stage" id="s9">
+    <div class="stage-head">
+      <span class="stage-num">09</span>
+      <h2>Activity logs</h2>
+      <p>Same endpoint, same envelope, on both platforms. This is what the portal timeline and board read.</p>
+    </div>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">POST</span>
+          <span class="path">/user-activity-log/v1/create</span>
+          <span class="chip parity">Same envelope</span>
+        </div>
+        <p class="fires">Every event below. <code>meta.leadId</code> is auto-attached when absent.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">utils/logger.js → logEvent</span></div>
+<pre>{
+  <span class="k">"user_id"</span>: <span class="s">"6a1f…"</span>,
+  <span class="k">"action_type"</span>: <span class="s">"change"</span>,
+  <span class="k">"module_type"</span>: <span class="s">"rollout_and_drop"</span>,
+  <span class="k">"created_by"</span>: <span class="s">"6a1f…"</span>,
+  <span class="k">"meta"</span>: { … }
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">services/api/LoggerService.ts → logEvent</span></div>
+<pre>{
+  <span class="k">"user_id"</span>: <span class="s">"6a1f…"</span>,
+  <span class="k">"action_type"</span>: <span class="s">"change"</span>,
+  <span class="k">"module_type"</span>: <span class="s">"rollout_and_drop"</span>,
+  <span class="k">"created_by"</span>: <span class="s">"6a1f…"</span>,
+  <span class="k">"meta"</span>: { … }
+}</pre>
+        </div>
+      </div>
+    </article>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Moment</th><th class="mono">action_type</th><th class="mono">module_type</th><th class="mono">meta.action</th><th>Parity</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>First calculator created</td><td class="mono">create</td><td class="mono">calculator</td><td class="mono">Created new calculator tab</td><td>both</td></tr>
+          <tr><td>＋ new tab</td><td class="mono">create</td><td class="mono">calculator</td><td class="mono">calculator_created</td><td>both</td></tr>
+          <tr><td>Duplicate</td><td class="mono">duplicate</td><td class="mono">calculator</td><td class="mono">calculator_duplicated</td><td>both — inside the POST</td></tr>
+          <tr><td>Manual rename</td><td class="mono">rename</td><td class="mono">calculator</td><td class="mono">calculator_rename</td><td>web only</td></tr>
+          <tr><td>Derived title changed</td><td class="mono">auto_rename</td><td class="mono">calculator</td><td class="mono">calculator_auto_renamed</td><td>both</td></tr>
+          <tr><td>Delete</td><td class="mono">delete</td><td class="mono">calculator</td><td class="mono">calculator_deleted</td><td>both</td></tr>
+          <tr><td>Tab opened</td><td class="mono">view</td><td class="mono">calculator</td><td class="mono">calculator viewed</td><td>both</td></tr>
+          <tr><td>Rollout list opened</td><td class="mono">view</td><td class="mono">view_all_calculators</td><td class="mono">view_all_calculators</td><td>both</td></tr>
+          <tr><td>Field edited</td><td class="mono">change</td><td class="mono">calculator_field_entry</td><td class="mono">calculator field changed</td><td>both</td></tr>
+          <tr><td>Category cleared</td><td class="mono">change</td><td class="mono">calculator_field_entry</td><td class="mono">section cleared</td><td>both</td></tr>
+          <tr><td>End price / down payment / discount</td><td class="mono">change</td><td class="mono">rollout_and_drop</td><td class="mono">(per field)</td><td>both</td></tr>
+          <tr><td>Payment method inherited</td><td class="mono">change</td><td class="mono">rollout_and_drop</td><td class="mono">payment method inherited</td><td>both</td></tr>
+          <tr><td>Drop secured</td><td class="mono">change</td><td class="mono">rollout_and_drop</td><td class="mono">drop price secured</td><td>both</td></tr>
+          <tr><td>Drop declined</td><td class="mono">change</td><td class="mono">rollout_and_drop</td><td class="mono">drop price declined</td><td>both</td></tr>
+          <tr><td>Drop un-secured</td><td class="mono">change</td><td class="mono">rollout_and_drop</td><td class="mono">drop price unselected</td><td>both</td></tr>
+          <tr><td>Plan added in the drop sheet</td><td class="mono">change</td><td class="mono">rollout_and_drop</td><td class="mono">drop price plan selected</td><td>both</td></tr>
+          <tr><td>Build Job pressed</td><td class="mono">click</td><td class="mono">job_builder</td><td class="mono">build_job_initiated</td><td>both</td></tr>
+          <tr><td>Submit</td><td class="mono">rollout_and_drop_summary</td><td class="mono">rollout_and_drop</td><td class="mono">job_builder_submitted_with_rollout_drop_summary</td><td>both</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">META</span>
+          <span class="path">rollout_and_drop · a field change</span>
+          <span class="chip parity">Byte-identical</span>
+        </div>
+        <p class="fires">Any rollout control. Tier prices are computed at <code>check</code> so they match
+        <code>percentageOfRollout</code>; anything extra passed by the caller is spread in after
+        <code>leadId</code>.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">ViewAllCalculators.js → fireRolloutLog</span></div>
+<pre>{
+  <span class="k">"calculatorId"</span>, <span class="k">"appointmentId"</span>, <span class="k">"calculatorTitle"</span>,
+  <span class="k">"fieldLabel"</span>: <span class="s">"Drop Price"</span>,
+  <span class="k">"fieldValue"</span>: 8888,
+  <span class="k">"fieldCategory"</span>: <span class="s">"drop"</span>,
+  <span class="k">"oldValue"</span>: 10000,
+  <span class="k">"newValue"</span>: 8888,
+  <span class="k">"action"</span>: <span class="s">"drop price secured"</span>,
+  <span class="k">"costPrice"</span>: 4820, <span class="k">"parPrice"</span>: 6266, <span class="k">"retailPrice"</span>: 9640,
+  <span class="k">"percentageOfRollout"</span>: <span class="s">"PAR + 42%"</span>,
+  <span class="k">"leadId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="c">// …isSecured, isDeclined, dropNumber, dropPrice,</span>
+  <span class="c">//   paymentPlanKey, paymentPlanLabel…</span>
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">utils/activity-log/rollout-log-meta.ts → fireRolloutLog</span></div>
+<pre>{
+  <span class="k">"calculatorId"</span>, <span class="k">"appointmentId"</span>, <span class="k">"calculatorTitle"</span>,
+  <span class="k">"fieldLabel"</span>: <span class="s">"Drop Price"</span>,
+  <span class="k">"fieldValue"</span>: 8888,
+  <span class="k">"fieldCategory"</span>: <span class="s">"drop"</span>,
+  <span class="k">"oldValue"</span>: 10000,
+  <span class="k">"newValue"</span>: 8888,
+  <span class="k">"action"</span>: <span class="s">"drop price secured"</span>,
+  <span class="k">"costPrice"</span>: 4820, <span class="k">"parPrice"</span>: 6266, <span class="k">"retailPrice"</span>: 9640,
+  <span class="k">"percentageOfRollout"</span>: <span class="s">"PAR + 42%"</span>,
+  <span class="k">"leadId"</span>: <span class="s">"6a8299…"</span>,
+  <span class="c">// …same spread-through of caller extras…</span>
+}</pre>
+        </div>
+      </div>
+    </article>
+
+    <article class="req">
+      <div class="req-head">
+        <div class="verb-row">
+          <span class="verb">META</span>
+          <span class="path">rollout_and_drop_summary · fired at submit</span>
+          <span class="chip diverges">Differs in its inputs</span>
+        </div>
+        <p class="fires">Not awaited on either platform. This is the event the portal board reads for the
+        negotiation as a whole, so its <em>inputs</em> matter as much as its shape.</p>
+      </div>
+      <div class="panes">
+        <div class="pane w">
+          <div class="pane-label">Web <span class="src">rollout-drop-summary-log.js</span></div>
+<pre>{
+  <span class="k">"calculatorId"</span>, <span class="k">"appointmentId"</span>, <span class="k">"leadId"</span>,
+  <span class="k">"noOfRollouts"</span>: 4,                 <span class="c">// appointmentsCalculator.length</span>
+  <span class="k">"noOfDropsOnResultedJob"</span>: 2,
+  <span class="k">"noOfDropsAllJobs"</span>: 6,
+  <span class="k">"noOfJobsAtCost"</span>, <span class="k">"noOfJobsAtPar"</span>, <span class="k">"noOfJobsAtRetail"</span>,
+  <span class="k">"percentageJobsAtCost"</span>: <span class="s">"25%"</span>, <span class="c">/* …AtPar, …AtRetail */</span>
+  <span class="k">"aggregatedRetailPrice"</span>, <span class="k">"aggregatedCostPrice"</span>,
+  <span class="k">"resultedJobCost"</span>, <span class="k">"resultedJobPar"</span>, <span class="k">"resultedJobRetail"</span>,
+  <span class="k">"resultedJobPrice"</span>: 9640,
+  <span class="k">"rolloutPaymentMethod"</span>, <span class="k">"resultedPaymentMethod"</span>,
+  <span class="k">"dropDeltas"</span>: [ { <span class="k">"dropNumber"</span>, <span class="k">"dropPrice"</span>, <span class="k">"dropStatus"</span>,
+      <span class="k">"dropPaymentMethod"</span>, <span class="k">"deltaFromPrevious"</span>, <span class="k">"deltaFromOriginal"</span> } ],
+  <span class="k">"deltaFromRolloutToResult"</span>: <span class="s">"-8.2%"</span>,
+  <span class="k">"paymentPlansOnResultedJob"</span>, <span class="k">"paymentPlansList"</span>,
+  <span class="k">"demoDurationMinutes"</span>, <span class="k">"demoDurationHours"</span>,
+  <span class="k">"resultStatus"</span>: <span class="s">"Sale"</span>,
+  <span class="k">"action"</span>: <span class="s">"job_builder_submitted_with_rollout_drop_summary"</span>
+}</pre>
+        </div>
+        <div class="pane m">
+          <div class="pane-label">Mobile <span class="src">utils/activity-log/rollout-summary.ts</span></div>
+<pre>{
+  <span class="c">// identical key set and identical arithmetic</span>
+  <span class="c">// three INPUTS were wrong and are now aligned:</span>
+  <span class="k">"noOfRollouts"</span>: 4,        <span class="c">// was 1 — only the resulted calc was passed</span>
+  <span class="k">"resultStatus"</span>: <span class="s">"Sale"</span>,   <span class="c">// was "Unknown" — rd carries resultType</span>
+  <span class="k">"appointmentId"</span>: <span class="s">"6a8298…"</span> <span class="c">// was undefined — CalcTab has no appointmentId</span>
+}</pre>
+        </div>
+      </div>
+      <div class="delta">
+        <span class="delta-tag">Delta</span>
+        <div>
+          <p>The tier fields also resolve differently: web's <code>calculateTiers</code> passes
+          <code>schemas</code>, so the same function prices a dynamic calculator. Mobile's port of that
+          util is not schema-aware, so it takes the tiers from the calculator's persisted
+          <code>totals</code> instead (opt-in via <code>preferStoredTotals</code>) — the same numbers the
+          rollout tiles derive from. Without it every dynamic job bucketed as <em>at retail</em>.</p>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ══════════════════════════════════════════════ ledger -->
+  <section class="stage" id="ledger">
+    <div class="stage-head">
+      <span class="stage-num">△</span>
+      <h2>Divergence ledger</h2>
+      <p>Every difference above, in one place, with the reason it exists.</p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Stage</th><th>Difference</th><th>Why it is not a bug</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">01</td>
+            <td>Mobile adopts a 409 on <code>POST /appointments</code></td>
+            <td>The date-filtered GET can miss an existing appointment (UTC/local off-by-one on <code>lead_date</code>); without this the flow drops into local, unsaved mode.</td>
+          </tr>
+          <tr>
+            <td class="mono">01</td>
+            <td>Mobile seeds <code>entries</code> on the first calculator; web sends <code>{title, price}</code></td>
+            <td>Convergent after one edit. Mobile's create is the same helper as the ＋ button.</td>
+          </tr>
+          <tr>
+            <td class="mono">02</td>
+            <td>Web's duplicate copies the source <em>record</em>; mobile copies the <em>entries</em></td>
+            <td>Mobile re-derives the rep-level defaults and lets the autosave write the rest.</td>
+          </tr>
+          <tr>
+            <td class="mono">02</td>
+            <td>No rename request on mobile</td>
+            <td>Dynamic titles are derived from the entered values; the tab menu offers Duplicate and Delete only.</td>
+          </tr>
+          <tr>
+            <td class="mono">03 · 04</td>
+            <td><strong>Mobile folds every rollout field into the debounced whole-calculator save; web writes each as its own PUT</strong></td>
+            <td>Fewer requests on a phone. Cost: each save re-asserts the rollout state, so freshness is bounded by the 1500&nbsp;ms debounce.</td>
+          </tr>
+          <tr>
+            <td class="mono">04</td>
+            <td>Mobile omits <code>paymentMethodLabel</code></td>
+            <td>Derivable from the key against the plan catalog. Worth adding if a portal reader depends on the stored label.</td>
+          </tr>
+          <tr>
+            <td class="mono">03 · 04</td>
+            <td><code>priceScopeSig</code> and <code>inHome</code> are mobile-only</td>
+            <td>The first drives the "job scope changed — review the end price" warning across a reload; the second persists the Investment Center's monthly shortlist, which web keeps in local state.</td>
+          </tr>
+          <tr>
+            <td class="mono">05</td>
+            <td><code>paymentMethods[]</code> on a drop row is mobile-only</td>
+            <td>Re-opening a declined drop restores the financing plans it was negotiated with.</td>
+          </tr>
+          <tr>
+            <td class="mono">05</td>
+            <td>Mobile secures the last drop when a rep results an all-declined calculator</td>
+            <td>Otherwise the sold calculator stores no record of the agreed price and the portal board attributes the sale to a sibling calculator that <em>does</em> have an accepted drop.</td>
+          </tr>
+          <tr>
+            <td class="mono">06</td>
+            <td>Mobile writes no outcome at result time</td>
+            <td>The modal's answers are held in memory and land with the first draft autosave. A lead therefore has no outcome row until the job builder opens.</td>
+          </tr>
+          <tr>
+            <td class="mono">06</td>
+            <td><code>versatile</code> / <code>pineapple</code> are mobile-only</td>
+            <td>They do not exist anywhere in the web sales app. Carried so they rehydrate on reopen.</td>
+          </tr>
+          <tr>
+            <td class="mono">06</td>
+            <td>Mobile omits <code>LFCalculator</code> unless it is the real server document</td>
+            <td>The backend subdocument requires <code>createdBy</code> / <code>appointmentId</code> / <code>title</code>; a partial one 500s the PUT.</td>
+          </tr>
+          <tr>
+            <td class="mono">07</td>
+            <td>Mobile files documents eagerly; web files them at submit</td>
+            <td>Consequence: mobile must NOT re-send them in the submit mirror, or the backend files a second row (same bytes, empty <code>name</code>, new <code>_id</code>).</td>
+          </tr>
+          <tr>
+            <td class="mono">08</td>
+            <td>Mobile's <code>leadData</code> is assembled key by key; money is a normalised string</td>
+            <td>The contract has a fixed key set. <code>""</code> never <code>0</code>: a zero reads as a real quoted figure on the portal.</td>
+          </tr>
+          <tr>
+            <td class="mono">08</td>
+            <td>Mobile sends <code>paperWork: []</code> and <code>downPaymentReceipt: []</code></td>
+            <td>The backend contract lists four document groups, and an absent key is not an empty one to a partial-update handler.</td>
+          </tr>
+          <tr>
+            <td class="mono">08</td>
+            <td>Mobile's mirror is calculator-scoped; web's is lead-scoped</td>
+            <td>The bare lead-scoped <code>PUT /lead/v1/{leadId}/outcome</code> 404s on device and was removed app-wide from mobile.</td>
+          </tr>
+          <tr>
+            <td class="mono">08</td>
+            <td>Mobile sends <code>leadResulted: "completed"</code> at Build Job</td>
+            <td>Web's dynamic flow only ever sends <code>"active"</code>, so the portal's milestone never flipped to Complete.</td>
+          </tr>
+          <tr>
+            <td class="mono">09</td>
+            <td>Mobile's summary tiers come from stored <code>totals</code></td>
+            <td>Mobile's port of <code>calculateResultUtil</code> is not schema-aware, so the legacy column pricing returns nothing for a dynamic calculator.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span>revDSM Sales · dynamic deal center</span>
+    <span>Read from source 2026-08-24</span>
+    <span>web <code>mhalt-revDSM-sales-frontend</code> @ 59110f69</span>
+    <span>mobile <code>mhalt-revdsm-mobile</code> @ dev-v1-sales</span>
+  </footer>
+
+</div>

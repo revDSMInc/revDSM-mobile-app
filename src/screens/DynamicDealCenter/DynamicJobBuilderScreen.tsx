@@ -119,6 +119,22 @@ interface DynamicJobBuilderScreenProps {
    * docs never resolve and the Contract Amendment summary shows no existing docs.
    */
   rawDocsOverride?: { agreements?: any[]; orderSheets?: any[] } | null;
+  /**
+   * EVERY calculator on the lead's appointment, backend-shaped (`_id` / `price` /
+   * `dropPrice` / `totals`).
+   *
+   * Only the `rollout_and_drop_summary` activity log reads this — web passes its whole
+   * `appointmentsCalculator` list there (`logRolloutDropSummaryOnSubmit`), because the
+   * event reports on the WHOLE negotiation: how many rollouts were priced, how many
+   * drops were taken across all of them, and the aggregate retail/cost. Mobile used to
+   * pass `[selectedCalculator]`, so a lead worked across four calculators was logged as
+   * one rollout with only its own drops — the portal board then under-reported every
+   * multi-calculator lead.
+   *
+   * Optional: an embedder that doesn't have the list falls back to the resulted
+   * calculator alone, i.e. the previous behaviour.
+   */
+  allCalculators?: any[];
   onStateChange?: (jobState: any) => void;
   onEditComplete?: (jobState: any) => void;
   onEditBack?: () => void;
@@ -178,6 +194,7 @@ function DynamicJobBuilderInner({
   // `rawDocsOverride` (savedOutcome.jobBuilderDocuments) is intentionally NOT consumed:
   // it is not pruned when a rep deletes a document, so it would resurrect removed
   // agreements. Edit-mode docs come from `downloadOutcomeDocuments` (web parity).
+  allCalculators,
   onStateChange,
   onEditComplete,
   onEditBack,
@@ -512,6 +529,46 @@ function DynamicJobBuilderInner({
   // second PUT to it moments after Complete Job, duplicating the outcome row.
   const isCompletingRef = useRef(false);
 
+  // ── the calculator document every outcome PUT must carry ───────────────────
+  //
+  // ⚠️ `calculatorResultData.LFCalculator` is the IN-MEMORY `CalcTab`, which has no
+  // `createdBy`, no `appointmentId` and no backend `title`. `buildCalculatorOutcomePayload`
+  // requires all three before it will attach the subdoc (a partial one 500s the PUT
+  // with "LFCalculator.createdBy is required"), so the tab ALWAYS failed that gate and
+  // every auto-save PUT went out with NO LFCalculator at all — while web sends the full
+  // document. `handleComplete` already resolved the real one; this shares it so the
+  // auto-save path does too.
+  //
+  // ⚠️ CACHED per calculator id. The auto-save is debounced and fires on every build
+  // edit, so re-reading the calculator each time would be a GET per keystroke-batch.
+  const lfCalcDocRef = useRef<{ id: string; doc: any; fromServer: boolean } | null>(null);
+  const resolveLfCalculatorDoc = useCallback(
+    async (targetCalcId: string | null, rd: any, opts: { force?: boolean } = {}) => {
+      if (!targetCalcId) return { doc: null as any, fromServer: false };
+      if (!opts.force && lfCalcDocRef.current?.id === targetCalcId) {
+        return { doc: lfCalcDocRef.current.doc, fromServer: lfCalcDocRef.current.fromServer };
+      }
+      let serverDoc: any = null;
+      try {
+        serverDoc = extractCalculatorDocument((await LeadService.getCalculator(targetCalcId))?.data);
+      } catch (e: any) {
+        console.warn('[DynamicJobBuilder] could not read the calculator:', e?.message || e);
+      }
+      // A failed read is NON-FATAL: the in-memory tab is the documented fallback and
+      // `buildCalculatorDocument` fills the required ids from the context passed here,
+      // so the shape is still complete enough to pass the subdoc validators.
+      const doc = buildCalculatorDocument(serverDoc, rd?.LFCalculator, {
+        calculatorId: targetCalcId,
+        appointmentId: rd?.selectedAppointmentId || rd?.appointmentId || null,
+        leadId,
+        enteredBy: (authUser as any)?._id || (authUser as any)?.id || null,
+      });
+      lfCalcDocRef.current = { id: targetCalcId, doc, fromServer: Boolean(serverDoc) };
+      return { doc, fromServer: Boolean(serverDoc) };
+    },
+    [leadId, authUser]
+  );
+
   const performAutoSave = useCallback(async () => {
     if (!leadId || !initialFetchDoneRef.current || embedded) return;
     if (isCompletingRef.current) return;
@@ -567,11 +624,14 @@ function DynamicJobBuilderInner({
         });
       } else {
         const rd = (calculatorResultData || {}) as any;
+        // Resolve the REAL calculator document so this PUT carries `LFCalculator`,
+        // matching web. Cached, so the debounce does not re-read it.
+        const { doc: autoSaveLfDoc } = await resolveLfCalculatorDoc(calcId, rd);
         await LeadService.updateLeadOutcomeByCalculator(
           leadId,
           calcId,
           buildCalculatorOutcomePayload({
-            rd,
+            rd: autoSaveLfDoc ? { ...rd, LFCalculator: autoSaveLfDoc } : rd,
             calcId,
             fallbackAppointmentId: appointmentId || leadId,
             jobBuilder: {
@@ -598,7 +658,7 @@ function DynamicJobBuilderInner({
         void performAutoSaveRef.current();
       }
     }
-  }, [leadId, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded]);
+  }, [leadId, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded, resolveLfCalculatorDoc]);
 
   // Keep the latest saver in a ref so the unmount flush calls the current closure.
   const performAutoSaveRef = useRef(performAutoSave);
@@ -1048,6 +1108,19 @@ function DynamicJobBuilderInner({
             }
           : null;
         const uid = authUser?._id || authUser?.id;
+        // Web passes its full `appointmentsCalculator` list; the resulted calculator alone
+        // is the fallback for an embedder that has no list. The resulted one is force-
+        // merged in by id so its LIVE drops/price are what the summary reports even if the
+        // list handed down is a render behind.
+        const summaryCalcs = Array.isArray(allCalculators) && allCalculators.length
+          ? allCalculators.map((c: any) =>
+              selectedCalc && String(c?._id || c?.id) === String(selectedCalc._id)
+                ? { ...c, ...selectedCalc }
+                : c
+            )
+          : selectedCalc
+            ? [selectedCalc]
+            : [];
         if (uid && leadId && selectedCalc) {
           // ⚠️ NOT awaited — exact web parity. Web fires this without `await`
           // (TabbedCalculator.js:1103) and mobile used to block the ENTIRE submit on
@@ -1057,9 +1130,32 @@ function DynamicJobBuilderInner({
           logRolloutAndDropSummary({
             userId: uid,
             leadId,
-            allCalculators: [selectedCalc],
+            allCalculators: summaryCalcs,
             selectedCalculator: selectedCalc,
-            leadData: rdForSummary,
+            // ⚠️ NORMALIZED to web's `cleanLeadData` keys — NOT `rd` verbatim.
+            //
+            // The result modal produces `resultType` / `contractPrice` /
+            // `downPaymentMethod`, while this log reads `result` /
+            // `originalContractPrice` / `paymentMethod`. So every dynamic submit logged
+            // `resultStatus: "Unknown"` and a resulted price of 0 (hence
+            // `deltaFromRolloutToResult: "0%"`), where web logs the real Sale/Demo and
+            // price — the portal board could not tell what this calculator sold for.
+            //
+            // Built by the SAME `buildSubmitLeadData` that assembles the submit payload,
+            // so the log and the job can never disagree about the result or about which
+            // of `lastPriceQuoted` / `originalContractPrice` a Demo vs a Sale carries.
+            leadData: {
+              ...rdForSummary,
+              ...buildSubmitLeadData({
+                resultData: rdForSummary,
+                result: isSale ? 'Sale' : 'Demo',
+                calculatorDocument: selectedCalc,
+                selectedCalculatorId: selectedCalc._id,
+              }),
+            },
+            // Dynamic calculators carry no legacy priced columns — take the tiers from
+            // the `totals` the deal center persisted (web passes `schemas` instead).
+            preferStoredTotals: true,
             isLowesLead: Boolean((initialConfig as any)?.lowesLead) || Boolean(rdForSummary?.isLowesLead),
           }).catch((e) => console.warn('[DynamicJobBuilder] rollout summary log failed:', e));
         }
@@ -1158,21 +1254,13 @@ function DynamicJobBuilderInner({
       // reference payload shows. The in-memory tab (`rd.LFCalculator`) is only the
       // fallback — see `buildCalculatorDocument`. A failed read is non-fatal: the
       // fallback still produces the complete shape.
-      let calculatorServerDoc: any = null;
-      if (submitCalculatorId) {
-        try {
-          const calcRes = await LeadService.getCalculator(submitCalculatorId);
-          calculatorServerDoc = extractCalculatorDocument(calcRes?.data);
-        } catch (e: any) {
-          console.warn('[DynamicJobBuilder] could not read the calculator for the submit payload:', e?.message || e);
-        }
-      }
-      const lfCalculatorDoc = buildCalculatorDocument(calculatorServerDoc, rd.LFCalculator, {
-        calculatorId: submitCalculatorId,
-        appointmentId: rd.selectedAppointmentId || rd.appointmentId || null,
-        leadId,
-        enteredBy: (authUser as any)?._id || (authUser as any)?.id || null,
-      });
+      // Same resolver the auto-save uses, FORCED — the submit must read the calculator
+      // fresh rather than trust a doc cached earlier in the session.
+      const { doc: lfCalculatorDoc, fromServer: lfFromServer } = await resolveLfCalculatorDoc(
+        submitCalculatorId,
+        rd,
+        { force: true }
+      );
 
       // `leadData` is assembled to the backend's documented key set (see
       // `utils/job-submit-payload.ts`) rather than spread from the result modal's
@@ -1211,7 +1299,7 @@ function DynamicJobBuilderInner({
         lfCalculatorDoc?._id
           ? `_id=${lfCalculatorDoc._id} title=${lfCalculatorDoc.title} entries=${
               (lfCalculatorDoc.entries || []).length
-            } source=${calculatorServerDoc ? 'server' : 'local tab'}`
+            } source=${lfFromServer ? 'server' : 'local tab'}`
           : 'NONE — no calculator id resolved and no local tab'
       );
 
@@ -1341,7 +1429,7 @@ function DynamicJobBuilderInner({
     } finally {
       setIsSaving(false);
     }
-  }, [jobState, initialConfig, calculatorResultData, leadId, calcId, dealCenterData, isSale, onJobComplete, canComplete, activityLog, isEdit, appointmentId, authUser]);
+  }, [jobState, initialConfig, calculatorResultData, leadId, calcId, dealCenterData, isSale, onJobComplete, canComplete, activityLog, isEdit, appointmentId, authUser, resolveLfCalculatorDoc, allCalculators]);
 
   // Persist a generated/scanned agreement or order-sheet. Web parity
   // (TabbedCalculator outcomePayload): the base64 PDFs go at the TOP LEVEL of the

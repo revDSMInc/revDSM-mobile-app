@@ -6,6 +6,7 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
+  RefreshControl,
   StyleSheet,
   Platform,
   StatusBar,
@@ -35,10 +36,7 @@ import {
 import { LeadService, resolveLeadCalculatorId } from '../../services/api/leads';
 import { resolveS3Url } from '../../utils/s3-utils';
 import { getRawPhoneNumber, formatUSPhoneNumber } from '../../utils/phone-util';
-import {
-  buildCustomerFieldChanges,
-  resolveCustomerLogIds,
-} from '../../utils/customer-detail-changes';
+import { resolveCustomerLogIds } from '../../utils/customer-detail-changes';
 import { parseApiError } from '../../utils/error-util';
 import { ConsentFormModal } from '../../widgets/modals/lead-center/ConsentFormModal';
 import { RoofWaiverModal } from '../../widgets/modals/lead-center/RoofWaiverModal';
@@ -407,7 +405,7 @@ export default function LeadCenterPage() {
   // on BOTH routes (not just `fromMyDeals`) because `AddendumsCard` renders on both —
   // web's own note: "it is null when the lead has none, so it costs the Lead Center
   // nothing when there are no addendums." Only the BANNERS are deal-only.
-  const { data: dealDrafts = [] } = useQuery({
+  const { data: dealDrafts = [], isFetched: draftsFetched } = useQuery({
     queryKey: ['lead-job-builder-drafts', lead?._id],
     queryFn: async () => {
       try {
@@ -440,6 +438,22 @@ export default function LeadCenterPage() {
       }
     }, [lead?._id, queryClient, refetch])
   );
+
+  // Pull-to-refresh — the same three refreshes the focus effect above performs, so a
+  // pull and a re-focus can never leave the screen in different states.
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+  const handlePullToRefresh = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      if (lead?._id) {
+        queryClient.invalidateQueries({ queryKey: ['revrender-runs', lead._id] });
+        queryClient.invalidateQueries({ queryKey: ['lead-job-builder-drafts', lead._id] });
+      }
+      await refetch();
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [lead?._id, queryClient, refetch]);
 
   // Just returned from finishing a job (Complete Job) — the route param `lead` is the
   // pre-result snapshot, so force fresh refetches. A couple of delayed passes beat the
@@ -741,24 +755,6 @@ export default function LeadCenterPage() {
     });
   };
 
-  // Web parity (`edit-customer-modal.js` `trackFieldChange`): one `change` row per field
-  // the rep actually altered, so the portal timeline reads "Changed First Name from X to
-  // Y" and not just "saved". The rules — including the formatting the baseline has to
-  // match — live in `utils/customer-detail-changes.ts`; this only emits them.
-  const logCustomerFieldChanges = (data: EditCustomerPayload) => {
-    const uId = user?._id || user?.id;
-    if (!uId) return;
-    const ids = resolveCustomerLogIds(lead);
-    buildCustomerFieldChanges(lead, data).forEach((change) => {
-      logEvent('change', {
-        user_id: uId,
-        created_by: uId,
-        module_type: 'customer_details',
-        meta: { ...ids, ...change },
-      });
-    });
-  };
-
   const handleCustomerSubmit = async (data: EditCustomerPayload) => {
     try {
       const customerId = lead.customerDetails?._id || lead.customerDetails?.id || lead?._id || lead?.id;
@@ -808,12 +804,10 @@ export default function LeadCenterPage() {
 
       FlashMessage.success('Success', 'Customer details updated successfully.');
       logCustomerDetailsEvent('submit', 'customer details saved');
-      // ⚠️ AFTER the `submit` row, on request. Web's field rows land BEFORE it (they are
-      // debounced off each keystroke, so they are already sent by the time Save is
-      // pressed) — mobile derives them from the saved payload, and the reporter wants the
-      // detail rows to read as the breakdown UNDER the save. `LoggerService` serialises
-      // its queue, so this call order is the order the portal receives them in.
-      logCustomerFieldChanges(data);
+      // ⚠️ The per-field `change` rows are NOT emitted here. They are debounced off the
+      // rep's typing inside `EditCustomerModal` (web parity), so they have already been
+      // sent by the time Save is pressed — emitting them again from the saved payload
+      // would put every edit on the timeline twice.
       refetch();
     } catch (error: any) {
       const apiError = error?.response?.data || error?.data || error;
@@ -1135,6 +1129,17 @@ export default function LeadCenterPage() {
           showsVerticalScrollIndicator={false}
           stickyHeaderIndices={[1]}
           contentContainerStyle={{ paddingBottom: 20 }}
+          refreshControl={
+            // ⚠️ Its OWN flag, not the hook's `isRefreshing`. That one is also true for
+            // the mount and focus refetches, so reusing it would spin the control every
+            // time the rep navigates back to this screen without having pulled anything.
+            <RefreshControl
+              refreshing={pullRefreshing}
+              onRefresh={handlePullToRefresh}
+              tintColor="#72BD00"
+              colors={['#72BD00']}
+            />
+          }
         >
           <View className="px-4">
             <View className="flex-row gap-4 mb-4">
@@ -1297,6 +1302,10 @@ export default function LeadCenterPage() {
                 isRefreshing={isRefreshing}
                 onEditContract={fromMyDeals ? handleEditDealFromMyDeals : undefined}
                 drafts={dealDrafts}
+                // Whether the drafts query has SETTLED (success or handled error).
+                // The pending-addendum card holds its first paint until it has, so a
+                // draft's own contact never flickers in over the customer's.
+                draftsReady={draftsFetched}
                 // Resend / Cancel change the DRAFT; an Edit Phone/Email writes the
                 // CUSTOMER record, which the recipient line falls back to — so refetch
                 // both rather than only the drafts.

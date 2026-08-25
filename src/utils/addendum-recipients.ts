@@ -10,9 +10,10 @@
  *   GET   lead/v1/{leadId}/pending-addendums          the banner's own source of truth
  *   POST  lead/v1/job-builder-draft/{draftId}/resend  per draft, body `{ customerPhone, customerEmail? }`
  *   POST  lead/v1/job-builder-draft/{draftId}/cancel  per draft, NO body
- *   PATCH lead/v1/customer/{customerId}               lead-level, ONE field per request
+ *   PATCH lead/v1/job-builder-draft/{draftId}/contact per draft, BOTH fields, E.164 phone
  */
 import { validateEmail } from './validation';
+import { toE164USPhone } from './phone-util';
 
 /**
  * Bare 10 digits — strip all formatting, then strip a leading US `1`.
@@ -195,28 +196,107 @@ export const channelLabel = (channel: string): string => {
   return String(channel);
 };
 
-// ── PATCH lead/v1/customer/{customerId} ──────────────────────────────────────
+// ── PATCH lead/v1/job-builder-draft/{draftId}/contact ────────────────────────
 
 /**
- * The customer record the contact belongs to.
+ * Body for `PATCH lead/v1/job-builder-draft/{draftId}/contact`.
  *
- * ⚠️ Contact is LEAD-LEVEL, not per draft — one edit affects EVERY pending addendum.
+ * ⚠️ BOTH fields go every time, unlike the customer PATCH which sent only the edited
+ * one. So the untouched channel is sent at its CURRENT value — passing only the edited
+ * field would blank the other.
  *
- * Falls through the documented chain. If none resolve the caller must make NO request:
- * a "saved" that never saved would let a later resend report success against a number
- * that was never stored.
+ * ⚠️ E.164 for the phone (`+15551234567`), per the documented payload. That is a THIRD
+ * shape on this screen; see `toPhoneDigits` for the other two.
  */
-export const resolveCustomerId = (lead: any): string =>
+export const buildDraftContactPayload = (
+  contact: { phone?: string; email?: string },
+  patch?: { phone?: string; email?: string }
+): { customerPhone: string; customerEmail: string } => ({
+  customerPhone: toE164USPhone(patch?.phone ?? contact?.phone ?? ''),
+  customerEmail: String(patch?.email ?? contact?.email ?? '').trim(),
+});
+/**
+ * The customer's contact as stored on the LEAD — the seed for the deal-edit wizard's
+ * "Send Addendum To" fields, which the rep may then override.
+ *
+ * ⚠️ FIXED candidate chains, never a guess — the same discipline as
+ * the endpoint helpers. A lead reaches that screen from several sources (the sales
+ * portal list, My Deals, an outcome record) and they do not all nest the customer the
+ * same way, which is why reading `customerDetails.email` ALONE left the Email field
+ * blank on leads that plainly had one.
+ */
+export const readLeadPhone = (lead: any): string =>
   String(
-    lead?.customerDetails?._id ||
-      lead?.customerDetails?.customerId ||
-      lead?.customerId ||
-      lead?.customer?._id ||
-      lead?._id ||
+    lead?.customerDetails?.phone ||
+      lead?.customerDetails?.phoneNumber ||
+      lead?.customer?.phone ||
+      lead?.phone ||
       ''
-  );
+  ).trim();
 
-export const NO_CUSTOMER_MESSAGE = 'No customer record on this lead';
+export const readLeadEmail = (lead: any): string =>
+  String(
+    lead?.customerDetails?.email ||
+      lead?.customerDetails?.emailAddress ||
+      lead?.customer?.email ||
+      lead?.email ||
+      ''
+  ).trim();
+
+/**
+ * The contact stored ON THE DRAFT itself — `customerPhone` / `customerEmail` at the
+ * root of each row of `GET lead/v1/{leadId}/job-builder-drafts`.
+ *
+ * This is where a rep's OVERRIDE lands: the deal-edit wizard sends these two fields at
+ * root level on the draft-create POST, so an addendum deliberately sent somewhere other
+ * than the customer record carries that address here.
+ */
+export const readDraftContact = (draft: any): { phone: string; email: string } => ({
+  phone: String(draft?.customerPhone || '').trim(),
+  email: String(draft?.customerEmail || '').trim(),
+});
+
+/** Index the drafts list by every id spelling, for lookup by a row's `draftId`. */
+export const indexDraftsById = (drafts: any[] | null | undefined): Record<string, any> => {
+  const out: Record<string, any> = {};
+  (Array.isArray(drafts) ? drafts : []).forEach((d) => {
+    [d?.draftId, d?._id, d?.id].forEach((id) => {
+      if (id) out[String(id)] = d;
+    });
+  });
+  return out;
+};
+
+/**
+ * What the card shows — and what a resend sends — for ONE addendum.
+ *
+ * ⚠️ The fallback is PER FIELD, not all-or-nothing. A draft can carry an overridden
+ * phone and no email at all; taking the whole contact from one source would then blank
+ * an email the customer record plainly has.
+ *
+ * Order, per field:
+ *   1. `override` — a contact the rep just saved in this session (see below)
+ *   2. the DRAFT's own `customerPhone`/`customerEmail` — where an override landed
+ *   3. the customer block on the pending-addendums snapshot
+ *   4. the lead's own customer details
+ *
+ * ⚠️ (1) exists because "Edit Phone"/"Edit Email" write to the CUSTOMER record, which
+ * ranks BELOW the draft. Without the override, editing the contact of an addendum that
+ * carries its own would appear to do nothing — and the next resend would still go to
+ * the old address.
+ */
+export const resolveRowContact = (
+  draft: any,
+  snapshotCustomer: { phone?: string; email?: string } | null | undefined,
+  lead: any,
+  override?: { phone?: string; email?: string }
+): { phone: string; email: string } => {
+  const d = readDraftContact(draft);
+  return {
+    phone: override?.phone ?? (d.phone || String(snapshotCustomer?.phone || '') || readLeadPhone(lead)),
+    email: override?.email ?? (d.email || String(snapshotCustomer?.email || '') || readLeadEmail(lead)),
+  };
+};
 
 /**
  * Validation for the inline editor.
@@ -264,6 +344,24 @@ export const resolveContactEditPatch = (
   return field === 'phone' ? { phone: next } : { email: next };
 };
 
+/**
+ * Whether the card may paint yet.
+ *
+ * ⚠️ TWO sources feed one line of text and they land at different times:
+ * `pending-addendums` resolves first but knows only the LEAD-level customer, while
+ * the drafts list knows the address this addendum actually went to. Painting on the
+ * first alone showed the customer contact for a beat and then swapped it — a visible
+ * flicker, and on a deliberately overridden addendum the first value was WRONG.
+ *
+ * So: nothing renders until BOTH have settled. `draftsSettled` means resolved OR
+ * failed — not "returned rows" — otherwise a lead with no drafts would hang forever.
+ */
+export const canRenderRecipientCard = (
+  pendingLoading: boolean,
+  draftsSettled: boolean,
+  rowCount: number
+): boolean => !pendingLoading && draftsSettled && rowCount > 0;
+
 // ── action guards ─────────────────────────────────────────────────────────────
 
 export type RecipientAction = 'ignore' | 'invalid' | 'send';
@@ -300,13 +398,14 @@ export const resolveCancelAction = (
  * simply nothing to send.
  */
 export const resolveContactSaveAction = (
-  customerId: string,
+  draftId: string,
   field: 'phone' | 'email',
   value: string,
   original: string,
   busyDraftId: string | null
 ): RecipientAction => {
-  if (!customerId) return 'ignore';
+  // Every write is keyed by draft id, so without one there is nothing to PATCH.
+  if (!draftId) return 'ignore';
   if (busyDraftId) return 'ignore';
   if (recipientEditError(field, value)) return 'invalid';
   if (!resolveContactEditPatch(field, value, original)) return 'ignore';

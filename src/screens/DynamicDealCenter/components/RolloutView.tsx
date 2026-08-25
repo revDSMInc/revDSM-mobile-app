@@ -12,6 +12,7 @@ import { resolveSchemaStyle } from '../utils/icon-color';
 import { formatAmountInput, stripAmount } from '../utils/format-amount';
 import { MODAL_BLUR_AMOUNT, MODAL_SCRIM, MODAL_CARD_SHADOW } from './modal-chrome';
 import { describeFullPackage } from '../utils/tab-naming';
+import { autoSecureLastDrop, dropPriceOf } from '../utils/drop-prices';
 import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
@@ -48,6 +49,7 @@ import { RevRenderSlots, type RenderPair } from './RevRenderSlots';
 import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../../widgets/common/PhotoPeekScrollLock';
 import { OneYearMonthlyPlan, type OneYearMonthlyValue } from './OneYearMonthlyPlan';
 import { scopeSignature } from '../utils/scope-signature';
+import type { CalculatorLockState } from '../utils/job-builder-submission';
 
 /** Resolve the payment plan shown for a calculator (saved → user default → lead-aware fallback). */
 const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?: string) =>
@@ -146,6 +148,12 @@ interface RolloutViewProps {
    *  preserves which calculator the user was working on. */
   activeTabId?: string;
   onTabSelect?: (id: string) => void;
+  /** Ticket 409 — the calculator the lead was already resulted from, or null. Every
+   *  calculator's Result Lead / Add Drop locks while this is set; only that one offers
+   *  Reset Job Builder. */
+  submittedCalculatorId?: string | null;
+  /** Tapping Reset Job Builder on the resulted calculator. */
+  onResetJobBuilder?: () => void;
 }
 
 type CatStyle = { color: string; icon: string; bg: string };
@@ -784,7 +792,7 @@ function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   );
 }
 
-function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, isRehashed = false, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, onDismissScopeWarning, onShowPackageInfo, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, isRehashed = false, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, lockState, onResetJobBuilder, onDismissScopeWarning, onShowPackageInfo, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
   isLowesLead: boolean;
@@ -803,6 +811,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   onPriceChange: (id: string, price: number, pricemarkup?: string) => void;
   onResult: (id: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
   onPaymentMethodChange: (id: string, method: string) => void;
+  /** Ticket 409: whether the lead is already resulted, and from which calculator. */
+  lockState?: CalculatorLockState;
+  onResetJobBuilder?: () => void;
   onDropChange: (id: string, drops: any[]) => void;
   onDiscountChange: (id: string, discount: number) => void;
   onDownPaymentChange: (id: string, downPayment: number) => void;
@@ -816,6 +827,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     () => describeFullPackage(calculator.entries || {}, verticals || []),
     [calculator.entries, verticals]
   );
+  // Ticket 409 lock state, normalised so every read below is a plain boolean. Absent
+  // (an embedder that does not pass it) means nothing is resulted, i.e. unchanged.
+  const jobLock: CalculatorLockState = lockState || { isSubmittedTab: false, isAnySubmitted: false, isLockedByOtherTab: false };
   const [endPrice, setEndPrice] = useState(initialPrice ? String(initialPrice) : String(calculator.price || ''));
   const [focused, setFocused] = useState(false);
   const [showPlanPicker, setShowPlanPicker] = useState(false);
@@ -1058,7 +1072,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const priceNum = parseFloat(endPrice) || 0;
   // Below-cost / below-plan-minimum / below-$200 — the full web check set.
   const priceErr = endPriceError(plans, priceNum, calculator, method);
-  const finalPrice = drops.length ? drops[drops.length - 1].price : (calculator.price || priceNum);
+  // ⚠️ `dropPriceOf`, NOT `.price` — a drop that has been through the server carries
+  // `dropedPrice` only (see the note on that helper). Reading `.price` here returned
+  // `undefined` on a reloaded calculator, so the Result Lead button showed no figure
+  // and the outcome modal opened at $0.00 with Build Job disabled.
+  const finalPrice = drops.length
+    ? dropPriceOf(drops[drops.length - 1])
+    : (calculator.price || priceNum);
 
   // ── Result-section values (mirror the regular rollout, CalculatorSummary.tsx:422-429) ──
   // Shown live once a valid end price is entered. Computed via the unit-tested
@@ -1261,7 +1281,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // convert rather than duplicate. Nothing is pre-persisted now, so that scan would
   // silently fold a genuinely new round into an older one at the same price.
   const resolveDropTargetIndex = () => {
-    const priceOf = (d: any) => Math.round(Number(d?.price ?? d?.dropedPrice ?? 0));
+    const priceOf = (d: any) => Math.round(dropPriceOf(d));
     const target = Math.round(Number(pendingDrop));
     if (
       pendingDropIndex >= 0 &&
@@ -1393,6 +1413,69 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     setDeclinedPrice(pendingDrop);
   };
 
+  // ── Result Lead ──────────────────────────────────────────────
+  // A rep can walk the customer down several drops, DECLINE each one, and result the
+  // lead anyway. That left a SOLD deal whose every drop reads Declined and whose
+  // secured price is nothing — so the portal (TNT board) had no row on THIS calculator
+  // saying what was sold, and read the accepted drop on a SIBLING calculator as the sold
+  // job instead. When nothing is secured here, the LAST drop is secured before the
+  // outcome modal opens.
+  //
+  // ⚠️ ONLY when nothing is secured. If the rep already secured an earlier drop and
+  // then explored two more without taking them, that deliberate choice stands —
+  // `autoSecureLastDrop` returns the same array reference and nothing is written.
+  //
+  // ⚠️ `onDropChange` persists IMMEDIATELY (`handleSetDrops` → `saveDropsNow`), not
+  // on the debounced calculator save, so the row is filed before the job is built.
+  //
+  // ⚠️ This was lost once already: it shipped in `c65e14f` ("Drop Price TNT Board issu
+  // fixed") and the ticket-409 merge resolved this file to a branch that predated it,
+  // silently reverting it. If it disappears again, check the merge, not the ticket.
+  const openResultChooser = () => {
+    const secured = autoSecureLastDrop(drops);
+    // Seeded from the CURRENT state; overridden below by the row just secured, whose
+    // own plan and down payment are what the deal is being resulted at. `activeMethod`
+    // / `activeDownPayment` derive from an ALREADY-accepted drop, so on this path they
+    // are still the pre-secure values.
+    let chooseAt = finalPrice;
+    let chooseDown = activeDownPayment;
+    if (secured !== drops) {
+      onDropChange(calculator.id, secured);
+      const idx = secured.length - 1;
+      const row = secured[idx];
+      const dropPrice = dropPriceOf(row);
+      if (dropPrice > 0) chooseAt = dropPrice;
+      chooseDown = Number(row?.downPayment) || 0;
+      const uidA = user?._id || user?.id;
+      if (uidA) {
+        // The portal timeline must be able to explain the secured row. Same shape as
+        // `secureDrop`'s log; the OLD value is the price BEFORE this drop (the
+        // previous round, or the rollout end price when this is the only one).
+        const prev = idx > 0 ? secured[idx - 1] : null;
+        const lastDrop = prev ? dropPriceOf(prev) : (calculator.price || priceNum);
+        logRolloutChange({
+          userId: uidA,
+          leadId,
+          calculator: { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId },
+          tiers: logTiers,
+          percentageOfRollout: markupLabel(dropPrice, logTiers),
+          change: {
+            fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: dropPrice, fieldCategory: 'drop',
+            oldValue: lastDrop, newValue: dropPrice,
+            oldPercentageOfRollout: markupLabel(Number(lastDrop) || 0, logTiers),
+            isSecured: true, isDeclined: false, dropNumber: idx + 1, dropPrice,
+            paymentPlanKey: row?.paymentMethod || activeMethod,
+            paymentPlanLabel: planLabelOf(pricing.plans, row?.paymentMethod || activeMethod),
+            action: 'drop price secured',
+          },
+        }).catch(() => {});
+      }
+    }
+    setChooserPrice(chooseAt);
+    setChooserDown(chooseDown);
+    setShowChooser(true);
+  };
+
   // Web `handleDeclineResultLead`: close the modal and result the lead as a DEMO at
   // the MOST RECENT drop price (falling back to the rollout end price when there are
   // no drops) — it does NOT go through the Sale/Demo chooser.
@@ -1444,7 +1527,18 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   return (
     <>
       {/* ── Main card ── */}
-      <View style={{ backgroundColor: '#fff', borderWidth: 2, borderColor: calculator.isRolloutConfirmed ? '#16A34A' : '#DFE3E8', borderRadius: 24, paddingBottom: 16 }}>
+      {/* Ticket 409 — a resulted lead makes the WHOLE quote read-only, not just the two
+          action buttons: web dims the entire card (see the reference screenshot, where the
+          items, Add Renders, the payment plan, the tiers and the end price are all greyed).
+          `pointerEvents: 'none'` is what actually enforces it — without it the payment-plan
+          sheet, Add Renders and the end-price field stay tappable behind the dimming and the
+          rep can still edit a quote the lead was already resulted against.
+          Mirrors the CLASSIC deal center (`CalculatorSummary.tsx`: `opacity: 0.6` +
+          `pointerEvents` on `isJobBuilderSubmitted || isJobSubmittedOnOtherCalc`). */}
+      <View
+        pointerEvents={jobLock.isAnySubmitted ? 'none' : 'auto'}
+        style={{ backgroundColor: '#fff', borderWidth: 2, borderColor: calculator.isRolloutConfirmed ? '#16A34A' : '#DFE3E8', borderRadius: 24, paddingBottom: 16, opacity: jobLock.isAnySubmitted ? 0.6 : 1 }}
+      >
         {/* 1. Heading — calculator name + confirmed/required badge (old UI parity) */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14 }}>
           {/* Web `QuoteResultCard.js:153-165` renders the calculator title at
@@ -1729,6 +1823,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       {/* ── Outside card: Installers Check + Drops + Actions (old UI parity) ── */}
       {calculator.isRolloutConfirmed && (
         <View style={{ marginTop: 16, marginBottom: 24 }}>
+          {/* Everything ABOVE the action row dims with the card. The row itself stays
+              OUTSIDE this wrapper — Reset Job Builder is the one control that must remain
+              pressable, and it lives there. */}
+          <View
+            pointerEvents={jobLock.isAnySubmitted ? 'none' : 'auto'}
+            style={{ opacity: jobLock.isAnySubmitted ? 0.6 : 1 }}
+          >
           {/* Installers Check bar */}
           <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
             <Text style={{ fontSize: 12, fontWeight: '700', color: '#1C252E' }}>Check to installers (screens)</Text>
@@ -1748,7 +1849,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             // both ignored it, so it could never be cleared.
             const declined = d.status === 'declined';
             const secured = d.status === 'accepted';
-            const dp = d.price ?? d.dropedPrice ?? 0;
+            const dp = dropPriceOf(d);
             return (
               <View key={i} style={{ marginBottom: 24 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 4 }}>
@@ -1836,9 +1937,18 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             </View>
           )}
 
+          </View>
+
           {/* Drop + Result Lead buttons */}
+          {/* Ticket 409 — once the lead is resulted from ANY calculator both actions lock
+              on EVERY tab (web `QuoteResultCard`: `isLocked = isAnyJobSubmitted` on the drop
+              button, `isDisabled` on Result Lead), and the resulted tab swaps Result Lead
+              for a red Reset Job Builder. The reference screenshots show exactly this: on a
+              NON-resulted tab both buttons are greyed; on the resulted one the drop is greyed
+              beside a vivid red Reset. */}
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TouchableOpacity
+              disabled={jobLock.isAnySubmitted}
               onPress={() => {
                 if (showDropInput) {
                   openDrop();
@@ -1847,28 +1957,42 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   setShowDropInput(true);
                 }
               }}
-              style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#1976D2', backgroundColor: '#fff' }}
+              style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: jobLock.isAnySubmitted ? '#CBD5E1' : '#1976D2', backgroundColor: jobLock.isAnySubmitted ? '#F1F5F9' : '#fff', opacity: jobLock.isAnySubmitted ? 0.5 : 1 }}
             >
-              <Text style={{ fontSize: 12, fontWeight: '900', color: '#1976D2' }}>
+              <Text style={{ fontSize: 12, fontWeight: '900', color: jobLock.isAnySubmitted ? '#94A3B8' : '#1976D2' }}>
                 {`+ ${['1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][drops.length] || `${drops.length + 1}th`} Drop`}
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={() => { setChooserPrice(finalPrice); setChooserDown(activeDownPayment); setShowChooser(true); }}
-              style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#F97316', backgroundColor: '#fff' }}
-            >
-              <Ionicons name="document-text-outline" size={16} color="#EA580C" style={{ marginBottom: 2 }} />
-              <Text style={{ fontSize: 12, fontWeight: '900', color: '#EA580C', marginBottom: 1 }}>Result Lead</Text>
-              {/* Web parity (QuoteResultCard.js:964 `{!isRehashed && …}`): on a rehash
-                  the price isn't carried forward from the original appointment — the rep
-                  enters it in the result modal — so the button shows no locked figure. */}
-              {!isRehashed && (
-                <Text style={{ fontSize: 14, fontWeight: '900', color: '#EA580C' }}>
-                  {finalPrice > 0 ? fmt(finalPrice) : ''}
-                </Text>
-              )}
-            </TouchableOpacity>
+            {jobLock.isSubmittedTab ? (
+              /* ⚠️ Deliberately NEVER disabled (web: `disabled={isJobBuilderSubmittedTab ? false : isDisabled}`).
+                 It is the ONLY way out of the locked state — greying it out alongside the
+                 rest would strand the rep on a lead they cannot re-result. */
+              <TouchableOpacity
+                onPress={() => onResetJobBuilder?.()}
+                style={{ flex: 1, height: 56, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EF4444' }}
+              >
+                <Ionicons name="refresh" size={16} color="#fff" />
+                <Text style={{ fontSize: 12, fontWeight: '900', color: '#fff', marginLeft: 8 }}>Reset Job Builder</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                disabled={jobLock.isAnySubmitted}
+                onPress={openResultChooser}
+                style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: jobLock.isAnySubmitted ? '#CBD5E1' : '#F97316', backgroundColor: jobLock.isAnySubmitted ? '#F1F5F9' : '#fff', opacity: jobLock.isAnySubmitted ? 0.5 : 1 }}
+              >
+                <Ionicons name="document-text-outline" size={16} color={jobLock.isAnySubmitted ? '#94A3B8' : '#EA580C'} style={{ marginBottom: 2 }} />
+                <Text style={{ fontSize: 12, fontWeight: '900', color: jobLock.isAnySubmitted ? '#94A3B8' : '#EA580C', marginBottom: 1 }}>Result Lead</Text>
+                {/* Web parity (QuoteResultCard.js:964 `{!isRehashed && …}`): on a rehash
+                    the price isn't carried forward from the original appointment — the rep
+                    enters it in the result modal — so the button shows no locked figure. */}
+                {!isRehashed && (
+                  <Text style={{ fontSize: 14, fontWeight: '900', color: jobLock.isAnySubmitted ? '#94A3B8' : '#EA580C' }}>
+                    {finalPrice > 0 ? fmt(finalPrice) : ''}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       )}
@@ -1943,7 +2067,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   );
 }
 
-export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, isRehashed = false, leadId, appointmentId, onBack, onConfirmRollouts, onResultJob, onPriceCommit, onDismissScopeWarning, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange, onRolloutsConfirmedDone, activeTabId, onTabSelect }: RolloutViewProps) {
+export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, isRehashed = false, leadId, appointmentId, onBack, onConfirmRollouts, onResultJob, onPriceCommit, onDismissScopeWarning, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange, onRolloutsConfirmedDone, activeTabId, onTabSelect, submittedCalculatorId = null, onResetJobBuilder }: RolloutViewProps) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const [prices, setPrices] = useState<Record<string, number>>({});
@@ -2000,6 +2124,18 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   const enteredCount = visibleCalculators.filter((c) => effectivePrice(c) > 0).length;
   const progress = visibleCalculators.length > 0 ? (enteredCount / visibleCalculators.length) * 100 : 0;
   const selectedCalc = visibleCalculators.find((c) => c.id === activeTabId) || visibleCalculators[0];
+  // Ticket 409 — resolved per calculator so the SAME rule drives the locked buttons and
+  // the tab strip's badge; they cannot disagree about which tab owns the result.
+  const lockOf = useCallback(
+    (calcId: string): CalculatorLockState => {
+      if (!submittedCalculatorId) {
+        return { isSubmittedTab: false, isAnySubmitted: false, isLockedByOtherTab: false };
+      }
+      const isSubmittedTab = String(calcId) === String(submittedCalculatorId);
+      return { isSubmittedTab, isAnySubmitted: true, isLockedByOtherTab: !isSubmittedTab };
+    },
+    [submittedCalculatorId]
+  );
 
   // Web parity (ViewAllCalculators): auto-confirm after 10 minutes of inactivity.
   // Track the last time each calculator's price or payment method was changed.
@@ -2203,6 +2339,8 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               verticals={verticals || []}
               pricingConfig={pricingConfig}
               scopeChanged={scopeChangedOf(selectedCalc)}
+              lockState={lockOf(selectedCalc.id)}
+              onResetJobBuilder={onResetJobBuilder}
               onDismissScopeWarning={() => onDismissScopeWarning?.(selectedCalc.id)}
               onShowPackageInfo={openPackageInfo}
               onPriceChange={(id, price, pricemarkup) => {

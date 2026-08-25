@@ -148,6 +148,10 @@ export const LeadEndpoints = {
     // but no draft ids, so this is the only place those come from.
     pending: (leadId: string) => `lead/v1/${leadId}/pending-addendums`,
     cancel: (draftId: string) => `lead/v1/job-builder-draft/${draftId}/cancel`,
+    // Correct WHO one outstanding addendum goes to. Per DRAFT, not per customer — an
+    // addendum may deliberately have been sent somewhere other than the customer
+    // record, and this edits that address without touching the record.
+    contact: (draftId: string) => `lead/v1/job-builder-draft/${draftId}/contact`,
   },
 };
 
@@ -427,6 +431,19 @@ export const LeadService = {
     contact?: { customerPhone?: string; customerEmail?: string }
   ): Promise<AxiosResponse<any>> =>
     api.post(LeadEndpoints.jobBuilderDraft.resend(draftId), contact),
+  // Update the contact ONE outstanding addendum is addressed to.
+  //
+  // ⚠️ Sends BOTH fields — `{ customerPhone, customerEmail }` — not just the edited
+  // one, unlike the customer PATCH. The phone goes out E.164 (`+15551234567`).
+  //
+  // ⚠️ This writes to the DRAFT, which is exactly where the card reads the contact
+  // from (`customerPhone`/`customerEmail` on the drafts row), so an edit is visible
+  // on the next refetch. It deliberately does NOT touch the customer record.
+  updateJobBuilderDraftContact: (
+    draftId: string,
+    payload: { customerPhone: string; customerEmail: string }
+  ): Promise<AxiosResponse<any>> =>
+    api.patch(LeadEndpoints.jobBuilderDraft.contact(draftId), payload),
   // Void an addendum that is still awaiting signature. The customer's review link
   // stops working once the draft flips to `cancelled`.
   //
