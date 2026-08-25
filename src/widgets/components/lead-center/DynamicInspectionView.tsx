@@ -28,7 +28,6 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../../hooks/useAuth';
 import { uploadQueueManager } from '../../../utils/uploadQueue';
-import { logEvent } from '../../../services/api/LoggerService';
 import {
   getTopTabs,
   slotCapacity,
@@ -130,18 +129,6 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     });
     return () => unsubscribe();
   }, [refetch]);
-
-  // Log a view event on mount (parity with the legacy inspection modal).
-  useEffect(() => {
-    if (user) {
-      logEvent('view', {
-        user_id: user._id || user.id,
-        module_type: 'inspection_photo',
-        created_by: user._id || user.id,
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const [pendingPhoto, setPendingPhoto] = useState<PendingPhoto | null>(null);
   const [previewState, setPreviewState] = useState<PreviewState | null>(null);

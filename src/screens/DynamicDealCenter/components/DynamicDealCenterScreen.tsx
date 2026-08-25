@@ -529,7 +529,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={{ fontSize: 18, fontWeight: '900', color: '#1C252E' }} numberOfLines={1}>
-            {customerName}
+             {customerName}
             {leadTime ? <Text style={{ fontSize: 18, fontWeight: '900', color: '#1C252E' }}> - {leadTime} Lead</Text> : ''}
           </Text>
           {isSaving ? (
@@ -542,7 +542,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
               {lastUpdated ? `Last updated at ${lastUpdated}` : 'No changes to save'}
             </Text>
           )}
-        </View>
+        </View> 
       </View>
 
       {isLoading ? (

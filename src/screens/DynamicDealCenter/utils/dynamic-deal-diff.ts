@@ -59,6 +59,17 @@ interface FieldLabelMeta {
   /** locationGrid only — cell coordinate → human label, for naming a changed cell. */
   gridRowLabels?: Record<string, string>;
   gridColLabels?: Record<string, string>;
+  /**
+   * Position in the CONFIG's field order.
+   *
+   * A combination's values are read back in whatever order the stored object happens
+   * to hold them, which is not the order the rep filled them in and differs between
+   * two combinations of the SAME section — the review listed one as
+   * `Type · Footage · Soffit Type · Color` and its sibling as
+   * `Color · Soffit Type · Type · Footage`. Sorting on this restores the authored
+   * order, which is what the portal's own build card shows.
+   */
+  order?: number;
 }
 
 /**
@@ -103,6 +114,7 @@ function gridCellLabels(field: any): Pick<FieldLabelMeta, 'gridRowLabels' | 'gri
 /** Build `{ "<scopeId>\0<fieldId>": { label, tab, sectionLabel, vertical } }` from the config. */
 export function buildFieldLabelMap(config: any): Record<string, FieldLabelMeta> {
   const map: Record<string, FieldLabelMeta> = {};
+  let order = 0;
   const collect = (
     fields: any[],
     scopeId: string,
@@ -120,6 +132,7 @@ export function buildFieldLabelMap(config: any): Record<string, FieldLabelMeta> 
         const qk = qualify(scopeId, f.id);
         if (!map[qk]) {
           map[qk] = {
+            order: order++,
             label: isContainer ? containerLabel || f.id : resolveFieldLabel(f, parentLabel),
             tab: tabLabel,
             sectionLabel: sectionLabel || '',
@@ -299,12 +312,24 @@ export function flattenStateValues(jobState: any): Record<string, string> {
 
 export type BuildChangeKind = 'change' | 'added' | 'removed';
 
+/** One named measurement of a combination, as the review lists it. */
+export interface ComboField {
+  label: string;
+  value: string;
+}
+
 export interface BuildChange {
   field: string;
   from: string;
   to: string;
   /** Omitted for an ordinary field edit. */
   kind?: BuildChangeKind;
+  /**
+   * Set ONLY on an added/removed combination — the same values as `from`/`to`, split
+   * so the review can lay them out as the portal does. `from`/`to` stay authoritative:
+   * they are what the submitted addendum carries.
+   */
+  comboFields?: ComboField[];
 }
 export interface BuildChangeGroup {
   vertical: string;
@@ -360,20 +385,49 @@ function resolveKeyMeta(
   return { meta, cellLabel: [rowLabel, colLabel].filter(Boolean).join(' · ') };
 }
 
-function describeCombo(
+/**
+ * A combination broken into its named measurements, in the CONFIG's field order.
+ *
+ * This is what the review renders — the portal shows a combination as a labelled
+ * table (`Type / Vinyl Soffit Footage / Soffit Type / Color`), and a run-on sentence
+ * of the same values is unreadable once a combination carries more than two or three.
+ */
+function comboFields(
   combo: ComboSnapshot,
   scopeId: string,
   labels: Record<string, FieldLabelMeta>
-): string {
-  const parts: string[] = [];
+): ComboField[] {
+  const rows: Array<{ order: number; label: string; value: string }> = [];
   Object.entries(combo.values).forEach(([fieldKey, value]) => {
     const resolved = resolveKeyMeta(scopeId, fieldKey, labels);
     if (!resolved) return;
     // A grid cell names its coordinate, so a removed combination is described by the
     // measurements it actually held ("Location Left Side · 3rd Story 33").
-    const name = [(resolved.meta.label || '').trim(), resolved.cellLabel].filter(Boolean).join(' ');
-    parts.push(name ? `${name} ${value}` : value);
+    const label = [(resolved.meta.label || '').trim(), resolved.cellLabel].filter(Boolean).join(' ');
+    rows.push({ order: resolved.meta.order ?? Number.MAX_SAFE_INTEGER, label, value });
   });
+  // Stable: equal orders (a field the map never saw) keep their read order.
+  return rows
+    .map((r, i) => ({ ...r, i }))
+    .sort((a, b) => a.order - b.order || a.i - b.i)
+    .map(({ label, value }) => ({ label, value }));
+}
+
+/**
+ * The same combination as ONE line.
+ *
+ * ⚠️ Still needed even though the review renders the table: this string is what goes
+ * into `buildChangeSummary`, i.e. onto the addendum the CUSTOMER signs. Derived from
+ * `comboFields` so the two can never describe the same combination differently.
+ */
+function describeCombo(
+  combo: ComboSnapshot,
+  scopeId: string,
+  labels: Record<string, FieldLabelMeta>
+): string {
+  const parts = comboFields(combo, scopeId, labels).map(({ label, value }) =>
+    label ? `${label} ${value}` : value
+  );
   return parts.length ? parts.join(' · ') : '—';
 }
 
@@ -564,6 +618,7 @@ export function computeDynamicBuildChanges(
         from: describeCombo(origCombos[oi], scopeId, labels),
         to: '—',
         kind: 'removed',
+        comboFields: comboFields(origCombos[oi], scopeId, labels),
       });
     });
     addedIdx.forEach((ni) => {
@@ -572,6 +627,7 @@ export function computeDynamicBuildChanges(
         from: '—',
         to: describeCombo(nextCombos[ni], scopeId, labels),
         kind: 'added',
+        comboFields: comboFields(nextCombos[ni], scopeId, labels),
       });
     });
   });
