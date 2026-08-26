@@ -71,7 +71,7 @@ export default function ImageAnnotationScreen() {
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [containerLayout, setContainerLayout] = useState<{ width: number; height: number } | null>(null);
   const [pendingTextPos, setPendingTextPos] = useState<{ px: number; py: number } | null>(null);
-  // Live pinch scale of the canvas, reported by `AnnotationCanvas`'s ScrollView.
+  // Live pinch scale of the canvas, reported by `AnnotationCanvas`'s zoom transform.
   // Only the drawing MOVE needs it — see `onPanResponderMove`.
   const [zoomScale, setZoomScale] = useState<number>(1);
 
@@ -254,10 +254,11 @@ export default function ImageAnnotationScreen() {
         if (activeTool === 'draw' && activeStrokeRef.current) {
           // ⚠️ `gestureState.dx/dy` are SCREEN pixels, while `startXRef` came from
           // `locationX` — which is already in the canvas's own untransformed space,
-          // because iOS hit-tests through the scroll view's zoom transform. Mixing the
-          // two only worked while the canvas could never be zoomed WHILE drawing; now
-          // that the zoom persists into Draw, the delta has to be divided by the scale
-          // or a stroke runs N times as far as the finger.
+          // because BOTH platforms hit-test through the zoom transform (iOS via the
+          // layer transform, Android via `TouchTargetHelper`'s inverse matrix). Mixing
+          // the two only worked while the canvas could never be zoomed WHILE drawing;
+          // now that the zoom persists into Draw, the delta has to be divided by the
+          // scale or a stroke runs N times as far as the finger.
           const scale = zoomScale > 0 ? zoomScale : 1;
           const curX = startXRef.current + gestureState.dx / scale;
           const curY = startYRef.current + gestureState.dy / scale;

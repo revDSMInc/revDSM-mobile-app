@@ -16,6 +16,14 @@ interface DraggableTextProps {
   setShowStylePanel: (show: boolean) => void;
   handleDeleteTextNote: (id: string) => void;
   handleMoveText: (id: string, newPx: number, newPy: number) => void;
+  /**
+   * Live pinch scale of the canvas. `gestureState.dx/dy` are SCREEN pixels while the
+   * note's position is stored in canvas units, so at 3x an untouched drag would carry
+   * the note three times as far as the finger. Same correction the stroke layer applies.
+   */
+  zoomScale?: number;
+  /** False while the rep is in Zoom mode, so a pinch that lands on a note pans instead of dragging it. */
+  dragEnabled?: boolean;
 }
 
 export const DraggableText = ({
@@ -27,30 +35,34 @@ export const DraggableText = ({
   setShowStylePanel,
   handleDeleteTextNote,
   handleMoveText,
+  zoomScale = 1,
+  dragEnabled = true,
 }: DraggableTextProps) => {
   const startPx = useRef(text.px);
   const startPy = useRef(text.py);
-  const textStateRef = useRef({ text, canvasLayout });
+  const textStateRef = useRef({ text, canvasLayout, zoomScale, dragEnabled });
   const [layout, setLayout] = useState<{ width: number; height: number } | null>(null);
 
   useEffect(() => {
-    textStateRef.current = { text, canvasLayout };
+    textStateRef.current = { text, canvasLayout, zoomScale, dragEnabled };
   });
 
   const isSelected = text.id === selectedTextId;
 
   const textPanResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: () => textStateRef.current.dragEnabled,
+      onMoveShouldSetPanResponder: () => textStateRef.current.dragEnabled,
       onPanResponderGrant: () => {
         startPx.current = textStateRef.current.text.px;
         startPy.current = textStateRef.current.text.py;
       },
       onPanResponderMove: (evt, gestureState) => {
-        const { text: currentText, canvasLayout: currentLayout } = textStateRef.current;
-        const deltaPx = gestureState.dx / currentLayout.width;
-        const deltaPy = gestureState.dy / currentLayout.height;
+        const { text: currentText, canvasLayout: currentLayout, zoomScale: currentScale } =
+          textStateRef.current;
+        const scale = currentScale > 0 ? currentScale : 1;
+        const deltaPx = gestureState.dx / scale / currentLayout.width;
+        const deltaPy = gestureState.dy / scale / currentLayout.height;
         handleMoveText(currentText.id, startPx.current + deltaPx, startPy.current + deltaPy);
       },
       onPanResponderRelease: (evt, gestureState) => {
