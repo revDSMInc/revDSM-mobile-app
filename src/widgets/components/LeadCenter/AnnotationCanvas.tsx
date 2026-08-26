@@ -25,6 +25,12 @@ interface AnnotationCanvasProps {
   setShowStylePanel: (show: boolean) => void;
   handleDeleteTextNote: (id: string) => void;
   handleMoveText: (id: string, newPx: number, newPy: number) => void;
+  /**
+   * Reports the live pinch scale so the drawing layer can divide its gesture deltas
+   * by it — `gestureState.dx/dy` are SCREEN pixels, so at 3x a stroke would otherwise
+   * run three times as far as the finger.
+   */
+  onZoomChange?: (scale: number) => void;
 }
 
 export const AnnotationCanvas = ({
@@ -43,6 +49,7 @@ export const AnnotationCanvas = ({
   setShowStylePanel,
   handleDeleteTextNote,
   handleMoveText,
+  onZoomChange,
 }: AnnotationCanvasProps) => {
 
   const renderCanvas = () => {
@@ -155,24 +162,28 @@ export const AnnotationCanvas = ({
     );
   };
 
-  if (activeTool === 'zoom') {
-    return (
-      <ScrollView
-        maximumZoomScale={5}
-        minimumZoomScale={1}
-        showsHorizontalScrollIndicator={false}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center' }}
-        className="w-full h-full"
-      >
-        {renderCanvas()}
-      </ScrollView>
-    );
-  }
-
+  // The zoom ScrollView stays mounted for EVERY tool.
+  //
+  // It used to wrap the canvas only while `activeTool === 'zoom'`, so switching to Draw
+  // unmounted it and threw the zoom away — the rep lined up a detail, picked the pen,
+  // and was back at 1x with no way to make a precise stroke.
+  //
+  // Only its own gestures are gated now: `scrollEnabled` is off unless the rep is in
+  // Zoom mode, so a one-finger drag draws instead of panning the image. iOS keeps the
+  // current zoomScale while scrolling is disabled, which is what preserves the view.
   return (
-    <View style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' }}>
+    <ScrollView
+      maximumZoomScale={5}
+      minimumZoomScale={1}
+      scrollEnabled={activeTool === 'zoom'}
+      onScroll={(e) => onZoomChange?.(e.nativeEvent.zoomScale || 1)}
+      scrollEventThrottle={16}
+      showsHorizontalScrollIndicator={false}
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center' }}
+      className="w-full h-full"
+    >
       {renderCanvas()}
-    </View>
+    </ScrollView>
   );
 };
