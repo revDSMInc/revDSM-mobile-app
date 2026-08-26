@@ -7,6 +7,8 @@ import { planBelowMin, belowMinMsg, type DealPlan, type PayCategory } from '../.
 import {
   driftNote,
   effectiveRowAmount,
+  isRemovableRow,
+  isSettledRow,
   lenderState,
   showsChip,
   type LenderTone,
@@ -210,17 +212,21 @@ export function PaymentRowsGroup({
   );
 
   const body = rows.map((row) => {
-    const locked = !!row.decision;
+    // ⚠️ SETTLED, not merely "a lender answered". `decision` exists only on financing
+    // rows, so this used to leave a CHARGED down payment card — or a collected check —
+    // fully editable: Remove and Swap were both offered on money already with the
+    // processor, and a swap resets the row server-side. See `isSettledRow`.
+    const locked = isSettledRow(row);
     const needs = row.pid === needsRowId;
     const amount = effectiveRowAmount(row, allRows, price);
     const label = plans[row.method]?.label || row.methodLabel;
     const isOpen = openRowId === row.pid;
     const readOnlyAmount = locked || !!row.auto;
 
-    // The auto row can only be dismissed once it has nothing left to hold; removing
-    // it while money is unassigned would hide the shortfall. And with `canAdd` off
-    // there is no way back, so nothing is removable at all.
-    const removable = canAdd && !locked && (!row.auto || amount === 0);
+    // The auto row can only be dismissed once it has nothing left to hold; removing it
+    // while money is unassigned would hide the shortfall. `isRemovableRow` adds the
+    // server's own rule on top — it 409s a row with a sent link or a decision.
+    const removable = canAdd && isRemovableRow(row) && (!row.auto || amount === 0);
 
     // The mockup's own split: the REMAINDER row draws the chip (`autoRowHtml`),
     // every other line draws a dropdown (`simpleRowHtml`). A decided row joins it
@@ -340,7 +346,10 @@ export function PaymentRowsGroup({
             {!!onRestore && (
               <TouchableOpacity
                 onPress={() => onRestore(row.pid, a.archivedId)}
-                style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#EFF4FF' }}
+                // `flexShrink: 0` — the plan name truncates before the button does.
+                // Restore is the only way back to an archived plan, so it is the last
+                // thing on the row that may be squeezed.
+                style={{ flexShrink: 0, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#EFF4FF' }}
               >
                 <Text style={{ fontSize: 11.5, fontWeight: '800', color: '#2563EB' }}>Restore</Text>
               </TouchableOpacity>

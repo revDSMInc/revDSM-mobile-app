@@ -86,9 +86,12 @@ import {
   hasDecline,
   hydrateRowsFromRecord,
   inferPayMode,
+  isLocalArchive,
   MULTI_METHOD_ENABLED,
   needsAttentionRowId,
   newPaymentId,
+  restoreRowPlan,
+  swapRowMethod,
   paymentAllocations,
   structureHint,
   structureLocked,
@@ -770,9 +773,38 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           amount: effectiveRowAmount(row, activeRows, contractNum),
         });
       }
-      updateRow(pid, { method: key });
+      // ⚠️ NOT a plain `updateRow({ method })`. On a chip row this is the **Swap**
+      // control, and swapping has to shelve the plan it replaces — that is the mockup's
+      // whole archive/restore behaviour, and without it the ARCHIVED METHODS block only
+      // ever showed what the SERVER had archived, so a swap the rep just made left no
+      // trace and could not be undone. `swapRowMethod` is a no-op beyond setting the
+      // method for the ordinary dropdown on an untouched line.
+      setRows((prev) => swapRowMethod(prev, pid, key, pricing.plans));
     },
-    [rows, activeRows, contractNum, pricing.plans, fundingLog, updateRow]
+    [rows, activeRows, contractNum, pricing.plans, fundingLog]
+  );
+
+  /**
+   * Put an archived plan back.
+   *
+   * ⚠️ Two different mechanisms behind one button, and they must not be confused. A
+   * plan the SERVER archived is restored through `POST …/restore`, which is the only
+   * thing that can move it on the record. A plan THIS SESSION archived (the rep swapped
+   * away from it a moment ago, before any save) has no `archivedId` the server knows —
+   * sending it would 404 — so it is restored in state, symmetrically, exactly as the
+   * mockup does it.
+   */
+  const restorePlan = useCallback(
+    (pid: string, archivedId: string) => {
+      const row = rows.find((r) => r.pid === pid);
+      const entry = (row?.archived || []).find((a) => a.archivedId === archivedId);
+      if (entry && isLocalArchive(entry)) {
+        setRows((prev) => restoreRowPlan(prev, pid, archivedId, pricing.plans));
+        return;
+      }
+      funding.restoreArchivedPlan(pid, archivedId);
+    },
+    [rows, pricing.plans, funding]
   );
 
   /**
@@ -1906,7 +1938,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                     <PaymentRowsGroup
                       title="Upfront"
                       layout="plain"
-                      onRestore={funding.restoreArchivedPlan}
+                      onRestore={restorePlan}
                       total={downTotal}
                       rows={upRows}
                       allRows={activeRows}
@@ -1938,7 +1970,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                     <PaymentRowsGroup
                       title="Down Payment"
                       layout="plain"
-                      onRestore={funding.restoreArchivedPlan}
+                      onRestore={restorePlan}
                       total={downTotal}
                       rows={downRows}
                       allRows={activeRows}
@@ -1960,7 +1992,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                     <PaymentRowsGroup
                       title="Balance"
                       layout="plain"
-                      onRestore={funding.restoreArchivedPlan}
+                      onRestore={restorePlan}
                       total={balanceTotal}
                       rows={balRows}
                       allRows={activeRows}

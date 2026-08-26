@@ -139,6 +139,15 @@ export interface PaymentRow {
    */
   linkSent?: boolean;
   activated?: boolean;
+  /**
+   * The money has actually MOVED — a card charged, or a check taken.
+   *
+   * ⚠️ Mirrored for the same reason `decision` is: without them the pricing screen
+   * cannot tell a charged down payment from an untouched one, and offers to remove or
+   * swap money that is already with the processor.
+   */
+  charged?: boolean;
+  collected?: boolean;
 
   /**
    * Plans this row has been swapped away from, newest first — the archived block
@@ -197,8 +206,159 @@ export function lenderState(
           : 'Approved',
     };
   }
+  // ⚠️ Settlement reads GREEN and names itself. Without this a charged card falls
+  // through to the amber "Pending lender decision" below — which is wrong twice over:
+  // the money is already in, and no lender is involved in a card at all. It also
+  // leaves a row whose Remove and Swap have both vanished with nothing explaining why.
+  if (row.charged) return { tone: 'approved', sub: 'Charged' };
+  if (row.collected) return { tone: 'approved', sub: 'Collected' };
   if (row.linkSent) return { tone: 'pending', sub: 'Pending lender decision' };
   return { tone: financing ? 'pending' : 'neutral', sub: 'Not yet submitted' };
+}
+
+/**
+ * ── swapping a plan, and getting it back ────────────────────────────────────
+ *
+ * The mockup's `swapMethod` / `restoreMethod` are a LOCAL, symmetric stack: picking a
+ * new plan pushes the outgoing one onto the shelf, and restoring pushes the current one
+ * back in exchange, so nothing is ever lost and a restore can itself be undone.
+ *
+ * ⚠️ It has to be local because it happens BEFORE any save. The server keeps its own
+ * `archived[]` and its own `POST …/restore`, but a plan the rep swapped away from two
+ * seconds ago has no `archivedId` yet — there is nothing for that endpoint to address.
+ * So the shelf renders BOTH: entries the server archived (restored through the API) and
+ * entries this session archived (restored in state). `isLocalArchive` tells them apart,
+ * which is what stops a local entry being sent to an endpoint that would 404 on it.
+ */
+const LOCAL_ARCHIVE_PREFIX = 'local-';
+
+export function isLocalArchive(entry: { archivedId?: string } | null | undefined): boolean {
+  return String(entry?.archivedId || '').startsWith(LOCAL_ARCHIVE_PREFIX);
+}
+
+/** A snapshot of the plan a row is carrying right now, for the shelf. */
+function snapshotPlan(row: PaymentRow, plans: Record<string, DealPlan>): FundingArchivedPlan {
+  return {
+    archivedId: `${LOCAL_ARCHIVE_PREFIX}${Math.random().toString(36).slice(2, 10)}`,
+    method: methodLabelOf(plans, row.method) || row.methodLabel || row.method || '',
+    // The KEY is what puts the plan back on the row; the label above is only what the
+    // shelf reads. Kept beside it so a restore never has to re-resolve a display string.
+    planKey: row.method,
+    ...(row.decision ? { decision: row.decision } : {}),
+  };
+}
+
+/**
+ * Change a row's plan, archiving the one it was carrying.
+ *
+ * ⚠️ Archiving happens ONLY on a chip row — i.e. only when the change came from **Swap**.
+ * The ordinary dropdown on an untouched line is a rep picking a method for the first
+ * time, not replacing a plan; shelving those would fill the block with every mis-tap.
+ * `showsChip` is exactly that test, because Swap is the only method control a chip row
+ * has.
+ *
+ * ⚠️ The incoming plan starts UNPROVEN — `linkSent` / `decision` / `activated` are
+ * cleared. That is the mockup's rule ("the freshly-picked plan never inherits green") and
+ * it is also what the SERVER does: changing `method` resets that row's steps, link and
+ * decision. Carrying them over would show a green "Approved" chip for a lender who has
+ * never seen this plan.
+ */
+export function swapRowMethod(
+  rows: PaymentRow[],
+  pid: string,
+  nextKey: string,
+  plans: Record<string, DealPlan>
+): PaymentRow[] {
+  return rows.map((r) => {
+    if (r.pid !== pid) return r;
+    // Nothing to archive when the plan is unchanged, when the row never had one, or
+    // when the change came from the plain dropdown rather than Swap.
+    if (!nextKey || nextKey === r.method || !r.method || !showsChip(r)) {
+      return { ...r, method: nextKey };
+    }
+    return {
+      ...r,
+      method: nextKey,
+      methodLabel: undefined,
+      linkSent: false,
+      activated: false,
+      decision: null,
+      archived: [snapshotPlan(r, plans), ...(r.archived || [])],
+    };
+  });
+}
+
+/**
+ * Put an archived plan back on the row — the LOCAL half of restore.
+ *
+ * ⚠️ **Symmetric**, matching both the mockup and the server: the plan the row is
+ * carrying goes onto the shelf in exchange, so the shelf is never emptied by a restore
+ * and the restore can be undone the same way.
+ *
+ * ⚠️ Deliberate divergence from the mockup's `restoreMethod`, whose comment says it
+ * "brings back exactly the status that plan had when it was archived". We reset the
+ * lender state instead. Locally we cannot honestly claim a lender still stands behind a
+ * plan the row has not carried for the last few minutes, and the server resets those
+ * steps on a method change anyway — so restoring them would put a green chip on a plan
+ * the next save is about to un-approve.
+ */
+export function restoreRowPlan(
+  rows: PaymentRow[],
+  pid: string,
+  archivedId: string,
+  plans: Record<string, DealPlan>
+): PaymentRow[] {
+  return rows.map((r) => {
+    if (r.pid !== pid) return r;
+    const shelf = r.archived || [];
+    const entry = shelf.find((a) => a.archivedId === archivedId);
+    if (!entry) return r;
+    const key = (entry as any).planKey || planKeyForLabel(plans, entry.method) || entry.method || '';
+    return {
+      ...r,
+      method: key,
+      // A plan that has left the catalogue resolves to no key; its stored label is then
+      // the only handle the row still has on what the money was committed to.
+      methodLabel: key && plans[key] ? undefined : entry.method,
+      linkSent: false,
+      activated: false,
+      decision: null,
+      archived: [
+        ...(r.method || r.methodLabel ? [snapshotPlan(r, plans)] : []),
+        ...shelf.filter((a) => a.archivedId !== archivedId),
+      ],
+    };
+  });
+}
+
+/**
+ * Is this line SETTLED — has its money actually moved, or has a third party answered
+ * for it?
+ *
+ * ⚠️ This is what `!!row.decision` used to stand in for, and the gap mattered:
+ * `decision` only ever exists on a FINANCING row, so a down payment card that had been
+ * **charged** — or a check already **collected** — counted as untouched. The pricing
+ * screen then offered **Remove** and **Swap** on money that is with the processor, and
+ * a swap resets the row's steps, link and decision server-side.
+ *
+ * A settled row is a FACT, not an input: its amount is read-only, its method is fixed,
+ * and it cannot be deleted.
+ */
+export function isSettledRow(row: PaymentRow): boolean {
+  return Boolean(row.decision || row.charged || row.collected);
+}
+
+/**
+ * May the rep delete this line?
+ *
+ * ⚠️ Mirrors the SERVER's own rule rather than inventing one: `PUT` sends the complete
+ * list and omitting a row deletes it, but the API **refuses with 409 a row that has a
+ * sent link or a decision** — and settlement is stricter still. Offering a control that
+ * can only fail is worse than not offering it; the rep's route out is to reassign the
+ * money on the funding screen, not to make the row disappear.
+ */
+export function isRemovableRow(row: PaymentRow): boolean {
+  return !isSettledRow(row) && !row.linkSent;
 }
 
 /**
@@ -208,7 +368,9 @@ export function lenderState(
  * it sits, including on a line the rep added by hand.
  */
 export function hasLenderState(row: PaymentRow): boolean {
-  return Boolean(row.decision || row.linkSent || row.activated);
+  // `charged` / `collected` included so a settled line still draws the chip — that is
+  // the only place it can say "Charged" instead of silently losing both its buttons.
+  return Boolean(row.decision || row.linkSent || row.activated || row.charged || row.collected);
 }
 
 /**
@@ -595,6 +757,8 @@ export function hydrateRowsFromRecord(
     // same row the amount came off — see `lenderState` / `driftNote`.
     linkSent: p.linkSent,
     activated: p.activated,
+    charged: p.charged,
+    collected: p.collected,
     archived: p.archived,
     baseline: p.baseline,
     liveUsage: p.liveUsage,
@@ -918,6 +1082,99 @@ export function fundingBlockers(
     out.push('Payments are not set up for your company yet — contact your office');
   }
   return out;
+}
+
+/**
+ * ── resuming an abandoned build ─────────────────────────────────────────────
+ *
+ * Can the rep be taken STRAIGHT to the Job Builder when they tap Sale, skipping the
+ * Result Lead sheet entirely?
+ *
+ * The case this exists for: the rep priced the job, walked the funding to the end and
+ * hit **Submit Funding** — which results the lead and opens the builder — and then
+ * backed out without finishing the build. The lead has no `selectedCalculatorId` yet
+ * (only the builder's own submit writes one), so nothing is locked and Result Lead is
+ * live again. Tapping Sale then made them re-walk pricing → Confirm → funding →
+ * Submit, three taps that change nothing, before landing where they left off.
+ *
+ * ⚠️ **Gated on `status === 'submitted'`, deliberately — NOT on "the rows look
+ * filled in".** The Submit Funding gate is what enforces the per-row blockers (link
+ * not sent, card not charged, check not collected). A record that merely HAS payments
+ * has not passed it, and skipping there would let a job be built on money nobody has
+ * collected, leaving the record `pending` forever with no path back to the gate.
+ */
+export function canResumeJobBuild(record: FundingRecord | null | undefined): boolean {
+  return record?.status === 'submitted' && (record?.payments?.length || 0) > 0;
+}
+
+/**
+ * Rebuild the outcome payload the Result Lead sheet WOULD have produced, from the
+ * funding record it already produced once.
+ *
+ * Every money field is recoverable because the record is what the sheet saved:
+ * `contractPrice`, and the rows it split it into. The four flat scalars are derived
+ * the same way the sheet derives them — summed group totals plus the FIRST funded
+ * row's plan key — with the full breakdown alongside.
+ *
+ * ⚠️ **Amounts come from `fundedAmount`, not `amount`**, so a short-approved loan
+ * contributes what the lender GRANTED. That is the money that will really arrive, and
+ * it is what `groupTotal` and `coverageOK` already count — a resumed build must not
+ * report a larger figure than the funding screen showed.
+ *
+ * ⚠️ **`oneLeg` / `versatile` / `pineapple` are NOT in the record**, so they come
+ * back as the values an untouched sheet would have sent (`'No'` / false / false).
+ * That is the honest reconstruction rather than a guess: nothing on this path ever
+ * asked the rep for them, and the alternative — omitting them — would clear whatever
+ * `buildSubmitLeadData` defaults them to.
+ *
+ * ⚠️ **Plan KEYS, never the catalogue labels the record stores.** The outcome's
+ * `paymentMethod` is resolved against the plan catalogue by ~20 consumers, and
+ * `resolveTierPaymentMethod` substring-sniffs it to pick the bank fee — a label like
+ * `"AMEX (Bank Fee: 5%)"` reaching that path would be read as AMEX by luck rather
+ * than by resolution, and a renamed plan would resolve to nothing at all.
+ */
+export function resumeOutcomeFromRecord(
+  record: FundingRecord | null | undefined,
+  plans: Record<string, DealPlan>
+): Record<string, any> | null {
+  if (!canResumeJobBuild(record)) return null;
+  const payments = record!.payments || [];
+  const down = payments.filter((p) => p.kind === 'down');
+  const bal = payments.filter((p) => p.kind === 'bal');
+
+  const keyOf = (p: FundingPayment) => planKeyForLabel(plans, p.method) || p.method || '';
+  // The first row of each half that carries BOTH a method and money — the same rule
+  // the sheet's `primaryDownMethod` uses.
+  const primary = (rows: FundingPayment[]) => {
+    const hit = rows.find((p) => p.method && fundedAmount(p) > 0) || rows.find((p) => p.method);
+    return hit ? keyOf(hit) : '';
+  };
+  const allocate = (rows: FundingPayment[]): PaymentAllocation[] =>
+    rows
+      .filter((p) => p.method && fundedAmount(p) > 0)
+      .map((p) => ({
+        method: keyOf(p),
+        amount: toWholeDollars(fundedAmount(p)),
+        label: p.method,
+        ...(p.type ? { type: p.type } : {}),
+      }));
+
+  return {
+    resultType: 'sale' as const,
+    oneLeg: 'No',
+    contractPrice: record!.contractPrice || undefined,
+    downPayment: groupTotal(down) || undefined,
+    balance: groupTotal(bal),
+    downPaymentMethod: primary(down) || undefined,
+    balancePaymentMethod: primary(bal) || undefined,
+    downPayments: allocate(down),
+    balancePayments: allocate(bal),
+    versatile: false,
+    pineapple: false,
+    bankDecline: record!.result === 'bankDecline',
+    payments,
+    fundingAttempts: record!.attemptHistory || [],
+  };
 }
 
 /** Running total for a group heading (`DOWN PAYMENT · $2,500`). */

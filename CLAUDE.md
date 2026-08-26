@@ -2389,6 +2389,242 @@ never walked through HTTP"*: the Swap chip and shelf on a real approved row, Res
 Reactivate on a drifted loan, `sync-all`'s `problems[]`, and — the one with no
 documentation at all — whether `funding-updated` arrives without an explicit room join.
 
+### Sale on an abandoned build goes STRAIGHT to the Job Builder
+
+Ticket: *"if the down payment and finance already set and the job builder is not
+submitted and user when reopen the lead than do not move the user on the funding screen
+directly move to the job builder when user click on the sale button."*
+
+The reachable case, and it is a normal one: the rep prices the job, walks the funding to
+the end and taps **Submit Funding** — which results the lead and opens the builder — then
+backs out without finishing the build. Only the BUILDER's own submit writes
+`selectedCalculatorId`, so ticket 409's lock never engages, Result Lead is live again, and
+tapping Sale made them re-walk pricing → Confirm → funding → Submit to land back where
+they left off. Three taps that change nothing.
+
+`handleResultJob` (`DynamicDealCenterScreen`) now reads the funding record first on the
+**sale** arm and, when it can be resumed, hands the rebuilt outcome straight to
+`handleResultConfirm` — the same function the sheet's Build Job calls.
+
+#### ⚠️ Gated on `status === 'submitted'`, NOT on "the rows look filled in"
+
+`canResumeJobBuild` (`utils/funding.ts`) requires a **submitted** record with payments.
+This was the ticket's one real decision and it was put to the reporter rather than
+inferred: *"already set"* could mean configured, and skipping there would be a hole. The
+**Submit Funding gate is what enforces the per-row blockers** — link not sent, card not
+charged, check not collected — so a `pending` record has not passed them. Skipping on one
+would let a job be built on money nobody has collected AND leave the record `pending`
+forever, with no path back to the gate. A configured-but-unsubmitted deal therefore still
+gets the full sheet, which is the correct outcome: the rep has not finished the money side.
+
+#### The outcome is REBUILT from the record, not remembered
+
+`resumeOutcomeFromRecord(record, plans)` reconstructs the payload the sheet would have
+sent. Every money field is recoverable because the record IS what the sheet saved —
+`contractPrice`, and the rows it split it into — with the four flat scalars derived the
+same way (`groupTotal` per half, plus the first funded row's plan key) and the full
+breakdown alongside in `downPayments` / `balancePayments`.
+
+- ⚠️ **Amounts come from `fundedAmount`, not `amount`**, so a short-approved loan
+  contributes what the lender GRANTED. That is what `groupTotal` and `coverageOK` already
+  count, and a resumed build must not report a larger figure than the funding screen showed.
+- ⚠️ **Plan KEYS, never the catalogue LABELS the record stores.** `resolveTierPaymentMethod`
+  substring-sniffs `paymentMethod` to pick the bank fee, and ~20 consumers resolve it
+  against the catalogue — a label would resolve by luck, and a renamed plan not at all. A
+  plan that has LEFT the catalogue keeps its stored label as the key: it is the only handle
+  the record still has on what the money was committed to.
+- ⚠️ **`oneLeg` / `versatile` / `pineapple` are not in the funding record** and come back as
+  `'No'` / `false` / `false` — exactly what an untouched sheet would have sent. Reading them
+  back from a saved outcome was offered and declined; there would be nothing to read anyway
+  on this path, since only the builder's submit writes one.
+
+#### Two wiring details that are not style
+
+- ⚠️ **The calculator id travels as an ARGUMENT.** `handleResultConfirm` gained an optional
+  `calcIdOverride`, because the resume path reaches it in the same tick as its
+  `setCurrentCalculatorId` — the state is not readable yet, so relying on it would attach
+  the outcome to whichever calculator was resulted last. The sheet passes nothing and
+  behaves exactly as before. All four reads inside that callback use the resolved id.
+- ⚠️ **It fires through `resumeRef.current.confirm`, not a direct call.**
+  `handleResultConfirm` is defined below and cannot be re-ordered above — the result-opt-in
+  effect already depends on `handleResultJob`, so moving that down would put the effect in
+  its own temporal dead zone. Routing through the ONE function is also what stops the two
+  paths drifting on the timeline PATCH, the `build_job_initiated` log and the rehash
+  "reuse the saved build?" prompt.
+
+**A failure falls through to the sheet.** Any error on the lookup opens the Result Lead
+modal as before — a lookup problem must never block a rep from resulting a lead, the same
+rule the rehash `openJobBuilder` read directly below already follows. The DEMO arm never
+reads anything: a demo has nothing to fund.
+
+⚠️ `resumeRef` holds BOTH the callback and the in-flight guard in one ref, for the reason
+on `rehashBuild` — every hook in this component sits after the edit-mode early return, so
+each one added widens that compromise. The guard is a ref rather than state because
+nothing renders from it, and a state flag would be read from whichever closure
+`RolloutView` is holding, which is the render before it flipped.
+
+Verified with 15 tests (`__tests__/screens/DynamicDealCenter/funding-resume-job-build.test.ts`):
+a submitted record resuming and a **pending one refusing to** (the guard the whole feature
+rests on), a submitted record with no payments refused, null/undefined as a no-op; the
+rebuilt outcome's price and both halves, methods as plan keys, the allocations, Sale vs a
+mirrored Bank Decline, the three defaulted answers, **a short approval contributing 1,800
+rather than the 2,363 asked**, a contract paid in full reporting no balance, a three-way
+split naming the first funded row and never a joined string, a retired plan keeping its
+label, and a $0 row not becoming an allocation. tsc 44 (baseline unchanged); eslint on
+`DynamicDealCenterScreen.tsx` 39 problems / 23 errors against a HEAD baseline of 38 / 22 —
+the one added is `react-hooks/rules-of-hooks` on the single new `useRef`, joining the 22
+the file already carries for the documented reason. Suite 618 passing, 1 pre-existing
+failure (`installer-card-state`, unrelated).
+
+⚠️ Needs a device check: submit funding, back out of the builder, reopen the lead and tap
+**Sale** — it should land on the Job Builder with no Result Lead sheet, and the submitted
+job should carry the same contract price, down payment and both methods as the funding
+screen showed. Then the negative: a lead whose funding is configured but NOT submitted must
+still open the sheet.
+
+
+### A PAID payment line can no longer be removed or swapped
+
+Ticket: *"do not allow the user to remove the already paid downpayment or also not
+allowed to swap the already paid downpayment in the my deals flow."*
+
+`PaymentRowsGroup`'s lock was **`const locked = !!row.decision`** — and a `decision` only
+ever exists on a FINANCING row. So a down payment **card that had been charged**, or a
+**check already collected**, counted as untouched: the pricing screen offered **Remove**
+and **Swap** on money that is with the processor.
+
+⚠️ Neither failed loudly. Remove would 409 (the server refuses deleting a row with a sent
+link or a decision), `classifyFundingError` files that as `stale`, and `report` refetches
+and flashes *"Funding updated"* — which reads as success. **Swap is worse**: changing
+`method` **resets that row's steps, link and decision** server-side, so it would silently
+throw away a completed collection.
+
+#### Two predicates, in `utils/funding.ts`
+
+- **`isSettledRow(row)`** — `decision || charged || collected`. The money has moved, or a
+  third party has answered for it. A settled row is a FACT, not an input: amount
+  read-only, method fixed, no Swap, no Remove. This replaces `!!row.decision` as the
+  component's `locked`.
+- **`isRemovableRow(row)`** — `!isSettledRow(row) && !row.linkSent`. ⚠️ **Mirrors the
+  SERVER's own rule rather than inventing one**: `PUT` sends the complete list and an
+  omitted row is deleted, but the API refuses a row with a sent link or a decision.
+  Offering a control that can only fail is worse than not offering it — the rep's route
+  out is to reassign the money on the funding screen, not to make the row disappear.
+
+⚠️ **`charged` / `collected` had to be MIRRORED onto `PaymentRow` first** — they were not
+carried by `hydrateRowsFromRecord`, so the pricing screen literally could not tell a
+charged down payment from an untouched one. That is the whole reason the gap existed.
+
+#### The chip has to say WHY the buttons are gone
+
+`hasLenderState` now counts `charged` / `collected` too, so a settled line still draws the
+chip, and `lenderState` gained two branches **above** the `linkSent` one:
+
+| state | tone | sub |
+|---|---|---|
+| `charged` | green | Charged |
+| `collected` | green | Collected |
+
+⚠️ Without them a charged card fell through to the amber **"Pending lender decision"**,
+which is wrong twice over — the money is already in, and no lender is involved in a card
+at all — and it left a row whose Remove and Swap had both vanished with nothing on screen
+explaining it. ⚠️ A lender VERDICT still outranks both: `{ decision: 'declined',
+charged: true }` reads *Declined by lender*, not *Charged*.
+
+#### Applies to BOTH flows, deliberately
+
+The ticket names My Deals, but the rule is enforced in the shared `PaymentRowsGroup`, so
+the Result Lead sheet gets it too. That is not scope creep — a charged card cannot be
+un-charged from either screen, and the sale sheet carried the identical hole. The visible
+difference is only that `panel` layout has no Swap button to suppress.
+
+Verified with 20 tests (`__tests__/screens/DynamicDealCenter/funding-settled-row.test.ts`)
+driving the component's own two expressions: what counts as settled (charged card with
+`decision` asserted `undefined`, so the old rule's blind spot is explicit; collected check;
+both decisions; a merely-sent link NOT settled); Remove refused on a paid line **with the
+old rule asserted to have allowed it**, refused on a sent link, still allowed on an
+untouched line, the auto row still only going at $0, and nothing removable while Add is
+off; Swap refused on paid and on decided rows but kept on a line still awaiting an answer
+and on the remainder row; the chip still drawn on a settled row with the two new labels and
+the verdict precedence; and the record hydrate carrying both flags through so the two
+controls really do disappear. tsc 44 (baseline unchanged); eslint 0 errors across
+`utils/funding.ts`, `PaymentRowsGroup.tsx` and the new test. Suite 638 passing, 1
+pre-existing failure (`installer-card-state`, unrelated).
+
+⚠️ Needs a device check: charge a down payment card on the funding screen, go **Back /
+Edit payments**, and confirm that row shows a green **Charged** chip with no Swap and no
+Remove — while an untouched line beside it keeps both.
+
+
+### Swap now ARCHIVES the plan it replaces, and Restore is symmetric
+
+Ticket: *"when we update or swap any method then the UI should behave like this"*, against
+the mockup's **ARCHIVED METHODS** block — a swapped-away plan struck through on a dashed
+shelf with a **Restore** beside it.
+
+`onChangeMethod` was a plain `updateRow({ method })`. The shelf rendered `row.archived`,
+which only ever holds what the **SERVER** archived — and the server has nothing to archive
+until the next save. So a swap the rep made two seconds ago left **no trace and could not
+be undone**, which is the whole point of the block.
+
+#### The stack is LOCAL, and it has to be
+
+`swapRowMethod` / `restoreRowPlan` (`utils/funding.ts`) are the mockup's `swapMethod` /
+`restoreMethod`: the outgoing plan is `unshift`ed to the FRONT of the shelf, and a restore
+puts the **current** plan back in its place in exchange — so the shelf is never emptied by
+a restore and the restore can itself be undone.
+
+⚠️ **Local because it happens BEFORE any save.** A plan the rep swapped away from a moment
+ago has no `archivedId` the server knows, so `POST …/restore` would 404 on it. The shelf
+therefore renders BOTH kinds and **`isLocalArchive`** tells them apart — a server entry
+still goes to the endpoint, a local one is restored in state. `restorePlan` in
+`DynamicDealEditScreen` is the one place that branches.
+
+#### Three rules that are not arbitrary
+
+- ⚠️ **Only SWAP shelves; the ordinary dropdown does not.** The test is `showsChip(row)`,
+  because Swap is the only method control a chip row has. A Down Payment line is a rep
+  picking a method for the first time, not replacing a plan — shelving those would fill
+  the block with every mis-tap.
+- ⚠️ **The incoming plan starts UNPROVEN** — `linkSent` / `decision` / `activated` cleared.
+  That is the mockup's rule ("the freshly-picked plan never inherits green") AND what the
+  server does: changing `method` resets that row's steps, link and decision. Carrying them
+  over would show a green *Approved* chip for a lender who has never seen this plan.
+- ⚠️ **A restored plan is unproven too — a deliberate divergence from the mockup**, whose
+  `restoreMethod` comment says it "brings back exactly the status that plan had when it was
+  archived". Locally we cannot honestly claim a lender still stands behind a plan the row
+  has not carried for the last few minutes, and the next save resets those steps anyway —
+  restoring them would put a green chip on a plan the server is about to un-approve.
+
+A plan that has **left the catalogue** keeps its stored label on restore (`methodLabel`),
+since that is the only handle the row still has on what the money was committed to. An
+unknown `archivedId` is a no-op rather than a wipe.
+
+Also: the shelf's **Restore button is now `flexShrink: 0`** — the plan name truncates
+before the button does, because Restore is the only way back to an archived plan.
+
+⚠️ The local shelf lives for the editing session. It survives Confirm → Funding → **Edit
+payments** (those operate on the rows in state), and is lost on a full reload of the
+screen, where the server's own `archived[]` takes over. That matches the mockup, whose
+stack is session-local too.
+
+Verified with 14 tests (`__tests__/screens/DynamicDealCenter/funding-swap-archive.test.ts`):
+the outgoing plan shelved by label and a second swap stacking newest-first (the mockup
+screenshot's two entries), the incoming plan not inheriting status, local entries marked as
+local while a server id is not, re-picking the same plan archiving nothing, **the dropdown
+asserted NOT to shelve** with `showsChip` false on that row, a plan-less row, other rows
+untouched by reference; and for restore — the displaced plan taking its place, a restore
+undone by restoring again to land exactly where it started, the named entry picked out of a
+shelf of several, the restored plan unproven, a retired plan keeping its label, and an
+unknown id as a no-op. tsc 44 (baseline unchanged); eslint 0 errors across
+`utils/funding.ts`, `PaymentRowsGroup.tsx`, `DynamicDealEditScreen.tsx` and the new test.
+Suite 652 passing, 1 pre-existing failure (`installer-card-state`, unrelated).
+
+⚠️ Needs a device check: Swap the Balance plan twice and confirm both previous plans stack
+newest-first under ARCHIVED METHODS, that Restore swaps them back symmetrically, and that
+changing a Down Payment method through its dropdown adds nothing to any shelf.
+
+
 ### Rehash with no job scope opens the entry form, not a locked $0 receipt
 
 Ticket: *"in the rehash module when the lead having `isRehashed: true` … if the lead is in the rehash
