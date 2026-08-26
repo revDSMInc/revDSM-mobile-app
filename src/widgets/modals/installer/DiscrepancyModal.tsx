@@ -10,11 +10,17 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { DISCREPANCY_ISSUE_TYPES } from '../../../constants/installer';
 import type { SoldProduct } from '../../../config/types/installer';
+
+/**
+ * Space under the Send button, in dp.
+ *
+ * Fixed rather than safe-area derived - see the note at the call site.
+ */
+const SHEET_BOTTOM_GAP = 10;
 
 export interface JobPhotoRef {
   id: string;
@@ -40,7 +46,6 @@ interface Props {
  */
 export function DiscrepancyModal({ visible, product, jobPhotos, onClose, onSend }: Props) {
   const { colors, isDark } = useTheme();
-  const insets = useSafeAreaInsets();
   const [issue, setIssue] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [attached, setAttached] = useState<string[]>([]);
@@ -75,7 +80,15 @@ export function DiscrepancyModal({ visible, product, jobPhotos, onClose, onSend 
             className="w-full rounded-t-[32px] px-6 pt-5"
             style={{
               backgroundColor: isDark ? colors.surface : colors.background,
-              paddingBottom: Math.max(insets.bottom, 24),
+              // ⚠️ A FIXED gap, deliberately NOT `Math.max(insets.bottom, 24)`.
+              //
+              // This sheet does not draw under the navigation bar - it ends above it -
+              // so there is nothing here to clear. And `useSafeAreaInsets()` inside a
+              // `Modal` reports the ROOT window's inset, not this window's (the same
+              // trap `utils/installer-insets.ts` documents), so on a 3-button device it
+              // returned the full 48dp nav-bar height and left an empty band below the
+              // Send button roughly as tall as the button itself.
+              paddingBottom: SHEET_BOTTOM_GAP,
               maxHeight: '88%',
             }}
           >
