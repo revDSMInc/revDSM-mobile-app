@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { NUMBER_PAD_KEYBOARD } from '../../../utils/keyboard-type';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -721,7 +722,8 @@ export const LeafFilterSection = ({
                                   }
                                 }
                               }}
-                              keyboardType="number-pad"
+                              keyboardType={NUMBER_PAD_KEYBOARD}
+                              returnKeyType="done"
                               placeholder="0"
                               className="h-10 bg-slate-50 rounded-xl border border-slate-200 text-center text-[12px] font-black text-black"
                             />

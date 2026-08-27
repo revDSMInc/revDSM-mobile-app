@@ -13,6 +13,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { COLORS } from './color-constant';
 import { useProductImage } from '../../../hooks/useProductImage';
 import { Image, ActivityIndicator } from 'react-native';
+import { NUMBER_PAD_KEYBOARD } from '../../../utils/keyboard-type';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -607,7 +608,8 @@ export const GutterSection = ({
                                 next[lIdx * 3 + sIdx] = v.replace(/[^0-9]/g, '');
                                 updateCombo(idx, { measurements: next });
                               }}
-                              keyboardType="number-pad"
+                              keyboardType={NUMBER_PAD_KEYBOARD}
+                              returnKeyType="done"
                               placeholder="0"
                               className="h-10 bg-slate-50 rounded-xl border border-slate-200 text-center text-[12px] font-black text-black"
                             />
@@ -653,7 +655,8 @@ export const GutterSection = ({
                               onChangeText={(v) =>
                                 updateCombo(idx, { [f.field]: v.replace(/[^0-9]/g, '') })
                               }
-                              keyboardType="number-pad"
+                              keyboardType={NUMBER_PAD_KEYBOARD}
+                              returnKeyType="done"
                               className={`h-12 rounded-2xl border-2 px-5 text-[12px] font-black text-black ${
                                 isError
                                   ? 'border-red-500 bg-red-50/10'
@@ -849,7 +852,8 @@ export const GutterSection = ({
                             onChangeText={(v) =>
                               updateDS(dsIdx, { [f.field]: v.replace(/[^0-9]/g, '') })
                             }
-                            keyboardType="number-pad"
+                            keyboardType={NUMBER_PAD_KEYBOARD}
+                            returnKeyType="done"
                             className="h-12 bg-white rounded-2xl border-2 border-slate-100 px-5 text-[12px] font-black text-black"
                           />
                         </View>

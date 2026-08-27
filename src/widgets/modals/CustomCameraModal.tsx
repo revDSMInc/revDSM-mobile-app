@@ -9,7 +9,7 @@ import {
   Animated,
   SafeAreaView,
   Image,
-  Dimensions,
+  useWindowDimensions,
   Platform,
 } from 'react-native';
 import { Camera, useCameraDevice, useCameraFormat } from 'react-native-vision-camera';
@@ -52,6 +52,10 @@ export const CustomCameraModal = ({
   } | null>(null);
 
   const insets = useSafeAreaInsets();
+  // ⚠️ `useWindowDimensions`, not `Dimensions.get('window')`: iPad allows landscape
+  // (`UISupportedInterfaceOrientations~ipad`) and the one-shot read never updated on
+  // rotation, so the viewfinder kept its portrait geometry after turning the device.
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
 
   const device = useCameraDevice('back', { physicalDevices: ['ultra-wide-angle-camera', 'wide-angle-camera', 'telephoto-camera'] });
   const ultraWideDevice = useCameraDevice('back', { physicalDevices: ['ultra-wide-angle-camera'] });
@@ -271,9 +275,25 @@ export const CustomCameraModal = ({
 
   if (!visible) return null;
 
-  const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-  const viewfinderHeight = screenWidth * (4 / 3);
   const viewfinderTop = insets.top + 20 + (Platform.OS === 'android' ? insets.top + 20 : 0);
+
+  // ⚠️ The 4:3 viewfinder is capped by the HEIGHT THAT IS LEFT, not derived from the
+  // width alone. `screenWidth * 4/3` silently assumes a phone: on an 11" iPad it comes
+  // to 1093pt of a 1180pt screen, leaving 43pt for a shutter bar that needs ~200, and on
+  // a 12.9" it overshoots the screen entirely (-43pt) so the shutter sits below the
+  // bottom edge and cannot be tapped at all. Small phones (SE) were squeezed by the same
+  // sum. Landscape iPad is the same story with even less height.
+  //
+  // Both sides are derived from whichever dimension binds, so the box stays a TRUE 4:3
+  // and is centred rather than stretched; on a phone the width still binds, so the
+  // geometry there is unchanged to the pixel.
+  const maxViewfinderHeight = Math.max(
+    0,
+    screenHeight - viewfinderTop - insets.bottom - BOTTOM_CONTROLS_MIN_HEIGHT,
+  );
+  const viewfinderHeight = Math.min(screenWidth * (4 / 3), maxViewfinderHeight);
+  const viewfinderWidth = viewfinderHeight * (3 / 4);
+  const viewfinderLeft = (screenWidth - viewfinderWidth) / 2;
 
   const SafeAreaComponent = Platform.OS === 'android' ? SafeAreaViewContext : SafeAreaView;
 
@@ -284,8 +304,8 @@ export const CustomCameraModal = ({
         <View style={{
           position: 'absolute',
           top: viewfinderTop,
-          left: 0,
-          width: screenWidth,
+          left: viewfinderLeft,
+          width: viewfinderWidth,
           height: viewfinderHeight,
           overflow: 'hidden',
           backgroundColor: 'black',
@@ -342,8 +362,8 @@ export const CustomCameraModal = ({
                 <View style={{
                   position: 'absolute',
                   top: viewfinderTop,
-                  left: 0,
-                  width: screenWidth,
+                  left: viewfinderLeft,
+                  width: viewfinderWidth,
                   height: viewfinderHeight,
                   overflow: 'hidden',
                   backgroundColor: 'black',
@@ -543,6 +563,13 @@ export const CustomCameraModal = ({
     </View>
   );
 };
+
+/**
+ * What the bottom bar needs before the shutter starts being clipped: the zoom pills
+ * (36 + 24 padding), the shutter row (76 + 5 margin) and the section's own padding
+ * (12 + 12 + 20). Measured from the styles below — keep the two in step.
+ */
+const BOTTOM_CONTROLS_MIN_HEIGHT = 200;
 
 const styles = StyleSheet.create({
   container: {

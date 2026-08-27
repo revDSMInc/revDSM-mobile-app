@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TextInput } from 'react-native';
+import { NUMBER_PAD_KEYBOARD } from '../../../utils/keyboard-type';
 
 interface InputFieldProps {
   label?: string;
@@ -24,7 +25,8 @@ export function InputField({ label, placeholder, value, onChange, unit, editable
       <View className="relative">
         <TextInput
           className="h-12 bg-white rounded-2xl border-2 border-slate-100 px-5 text-[12px] font-black text-black"
-          keyboardType="number-pad"
+          keyboardType={NUMBER_PAD_KEYBOARD}
+          returnKeyType="done"
           placeholder={placeholder || '0'}
           value={value != null ? String(value) : ''}
           onChangeText={onChange}

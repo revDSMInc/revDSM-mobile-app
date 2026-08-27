@@ -30,6 +30,7 @@ import RNFlashMessage from 'react-native-flash-message';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { format } from 'date-fns';
 import { logEvent } from '../../../services/api/LoggerService';
+import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 
 interface Props {
   visible: boolean;
@@ -804,7 +805,8 @@ export default function LeadCreateModal({
                     value={form.lfLeadId}
                     onChangeText={(t) => setForm({ ...form, lfLeadId: t })}
                     placeholder="Enter ID"
-                    keyboardType="numeric"
+                    keyboardType={NUMERIC_KEYBOARD}
+                    returnKeyType="done"
                     onFocus={() => {
                       scrollViewRef.current?.scrollTo({ y: lfSyncBoxY, animated: true });
                     }}
