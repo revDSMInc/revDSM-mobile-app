@@ -8,9 +8,10 @@ import {
   ActivityIndicator,
   Pressable,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { EDGE_TO_EDGE_MODAL, footerBottomPadding } from '../../../utils/installer-insets';
 
 export type ConfirmTone = 'primary' | 'danger';
 
@@ -194,6 +195,7 @@ export function ConfirmActionModal({
         visible={visible}
         transparent
         animationType="slide"
+        {...EDGE_TO_EDGE_MODAL}
         // Ignore the hardware back button mid-request, so the action can't be left in
         // an unknown state from the installer's point of view.
         onRequestClose={submitting ? undefined : onCancel}
@@ -211,9 +213,11 @@ export function ConfirmActionModal({
               backgroundColor: isDark ? colors.surface : colors.background,
               borderTopLeftRadius: 24,
               borderTopRightRadius: 24,
-              // Clears the home indicator / nav bar — the confirm button is the last
-              // thing in here and must not sit under it.
-              paddingBottom: insets.bottom + 16,
+              // Clears the system bar the sheet now paints UNDER (`EDGE_TO_EDGE_MODAL` on the
+              // Modal above). The bar overlays this padding rather than sitting below it, so what
+              // the installer SEES under the last button is the same on a 3-button bar, a gesture
+              // pill and an iOS home indicator alike.
+              paddingBottom: footerBottomPadding(insets.bottom),
             }}
           >
             {/* Grabber — the app's established sheet affordance (see the phone-actions
