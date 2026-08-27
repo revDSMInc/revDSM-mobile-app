@@ -111,18 +111,17 @@ interface Props {
 }
 
 /**
- * The header's "Paper Fallback" pill — HIDDEN by request.
+ * The header's "Paper Fallback" pill — SHOWN again, by request.
  *
- * ⚠️ It was the last entry point to the document scanner in this step (the result
- * screen's own Scan button was removed earlier), so with this off the certificate can
- * only be signed on the device. Pages scanned before that still display, and can still
- * be deleted, from the result screen.
+ * ⚠️ It is the ONLY entry point to the document scanner in this step — the result
+ * screen's own Scan button was removed earlier and stays removed — so turning this
+ * back off means the certificate can only be signed on the device.
  *
- * Kept as a flag rather than deleted: the whole scan path — `onPaperFallback` here,
- * `startScan` and the page grid in `CoCStep` — is intact behind it, so putting the
- * button back is this one boolean.
+ * Kept as a flag rather than inlined: the whole scan path — `onPaperFallback` here,
+ * `startScan` and the page grid in `CoCStep` — hangs off it, so switching the button
+ * off (or on again) is this one boolean.
  */
-const SHOW_PAPER_FALLBACK = false;
+const SHOW_PAPER_FALLBACK = true;
 
 const two = (n: number) => n.toString().padStart(2, '0');
 
