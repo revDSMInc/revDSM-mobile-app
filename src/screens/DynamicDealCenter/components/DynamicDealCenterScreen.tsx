@@ -424,6 +424,9 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         dealCenterData={consolidatedDealCenterData}
         calculatorResultData={calculatorResultData}
         leadId={lead?._id || lead?.leadId || lead?.id}
+        // Read only by the job-tracker auto-add on Sale: the rep initials that
+        // build the job number, and the Lowe's admin-fee waiver.
+        lead={lead}
         // Web sends the calculator's OWN appointment id on every outcome write and names
         // it in the rollout/drop summary log. Without it the log shipped
         // `appointmentId: undefined` and the outcome fell back to the LEAD id, which is

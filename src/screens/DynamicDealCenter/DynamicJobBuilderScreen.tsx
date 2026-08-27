@@ -36,6 +36,11 @@ import {
 import { canCompleteJobBuilder, finalizeBlockedReason as computeFinalizeBlockedReason } from './utils/finalize-gate';
 import { useAuth } from '../../hooks/useAuth';
 import { logRolloutAndDropSummary } from '../../utils/activity-log/rollout-summary';
+import JobService from '../../services/api/JobService';
+import { calculateCommission } from '../../utils/calculator/commission-utils';
+import { fetchCommissionConfig } from '../../hooks/useCommissionConfig';
+import { buildJobNumber } from '../../utils/office-initials';
+import { queryClient } from '../../services/api/queryClient';
 import { isTabComplete } from '../../utils/dynamic-job-builder/engine/tab-validation';
 import { buildInitialJobState } from '../../utils/dynamic-job-builder/engine/preview-compute';
 import {
@@ -73,6 +78,11 @@ interface DynamicJobBuilderScreenProps {
     pineapple?: boolean;
   };
   leadId?: string;
+  /**
+   * The lead record. Read ONLY for the job-tracker auto-add on Sale: the rep
+   * initials that build the job number, and the Lowe's admin-fee waiver.
+   */
+  lead?: any;
   onJobComplete?: (config: any, state: any) => void;
   onGoBack?: () => void;
   // --- Deal-edit flow (web PortalDynamicJobBuilderModal) ----------------------
@@ -181,6 +191,7 @@ function DynamicJobBuilderInner({
   dealCenterData,
   calculatorResultData,
   leadId,
+  lead,
   onJobComplete,
   onGoBack,
   mode = 'new',
@@ -1394,6 +1405,75 @@ function DynamicJobBuilderInner({
         }
       }
 
+      // ── Auto-add to Job Tracker on SALE ───────────────────────────────────
+      // Web parity (TabbedCalculator.js ~L1351). Two conditions, both required:
+      // the /job-builder POST above must have RESOLVED, and the outcome must be a
+      // SALE. A Demo never files a job-tracker row.
+      //
+      // ⚠️ Non-fatal by design. The job is already submitted at this point, so a
+      // job-tracker failure must never surface as a failed build or block
+      // navigation - it is caught and logged, exactly as the legacy JobBuilder
+      // screen does.
+      if (isSale && leadId) {
+        try {
+          const scheduleTime: any = (jobState as any)?.scheduleTime || {};
+          const isTBD = !scheduleTime.date || scheduleTime.date === 'TBD';
+
+          const rawPrice =
+            parseFloat(String(rd.contractPrice ?? rd.originalContractPrice ?? 0).replace(/,/g, '')) ||
+            0;
+          const pmMethod = rd.balancePaymentMethod || rd.downPaymentMethod || rd.paymentMethod || '';
+
+          // RETAIL is the calculator line-item sum (totals.retail = the same
+          // Sum(qty x price.retail) web reads via getSchemaRetailPrice). It is NOT a
+          // markup figure: those already bake in the $500 admin fee, which the tier
+          // thresholds add again.
+          const retailPrice = Number((lfCalculatorDoc as any)?.totals?.retail) || 0;
+
+          // Split jobs blend the bank fee dollar-weighted: the down payment rides on
+          // the down-payment method, the balance on the balance method.
+          const downPaymentAmt = parseFloat(String(rd.downPayment ?? 0).replace(/,/g, '')) || 0;
+          const payments = [
+            { amount: downPaymentAmt, method: rd.downPaymentMethod || rd.paymentMethod || pmMethod },
+            { amount: Math.max(0, rawPrice - downPaymentAmt), method: pmMethod },
+          ];
+
+          // Cached after the first read; null on any failure, which falls back to the
+          // legacy ladder rather than blocking the submit.
+          const commissionConfig = await fetchCommissionConfig(queryClient);
+
+          const commissionResult = calculateCommission(rawPrice, pmMethod, {
+            config: commissionConfig,
+            retailPrice,
+            payments,
+            // Lowe's leads carry no admin fee.
+            adminFeeOverride: lead?.lowesLead === true ? 0 : null,
+          });
+
+          await JobService.createJob({
+            jobNumber: buildJobNumber(lead?.assignedRepDetails || {}, lead?.leadId || leadId),
+            salesPrice: rawPrice,
+            paymentMethod: pmMethod,
+            installDate: isTBD ? null : scheduleTime.date || null,
+            soldDate: new Date().toISOString(),
+            toBeDetermined: isTBD,
+            commission: commissionResult.amount,
+            retailPrice,
+            commissionTierId: commissionResult.details.tierId,
+            commissionConfigUpdatedAt: commissionResult.details.configUpdatedAt,
+            appointmentId: (lfCalculatorDoc as any)?.appointmentId || appointmentId || undefined,
+            calculatorId: submitCalculatorId || undefined,
+            leadId,
+            isManual: false,
+          } as any);
+        } catch (jobTrackerError: any) {
+          console.warn(
+            '[DynamicJobBuilder] job tracker auto-add failed:',
+            jobTrackerError?.message || jobTrackerError
+          );
+        }
+      }
+
       // Web parity: mark the lead's timeline milestones complete now that the job is
       // built. The web static flow does this in two steps — result-lead-modal.js:3189
       // sets `leadResulted: "completed"` and job-builder-modal.js:2980 sets
@@ -1429,7 +1509,7 @@ function DynamicJobBuilderInner({
     } finally {
       setIsSaving(false);
     }
-  }, [jobState, initialConfig, calculatorResultData, leadId, calcId, dealCenterData, isSale, onJobComplete, canComplete, activityLog, isEdit, appointmentId, authUser, resolveLfCalculatorDoc, allCalculators]);
+  }, [jobState, initialConfig, calculatorResultData, leadId, calcId, dealCenterData, isSale, onJobComplete, canComplete, activityLog, isEdit, appointmentId, authUser, resolveLfCalculatorDoc, allCalculators, lead]);
 
   // Persist a generated/scanned agreement or order-sheet. Web parity
   // (TabbedCalculator outcomePayload): the base64 PDFs go at the TOP LEVEL of the
