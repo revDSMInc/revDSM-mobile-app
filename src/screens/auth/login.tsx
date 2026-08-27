@@ -198,7 +198,7 @@ export default function LoginScreen() {
           >
             <View className="flex-1 justify-center px-6">
               <Text className="text-2xl font-semibold mb-8" style={{ color: colors.text }}>
-                Sign in to <Text style={{ color: colors.primary.main }}>rev</Text>DSM
+                Sign in to <Text className="text-2xl font-semibold mb-8"  style={{ color: colors.primary.main }}>rev</Text>DSM
               </Text>
                <CustomInput
                 ref={emailRef}

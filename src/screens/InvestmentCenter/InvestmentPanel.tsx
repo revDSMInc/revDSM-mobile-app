@@ -41,6 +41,7 @@ import {
   logInvestmentPaymentMethodSelected,
   logInvestmentDownPaymentChanged,
 } from '../../utils/activity-log/investment-center-log';
+import { NUMERIC_KEYBOARD } from '../../utils/keyboard-type';
 
 /**
  * One calculator's Investment Center panel (web parity: `investment-panel.js`),
@@ -548,7 +549,8 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           onBlur={commit}
           placeholder="Add Down Payment"
           placeholderTextColor="#94A3B8"
-          keyboardType="numeric"
+          keyboardType={NUMERIC_KEYBOARD}
+          returnKeyType="done"
           editable={!isLeadSold}
         />
         {dp > 0 && !isLeadSold && (

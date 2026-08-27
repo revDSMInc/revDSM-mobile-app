@@ -12,6 +12,7 @@ import { unitSuffix, labelWithSection } from '../utils/item-format';
 import { describeFullPackage } from '../utils/tab-naming';
 import { FullPackageTitle, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
+import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 
 /**
  * The full **Result Lead** outcome modal — a faithful port of the regular deal
@@ -202,7 +203,8 @@ function MoneyField({ label, value, onChange, editable = true }: {
           onChangeText={(t) => onChange?.(t.replace(/[^0-9.]/g, ''))}
           placeholder="0.00"
           placeholderTextColor="#919EAB"
-          keyboardType="numeric"
+          keyboardType={NUMERIC_KEYBOARD}
+          returnKeyType="done"
         />
       </View>
     </View>

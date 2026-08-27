@@ -18,6 +18,19 @@ export const isDraftApproved = (draft: any): boolean => {
   return s === 'accepted' || s === 'signed' || s === 'approved';
 };
 
+/**
+ * Cancelled on the PORTAL after it was raised. Terminal: unlike a pending addendum this
+ * will never gain a PDF, so the surfaces that offer one have to say so differently.
+ *
+ * ⚠️ Both spellings are accepted. The lead's own result status is `cancelled`
+ * (`DealBanners`), but the funding backend already sends the single-l `canceled` for its
+ * own terminal states, so a draft arriving either way must not silently read as pending.
+ */
+export const isDraftCancelled = (draft: any): boolean => {
+  const s = String(draft?.status || '').toLowerCase();
+  return s === 'cancelled' || s === 'canceled';
+};
+
 /** Awaiting the customer's signature. */
 export const isPendingDraft = (draft: any): boolean =>
   String(draft?.status || '').toLowerCase() === 'pending';

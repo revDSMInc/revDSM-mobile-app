@@ -22,6 +22,7 @@ import type { RootStackParamList } from '../../navigation';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { AuthService } from '../../services/api/auth';
 import { validatePassword } from '../../utils/validation';
+import { NUMBER_PAD_KEYBOARD } from '../../utils/keyboard-type';
 
 export default function ResetPasswordScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -222,7 +223,8 @@ export default function ResetPasswordScreen() {
                     value={digit}
                     onChangeText={(text) => handleOtpChange(text, i)}
                     onKeyPress={(e) => handleOtpKeyPress(e, i)}
-                    keyboardType="number-pad"
+                    keyboardType={NUMBER_PAD_KEYBOARD}
+                    returnKeyType="done"
                     maxLength={1}
                     selectTextOnFocus
                   />

@@ -18,6 +18,7 @@ import { LeadService } from '../../services/api/leads';
 import { useAuth } from '../../hooks/useAuth';
 import { formatUSPhoneNumber } from '../../utils/phone-util';
 import { logEvent } from '../../services/api/LoggerService';
+import { NUMERIC_KEYBOARD } from '../../utils/keyboard-type';
 
 interface ReferralModalProps {
   visible: boolean;
@@ -367,7 +368,8 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
                       value={form.zipCode} 
                       onChangeText={(t: string) => setForm({...form, zipCode: t})}
                       placeholder="Zip Code"
-                      keyboardType="numeric"
+                      keyboardType={NUMERIC_KEYBOARD}
+                      returnKeyType="done"
                       isDark={isDark}
                       editable={!isViewMode}
                     />

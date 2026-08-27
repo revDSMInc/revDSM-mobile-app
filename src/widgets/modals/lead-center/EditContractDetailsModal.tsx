@@ -25,6 +25,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
 import { getCalculationResult } from '../../../utils/calculator/calculator-calculation';
 import { calculateMarkupLabel } from '../../../utils/activity-log/rollout-log-meta';
+import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 
 // Human-readable labels for each field — used in change logs
 const labelMap: Record<string, string> = {
@@ -1205,7 +1206,8 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
                               <TextInput
                                 value={formData.lastPriceQuoted}
                                 onChangeText={(t) => handleFieldChange('lastPriceQuoted', t)}
-                                keyboardType="numeric"
+                                keyboardType={NUMERIC_KEYBOARD}
+                                returnKeyType="done"
                                 style={{ flex: 1, fontWeight: '700', fontSize: 16, color: isDark ? '#FFF' : '#1C252E' }}
                               />
                             </View>
@@ -1231,7 +1233,8 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
                               <TextInput
                                 value={formData.originalContractPrice}
                                 onChangeText={(t) => handleFieldChange('originalContractPrice', t)}
-                                keyboardType="numeric"
+                                keyboardType={NUMERIC_KEYBOARD}
+                                returnKeyType="done"
                                 style={{ flex: 1, fontWeight: '700', fontSize: 16, color: isDark ? '#FFF' : '#1C252E' }}
                               />
                             </View>
@@ -1248,7 +1251,8 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
                                 <TextInput
                                   value={formData.downPayment}
                                   onChangeText={(t) => handleFieldChange('downPayment', t)}
-                                  keyboardType="numeric"
+                                  keyboardType={NUMERIC_KEYBOARD}
+                                  returnKeyType="done"
                                   style={{ flex: 1, fontWeight: '700', fontSize: 14, color: isDark ? '#FFF' : '#1C252E' }}
                                 />
                               </View>

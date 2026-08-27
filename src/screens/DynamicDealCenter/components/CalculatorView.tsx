@@ -20,6 +20,7 @@ import { withPlanFee, type DealPlan } from '../hooks/useDealPricing';
 import { describeFullPackage } from '../utils/tab-naming';
 import { FullPackageTitle, FullPackageInfoModal, type PackageAnchorRect } from './FullPackageBadge';
 import { useAuth } from '../../../hooks/useAuth';
+import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 
 interface CalculatorTabLite {
   id: string;
@@ -177,7 +178,8 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
           onBlur={() => setFocused(false)}
           placeholder=""
           placeholderTextColor="#919EAB"
-          keyboardType="numeric"
+          keyboardType={NUMERIC_KEYBOARD}
+          returnKeyType="done"
         />
         {/* Right block: green retail PRICE with the measurement unit joined by a
             slash — "$650/unit" (web `dynamic-field.js` parity). A unit-less field
