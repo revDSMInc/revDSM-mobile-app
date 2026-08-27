@@ -4,19 +4,28 @@ import {
   View,
   Text,
   TouchableOpacity,
-  ScrollView,
   TextInput,
   ActivityIndicator,
-  Platform,
   StyleSheet,
-  Alert,
-  KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  KeyboardAwareScrollView,
+} from 'react-native-keyboard-controller';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { LeadService } from '../../../services/api/leads';
 import { useAuth } from '../../../hooks/useAuth';
+import {
+  canSendToSigners,
+  signerContactError,
+  signerEditError,
+  signerEmailError,
+  signerHasContact,
+  signerPhoneError,
+} from '../../../utils/remote-signer-contact';
 // The backend records a server-side audit of the remote session (REVDSM-263), but the
 // portal timeline renders `user-activity-log` rows — so we ALSO fire client logs for the
 // rep's remote-signing actions (send / resend / recipient edit / cancel) so they show up
@@ -137,6 +146,36 @@ const buildSigners = (customerDetails: any): Signer[] => {
   return [buyer, ...coBuyers];
 };
 
+/**
+ * The sheet's own dialog, in place of `Alert.alert`.
+ *
+ * A native alert is drawn by the OS: a white card with a blue/green system tint, no
+ * dark-mode awareness and none of the app's shape language. This sheet is otherwise
+ * fully themed, so a send would end on the one surface that looked like it belonged to
+ * a different app.
+ */
+type DialogTone = 'success' | 'warning' | 'error' | 'confirm';
+
+interface SheetDialog {
+  tone: DialogTone;
+  title: string;
+  message: string;
+  /** Defaults to 'OK'. */
+  confirmText?: string;
+  /** Present ⇒ a two-button dialog. Absent ⇒ a single acknowledgement. */
+  cancelText?: string;
+  /** Paints the confirm action red (the `Alert` `style: 'destructive'` arm). */
+  destructive?: boolean;
+  onConfirm?: () => void;
+}
+
+const DIALOG_TONES: Record<DialogTone, { icon: string; color: string; bgLight: string }> = {
+  success: { icon: 'check-circle-outline', color: '#4CBB17', bgLight: '#ECFDF5' },
+  warning: { icon: 'alert-circle-outline', color: '#F59E0B', bgLight: '#FFF8E6' },
+  error: { icon: 'close-circle-outline', color: '#FF5630', bgLight: '#FFF1F0' },
+  confirm: { icon: 'help-circle-outline', color: '#FF5630', bgLight: '#FFF1F0' },
+};
+
 const STATUS_META: Record<string, { label: string; color: string; bg: string; icon: string }> = {
   sent: { label: 'Sent', color: '#B45309', bg: '#FEF3C7', icon: 'send-outline' },
   viewed: { label: 'Viewed', color: '#1D4ED8', bg: '#DBEAFE', icon: 'eye-outline' },
@@ -173,6 +212,18 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
   const [editing, setEditing] = useState<{ signerId: string; field: 'phone' | 'email'; value: string } | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [resendingId, setResendingId] = useState<string | null>(null);
+
+  // One dialog at a time, exactly like `Alert.alert` — a second `setDialog` replaces
+  // the first rather than stacking.
+  const [dialog, setDialog] = useState<SheetDialog | null>(null);
+
+  // The dialog is CENTRED and, unlike the sheet, is not inside the KeyboardAvoidingView
+  // (it is a sibling, so it covers the sheet rather than being shrunk with it). An open
+  // keypad would therefore sit over its buttons — a native alert dismisses the keyboard
+  // for us, so do the same.
+  useEffect(() => {
+    if (dialog) Keyboard.dismiss();
+  }, [dialog]);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -262,8 +313,10 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
     setSigners((prev) => prev.map((s) => (s.index === index ? { ...s, ...patch } : s)));
   };
 
-  const signerHasContact = (s: Signer) => digitsOnly(s.phone).length > 0 || s.email.trim().length > 0;
-  const canSend = signers.length > 0 && signers.every(signerHasContact);
+  // Reachability AND format both gate the button, so it can never be enabled over a
+  // half-typed number or an email like `asdsdas` (which the server accepts and then
+  // silently cannot deliver to). Rules live in `utils/remote-signer-contact`.
+  const canSend = canSendToSigners(signers);
 
   // ── Send ─────────────────────────────────────────────────────────────────────
   // `POST /agreement/:leadId/send-remote` with `{ signers: [{ coBuyerIndex, phone,
@@ -271,7 +324,12 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
   // signer and files the signed PDF once all have signed. Audit is server-side.
   const handleSend = async () => {
     if (!canSend) {
-      Alert.alert('Missing contact', 'Each signer needs a phone number or an email address.');
+      const firstProblem = signers.map(signerContactError).find(Boolean);
+      setDialog({
+        tone: 'warning',
+        title: 'Check the recipients',
+        message: firstProblem || 'Each signer needs a phone number or an email address.',
+      });
       return;
     }
     setSending(true);
@@ -319,20 +377,24 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
       if (undelivered.length) {
         // Stay on the pending panel so the rep can fix the bad phone/email and resend.
         const names = undelivered.map((r) => r?.name || 'a signer').join(', ');
-        Alert.alert('Sent — with issues', `Couldn't reach: ${names}. Fix their phone/email below and resend.`);
+        setDialog({
+          tone: 'warning',
+          title: 'Sent — with issues',
+          message: `Couldn't reach: ${names}. Fix their phone/email below and resend.`,
+        });
       } else {
         // Fully delivered — close the whole agreement stack and land on the summary,
         // which now shows "Pending Customer Signature". (Inlines handleSent using the
         // freshly-normalized `next` so it doesn't depend on the async `agreement` state.)
-        Alert.alert('Sent', 'The agreement was sent for remote signature.', [
-          {
-            text: 'OK',
-            onPress: () => {
-              if (onSent) onSent(next?.agreementId);
-              else onClose();
-            },
+        setDialog({
+          tone: 'success',
+          title: 'Sent',
+          message: 'The agreement was sent for remote signature.',
+          onConfirm: () => {
+            if (onSent) onSent(next?.agreementId);
+            else onClose();
           },
-        ]);
+        });
       }
     } catch (err: any) {
       // 409 = an agreement is already out. Load it so the rep can resend / edit /
@@ -341,9 +403,18 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
       const msg = String(err?.message || err?.response?.data?.message || '');
       if (code === 409 || /already/i.test(msg)) {
         await refreshStatus({ showSpinner: true });
-        Alert.alert('Already sent', 'This agreement is already out for signature — resend, edit a recipient, or cancel it below.');
+        setDialog({
+          tone: 'warning',
+          title: 'Already sent',
+          message:
+            'This agreement is already out for signature — resend, edit a recipient, or cancel it below.',
+        });
       } else {
-        Alert.alert('Error', msg || 'Could not send the agreement. Please try again.');
+        setDialog({
+          tone: 'error',
+          title: 'Error',
+          message: msg || 'Could not send the agreement. Please try again.',
+        });
       }
     } finally {
       setSending(false);
@@ -393,9 +464,17 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
           }).catch(() => {});
         }
       }
-      Alert.alert('Sent', patch ? 'Recipient updated and link resent.' : 'Link resent.');
+      setDialog({
+        tone: 'success',
+        title: 'Sent',
+        message: patch ? 'Recipient updated and link resent.' : 'Link resent.',
+      });
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Could not resend. Please try again.');
+      setDialog({
+        tone: 'error',
+        title: 'Error',
+        message: err?.message || 'Could not resend. Please try again.',
+      });
     } finally {
       setResendingId(null);
     }
@@ -417,12 +496,15 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
       editing.field === 'phone'
         ? { phone: digitsOnly(editing.value) }
         : { email: editing.value.trim() };
-    if (editing.field === 'phone' && !patch.phone) {
-      Alert.alert('Invalid phone', 'Enter a valid 10-digit phone number.');
-      return;
-    }
-    if (editing.field === 'email' && !patch.email) {
-      Alert.alert('Invalid email', 'Enter a valid email address.');
+    // ⚠️ The old check was `!patch.phone` / `!patch.email` — EMPTINESS only, so `221`
+    // and `asdsdas` both saved and were resent to a destination that cannot receive.
+    const editError = signerEditError(editing.field, editing.value);
+    if (editError) {
+      setDialog({
+        tone: 'warning',
+        title: editing.field === 'phone' ? 'Invalid phone' : 'Invalid email',
+        message: editError,
+      });
       return;
     }
     setSavingEdit(true);
@@ -437,12 +519,15 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
   // Cancel the whole request (voids every outstanding link) → back to compose.
   const handleCancel = () => {
     if (!agreement) return;
-    Alert.alert('Cancel request?', 'This voids every outstanding signing link for this agreement.', [
-      { text: 'Keep', style: 'cancel' },
-      {
-        text: 'Cancel Request',
-        style: 'destructive',
-        onPress: async () => {
+    setDialog({
+      tone: 'confirm',
+      title: 'Cancel request?',
+      message: 'This voids every outstanding signing link for this agreement.',
+      cancelText: 'Keep',
+      confirmText: 'Cancel Request',
+      destructive: true,
+      onConfirm: () => {
+        void (async () => {
           try {
             const cancelledId = agreement.agreementId;
             await LeadService.cancelAgreementRemote(cancelledId);
@@ -454,11 +539,15 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
             setSigners(buildSigners(customerDetails));
             setPhase('compose');
           } catch (err: any) {
-            Alert.alert('Error', err?.message || 'Could not cancel. Please try again.');
+            setDialog({
+              tone: 'error',
+              title: 'Error',
+              message: err?.message || 'Could not cancel. Please try again.',
+            });
           }
-        },
+        })();
       },
-    ]);
+    });
   };
 
   const handleDone = () => {
@@ -531,7 +620,13 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
         </Text>
       </View>
 
-      {signers.map((s) => (
+      {signers.map((s) => {
+        // Computed per render from the live value, so the message appears as the rep
+        // types and clears itself the moment the field is complete.
+        const phoneError = signerPhoneError(s.phone);
+        const emailError = signerEmailError(s.email);
+        const errBorder = '#FF5630';
+        return (
         <View
           key={`${s.role}-${s.index}`}
           style={[styles.signerCard, { backgroundColor: isDark ? '#FFFFFF08' : '#F9FAFB', borderColor: isDark ? '#FFFFFF12' : '#EEF1F4' }]}
@@ -550,9 +645,10 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
             </Text>
           )}
 
-          {/* Phone */}
+          {/* Phone. The field renders a STATIC +1, so it holds the LOCAL ten only -
+              maxLength 14 is "(XXX) XXX-XXXX", the mask formatLocalPhone produces. */}
           <Text style={styles.fieldLabel}>Phone Number</Text>
-          <View style={[styles.inputRow, { borderColor: isDark ? '#FFFFFF20' : '#919EAB33', backgroundColor: isDark ? '#FFFFFF05' : '#FFFFFF' }]}>
+          <View style={[styles.inputRow, { borderColor: phoneError ? errBorder : isDark ? '#FFFFFF20' : '#919EAB33', backgroundColor: isDark ? '#FFFFFF05' : '#FFFFFF' }]}>
             <Text style={[styles.prefix, { color: isDark ? '#FFFFFF80' : '#637381' }]}>+1</Text>
             <TextInput
               value={s.phone}
@@ -560,14 +656,16 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
               placeholder="(555) 123-4567"
               placeholderTextColor="#919EAB"
               keyboardType="phone-pad"
+              maxLength={14}
               style={[styles.inputText, { color: titleColor }]}
               editable={!sending}
             />
           </View>
+          {!!phoneError && <Text style={styles.fieldError}>{phoneError}</Text>}
 
           {/* Email */}
           <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Email Address</Text>
-          <View style={[styles.inputRow, { borderColor: isDark ? '#FFFFFF20' : '#919EAB33', backgroundColor: isDark ? '#FFFFFF05' : '#FFFFFF' }]}>
+          <View style={[styles.inputRow, { borderColor: emailError ? errBorder : isDark ? '#FFFFFF20' : '#919EAB33', backgroundColor: isDark ? '#FFFFFF05' : '#FFFFFF' }]}>
             <Icon name="email-outline" size={16} color="#637381" style={{ marginRight: 8 }} />
             <TextInput
               value={s.email}
@@ -576,16 +674,21 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
               placeholderTextColor="#919EAB"
               keyboardType="email-address"
               autoCapitalize="none"
+              autoCorrect={false}
               style={[styles.inputText, { color: titleColor }]}
               editable={!sending}
             />
           </View>
+          {!!emailError && <Text style={styles.fieldError}>{emailError}</Text>}
 
+          {/* Kept as its own line rather than folded into the two above: a signer with
+              NEITHER field filled has nothing to correct in either one. */}
           {!signerHasContact(s) && (
             <Text style={styles.contactWarn}>Add a phone or email to send this signer a link.</Text>
           )}
         </View>
-      ))}
+        );
+      })}
 
       <View style={{ gap: 10, marginTop: 8 }}>
         <TouchableOpacity
@@ -624,6 +727,9 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
       {pendingRows.map(({ st, roleLabel, name }) => {
         const meta = STATUS_META[String(st.status || 'sent').toLowerCase()] || STATUS_META.sent;
         const isEditingThis = editing?.signerId === st.signerId;
+        // An EMPTY value IS an error in this editor, unlike the compose fields above:
+        // saving here also RESENDS, so it is always answering "where do we send this?".
+        const editError = editing && isEditingThis ? signerEditError(editing.field, editing.value) : '';
         return (
           <View
             key={st.signerId}
@@ -653,8 +759,9 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
 
             {/* Inline editor */}
             {isEditingThis ? (
+              <View>
               <View style={styles.editRow}>
-                <View style={[styles.inputRow, { flex: 1, borderColor: isDark ? '#FFFFFF20' : '#919EAB33', backgroundColor: isDark ? '#FFFFFF05' : '#FFFFFF' }]}>
+                <View style={[styles.inputRow, { flex: 1, borderColor: editError ? '#FF5630' : isDark ? '#FFFFFF20' : '#919EAB33', backgroundColor: isDark ? '#FFFFFF05' : '#FFFFFF' }]}>
                   {editing!.field === 'phone' && (
                     <Text style={[styles.prefix, { color: isDark ? '#FFFFFF80' : '#637381' }]}>+1</Text>
                   )}
@@ -677,9 +784,15 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
                 <TouchableOpacity onPress={() => setEditing(null)} disabled={savingEdit} style={styles.iconBtnGhost}>
                   <Icon name="close" size={18} color="#637381" />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={saveEdit} disabled={savingEdit} style={[styles.iconBtnSolid, { backgroundColor: '#4CBB17' }]}>
-                  {savingEdit ? <ActivityIndicator size="small" color="white" /> : <Icon name="check" size={18} color="white" />}
+                <TouchableOpacity
+                  onPress={saveEdit}
+                  disabled={savingEdit || !!editError}
+                  style={[styles.iconBtnSolid, { backgroundColor: editError ? '#919EAB33' : '#4CBB17' }]}
+                >
+                  {savingEdit ? <ActivityIndicator size="small" color="white" /> : <Icon name="check" size={18} color={editError ? '#919EABCC' : 'white'} />}
                 </TouchableOpacity>
+              </View>
+              {!!editError && <Text style={styles.fieldError}>{editError}</Text>}
               </View>
             ) : (
               String(st.status || '').toLowerCase() !== 'signed' && (
@@ -742,27 +855,95 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
     </>
   );
 
+  // ─── Render: DIALOG ──────────────────────────────────────────────────────────
+  // An in-sheet OVERLAY, deliberately not its own <Modal>: this sheet is already the
+  // third native modal in the stack (dialog -> signature modal -> here), and stacked
+  // native modals are unreliable on both platforms - the same reason the funding
+  // flow's SendLinkModal and FullPackageInfoOverlay are overlays. Rendered as the LAST
+  // child of the Modal's full-screen root, so it covers the sheet and takes its taps.
+  const renderDialog = () => {
+    if (!dialog) return null;
+    const tone = DIALOG_TONES[dialog.tone] || DIALOG_TONES.success;
+    const confirmColor = dialog.destructive ? '#FF5630' : '#4CBB17';
+    const dismiss = () => setDialog(null);
+    return (
+      <View style={styles.dialogScrim}>
+        <View style={[styles.dialogCard, { backgroundColor: sheetBg }]}>
+          <View style={[styles.dialogIcon, { backgroundColor: isDark ? `${tone.color}20` : tone.bgLight }]}>
+            <Icon name={tone.icon} size={34} color={tone.color} />
+          </View>
+          <Text style={[styles.dialogTitle, { color: titleColor }]}>{dialog.title}</Text>
+          <Text style={styles.dialogMessage}>{dialog.message}</Text>
+
+          {/* One button or two. A two-button dialog puts the dismissive action FIRST,
+              matching the Cancel/Send pairing the compose panel already uses. */}
+          <View style={styles.dialogActions}>
+            {!!dialog.cancelText && (
+              <TouchableOpacity
+                onPress={dismiss}
+                style={[styles.dialogCancelBtn, { borderColor: isDark ? '#FFFFFF20' : '#E2E8F0' }]}
+              >
+                <Text style={styles.cancelText}>{dialog.cancelText}</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              onPress={() => {
+                // Clear FIRST, then run the action: `onConfirm` can open a dialog of its
+                // own (the cancel-request failure path), which a later clear would eat.
+                dismiss();
+                dialog.onConfirm?.();
+              }}
+              style={[styles.dialogConfirmBtn, { backgroundColor: confirmColor }]}
+            >
+              <Text style={[styles.primaryBtnText, { color: 'white' }]}>
+                {dialog.confirmText || 'OK'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
-      >
+    // Android back closes the DIALOG when one is up, not the whole sheet underneath it
+    // - a native alert swallows the back press the same way.
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={() => (dialog ? setDialog(null) : onClose())}
+    >
+      {/* Both keyboard components come from `react-native-keyboard-controller`, NOT
+          React Native's own. `KeyboardProvider` (App.tsx) puts the app EDGE-TO-EDGE,
+          after which Android stops resizing the window, so RN's KeyboardAvoidingView
+          had nothing to react to and this bottom sheet stayed pinned under the keypad.
+          The controller reads the keyboard height directly, and its context crosses the
+          Modal boundary (this sheet is three modals deep) the same way
+          `useSafeAreaInsets` does.
+
+          BOTH layers are needed. The sheet is anchored to the BOTTOM of the screen, so
+          scrolling alone cannot help - "above the keyboard" is outside the card.
+          `KeyboardAvoidingView` shrinks the sheet into the space that is left, and
+          `KeyboardAwareScrollView` then brings the focused phone/email field into that
+          space (the co-buyer rows sit at the bottom of a long list). */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         <View style={styles.overlay}>
           <View style={[styles.sheetCard, { backgroundColor: sheetBg }]}>
-            <ScrollView
+            <KeyboardAwareScrollView
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
+              bottomOffset={24}
               contentContainerStyle={{ padding: 24, paddingBottom: Math.max(insets.bottom, 24) }}
             >
               {phase === 'compose' && renderCompose()}
               {phase === 'pending' && renderPending()}
               {phase === 'done' && renderDone()}
-            </ScrollView>
+            </KeyboardAwareScrollView>
           </View>
         </View>
       </KeyboardAvoidingView>
+      {renderDialog()}
     </Modal>
   );
 };
@@ -806,6 +987,7 @@ const styles = StyleSheet.create({
   prefix: { fontWeight: '700', marginRight: 6, fontSize: 14, includeFontPadding: false },
   inputText: { flex: 1, fontSize: 14, fontWeight: '600' },
   contactWarn: { fontSize: 11, color: '#FF5630', fontWeight: '700', marginTop: 8 },
+  fieldError: { fontSize: 11, color: '#FF5630', fontWeight: '700', marginTop: 6 },
 
   recipientLine: { fontSize: 12.5, color: '#637381', marginTop: 8, fontWeight: '600' },
 
@@ -829,6 +1011,43 @@ const styles = StyleSheet.create({
   primaryBtn: { height: 54, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   primaryBtnText: { fontWeight: '900', fontSize: 14, letterSpacing: 0.3 },
   cancelBtn: { height: 50, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+
+  // The themed dialog (replaces `Alert.alert`).
+  dialogScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15,23,42,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+  },
+  dialogCard: { width: '100%', maxWidth: 400, borderRadius: 24, padding: 24, alignItems: 'center' },
+  dialogIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  dialogTitle: { fontSize: 17, fontWeight: '900', textAlign: 'center' },
+  dialogMessage: {
+    fontSize: 13,
+    color: '#637381',
+    textAlign: 'center',
+    lineHeight: 19,
+    marginTop: 6,
+    marginBottom: 20,
+  },
+  dialogActions: { flexDirection: 'row', gap: 10, alignSelf: 'stretch' },
+  dialogCancelBtn: {
+    flex: 1,
+    height: 50,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dialogConfirmBtn: { flex: 1, height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   cancelText: { fontWeight: '700', color: '#637381', fontSize: 14 },
 
   doneWrap: { alignItems: 'center', paddingVertical: 24 },
