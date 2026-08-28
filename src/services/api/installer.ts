@@ -475,6 +475,7 @@ const PHASE_ARRAY_KEY: Record<InstallerImagePhase, string> = {
   post: 'installerPostInstallPhotos',
   return: 'installerReturnPhotos',
   coc: 'installerCocPhotos',
+  cocPaperFallback: 'installerCocPhotos',
   result: 'installerResultPhotos',
 };
 

@@ -2333,6 +2333,29 @@ Verified with 6 tests driving the real helpers for this canvas's geometry: the a
 already-panned state. tsc 44 (baseline unchanged); `DraggableText` and `ImageAnnotation/index.tsx`
 identical to HEAD, `AnnotationCanvas` +1 `react-native/no-inline-styles`.
 
+### CoC Paper Fallback scans upload under `phase: 'cocPaperFallback'`
+
+Ticket: the paper-fallback upload should use `PUT /installer/v1/{jobId}/images` with
+`phase=cocPaperFallback`. The endpoint and method were already right (`IMAGE_UPLOAD_METHOD` is
+`'put'`), so the whole change is the phase.
+
+- `'cocPaperFallback'` added to `InstallerImagePhase` (`config/types/installer.ts`) and to
+  `PHASE_ARRAY_KEY` (`services/api/installer.ts`), where it maps to **`installerCocPhotos`** — the
+  array `installer-hydrate` already reads, so a scanned page still comes back onto the step.
+  `InstallerDeletePhase` is derived from the union, so the delete route inherits it (no CoC delete
+  call site exists today).
+- `useInstallerPhotoUpload.uploadCoc` sends the new phase; **`uploadCocSignature` stays on `'coc'`**.
+  That split is the point of the ticket: the phase is now what tells a SCANNED paper certificate from
+  one SIGNED on the device. Both still send `subcategory: 'coc'` (`cocDescriptor` is shared), so
+  within a phase only the file distinguishes them, exactly as before.
+- ⚠️ `uploadCoc` is reached ONLY from the Paper Fallback pill — `CoCStep.startScan` has no other
+  caller (`handlePaperFallback` is its one entry point, by design: *"its only entry point is the
+  form's own Paper Fallback pill"*). That is what makes retagging the whole function safe.
+- ⚠️ **The BACKEND does not know this phase yet.** `InstallerHandler.uploadJobImages` normalises the
+  form field through a ternary chain whose fallback is **`'pre'`**, so until it learns
+  `cocpaperfallback` the scans land in `installerPreInstallPhotos` and vanish from the CoC step.
+  Ship the backend arm first, or with this.
+
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area

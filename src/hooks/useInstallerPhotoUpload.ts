@@ -176,11 +176,11 @@ export function useInstallerPhotoUpload(
   /**
   * One of the certificate's two signatures, rasterised from the on-device form.
    *
-   * Goes up the SAME way a scanned page does — `phase: 'coc'`, `subcategory: 'coc'`
-   * — because that is the payload the endpoint was given for this phase. ⚠️ It means
-   * a signature and a scanned page are indistinguishable in the stored `subcategory`;
-   * only the file itself tells them apart. The ACTIVITY LOG does record which is
-   * which, so the portal's timeline can still name them.
+   * Stays on `phase: 'coc'` — that is the certificate signed ON THE DEVICE. A scanned
+   * page of the paper certificate goes up under `cocPaperFallback` instead, which is
+   * now what tells the two apart on the server: both still carry `subcategory: 'coc'`,
+   * so within a phase only the file itself distinguishes them. The ACTIVITY LOG does
+   * record which is which, so the portal's timeline can still name them.
    */
   const uploadCocSignature = useCallback(
     (photo: CapturedPhoto, who: 'installer' | 'customer') =>
@@ -198,11 +198,17 @@ export function useInstallerPhotoUpload(
     [run]
   );
 
-  /** A scanned CoC page. */
+  /**
+   * A scanned page of the PAPER certificate.
+   *
+   * Goes up under `phase: 'cocPaperFallback'`, not `coc`: this path is only ever
+   * reached from the form's Paper Fallback pill, and the office needs the scanned
+   * document told apart from the certificate signed on the device.
+   */
   const uploadCoc = useCallback(
     (photo: CapturedPhoto, index: number) =>
       run(
-        'coc',
+        'cocPaperFallback',
         photo,
         (coords) => cocDescriptor(photo, coords),
         {

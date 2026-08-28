@@ -512,6 +512,12 @@ export type InstallerImagePhase =
   | 'post'
   | 'return'
   | 'coc'
+  /**
+   * A scanned page of the PAPER certificate — the CoC form's Paper Fallback pill.
+   * Its own phase so the office can tell a scanned document from the certificate
+   * signed on the device, which goes up under `coc`.
+   */
+  | 'cocPaperFallback'
   | 'result';
 
 /**
