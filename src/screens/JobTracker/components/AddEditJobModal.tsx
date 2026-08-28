@@ -17,6 +17,7 @@ import { format, parseISO, isValid } from 'date-fns';
 import { parseSafeISO } from '../../../utils/date-util';
 import { CustomDatePicker } from './CustomDatePicker';
 import { calculateCommission } from '../../../utils/calculator/commission-utils';
+import { useCommissionConfig } from '../../../hooks/useCommissionConfig';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
@@ -119,17 +120,29 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job, isLowesLead 
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [datePickerType, setDatePickerType] = useState<'install' | 'sold'>('install');
 
+  // The company ladder. Null while loading / unconfigured / on error, in which
+  // case calculateCommission falls back to the legacy hardcoded ladder.
+  const { commissionConfig } = useCommissionConfig();
+
   // Auto-calculate commission whenever salesPrice or paymentMethod changes
   useEffect(() => {
     // Only auto-calculate commission for calculator-originated jobs (non-manual)
     if (!formData.isManual && formData.salesPrice !== undefined && formData.paymentMethod) {
-      const comm = calculateCommission(formData.salesPrice, formData.paymentMethod);
+      const comm = calculateCommission(formData.salesPrice, formData.paymentMethod, {
+        config: commissionConfig,
+        // The job record carries the deal-center retail when the row was filed by
+        // the job-builder auto-add. Without it the ladder still applies, but its
+        // top rungs are unreachable - see commission-utils.
+        retailPrice: Number((formData as any).retailPrice) || 0,
+        adminFeeOverride: isLowesLead ? 0 : null,
+      });
       setFormData(prev => ({
         ...prev,
         commission: Math.round(comm.amount * 100) / 100
       }));
     }
-  }, [formData.salesPrice, formData.paymentMethod, formData.isManual]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.salesPrice, formData.paymentMethod, formData.isManual, (formData as any).retailPrice, commissionConfig, isLowesLead]);
 
   useEffect(() => {
     if (visible) {

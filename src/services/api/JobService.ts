@@ -10,6 +10,12 @@ export interface JobEntry {
   soldDate: string;
   toBeDetermined: boolean;
   commission: number;
+  /** Sum(qty x price.retail) from the deal center - the commission tier basis. */
+  retailPrice?: number;
+  /** Which configured tier paid this job, for audit. */
+  commissionTierId?: string | null;
+  /** Which version of the commission config paid it. */
+  commissionConfigUpdatedAt?: string | null;
   customerName?: string;
   title?: string;
   isManual: boolean;
