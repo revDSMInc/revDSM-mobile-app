@@ -4,7 +4,7 @@ import { format, isValid } from 'date-fns';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
-import { isDraftApproved } from '../../../utils/addendum-drafts';
+import { isDraftApproved, isDraftCancelled } from '../../../utils/addendum-drafts';
 
 /**
  * The deal's addendum list — a port of web `src/sections/deal/components/addendums-card.js`.
@@ -18,6 +18,10 @@ import { isDraftApproved } from '../../../utils/addendum-drafts';
 const CHIP: Record<string, { label: string; bg: string; fg: string }> = {
   pending: { label: 'Pending', bg: '#FFAB00', fg: '#1C252E' },
   declined: { label: 'Declined', bg: '#FF5630', fg: '#FFFFFF' },
+  // Same grey the unknown-status fallback was already painting — only the raw lowercase
+  // label is corrected, so a cancelled row reads like its `Accepted` siblings.
+  cancelled: { label: 'Cancelled', bg: '#919EAB29', fg: '#1C252E' },
+  canceled: { label: 'Cancelled', bg: '#919EAB29', fg: '#1C252E' },
   signed: { label: 'Signed', bg: '#22C55E', fg: '#FFFFFF' },
   accepted: { label: 'Accepted', bg: '#22C55E', fg: '#FFFFFF' },
   approved: { label: 'Approved', bg: '#22C55E', fg: '#FFFFFF' },
@@ -29,7 +33,7 @@ export const statusChipConfig = (status: any) => {
   return CHIP[s] || { label: status || 'Draft', bg: '#919EAB29', fg: '#1C252E' };
 };
 
-export type AddendumTapAction = 'ignore' | 'not-approved' | 'open-pdf';
+export type AddendumTapAction = 'ignore' | 'cancelled' | 'not-approved' | 'open-pdf';
 
 /**
  * What tapping an addendum row does. Pure so the guards can be tested — they are the
@@ -37,13 +41,19 @@ export type AddendumTapAction = 'ignore' | 'not-approved' | 'open-pdf';
  *  - `ignore` while another row's PDF is in flight. `/amendment-pdf` GENERATES the
  *    document on demand, so a second tap means a second Puppeteer run, a second S3
  *    upload and two 'amendment' documents for one addendum.
- *  - `not-approved` for anything unsigned: the API answers 409, so warn rather than
+ *  - `cancelled` for an addendum cancelled on the portal. It is terminal, so it must be
+ *    told apart from `not-approved` — "available once the customer approves it" invites
+ *    the rep to wait for a signature that can never arrive.
+ *  - `not-approved` for anything else unsigned: the API answers 409, so warn rather than
  *    open a blank viewer.
  */
 export function resolveAddendumTap(draft: any, pdfLoadingDraftId: string | null): AddendumTapAction {
   const id = draft?._id || draft?.id;
   if (!id) return 'ignore';
   if (pdfLoadingDraftId) return 'ignore';
+  // ⚠️ Still BELOW the in-flight guard, which outranks every status test for the reason
+  // above; but ahead of the approval test, which would otherwise swallow this case.
+  if (isDraftCancelled(draft)) return 'cancelled';
   if (!isDraftApproved(draft)) return 'not-approved';
   return 'open-pdf';
 }
@@ -76,6 +86,13 @@ export const AddendumsCard = ({ drafts = [], onOpenPdf, isDark, colors }: Addend
       // Same reasoning as the chat card's `addendumPdfPending` (see CLAUDE.md).
       const action = resolveAddendumTap(draft, pdfLoadingDraftId);
       if (action === 'ignore') return;
+      if (action === 'cancelled') {
+        FlashMessage.warning(
+          'Addendum cancelled',
+          'The Addendum PDF is unavailable because the Addendum was cancelled.'
+        );
+        return;
+      }
       if (action === 'not-approved') {
         FlashMessage.warning(
           'Not available yet',

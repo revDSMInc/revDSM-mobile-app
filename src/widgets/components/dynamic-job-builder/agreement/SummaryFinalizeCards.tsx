@@ -9,6 +9,7 @@ import {
   Modal,
   Alert,
   StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import RNFS from 'react-native-fs';
@@ -175,6 +176,17 @@ export function SummaryFinalizeCards({
   const [schedulerVisible, setSchedulerVisible] = useState(false);
   const [isEditingAppt, setIsEditingAppt] = useState(false);
   const [scannerCategory, setScannerCategory] = useState<DocCategory | null>(null);
+  // The category whose documents are being filed right now, or null.
+  //
+  // `DocumentScannerModal.handleSave` does NOT await `onSave` — it fires it and closes
+  // immediately — so the rep is dropped back onto this card while the upload is still
+  // running (read the file, convert the JPEG to a PDF on the JS thread, PUT it). Before
+  // this the card just sat on "No documents" for those seconds with nothing to say it
+  // was working, so the rep read it as the document having been lost.
+  //
+  // `isDocUploadingRef` cannot drive this — it is a ref (it exists to keep the autosave
+  // off the wire mid-upload) and never re-renders.
+  const [uploadingCategory, setUploadingCategory] = useState<DocCategory | null>(null);
   const [agreementDialogVisible, setAgreementDialogVisible] = useState(false);
   // A remote signature in progress: the lowercase `remote-status` (pending / sent /
   // viewed / completed / …) or null when nothing is out for signature. Drives the
@@ -300,6 +312,7 @@ export function SummaryFinalizeCards({
   const uploadNewFiles = async (cat: DocCategory, newFiles: any[]): Promise<any[] | null> => {
     if (!leadId || !newFiles.length) return null;
     if (isDocUploadingRef) isDocUploadingRef.current = true;
+    setUploadingCategory(cat);
     try {
       const payloads: any[] = [];
       const displayDocs: any[] = [];
@@ -359,6 +372,7 @@ export function SummaryFinalizeCards({
       return null;
     } finally {
       if (isDocUploadingRef) isDocUploadingRef.current = false;
+      setUploadingCategory(null);
     }
   };
 
@@ -671,6 +685,7 @@ export function SummaryFinalizeCards({
     required = false,
   ) => {
     const isEmpty = files.length === 0;
+    const isUploading = uploadingCategory === cat;
     return (
       <View style={styles.card}>
         <View style={[styles.sectionHeader, { backgroundColor: accent }]}>
@@ -685,7 +700,12 @@ export function SummaryFinalizeCards({
             )}
           </View>
           {!isEmpty && (
-            <TouchableOpacity onPress={() => setScannerCategory(cat)} hitSlop={10}>
+            <TouchableOpacity
+              onPress={() => !isUploading && setScannerCategory(cat)}
+              disabled={isUploading}
+              hitSlop={10}
+              style={isUploading ? { opacity: 0.4 } : undefined}
+            >
               {/* Web swaps to a pencil once documents exist (mdi:pencil). */}
               <Icon name="pencil" size={20} color="white" />
             </TouchableOpacity>
@@ -715,10 +735,18 @@ export function SummaryFinalizeCards({
               </View>
             ) : (
             <View style={{ alignItems: 'center', paddingVertical: 24, borderStyle: 'dashed', borderColor: '#f1f5f9', borderRadius: 24, borderWidth: 2 }}>
+              {/* Uploading: the spinner takes the CATEGORY ICON's place, so the card
+                  reads as working rather than as empty. */}
               <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#f8fafc', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-                <Icon name={iconName} size={32} color="#CBD5E1" />
+                {isUploading ? (
+                  <ActivityIndicator size="small" color={accent} />
+                ) : (
+                  <Icon name={iconName} size={32} color="#CBD5E1" />
+                )}
               </View>
-              <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#94a3b8', marginBottom: 24 }}>No documents</Text>
+              <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#94a3b8', marginBottom: 24 }}>
+                {isUploading ? 'Uploading document\u2026' : 'No documents'}
+              </Text>
               {/* Web `document-summary-cards.js` empty state: the agreements card
                   shows Generate AND Add Document side by side. Generate is merely
                   DISABLED until an appointment exists (web tooltip: "Schedule the
@@ -726,6 +754,9 @@ export function SummaryFinalizeCards({
                   always available. Mobile made the two mutually exclusive and
                   dropped Add Document from agreements entirely, so with no
                   appointment there was no way to attach one at all. */}
+              {/* Actions are withheld mid-upload: re-opening the scanner over an
+                  upload in flight would offer the same page again and file it twice. */}
+              {!isUploading && (
               <View style={{ width: '100%', paddingHorizontal: 48, gap: 12 }}>
                 {isAgreement && (
                   <>
@@ -752,6 +783,7 @@ export function SummaryFinalizeCards({
                   <Text style={{ color: '#0f172a', fontWeight: '900', fontSize: 10, marginLeft: 8 }}>Add Document</Text>
                 </TouchableOpacity>
               </View>
+              )}
             </View>
             )
           ) : (
@@ -783,6 +815,15 @@ export function SummaryFinalizeCards({
                   </TouchableOpacity>
                 );
               })}
+              {/* Adding to a card that ALREADY holds documents is just as silent —
+                  the new page simply appears some seconds later. A placeholder tile
+                  in the PDF tile's own shape stands in for it while it files. */}
+              {isUploading && (
+                <View style={{ width: 96, height: 128, borderRadius: 12, backgroundColor: '#f8fafc', marginRight: 12, borderWidth: 1, borderColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' }}>
+                  <ActivityIndicator size="small" color={accent} />
+                  <Text style={{ fontSize: 8, fontWeight: '900', color: '#94a3b8', marginTop: 8 }}>Uploading</Text>
+                </View>
+              )}
             </ScrollView>
           )}
         </View>

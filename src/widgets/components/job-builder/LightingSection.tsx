@@ -3,6 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet } from 
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { COLORS } from './color-constant';
+import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 
 const LOCATIONS = ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER'];
 const TRACK_MATERIALS = ['Acrylic', 'Aluminum', 'Special Order'];
@@ -551,7 +552,8 @@ export const LightingSection = ({
                     <View key={story.index} style={{ flex: 1, paddingHorizontal: 4 }}>
                       <TextInput
                         className="bg-white border border-slate-200 rounded-lg text-center font-bold text-xs py-2 text-slate-850"
-                        keyboardType="numeric"
+                        keyboardType={NUMERIC_KEYBOARD}
+                        returnKeyType="done"
                         placeholder="0"
                         value={value}
                         onChangeText={(text) => {

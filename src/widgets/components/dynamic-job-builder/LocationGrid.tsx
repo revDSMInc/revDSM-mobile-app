@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TextInput } from 'react-native';
 import { computeGridTotal } from '../../../utils/dynamic-job-builder/engine/allocation-utils';
 import { computeColumnTotal, resolveLocationGridConfig, resolveVisibleColumns } from '../../../utils/dynamic-job-builder/engine/location-grid-utils';
+import { NUMBER_PAD_KEYBOARD } from '../../../utils/keyboard-type';
 
 interface LocationGridProps {
   label?: string;
@@ -93,7 +94,8 @@ export function LocationGrid({ label = 'Measurements', value = {}, onChange, fie
               <View key={col.key} className="flex-1 px-1">
                 <TextInput
                   className="h-10 bg-slate-50 rounded-xl border border-slate-200 text-center text-[12px] font-black text-black"
-                  keyboardType="number-pad"
+                  keyboardType={NUMBER_PAD_KEYBOARD}
+                  returnKeyType="done"
                   value={cellText(value?.[row.key]?.[col.key])}
                   onChangeText={(val) => update(row.key, col.key, val)}
                   placeholder="0"

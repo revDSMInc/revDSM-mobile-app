@@ -9,6 +9,7 @@ import { CustomDatePicker } from '../../screens/JobTracker/components/CustomDate
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { LeadService } from '../../services/api/leads';
+import { NUMERIC_KEYBOARD } from '../../utils/keyboard-type';
 
 // Dedicated, interceptor-free client for the Google Places/Geocode web-service calls,
 // with a finite timeout so a hung request fails fast instead of surfacing a bare
@@ -620,7 +621,8 @@ export const MapFiltersModal = ({
                   <TextInput
                     placeholder="Min Price"
                     placeholderTextColor="#94a3b8"
-                    keyboardType="numeric"
+                    keyboardType={NUMERIC_KEYBOARD}
+                    returnKeyType="done"
                     className="font-bold text-slate-700 text-[13px]"
                     style={{ paddingVertical: 0, includeFontPadding: false as any }}
                     value={localFilters.minPrice}
@@ -637,7 +639,8 @@ export const MapFiltersModal = ({
                   <TextInput
                     placeholder="Max Price"
                     placeholderTextColor="#94a3b8"
-                    keyboardType="numeric"
+                    keyboardType={NUMERIC_KEYBOARD}
+                    returnKeyType="done"
                     className="font-bold text-slate-700 text-[13px]"
                     style={{ paddingVertical: 0, includeFontPadding: false as any }}
                     value={localFilters.maxPrice}

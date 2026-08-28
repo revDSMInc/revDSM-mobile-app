@@ -61,6 +61,29 @@ export const headerTopPadding = (insetTop: number) =>
  */
 export const FOOTER_BOTTOM_GAP = 16;
 
+/**
+ * Props that make a `Modal`'s window cover the WHOLE screen, system bars included.
+ *
+ * Android lays a Modal's window out INSIDE the system window insets by default, so a
+ * bottom sheet stops short of the screen and a strip of the page behind it shows between
+ * the sheet and the navigation bar. That strip is the reported gap, and no amount of
+ * padding closes it: the sheet is not allowed to paint there.
+ *
+ * ⚠️ Both flags together, always. RN warns (and ignores the bottom half) if
+ * `navigationBarTranslucent` is set without `statusBarTranslucent`.
+ *
+ * ⚠️ And always with `footerBottomPadding` below: the two are ONE change. The flags
+ * put the sheet under the bars, the padding lifts its last control back above them. Flags
+ * alone hide the button behind the bar; padding alone is dead white space.
+ *
+ * iOS ignores both, its modal windows being full-screen already, and the padding does the
+ * whole job there by clearing the home indicator.
+ */
+export const EDGE_TO_EDGE_MODAL = {
+  statusBarTranslucent: true,
+  navigationBarTranslucent: true,
+} as const;
+
 /** Padding under a footer row: clear of the system bar, plus room to breathe. */
 export const footerBottomPadding = (insetBottom: number) =>
   Math.max(insetBottom, FOOTER_BOTTOM_GAP) + FOOTER_BOTTOM_GAP;

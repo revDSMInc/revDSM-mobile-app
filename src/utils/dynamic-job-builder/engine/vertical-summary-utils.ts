@@ -2,6 +2,7 @@ import {
   getTabSections,
   getCombinationDisplayNumber,
   getCombinationSectionHeaderFields,
+  getFlattenedCombinationSectionRowFields,
   isSectionScopedCombinationField,
 } from './combination-utils';
 import { isAllocationField, isFieldLocked, resolveLockedValue } from './allocation-utils';
@@ -508,9 +509,82 @@ function processSummaryFields(fields: any[] = [], state: any = {}, ctx: any = {}
   return result;
 }
 
+/**
+ * Ticket: *"is there any safeguards we can do that if product is <1 foot or <1 unit
+ * measurement we have it so it doesn't get thru to job summary full build?"* A rep who
+ * picked `Gutter Type: 6" K-Style`, left the Measurements grid on all zeros and walked
+ * on to Downspouts still got a `Combination #1 - Gutter Type: 6" K-Style` card on the Job
+ * Builder Summary: a line item for a product with no footage behind it.
+ *
+ * A selection alone was enough because `parts.length > 0` was the whole test - the grid
+ * contributed nothing (`buildLocationRowsFromGrid` already drops zero cells) and a 0
+ * number is already dropped by `isDisplayableFieldSummary`, so an unmeasured combination
+ * looked exactly like one carrying only a colour.
+ */
+const MIN_MEASURED_QUANTITY = 1;
+
+function sumGridValues(grid: any): number {
+  if (!grid || typeof grid !== 'object') return 0;
+  return Object.values(grid).reduce((rowSum: number, stories: any) => {
+    if (stories && typeof stories === 'object') {
+      return rowSum + Object.values(stories).reduce((s: number, v: any) => s + (Number(v) || 0), 0);
+    }
+    return rowSum + (Number(stories) || 0);
+  }, 0);
+}
+
+/**
+ * How much this ONE combination measures, and whether it declares a measurement at all.
+ *
+ * The field precedence is `computeGroupUsed`'s verbatim - the same rule that decides how
+ * much of an allocation a combination consumes - so "measured" cannot come to mean two
+ * different things on the allocator bar and on the summary: grids define the quantity
+ * when the section has one, and sibling numbers (miters, end caps) are add-ons that must
+ * never stand in for the footage.
+ *
+ * WARNING: only `locationGrid` and `number` count. A footage box authored as a `text`
+ * field is NOT gated - a text field holding `Versa` is a profile, not a measurement, and
+ * a blank one is indistinguishable from a blank descriptive field, so treating it as a
+ * measurement would hide selection-only combinations that are legitimately on the job.
+ */
+function measureCombo(section: any, state: any, ctx: any) {
+  // Hidden fields are excluded, so a measurement a condition has switched off can never
+  // hold a combination out of the summary. That is deliberately the SAFE direction: with
+  // every measurement hidden the combination declares none and renders as it always did.
+  const rowFields = getFlattenedCombinationSectionRowFields(section).filter((field: any) =>
+    isSummaryFieldVisible(field, state, ctx)
+  );
+
+  const gridFields = rowFields.filter((f: any) => f.type === 'locationGrid');
+  const measured = gridFields.length
+    ? gridFields
+    : rowFields.filter((f: any) => f.type === 'number');
+
+  if (!measured.length) return { declared: false, total: 0 };
+
+  const total = measured.reduce((sum: number, field: any) => {
+    // The value may sit under the field id, its `key`, or (grids only) the legacy `grid`
+    // slot - the same three places `computeGroupUsed` looks.
+    const raw = state?.[field.id] ?? (field.key ? state?.[field.key] : undefined);
+    if (field.type === 'locationGrid') return sum + sumGridValues(raw ?? state?.grid);
+    return sum + (Number(raw) || 0);
+  }, 0);
+
+  return { declared: true, total };
+}
+
 function comboHasMeaningfulData(section: any, combo: any, ctx: any) {
   const displayState = buildComboDisplayState(combo, combo?.colorValues);
-  const content = processSummaryFields(getCombinationSectionFields(section), displayState, {
+  const sectionFields = getCombinationSectionFields(section);
+
+  // A combination that DECLARES a measurement has to carry one. A section that authors
+  // none (colour-only, selection-only) is untouched and still renders on its content.
+  const measurement = measureCombo(section, displayState, {
+    ...ctx, section, summaryMode: 'combination', sectionFields,
+  });
+  if (measurement.declared && measurement.total < MIN_MEASURED_QUANTITY) return false;
+
+  const content = processSummaryFields(sectionFields, displayState, {
     ...ctx, section, summaryMode: 'combination',
   });
   return content.parts.length > 0 || content.detailRows.length > 0 || content.locationRows.length > 0;

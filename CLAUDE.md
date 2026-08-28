@@ -3136,6 +3136,171 @@ accepts (and an id-less one rejected), the four document groups always present, 
 calculator document — watch for a validation error naming `lfCalculator`.
 ---
 
+### iPad: numeric fields get a DOCKED keyboard, not iPadOS's floating palette
+
+Ticket: *"Change UI of number pad — it should be like 2nd image"*, against a screenshot of the Deal
+Center calculator on an iPad with a small floating keypad sitting on top of the Gutters rows it was
+meant to fill in.
+
+⚠️ **Not a layout bug, and no prop moves it.** iPadOS renders EVERY "pad" keyboard type — `number-pad`,
+`decimal-pad`, and `numeric`, which react-native maps to `UIKeyboardTypeDecimalPad` on iOS — as a
+compact FLOATING key palette anchored beside the field, with the phone-keypad `2 ABC / 3 DEF`
+lettering. The presentation is Apple's, chosen from the keyboard type alone. A NON-pad type is drawn
+as the ordinary full-width keyboard docked at the bottom, and that is the only lever there is.
+
+**New `src/utils/keyboard-type.ts`** holds the decision once: `NUMERIC_KEYBOARD` /
+`NUMBER_PAD_KEYBOARD` resolve to `numbers-and-punctuation` on iPad (`Platform.isPad`, no new
+dependency) and to the previous `numeric` / `number-pad` everywhere else. **33 inputs across 19 files**
+read them, each also gaining `returnKeyType="done"` for the Done key — which doubles as the keyboard
+dismissal these fields never had.
+
+- ⚠️ **It is a FULL keyboard, so it carries a letters key.** That is safe ONLY because all 33 consumers
+  already strip non-numerics in `onChangeText` (or `parseFloat` the value) — checked before the sweep.
+  Do not point these constants at a field that stores raw text.
+- ⚠️ **`RolloutView`'s drop-price input had to be DISARMED, and this is the one with teeth.** It commits
+  on `onBlur` precisely *because* iPhone's number pad has no return key, so `onSubmitEditing` never
+  fires there (its own comment says so). Give iPad a Done key and BOTH fire — Done submits, then blurs —
+  so `openDrop` would run **twice for one tap**, on the very screen whose duplicate `dropPrice` rows
+  this file documents at length. **`NUMERIC_KEYBOARD_HAS_RETURN_KEY`** gates that blur commit now; read
+  it before adding any other blur-as-submit workaround to a numeric field.
+- ⚠️ `CalculatorSummary`'s equivalent blur commit is **unconditional** (it already coexists with
+  `onSubmitEditing` on Android), so it was left alone — iPad simply behaves like Android does there.
+- ⚠️ **The two OTP screens are deliberately EXCLUDED** (`auth/email-otp`, `auth/authenticator-otp`).
+  They already own per-box `returnKeyType`/`onSubmitEditing`, and a full keyboard behind six
+  single-character boxes is worse than the palette.
+- **iPhone and Android are untouched by construction** — the constants resolve to the previous string
+  literals there, so the change is a no-op off iPad.
+
+tsc 44 (baseline unchanged); eslint across all touched files **997 → 996 problems, zero added** (the one
+removed is the camera fix below). ⚠️ Nine of the 19 files are CRLF — all endings were asserted
+byte-identical to HEAD after the sweep.
+
+### iPad: the camera viewfinder pushed the shutter button off the screen
+
+Ticket: *"Screen cutoff on ipad — camera shoot button is not visible."*
+
+`widgets/modals/CustomCameraModal.tsx` sized its 4:3 viewfinder from the WIDTH alone
+(`screenWidth * (4 / 3)`) and never consulted the height, which silently assumes a phone:
+
+| device | viewfinder | left for the bottom bar (needs ~200pt) |
+|---|---|---|
+| iPhone 14 Pro | 524pt | 249pt ✅ |
+| iPad 10.9 | 1093pt | **43pt** |
+| iPad Pro 12.9 | 1365pt | **−43pt** — the bar is off-screen entirely |
+
+⚠️ **eslint had been reporting the cause for as long as the bug existed**: `'screenHeight' is assigned
+a value but never used`. The layout destructured the screen height and then ignored it.
+
+The viewfinder is now capped at the height that is actually left
+(`screenHeight − viewfinderTop − insets.bottom − BOTTOM_CONTROLS_MIN_HEIGHT`), and **both** sides are
+derived from whichever dimension binds, so the box stays a TRUE 4:3 and is centred rather than
+stretched or cropped. On a phone the width still binds, so the geometry there is unchanged to the pixel.
+
+- ⚠️ **iPhone SE was affected too** (427pt available against a 500pt viewfinder) — its shutter was being
+  squeezed by the same sum, so this is a visible change on the smallest phones as well, not only iPad.
+- ⚠️ **`Dimensions.get('window')` → `useWindowDimensions()`.** iPad allows landscape
+  (`UISupportedInterfaceOrientations~ipad`), and the one-shot read never updated on rotation, so the
+  viewfinder kept its portrait geometry after turning the device. The hook had to move ABOVE the
+  `if (!visible) return null` early return.
+- `BOTTOM_CONTROLS_MIN_HEIGHT` (200) is measured from the styles it protects — zoom pills (36 + 24),
+  shutter row (76 + 5), section padding (12 + 12 + 20). Keep the two in step.
+
+Verified by computing the geometry for seven device/orientation combinations: all four iPad
+orientations now leave 220pt for the bar, and the three phones keep a viewfinder exactly as wide as the
+screen. tsc 44 (baseline unchanged); eslint 17 → 16 problems, the removed one being the unused
+`screenHeight` above.
+
+### A CANCELLED addendum says so, instead of "once the customer approves it"
+
+Ticket: *"My Deals > Incorrect Addendum Cancellation Message Displayed After cancel from Portal"* — the
+message should read **"The Addendum PDF is unavailable because the Addendum was cancelled."**
+
+`resolveAddendumTap` (`widgets/components/LeadCenter/AddendumsCard.tsx`) knew three outcomes and
+`cancelled` was not one, so a cancelled row fell through the `!isDraftApproved(draft)` catch-all into
+the PENDING message — which tells the rep to wait for a signature that can never arrive.
+
+- **New `isDraftCancelled`** in `utils/addendum-drafts.ts`, the documented home for these predicates, so
+  "cancelled" cannot come to mean different things on the three surfaces that read a draft's status.
+- **`AddendumTapAction` gained `'cancelled'`**, placed **below the in-flight guard** — that guard still
+  outranks every status test, for the reason recorded above (a second tap is a second Puppeteer run) —
+  but ABOVE the approval test, which was swallowing the case.
+- ⚠️ **Both spellings are accepted** (`cancelled` / `canceled`). The lead's own result status is the
+  double-l one, but the funding backend already sends the single-l form for its terminal states.
+- **The chip reads `Cancelled`, not raw lowercase `cancelled`** — the status was absent from `CHIP`, so
+  it hit the verbatim fallback and sat next to a capitalised `Accepted`. Only the label changed; the
+  colour is the exact grey the fallback was already painting.
+
+Verified with 7 tests over the real functions: the repro **with the pre-fix `not-approved` outcome
+asserted** so it cannot regress silently, all four spellings/casings, every other status unchanged, the
+in-flight guard still winning, an id-less draft still inert, cancelled NOT counting as pending (so it
+can never turn the contract header amber), and the chip. tsc 44 (baseline unchanged); eslint identical
+to HEAD on both files.
+
+### The Add-to-Job-Tracker modal clipped its own buttons
+
+Ticket: *"Add This Job to Job Tracker modal scroll not working — from end it's hiding the button."*
+
+`AddEditJobModal` had `<ScrollView className="px-8 py-8">`, i.e. the padding on the **ScrollView's own
+style**. In react-native that pads the scroll FRAME — it shrinks the visible window without adding any
+scrollable length — so the last 32px of content is permanently unreachable and Cancel / Add to Job
+Tracker stayed clipped by the card's `overflow: 'hidden'` edge however far the rep scrolled. The list
+was scrolling correctly; there was simply nowhere left to scroll to.
+
+⚠️ **Padding on a ScrollView belongs on `contentContainerStyle`.** Moved there as the named
+`styles.scrollContent` (same 32px, so the spacing is unchanged).
+
+Also added **`keyboardShouldPersistTaps="handled"`**: the form has four text inputs above the buttons, so
+without it the first tap on Cancel/Add with the keyboard up is swallowed dismissing the keyboard.
+
+⚠️ The modal still has **no keyboard avoidance at all** — with the keyboard up the lower fields can sit
+behind it. Separate from the reported bug; per §6 the repo's answer for a scrolling form is
+`KeyboardAwareScrollView` from `react-native-keyboard-controller`.
+
+tsc 44 (baseline unchanged); eslint byte-identical to HEAD (21 problems: 4 errors / 17 warnings).
+⚠️ The file is CRLF.
+
+### Annotation zoom persists into Draw — on BOTH platforms now (ticket 420)
+
+Ticket: *"if i zoomed the image and then go to Draw the zooming will remain… this works fine on iOS but
+in android it's not even zooming"*, plus *"in ios it disturbs the zoomed image position when i move to
+Draw."* Two symptoms, one cause.
+
+`widgets/components/LeadCenter/AnnotationCanvas.tsx` zoomed with a `ScrollView` carrying
+`maximumZoomScale` / `minimumZoomScale` / `zoomScale`. ⚠️ **Those props are iOS-ONLY** — Android's
+ScrollView has no pinch-zoom whatsoever, so the feature was silently absent rather than broken. And on
+iOS, flipping `scrollEnabled` when the rep picked the pen re-laid out the content, which made
+UIScrollView re-clamp its `contentOffset` and slide the image off the detail they had lined up.
+
+**Rewritten as a reanimated TRANSFORM driven by `react-native-gesture-handler`**, reusing the tested
+worklet maths from ticket 380 (`utils/zoom-transform.ts`) that `widgets/common/ZoomableImage` already
+uses. The same gestures fire on both platforms, and switching tools touches none of the shared values,
+so the position is preserved to the pixel — the iOS jump goes away by construction rather than by
+patching the clamp.
+
+- ⚠️ **The frame clips; the layer inside it transforms.** Scaling a view that carries its own
+  `overflow: 'hidden'` scales the clip with it and lets the image paint over the chrome — hence a static
+  frame wrapping an `Animated.View`.
+- ⚠️ **The pan bound is the CANVAS, not the container.** `canvasLayout` is already the image's exact
+  letterboxed box, so the drag stops at the image's own edge instead of sliding into the empty margin.
+  This is the one place it differs from `ZoomableImage`.
+- ⚠️ **Gestures are live ONLY in Zoom mode.** In Draw/Text the PanResponder overlay owns every touch
+  exactly as before, so a one-finger drag still draws and the two systems never contend.
+- **The existing `dx / scale` correction stays valid** because both platforms hit-test through the
+  transform (iOS via the layer transform, Android via `TouchTargetHelper`'s inverse matrix), so
+  `locationX` still arrives in canvas space.
+- **`DraggableText` gained `zoomScale` + `dragEnabled`** — dragging a note while zoomed moved it
+  `scale`× too far (the same bug the stroke layer already corrects), and a pinch landing on a note now
+  pans instead of dragging it.
+- **The zoom resets on Next/Prev**, so the rep never lands on a new photo already zoomed into wherever
+  the last one was.
+
+Verified with 6 tests driving the real helpers for this canvas's geometry: the anchor identity, the
+`dx/scale` delta, the edge bound, 1x re-centring, the scale clamp, and a second pinch from an
+already-panned state. tsc 44 (baseline unchanged); `DraggableText` and `ImageAnnotation/index.tsx`
+identical to HEAD, `AnnotationCanvas` +1 `react-native/no-inline-styles`.
+
+---
+
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area
 
 This is the schema-driven ("dynamic") calculator + job-builder that renders forms from a backend
@@ -3526,6 +3691,13 @@ Still pending (deferred — advanced features):
   `file://…`. See "Hold-to-peek previews" below.
 - **Largest files** (respect when editing): `src/widgets/components/dealcenter/CalculatorSummary.tsx` (~2,298),
   `src/widgets/components/job-builder/SummarySection.tsx` (~1,993), `src/screens/JobBuilder/index.tsx` (~1,730).
+- **iPad is a supported form factor and it is NOT just "a big phone".** Two standing rules, both of
+  which shipped as bugs (see the two iPad sections in §4): any numeric `TextInput` must take
+  `NUMERIC_KEYBOARD` / `NUMBER_PAD_KEYBOARD` from `src/utils/keyboard-type.ts`, because iPadOS turns
+  every "pad" keyboard type into a floating palette that covers the form; and any full-screen layout
+  sized from `screenWidth` must be capped against the height that is LEFT, or its bottom controls end
+  up off-screen. iPad also allows LANDSCAPE — prefer `useWindowDimensions()` over
+  `Dimensions.get('window')`.
 - Web is the **source of truth** for feature behavior; when unsure how a flow should work, check the web ref path in §4.
 
 ### Hold-to-peek previews warm through a shared local-file cache
@@ -5588,3 +5760,21 @@ yarn start                 # Metro
 yarn lint                  # eslint
 yarn test                  # jest
 ```
+
+### iOS pods: `bundle exec pod install`, never a bare `pod install`
+
+CocoaPods is **pinned in the repo's `Gemfile`** (`>= 1.13, != 1.15.0, != 1.15.1`) and installed into
+`./vendor/bundle`, so there is no global `pod` on PATH and a bare `pod install` answers
+`command not found`. Run it from `ios/` as **`bundle exec pod install`** — Bundler walks up to the root
+`Gemfile`, so you need not be in the repo root. Installing CocoaPods globally instead would sidestep
+the pin and churn `Podfile.lock` against the rest of the team.
+
+⚠️ **Ruby 3.4+ needs `gem 'nkf'` in the Gemfile**, and that is why it is there: CocoaPods requires
+`kconv`, which lives in the `nkf` gem, and that gem stopped being part of Ruby's stdlib in 3.4 — so on
+a modern Ruby (a new Mac ships Homebrew Ruby 4.x) `pod install` dies with
+`cannot load such file -- kconv` before doing anything. It sits in the Gemfile's existing *"Ruby 3.4.0
+has removed some libraries from the standard library"* block beside `bigdecimal`, `logger`, `benchmark`
+and `mutex_m`. ⚠️ Do not drop it when resolving a Gemfile conflict — the gem merely being present in
+`vendor/bundle` is NOT enough, since Bundler only exposes what the Gemfile declares.
+
+Note `pod install` prints a React Native deprecation notice; `yarn ios` runs it for you.

@@ -44,6 +44,7 @@ import { formatUSPhoneNumber, getRawPhoneNumber } from '../../utils/phone-util';
 
 
 import { AxiosResponse } from 'axios';
+import { NUMERIC_KEYBOARD } from '../../utils/keyboard-type';
 
 type TabType = 'profile' | '2fa';
 
@@ -1274,7 +1275,8 @@ export default function ProfilePage() {
                       placeholder="000 000"
                       value={authCode}
                       onChangeText={(t) => setAuthCode(t.replace(/[^0-9]/g, ''))}
-                      keyboardType="numeric"
+                      keyboardType={NUMERIC_KEYBOARD}
+                      returnKeyType="done"
                       maxLength={6}
                     />
 

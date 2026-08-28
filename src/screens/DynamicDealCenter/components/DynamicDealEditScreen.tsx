@@ -111,6 +111,7 @@ import {
   logFundingStructureChanged,
   resolveFundingSource,
 } from '../../../utils/activity-log/funding-log';
+import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 
 /**
  * 4-step DYNAMIC deal-edit wizard. Faithful port of web
@@ -1874,7 +1875,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 <TextInput
                   value={String(contractPrice)}
                   onChangeText={(t) => setContractPrice(parseFloat(t.replace(/[^0-9.]/g, '')) || 0)}
-                  keyboardType="numeric"
+                  keyboardType={NUMERIC_KEYBOARD}
+                  returnKeyType="done"
                   style={{ flex: 1, fontSize: 16, fontWeight: '800', color: '#0F172A', paddingVertical: 10 }}
                 />
                 {priceUnlocked && (

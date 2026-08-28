@@ -8,15 +8,16 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Ionicons';
 import MaterialIcon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { InstallerCamera } from '../../components/installer/InstallerCamera';
 import { ConfirmActionModal } from './ConfirmActionModal';
 import { usePhotoDeleteConfirm } from '../../../hooks/usePhotoDeleteConfirm';
 import { INSTALLER_RESULT_REASONS } from '../../../constants/installer';
 import type { CapturedPhoto, InstallerResultType } from '../../../config/types/installer';
+import { EDGE_TO_EDGE_MODAL, footerBottomPadding } from '../../../utils/installer-insets';
 
 interface Props {
   visible: boolean;
@@ -120,13 +121,23 @@ export function ResultJobModal({
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+      {...EDGE_TO_EDGE_MODAL}
+    >
       <View className="flex-1 justify-end" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}>
         <View
           className="w-full rounded-t-[32px] px-6 pt-5"
           style={{
             backgroundColor: isDark ? colors.surface : colors.background,
-            paddingBottom: Math.max(insets.bottom, 24),
+            // Clears the system bar the sheet now paints UNDER (`EDGE_TO_EDGE_MODAL` on the
+            // Modal above). The bar overlays this padding rather than sitting below it, so what
+            // the installer SEES under the last button is the same on a 3-button bar, a gesture
+            // pill and an iOS home indicator alike.
+            paddingBottom: footerBottomPadding(insets.bottom),
             maxHeight: '85%',
           }}
         >

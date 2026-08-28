@@ -20,6 +20,7 @@ import { calculateCommission } from '../../../utils/calculator/commission-utils'
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
+import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 
 interface Props {
   visible: boolean;
@@ -252,7 +253,16 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job, isLowesLead 
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.overlay}>
         <View style={[styles.content, { backgroundColor: colors.card }]}>
-          <ScrollView className="px-8 py-8" showsVerticalScrollIndicator={false}>
+          {/* ⚠️ The padding MUST live on `contentContainerStyle`, not on the ScrollView.
+              As `className="px-8 py-8"` it was applied to the scroll FRAME, which insets the
+              visible window without extending the scrollable content — so the last 32px never
+              became reachable and the Cancel / Add buttons stayed clipped by the card's
+              `overflow: 'hidden'` edge no matter how far the rep scrolled. */}
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
             <Text className="text-lg font-black text-[#1C252E] mb-6 mt-2">
               {job?.id || job?._id ? 'Edit Job' : 'Add This Job to Job Tracker'}
             </Text>
@@ -305,7 +315,8 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job, isLowesLead 
               <View style={[styles.fieldBox, { borderColor: !formData.salesPrice ? '#EF4444' : colors.border }]}>
                 <TextInput
                   value={formData.salesPrice === 0 ? '0' : formData.salesPrice?.toString()}
-                  keyboardType="numeric"
+                  keyboardType={NUMERIC_KEYBOARD}
+                  returnKeyType="done"
                   onChangeText={(t) => setFormData({ ...formData, salesPrice: parseFloat(t) || 0 })}
                   style={[styles.fieldInput, { color: colors.text }]}
                   placeholder="0"
@@ -400,7 +411,8 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job, isLowesLead 
                 <View style={[styles.fieldBox, { borderColor: colors.border }]}>
                   <TextInput
                     value={formData.commission?.toString() || '0'}
-                    keyboardType="numeric"
+                    keyboardType={NUMERIC_KEYBOARD}
+                    returnKeyType="done"
                     onChangeText={(t) => setFormData({ ...formData, commission: parseFloat(t) || 0 })}
                     style={[styles.fieldInput, { color: colors.text }]}
                     placeholder="0"
@@ -560,6 +572,7 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 10,
   },
+  scrollContent: { paddingHorizontal: 22, paddingTop: 22, paddingBottom: 32 },
   fieldWrap: { marginBottom: 24, position: 'relative' },
   floatingLabel: {
     position: 'absolute',

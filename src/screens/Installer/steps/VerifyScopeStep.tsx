@@ -101,13 +101,31 @@ export function VerifyScopeStep({
     onBack();
   };
 
+  // One name for it, so the footer below and the sheet at the bottom of this file can
+  // never disagree about whether the sheet is up.
+  const showDiscrepancySheet = !!sheetFor;
+
   return (
     <InstallerSubScreen
       visible={visible}
       title={t('installer.scopeTitle')}
       subtitle={t('installer.scopeSub')}
       onBack={onBack}
+      /*
+       * No footer while the discrepancy sheet is up.
+       *
+       * The sheet is a separate window that ends above the system bar, so whatever the
+       * screen draws at ITS bottom shows in the strip underneath — which was the whole
+       * "Done — Scope Reviewed" bar sitting below the sheet, dimmed but perfectly legible,
+       * and reading as dead space the sheet had failed to cover.
+       *
+       * ⚠️ It has to be UNMOUNTED, not hidden. `InstallerSubScreen` wraps the footer in a
+       * bar of its own (border, padding, background, bottom inset); leaving that behind with
+       * empty contents swaps one visible strip for another. Passing undefined also hands the
+       * screen back its no-footer scroll padding, so nothing underneath is left mid-cut.
+       */
       footer={
+        showDiscrepancySheet ? undefined : (
         <>
           {pending > 0 && (
             <View
@@ -146,6 +164,7 @@ export function VerifyScopeStep({
             </Text>
           </TouchableOpacity>
         </>
+        )
       }
     >
       {nothingToVerify && (
@@ -348,7 +367,7 @@ export function VerifyScopeStep({
       )}
 
       <DiscrepancyModal
-        visible={!!sheetFor}
+        visible={showDiscrepancySheet}
         product={sheetFor}
         jobPhotos={jobPhotos}
         onClose={() => setSheetFor(null)}

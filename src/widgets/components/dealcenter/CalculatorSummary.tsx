@@ -48,6 +48,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
 import { sanitizeCalculatorLogTitle } from '../../../utils/activity-log/job-builder-auto-log';
 import { SettingsService } from '../../../services/api/SettingsService';
+import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 
 const getOrdinal = (n: number) => {
   const j = n % 10,
@@ -937,7 +938,8 @@ export const CalculatorSummary = ({
                       value={activeDrop || activeCalc.isRolloutConfirmed ? String(effectiveEndPrice || '') : priceText}
                       placeholder="Enter End Price"
                       placeholderTextColor="#919EAB"
-                      keyboardType="numeric"
+                      keyboardType={NUMERIC_KEYBOARD}
+                      returnKeyType="done"
                       editable={!activeCalc.isRolloutConfirmed && !activeDrop && !isJobBuilderSubmitted}
                       onChangeText={handlePriceChange}
                       onEndEditing={handlePriceBlur}
@@ -1151,7 +1153,8 @@ export const CalculatorSummary = ({
                                 ref={downPaymentInputRef}
                                 autoFocus={true}
                                 className="text-xs font-black text-slate-800 p-0 flex-1"
-                                keyboardType="numeric"
+                                keyboardType={NUMERIC_KEYBOARD}
+                                returnKeyType="done"
                                 value={preOrderDownPayment > 0 ? String(preOrderDownPayment) : ''}
                                 placeholder="Down Payment"
                                 placeholderTextColor="#919EAB"
@@ -1419,7 +1422,8 @@ export const CalculatorSummary = ({
                         className="flex-1 text-slate-900 font-bold text-sm"
                         placeholder="Enter price..."
                         placeholderTextColor="#919EAB"
-                        keyboardType="numeric"
+                        keyboardType={NUMERIC_KEYBOARD}
+                        returnKeyType="done"
                         autoFocus
                         value={dropValue}
                         onChangeText={(v) => {
@@ -2089,7 +2093,8 @@ export const CalculatorSummary = ({
                                   }
                                 }, 150);
                               }}
-                              keyboardType="numeric"
+                              keyboardType={NUMERIC_KEYBOARD}
+                              returnKeyType="done"
                               value={String(currentDownPayment || '')}
                               onChangeText={(t) => handleCurrentSetDownPayment(Number(t.replace(/[^0-9]/g, '')))}
                               placeholder="0"

@@ -50,6 +50,7 @@ import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../../widge
 import { OneYearMonthlyPlan, type OneYearMonthlyValue } from './OneYearMonthlyPlan';
 import { scopeSignature } from '../utils/scope-signature';
 import type { CalculatorLockState } from '../utils/job-builder-submission';
+import { NUMERIC_KEYBOARD, NUMERIC_KEYBOARD_HAS_RETURN_KEY } from '../../../utils/keyboard-type';
 
 /** Resolve the payment plan shown for a calculator (saved → user default → lead-aware fallback). */
 const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?: string) =>
@@ -545,7 +546,8 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
                         style={{ flex: 1, fontSize: 16, fontWeight: '900', color: '#0F172A', padding: 0 }}
                         value={formatAmountInput(downText)}
                         onChangeText={(t) => setDownText(stripAmount(t))}
-                        placeholder="0" placeholderTextColor="#94A3B8" keyboardType="numeric"
+                        placeholder="0" placeholderTextColor="#94A3B8" keyboardType={NUMERIC_KEYBOARD}
+                        returnKeyType="done"
                       />
                     </View>
                   </View>
@@ -1688,7 +1690,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                 value={endPrice}
                 onChangeText={(t) => { const c = t.replace(/[^0-9.]/g, ''); setEndPrice(c); onPriceChange(calculator.id, parseFloat(c) || 0); }}
                 onFocus={() => setFocused(true)} onBlur={() => { setFocused(false); logEndPriceEntered(); }}
-                placeholder="Enter End Price" placeholderTextColor="#919EAB" keyboardType="numeric"
+                placeholder="Enter End Price" placeholderTextColor="#919EAB" keyboardType={NUMERIC_KEYBOARD}
+                returnKeyType="done"
               />
             </View>
           )}
@@ -1800,7 +1803,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                         onBlur={commitDownPayment}
                         placeholder="Add Down Payment"
                         placeholderTextColor="#94A3B8"
-                        keyboardType="numeric"
+                        keyboardType={NUMERIC_KEYBOARD}
+                        returnKeyType="done"
                       />
                       {downPay > 0 && (
                         <TouchableOpacity onPress={clearDownPayment} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -1937,16 +1941,26 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   value={formatAmountInput(dropText)}
                   onChangeText={(t) => setDropText(stripAmount(t))}
                   onSubmitEditing={openDrop}
-                  // iOS's numeric pad has NO return key, so `onSubmitEditing` never
+                  // iPHONE's numeric pad has NO return key, so `onSubmitEditing` never
                   // fires there and focusing out dropped the typed price on the
                   // floor; Android's numeric IME has a submit action, hence the
                   // platform split. The regular rollout (`CalculatorSummary`) already
                   // runs the same commit from both handlers. `openDrop` no-ops on an
                   // empty/zero value, so a blur with nothing typed does nothing.
-                  onBlur={Platform.OS === 'ios' ? openDrop : undefined}
+                  //
+                  // ⚠️ iPad is EXCLUDED: it now asks for a docked `numbers-and-punctuation`
+                  // keyboard (see `utils/keyboard-type`), which DOES have a return key. Done
+                  // fires `onSubmitEditing` and then blurs, so leaving the blur commit armed
+                  // would run `openDrop` TWICE for one tap.
+                  onBlur={
+                    Platform.OS === 'ios' && !NUMERIC_KEYBOARD_HAS_RETURN_KEY
+                      ? openDrop
+                      : undefined
+                  }
                   placeholder="Enter price..."
                   placeholderTextColor="#919EAB"
-                  keyboardType="numeric"
+                  keyboardType={NUMERIC_KEYBOARD}
+                  returnKeyType="done"
                   autoFocus
                 />
               </View>
