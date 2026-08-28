@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { FUND } from './funding-theme';
+import { FS, FUND, PS } from './funding-theme';
 
 /**
  * A radio-card segmented control: two or more side-by-side cards, each a title
@@ -55,7 +55,7 @@ export function SegmentedChoice<T extends string>({
   return (
     <View style={{ marginBottom: 20 }}>
       {!!label && (
-        <Text style={{ fontSize: 12, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase', color: FUND.PANEL_LABEL, paddingHorizontal: 4, paddingBottom: 9 }}>
+        <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 1.2, textTransform: 'uppercase', color: FUND.PANEL_LABEL, paddingHorizontal: 4, paddingBottom: 9 }}>
           {label}
         </Text>
       )}
@@ -76,12 +76,12 @@ export function SegmentedChoice<T extends string>({
                 <View style={{ width: 17, height: 17, borderRadius: 9, borderWidth: 2, alignItems: 'center', justifyContent: 'center', borderColor: on ? FUND.GREEN : '#CCD3CD', backgroundColor: on ? FUND.GREEN : 'transparent' }}>
                   {on && <Ionicons name="checkmark" size={10} color="#fff" />}
                 </View>
-                <Text style={{ flex: 1, fontSize: 15.5, fontWeight: '700', letterSpacing: -0.2, color: on ? FUND.GREEN_TEXT : FUND.SUBTEXT }} numberOfLines={1}>
+                <Text style={{ flex: 1, fontSize: FS.LEAD, fontFamily: PS.bold, letterSpacing: -0.2, color: on ? FUND.GREEN_TEXT : FUND.SUBTEXT }} numberOfLines={1}>
                   {o.title}
                 </Text>
               </View>
               {!!o.subtitle && (
-                <Text style={{ fontSize: 10.5, fontWeight: '600', lineHeight: 14, marginTop: 5, color: on ? '#5F7A55' : FUND.MUTED }}>
+                <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, lineHeight: 14, marginTop: 5, color: on ? '#5F7A55' : FUND.MUTED }}>
                   {o.subtitle}
                 </Text>
               )}
@@ -91,7 +91,7 @@ export function SegmentedChoice<T extends string>({
       </View>
 
       {!!hint && (
-        <Text style={{ fontSize: 11, fontWeight: '600', lineHeight: 16, marginTop: 9, marginHorizontal: 4, color: hintTone === 'warn' ? FUND.AMBER_TEXT : FUND.MUTED }}>
+        <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, lineHeight: 16, marginTop: 9, marginHorizontal: 4, color: hintTone === 'warn' ? FUND.AMBER_TEXT : FUND.MUTED }}>
           {hint}
         </Text>
       )}

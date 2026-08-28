@@ -23,6 +23,7 @@ import {
   toWholeDollars,
   type FundingApplicationClosed,
   type FundingArchivedPlan,
+  type FundingChannel,
   type FundingDecision,
   type FundingKind,
   type FundingMethodType,
@@ -31,6 +32,11 @@ import {
   type FundingUpsertRow,
   type PaymentAllocation,
 } from '../../../services/api/FundingService';
+// Display-only, and the ONLY react-native-free util this file needs: a stored
+// destination is E.164 (`+14438784937`) and has to read back as the rep typed it.
+// `toE164USPhone` joins it for `normalizeDestination`, which has to compare a
+// stored E.164 against whatever the rep just typed.
+import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
 
 /**
  * Splitting a half of the contract across SEVERAL payment lines — **on**.
@@ -563,9 +569,36 @@ export function confirmBlockers(rows: PaymentRow[], price: number, mode: PayMode
    *
    * The AUTO row is exempt: it is $0 exactly when everything else already covers
    * the contract, which is the correct end state, not a gap.
+   *
+   * ⚠️ …and so is an ENTIRELY UNFUNDED DOWN PAYMENT — "no money down", with the
+   * balance carrying the whole contract. That is a complete answer and has to reach
+   * the funding screen so the balance can go for approval.
+   *
+   * The exemption is scoped to `down`, and both halves of that matter:
+   *
+   * - **`down` only**, because it is the ONLY group whose row is named without the
+   *   rep choosing anything: the mount seed fills it from the lead's own payment
+   *   method (`seedDownMethod`). Every other non-auto row is either one the rep
+   *   added or one hydrated from a save that carried money, so on those the "you
+   *   picked a method, so you meant to fund it" signal this rule reads is real.
+   *   (The upfront and re-entry seeds all use `method: ''`.)
+   * - **entirely unfunded**, so $1,300 down beside a second down line left blank is
+   *   still the forgotten amount it looks like, and still blocked.
+   *
+   * ⚠️ Nothing is lost by exempting it: a blank row contributes $0, so the auto
+   * row's remainder is identical whether it is dropped or kept, and the coverage
+   * rule below is unaffected. The rep can still delete the line outright with its ✕;
+   * this stops the more obvious gesture — clearing the amount — from dead-ending on
+   * a message about a line they never added.
    */
+  const downIsFunded = rows.some((r) => r.kind === 'down' && effectiveRowAmount(r, rows, price) > 0);
   const emptyNamed = rows.filter(
-    (r) => !r.auto && !r.decision && (r.method || r.methodLabel) && effectiveRowAmount(r, rows, price) <= 0
+    (r) =>
+      !r.auto &&
+      !r.decision &&
+      (r.method || r.methodLabel) &&
+      effectiveRowAmount(r, rows, price) <= 0 &&
+      !(r.kind === 'down' && !downIsFunded)
   );
   if (emptyNamed.length) {
     // Deliberately NOT named: `PaymentRow.method` is a plan KEY, and this function
@@ -703,6 +736,176 @@ export function isApplicationClosed(p: FundingPayment): boolean {
   return !!p.applicationClosed && !p.linkSent && !p.decision;
 }
 
+/**
+ * ── resend the link ────────────────────────────────────────────────────────
+ *
+ * Can this row be sent again? (REVDSM-1155 Item A.)
+ *
+ * The case this exists for: the rep mistypes the homeowner's number or email, the
+ * send succeeds as far as the server is concerned, and the row ticks **Link Sent**.
+ * The send button is gated on `!linkSent`, so it disappears — and the rep is left on
+ * a card that says the link went out, with no way to correct it. Nothing else on the
+ * screen recovers that.
+ *
+ * ⚠️ **`link` is idempotent, so a resend delivers the SAME url** — it reuses the open
+ * Checkout session rather than minting a second one. That is exactly right for "the
+ * message never arrived": the page was always fine, the delivery was not. It is NOT a
+ * way to revoke a link that leaked; that would need a new endpoint.
+ *
+ * ⚠️ Gated at **Link Sent but not yet Card on File** (the spec's wording). Past that
+ * point a resend has no legitimate use — it quietly replaces the stored session
+ * reference — and the backend intends to refuse it, so no UI may depend on it. The
+ * route for "they want to use a different card" is Item B: remove the row in the
+ * pricing panel and add a new one with a fresh `pid`.
+ *
+ * ⚠️ A **closed** application is deliberately excluded even though it also sits at
+ * "sent". `isApplicationClosed` resets `linkSent` to false and the card already offers
+ * *"Send a new link"* with a banner explaining why — two competing send controls on
+ * one card would be worse than either alone.
+ *
+ * ⚠️ A **check** row can never resend: there is no link to send (the endpoint answers
+ * 422), and the row has no `type === cc | bank` rail at all.
+ */
+export function canResendLink(p: FundingPayment): boolean {
+  if (!p) return false;
+  if (p.type !== 'cc' && p.type !== 'bank') return false;
+  if (!p.linkSent) return false;
+  // Money has already moved, or somebody has already answered — see the warnings.
+  if (p.charged || p.collected) return false;
+  if (p.type === 'cc') return !(p.step >= 2);
+  return !p.decision && !p.activated;
+}
+
+/**
+ * Where the last send went, for the card — `"Texted to 443-878-4937 · 2:04 PM"`.
+ *
+ * ⚠️ This is the half that actually fixes the reported bug. A rep who mistyped a
+ * digit cannot tell from `Link Sent` alone that anything is wrong; showing the
+ * destination back to them is what makes the mistake visible. The resend button
+ * without it would just be a second chance to send to the same wrong number.
+ *
+ * A `qr` send has no destination by design — nothing was transmitted.
+ */
+export function lastSendNote(p: FundingPayment): string | null {
+  if (!p || !p.linkSent || !p.sentChannel) return null;
+  const at = formatStamp(p.sentAt);
+  const when = at ? ` · ${at}` : '';
+  if (p.sentChannel === 'qr') return `Scanned at the table${when}`;
+  const to = String(p.sentTo || '').trim();
+  const pretty = p.sentChannel === 'text' && to ? formatLocalUSPhone(to) || to : to;
+  const verb = p.sentChannel === 'text' ? 'Texted to' : 'Emailed to';
+  // A destination-less text/email should not read as `Texted to  · 2:04 PM`.
+  if (!pretty) return `${p.sentChannel === 'text' ? 'Texted' : 'Emailed'}${when}`;
+  return `${verb} ${pretty}${when}`;
+}
+
+/**
+ * What the send sheet should open on when it is a RESEND.
+ *
+ * Lands on the channel that was used last with the destination **prefilled**, so the
+ * rep corrects the digit they got wrong instead of retyping the whole thing from a
+ * blank field — retyping is how the same typo gets made twice. `Back` still reaches
+ * the other channels and the QR, so nothing is taken away.
+ *
+ * ⚠️ A `qr` resend opens on `choose`, not on a stage: there is nothing to correct
+ * about a QR code, and the reason to resend one is almost always to switch channel.
+ */
+export function resendSeed(p: FundingPayment): {
+  stage: 'choose' | 'text' | 'email';
+  phone: string;
+  email: string;
+} {
+  const blank = { stage: 'choose' as const, phone: '', email: '' };
+  if (!p || !canResendLink(p) || !p.sentChannel) return blank;
+  const to = String(p.sentTo || '').trim();
+  if (p.sentChannel === 'text') return { stage: 'text', phone: formatLocalUSPhone(to), email: '' };
+  if (p.sentChannel === 'email') return { stage: 'email', phone: '', email: to };
+  return blank;
+}
+
+/**
+ * ── re-issue: the link went to the WRONG person ────────────────────────────
+ *
+ * Normalise a destination so two spellings of the same recipient compare equal.
+ *
+ * ⚠️ Comparing the raw strings is not good enough and would silently disable the
+ * whole re-issue path: the row stores E.164 (`+14438784937`) while the sheet holds
+ * a display string, and an email differing only in case or trailing space is the
+ * same inbox. A false "different" cancels a link that was fine; a false "same"
+ * leaves a working link with a stranger. Both are worse than the typo.
+ */
+export function normalizeDestination(channel: FundingChannel, value?: string | null): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (channel === 'text') return toE164USPhone(raw);
+  if (channel === 'email') return raw.toLowerCase();
+  return '';
+}
+
+/**
+ * Is this send going somewhere DIFFERENT from the last one? (REVDSM-1155.)
+ *
+ * The distinction is not cosmetic — the backend behaves differently on each side
+ * of it, and the payment link is a **bearer credential**: whoever opens that URL
+ * can put a card on this job.
+ *
+ * | | what the server does |
+ * |---|---|
+ * | same destination | reuses the open Checkout session — the "the SMS never arrived" case, where the page was always fine and only the delivery failed |
+ * | **different destination** | **expires the old session first**, then mints a genuinely new page |
+ *
+ * So a corrected number is a **re-issue, not a resend**: the link the wrong person
+ * is holding stops working. That is the point — before this, correcting the number
+ * handed the stranger the very same URL again, and it stayed alive until Stripe
+ * expired it 24 hours later. A mistyped number often belongs to a real person, who
+ * could vault THEIR card against this job and look completely normal doing it.
+ *
+ * ⚠️ There is **no new endpoint** — the behaviour keys off the `destination` already
+ * sent on `link-sent`. This predicate only tells the APP when to warn the rep, fix
+ * the customer record and stop trusting a cached url.
+ *
+ * ⚠️ A **QR** send never re-issues: it has no destination, the rep is showing their
+ * own screen, and there is no wrong recipient to worry about.
+ *
+ * ⚠️ A **first** send is never a re-issue either — there is no earlier link to
+ * cancel, so warning about one would be a lie.
+ */
+export function isReissue(
+  p: FundingPayment,
+  channel: FundingChannel,
+  destination?: string | null
+): boolean {
+  if (!p || !p.linkSent || channel === 'qr') return false;
+  // Only a text/email row can have a destination to differ FROM. A row whose last
+  // send was a QR has none, so switching to text is a first delivery, not a re-issue.
+  if (p.sentChannel !== 'text' && p.sentChannel !== 'email') return false;
+  const next = normalizeDestination(channel, destination);
+  const prev = normalizeDestination(p.sentChannel, p.sentTo);
+  // An unreadable stored destination cannot be compared. Treat it as unchanged: a
+  // warning naming a blank recipient tells the rep nothing, and the server makes
+  // the real decision either way.
+  if (!next || !prev) return false;
+  return next !== prev;
+}
+
+/**
+ * The confirmation copy for a re-issue, or `null` when there is nothing to cancel.
+ *
+ * ⚠️ Worth a prompt even though the API does not require one: the rep is about to
+ * kill a link the homeowner may already have open, and — the reason this ticket
+ * exists — it is a last moment to check the new number before a SECOND stranger
+ * gets one.
+ */
+export function reissueWarning(
+  p: FundingPayment,
+  channel: FundingChannel,
+  destination?: string | null
+): string | null {
+  if (!isReissue(p, channel, destination)) return null;
+  const old = String(p.sentTo || '').trim();
+  const pretty = p.sentChannel === 'text' ? formatLocalUSPhone(old) || old : old;
+  return `This cancels the link already sent to ${pretty}. It will stop working, and a new one will be sent instead.`;
+}
 /** The sentence for the card banner, or `null` when there is nothing to say. */
 export function applicationClosedNote(p: FundingPayment): string | null {
   if (!isApplicationClosed(p)) return null;

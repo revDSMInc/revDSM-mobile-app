@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { FUND } from './funding-theme';
+import { FS, FUND, PS } from './funding-theme';
 import { PaymentFundingCard } from './PaymentFundingCard';
 import { describePayment, groupTotal, type AttemptLogEntry, type FundingPayment, type PayMode } from '../../utils/funding';
 
@@ -74,11 +74,11 @@ interface Props {
 function SectionLabel({ text, hint, total, first }: { text: string; hint: string; total: number; first?: boolean }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginHorizontal: 4, marginBottom: 10, marginTop: first ? 0 : 8 }}>
-      <Text style={{ fontSize: 12, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase', color: '#8A9490' }}>
+      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 1.2, textTransform: 'uppercase', color: '#8A9490' }}>
         {text}
         <Text style={{ color: FUND.SUBTEXT }}>{`  ·  $${total.toLocaleString()}`}</Text>
       </Text>
-      <Text style={{ fontSize: 12, fontWeight: '600', color: FUND.MUTED }}>{hint}</Text>
+      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED }}>{hint}</Text>
     </View>
   );
 }
@@ -89,16 +89,16 @@ function SetupBanner({ message }: { message: string }) {
     <View style={{ flexDirection: 'row', gap: 10, backgroundColor: FUND.RED_BG, borderWidth: 1.4, borderColor: FUND.RED_BORDER, borderRadius: 14, padding: 14, marginBottom: 18 }}>
       <Ionicons name="alert-circle" size={18} color={FUND.RED_TEXT} />
       <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 13, fontWeight: '800', color: FUND.RED_TEXT }}>Payments are not set up for your company yet</Text>
+        <Text style={{ fontSize: FS.BODY, fontFamily: PS.extrabold, color: FUND.RED_TEXT }}>Payments are not set up for your company yet</Text>
         {/* The rep cannot fix this at the table, so it is framed as somebody
             else's job rather than as something to tap again. */}
-        <Text style={{ fontSize: 12, fontWeight: '700', lineHeight: 17, color: FUND.RED_TEXT, marginTop: 4 }}>
+        <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, lineHeight: 17, color: FUND.RED_TEXT, marginTop: 4 }}>
           Contact your office — someone with portal access has to finish setup in Stripe. Card and loan links can’t be
           sent until then; checks are unaffected.
         </Text>
         {/* The server's own wording, kept verbatim: it names the exact requirement
             (e.g. `requirements.past_due`) that whoever is called will need. */}
-        <Text style={{ fontSize: 11, fontWeight: '600', lineHeight: 16, color: FUND.RED_TEXT, marginTop: 6, opacity: 0.85 }}>
+        <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, lineHeight: 16, color: FUND.RED_TEXT, marginTop: 6, opacity: 0.85 }}>
           {message}
         </Text>
       </View>
@@ -159,7 +159,7 @@ export function FundingView({
     <View>
       {/* status-check header */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Text style={{ fontSize: 12, fontWeight: '600', color: FUND.MUTED }}>
+        <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED }}>
           {lastSyncedAt ? `All synced ${lastSyncedAt}` : 'Not synced yet'}
         </Text>
         <TouchableOpacity
@@ -169,13 +169,13 @@ export function FundingView({
           style={{ flexDirection: 'row', alignItems: 'center', gap: 7, opacity: syncingAll ? 0.6 : 1, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 }}
         >
           {syncingAll ? <ActivityIndicator size="small" color="#5B6B60" /> : <Ionicons name="refresh" size={14} color="#5B6B60" />}
-          <Text style={{ fontSize: 13, fontWeight: '700', color: '#5B6B60' }}>Sync all</Text>
+          <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: '#5B6B60' }}>Sync all</Text>
         </TouchableOpacity>
       </View>
 
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 18, padding: 16, marginBottom: 20 }}>
-        <Text style={{ fontSize: 12, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase', color: FUND.PANEL_LABEL }}>Contract Total</Text>
-        <Text style={{ fontSize: 24, fontWeight: '700', letterSpacing: -0.4, color: FUND.TEXT }}>${contractTotal.toLocaleString()}</Text>
+        <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 1.2, textTransform: 'uppercase', color: FUND.PANEL_LABEL }}>Contract Total</Text>
+        <Text style={{ fontSize: FS.DISPLAY, fontFamily: PS.bold, letterSpacing: -0.4, color: FUND.TEXT }}>${contractTotal.toLocaleString()}</Text>
       </View>
 
       {/* Above the payment cards and above the Bank Decline notice: it explains
@@ -184,12 +184,12 @@ export function FundingView({
 
       {bankDeclined && (
         <View style={{ backgroundColor: FUND.RED_BG, borderRadius: 14, padding: 14, marginBottom: 18 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', lineHeight: 19, color: FUND.RED_TEXT }}>
-            Resulted as <Text style={{ fontWeight: '900' }}>Bank Decline</Text>. Nothing collects on this job. The lender
+          <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, lineHeight: 19, color: FUND.RED_TEXT }}>
+            Resulted as <Text style={{ fontFamily: PS.black }}>Bank Decline</Text>. Nothing collects on this job. The lender
             attempts below stay on the record.
           </Text>
           <TouchableOpacity onPress={onUndoBankDecline} style={{ marginTop: 9 }}>
-            <Text style={{ fontSize: 12, fontWeight: '800', textDecorationLine: 'underline', color: FUND.RED_TEXT }}>
+            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, textDecorationLine: 'underline', color: FUND.RED_TEXT }}>
               Undo — go back to Sale
             </Text>
           </TouchableOpacity>
@@ -199,10 +199,10 @@ export function FundingView({
       {payments.length === 0 ? (
         <View style={{ paddingVertical: 24, alignItems: 'center' }}>
           <Ionicons name="card-outline" size={32} color={FUND.BORDER} />
-          <Text style={{ fontSize: 13, fontWeight: '700', color: FUND.MUTED, marginTop: 10, textAlign: 'center' }}>
+          <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: FUND.MUTED, marginTop: 10, textAlign: 'center' }}>
             No payment methods entered
           </Text>
-          <Text style={{ fontSize: 12, fontWeight: '600', color: FUND.MUTED, marginTop: 4, textAlign: 'center', lineHeight: 17 }}>
+          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, marginTop: 4, textAlign: 'center', lineHeight: 17 }}>
             Go back and assign the contract to at least one method.
           </Text>
         </View>
@@ -231,10 +231,10 @@ export function FundingView({
 
       {log.length > 0 && (
         <View style={{ marginTop: 22, paddingTop: 16, borderTopWidth: 1, borderTopColor: FUND.BORDER }}>
-          <Text style={{ fontSize: 12, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase', color: '#8A9490', marginBottom: 4 }}>
+          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 1.2, textTransform: 'uppercase', color: '#8A9490', marginBottom: 4 }}>
             Attempt history
           </Text>
-          <Text style={{ fontSize: 11.5, fontWeight: '600', color: FUND.MUTED, lineHeight: 17, marginBottom: 11 }}>
+          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, lineHeight: 17, marginBottom: 11 }}>
             Kept on the job whether or not the amount was reassigned.
           </Text>
           {log.map((l, i) => {
@@ -254,15 +254,15 @@ export function FundingView({
                 style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, backgroundColor: '#fff', borderWidth: 1.4, borderColor: FUND.BORDER, borderLeftWidth: 4, borderLeftColor: rail, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 8 }}
               >
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#3A4048' }} numberOfLines={1}>{l.method}</Text>
-                  <Text style={{ fontSize: 11, fontWeight: '600', color: FUND.MUTED, marginTop: 3 }}>
+                  <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: '#3A4048' }} numberOfLines={1}>{l.method}</Text>
+                  <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: FUND.MUTED, marginTop: 3 }}>
                     ${l.amt.toLocaleString()} requested
                     {partial ? ` · $${l.approved.toLocaleString()} approved` : ''}
                     {l.at ? ` · ${l.at}` : ''}
                   </Text>
                 </View>
                 <View style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 7, backgroundColor: badge.bg }}>
-                  <Text style={{ fontSize: 10, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase', color: badge.fg }}>
+                  <Text style={{ fontSize: FS.MICRO, fontFamily: PS.extrabold, letterSpacing: 0.4, textTransform: 'uppercase', color: badge.fg }}>
                     {l.outcome}
                   </Text>
                 </View>

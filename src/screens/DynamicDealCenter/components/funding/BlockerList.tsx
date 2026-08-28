@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text } from 'react-native';
-import { FUND } from './funding-theme';
+import { FS, FUND, PS } from './funding-theme';
 
 /**
  * The checklist above a disabled action: what is still standing between the rep
@@ -32,7 +32,7 @@ interface Props {
 export function BlockerList({ items, title = 'Before you can submit:', readyText, override }: Props) {
   if (override) {
     return (
-      <Text style={{ fontSize: 11.5, fontWeight: '700', color: FUND.MUTED, lineHeight: 17, marginBottom: 11 }}>
+      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.MUTED, lineHeight: 17, marginBottom: 11 }}>
         <Text style={{ color: FUND.SUBTEXT }}>{override.title}</Text>
         {'\n'}
         {override.body}
@@ -43,7 +43,7 @@ export function BlockerList({ items, title = 'Before you can submit:', readyText
   if (!items.length) {
     if (!readyText) return null;
     return (
-      <Text style={{ fontSize: 11.5, fontWeight: '700', color: FUND.GREEN_TEXT, lineHeight: 17, marginBottom: 11 }}>
+      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.GREEN_TEXT, lineHeight: 17, marginBottom: 11 }}>
         {readyText}
       </Text>
     );
@@ -51,13 +51,13 @@ export function BlockerList({ items, title = 'Before you can submit:', readyText
 
   return (
     <View style={{ marginBottom: 11 }}>
-      <Text style={{ fontSize: 11.5, fontWeight: '700', color: FUND.SUBTEXT, lineHeight: 17 }}>{title}</Text>
+      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT, lineHeight: 17 }}>{title}</Text>
       {items.map((b, i) => (
         // Bullet and text are separate so a wrapped line indents under the words
         // rather than under the dot — these run to two lines often.
         <View key={`${b}-${i}`} style={{ flexDirection: 'row', gap: 6, marginTop: 2 }}>
-          <Text style={{ fontSize: 11.5, fontWeight: '700', color: FUND.MUTED, lineHeight: 17 }}>•</Text>
-          <Text style={{ flex: 1, fontSize: 11.5, fontWeight: '700', color: FUND.MUTED, lineHeight: 17 }}>{b}</Text>
+          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.MUTED, lineHeight: 17 }}>•</Text>
+          <Text style={{ flex: 1, fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.MUTED, lineHeight: 17 }}>{b}</Text>
         </View>
       ))}
     </View>

@@ -1,15 +1,17 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { FUND } from './funding-theme';
+import { FS, FUND, PS } from './funding-theme';
 import { FundingStepper } from './FundingStepper';
 import {
   FLOW,
   applicationClosedNote,
+  canResendLink,
   canSync,
   doneFor,
   formatStamp,
   isApplicationClosed,
+  lastSendNote,
   openShort,
   ownerOf,
   type FundingPayment,
@@ -96,7 +98,7 @@ function ActionButton({ label, onPress, alt, tone, busy, disabled }: {
       {busy ? (
         <ActivityIndicator size="small" color={alt ? FUND.SUBTEXT : '#fff'} />
       ) : (
-        <Text style={{ fontSize: 14, fontWeight: '700', color: alt ? (danger ? FUND.RED_TEXT : '#3A4048') : '#fff' }}>{label}</Text>
+        <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: alt ? (danger ? FUND.RED_TEXT : '#3A4048') : '#fff' }}>{label}</Text>
       )}
     </TouchableOpacity>
   );
@@ -106,7 +108,7 @@ function Banner({ tone, children }: { tone: 'warn' | 'bad'; children: React.Reac
   const bad = tone === 'bad';
   return (
     <View style={{ marginTop: 12, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, backgroundColor: bad ? FUND.RED_BG : FUND.AMBER_BG }}>
-      <Text style={{ fontSize: 12.5, fontWeight: '700', lineHeight: 18, color: bad ? FUND.RED_TEXT : FUND.AMBER_TEXT }}>{children}</Text>
+      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, lineHeight: 18, color: bad ? FUND.RED_TEXT : FUND.AMBER_TEXT }}>{children}</Text>
     </View>
   );
 }
@@ -128,6 +130,8 @@ export function PaymentFundingCard({
   onReactivate,
 }: Props) {
   const steps = FLOW[p.type] || [];
+  /** Where the last send went — see the resend block below. */
+  const sendNote = lastSendNote(p);
   const finished = doneFor(p, covered);
   const isOpenShort = openShort(p, covered);
   const shortfall = p.decision === 'short' && p.requested != null ? p.requested - (p.approvedAmt || 0) : 0;
@@ -185,18 +189,18 @@ export function PaymentFundingCard({
     <View style={{ borderWidth: 1.6, borderColor: tint.border, backgroundColor: tint.bg, borderRadius: 16, paddingHorizontal: 14, paddingTop: 15, paddingBottom: 12, marginBottom: 14 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 10 }}>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, flexShrink: 1 }}>
-          <Text style={{ fontSize: 22, fontWeight: '700', letterSpacing: -0.4, color: FUND.TEXT }}>
+          <Text style={{ fontSize: FS.DISPLAY, fontFamily: PS.bold, letterSpacing: -0.4, color: FUND.TEXT }}>
             ${p.amount.toLocaleString()}
           </Text>
           {/* Only the ordinal, and only when there IS one: two `$500 Check` cards
               are otherwise pixel-identical and the rep cannot tell which one a
               blocker sentence is about. */}
           {!!ordinal && (
-            <Text style={{ fontSize: 12, fontWeight: '800', color: FUND.MUTED }}>{ordinal}</Text>
+            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, color: FUND.MUTED }}>{ordinal}</Text>
           )}
         </View>
         <View style={{ maxWidth: '58%', backgroundColor: FUND.FILL, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 20 }}>
-          <Text style={{ fontSize: 12.5, fontWeight: '700', color: FUND.SUBTEXT }} numberOfLines={1}>
+          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT }} numberOfLines={1}>
             {p.method}
           </Text>
         </View>
@@ -233,6 +237,49 @@ export function PaymentFundingCard({
         />
       )}
 
+      {/* ── the link went to the wrong place ──
+          Once `linkSent` ticks, the send button above disappears — so a rep who
+          mistyped a digit was left on a card that says the link went out with no
+          way to correct it (REVDSM-1155 Item A).
+
+          ⚠️ **The destination is shown, not just the button.** `Link Sent` alone
+          cannot tell a rep that anything is wrong; reading `Texted to 443-878-4937`
+          back to them is what makes the typo visible. A resend button without it
+          would just be a second chance to send to the same wrong number.
+
+          ⚠️ Withdrawn once the card is on file / a lender has answered — see
+          `canResendLink`. Past that a resend has no legitimate use and the backend
+          intends to refuse it; the route for a different card is to remove the row
+          in the pricing panel and add a new one. */}
+      {canResendLink(p) && !bankDeclined && (
+        <View style={{ marginTop: 12, paddingHorizontal: 13, paddingVertical: 12, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Ionicons
+              name={p.sentChannel === 'email' ? 'mail-outline' : p.sentChannel === 'qr' ? 'qr-code-outline' : 'chatbubble-ellipses-outline'}
+              size={14}
+              color={FUND.SUBTEXT}
+            />
+            <Text style={{ flex: 1, fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT }} numberOfLines={2}>
+              {sendNote}
+            </Text>
+          </View>
+          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, lineHeight: 16, color: FUND.MUTED, marginTop: 6 }}>
+            {p.sentChannel === 'qr'
+              ? 'Didn’t go through? Send it to their phone or email instead.'
+              : 'Wrong number or address? Fix it and send the same link again.'}
+          </Text>
+          {/* Outlined, not green: the primary action on this card is still waiting
+              for the homeowner, and a filled button here would compete with it. */}
+          <ActionButton
+            label={linkBlocked ? 'Payments not set up — can’t send' : 'Send again'}
+            alt
+            onPress={onSendLink}
+            busy={isBusy}
+            disabled={linkBlocked}
+          />
+        </View>
+      )}
+
       {/* Card on File is not a rep action — the processor reports it on Sync.
           Charging is: a DOWN-payment card on file that has not been charged. A
           balance card is charged by the processor after install and the endpoint
@@ -255,16 +302,16 @@ export function PaymentFundingCard({
         <View style={{ marginTop: 12, paddingHorizontal: 13, paddingVertical: 12, backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#F1F5F9', borderRadius: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: onReactivate ? 10 : 0 }}>
             <View>
-              <Text style={{ fontSize: 10.5, fontWeight: '700', letterSpacing: 0.3, color: '#94A3B8' }}>PRIOR</Text>
-              <Text style={{ fontSize: 16, fontWeight: '800', color: FUND.TEXT, marginTop: 2 }}>${drift.prior.toLocaleString()}</Text>
+              <Text style={{ fontSize: FS.TINY, fontFamily: PS.bold, letterSpacing: 0.3, color: '#94A3B8' }}>PRIOR</Text>
+              <Text style={{ fontSize: FS.LEAD, fontFamily: PS.extrabold, color: FUND.TEXT, marginTop: 2 }}>${drift.prior.toLocaleString()}</Text>
             </View>
-            <Text style={{ fontSize: 14, color: '#CBD5E1' }}>→</Text>
+            <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.regular, color: '#CBD5E1' }}>→</Text>
             <View>
-              <Text style={{ fontSize: 10.5, fontWeight: '700', letterSpacing: 0.3, color: '#94A3B8' }}>NEW</Text>
-              <Text style={{ fontSize: 16, fontWeight: '800', color: FUND.TEXT, marginTop: 2 }}>${drift.live.toLocaleString()}</Text>
+              <Text style={{ fontSize: FS.TINY, fontFamily: PS.bold, letterSpacing: 0.3, color: '#94A3B8' }}>NEW</Text>
+              <Text style={{ fontSize: FS.LEAD, fontFamily: PS.extrabold, color: FUND.TEXT, marginTop: 2 }}>${drift.live.toLocaleString()}</Text>
             </View>
             <View style={{ marginLeft: 'auto', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: drift.up ? FUND.AMBER_BG : '#E0F2FE' }}>
-              <Text style={{ fontSize: 12.5, fontWeight: '800', color: drift.up ? '#B45309' : '#0369A1' }}>
+              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, color: drift.up ? '#B45309' : '#0369A1' }}>
                 {drift.up ? '+' : '−'}${Math.abs(drift.diff).toLocaleString()}
               </Text>
             </View>
@@ -276,7 +323,7 @@ export function PaymentFundingCard({
               disabled={isBusy}
               style={{ borderRadius: 11, paddingVertical: 12, alignItems: 'center', backgroundColor: isBusy ? '#94A3B8' : '#0C2618' }}
             >
-              <Text style={{ fontSize: 13, fontWeight: '800', letterSpacing: 0.2, color: '#fff' }}>
+              <Text style={{ fontSize: FS.BODY, fontFamily: PS.extrabold, letterSpacing: 0.2, color: '#fff' }}>
                 Reactivate loan for ${drift.live.toLocaleString()}
               </Text>
             </TouchableOpacity>
@@ -317,7 +364,7 @@ export function PaymentFundingCard({
           no external system to poll and `sync` refuses it (spec §5.8). */}
       {canSync(p) && !finished && (
         <View style={{ marginTop: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text style={{ fontSize: 11, fontWeight: '600', color: FUND.MUTED }}>
+          <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: FUND.MUTED }}>
             {p.syncedAt ? `Synced ${formatStamp(p.syncedAt)}` : 'Awaiting response'}
           </Text>
           <TouchableOpacity
@@ -327,24 +374,24 @@ export function PaymentFundingCard({
             style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isBusy ? 0.55 : 1, backgroundColor: FUND.FILL, borderWidth: 1, borderColor: FUND.BORDER, borderRadius: 18, paddingHorizontal: 13, paddingVertical: 7 }}
           >
             {isBusy ? <ActivityIndicator size="small" color={FUND.SUBTEXT} /> : <Ionicons name="refresh" size={13} color={FUND.SUBTEXT} />}
-            <Text style={{ fontSize: 12, fontWeight: '700', color: FUND.SUBTEXT }}>Sync</Text>
+            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT }}>Sync</Text>
           </TouchableOpacity>
         </View>
       )}
 
       {!!finished && (
         <View style={{ marginTop: 12, paddingTop: 11, borderTopWidth: 1, borderTopColor: '#D8EECD', flexDirection: 'row', gap: 7 }}>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: FUND.GREEN_TEXT }}>✓</Text>
+          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.GREEN_TEXT }}>✓</Text>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 12, fontWeight: '700', color: FUND.GREEN_TEXT, lineHeight: 17 }}>All set for now</Text>
-            <Text style={{ fontSize: 12, fontWeight: '600', color: '#5F7A55', lineHeight: 17, marginTop: 2 }}>{finished}</Text>
+            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.GREEN_TEXT, lineHeight: 17 }}>All set for now</Text>
+            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: '#5F7A55', lineHeight: 17, marginTop: 2 }}>{finished}</Text>
           </View>
         </View>
       )}
 
       {!!note && (
         <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderStyle: 'dashed', borderTopColor: FUND.BORDER }}>
-          <Text style={{ fontSize: 11.5, fontWeight: '600', color: FUND.MUTED, lineHeight: 17 }}>{note}</Text>
+          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, lineHeight: 17 }}>{note}</Text>
         </View>
       )}
     </View>

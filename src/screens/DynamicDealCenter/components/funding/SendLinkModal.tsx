@@ -1,12 +1,19 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Clipboard from '@react-native-clipboard/clipboard';
-import { FUND } from './funding-theme';
+import { FS, FUND, PS } from './funding-theme';
 import { FlashMessage } from '../../../../config/message';
 import { formatLocalUSPhone, toE164USPhone } from '../../../../utils/phone-util';
 import type { FundingChannel } from '../../../../services/api/FundingService';
-import type { FundingPayment } from '../../utils/funding';
+import {
+  canResendLink,
+  isReissue,
+  lastSendNote,
+  reissueWarning,
+  resendSeed,
+  type FundingPayment,
+} from '../../utils/funding';
 
 /**
  * "Send application/payment link" — the sheet that gets the homeowner onto their
@@ -26,6 +33,26 @@ import type { FundingPayment } from '../../utils/funding';
  * ⚠️ Opening this sheet marks NOTHING. `Link Sent` only ticks once a send actually
  * completes (spec §5.4) — which for QR means the rep confirming the homeowner
  * scanned it.
+ *
+ * ⚠️ **RESEND** (REVDSM-1155 Item A) reuses this same sheet rather than adding a
+ * second one — it is the same two calls (`link`, then `link-sent`), and a separate
+ * "resend" sheet would be a second place for the channel rules to drift. When the row
+ * is already at Link Sent the sheet opens **on the channel that was used, with the
+ * destination prefilled**, so the rep corrects the digit they got wrong instead of
+ * retyping from a blank field — retyping is how the same typo gets made twice.
+ * `Back` still reaches the QR and the other channel.
+ *
+ * ⚠️ **A resend to the SAME destination delivers the same url** — `link` is idempotent
+ * while the page is open. That is right for "the SMS never arrived": the page was
+ * always fine, the delivery was not.
+ *
+ * ⚠️ **A resend to a DIFFERENT destination is a RE-ISSUE** (REVDSM-1155). The server
+ * expires the old Checkout session before minting the new page, so the link the wrong
+ * person is holding stops working — which is the entire point, since that url is a
+ * bearer credential and a mistyped number often belongs to a real person. The rep is
+ * asked to confirm first (`reissueWarning`), because it is the last moment to check
+ * the new number before a second stranger gets one, and the confirmation screen says
+ * the old link was cancelled. See `isReissue`.
  *
  * ⚠️ The url is a **bearer credential** scoped to one payment: anyone holding it
  * can complete that payment. It is never logged or persisted — it lives in the
@@ -105,7 +132,7 @@ function ModalButton({ label, onPress, alt, disabled, busy }: {
       {busy ? (
         <ActivityIndicator size="small" color={alt ? FUND.SUBTEXT : '#fff'} />
       ) : (
-        <Text style={{ fontSize: 14, fontWeight: '700', color: alt ? '#3A4048' : '#fff' }}>{label}</Text>
+        <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: alt ? '#3A4048' : '#fff' }}>{label}</Text>
       )}
     </TouchableOpacity>
   );
@@ -121,20 +148,81 @@ export function SendLinkModal({
   onCopyLink,
   onClose,
 }: Props) {
-  const [stage, setStage] = useState<Stage>('choose');
-  const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
+  /**
+   * Is this a second (or third) send for a row that is already at Link Sent?
+   *
+   * ⚠️ Read off the PAYMENT, not passed in as a prop: both host screens already
+   * hand this component the row, and deriving it here is what stops the two of them
+   * from ever disagreeing about whether a send is a resend.
+   */
+  const isResend = canResendLink(payment);
+  const previously = lastSendNote(payment);
+
+  /**
+   * ⚠️ Lazy initialisers, not an effect. Both hosts mount this conditionally
+   * (`{!!linkPayment && <SendLinkModal …/>}`), so it remounts on every open and the
+   * seed runs exactly once per open — an effect would fight the rep the moment they
+   * started correcting the number.
+   */
+  const [stage, setStage] = useState<Stage>(() => (isResend ? resendSeed(payment).stage : 'choose'));
+  const [phone, setPhone] = useState(() => (isResend ? resendSeed(payment).phone : ''));
+  const [email, setEmail] = useState(() => (isResend ? resendSeed(payment).email : ''));
   const [sentTo, setSentTo] = useState('');
+  /**
+   * Was the send that landed on the confirmation screen a RE-ISSUE?
+   *
+   * ⚠️ Captured at send time rather than re-derived for the `done` copy: the row is
+   * refetched the moment the send lands, so by then `sentTo` is the NEW destination
+   * and `isReissue` would compare it against itself and answer false. The rep would
+   * never be told the old link had been cancelled.
+   */
+  const [cancelledOld, setCancelledOld] = useState<string | null>(null);
 
   const isBank = payment.type === 'bank';
-  const title = isBank ? 'Send application link' : 'Send payment link';
+  const noun = isBank ? 'application' : 'payment';
+  const title = `${isResend ? 'Resend' : 'Send'} ${noun} link`;
 
   /** Only advance to the confirmation when the SERVER says the send happened. */
   const deliver = async (channel: FundingChannel, destination: string | undefined, who: string) => {
+    // Read BEFORE the call: the row is refreshed by the send, so afterwards the old
+    // destination is gone. Same reason `useFunding.wasLinkSent` snapshots first.
+    const cancelled = isReissue(payment, channel, destination)
+      ? String(payment.sentTo || '').trim()
+      : null;
     const ok = await onSend(channel, destination);
     if (!ok) return; // the hook already surfaced why; stay put so the rep can retry
     setSentTo(who);
+    setCancelledOld(cancelled);
     setStage('done');
+  };
+
+  /**
+   * Send, pausing first when this cancels a link that is already out there.
+   *
+   * ⚠️ Not required by the API — the server re-issues either way — but the rep is
+   * about to kill a page the homeowner may already have open, and this is the last
+   * moment to notice a wrong number before a SECOND stranger receives one.
+   *
+   * ⚠️ A native `Alert` rather than an in-sheet layer: this component is already an
+   * overlay inside the Result Lead modal (see the note above about stacked modals),
+   * and a third hand-rolled layer on top of that is where z-order goes wrong.
+   */
+  const confirmThenDeliver = (channel: FundingChannel, destination: string, who: string) => {
+    const warning = reissueWarning(payment, channel, destination);
+    if (!warning) {
+      deliver(channel, destination, who);
+      return;
+    }
+    Alert.alert('Cancel the old link?', warning, [
+      { text: 'Keep it', style: 'cancel' },
+      {
+        text: 'Cancel & send new',
+        style: 'destructive',
+        onPress: () => {
+          deliver(channel, destination, who);
+        },
+      },
+    ]);
   };
 
   const sendText = () => {
@@ -143,7 +231,7 @@ export function SendLinkModal({
       FlashMessage.warning('Phone number', 'Enter the homeowner’s 10-digit mobile number.');
       return;
     }
-    deliver('text', e164, `Texted to ${formatLocalUSPhone(phone)}`);
+    confirmThenDeliver('text', e164, `Texted to ${formatLocalUSPhone(phone)}`);
   };
 
   const sendEmail = () => {
@@ -152,7 +240,7 @@ export function SendLinkModal({
       FlashMessage.warning('Email address', 'Enter a valid email address for the homeowner.');
       return;
     }
-    deliver('email', to, `Emailed to ${to}`);
+    confirmThenDeliver('email', to, `Emailed to ${to}`);
   };
 
   return (
@@ -161,31 +249,40 @@ export function SendLinkModal({
         <ScrollView contentContainerStyle={{ padding: 22, alignItems: 'center' }} keyboardShouldPersistTaps="handled">
           {stage === 'choose' && (
             <>
-              <Text style={{ fontSize: 19, fontWeight: '700', color: FUND.TEXT, marginBottom: 4, textAlign: 'center' }}>{title}</Text>
-              <Text style={{ fontSize: 12.5, fontWeight: '600', color: FUND.MUTED, marginBottom: 16, textAlign: 'center' }}>
+              <Text style={{ fontSize: FS.TITLE, fontFamily: PS.bold, color: FUND.TEXT, marginBottom: 4, textAlign: 'center' }}>{title}</Text>
+              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, marginBottom: isResend && previously ? 10 : 16, textAlign: 'center' }}>
                 ${payment.amount.toLocaleString()} · {payment.method}
               </Text>
+
+              {/* ⚠️ The destination, read back. A rep who mistyped a digit cannot see
+                  it anywhere else — this is the whole point of the resend flow. */}
+              {isResend && !!previously && (
+                <View style={{ alignSelf: 'stretch', backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 16 }}>
+                  <Text style={{ fontSize: FS.TINY, fontFamily: PS.extrabold, letterSpacing: 0.5, color: FUND.MUTED, marginBottom: 3 }}>LAST SENT</Text>
+                  <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: FUND.SUBTEXT }}>{previously}</Text>
+                </View>
+              )}
 
               {isLoadingLink ? (
                 <View style={{ paddingVertical: 40, alignItems: 'center' }}>
                   <ActivityIndicator size="large" color={FUND.GREEN} />
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: FUND.MUTED, marginTop: 12 }}>Preparing the link…</Text>
+                  <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, marginTop: 12 }}>Preparing the link…</Text>
                 </View>
               ) : blockedReason ? (
                 /* ⚠️ NOT "try again". The company's Stripe account is connected but
                    cannot take payments, and no number of taps changes that — the
                    rep needs someone with portal access, so say so and name them. */
                 <View style={{ alignSelf: 'stretch', backgroundColor: FUND.RED_BG, borderRadius: 11, padding: 12 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '800', color: FUND.RED_TEXT }}>
+                  <Text style={{ fontSize: FS.BODY, fontFamily: PS.extrabold, color: FUND.RED_TEXT }}>
                     Payments are not set up for your company yet
                   </Text>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: FUND.RED_TEXT, lineHeight: 17, marginTop: 4 }}>
+                  <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.RED_TEXT, lineHeight: 17, marginTop: 4 }}>
                     Contact your office — setup has to be finished in Stripe before card and loan links can be sent.
                     Nothing has been sent.
                   </Text>
                   {/* The server's wording names the exact requirement whoever is
                       called will have to clear. */}
-                  <Text style={{ fontSize: 11, fontWeight: '600', color: FUND.RED_TEXT, lineHeight: 16, marginTop: 6, opacity: 0.85 }}>
+                  <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: FUND.RED_TEXT, lineHeight: 16, marginTop: 6, opacity: 0.85 }}>
                     {blockedReason}
                   </Text>
                 </View>
@@ -194,7 +291,7 @@ export function SendLinkModal({
                    there is nothing to scan, text or email, so offer the way out
                    rather than three dead buttons. */
                 <View style={{ alignSelf: 'stretch', backgroundColor: FUND.RED_BG, borderRadius: 11, padding: 12 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: FUND.RED_TEXT, lineHeight: 17 }}>
+                  <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.RED_TEXT, lineHeight: 17 }}>
                     Couldn’t create the payment link. Close this and try again — nothing has been sent.
                   </Text>
                 </View>
@@ -205,7 +302,7 @@ export function SendLinkModal({
                       <View style={{ padding: 10, borderRadius: 12, borderWidth: 1, borderColor: FUND.BORDER, backgroundColor: '#fff' }}>
                         <QRCode value={link} size={170} backgroundColor="#fff" color={FUND.TEXT} />
                       </View>
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: FUND.SUBTEXT, marginTop: 10, textAlign: 'center' }}>
+                      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT, marginTop: 10, textAlign: 'center' }}>
                         Have them scan this with their phone
                       </Text>
                       <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignSelf: 'stretch' }}>
@@ -220,7 +317,7 @@ export function SendLinkModal({
                     </>
                   ) : (
                     <View style={{ alignSelf: 'stretch', backgroundColor: FUND.AMBER_BG, borderRadius: 11, padding: 12, marginBottom: 4 }}>
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: FUND.AMBER_TEXT, lineHeight: 17 }}>
+                      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.AMBER_TEXT, lineHeight: 17 }}>
                         QR display is unavailable in this build. Send the link by text or email instead.
                       </Text>
                     </View>
@@ -228,7 +325,7 @@ export function SendLinkModal({
 
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14, marginBottom: 10, alignSelf: 'stretch' }}>
                     <View style={{ flex: 1, height: 1, backgroundColor: FUND.BORDER }} />
-                    <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase', color: FUND.MUTED }}>or send it</Text>
+                    <Text style={{ fontSize: FS.TINY, fontFamily: PS.bold, letterSpacing: 0.6, textTransform: 'uppercase', color: FUND.MUTED }}>or send it</Text>
                     <View style={{ flex: 1, height: 1, backgroundColor: FUND.BORDER }} />
                   </View>
 
@@ -246,7 +343,7 @@ export function SendLinkModal({
                     style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14 }}
                   >
                     <Ionicons name="copy-outline" size={14} color={FUND.SUBTEXT} />
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: FUND.SUBTEXT }}>Copy link</Text>
+                    <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: FUND.SUBTEXT }}>Copy link</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -254,21 +351,25 @@ export function SendLinkModal({
               <TouchableOpacity onPress={onClose} style={{ marginTop: 12 }}>
                 {/* "Cancel" implies aborting something in progress; when the gate
                     refused there is nothing in progress to abort. */}
-                <Text style={{ fontSize: 13, fontWeight: '700', color: FUND.MUTED }}>{blockedReason ? 'Close' : 'Cancel'}</Text>
+                <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: FUND.MUTED }}>{blockedReason ? 'Close' : 'Cancel'}</Text>
               </TouchableOpacity>
             </>
           )}
 
           {stage === 'text' && (
             <>
-              <Text style={{ fontSize: 19, fontWeight: '700', color: FUND.TEXT, marginBottom: 4 }}>Text the link</Text>
-              <Text style={{ fontSize: 12.5, fontWeight: '600', color: FUND.MUTED, marginBottom: 4, textAlign: 'center' }}>
-                Goes straight to the homeowner’s phone
+              <Text style={{ fontSize: FS.TITLE, fontFamily: PS.bold, color: FUND.TEXT, marginBottom: 4 }}>
+                {isResend ? 'Check the number' : 'Text the link'}
+              </Text>
+              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, marginBottom: 4, textAlign: 'center' }}>
+                {isResend
+                  ? 'Correct it if it is wrong, then send the same link again.'
+                  : 'Goes straight to the homeowner’s phone'}
               </Text>
               <View style={{ alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', borderWidth: 1.6, borderColor: FUND.BORDER, borderRadius: 11, paddingHorizontal: 14, paddingVertical: 12, marginTop: 14 }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: FUND.SUBTEXT, marginRight: 6 }}>+1</Text>
+                <Text style={{ fontSize: FS.LEAD, fontFamily: PS.bold, color: FUND.SUBTEXT, marginRight: 6 }}>+1</Text>
                 <TextInput
-                  style={{ flex: 1, fontSize: 16, fontWeight: '600', color: FUND.TEXT, padding: 0 }}
+                  style={{ flex: 1, fontSize: FS.LEAD, fontFamily: PS.semibold, color: FUND.TEXT, padding: 0 }}
                   value={phone}
                   onChangeText={(t) => setPhone(formatLocalUSPhone(t))}
                   placeholder="443-878-4937"
@@ -278,22 +379,30 @@ export function SendLinkModal({
                 />
               </View>
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignSelf: 'stretch' }}>
-                <ModalButton label="Send text" onPress={sendText} busy={isSending} />
+                <ModalButton label={isResend ? 'Resend text' : 'Send text'} onPress={sendText} busy={isSending} />
               </View>
+              {/* Reaches the QR and the other channel even when a resend opened
+                  straight onto this stage — nothing is taken away by the shortcut. */}
               <TouchableOpacity onPress={() => setStage('choose')} disabled={isSending} style={{ marginTop: 12 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: FUND.MUTED }}>Back</Text>
+                <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: FUND.MUTED }}>
+                  {isResend ? 'Other ways to send' : 'Back'}
+                </Text>
               </TouchableOpacity>
             </>
           )}
 
           {stage === 'email' && (
             <>
-              <Text style={{ fontSize: 19, fontWeight: '700', color: FUND.TEXT, marginBottom: 4 }}>Email the link</Text>
-              <Text style={{ fontSize: 12.5, fontWeight: '600', color: FUND.MUTED, marginBottom: 4, textAlign: 'center' }}>
-                Goes straight to the homeowner’s inbox
+              <Text style={{ fontSize: FS.TITLE, fontFamily: PS.bold, color: FUND.TEXT, marginBottom: 4 }}>
+                {isResend ? 'Check the address' : 'Email the link'}
+              </Text>
+              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, marginBottom: 4, textAlign: 'center' }}>
+                {isResend
+                  ? 'Correct it if it is wrong, then send the same link again.'
+                  : 'Goes straight to the homeowner’s inbox'}
               </Text>
               <TextInput
-                style={{ alignSelf: 'stretch', borderWidth: 1.6, borderColor: FUND.BORDER, borderRadius: 11, paddingHorizontal: 14, paddingVertical: 13, fontSize: 16, fontWeight: '600', color: FUND.TEXT, marginTop: 14, textAlign: 'center' }}
+                style={{ alignSelf: 'stretch', borderWidth: 1.6, borderColor: FUND.BORDER, borderRadius: 11, paddingHorizontal: 14, paddingVertical: 13, fontSize: FS.LEAD, fontFamily: PS.semibold, color: FUND.TEXT, marginTop: 14, textAlign: 'center' }}
                 value={email}
                 onChangeText={setEmail}
                 placeholder="homeowner@email.com"
@@ -303,19 +412,37 @@ export function SendLinkModal({
                 autoCorrect={false}
               />
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignSelf: 'stretch' }}>
-                <ModalButton label="Send email" onPress={sendEmail} busy={isSending} />
+                <ModalButton label={isResend ? 'Resend email' : 'Send email'} onPress={sendEmail} busy={isSending} />
               </View>
               <TouchableOpacity onPress={() => setStage('choose')} disabled={isSending} style={{ marginTop: 12 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: FUND.MUTED }}>Back</Text>
+                <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: FUND.MUTED }}>
+                  {isResend ? 'Other ways to send' : 'Back'}
+                </Text>
               </TouchableOpacity>
             </>
           )}
 
           {stage === 'done' && (
             <>
-              <Text style={{ fontSize: 34, marginBottom: 6 }}>✅</Text>
-              <Text style={{ fontSize: 19, fontWeight: '700', color: FUND.TEXT, marginBottom: 4 }}>Link sent</Text>
-              <Text style={{ fontSize: 12.5, fontWeight: '600', color: FUND.MUTED, marginBottom: 16, textAlign: 'center' }}>{sentTo}</Text>
+              <Text style={{ fontSize: FS.EMOJI, marginBottom: 6 }}>✅</Text>
+              <Text style={{ fontSize: FS.TITLE, fontFamily: PS.bold, color: FUND.TEXT, marginBottom: 4 }}>
+                {cancelledOld ? 'New link sent' : isResend ? 'Link sent again' : 'Link sent'}
+              </Text>
+              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, marginBottom: cancelledOld ? 10 : 16, textAlign: 'center' }}>{sentTo}</Text>
+
+              {/* ⚠️ Said explicitly, because the rep cannot see it anywhere else and it
+                  is the fact that makes the mistake safe: the url the wrong person is
+                  holding no longer works. It also warns them off a link they may have
+                  copied to the clipboard a moment ago. */}
+              {!!cancelledOld && (
+                <View style={{ alignSelf: 'stretch', backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 16 }}>
+                  <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT, lineHeight: 17 }}>
+                    The earlier link to{' '}
+                    {payment.sentChannel === 'email' ? cancelledOld : formatLocalUSPhone(cancelledOld) || cancelledOld}{' '}
+                    has been cancelled and no longer works.
+                  </Text>
+                </View>
+              )}
               <View style={{ flexDirection: 'row', gap: 8, alignSelf: 'stretch' }}>
                 <ModalButton label="Done" onPress={onClose} />
               </View>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text } from 'react-native';
 import Svg, { Circle, Line } from 'react-native-svg';
-import { FUND } from './funding-theme';
+import { FS, FUND, PS } from './funding-theme';
 import {
   FLOW,
   connectorTones,
@@ -149,24 +149,24 @@ export function FundingStepper({ payment, covered }: { payment: FundingPayment; 
                     justifyContent: 'center',
                   }}
                 >
-                  <Text style={{ fontSize: 11, fontWeight: '800', color: colors.fg }}>{markFor(state, i)}</Text>
+                  <Text style={{ fontSize: FS.TINY, fontFamily: PS.extrabold, color: colors.fg }}>{markFor(state, i)}</Text>
                 </View>
               )}
             </View>
 
             <Text
-              style={{ fontSize: 10.5, fontWeight: '700', lineHeight: 13, textAlign: 'center', color: labelColor(state) }}
+              style={{ fontSize: FS.TINY, fontFamily: PS.bold, lineHeight: 13, textAlign: 'center', color: labelColor(state) }}
               numberOfLines={2}
             >
               {displayLabel}
             </Text>
             {approvedSub && (
-              <Text style={{ fontSize: 9.5, fontWeight: '700', color: labelColor(state), marginTop: 2 }}>
+              <Text style={{ fontSize: FS.MICRO, fontFamily: PS.bold, color: labelColor(state), marginTop: 2 }}>
                 ${(payment.approvedAmt || 0).toLocaleString()}
               </Text>
             )}
             {state === 'locked' && (
-              <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 0.5, textTransform: 'uppercase', color: FUND.FAINT, marginTop: 3, textAlign: 'center' }}>
+              <Text style={{ fontSize: FS.MICRO, fontFamily: PS.extrabold, letterSpacing: 0.5, textTransform: 'uppercase', color: FUND.FAINT, marginTop: 3, textAlign: 'center' }}>
                 {owner}
               </Text>
             )}

@@ -211,6 +211,42 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
       const openSheet = () => {
         setResultModal({ visible: true, calculatorId, resultType: result, price, paymentMethod, downPayment });
         setCurrentCalculatorId(calculatorId);
+
+        /**
+         * The portal's Forever Record turns the **Lead Resulted** step in-progress here.
+         *
+         * ⚠️ That step is the one sales-phase milestone with NO log-derived fallback —
+         * the backend reads `lead.timelineProgress[cycle].leadResulted` and nothing else
+         * (`SalesPhaseBuilder`), and the field is created `pending`. Its neighbours look
+         * alive without help (Sales Process is created `active`; Funding is derived from
+         * the `JobFunding` doc), so before this the dynamic flow left it reading
+         * "Pending… / Result: N/A" while Funding beside it showed green — on a lead that
+         * had plainly been resulted. It only ever jumped straight to `completed`, at
+         * Build Job.
+         *
+         * ⚠️ Web parity, and the same moment: `deal-center/components/ResultJobModal.js`
+         * sends this exact pair from the Sale **and** Demo buttons of the chooser, which
+         * is the press that lands here. Mobile's own static flow does it too
+         * (`useDealOutcome.handleStatusSelect`). Tapping **Result Lead** to open the
+         * chooser still changes nothing — only picking an outcome does.
+         *
+         * ⚠️ Safe to repeat: `canAdvanceStatus` is FORWARD-ONLY (`pending → active →
+         * completed`), so re-opening the sheet on an already-built lead cannot knock the
+         * step back, and the Build Job write below still wins.
+         *
+         * ⚠️ Deliberately NOT awaited, matching the Build Job site: nothing the rep is
+         * about to see reads these flags, and a failed PATCH must never block resulting
+         * a lead.
+         */
+        const progressLeadId = lead?._id || lead?.leadId || lead?.id;
+        if (progressLeadId) {
+          LeadService.updateLeadTimelineProgress(progressLeadId, {
+            salesProcess: 'completed',
+            leadResulted: 'active',
+          }).catch((e: any) =>
+            console.warn('[DynamicDealCenter] timeline progress (result opened) failed:', e?.message || e)
+          );
+        }
       };
 
       const resumeLeadId = lead?._id || lead?.leadId || lead?.id;

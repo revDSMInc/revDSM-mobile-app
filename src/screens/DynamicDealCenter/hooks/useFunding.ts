@@ -30,6 +30,9 @@ import {
   type FundingLogPayment,
   type FundingSource,
 } from '../../../utils/activity-log/funding-log';
+import { isReissue } from '../utils/funding';
+import { LeadService } from '../../../services/api/leads';
+import { getRawPhoneNumber } from '../../../utils/phone-util';
 
 /**
  * useFunding — the single seam between the Result Lead sheet and the Funding API
@@ -99,6 +102,20 @@ export interface FundingLogContext {
    * can tell the three apart while `module_type` stays `funding` for all of them.
    */
   source?: FundingSource;
+  /**
+   * The CUSTOMER record's id — `lead.customerDetails._id`, a DIFFERENT document
+   * from the lead.
+   *
+   * Used for one thing: when a rep corrects a mistyped phone or email on a resend,
+   * the contact record is fixed too (`PATCH /lead/v1/customer/:customerId`).
+   * Expiring the old link stops the wrong person using it, but it does NOT correct
+   * the record — the next agreement or addendum would go to the same wrong address.
+   *
+   * ⚠️ It lives here, in the hook, rather than at the two call sites so both funding
+   * screens cannot drift on it. ⚠️ And it must be the customer id, never the lead id:
+   * the endpoint is keyed on the customer document.
+   */
+  customerId?: string;
 }
 
 export function useFunding(leadId?: string, companyId?: string, logCtx?: FundingLogContext) {
@@ -114,6 +131,8 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
    * one identity to the logs and a different one to the API.
    */
   const actorId = logCtx?.userId;
+  /** See `FundingLogContext.customerId` — the contact-correction target. */
+  const customerId = logCtx?.customerId;
   const [record, setRecord] = useState<FundingRecord | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -213,6 +232,34 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       ? { pid: p.pid, method: p.method, type: p.type, kind: p.kind, amount: p.amount }
       : { pid };
   }, []);
+
+  /**
+   * Was this row ALREADY at Link Sent going into the call?
+   *
+   * ⚠️ Same snapshot rule as `paymentFor`, and for the same reason: `link-sent`
+   * answers with a record whose `linkSent` is true, so reading it afterwards would
+   * mark every send as a re-send. Kept separate from `paymentFor` because that one
+   * narrows to the log payload shape and deliberately drops the step flags.
+   */
+  const wasLinkSent = useCallback((pid: string): boolean => {
+    const row = (recordRef.current?.payments || []).find((x) => x.pid === pid);
+    return !!row?.linkSent;
+  }, []);
+
+  /**
+   * The WHOLE server row as it stands before a call — for rules that need more
+   * than one flag off it (`isReissue` reads `linkSent`, `sentChannel` and `sentTo`
+   * together).
+   *
+   * ⚠️ Same snapshot rule as its two siblings: every one of these endpoints answers
+   * with a MUTATED record, so reading afterwards would compare the new destination
+   * against itself and never see a change.
+   */
+  const rowFor = useCallback(
+    (pid: string): FundingPaymentRow | null =>
+      (recordRef.current?.payments || []).find((x) => x.pid === pid) || null,
+    []
+  );
 
   const refetch = useCallback(async (): Promise<FundingRecord | null> => {
     if (!leadId) return null;
@@ -412,12 +459,15 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
   const fetchLink = useCallback(
     async (pid: string): Promise<FundingActionResult<{ url: string }>> => {
       const payment = paymentFor(pid);
+      // Read BEFORE the call — see `wasLinkSent`.
+      const resend = wasLinkSent(pid);
       const res = await run('Payment link', () => FundingService.getLink(leadId!, pid, companyId, actorId), { pid });
       // ⚠️ The url is NEVER passed to the logger, and `logFundingLinkRequested` does
       // not accept one — it is a bearer credential scoped to this payment.
       logFundingLinkRequested({
         ...logBase,
         payment,
+        resend,
         ok: res.ok,
         blocked: res.error?.kind === 'setupRequired',
         error: res.error?.message,
@@ -429,7 +479,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       setPaymentsSetupError(null);
       return OK(res.message, { url: res.data?.url || '' });
     },
-    [run, leadId, companyId, actorId, logBase, paymentFor]
+    [run, leadId, companyId, actorId, logBase, paymentFor, wasLinkSent]
   );
 
   /**
@@ -438,10 +488,60 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
    * ⚠️ Only call this once the send is REAL: a QR the homeowner confirmed scanning,
    * or a text/email the server actually delivered. On 502/503 nothing is written
    * and `ok` is false, so the caller must not show the link as sent.
+   *
+   * ⚠️ **A DIFFERENT `destination` re-issues the link** (REVDSM-1155). The server
+   * expires the open Checkout session before minting the new page, so the url the
+   * wrong person is holding stops working. There is no separate endpoint — the
+   * behaviour keys off this `destination`. See `isReissue`.
    */
   const markLinkSent = useCallback(
-    async (pid: string, channel: FundingChannel, destination?: string): Promise<FundingActionResult> => {
+    async (pid: string, channel: FundingChannel, destination?: string): Promise<FundingActionResult<{ reissued: boolean }>> => {
       const payment = paymentFor(pid);
+      // Read BEFORE the call, for the reason on `wasLinkSent`.
+      const wasSent = wasLinkSent(pid);
+      const row = rowFor(pid);
+      const reissued = !!row && isReissue(row, channel, destination);
+
+      /**
+       * Correct the CONTACT RECORD first, and this ordering is the spec's own.
+       *
+       * Expiring the old link stops the wrong person using it; it does not fix the
+       * number the mistake came from, so the next agreement or addendum would go to
+       * the same wrong address. Doing it BEFORE the send means a failed send still
+       * leaves the record corrected — which is right on its own terms — whereas the
+       * other order can send successfully and leave the typo in place.
+       *
+       * ⚠️ A failure here must NOT abort the send. The re-issue is the urgent half:
+       * it is what kills the link a stranger is holding. So this is awaited (the
+       * record should be right before the new link goes out) but never thrown from.
+       *
+       * ⚠️ Only the ONE changed field is sent. The Lead Center writes the whole
+       * customer object, but this is a correction to a single contact detail and
+       * blanking a name from the funding screen would be indefensible.
+       *
+       * ⚠️ `getRawPhoneNumber` matches what the Lead Center already stores
+       * (`14438784937`), so the field keeps ONE shape rather than gaining an E.164
+       * spelling only this path writes.
+       */
+      if (reissued && customerId && destination) {
+        try {
+          await LeadService.updateCustomer(
+            customerId,
+            channel === 'text'
+              ? { phone: getRawPhoneNumber(destination) }
+              : { email: destination.trim() }
+          );
+        } catch (e: any) {
+          // Said out loud rather than swallowed: the link is about to be re-issued
+          // correctly, but the record the rest of the app reads is still wrong.
+          FlashMessage.warning(
+            'Contact not updated',
+            'The link will go to the corrected address, but the customer record still has the old one. Fix it in Edit Customer.'
+          );
+          if (__DEV__) console.warn('[useFunding] customer correction failed:', e?.message || e);
+        }
+      }
+
       const res = await run(
         'Send link',
         () => FundingService.markLinkSent(leadId!, pid, { channel, destination }, companyId, actorId),
@@ -450,6 +550,11 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       logFundingLinkSent({
         ...logBase,
         payment,
+        resend: wasSent,
+        // ⚠️ Its own field, not folded into `resend`: a re-issue CANCELLED a live
+        // credential, which is a materially different event from re-sending the same
+        // page to the same person, and the money trail has to be able to say so.
+        reissued,
         channel,
         // QR transmits nothing, so it has no destination to record (spec §5.4).
         destination: channel === 'qr' ? undefined : destination,
@@ -457,9 +562,16 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         error: res.error?.message,
       });
       if (res.ok) setPaymentsSetupError(null);
-      return res;
+      /**
+       * ⚠️ `reissued` is REPORTED BACK because the caller is holding a url that the
+       * server has just expired. Computing it here rather than at the two call sites
+       * is what stops the funding screens disagreeing about whether a link is still
+       * live — and the caller cannot re-derive it afterwards anyway, since the row now
+       * carries the NEW destination.
+       */
+      return { ...res, data: { reissued } };
     },
-    [run, leadId, companyId, actorId, logBase, paymentFor]
+    [run, leadId, companyId, actorId, logBase, paymentFor, wasLinkSent, rowFor, customerId]
   );
 
   /** Ask the processor/lender what happened. The main way card and loan rows advance. */

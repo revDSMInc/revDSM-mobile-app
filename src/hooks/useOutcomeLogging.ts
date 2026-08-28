@@ -46,6 +46,19 @@ export function useOutcomeLogging(opts: {
    * indistinguishable from the same change on a fresh sale.
    */
   source?: FundingSource;
+  /**
+   * The `module_type` these rows are filed under.
+   *
+   * ⚠️ **Opt-in, and it has to be.** Three screens call this hook and the WEB app
+   * emits the same strings into `lead_result_field_entry`, so the default keeps the
+   * classic Outcome modal and the Lead Center Result Lead modal byte-identical.
+   *
+   * Only the DYNAMIC Result Lead sheet overrides it, with `RESULT_LEAD_MODULE`, so
+   * ONE module covers everything on that screen — these field rows alongside the
+   * payment-split rows the sheet fires itself. Without the override it would go on
+   * emitting two module types for one flow, which is the thing being fixed.
+   */
+  moduleType?: string;
 }) {
   const { user } = useAuth();
   const {
@@ -57,6 +70,7 @@ export function useOutcomeLogging(opts: {
     lead,
     disabled = false,
     source,
+    moduleType = 'lead_result_field_entry',
   } = opts;
   const leadId = lead?._id || lead?.leadId || lead?.id;
   const stepViewedRef = useRef(false);
@@ -171,7 +185,7 @@ export function useOutcomeLogging(opts: {
         await logEvent('auto-populated', {
           user_id: userId,
           created_by: userId,
-          module_type: 'lead_result_field_entry',
+          module_type: moduleType,
           meta: stamp(
             {
               fieldName: entry.key,
@@ -194,7 +208,7 @@ export function useOutcomeLogging(opts: {
     fireAutoLogs();
     prevFormRef.current = JSON.parse(JSON.stringify(outcomeForm || {}));
     prevActiveIdxRef.current = activeIdx;
-  }, [visible, sectionsReady, user, leadId, buildResultData, outcomeForm, outcomeStatus, activeIdx, disabled, stamp]);
+  }, [visible, sectionsReady, user, leadId, buildResultData, outcomeForm, outcomeStatus, activeIdx, disabled, stamp, moduleType]);
 
   // Calculator switch logging (web parity: selectedCalculatorId change)
   useEffect(() => {
@@ -209,7 +223,7 @@ export function useOutcomeLogging(opts: {
       logEvent('change', {
         user_id: userId,
         created_by: userId,
-        module_type: 'lead_result_field_entry',
+        module_type: moduleType,
         meta: stamp({
           leadId,
           fieldName: 'selectedCalculatorId',
@@ -225,7 +239,7 @@ export function useOutcomeLogging(opts: {
       });
       prevActiveIdxRef.current = activeIdx;
     }
-  }, [activeIdx, visible, user, leadId, calculators, disabled, stamp]);
+  }, [activeIdx, visible, user, leadId, calculators, disabled, stamp, moduleType]);
 
   useEffect(() => {
     if (disabled) return;
@@ -241,7 +255,7 @@ export function useOutcomeLogging(opts: {
         logEvent('user_changed', {
           user_id: userId,
           created_by: userId,
-          module_type: 'lead_result_field_entry',
+          module_type: moduleType,
           meta: stamp(
             {
               fieldName: 'downPayment',
@@ -262,7 +276,7 @@ export function useOutcomeLogging(opts: {
         logEvent('auto-populated', {
           user_id: userId,
           created_by: userId,
-          module_type: 'lead_result_field_entry',
+          module_type: moduleType,
           meta: stamp(
             {
               fieldName: 'balance',
@@ -314,7 +328,7 @@ export function useOutcomeLogging(opts: {
         logEvent('change', {
           user_id: userId,
           created_by: userId,
-          module_type: 'lead_result_field_entry',
+          module_type: moduleType,
           meta: stamp({
             leadId,
             fieldName: change.fieldName,
@@ -333,7 +347,7 @@ export function useOutcomeLogging(opts: {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [outcomeForm, visible, user, leadId, disabled, stamp]);
+  }, [outcomeForm, visible, user, leadId, disabled, stamp, moduleType]);
 
   const logReset = useCallback(() => {
     if (disabled) return;
@@ -342,7 +356,7 @@ export function useOutcomeLogging(opts: {
     logEvent('reset', {
       user_id: userId,
       created_by: userId,
-      module_type: 'lead_result_field_entry',
+      module_type: moduleType,
       meta: stamp({
         leadId,
         action: 'reset_lead_result_form',
@@ -350,7 +364,7 @@ export function useOutcomeLogging(opts: {
     });
     autoLoggedRef.current = false;
     stepViewedRef.current = false;
-  }, [user, leadId, disabled, stamp]);
+  }, [user, leadId, disabled, stamp, moduleType]);
 
   return { logReset };
 }

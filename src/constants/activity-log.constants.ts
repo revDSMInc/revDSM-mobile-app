@@ -122,6 +122,39 @@ export const INVESTMENT_CENTER_MODULE = 'investment_center';
  * First introduced on mobile (the web funding screen does not log yet), so the
  * vocabulary is defined here.
  */
+/**
+ * Result Lead — the sheet a rep results a job from, up to and including **Confirm**.
+ *
+ * ONE module for everything that happens on that screen: the sheet opening, the
+ * web-parity field rows (One Leg, Result, contract price, the payment-method
+ * scalars — see `useOutcomeLogging`), the payment structure choice, every payment
+ * line added / removed / given a method, and the Confirm that ends it.
+ *
+ * ⚠️ **It ends at Confirm, and `funding` begins there.** Before the rep confirms,
+ * the split is an unsaved local draft and nothing has been asked of a processor or
+ * a lender; after it, `PUT …/funding` has filed the rows and every subsequent row is
+ * about money actually moving. Splitting the two there is what lets a portal filter
+ * answer "how was this job resulted?" separately from "how did the money come in?" —
+ * previously the two were interleaved under `funding`.
+ *
+ * ⚠️ The module follows the SCREEN, not the deal's history: **Edit payments** returns
+ * to the pricing panel, so a re-price after a lender decision fires
+ * `result_lead_opened` again and files its edits here, not under `funding`.
+ *
+ * ⚠️ This is the Result Lead SHEET only. `DynamicDealEditScreen`'s Job Price step
+ * renders the same pricing components inside the My Deals wizard and deliberately
+ * keeps logging to `funding`: it is a different screen and is not a Result Lead.
+ *
+ * ⚠️ Distinct from `lead_result_field_entry`, the module the CLASSIC Outcome modal
+ * and the Lead Center Result Lead modal still emit into byte-identically to web.
+ * Only the DYNAMIC sheet opts in to this one — see `useOutcomeLogging`'s `moduleType`.
+ *
+ * Events are namespaced `result_lead_*` and carry the same flow prefix and
+ * `meta.fundingSource` the funding module does, so the portal badges both the same
+ * way — see `src/utils/activity-log/result-lead-log.ts`.
+ */
+export const RESULT_LEAD_MODULE = 'result_lead';
+
 export const FUNDING_MODULE = 'funding';
 
 /**

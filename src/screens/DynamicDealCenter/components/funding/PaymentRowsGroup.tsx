@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { FUND } from './funding-theme';
+import { FS, FUND, PS } from './funding-theme';
 import { FlashMessage } from '../../../../config/message';
 import { planBelowMin, belowMinMsg, type DealPlan, type PayCategory } from '../../hooks/useDealPricing';
 import {
@@ -99,7 +99,7 @@ function StatusPill({ decision }: { decision: 'full' | 'short' | 'declined' }) {
   const declined = decision === 'declined';
   return (
     <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: declined ? FUND.RED_BG : FUND.GREEN_BG }}>
-      <Text style={{ fontSize: 10, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase', color: declined ? FUND.RED_TEXT : FUND.GREEN_TEXT }}>
+      <Text style={{ fontSize: FS.MICRO, fontFamily: PS.extrabold, letterSpacing: 0.4, textTransform: 'uppercase', color: declined ? FUND.RED_TEXT : FUND.GREEN_TEXT }}>
         {declined ? 'Declined' : 'Approved'}
       </Text>
     </View>
@@ -160,7 +160,7 @@ export function PaymentRowsGroup({
             }}
             style={{ paddingHorizontal: 13, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#EEF0F2', backgroundColor: isSel ? FUND.FILL : 'transparent' }}
           >
-            <Text style={{ flex: 1, fontSize: 14, fontWeight: isSel ? '700' : '500', color: isSel ? FUND.TEXT : FUND.SUBTEXT }}>{o.label}</Text>
+            <Text style={{ flex: 1, fontSize: FS.BODY_LG, fontFamily: isSel ? PS.bold : PS.medium, color: isSel ? FUND.TEXT : FUND.SUBTEXT }}>{o.label}</Text>
             {isSel && <Ionicons name="checkmark" size={15} color={FUND.TEXT} />}
           </TouchableOpacity>
         );
@@ -170,7 +170,7 @@ export function PaymentRowsGroup({
         <View key={cat.title || 'basic'}>
           {!!cat.title && (
             <View style={{ paddingHorizontal: 13, paddingVertical: 10, backgroundColor: cat.bg }}>
-              <Text style={{ fontSize: 12, fontWeight: '800', letterSpacing: 0.3, textTransform: 'uppercase', color: cat.text }}>{cat.title}</Text>
+              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 0.3, textTransform: 'uppercase', color: cat.text }}>{cat.title}</Text>
             </View>
           )}
           {cat.plans.map((key) => {
@@ -195,9 +195,9 @@ export function PaymentRowsGroup({
                 style={{ paddingHorizontal: 13, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#EEF0F2', opacity: belowMin ? 0.5 : 1, backgroundColor: isSel ? FUND.FILL : 'transparent' }}
               >
                 <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={{ fontSize: 13.5, fontWeight: isSel ? '700' : '500', color: isSel ? FUND.TEXT : FUND.SUBTEXT }}>{plan.label}</Text>
+                  <Text style={{ fontSize: FS.BODY, fontFamily: isSel ? PS.bold : PS.medium, color: isSel ? FUND.TEXT : FUND.SUBTEXT }}>{plan.label}</Text>
                   {belowMin && !!plan.minPrice && (
-                    <Text style={{ fontSize: 11, fontWeight: '600', color: FUND.MUTED, marginTop: 2 }}>
+                    <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: FUND.MUTED, marginTop: 2 }}>
                       Requires ${plan.minPrice.toLocaleString()}+
                     </Text>
                   )}
@@ -247,14 +247,14 @@ export function PaymentRowsGroup({
     const amountCell = (
       <>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Text style={{ fontSize: plain ? 16 : 18, fontWeight: '700', color: readOnlyAmount ? FUND.MUTED : FUND.TEXT, marginRight: 3 }}>$</Text>
+          <Text style={{ fontSize: FS.LEAD, fontFamily: PS.bold, color: readOnlyAmount ? FUND.MUTED : FUND.TEXT, marginRight: 3 }}>$</Text>
           {readOnlyAmount ? (
-            <Text style={{ flex: 1, fontSize: plain ? 16 : 18, fontWeight: '700', color: locked ? FUND.TEXT : plain ? '#6B7280' : FUND.MUTED }} numberOfLines={1}>
+            <Text style={{ flex: 1, fontSize: FS.LEAD, fontFamily: PS.bold, color: locked ? FUND.TEXT : plain ? '#6B7280' : FUND.MUTED }} numberOfLines={1}>
               {amount.toLocaleString()}
             </Text>
           ) : (
             <TextInput
-              style={{ flex: 1, fontSize: plain ? 16 : 18, fontWeight: '700', color: FUND.TEXT, padding: 0 }}
+              style={{ flex: 1, fontSize: FS.LEAD, fontFamily: PS.bold, color: FUND.TEXT, padding: 0 }}
               value={row.amount}
               onChangeText={(t) => onChangeAmount(row.pid, t.replace(/[^0-9.]/g, ''))}
               placeholder="0"
@@ -268,8 +268,8 @@ export function PaymentRowsGroup({
             differing is not an error state, it is a reactivation waiting to happen. */}
         {!!drift && (
           <View style={{ marginTop: 4 }}>
-            <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#94A3B8' }}>{drift.prior}</Text>
-            <Text style={{ fontSize: 10.5, fontWeight: '800', color: drift.up ? '#B45309' : '#0369A1' }}>{drift.delta}</Text>
+            <Text style={{ fontSize: FS.TINY, fontFamily: PS.bold, color: '#94A3B8' }}>{drift.prior}</Text>
+            <Text style={{ fontSize: FS.TINY, fontFamily: PS.extrabold, color: drift.up ? '#B45309' : '#0369A1' }}>{drift.delta}</Text>
           </View>
         )}
       </>
@@ -281,10 +281,10 @@ export function PaymentRowsGroup({
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9, flex: 1, minWidth: 0 }}>
           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tone.dot }} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={{ fontSize: 14, fontWeight: '700', color: label ? tone.name : FUND.MUTED }} numberOfLines={1}>
+            <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: label ? tone.name : FUND.MUTED }} numberOfLines={1}>
               {label || 'Select payment method'}
             </Text>
-            <Text style={{ fontSize: 11.5, fontWeight: '600', color: tone.sub, marginTop: 1 }} numberOfLines={2}>
+            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: tone.sub, marginTop: 1 }} numberOfLines={2}>
               {lender?.sub}
             </Text>
           </View>
@@ -297,7 +297,7 @@ export function PaymentRowsGroup({
             style={{ flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 9, borderWidth: 1.5, borderColor: FUND.BORDER, backgroundColor: '#fff' }}
           >
             <Ionicons name={isOpen ? 'close' : 'swap-horizontal'} size={13} color="#374151" />
-            <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#374151' }}>{isOpen ? 'Close' : 'Swap'}</Text>
+            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: '#374151' }}>{isOpen ? 'Close' : 'Swap'}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -309,10 +309,10 @@ export function PaymentRowsGroup({
         style={
           plain
             ? { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4, minWidth: 0 }
-            : { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, borderWidth: 1.6, borderColor: isOpen ? FUND.TEXT : fieldBorder, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 14, backgroundColor: fieldBg }
+            : { flex: 1, minWidth: 0, minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, borderWidth: 1.6, borderColor: isOpen ? FUND.TEXT : fieldBorder, borderRadius: 12, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: fieldBg }
         }
       >
-        <Text style={{ flex: 1, fontSize: plain ? 13.5 : 13, fontWeight: label ? (plain ? '600' : '700') : '600', color: label ? '#374151' : FUND.MUTED }} numberOfLines={1}>
+        <Text style={{ flex: 1, fontSize: FS.BODY, fontFamily: label ? (plain ? PS.semibold : PS.bold) : PS.semibold, color: label ? '#374151' : FUND.MUTED }} numberOfLines={1}>
           {label || 'Select Payment Method'}
         </Text>
         {locked && row.decision && !plain ? (
@@ -326,7 +326,7 @@ export function PaymentRowsGroup({
     // ── archived shelf ───────────────────────────────────────────────────────
     const archivedBlock = archived.length > 0 && (
       <View style={{ marginTop: 8, marginBottom: 8, borderWidth: 1.5, borderStyle: 'dashed', borderColor: FUND.BORDER, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#FAFAFA' }}>
-        <Text style={{ fontSize: 11, fontWeight: '800', letterSpacing: 0.4, color: '#9CA3AF', marginBottom: 8 }}>ARCHIVED METHODS</Text>
+        <Text style={{ fontSize: FS.TINY, fontFamily: PS.extrabold, letterSpacing: 0.4, color: '#9CA3AF', marginBottom: 8 }}>ARCHIVED METHODS</Text>
         {archived.map((a) => (
           <View
             key={a.archivedId}
@@ -335,10 +335,10 @@ export function PaymentRowsGroup({
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
               <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#D1D5DB' }} />
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#6B7280', textDecorationLine: 'line-through' }} numberOfLines={1}>
+                <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: '#6B7280', textDecorationLine: 'line-through' }} numberOfLines={1}>
                   {a.method}
                 </Text>
-                <Text style={{ fontSize: 10.5, fontWeight: '600', color: '#B0B4BA', marginTop: 1 }} numberOfLines={1}>
+                <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: '#B0B4BA', marginTop: 1 }} numberOfLines={1}>
                   Archived{a.decision ? ` · ${a.decision === 'declined' ? 'Declined' : 'Approved'}` : ''}
                 </Text>
               </View>
@@ -351,7 +351,7 @@ export function PaymentRowsGroup({
                 // thing on the row that may be squeezed.
                 style={{ flexShrink: 0, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#EFF4FF' }}
               >
-                <Text style={{ fontSize: 11.5, fontWeight: '800', color: '#2563EB' }}>Restore</Text>
+                <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, color: '#2563EB' }}>Restore</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -371,10 +371,10 @@ export function PaymentRowsGroup({
               borderWidth: 1.5,
               borderColor: needs ? FUND.AMBER : '#E5E7EB',
               borderRadius: 14,
-              paddingLeft: 14,
-              paddingRight: 10,
-              paddingVertical: 10,
-              marginBottom: 8,
+              paddingLeft: 12,
+              paddingRight: 9,
+              paddingVertical: 8,
+              marginBottom: 7,
               backgroundColor: needs ? FUND.AMBER_BG : row.auto || locked ? '#F9FAFB' : '#fff',
             }}
           >
@@ -385,7 +385,7 @@ export function PaymentRowsGroup({
                 onPress={() => onRemove(row.pid)}
                 style={{ paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, borderWidth: 1.5, borderColor: '#E5E7EB' }}
               >
-                <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#374151' }}>Remove</Text>
+                <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: '#374151' }}>Remove</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -396,9 +396,9 @@ export function PaymentRowsGroup({
     }
 
     return (
-      <View key={row.pid} style={{ marginBottom: 10 }}>
+      <View key={row.pid} style={{ marginBottom: 8 }}>
         <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-          <View style={{ flexBasis: '34%', flexGrow: 0, flexShrink: 0, flexDirection: 'row', alignItems: 'center', borderWidth: 1.6, borderColor: fieldBorder, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 13, backgroundColor: fieldBg }}>
+          <View style={{ flexBasis: '30%', flexGrow: 0, flexShrink: 0, minHeight: 44, flexDirection: 'row', alignItems: 'center', borderWidth: 1.6, borderColor: fieldBorder, borderRadius: 12, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: fieldBg }}>
             <View style={{ flex: 1 }}>{amountCell}</View>
           </View>
 
@@ -433,13 +433,13 @@ export function PaymentRowsGroup({
       }
     >
       {plain ? (
-        <Text style={{ fontSize: 12.5, fontWeight: '700', color: canAdd ? '#12A96B' : FUND.MUTED }}>+ Add payment method</Text>
+        <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: canAdd ? '#12A96B' : FUND.MUTED }}>+ Add payment method</Text>
       ) : (
         <>
-          <View style={{ width: 21, height: 21, borderRadius: 11, backgroundColor: canAdd ? FUND.LAV_PILL : FUND.FILL, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 14, fontWeight: '800', color: canAdd ? FUND.LAV_TEXT : FUND.MUTED, lineHeight: 17 }}>+</Text>
+          <View style={{ width: 19, height: 19, borderRadius: 10, backgroundColor: canAdd ? FUND.LAV_PILL : FUND.FILL, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.extrabold, color: canAdd ? FUND.LAV_TEXT : FUND.MUTED, lineHeight: 17 }}>+</Text>
           </View>
-          <Text style={{ fontSize: 14.5, fontWeight: '700', color: canAdd ? FUND.LAV_TEXT : FUND.MUTED }}>Add payment method</Text>
+          <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: canAdd ? FUND.LAV_TEXT : FUND.MUTED }}>Add payment method</Text>
         </>
       )}
     </TouchableOpacity>
@@ -448,10 +448,10 @@ export function PaymentRowsGroup({
   if (plain) {
     return (
       <View style={{ marginTop: 18 }}>
-        <Text style={{ fontSize: 14, fontWeight: '700', color: '#374151', marginBottom: 8 }}>
+        <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: '#374151', marginBottom: 8 }}>
           {title}
           {rows.length > 1 && total != null && (
-            <Text style={{ fontWeight: '700', color: FUND.SUBTEXT }}>{`  ·  $${Math.round(total).toLocaleString()}`}</Text>
+            <Text style={{ fontFamily: PS.bold, color: FUND.SUBTEXT }}>{`  ·  $${Math.round(total).toLocaleString()}`}</Text>
           )}
         </Text>
         {body}
@@ -462,14 +462,14 @@ export function PaymentRowsGroup({
   }
 
   return (
-    <View style={{ position: 'relative', backgroundColor: '#fff', borderWidth: 1.6, borderColor: FUND.BORDER, borderRadius: 16, paddingHorizontal: 14, paddingTop: 20, paddingBottom: 14, marginBottom: 18 }}>
-      <Text style={{ position: 'absolute', top: -9, left: 16, paddingHorizontal: 6, backgroundColor: FUND.PANEL, fontSize: 13.5, fontWeight: '700', color: FUND.TEXT, zIndex: 2 }}>
+    <View style={{ position: 'relative', backgroundColor: '#fff', borderWidth: 1.6, borderColor: FUND.BORDER, borderRadius: 16, paddingHorizontal: 12, paddingTop: 16, paddingBottom: 11, marginBottom: 14 }}>
+      <Text style={{ position: 'absolute', top: -9, left: 16, paddingHorizontal: 6, backgroundColor: FUND.PANEL, fontSize: FS.BODY, fontFamily: PS.bold, color: FUND.TEXT, zIndex: 2 }}>
         {title}
         {/* Shown only once the group holds MORE THAN ONE line — with a single row
             the total is the number already in the field beside it, and repeating
             it in the heading reads as a second, different figure. */}
         {rows.length > 1 && total != null && (
-          <Text style={{ fontWeight: '700', color: FUND.SUBTEXT }}>{`  ·  $${Math.round(total).toLocaleString()}`}</Text>
+          <Text style={{ fontFamily: PS.bold, color: FUND.SUBTEXT }}>{`  ·  $${Math.round(total).toLocaleString()}`}</Text>
         )}
       </Text>
 

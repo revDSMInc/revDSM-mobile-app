@@ -2063,6 +2063,548 @@ and all 18 actions distinct and `funding_`-namespaced. tsc 44 (baseline unchange
 its test and `activity-log.constants.ts` are eslint-clean, `ResultJobModal.tsx` is at its exact HEAD
 count (65 problems, 0 errors) and `DynamicDealCenterScreen.tsx` at its HEAD 21 pre-existing errors.
 
+### The Lead Resulted timeline step now passes through in-progress
+
+Reference: **`funding-data/LEAD-RESULTED-TIMELINE-STEP-MOBILE.md`**. On the portal's Forever
+Record the **Lead Resulted** step read `Timestamp: Pending… / Result: N/A` on a lead that had
+plainly been resulted — with the **Funding** step directly below it already green.
+
+⚠️ **That step is the one sales-phase milestone with NO log-derived fallback.** The backend
+reads `lead.timelineProgress[cycle].leadResulted` and nothing else (`SalesPhaseBuilder`), and
+the field is created `pending`. Its neighbours look alive without help — Sales Process is
+created `active`, and Funding is derived from the `JobFunding` document — which is why only
+this one appeared stuck. **No `result_lead_*` / `funding_*` log moves it**; the logs render the
+timeline ROWS only. So this is not a logging gap and cannot be fixed by emitting anything.
+
+In the dynamic flow the ONLY writer was Build Job (`handleResultConfirm`, sending
+`leadResulted: 'completed'`), so the field went `pending → completed` with nothing in between —
+and that write lands *after* funding is submitted. Hence the screenshot: Funding active, Lead
+Resulted still Pending.
+
+`handleResultJob` → `openSheet` (`DynamicDealCenterScreen`) now PATCHes
+`{ salesProcess: 'completed', leadResulted: 'active' }`.
+
+- **`openSheet` is the moment, and it is web parity.** `deal-center/components/ResultJobModal.js`
+  sends that exact pair from the chooser's Sale **and** Demo buttons — the press that lands here
+  — and mobile's own static flow does the same (`useDealOutcome.handleStatusSelect`, the app's
+  only other `active` write). It is also the single point BOTH entry branches funnel through, so
+  one insertion covers the demo / no-lead-id early return and the normal path, and it covers both
+  `<ResultJobModal>` instances this screen renders (they share one `resultModal.visible`).
+- ⚠️ **Tapping "Result Lead" changes nothing.** That opens the `ResultJobChooser`, which fires no
+  timeline write and no funding log; only PICKING Sale/Demo calls `handleResultJob`. Verified,
+  because "opening the result screen must not flip the portal status" was the explicit
+  requirement alongside this fix.
+- ⚠️ **Safe to repeat.** `canAdvanceStatus` is FORWARD-ONLY (`pending → active → completed`), so
+  re-opening the sheet on an already-built lead cannot knock the step back, and the Build Job
+  write still wins. Abandoning the sheet leaves it 'active', which is correct — the rep did begin
+  resulting the lead.
+- ⚠️ **The RESUME path deliberately skips it.** A rep returning to a lead whose funding was
+  already submitted goes straight to `handleResultConfirm` → `'completed'`, never through
+  `openSheet`. Unchanged.
+- **Not awaited**, matching the Build Job site: nothing on screen reads these flags, and a failed
+  PATCH must never block resulting a lead.
+
+#### …and **Confirm** closes it, so the step no longer waits for Build Job
+
+Follow-up on the same ticket: *"when we click on the confirm button from the result lead screen
+than call the timeline progress and … make sure the status update `leadResulted: completed`,
+currently this is not calling on the confirm button."* Correct — `goFunding` saved the payments
+and moved to Funding without touching the milestone, so it sat `active` for the whole of the
+money flow and only completed at Build Job.
+
+`goFunding` (`ResultJobModal`) now PATCHes `{ salesProcess: 'completed', leadResulted: 'completed' }`.
+The result IS finished at Confirm — outcome, contract price and the whole payment split are
+saved — and everything past it belongs to **Funding**, which the portal derives separately from
+the `JobFunding` document. So the milestone now spans exactly the sheet: `active` when it opens,
+`completed` when the rep confirms.
+
+- ⚠️ **`jobBuild` is deliberately NOT advanced here.** The rep has not started building. Build
+  Job still sends `{ leadResulted: 'completed', jobBuild: 'active' }` of its own accord, and the
+  repeated `leadResulted` is a harmless no-op under the forward-only guard.
+- ⚠️ **Fired AFTER the save succeeds, unlike `result_lead_confirmed` — and the split is the**
+  **point.** That log is an EVENT (the rep pressed Confirm, which happened whatever the server
+  said, which is why it is unconditional); this is a STATE CLAIM. A refused save leaves the rep
+  on the pricing panel still able to change the result, and `canAdvanceStatus` is forward-only —
+  so completing the milestone there would be a claim that cannot be walked back.
+- **`DynamicDealEditScreen`'s Confirm is deliberately untouched.** That is the My Deals addendum
+  wizard; its lead was resulted long ago and the milestone is already `completed`, so a write
+  there would be a no-op at best.
+
+#### …and the audit that came with it: nothing changes portal status on open
+
+The **Funding** step IS log-derived (`JobFunding doc || funding logs`), so a stray `funding_*`
+row on the pricing panel would turn it active before any money existed. Checked and clean:
+
+| on the pricing panel | emits |
+|---|---|
+| structure switch · row add · row remove · method pick | `result_lead_*` — the module split, not `funding_*` |
+| the outcome fields | `useOutcomeLogging` with `moduleType: RESULT_LEAD_MODULE` |
+| `funding.load()` | **nothing** — a plain `GET /lead/v1/{id}/funding`; the doc is created by `savePayments()` at Confirm |
+
+The first `funding_*` row is `funding_payments_saved`, fired from inside `savePayments` at
+Confirm — immediately after `result_lead_confirmed` and before `funding_opened`, which is the
+boundary this file already documents. `funding_link_copied` is unreachable from the pricing
+panel: `SendLinkModal` is gated on `linkPayment`, set only by a card inside `FundingView`.
+
+⚠️ **The action vocabulary is exactly in sync with the portal doc** — 40 actions emitted
+(33 `funding_*`, 7 `result_lead_*`), 40 named in `RESULT-LEAD-AND-FUNDING-ACTIVITY-LOGS-PORTAL.md`,
+nothing missing in either direction. Verified by extracting the string literals from both log
+modules (comments stripped, so prose examples do not count) and diffing against the doc.
+
+⚠️ `LEAD-RESULTED-TIMELINE-STEP-MOBILE.md` §5 is STALE where it says *"`result_lead_*` logs are
+not emitted yet on this branch… there is no `src/utils/activity-log/result-lead-log.ts`"*. That
+file and its 7 emitters exist. The rest of the doc is accurate.
+
+tsc 75 (baseline unchanged); `DynamicDealCenterScreen.tsx` is byte-identical to its HEAD eslint
+baseline (39 problems: 23 errors / 16 warnings). 16 suites / 400 tests pass.
+
+⚠️ Needs a portal check, since the step is server-rendered: tap **Sale**, stop at the sheet, and
+confirm **Lead Resulted** reads in-progress with a timestamp while **Funding** below it stays
+Pending. Then **Confirm** — Lead Resulted flips to Complete and Funding goes active in the same
+moment (two `timeline-progress` PATCHes will have gone out, one per end of the sheet). Then
+Submit → Build Job, and reopen the sheet to confirm it STAYS Complete.
+
+### "No money down" now confirms — the down row is named before the rep touches it
+
+Ticket: *"if user do not want to provide any down payment go with only balance part than
+allow the user to move to the next screen for the approval of their balance section."*
+
+On the Result Lead pricing panel the rep clears the **Down Payment** so the balance carries
+the whole contract — and **Confirm stays dead**, listing *"Enter an amount for the payment
+method you added, or remove that line"*. The balance can never go for approval, on a
+structure that is perfectly ordinary.
+
+⚠️ **They never added it.** `confirmBlockers`' `emptyNamed` rule reads a picked method as
+*"I meant to fund this line"* — a good signal, and the rule it guards is real (a line the rep
+named and left blank is dropped by `toUpsertRows`, the server rejecting a zero amount with
+422, while the auto row silently re-absorbs the money). But the down row is **SEEDED** with
+the lead's own payment method (`seedDownMethod`, from `initialPaymentMethod`), so it arrives
+already named and the signal is simply absent there.
+
+`emptyNamed` now exempts an **entirely unfunded `down` group**. Both halves of that scope
+are load-bearing:
+
+- ⚠️ **`down` only.** It is the ONLY group whose row is named without the rep choosing
+  anything — every other seed writes `method: ''` (`switchPayMode`'s upfront row and its
+  split re-entry rows), and any other non-auto named row is either one the rep added or one
+  hydrated from a save that carried money. A group-agnostic version was written first and it
+  **broke an existing test** (`funding-multi-payment`: a blank balance line carrying a
+  retired plan label must still block) — correctly, and that is the case that pins the scope.
+- ⚠️ **Entirely unfunded.** $1,300 down beside a second down line left blank is still the
+  forgotten amount it looks like, and is still blocked.
+
+⚠️ **Nothing is lost by exempting it.** A blank row contributes $0, so the auto row's
+remainder is identical whether it is dropped or kept, and the coverage rule below it is
+untouched — an unpaid contract still cannot be confirmed. **Upfront is unaffected** (no auto
+row there, and its seed names nothing), so an all-blank upfront structure is still caught by
+the unassigned-contract line.
+
+⚠️ The ✕ on the down row already worked and still does. This fixes the more obvious
+gesture — clearing the amount — dead-ending on a message about a line the rep never added.
+
+**Both flows get it from the one function**: `ResultJobModal`'s Confirm and
+`DynamicDealEditScreen`'s **Next · Review** both gate on `confirmBlockers`, and the deal-edit
+wizard seeds its down row from the deal's stored `paymentMethod` the same way.
+
+Downstream is already correct and needed no change: `toUpsertRows` drops the empty row, so
+the `PUT` sends one balance row; `autoAmount` hands it the full contract; `paymentAllocations`
+files no $0 allocation; and the derived scalars report `downPayment: 0` with a blank
+`paymentMethod`, which is what a job with no money down is.
+
+Verified with 14 tests (`__tests__/screens/DynamicDealCenter/funding-no-down-payment.test.ts`):
+the repro cleared and typed as `0`, **with the pre-fix expression asserted to have flagged it**
+so the regression cannot return silently; the balance taking the whole contract and exactly one
+row reaching the server; an ordinary split unchanged; and the guard still armed — a second down
+line blank beside a funded one, several of them counted, a blank balance line beside a funded
+balance, the balance and upfront groups explicitly NOT inheriting the exemption, plus the price,
+method and over-allocation rules still speaking for themselves. tsc 75 (baseline unchanged);
+`funding.ts` and the new test are eslint-clean. The 14 DynamicDealCenter suites pass, 347 tests.
+
+⚠️ Needs a device check: clear the Down Payment on a $1,500 sale and confirm the Balance reads
+$1,500, **Confirm** is live, and the funding screen opens with a single balance card.
+
+### The Result Lead sheet was rendering in the SYSTEM font, not Public Sans
+
+Ticket: *"adjust the screen font size and family according to the already used in the app,
+make the screen more readable by reducing the font size."*
+
+⚠️ **The family half was a real defect, not a preference.** The whole Dynamic Deal Center is
+inline-styled, and these nine files declared a numeric `fontWeight` with **no `fontFamily`** —
+so every line rendered in Roboto / SF while the rest of the app rendered in **Public Sans**.
+NativeWind screens get it for free from `tailwind.config.js`, which maps `font-bold` →
+`PublicSans-Bold`; there is no class here to do that, so nothing named the face.
+
+⚠️ **This is the SECOND time this exact bug has been recorded in this repo.**
+`screens/Installer/JobDetail.tsx` already carries the note: *"the values here used to be
+`font-normal`, which resolves to NO fontFamily in this tailwind config — so half the block
+rendered in the SYSTEM font while sales rendered in Public Sans."* Any new inline-styled
+screen has the same hole.
+
+#### Two tokens in `funding/funding-theme.ts`, and one sweep
+
+**`PS`** names the six faces; **`FS`** is a 9-step scale. 130 weights and 126 sizes were
+converted mechanically, with the script asserting on any unmapped value rather than letting
+it through as a system-font line.
+
+⚠️ **The weight lives in the FACE — never pair `PS.bold` with a numeric `fontWeight`.** iOS
+synthesises bold on top of an already-bold face and Android can fail the lookup and fall back
+to the system font, which is the very bug being fixed. That is exactly why the tailwind config
+forces `fontWeight: normal` on every named weight class. All 130 `fontWeight`s are gone.
+
+⚠️ **The screen had grown EIGHTEEN distinct sizes** — 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5,
+13, 13.5, 14, 14.5, 15.5, 16, 18, 19, 22, 24, 34 — with no relationship between them. That is
+what made it read as crowded rather than dense: the eye gets no hierarchy out of a half-point
+difference. They collapse onto `MICRO 9 · TINY 10 · SMALL 11 · BODY 12 · BODY_LG 13 · LEAD 14
+· TITLE 16 · DISPLAY 20 · EMOJI 30`, every one at or below what it replaced.
+
+⚠️ **`MICRO` is the floor and is deliberately NOT reduced further.** It is only ever
+letter-spaced uppercase eyebrows, which stay legible small — and shrinking text does not by
+itself make a screen more readable, it makes it less crowded. Below ~9pt that trade stops
+paying.
+
+⚠️ **Public Sans has a taller x-height than the faces this screen was accidentally rendering
+in**, so it reads slightly LARGER at the same point size. The two changes belong together:
+swapping the family alone would have made the screen tighter, not looser.
+
+#### Three things the sweep deliberately did not touch
+
+- **`lineHeight`.** Every size went DOWN, so the existing values can only add leading — never
+  clip. Re-tuning them would have buried the change in a whole-file diff.
+- **Two nested `<Text>`s** (`BlockerList`, `FundingView` section label) carry only a colour.
+  They INHERIT the parent `Text`'s family, so naming one would be noise.
+- **The `✅` on the send confirmation.** Emoji render from the emoji font whatever the family
+  says; it takes `FS.EMOJI` for its size and no face.
+
+Two orphans DID need fixing — the `Calculator` label and the `→` glyph on the funding card had
+a size but no weight, so the sweep (which hangs the family off `fontWeight`) would have left
+them behind in the system font. Found by a follow-up scan asserting every `fontSize` line also
+names a family; run it again after any edit here.
+
+#### …and the payment fields, which the first sweep silently MISSED
+
+Follow-up: *"these field size is still very large adjust it as well"*, against the Down
+Payment / Balance rows.
+
+⚠️ **Four sites kept their original sizes and the verification did not catch it.** The sweep
+matched `fontSize: <number>`; these read **`fontSize: plain ? 16 : 18`** and
+`fontSize: plain ? 13.5 : 13`, so neither the replace NOR the follow-up
+`grep "fontSize: [0-9]"` saw them — the character after the colon is a letter. They are the
+amount and the method label, i.e. exactly the two controls in the screenshot. **Grep for
+`fontSize: [a-zA-Z]` as well after any pass like this.** All four are now `FS` tokens, and no
+ternary sizes remain on the screen.
+
+The amount drops 18 → `FS.LEAD` (14) and the method label 13 → `FS.BODY` (12); the label being
+smaller is also what stops `Check (Bank …` clipping, helped by the amount column going
+**34% → 30%** so the freed width lands on the method beside it.
+
+⚠️ **`minHeight: 44` is now explicit on every control that was shrunk, and it is a floor, not**
+**a style.** 44pt is the accessibility minimum for a touch target (Apple HIG 44 / Android 48dp),
+and 9pt padding around 12pt text is ~34 — so the padding could come down only because the floor
+holds the target. Do not remove it to make a row shorter. The sheet's own `SelectField` /
+`MoneyField` come 48 → 44 for the same reason: that is the whole budget there is.
+
+The rest is spacing, which has no such floor — group card `20/14/18` → `16/11/14`, row gaps
+10 → 8, the plain line 10 → 8, and the add-payment circle 21 → 19.
+tsc 75 (baseline unchanged). eslint **0 errors** and every file at or BELOW its HEAD warning
+count — `ResultJobModal` 65→63, `FundingView` 32→28, `PaymentRowsGroup` 62→57, `SendLinkModal`
+48→47, `CoverageBar` 3→2, `FundingStepper` 8→7, `PaymentFundingCard` 33→32, `BlockerList` and
+`SegmentedChoice` unchanged — all of them `react-native/no-inline-styles`, the only rule these
+files carry. 742 tests pass.
+
+⚠️ Needs a device check, since this repo cannot render-test and the fonts resolve natively:
+confirm the sheet is in Public Sans (compare against the Lead Center, which already is), that
+nothing reads *thinner* than before — which is what a failed family lookup looks like — and
+that no label now truncates at the smaller size.
+
+### A corrected number CANCELS the old link — re-issue, not resend (REVDSM-1155)
+
+Reference: **`funding-data/TAYYAB-1155-WRONG-DESTINATION.md`**. Builds on the resend flow
+below, and changes what a resend MEANS when the rep fixes the destination.
+
+⚠️ **The payment link is a bearer credential** — whoever opens that URL can put a card on
+this job. So a fat-fingered digit hands a working card-capture page to a stranger, and
+until now correcting the number made it *worse*: the backend reuses an open Checkout
+session, so the resend handed the wrong person **the very same URL again**, alive until
+Stripe expired it 24 hours later. A mistyped number often belongs to a real person, who
+could vault THEIR card against this job and have the row reach Card on File looking
+completely normal, brand and last4 and all.
+
+**The backend now expires the old session whenever `link-sent` arrives with a different**
+**`destination`.** ⚠️ **There is no new endpoint** — the behaviour keys entirely off the
+destination string the app already sends, which is why the app's whole job here is to
+decide *correctly* whether this send is going somewhere new.
+
+| | the server |
+|---|---|
+| same destination | reuses the link — the *"the SMS never arrived"* case, where the page was fine and only the delivery failed |
+| **different destination** | **expires the old session**, then mints a new page |
+
+#### `isReissue` is the whole of what can be silently wrong
+
+`normalizeDestination` / `isReissue` / `reissueWarning` are pure, in `utils/funding.ts`,
+for the reason the rest of that file is: neither component can be loaded under jest here,
+and this predicate is wrong in **both** directions with no visible symptom —
+
+- a false **"different"** cancels a link that was working;
+- a false **"same"** leaves a live credential with a stranger.
+
+⚠️ **A raw string compare would be wrong.** The row stores E.164 (`+14438784937`) while the
+sheet holds whatever the rep typed, and an email differing only in case or a trailing space
+is the same inbox. `normalizeDestination` reduces both sides first.
+
+⚠️ **A QR send never re-issues** — nothing was transmitted, the rep is showing their own
+screen, and there is no wrong recipient. ⚠️ Nor does a **first** send, or a row whose last
+send WAS a QR: there is no earlier destination, so a warning would name nobody. ⚠️ An
+unreadable stored destination reads as unchanged rather than being guessed at — the server
+decides for real either way, and a prompt naming a blank recipient tells the rep nothing.
+
+#### The two calls, in the spec's order
+
+⚠️ **Expiring the old link does not fix the RECORD**, so the next agreement or addendum would
+go to the same wrong address. `markLinkSent` therefore PATCHes
+`lead/v1/customer/{customerId}` **before** the send:
+
+- **Before, deliberately.** A failed send then still leaves the record corrected — which is
+  right on its own terms — whereas the other order can send fine and leave the typo in place.
+- ⚠️ **A failure here must NOT abort the send.** The re-issue is the urgent half: it is what
+  kills the link a stranger is holding. So it is awaited but never thrown from; the rep gets
+  a warning naming Edit Customer instead.
+- ⚠️ **Only the ONE changed field is sent.** The Lead Center writes the whole customer object;
+  blanking a name from the funding screen would be indefensible.
+- ⚠️ **`getRawPhoneNumber`, not E.164** — that is what `LeadCenter.handleCustomerSubmit`
+  already stores (`14438784937`), so the field keeps ONE shape instead of gaining a spelling
+  only this path writes. (The provider still gets E.164; two endpoints, two shapes.)
+- ⚠️ **`customerId` is the CUSTOMER document, never the lead** — a different record, resolved
+  as `lead.customerDetails._id`. It is threaded through `FundingLogContext` so BOTH funding
+  screens get one implementation and cannot drift.
+
+#### The cached url is dead, and the rep is told so
+
+⚠️ **Stop assuming the URL is stable.** `markLinkSent` now RETURNS `{ reissued }` and both
+hosts re-fetch the link when it is true — the QR and the Copy button were rendering a page
+the server had just expired. ⚠️ It has to be reported back rather than re-derived at the call
+site: the row now carries the NEW destination, so comparing it there answers false. (Same
+snapshot rule as `wasLinkSent`; the new `rowFor` is its full-row sibling.)
+
+The sheet **confirms before cancelling** — *"This cancels the link already sent to
+443-878-4937…"* — which the API does not require but is the last moment to check the new
+number before a SECOND stranger gets one. ⚠️ The prompt names the number in READABLE form:
+nobody proofreads a digit inside `+14438784937`, which is the exact mistake being fixed. The
+confirmation screen then says the earlier link was cancelled, which also warns the rep off a
+url they may have copied a moment earlier.
+
+⚠️ `cancelledOld` is captured at send time, not re-derived for that copy — the row is
+refreshed by the send, so `isReissue` would compare the new destination against itself.
+
+⚠️ A native `Alert`, not a fourth hand-rolled layer: this sheet is already an overlay inside
+the Result Lead modal.
+
+#### `meta.reissued` on the log
+
+Its own field, **not folded into `resend`**: a resend re-delivers the same page to the same
+person, while a re-issue **cancelled a live bearer credential**. When somebody later asks how
+a stranger came to have a working link, that is the row which answers it. A re-issue implies
+`resend` and both are sent, so a reader filtering on either finds it. Documented in §5.3 and
+§7.10 of `RESULT-LEAD-AND-FUNDING-ACTIVITY-LOGS-PORTAL.md`.
+
+⚠️ **Unchanged, and worth not re-litigating:** a card already on file refuses the whole thing
+with a 409 — changing a card is remove-and-relink through My Deals, not a resend — and
+`canResendLink` already gates that out.
+
+Verified with 20 tests (`__tests__/screens/DynamicDealCenter/funding-reissue-link.test.ts`):
+five spellings of one phone number normalising equal and an email case/space-insensitive; the
+ticket repro (one corrected digit → re-issue) against the same number typed three ways →
+not; a corrected email; a channel switch; QR, first send, QR-last-send, blank stored
+destination and junk all refusing; the warning naming the old number readably and **asserted
+not to show raw E.164**, silent when nothing is cancelled; the gate composing with
+`canResendLink` (every re-issuable row is resendable, and Card on File is out of both); and
+the corrected number reaching the provider as `+14438784938` while the customer record gets
+`14438784938`. tsc 75 (baseline unchanged); `funding.ts`, `useFunding.ts`, `funding-log.ts`
+and the test are eslint-clean, `ResultJobModal.tsx` (65) and `DynamicDealEditScreen.tsx` (147)
+are byte-identical to their HEAD baselines, and `SendLinkModal.tsx` adds only
+`react-native/no-inline-styles` (47 → 52), the sole rule it carries.
+
+⚠️ Needs a device check: send a link to a wrong number, tap **Send again**, correct one digit
+and confirm the prompt names the OLD number; after sending, the old url must 404 while the
+new one works, the customer record must show the corrected number in Edit Customer, and the
+log row must carry `reissued: true`. Then the negative: resending to the SAME number must
+show no prompt and keep the original link working.
+
+⚠️ **The one-field customer PATCH is unverified against the backend.** The Lead Center always
+sends the whole object; if that endpoint replaces rather than merges, this would blank the
+other fields. Confirm on device before trusting it.
+
+### A sent payment link can be sent again (REVDSM-1155 Item A)
+
+Ticket: *"if user input their wrong number and email for getting the payment link … there
+is no option for the resend the link for payment."* Correct, and it was a dead end: the
+card's send button is gated on `!p.linkSent`, so the moment the server accepts a send the
+button disappears. A rep who mistyped one digit was left on a card reading **Link Sent**,
+pointing at a number that does not exist, with nothing on the screen able to recover it.
+
+Reference: **`funding-data/LINK-AND-CARD-CHANGE.md`** (Lance's 26 Aug answers). ⚠️ **No new
+endpoint** — a resend is the same two calls the first send makes, `POST …/link` then
+`POST …/link-sent`, both of which `useFunding` already had.
+
+#### The rules are pure, in `utils/funding.ts`
+
+`canResendLink` / `lastSendNote` / `resendSeed` — for the reason the rest of that file is
+pure: `PaymentFundingCard` and `SendLinkModal` both need them and neither can be loaded
+under jest here, and "may this row be sent again" must mean ONE thing on both.
+
+⚠️ **`lastSendNote` is the half that actually fixes the ticket**, not the button.
+`Link Sent` alone cannot tell a rep that anything is wrong — the card now reads the
+destination back (`Texted to 443-878-4937 · 2:04 PM`). A resend control without it is just
+a second chance to send to the same wrong number. The stored value is E.164
+(`+14438784937`), so it is formatted through `formatLocalUSPhone` — nobody spots a typo in
+an E.164 string. That is the one `phone-util` import in this otherwise self-contained file.
+
+⚠️ **Gated at "Link Sent but not yet Card on File"**, the spec's own wording:
+`!charged && !collected`, plus `step < 2` for a card and `!decision && !activated` for a
+loan. Past that a resend quietly replaces the stored session reference and **the backend
+intends to refuse it** — the doc says in terms *"don't build UI that depends on it"*. The
+route for "they want to use a different card" is Item B: remove the row in the pricing
+panel and add one with a fresh `pid`, which `PaymentRowsGroup` already supports.
+
+⚠️ **A CLOSED application is deliberately excluded** even though it also sits at "sent".
+`isApplicationClosed` resets `linkSent` to false and the card already offers *"Send a new
+link"* over a banner explaining why — two competing send controls on one card would be
+worse than either alone.
+
+⚠️ **A resend delivers the SAME url.** `link` is idempotent while the page is open, so it
+reuses the Checkout session. That is right for *"the SMS never arrived"* — the page was
+always fine, the delivery was not. It is **not** a way to revoke a leaked link; a genuinely
+new URL is not supported and needs a decision from the client first.
+
+#### The sheet is reused, not duplicated
+
+`SendLinkModal` derives `isResend` from `canResendLink(payment)` — **no new prop on either
+host screen**. `PaymentFundingCard`'s new **Send again** calls the same `onSendLink`, which
+both `ResultJobModal` and `DynamicDealEditScreen` already wire to `openSendSheet`, so both
+flows get this with zero wiring. A separate "resend" sheet would have been a second place
+for the channel rules to drift.
+
+On a resend the sheet **opens on the channel that was used, with the destination
+prefilled** (`resendSeed`) — the rep corrects the digit they got wrong instead of retyping
+from a blank field, which is how the same typo gets made twice. ⚠️ Seeded with **lazy
+`useState` initialisers, not an effect**: both hosts mount it conditionally
+(`{!!linkPayment && <SendLinkModal …/>}`) so it remounts per open and the seed runs once —
+an effect would fight the rep the moment they started editing. ⚠️ A **QR** resend opens on
+`choose`: there is nothing to correct about a QR code, and the reason to resend one is
+almost always to switch channel. `Back` (relabelled *"Other ways to send"*) still reaches
+every other route, so the shortcut takes nothing away.
+
+#### `meta.resend` on the log
+
+`logFundingLinkRequested` / `logFundingLinkSent` gained an optional `resend`, set from a
+new **`wasLinkSent(pid)`** in `useFunding`. ⚠️ Read **before** the call, for the same reason
+`paymentFor` is: `link-sent` answers with a record whose `linkSent` is true, so reading
+after would mark *every* send as a re-send. It is a sibling of `paymentFor` rather than a
+field on it, because that one narrows to the log payload shape and drops the step flags.
+
+Worth its own field rather than left to be inferred by counting rows: the commonest reason
+for a second send is that the first went to a mistyped number, so *"sent again, to a
+different destination"* is the interesting event and a reader should not have to
+reconstruct it. Documented for the portal in §5.3 and §7.10 of
+`RESULT-LEAD-AND-FUNDING-ACTIVITY-LOGS-PORTAL.md`, with a renderer case.
+
+Verified with 25 tests (`__tests__/screens/DynamicDealCenter/funding-resend-link.test.ts`):
+the gate offered on the ticket's exact row and on a loan, refused before the first send,
+at `step >= 2`, on charged / collected, on all three lender decisions, on an activated
+loan, on a closed application and on a cheque; the note naming the number and **not**
+showing raw E.164, the email and QR forms, with and without a timestamp, the
+destination-less degenerate row, and silence before any send; the seed opening on text /
+email / choose, seeding nothing on a first send or once the gate refuses, and trimming a
+padded address; plus a round-trip proving an untouched prefill re-normalises to exactly the
+stored `+14438784937` and a corrected digit reaches the provider as `+14438784938`.
+tsc 75 (baseline unchanged); `funding.ts`, `useFunding.ts`, `funding-log.ts` and the test
+are eslint-clean, and the two components add only `react-native/no-inline-styles` — the
+sole rule either file carries (33→37 and 48→51 against their HEAD baselines).
+
+⚠️ Needs a device check: send a link to a wrong number, confirm the card then shows
+**Texted to …** with **Send again**, that tapping it opens the sheet on the text stage with
+that number prefilled, and that correcting it and resending ticks nothing new but records a
+second `funding_link_sent` carrying `resend: true` and the new destination. Then the
+negative: once the card is on file the block must disappear.
+
+### The Result Lead sheet is ONE module now — `result_lead`, ending at Confirm
+
+Ticket: *"currently you are implement the two type of logs one is about result lead and the
+other is about funding … now we can update these log for the one type, type name is: Result
+Lead … all the funding logs that is generated on this screen are converted with the result
+lead, and when the user press the confirm button than the result logs are end and the funding
+logs flow should be started."*
+
+`ResultJobModal` emitted **two** `module_type`s for one flow — `lead_result_field_entry` for
+the outcome fields and `funding` for the payment split — so a portal filter could answer
+neither *"how was this job resulted?"* nor *"how did the money come in?"* on its own. New
+**`RESULT_LEAD_MODULE = 'result_lead'`** + **`src/utils/activity-log/result-lead-log.ts`**
+(7 emitters) cover everything up to and including **Confirm**; `funding` begins there.
+
+| | before | now |
+|---|---|---|
+| sheet opens | *(nothing)* | `result_lead_opened` — the START |
+| One Leg / Result / price / methods | `lead_result_field_entry` | `result_lead` |
+| structure · row add · row remove · method | `funding` | `result_lead` |
+| **Confirm** | *(nothing)* | `result_lead_confirmed` — the END |
+| the save + funding screen onward | `funding` | `funding` (unchanged) |
+| **Build Job** on a DEMO | *(nothing)* | `result_lead_build_job` |
+
+⚠️ **The module follows the SCREEN, not the deal's history.** **Edit payments** returns to the
+pricing panel, so a re-price after a lender decision fires `result_lead_opened` again (with
+`reopened`) and files its edits under `result_lead` — even though the deal is well into the
+money flow by then. A timeline therefore ALTERNATES between the two modules; that is correct.
+
+⚠️ **The four `funding-log` twins are NOT dead and must not be deleted.**
+`logFundingStructureChanged` / `RowAdded` / `RowRemoved` / `MethodSelected` still serve
+`DynamicDealEditScreen`'s **Job Price** step, which renders the same pricing components inside
+the My Deals wizard and is not a Result Lead sheet. Their `meta` payloads are kept BYTE-
+IDENTICAL to the `result_lead_*` twins on purpose, so one portal renderer serves both — a test
+asserts both halves.
+
+⚠️ **`result_lead_confirmed` fires on the PRESS, before the `PUT …/funding`**, and
+unconditionally. Gating it on the save succeeding would leave a refused confirm as a flow with
+no terminal row — worse to read than an end marker followed by the save's own
+`funding_payments_save_failed`.
+
+⚠️ **`useOutcomeLogging` gained an OPT-IN `moduleType`** (default `'lead_result_field_entry'`).
+It has THREE callers and the web app emits the same strings into that module, so the classic
+`DealCenter/OutcomeModal` and `lead-center/ResultLeadModal` stay byte-identical; only the
+dynamic sheet overrides it. **Do not retire `lead_result_field_entry`** — those two still use
+it. The six `logEvent` sites all read the variable, for the reason `fire()` exists in
+`funding-log.ts`: one missed site would leave the sheet straddling two modules again.
+
+⚠️ `ResultLeadLogBase` is an **alias** of `FundingLogBase`, and `fire()` reuses funding's
+`composeFundingAction` and its `fundingSource` field name rather than inventing
+`resultLeadSource`. The flow (`sale`/`rehash`/`my_deals`) is a property of the VISIT, not of
+the module, and ONE identity object (`logCtx`, renamed from `fundingLog`) feeds both sides of
+the boundary — a second shape would only ever be a way for them to disagree.
+
+⚠️ `contractPrice: 0` is OMITTED from `result_lead_opened`: the sheet seeds the price from the
+calculator a tick after mount, so a `0` would read as a job quoted at nothing.
+
+**`FUNDING-ACTIVITY-LOGS-PORTAL.md` (repo root) was updated with it** — §2 (the boundary), the
+new §4.0 catalogue, §4.6, and a prefix-safe `baseAction()` in the drop-in renderer. ⚠️ That
+renderer previously switched on the RAW `meta.action`, so it matched nothing: every action is
+prefixed `sale_` / `rehash_` / `my_deals_`. Pre-existing bug, fixed in the same pass.
+
+Verified with 24 tests (`__tests__/utils/result-lead-log.test.ts`): every emitter's module,
+verb and action; the money trail still on `funding`; the four twins still firing into `funding`
+with `my_deals_` prefixes; the twins' payloads asserted key-for-key identical; the flow prefix
+across all three flows with `baseFundingAction` round-tripping; a bare action when no flow is
+known; distinct `result_lead_`-namespaced actions; `userId`-less and method-less calls as
+no-ops; `contractPrice: 0` omitted while `1234` is kept; `reopened` only on a real return trip;
+an absent `rowCount` omitted but a genuine `amount: 0` kept; and — the regression guard that
+matters most — that the OTHER two `useOutcomeLogging` callers never pass `moduleType`. tsc 75
+(baseline unchanged); `result-lead-log.ts`, `useOutcomeLogging.ts` and
+`activity-log.constants.ts` are eslint-clean and `ResultJobModal.tsx` is at its exact HEAD
+baseline (65 problems, 0 errors).
+
+⚠️ Needs a device check (this repo cannot render-test): one `result_lead_opened` per entry to
+the pricing panel and not one per re-render; a second one carrying `reopened` after **Edit
+payments**; `result_lead_confirmed` immediately before `funding_payments_saved`; and a demo
+ending on `result_lead_build_job` with no `funding` row at all.
+
 ### My Deals ▸ Job Price is now the Deal Center's pricing + funding flow
 
 Ticket: the mockup `Funding-UI-Mokap-My-Deals-Code.txt` (repo root) — the deal-edit

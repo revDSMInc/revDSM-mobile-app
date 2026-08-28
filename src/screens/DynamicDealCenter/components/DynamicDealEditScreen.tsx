@@ -529,6 +529,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     calculatorId: editCalculatorId || undefined,
     calculatorTitle: (calculatorData as any)?.title || undefined,
     source: fundingSource,
+    // ⚠️ The CUSTOMER document, not the lead — it is what a corrected phone or
+    // email is written back to when a rep fixes a mistyped destination.
+    customerId: lead?.customerDetails?._id || lead?.customerDetails?.id || undefined,
   });
 
   /**
@@ -1193,6 +1196,19 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     async (channel: FundingChannel, destination?: string): Promise<boolean> => {
       if (!linkTarget) return false;
       const res = await funding.markLinkSent(linkTarget, channel, destination);
+      /**
+       * ⚠️ A corrected destination RE-ISSUES the link: the server expires the open
+       * Checkout session and mints a new page, so the url this screen is still holding
+       * — the one behind the QR code and the Copy button — is dead. Re-fetch instead of
+       * trusting what we cached (REVDSM-1155).
+       *
+       * `reissued` comes back from the hook because it cannot be re-derived here: the
+       * row now carries the NEW destination, so comparing it would answer false.
+       */
+      if (res.ok && res.data?.reissued) {
+        const fresh = await funding.fetchLink(linkTarget);
+        setLinkUrl(fresh.ok ? fresh.data?.url || '' : '');
+      }
       return res.ok;
     },
     [funding, linkTarget]

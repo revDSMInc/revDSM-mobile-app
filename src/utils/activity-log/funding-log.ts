@@ -299,11 +299,19 @@ export const logFundingEditPayments = (o: FundingLogBase & { reassigning?: boole
  * accept payments (nobody at the table can fix that); or it simply failed.
  */
 export const logFundingLinkRequested = (
-  o: FundingLogBase & { payment: FundingLogPayment; ok: boolean; blocked?: boolean; error?: string },
+  o: FundingLogBase & {
+    payment: FundingLogPayment;
+    ok: boolean;
+    blocked?: boolean;
+    /** The row was already at Link Sent — this is a re-send, not a first send. */
+    resend?: boolean;
+    error?: string;
+  },
 ) =>
   fire('open', o, {
     action: o.ok ? 'funding_link_requested' : o.blocked ? 'funding_link_blocked' : 'funding_link_failed',
     ...paymentMeta(o.payment),
+    ...(o.resend ? { resend: true } : {}),
     ...(o.ok ? {} : { outcome: o.blocked ? 'blocked' : 'failed', ...(o.error ? { error: o.error } : {}) }),
   });
 
@@ -323,6 +331,30 @@ export const logFundingLinkSent = (
     channel: string;
     /** The phone or email the server delivered to. Absent for `qr`. */
     destination?: string;
+    /**
+     * The row was already at Link Sent when this went out.
+     *
+     * ⚠️ Worth its own field rather than left to be inferred by counting rows: the
+     * commonest reason for a second send is that the FIRST one went to a mistyped
+     * number, so "sent again, to a different destination" is the interesting event
+     * on the timeline — and a reader should not have to reconstruct it.
+     */
+    resend?: boolean;
+    /**
+     * This send went to a DIFFERENT destination, so the server expired the previous
+     * Checkout session and minted a new page (REVDSM-1155).
+     *
+     * ⚠️ Its own field, not folded into `resend`, because the two are materially
+     * different events on the money trail: a resend re-delivers the same page to the
+     * same person, while a re-issue **cancelled a live bearer credential** — the url
+     * whoever received the first message is holding stopped working at this moment.
+     * When somebody later asks how a stranger came to have a working link, this is
+     * the row that answers it.
+     *
+     * ⚠️ A re-issue implies `resend`; both are sent, so a reader filtering on either
+     * one finds it.
+     */
+    reissued?: boolean;
     ok: boolean;
     error?: string;
   },
@@ -332,6 +364,8 @@ export const logFundingLinkSent = (
     ...paymentMeta(o.payment),
     channel: o.channel,
     ...(o.destination ? { destination: o.destination } : {}),
+    ...(o.resend ? { resend: true } : {}),
+    ...(o.reissued ? { reissued: true } : {}),
     ...(o.ok ? {} : { outcome: 'failed', ...(o.error ? { error: o.error } : {}) }),
   });
 

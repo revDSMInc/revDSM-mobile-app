@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { BlurView } from '@react-native-community/blur';
@@ -14,17 +14,29 @@ import { FullPackageTitle, FullPackageInfoOverlay, type PackageAnchorRect } from
 import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 import { useAuth } from '../../../hooks/useAuth';
+// Past Confirm only. Everything BEFORE it is the Result Lead module below.
 import {
   logFundingEditPayments,
   logFundingLinkCopied,
-  logFundingMethodSelected,
   logFundingOpened,
-  logFundingRowAdded,
-  logFundingRowRemoved,
-  logFundingStructureChanged,
   type FundingSource,
 } from '../../../utils/activity-log/funding-log';
-import { FUND } from './funding/funding-theme';
+// This screen, up to and including Confirm.
+// ⚠️ The four pricing emitters here have twins in `funding-log` that are STILL
+// LIVE: `DynamicDealEditScreen`s Job Price step renders the same pricing
+// components inside the My Deals wizard, which is not a Result Lead sheet and
+// deliberately keeps logging to `funding`.
+import {
+  logResultLeadBuildJob,
+  logResultLeadConfirmed,
+  logResultLeadMethodSelected,
+  logResultLeadOpened,
+  logResultLeadRowAdded,
+  logResultLeadRowRemoved,
+  logResultLeadStructureChanged,
+} from '../../../utils/activity-log/result-lead-log';
+import { RESULT_LEAD_MODULE } from '../../../constants/activity-log.constants';
+import { FS, FUND, PS } from './funding/funding-theme';
 import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
 import { FundingView } from './funding/FundingView';
 import { SendLinkModal } from './funding/SendLinkModal';
@@ -32,6 +44,7 @@ import { SegmentedChoice } from './funding/SegmentedChoice';
 import { CoverageBar } from './funding/CoverageBar';
 import { BlockerList } from './funding/BlockerList';
 import { useFunding } from '../hooks/useFunding';
+import { LeadService } from '../../../services/api/leads';
 import type {
   FundingChannel,
   FundingPaymentRow,
@@ -192,7 +205,7 @@ interface ResultJobModalProps {
 /** Floating-label helper shared by every field (notched-outline look, web parity). */
 function FloatingLabel({ text, error, bg = '#fff' }: { text: string; error?: boolean; bg?: string }) {
   return (
-    <Text style={{ position: 'absolute', top: -8, left: 12, zIndex: 10, paddingHorizontal: 4, backgroundColor: bg, fontSize: 10, fontWeight: '600', letterSpacing: 0.5, color: error ? '#EF4444' : '#000' }}>
+    <Text style={{ position: 'absolute', top: -8, left: 12, zIndex: 10, paddingHorizontal: 4, backgroundColor: bg, fontSize: FS.MICRO, fontFamily: PS.semibold, letterSpacing: 0.5, color: error ? '#EF4444' : '#000' }}>
       {text}
     </Text>
   );
@@ -213,9 +226,9 @@ function SelectField({ label, value, placeholder, options, onSelect, disabled, c
         activeOpacity={0.8}
         disabled={disabled}
         onPress={() => setOpen((v) => !v)}
-        style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, minHeight: 48, borderColor: error ? '#EF4444' : open ? '#1C252E' : '#919EAB33', backgroundColor: disabled ? '#F4F6F8' : '#fff' }}
+        style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 8, paddingHorizontal: 13, paddingVertical: 10, minHeight: 44, borderColor: error ? '#EF4444' : open ? '#1C252E' : '#919EAB33', backgroundColor: disabled ? '#F4F6F8' : '#fff' }}
       >
-        <Text style={{ flex: 1, fontSize: 13, fontWeight: '600', color: selected ? (disabled ? '#919EAB' : '#1C252E') : '#919EAB', textTransform: capitalize ? 'capitalize' : 'none' }}>
+        <Text style={{ flex: 1, fontSize: FS.BODY, fontFamily: PS.semibold, color: selected ? (disabled ? '#919EAB' : '#1C252E') : '#919EAB', textTransform: capitalize ? 'capitalize' : 'none' }}>
           {selected ? selected.label : placeholder}
         </Text>
         <Ionicons name={disabled ? 'lock-closed' : open ? 'chevron-up' : 'chevron-down'} size={18} color="#919EAB" />
@@ -230,7 +243,7 @@ function SelectField({ label, value, placeholder, options, onSelect, disabled, c
                 onPress={() => { onSelect(o.value); setOpen(false); }}
                 style={{ paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#919EAB14', backgroundColor: isSel ? '#F4F6F8' : 'transparent' }}
               >
-                <Text style={{ fontSize: 13, fontWeight: '600', color: isSel ? '#1C252E' : '#637381', textTransform: capitalize ? 'capitalize' : 'none' }}>{o.label}</Text>
+                <Text style={{ fontSize: FS.BODY, fontFamily: PS.semibold, color: isSel ? '#1C252E' : '#637381', textTransform: capitalize ? 'capitalize' : 'none' }}>{o.label}</Text>
                 {isSel && <Ionicons name="checkmark" size={16} color="#1C252E" />}
               </TouchableOpacity>
             );
@@ -255,10 +268,10 @@ function MoneyField({ label, value, onChange, editable = true, labelBg, trailing
   return (
     <View style={{ marginBottom: 20, position: 'relative' }}>
       <FloatingLabel text={label} bg={labelBg} />
-      <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#919EAB33', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, minHeight: 48, backgroundColor: editable ? '#fff' : '#F4F6F8' }}>
-        <Text style={{ fontSize: 13, fontWeight: '700', marginRight: 4, color: editable ? '#1C252E' : '#919EAB' }}>$</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#919EAB33', borderRadius: 8, paddingHorizontal: 13, paddingVertical: 10, minHeight: 44, backgroundColor: editable ? '#fff' : '#F4F6F8' }}>
+        <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, marginRight: 4, color: editable ? '#1C252E' : '#919EAB' }}>$</Text>
         <TextInput
-          style={{ flex: 1, fontSize: 13, fontWeight: '600', color: editable ? '#1C252E' : '#919EAB', padding: 0 }}
+          style={{ flex: 1, fontSize: FS.BODY, fontFamily: PS.semibold, color: editable ? '#1C252E' : '#919EAB', padding: 0 }}
           value={value}
           editable={editable}
           onChangeText={(t) => onChange?.(t.replace(/[^0-9.]/g, ''))}
@@ -317,15 +330,23 @@ export function ResultJobModal({
     calculatorId,
     calculatorTitle,
     source: fundingSource,
+    // ⚠️ The CUSTOMER document, not the lead — it is what a corrected phone or
+    // email is written back to when a rep fixes a mistyped destination.
+    customerId: lead?.customerDetails?._id || lead?.customerDetails?.id || undefined,
   });
 
   /**
-   * Identity for the funding events this component fires directly — the ones that
-   * are pure UI and never reach an endpoint (structure, rows, method picks, moving
-   * between the two screens). Everything endpoint-driven is logged inside
-   * `useFunding`, which is the only place the OUTCOME exists.
+   * Identity for every event this component fires directly — the ones that are pure
+   * UI and never reach an endpoint (structure, rows, method picks, moving between
+   * the two screens). Everything endpoint-driven is logged inside `useFunding`,
+   * which is the only place the OUTCOME exists.
+   *
+   * ⚠️ ONE object feeds BOTH modules — `result_lead` before Confirm and `funding`
+   * after it — which is why `ResultLeadLogBase` is an alias of `FundingLogBase`
+   * rather than a second shape. A row has to identify the same lead, calculator and
+   * flow whichever side of the boundary it lands on.
    */
-  const fundingLog = useMemo(
+  const logCtx = useMemo(
     () => ({
       userId: user?._id || user?.id,
       leadId: leadLogId,
@@ -518,6 +539,11 @@ export function ResultJobModal({
     visible,
     lead,
     source: fundingSource,
+    // ⚠️ The override that makes this screen ONE module: without it these rows stay
+    // on `lead_result_field_entry` and the sheet goes on emitting two module types
+    // for a single flow. Opt-in on the hook, so the classic Outcome modal and the
+    // Lead Center Result Lead modal keep their web parity untouched.
+    moduleType: RESULT_LEAD_MODULE,
     outcomeStatus: resultType,
     outcomeForm: {
       oneLeg,
@@ -564,6 +590,47 @@ export function ResultJobModal({
     return order.map((id) => ({ id, count: counts[id] }));
   }, [entries]);
 
+  // ── the Result Lead flow: start ──────────────────────────────────────────
+
+  /**
+   * Has the rep been through to the funding screen on this visit? Only used to
+   * mark the re-entry, so a ref rather than state — nothing renders from it.
+   */
+  const wentToFundingRef = useRef(false);
+  /** Latches the `opened` row so re-renders do not repeat it. */
+  const openLoggedRef = useRef(false);
+
+  /**
+   * `result_lead_opened` — the START of the flow.
+   *
+   * ⚠️ Fires on ENTERING the pricing panel, not merely on the sheet becoming
+   * visible, and the latch is released whenever the rep leaves it. That is what
+   * makes **Edit payments** log a second `opened` (carrying `reopened`) rather
+   * than filing the re-price silently under a flow that had already been
+   * confirmed — the module follows the SCREEN.
+   *
+   * ⚠️ `contractNum` / `payMode` are read at fire time but the latch means a later
+   * change to either cannot re-log; they are in the dep list because the rule
+   * demands it, not because a change should re-fire.
+   */
+  useEffect(() => {
+    const onPricing = visible && screen === 'result';
+    if (!onPricing) {
+      openLoggedRef.current = false;
+      if (!visible) wentToFundingRef.current = false;
+      return;
+    }
+    if (openLoggedRef.current) return;
+    openLoggedRef.current = true;
+    logResultLeadOpened({
+      ...logCtx,
+      resultType,
+      payMode,
+      contractPrice: Math.round(contractNum) || undefined,
+      reopened: wentToFundingRef.current || undefined,
+    });
+  }, [visible, screen, resultType, payMode, contractNum, logCtx]);
+
   // ── pricing-row editing ──────────────────────────────────────────────────
 
   const updateRow = useCallback((pid: string, patch: Partial<PaymentRow>) => {
@@ -578,8 +645,8 @@ export function ResultJobModal({
       // assigned to that method.
       const gone = rows.find((r) => r.pid === pid);
       if (gone) {
-        logFundingRowRemoved({
-          ...fundingLog,
+        logResultLeadRowRemoved({
+          ...logCtx,
           kind: gone.kind,
           amount: effectiveRowAmount(gone, activeRows, contractNum),
           method: gone.method || undefined,
@@ -588,7 +655,7 @@ export function ResultJobModal({
       }
       setRows((prev) => prev.filter((r) => r.pid !== pid));
     },
-    [rows, activeRows, contractNum, pricing.plans, fundingLog]
+    [rows, activeRows, contractNum, pricing.plans, logCtx]
   );
 
   const addRow = useCallback(
@@ -596,8 +663,8 @@ export function ResultJobModal({
       // Same reason as `removeRow`: logged outside the updater, which React may run
       // more than once. `rowCount` is the count AFTER this add, so the timeline
       // reads "the contract is now split three ways".
-      logFundingRowAdded({
-        ...fundingLog,
+      logResultLeadRowAdded({
+        ...logCtx,
         kind,
         rowCount: activeRows.filter((r) => r.kind === kind).length + 1,
       });
@@ -616,7 +683,7 @@ export function ResultJobModal({
         return next;
       });
     },
-    [activeRows, fundingLog]
+    [activeRows, logCtx]
   );
 
   /**
@@ -632,8 +699,8 @@ export function ResultJobModal({
       // Only when it actually changes, matching how the Investment Center logs its
       // payment-method selection — re-picking the same plan is not an event.
       if (row && key && key !== row.method) {
-        logFundingMethodSelected({
-          ...fundingLog,
+        logResultLeadMethodSelected({
+          ...logCtx,
           kind: row.kind,
           method: key,
           methodLabel: pricing.plans[key]?.label,
@@ -642,7 +709,7 @@ export function ResultJobModal({
       }
       updateRow(pid, { method: key });
     },
-    [rows, activeRows, contractNum, pricing.plans, fundingLog, updateRow]
+    [rows, activeRows, contractNum, pricing.plans, logCtx, updateRow]
   );
 
   /**
@@ -670,7 +737,7 @@ export function ResultJobModal({
       // Logged only once the switch is actually ALLOWED — a refused tap changed
       // nothing about the deal, and recording it would put a structure change in the
       // timeline that never happened.
-      logFundingStructureChanged({ ...fundingLog, from: payMode, to: next });
+      logResultLeadStructureChanged({ ...logCtx, from: payMode, to: next });
       setRows((prev) => {
         const wantUpfront = next === 'upfront';
         const already = prev.some((r) => (wantUpfront ? r.kind === 'up' : r.kind !== 'up'));
@@ -686,7 +753,7 @@ export function ResultJobModal({
       });
       setPayMode(next);
     },
-    [payMode, contractNum, fundingLog]
+    [payMode, contractNum, logCtx]
   );
 
   /**
@@ -728,7 +795,7 @@ export function ResultJobModal({
    */
   const decisionBanners = banners.map((b) => (
     <View key={b.id} style={{ backgroundColor: b.tone === 'bad' ? FUND.RED_BG : FUND.AMBER_BG, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 12 }}>
-      <Text style={{ fontSize: 12, fontWeight: '700', lineHeight: 17, color: b.tone === 'bad' ? FUND.RED_TEXT : FUND.AMBER_TEXT }}>
+      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, lineHeight: 17, color: b.tone === 'bad' ? FUND.RED_TEXT : FUND.AMBER_TEXT }}>
         {b.text}
       </Text>
     </View>
@@ -765,25 +832,73 @@ export function ResultJobModal({
     // state, and `payments` is the COMPLETE list — sending them would file the
     // contract twice over.
     const upsert = toUpsertRows(activeRows, contractNum, pricing.plans);
+    // ⚠️ The BOUNDARY. `result_lead` ends on the press and `funding` begins with the
+    // save below, so this fires FIRST and unconditionally: gating it on the save
+    // succeeding would leave a failed confirm as a flow with no terminal row, which
+    // reads worse than an end marker followed by the save's own
+    // `funding_payments_save_failed`.
+    logResultLeadConfirmed({
+      ...logCtx,
+      contractPrice: Math.round(contractNum),
+      payMode,
+      paymentCount: upsert.length,
+      payments: upsert.map((r) => ({ kind: r.kind, method: r.method, amount: r.amount })),
+    });
     // `savePayments` logs the save itself (with the full breakdown) — it is the only
     // place the server's answer exists.
     const res = await funding.savePayments(Math.round(contractNum), upsert, payMode);
     if (!res.ok) return;
     logFundingOpened({
-      ...fundingLog,
+      ...logCtx,
       contractPrice: Math.round(contractNum),
       paymentCount: upsert.length,
       payMode,
     });
+
+    /**
+     * Confirm COMPLETES the portal's **Lead Resulted** milestone.
+     *
+     * The result itself is finished here — outcome, contract price and the whole
+     * payment split are saved — and everything past this point belongs to Funding,
+     * which the portal derives separately from the `JobFunding` document. The step
+     * was turned `'active'` when the sheet opened (`handleResultJob` → `openSheet`);
+     * this is its other end.
+     *
+     * ⚠️ `jobBuild` is deliberately NOT advanced. The rep has not started building,
+     * and Build Job sends `{ leadResulted: 'completed', jobBuild: 'active' }` of its
+     * own accord — repeating `leadResulted` there is a harmless no-op under the
+     * backend's forward-only `canAdvanceStatus` (`pending → active → completed`).
+     *
+     * ⚠️ Fired AFTER the save succeeds, unlike `result_lead_confirmed` above, and the
+     * difference is deliberate: that one is an EVENT (the rep pressed Confirm, which
+     * happened whatever the server said), this is a STATE CLAIM. A refused save leaves
+     * the rep on the pricing panel still able to change the result, so completing the
+     * milestone there would be a claim we cannot walk back — the guard is forward-only.
+     *
+     * ⚠️ Not awaited, matching every other timeline write: nothing on screen reads
+     * these flags, and a failed PATCH must never hold up the move to Funding.
+     */
+    if (leadLogId) {
+      LeadService.updateLeadTimelineProgress(leadLogId, {
+        salesProcess: 'completed',
+        leadResulted: 'completed',
+      }).catch((e: any) =>
+        console.warn('[ResultJobModal] timeline progress (confirm) failed:', e?.message || e)
+      );
+    }
+    // Set only once the rep has ACTUALLY left: a failed save keeps them on the
+    // pricing panel, and marking the trip there would make the next `opened` row
+    // claim a return that never happened.
+    wentToFundingRef.current = true;
     setScreen('funding');
-  }, [resultBlockers, contractNum, activeRows, pricing.plans, payMode, funding, fundingLog]);
+  }, [resultBlockers, contractNum, activeRows, pricing.plans, payMode, funding, logCtx, leadLogId]);
 
   /** Back / "Edit payments" — fold every lender decision onto the pricing rows. */
   const goResult = useCallback(() => {
     const applied = applyDecisionsToRows(activeRows, payments, contractNum, payMode);
     // `reassigning` is the case worth telling apart: a lender decision opened a gap
     // and the rep is going back to cover it, not just changing their mind.
-    logFundingEditPayments({ ...fundingLog, reassigning: applied.banners.length > 0 });
+    logFundingEditPayments({ ...logCtx, reassigning: applied.banners.length > 0 });
     // Decisions only ever touch the ACTIVE structure, so the other one's rows are
     // carried through untouched rather than dropped.
     const inactive = rows.filter((r) => !activeRows.includes(r));
@@ -794,7 +909,7 @@ export function ResultJobModal({
     // The "void it first" nudge answered a tap that is now several screens back.
     setStructureNudge(false);
     setScreen('result');
-  }, [rows, activeRows, payments, contractNum, payMode, funding, fundingLog]);
+  }, [rows, activeRows, payments, contractNum, payMode, funding, logCtx]);
 
   // ── funding actions ──────────────────────────────────────────────────────
 
@@ -853,6 +968,19 @@ export function ResultJobModal({
     async (channel: FundingChannel, destination?: string): Promise<boolean> => {
       if (!linkTarget) return false;
       const res = await funding.markLinkSent(linkTarget, channel, destination);
+      /**
+       * ⚠️ A corrected destination RE-ISSUES the link: the server expires the open
+       * Checkout session and mints a new page, so the url this screen is still holding
+       * — the one behind the QR code and the Copy button — is dead. Re-fetch instead of
+       * trusting what we cached (REVDSM-1155).
+       *
+       * `reissued` comes back from the hook because it cannot be re-derived here: the
+       * row now carries the NEW destination, so comparing it would answer false.
+       */
+      if (res.ok && res.data?.reissued) {
+        const fresh = await funding.fetchLink(linkTarget);
+        setLinkUrl(fresh.ok ? fresh.data?.url || '' : '');
+      }
       return res.ok;
     },
     [funding, linkTarget]
@@ -900,6 +1028,18 @@ export function ResultJobModal({
     if (!isDemo) {
       const res = await funding.submit();
       if (!res.ok) return;
+    } else {
+      // The demo arm never reaches Confirm and never enters the funding module, so
+      // without this it would be the one path through this screen that starts and
+      // simply stops. ⚠️ A SALE is NOT logged here — by then the rep is on the
+      // funding screen and `funding_submitted` already records it with the server's
+      // answer.
+      logResultLeadBuildJob({
+        ...logCtx,
+        resultType,
+        contractPrice: Math.round(contractNum) || undefined,
+        reason: demoReason || undefined,
+      });
     }
 
     onConfirm?.({
@@ -935,6 +1075,7 @@ export function ResultJobModal({
   }, [
     resultType, oneLeg, contractNum, downTotal, balanceTotal, primaryDownMethod, primaryBalanceMethod,
     allocations, demoReason, reasonExplanation, versatile, pineapple, bankDeclined, payments, funding, onConfirm,
+    logCtx,
   ]);
 
   // ── price lock ───────────────────────────────────────────────────────────
@@ -976,7 +1117,7 @@ export function ResultJobModal({
                     <Ionicons name="chevron-back" size={22} color="#fff" />
                   </TouchableOpacity>
                 )}
-                <Text style={{ fontSize: 16, fontWeight: '600', color: '#fff' }}>{onFunding ? 'Funding' : 'Result Lead'}</Text>
+                <Text style={{ fontSize: FS.LEAD, fontFamily: PS.semibold, color: '#fff' }}>{onFunding ? 'Funding' : 'Result Lead'}</Text>
               </View>
               <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
                 <Ionicons name="close" size={20} color="#fff" />
@@ -1038,7 +1179,7 @@ export function ResultJobModal({
                         onSelect={(v) => setResultChoice(v as 'sale' | 'bank_decline')}
                       />
                       {!declineHappened && (
-                        <Text style={{ fontSize: 11.5, fontWeight: '600', color: FUND.MUTED, marginTop: -14, marginBottom: 18, marginHorizontal: 4 }}>
+                        <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, marginTop: -14, marginBottom: 18, marginHorizontal: 4 }}>
                           Locked to Sale unless a lender declines.
                         </Text>
                       )}
@@ -1069,7 +1210,7 @@ export function ResultJobModal({
                           <FloatingLabel text="Explain Reason" error={!reasonExplanation.trim()} />
                           <View style={{ borderWidth: 1, borderColor: '#919EAB33', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, minHeight: 80, backgroundColor: '#fff' }}>
                             <TextInput
-                              style={{ fontSize: 13, fontWeight: '600', color: '#1C252E', padding: 0, textAlignVertical: 'top' }}
+                              style={{ fontSize: FS.BODY, fontFamily: PS.semibold, color: '#1C252E', padding: 0, textAlignVertical: 'top' }}
                               value={reasonExplanation}
                               onChangeText={setReasonExplanation}
                               placeholder="Enter details..."
@@ -1089,7 +1230,7 @@ export function ResultJobModal({
                        recessed panel so the split reads as a single figure broken up
                        rather than three unrelated fields. */
                     <View style={{ backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 22, paddingHorizontal: 14, paddingTop: 16, paddingBottom: 6, marginBottom: 22 }}>
-                      <Text style={{ fontSize: 12, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase', color: FUND.PANEL_LABEL, paddingHorizontal: 4, paddingBottom: 14 }}>
+                      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 1.2, textTransform: 'uppercase', color: FUND.PANEL_LABEL, paddingHorizontal: 4, paddingBottom: 14 }}>
                         Pricing
                       </Text>
 
@@ -1106,13 +1247,13 @@ export function ResultJobModal({
                         trailing={
                           priceUnlocked ? (
                             <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: FUND.AMBER_BG }}>
-                              <Text style={{ fontSize: 10, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase', color: FUND.AMBER_TEXT }}>Editable</Text>
+                              <Text style={{ fontSize: FS.MICRO, fontFamily: PS.extrabold, letterSpacing: 0.4, textTransform: 'uppercase', color: FUND.AMBER_TEXT }}>Editable</Text>
                             </View>
                           ) : null
                         }
                       />
                       {priceUnlocked && (
-                        <Text style={{ fontSize: 11.5, fontWeight: '700', lineHeight: 16, marginTop: -12, marginBottom: 16, marginHorizontal: 4, color: priceBelowLocked ? FUND.RED_TEXT : FUND.AMBER_TEXT }}>
+                        <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, lineHeight: 16, marginTop: -12, marginBottom: 16, marginHorizontal: 4, color: priceBelowLocked ? FUND.RED_TEXT : FUND.AMBER_TEXT }}>
                           {priceBelowLocked
                             ? `Contract price is below the $${lockedTotal.toLocaleString()} already approved and locked. Void that application before going lower.`
                             : PRICE_UNLOCK_HINT}
@@ -1167,7 +1308,7 @@ export function ResultJobModal({
                                 {/* Upfront has no remainder row to hide a gap in, so
                                     this is the only running total the rep gets. */}
                                 <CoverageBar assigned={totalAssigned} target={contractNum} />
-                                <Text style={{ fontSize: 11, fontWeight: '600', lineHeight: 16, marginTop: 9, marginHorizontal: 4, color: FUND.MUTED }}>
+                                <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, lineHeight: 16, marginTop: 9, marginHorizontal: 4, color: FUND.MUTED }}>
                                   Paid in full at the table, so there is no balance to finance. Lender plans are not offered here.
                                 </Text>
                               </>
@@ -1218,7 +1359,7 @@ export function ResultJobModal({
 
                   {!!calculatorTitle && (
                     <View style={{ marginBottom: 20, padding: 12, backgroundColor: '#F4F6F8', borderRadius: 8 }}>
-                      <Text style={{ fontSize: 11, color: '#919EAB' }}>Calculator</Text>
+                      <Text style={{ fontSize: FS.TINY, fontFamily: PS.regular, color: '#919EAB' }}>Calculator</Text>
                       {/* A full package shows the icon + ⓘ here too, so this block matches the
                           tab, the quote card and the Sale/Demo chooser the rep came through.
                           Derived from the same `entries` the Job Summary below lists, so the
@@ -1242,14 +1383,14 @@ export function ResultJobModal({
                         <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: '#F0EFFF', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
                           <Ionicons name="clipboard" size={16} color="#4CBB17" />
                         </View>
-                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#1C252E' }}>Job Summary</Text>
+                        <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: '#1C252E' }}>Job Summary</Text>
                       </View>
                       <View style={{ backgroundColor: '#E5D9FF', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}>
-                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#6B46C1' }}>{items.length} Item{items.length === 1 ? '' : 's'}</Text>
+                        <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, color: '#6B46C1' }}>{items.length} Item{items.length === 1 ? '' : 's'}</Text>
                       </View>
                     </View>
                     {items.length === 0 ? (
-                      <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '600', paddingVertical: 8 }}>No items</Text>
+                      <Text style={{ fontSize: FS.SMALL, color: '#94A3B8', fontFamily: PS.semibold, paddingVertical: 8 }}>No items</Text>
                     ) : (
                       <>
                         {/* Category pills (schema-driven icon + color) */}
@@ -1260,7 +1401,7 @@ export function ResultJobModal({
                               return (
                                 <View key={catId} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: meta.style.bg }}>
                                   <Ionicons name={meta.style.icon} size={11} color={meta.style.color} style={{ marginRight: 4 }} />
-                                  <Text style={{ fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label} ({count})</Text>
+                                  <Text style={{ fontSize: FS.TINY, fontFamily: PS.black, color: meta.style.color }}>{meta.label} ({count})</Text>
                                 </View>
                               );
                             })}
@@ -1274,7 +1415,7 @@ export function ResultJobModal({
                                 <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: meta.style.bg, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
                                   <Ionicons name={meta.style.icon} size={14} color={meta.style.color} />
                                 </View>
-                                <Text style={{ fontSize: 13, fontWeight: '700', color: '#1C252E', flex: 1 }}>
+                                <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: '#1C252E', flex: 1 }}>
                                   {item.inputValue}{unitSuffix(item)} {labelWithSection(item.label, item.sectionId, sectionLabelMap)}
                                 </Text>
                               </View>
@@ -1288,10 +1429,10 @@ export function ResultJobModal({
                   {/* Versatile / Pineapple */}
                   <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
                     <TouchableOpacity onPress={() => setVersatile((v) => !v)} style={{ flex: 1, height: 44, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFAB00', opacity: versatile ? 1 : 0.55 }}>
-                      <Text style={{ fontWeight: '700', fontSize: 11, color: '#212B36' }}>Versatile</Text>
+                      <Text style={{ fontFamily: PS.bold, fontSize: FS.TINY, color: '#212B36' }}>Versatile</Text>
                     </TouchableOpacity>
                     <TouchableOpacity onPress={() => setPineapple((v) => !v)} style={{ flex: 1, height: 44, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFAB00', opacity: pineapple ? 1 : 0.55 }}>
-                      <Text style={{ fontWeight: '700', fontSize: 11, color: '#212B36' }}>Pineapple</Text>
+                      <Text style={{ fontFamily: PS.bold, fontSize: FS.TINY, color: '#212B36' }}>Pineapple</Text>
                     </TouchableOpacity>
                   </View>
                 </>
@@ -1315,14 +1456,14 @@ export function ResultJobModal({
                     onPress={goResult}
                     style={{ height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', borderWidth: 1.6, borderColor: FUND.BORDER, marginBottom: 10 }}
                   >
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: FUND.SUBTEXT }}>Edit payments</Text>
+                    <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: FUND.SUBTEXT }}>Edit payments</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     disabled={submitDisabled}
                     onPress={handleBuild}
                     style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: submitDisabled ? '#E9EBEE' : '#4CBB17' }}
                   >
-                    <Text style={{ color: submitDisabled ? '#A8AEB6' : '#fff', fontWeight: '700', fontSize: 14, letterSpacing: 0.5 }}>
+                    <Text style={{ color: submitDisabled ? '#A8AEB6' : '#fff', fontFamily: PS.bold, fontSize: FS.BODY_LG, letterSpacing: 0.5 }}>
                       {bankDeclined ? 'Submit Bank Decline' : 'Submit Funding'}
                     </Text>
                   </TouchableOpacity>
@@ -1337,7 +1478,7 @@ export function ResultJobModal({
                     onPress={goFunding}
                     style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: saleReady ? '#4CBB17' : '#E9EBEE' }}
                   >
-                    <Text style={{ color: saleReady ? '#fff' : '#A8AEB6', fontWeight: '700', fontSize: 14, letterSpacing: 0.5 }}>
+                    <Text style={{ color: saleReady ? '#fff' : '#A8AEB6', fontFamily: PS.bold, fontSize: FS.BODY_LG, letterSpacing: 0.5 }}>
                       Confirm
                     </Text>
                   </TouchableOpacity>
@@ -1348,7 +1489,7 @@ export function ResultJobModal({
                   onPress={handleBuild}
                   style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: demoDisabled ? '#919EAB' : '#4CBB17' }}
                 >
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14, letterSpacing: 0.5 }}>Build Job</Text>
+                  <Text style={{ color: '#fff', fontFamily: PS.bold, fontSize: FS.BODY_LG, letterSpacing: 0.5 }}>Build Job</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -1365,7 +1506,7 @@ export function ResultJobModal({
                 onSend={handleSendLink}
                 onCopyLink={() =>
                   logFundingLinkCopied({
-                    ...fundingLog,
+                    ...logCtx,
                     payment: {
                       pid: linkPayment.pid,
                       method: linkPayment.method,
