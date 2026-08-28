@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlashMessage } from '../../../config/message';
 import SocketManager from '../../../services/SocketManager';
 import {
+  ApprovalService,
   FundingService,
   classifyFundingError,
   type FundingChannel,
@@ -9,6 +10,8 @@ import {
   type FundingError,
   type FundingPaymentRow,
   type FundingRecord,
+  type FundingRefundMethod,
+  type FundingRefundReason,
   type FundingResult,
   type FundingUpsertRow,
 } from '../../../services/api/FundingService';
@@ -29,6 +32,10 @@ import {
   type FundingLogBase,
   type FundingLogPayment,
   type FundingSource,
+  logRefundRequested,
+  logRefundDecided,
+  logRefundReassigned,
+  logRefundResent,
 } from '../../../utils/activity-log/funding-log';
 import { isReissue } from '../utils/funding';
 import { LeadService } from '../../../services/api/leads';
@@ -574,6 +581,150 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
     [run, leadId, companyId, actorId, logBase, paymentFor, wasLinkSent, rowFor, customerId]
   );
 
+  /**
+   * ── refunds (REVDSM-1160) ───────────────────────────────────────────────
+   *
+   * Raise a refund on a collected row. The only reason one exists in this app is
+   * that the rep re-priced a deal BELOW what has already been collected.
+   *
+   * ⚠️ **The addendum draft must exist first**, and its `draftId` must be in `body`.
+   * It is the only join between the refund and the paperwork the customer signs, it
+   * can only be set at creation, and without it the refund reaches `pendingCustomer`
+   * and waits there forever. `requestRefund` does not enforce it — the caller owns
+   * the ordering, because only the caller knows when the draft was submitted.
+   *
+   * ⚠️ Nothing needs re-fetching afterwards: like every funding endpoint this returns
+   * the WHOLE record and `run` applies it.
+   */
+  const requestRefund = useCallback(
+    async (
+      pid: string,
+      body: {
+        amount: number;
+        method: FundingRefundMethod;
+        reason: FundingRefundReason;
+        feeBorne?: 'company' | 'customer';
+        note?: string;
+        assignedToUserId?: string;
+        draftId?: string;
+      }
+    ): Promise<FundingActionResult> => {
+      // ⚠️ Snapshot BEFORE the call — the response mutates the row, so a log built
+      // afterwards would describe the post-state. Same rule as `chargeCard`.
+      const payment = paymentFor(pid);
+      const res = await run(
+        'Request refund',
+        () => FundingService.requestRefund(leadId!, pid, body, companyId, actorId),
+        { pid }
+      );
+      logRefundRequested({
+        ...logBase,
+        payment,
+        amount: body.amount,
+        method: body.method,
+        reason: body.reason,
+        approverId: body.assignedToUserId,
+        draftId: body.draftId,
+        ok: res.ok,
+        // Its own action, because it is the one refusal nobody at the table can clear.
+        approversMissing: res.error?.kind === 'approversMissing',
+        error: res.error?.message,
+      });
+      return res;
+    },
+    [run, leadId, companyId, actorId, logBase, paymentFor]
+  );
+
+  /**
+   * Answer an approval.
+   *
+   * ⚠️ **Approving returns no money** — it advances the refund to `pendingCustomer`,
+   * unlocking the customer's signature and nothing more.
+   *
+   * ⚠️ Not routed through `run`: this is an APPROVALS endpoint, not a funding one, so
+   * its response is `{ approval, funding }` rather than a bare funding envelope. The
+   * `funding` half is applied when present — it is there exactly when the refund moved.
+   */
+  const decideApproval = useCallback(
+    async (
+      approvalId: string,
+      decision: 'approved' | 'declined',
+      opts?: { note?: string; pid?: string; amount?: number }
+    ): Promise<FundingActionResult> => {
+      const payment = opts?.pid ? paymentFor(opts.pid) : undefined;
+      try {
+        const res = await ApprovalService.decide(
+          approvalId,
+          { decision, ...(opts?.note ? { note: opts.note } : {}) },
+          companyId,
+          actorId
+        );
+        const body: any = res?.data?.data ?? res?.data;
+        if (body?.funding) apply(body.funding);
+        logRefundDecided({
+          ...logBase,
+          payment,
+          approvalId,
+          decision,
+          amount: opts?.amount,
+          note: opts?.note,
+          ok: true,
+        });
+        FlashMessage.success(
+          decision === 'approved' ? 'Refund approved' : 'Refund declined',
+          decision === 'approved'
+            ? 'The customer can now sign the addendum. No money has moved yet.'
+            : 'The rep will have to raise a new refund.'
+        );
+        return { ok: true };
+      } catch (err: any) {
+        const error = classifyFundingError(err);
+        // ⚠️ A 403 here carries the server's own wording — wrong role, or the company
+        // does not allow approving your own request. It is the only thing that says WHY.
+        FlashMessage.error('Could not record the decision', error.message);
+        logRefundDecided({ ...logBase, payment, approvalId, decision, amount: opts?.amount, ok: false, error: error.message });
+        return { ok: false, error };
+      }
+    },
+    [companyId, actorId, logBase, paymentFor, apply]
+  );
+
+  /** Send a pending request to a different approver. ⚠️ `pending`-only — 409 otherwise. */
+  const reassignApproval = useCallback(
+    async (approvalId: string, toUserId: string, opts?: { note?: string; fromUserId?: string }): Promise<FundingActionResult> => {
+      try {
+        await ApprovalService.reassign(approvalId, toUserId, opts?.note, companyId, actorId);
+        logRefundReassigned({ ...logBase, approvalId, fromUserId: opts?.fromUserId, toUserId, ok: true });
+        FlashMessage.success('Sent on', 'The request is now with the new approver.');
+        return { ok: true };
+      } catch (err: any) {
+        const error = classifyFundingError(err);
+        FlashMessage.error('Could not reassign', error.message);
+        logRefundReassigned({ ...logBase, approvalId, fromUserId: opts?.fromUserId, toUserId, ok: false, error: error.message });
+        return { ok: false, error };
+      }
+    },
+    [companyId, actorId, logBase]
+  );
+
+  /** Nudge the same approver. ⚠️ `pending`-only — 409 otherwise. */
+  const resendApproval = useCallback(
+    async (approvalId: string, toUserId?: string): Promise<FundingActionResult> => {
+      try {
+        await ApprovalService.resend(approvalId, companyId, actorId);
+        logRefundResent({ ...logBase, approvalId, toUserId, ok: true });
+        FlashMessage.success('Reminder sent', 'The approver has been nudged again.');
+        return { ok: true };
+      } catch (err: any) {
+        const error = classifyFundingError(err);
+        FlashMessage.error('Could not resend', error.message);
+        logRefundResent({ ...logBase, approvalId, toUserId, ok: false, error: error.message });
+        return { ok: false, error };
+      }
+    },
+    [companyId, actorId, logBase]
+  );
+
   /** Ask the processor/lender what happened. The main way card and loan rows advance. */
   const syncPayment = useCallback(
     async (pid: string): Promise<FundingActionResult> => {
@@ -862,6 +1013,10 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
     activateLoan,
     reactivateLoan,
     restoreArchivedPlan,
+    requestRefund,
+    decideApproval,
+    reassignApproval,
+    resendApproval,
     chargeCard,
     markCheckCollected,
     submit,

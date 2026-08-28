@@ -24,6 +24,10 @@ import {
   type FundingApplicationClosed,
   type FundingArchivedPlan,
   type FundingChannel,
+  type FundingRefund,
+  type FundingRefundMethod,
+  type FundingRefundReason,
+  type FundingRefundState,
   type FundingDecision,
   type FundingKind,
   type FundingMethodType,
@@ -544,7 +548,25 @@ export function coverageState(assigned: number, price: number): { tone: Coverage
  * rep works the list, instead of tapping a live button and being told no. Phrased
  * as the next action, same as `fundingBlockers`.
  */
-export function confirmBlockers(rows: PaymentRow[], price: number, mode: PayMode = 'split'): string[] {
+export function confirmBlockers(
+  rows: PaymentRow[],
+  price: number,
+  mode: PayMode = 'split',
+  /**
+   * Money that is over the contract price because it has ALREADY BEEN COLLECTED and
+   * is going back as a refund (see `refundDueFor`).
+   *
+   * ⚠️ Without this the refund flow DEAD-ENDS, and it is not a subtle failure: a
+   * $500 contract with $900 already charged reads "Payments add up to $900 — $400
+   * more than the contract price" and disables Confirm. The rep cannot clear it —
+   * the row is settled, so its amount is read-only and it cannot be removed — so
+   * there is no way forward at all, including to the step where the refund is
+   * actually raised.
+   *
+   * The overage IS the refund. It is only still a blocker for whatever exceeds it.
+   */
+  opts?: { refundDue?: number }
+): string[] {
   if (!(price > 0)) return ['Enter the contract price'];
 
   const out: string[] = [];
@@ -612,11 +634,15 @@ export function confirmBlockers(rows: PaymentRow[], price: number, mode: PayMode
   }
 
   const total = assignedTotal(rows, price);
-  if (total > price + EPS) {
+  // ⚠️ An acknowledged refund EXPLAINS that much of the overage — it is money the
+  // company is holding and giving back, not money the rep mis-assigned and can trim.
+  const refunded = Math.max(0, Math.round(Number(opts?.refundDue) || 0));
+  const over = total - price - refunded;
+  if (over > EPS) {
     out.push(
       mode === 'upfront'
-        ? `Upfront is $${money(total - price)} over the contract price`
-        : `Payments add up to $${money(total)} — $${money(total - price)} more than the contract price`
+        ? `Upfront is $${money(over)} over the contract price`
+        : `Payments add up to $${money(total)} — $${money(over)} more than the contract price`
     );
   } else if (total < price - EPS) {
     out.push(`$${money(price - total)} of the contract is still unassigned`);
@@ -1474,4 +1500,369 @@ export function needsAttentionRowId(
   if (!banners.length) return null;
   const gapKind = remainderKind(mode);
   return rows.find((r) => r.kind === gapKind && !r.decision)?.pid ?? null;
+}
+
+// ── refunds & internal approvals (REVDSM-1159 / 1160) ──────────────────────
+
+/**
+ * ⚠️ **The one rule that decides everything here.** Lance, 24 Aug:
+ *
+ * > *"Approvals are only for refunds. (My deals flow currently allows change orders
+ * > of install date, job scope, pricing, materials, etc. and that all does NOT need
+ * > approval.) The only thing that needs approval is refunds bc now the company has
+ * > to give money back."*
+ *
+ * | the rep changes | approval? |
+ * |---|---|
+ * | install date, scope, materials | no |
+ * | price **up** | no |
+ * | price **down**, still ≥ collected | no — they re-work the balance themselves |
+ * | price **down** below what is COLLECTED | **yes** — the overage has to go back |
+ *
+ * His worked example: on a $10,000 contract with $1,000 collected, dropping to $9,000
+ * needs nothing; dropping to $800 refunds $200 and needs an approver.
+ */
+
+/** The eight server states, verbatim. ⚠️ Do not re-label or collapse them. */
+export const REFUND_STATE_LABELS: Record<FundingRefundState, string> = {
+  pendingApproval: 'Waiting on approval',
+  pendingCustomer: 'Waiting on customer',
+  customerSigned: 'Customer signed',
+  issuing: 'Issuing',
+  refunded: 'Refunded',
+  failed: 'Failed',
+  declined: 'Declined',
+  cancelled: 'Cancelled',
+};
+
+export const REFUND_REASON_LABELS: Record<FundingRefundReason, string> = {
+  priceDrop: 'Price reduced',
+  jobCancelled: 'Job cancelled',
+  bankDecline: 'Lender declined',
+  customerDispute: 'Customer dispute',
+  completionDispute: 'Completion dispute',
+  other: 'Other',
+};
+
+/**
+ * ⚠️ `refunded`, `declined` and `cancelled` are TERMINAL. Everything else is live.
+ * A declined request is not re-openable — the rep raises a new refund.
+ */
+const TERMINAL_REFUND_STATES: FundingRefundState[] = ['refunded', 'declined', 'cancelled'];
+
+export function isRefundLive(r?: FundingRefund | null): boolean {
+  if (!r || !r.state) return false;
+  return !TERMINAL_REFUND_STATES.includes(r.state);
+}
+
+/**
+ * The chip colour for a refund state.
+ *
+ * ⚠️ **An approved request sitting at `pendingCustomer` is the NORMAL resting state.**
+ * It is neither an error nor "done" — the approver has unlocked the signature and the
+ * customer has not signed yet. Painting it red would make every healthy refund look
+ * broken; painting it green would say the money went back.
+ */
+export function refundStateTone(state: FundingRefundState): 'ok' | 'warn' | 'bad' | 'muted' {
+  if (state === 'refunded') return 'ok';
+  if (state === 'declined' || state === 'failed') return 'bad';
+  if (state === 'cancelled') return 'muted';
+  return 'warn';
+}
+
+/**
+ * What has actually been COLLECTED on a row — money the company is holding.
+ *
+ * ⚠️ Not `amount`, which is what was ASKED. A card that has been charged and a cheque
+ * that has been taken are collected; a link that merely went out is not, and a loan
+ * that was short-approved funded only what the lender GRANTED (`fundedAmount`).
+ */
+export function collectedOn(p: FundingPayment): number {
+  if (!p) return 0;
+  if (p.charged || p.collected) return fundedAmount(p);
+  if (p.type === 'bank' && p.activated) return fundedAmount(p);
+  return 0;
+}
+
+/** Everything collected across the DOWN PAYMENT rows — the figure Lance's rule reads. */
+export function collectedDownPayment(payments: FundingPayment[]): number {
+  return (payments || [])
+    .filter((p) => p && p.kind !== 'bal')
+    .reduce((n, p) => n + collectedOn(p), 0);
+}
+
+/** Everything collected on the job, whichever half it sits in. */
+export function collectedTotal(payments: FundingPayment[]): number {
+  return (payments || []).reduce((n, p) => n + collectedOn(p), 0);
+}
+
+/**
+ * What is still refundable on ONE row.
+ *
+ * ⚠️ Refunds already raised are subtracted, but **only the live and completed ones** —
+ * a declined or cancelled request returned nothing and must not eat the allowance, or
+ * a rep who was refused once could never raise the refund again.
+ */
+export function refundableAmount(p: FundingPayment): number {
+  const collected = collectedOn(p);
+  if (collected <= 0) return 0;
+  const spoken = (p.refunds || [])
+    .filter((r) => r && r.state !== 'declined' && r.state !== 'cancelled')
+    .reduce((n, r) => n + (Number(r.amount) || 0), 0);
+  return Math.max(0, collected - spoken);
+}
+
+/** Every live refund on the job — what the funding screen has to keep showing. */
+export function liveRefunds(payments: FundingPayment[]): { payment: FundingPayment; refund: FundingRefund }[] {
+  const out: { payment: FundingPayment; refund: FundingRefund }[] = [];
+  for (const p of payments || []) {
+    for (const r of p?.refunds || []) if (isRefundLive(r)) out.push({ payment: p, refund: r });
+  }
+  return out;
+}
+
+/**
+ * How much has to go back if the contract is re-priced to `newContract`.
+ *
+ * ⚠️ Measured against what is COLLECTED, not against the old contract price. A deal
+ * can be re-priced far down and owe nothing, so long as it still covers the money
+ * already taken.
+ */
+export function refundDueFor(newContract: number, payments: FundingPayment[]): number {
+  const collected = collectedTotal(payments);
+  if (!(collected > 0)) return 0;
+  const price = Number(newContract) || 0;
+  return Math.max(0, Math.round(collected - price));
+}
+
+/** Does this re-price need an approver? Exactly when money has to go back. */
+export function requiresRefundApproval(newContract: number, payments: FundingPayment[]): boolean {
+  return refundDueFor(newContract, payments) > 0;
+}
+
+/**
+ * Is the down payment frozen at this contract price?
+ *
+ * ⚠️ Lance: *"Do not let them adjust the down payment (since that means funding has
+ * already been charged/received) as long as the new contract amount is greater than
+ * the down payment still."* So a COLLECTED down payment is untouchable while the new
+ * price still covers it — the rep re-works the balance instead. Once the price drops
+ * below it the row is in play, because that is precisely the refund case.
+ */
+export function isDownPaymentLocked(newContract: number, payments: FundingPayment[]): boolean {
+  const down = collectedDownPayment(payments);
+  if (!(down > 0)) return false;
+  return (Number(newContract) || 0) >= down;
+}
+
+/**
+ * The warning shown the moment the rep types a price below what has been collected.
+ *
+ * ⚠️ **Verbatim from Lance** — do not reword it. Only on **Yes** does the refund appear
+ * on the funding screen and on the addendum.
+ */
+export const REFUND_APPROVAL_WARNING =
+  'new contract price is less than collected down payment. This will require approvals. Do you wish to proceed?';
+
+/**
+ * Why a refund cannot be requested yet, or `null` when it can.
+ *
+ * Listed rather than thrown, and phrased as the next action — the same shape as
+ * `confirmBlockers` and `fundingBlockers`, so the rep works a list instead of tapping
+ * a button that says no.
+ */
+export function refundBlockers(opts: {
+  payment: FundingPayment | null;
+  amount: number;
+  method: FundingRefundMethod | '';
+  reason: FundingRefundReason | '';
+  approverId?: string;
+  approversConfigured: boolean;
+}): string[] {
+  const { payment, amount, method, reason, approverId, approversConfigured } = opts;
+  const out: string[] = [];
+
+  // ⚠️ First, and on its own terms: a company with nobody configured cannot refund at
+  // all. Saying so up front beats letting the rep fill a form that will 409.
+  if (!approversConfigured) {
+    out.push('No refund approvers are configured — ask your admin to set them in the portal');
+    return out;
+  }
+  if (!payment) return ['Pick the payment to refund'];
+
+  const max = refundableAmount(payment);
+  if (max <= 0) out.push('Nothing has been collected on this payment yet');
+  // ⚠️ Whole dollars, everywhere in this system.
+  else if (!(amount > 0) || !Number.isInteger(amount)) out.push('Enter a whole-dollar refund amount above zero');
+  else if (amount > max) out.push(`Refund cannot be more than the $${money(max)} available on this payment`);
+
+  if (!method) out.push('Choose how the money goes back');
+  // ⚠️ A cheque can refund a card payment; a card cannot refund a non-card one.
+  else if (method === 'card' && payment.type !== 'cc') out.push('Only a payment taken by card can be refunded to a card');
+
+  if (!reason) out.push('Choose a reason for the refund');
+  // ⚠️ Optional server-side, required here: an unassigned request appears in NOBODY’s
+  // approvals queue and simply sits there.
+  if (!approverId) out.push('Choose who approves this refund');
+  return out;
+}
+
+/**
+ * The approver list, filtered for the picker.
+ *
+ * ⚠️ `allowSelfApproval: false` is a COMPANY SETTING — excluding the signed-in user
+ * here is what stops the decide call 403-ing later, after the rep has already sent it.
+ */
+export function pickableApprovers(
+  feed: { approvers?: { id: string; name: string; roleName?: string }[]; allowSelfApproval?: boolean } | null | undefined,
+  selfUserId?: string
+): { id: string; name: string; roleName?: string }[] {
+  const list = feed?.approvers || [];
+  if (feed?.allowSelfApproval === false && selfUserId) {
+    return list.filter((a) => String(a.id) !== String(selfUserId));
+  }
+  return list;
+}
+
+/**
+ * ── the refund's own progress rail (REVDSM-1159) ──────────────────────────────
+ *
+ * The four milestones a refund passes through, in the order they happen. They are a
+ * READING of the server's eight states (`REFUND_STATE_LABELS`), not a replacement
+ * for them — `issuing` and `refunded` are two answers to the same question ("is the
+ * money back?") and share the last dot, while `declined` / `cancelled` / `failed`
+ * are drawn as a stop on the dot they died at.
+ *
+ * ⚠️ **Four steps, and the third one is the CUSTOMER's.** The most expensive thing
+ * this rail can get wrong is implying that approving returns the money. It does not
+ * — approval only unlocks the customer's signature and a manager releases the funds
+ * afterwards, so "Approved" is the SECOND dot of four and never the last.
+ */
+export const REFUND_APPROVAL_STEPS = ['Refund Raised', 'Approved', 'Customer Signs', 'Refunded'];
+
+/**
+ * The four dot states for a refund, or for one that has not been raised yet.
+ *
+ * ⚠️ `null` is a real, common input — the rep is standing on the pricing step having
+ * just agreed to a refund that does not exist on the server yet. It draws step 1 as
+ * "you are here", which is what makes the rail usable as a preview of what submitting
+ * will start rather than something that only appears after the fact.
+ *
+ * ⚠️ A dead request (`declined` / `cancelled`) draws its remaining dots **dashed**,
+ * not grey. Grey reads as "not yet"; these will never happen, and a declined request
+ * is terminal — the rep raises a NEW refund rather than re-opening this one.
+ */
+export function refundApprovalStates(refund?: FundingRefund | null): StepState[] {
+  switch (refund?.state) {
+    case 'pendingApproval':
+      // Amber, not green: somebody else has to act and the rep is waiting on them.
+      return ['done', 'warn', 'next', 'next'];
+    case 'pendingCustomer':
+      return ['done', 'done', 'warn', 'next'];
+    case 'customerSigned':
+    case 'issuing':
+      return ['done', 'done', 'done', 'now'];
+    case 'refunded':
+      return ['done', 'done', 'done', 'done'];
+    case 'failed':
+      return ['done', 'done', 'done', 'bad'];
+    case 'declined':
+      return ['done', 'bad', 'locked', 'locked'];
+    case 'cancelled':
+      return ['done', 'locked', 'locked', 'locked'];
+    default:
+      // Not raised yet — the rail previews what Submit will start.
+      return ['now', 'next', 'next', 'next'];
+  }
+}
+
+/**
+ * One sentence under the rail saying what happens next, and by whose hand.
+ *
+ * ⚠️ Every arm names WHO is holding the refund. A rail on its own tells the rep how
+ * far the money has got but not who to chase, and "waiting" with no owner is the
+ * complaint that brings them to support.
+ */
+export function refundApprovalNote(refund?: FundingRefund | null): string {
+  switch (refund?.state) {
+    case 'pendingApproval':
+      return 'Out for approval. Approving does not return the money — it lets the customer sign.';
+    case 'pendingCustomer':
+      return 'Approved. Waiting on the customer to sign the addendum.';
+    case 'customerSigned':
+      return 'The customer has signed. A manager releases the money from Command Center.';
+    case 'issuing':
+      return 'On its way back to the customer.';
+    case 'refunded':
+      return 'The money has gone back to the customer.';
+    case 'failed':
+      return 'The refund failed on the way out and can be retried from Command Center.';
+    case 'declined':
+      return 'Declined. A declined request cannot be re-opened — raise a new refund.';
+    case 'cancelled':
+      return 'Cancelled. Nothing went back to the customer.';
+    default:
+      return 'Nothing is raised yet. Submitting the addendum sends this to the approver you choose.';
+  }
+}
+
+/**
+ * Every refund on the job, **newest first**, each paired with the row it comes out of.
+ *
+ * ⚠️ Unlike `liveRefunds` this keeps the TERMINAL ones. A refund that has actually
+ * been paid back, or one that was declined, is exactly what the rep needs to see when
+ * they reopen the deal — dropping it would make a completed refund vanish and read as
+ * though it never happened.
+ */
+export function refundsOnJob(payments: FundingPayment[]): { payment: FundingPayment; refund: FundingRefund }[] {
+  const out: { payment: FundingPayment; refund: FundingRefund }[] = [];
+  for (const p of payments || []) {
+    for (const r of p?.refunds || []) if (r) out.push({ payment: p, refund: r });
+  }
+  return out.sort((a, b) => new Date(b.refund.at || 0).getTime() - new Date(a.refund.at || 0).getTime());
+}
+
+/**
+ * The approver feed, read out of whatever the API wrapped it in.
+ *
+ * ⚠️ **A non-empty list IS configured, whatever the flag says.** This started life as
+ * `isConfigured: body.isConfigured === true` alone, and that turned a perfectly good
+ * list into "No approvers configured" on a response that simply does not carry the
+ * field — the picker sat empty and told the rep to go and ask their admin for
+ * something the admin had already done. The flag is still honoured when the list is
+ * EMPTY, because that is the case it exists to describe: a company with nobody set up
+ * cannot refund at all, and the request would 409.
+ *
+ * ⚠️ `allowSelfApproval` keeps the strict default. Excluding the rep from their own
+ * approval beats letting the `decide` call 403 after the request has already gone out.
+ *
+ * Pure, and separated from the hook for the reason the rest of this file is: the shape
+ * an endpoint answers in is exactly the sort of thing that is wrong silently.
+ */
+export function normalizeApproverFeed(body: any): {
+  approvers: { id: string; name: string; email?: string; roleId?: string; roleName?: string }[];
+  roles: { id: string; name: string }[];
+  isConfigured: boolean;
+  allowSelfApproval: boolean;
+} {
+  // The envelope varies by deployment, so unwrap the way the repo already does
+  // elsewhere rather than assuming one depth.
+  const b = body?.data?.data ?? body?.data ?? body ?? {};
+  const approvers = (Array.isArray(b.approvers) ? b.approvers : [])
+    // A row with no id cannot be sent to anybody — `assignedToUserId` is the whole
+    // point of picking one, and an unassigned request sits in nobody's queue.
+    .filter((a: any) => a && (a.id || a._id))
+    .map((a: any) => ({
+      id: String(a.id || a._id),
+      name: String(a.name || a.fullName || a.email || 'Unnamed'),
+      email: a.email,
+      roleId: a.roleId,
+      roleName: a.roleName || a.role,
+    }));
+  return {
+    approvers,
+    roles: Array.isArray(b.roles) ? b.roles : [],
+    isConfigured: b.isConfigured === true || approvers.length > 0,
+    allowSelfApproval: b.allowSelfApproval === true,
+  };
 }

@@ -3,7 +3,9 @@ import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FS, FUND, PS } from './funding-theme';
 import { PaymentFundingCard } from './PaymentFundingCard';
+import { RefundApprovalCard } from './RefundApprovalStatus';
 import { describePayment, groupTotal, type AttemptLogEntry, type FundingPayment, type PayMode } from '../../utils/funding';
+import type { FundingRefund } from '../../../../services/api/FundingService';
 
 /**
  * The **Funding** screen — the second half of the Result Lead sheet.
@@ -47,6 +49,14 @@ interface Props {
    * retry it until they call support — and only someone with portal access can fix it.
    */
   paymentsSetupError?: string | null;
+  /**
+   * Refunds raised on this job, newest first, each with the row it comes out of.
+   *
+   * ⚠️ Optional, and absent on the Result Lead sheet by construction: a sale being
+   * priced for the first time has collected nothing to give back. It is the My Deals
+   * addendum flow that can owe a refund, so only that mount passes it.
+   */
+  refunds?: { payment: FundingPayment; refund: FundingRefund }[];
   onSyncAll: () => void;
   onSyncOne: (pid: string) => void;
   onSendLink: (pid: string) => void;
@@ -117,6 +127,7 @@ export function FundingView({
   syncingAll,
   busyPid,
   paymentsSetupError,
+  refunds,
   onSyncAll,
   onSyncOne,
   onSendLink,
@@ -181,6 +192,14 @@ export function FundingView({
       {/* Above the payment cards and above the Bank Decline notice: it explains
           why every send below is greyed, so it has to be read first. */}
       {!!paymentsSetupError && <SetupBanner message={paymentsSetupError} />}
+
+      {/* ⚠️ Above the payment cards, not below them. Money going BACK is the
+          exception on this screen, and it comes out of one of the rows underneath —
+          a rep reading the cards first would reconcile a collected total that the
+          refund has already been taken off. */}
+      {(refunds || []).map(({ payment, refund }) => (
+        <RefundApprovalCard key={refund.rid || `${payment.pid}-refund`} amount={refund.amount} refund={refund} />
+      ))}
 
       {bankDeclined && (
         <View style={{ backgroundColor: FUND.RED_BG, borderRadius: 14, padding: 14, marginBottom: 18 }}>

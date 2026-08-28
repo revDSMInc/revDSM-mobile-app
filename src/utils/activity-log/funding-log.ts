@@ -560,3 +560,117 @@ export const logFundingSubmitted = (
           ...(o.error ? { error: o.error } : {}),
         }),
   });
+
+// ── refunds & approvals (REVDSM-1159 / 1160) ───────────────────────────────
+
+/**
+ * ⚠️ **`module_type` stays `funding`, and the flow prefix does the rest.**
+ *
+ * These fire from the **My Deals** wizard, so `fire()` composes them as
+ * `my_deals_funding_refund_requested` with `meta.fundingSource: "my_deals"` — the
+ * same mechanism every other funding event on that screen uses. The flow is never
+ * the module: one portal filter on `funding` still returns the whole money trail
+ * for a job, refunds included, and that was the explicit ask when the prefix was
+ * introduced.
+ *
+ * A refund is money moving, so `funding` is where it belongs — not `result_lead`,
+ * which ends at Confirm.
+ */
+
+/**
+ * The rep asked for a refund. ⚠️ This does NOT return any money — it raises the
+ * request and the approval that gates it.
+ */
+export const logRefundRequested = (
+  o: FundingLogBase & {
+    payment?: FundingLogPayment;
+    amount: number;
+    method: string;
+    reason: string;
+    approverId?: string;
+    /** The addendum this refund is joined to — without it the refund never advances. */
+    draftId?: string;
+    ok: boolean;
+    /** The company has nobody configured to approve; the request never happened. */
+    approversMissing?: boolean;
+    error?: string;
+  },
+) =>
+  fire('create', o, {
+    // ⚠️ A failure is its own action, not a flag — and the no-approvers refusal is
+    // its own again, because it is the one nobody at the table can clear.
+    action: o.ok
+      ? 'funding_refund_requested'
+      : o.approversMissing
+        ? 'funding_refund_blocked'
+        : 'funding_refund_request_failed',
+    ...paymentMeta(o.payment),
+    refundAmount: o.amount,
+    refundMethod: o.method,
+    refundReason: o.reason,
+    ...(o.approverId ? { approverId: o.approverId } : {}),
+    ...(o.draftId ? { draftId: o.draftId } : {}),
+    ...(o.ok ? {} : { outcome: 'failed', ...(o.error ? { error: o.error } : {}) }),
+  });
+
+/**
+ * An approver answered.
+ *
+ * ⚠️ **Approving returns no money.** It advances the refund to `pendingCustomer`,
+ * i.e. it unlocks the customer signature — the verb is `decide`, and nothing here
+ * may read as "refunded".
+ */
+export const logRefundDecided = (
+  o: FundingLogBase & {
+    payment?: FundingLogPayment;
+    approvalId?: string;
+    decision: 'approved' | 'declined';
+    amount?: number;
+    note?: string;
+    ok: boolean;
+    error?: string;
+  },
+) =>
+  fire('update', o, {
+    action: o.ok
+      ? o.decision === 'approved'
+        ? 'funding_refund_approved'
+        : 'funding_refund_declined'
+      : 'funding_refund_decide_failed',
+    ...paymentMeta(o.payment),
+    ...(o.approvalId ? { approvalId: o.approvalId } : {}),
+    decision: o.decision,
+    ...(typeof o.amount === 'number' ? { refundAmount: o.amount } : {}),
+    ...(o.note ? { note: o.note } : {}),
+    ...(o.ok ? {} : { outcome: 'failed', ...(o.error ? { error: o.error } : {}) }),
+  });
+
+/** The request was sent to somebody else, to clear a bottleneck. */
+export const logRefundReassigned = (
+  o: FundingLogBase & {
+    approvalId?: string;
+    /** ⚠️ BOTH ends — recording only the new approver loses who was holding it. */
+    fromUserId?: string;
+    toUserId: string;
+    ok: boolean;
+    error?: string;
+  },
+) =>
+  fire('update', o, {
+    action: o.ok ? 'funding_refund_reassigned' : 'funding_refund_reassign_failed',
+    ...(o.approvalId ? { approvalId: o.approvalId } : {}),
+    ...(o.fromUserId ? { fromUserId: o.fromUserId } : {}),
+    toUserId: o.toUserId,
+    ...(o.ok ? {} : { outcome: 'failed', ...(o.error ? { error: o.error } : {}) }),
+  });
+
+/** The same approver was nudged again. */
+export const logRefundResent = (
+  o: FundingLogBase & { approvalId?: string; toUserId?: string; ok: boolean; error?: string },
+) =>
+  fire('send', o, {
+    action: o.ok ? 'funding_refund_resent' : 'funding_refund_resend_failed',
+    ...(o.approvalId ? { approvalId: o.approvalId } : {}),
+    ...(o.toUserId ? { toUserId: o.toUserId } : {}),
+    ...(o.ok ? {} : { outcome: 'failed', ...(o.error ? { error: o.error } : {}) }),
+  });

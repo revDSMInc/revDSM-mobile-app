@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Keyboard } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { FS, FUND, PS } from './funding-theme';
@@ -178,6 +178,15 @@ export function SendLinkModal({
    */
   const [cancelledOld, setCancelledOld] = useState<string | null>(null);
 
+  /**
+   * The pending re-issue confirmation — the copy to show and what to do on YES.
+   *
+   * ⚠️ The action is held as a THUNK rather than reconstructed when the rep confirms.
+   * The channel and destination are captured at the moment they pressed Send, so a
+   * keystroke landing behind the confirmation cannot change what is actually sent.
+   */
+  const [confirm, setConfirm] = useState<{ warning: string; run: () => void } | null>(null);
+
   const isBank = payment.type === 'bank';
   const noun = isBank ? 'application' : 'payment';
   const title = `${isResend ? 'Resend' : 'Send'} ${noun} link`;
@@ -203,9 +212,17 @@ export function SendLinkModal({
    * about to kill a page the homeowner may already have open, and this is the last
    * moment to notice a wrong number before a SECOND stranger receives one.
    *
-   * ⚠️ A native `Alert` rather than an in-sheet layer: this component is already an
-   * overlay inside the Result Lead modal (see the note above about stacked modals),
-   * and a third hand-rolled layer on top of that is where z-order goes wrong.
+   * ⚠️ **An in-sheet layer, NOT a native `Alert` and NOT a nested `<Modal>`.** This
+   * component is already an absolutely-positioned overlay (it is not itself a Modal,
+   * for the stacked-modal reason at the top of the file), so another absolute layer
+   * inside its own root sits above it with no z-order risk and carries the app’s own
+   * type and colour. A native Alert here rendered in the OS chrome instead: system
+   * font, system buttons, and a title the rep reads as coming from the phone rather
+   * than from the deal.
+   *
+   * ⚠️ The keyboard is dismissed first. This is raised from the text/email stage,
+   * where the keyboard covers the lower half of the screen — the previous native
+   * dialog was drawn over it, but an in-sheet card is not.
    */
   const confirmThenDeliver = (channel: FundingChannel, destination: string, who: string) => {
     const warning = reissueWarning(payment, channel, destination);
@@ -213,16 +230,8 @@ export function SendLinkModal({
       deliver(channel, destination, who);
       return;
     }
-    Alert.alert('Cancel the old link?', warning, [
-      { text: 'Keep it', style: 'cancel' },
-      {
-        text: 'Cancel & send new',
-        style: 'destructive',
-        onPress: () => {
-          deliver(channel, destination, who);
-        },
-      },
-    ]);
+    Keyboard.dismiss();
+    setConfirm({ warning, run: () => deliver(channel, destination, who) });
   };
 
   const sendText = () => {
@@ -450,6 +459,58 @@ export function SendLinkModal({
           )}
         </ScrollView>
       </View>
+
+      {/* ── "this cancels the old link" ──
+          The LAST child of the sheet root, so it covers the card and its keyboard
+          without a nested <Modal>. Same chrome as the app’s other destructive
+          confirmations (Cancel Job, Reset Job Builder): white card, centred title,
+          outlined "keep" beside a red "do it". */}
+      {!!confirm && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(17,20,24,0.55)', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 70 }}>
+          <View style={{ width: '100%', maxWidth: 340, backgroundColor: '#fff', borderRadius: 18, padding: 20 }}>
+            <View style={{ alignSelf: 'center', width: 42, height: 42, borderRadius: 21, backgroundColor: FUND.RED_BG, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+              <Ionicons name="unlink-outline" size={20} color={FUND.RED_TEXT} />
+            </View>
+            <Text style={{ fontSize: FS.TITLE, fontFamily: PS.bold, color: FUND.TEXT, textAlign: 'center' }}>
+              Cancel the old link?
+            </Text>
+            <Text style={{ fontSize: FS.BODY, fontFamily: PS.semibold, color: FUND.SUBTEXT, textAlign: 'center', lineHeight: 18, marginTop: 8 }}>
+              {confirm.warning}
+            </Text>
+
+            {/* ⚠️ Said plainly, because it is the half a rep skims past: the homeowner
+                may already have the old page open, and it stops working the moment
+                this is confirmed. */}
+            <View style={{ backgroundColor: FUND.RED_BG, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 10, marginTop: 14 }}>
+              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.RED_TEXT, lineHeight: 16 }}>
+                Anyone holding the old link — including whoever received it by mistake — will no
+                longer be able to pay on it.
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+              <TouchableOpacity
+                onPress={() => setConfirm(null)}
+                disabled={isSending}
+                style={{ flex: 1, minHeight: 44, borderWidth: 1.6, borderColor: FUND.BORDER, borderRadius: 11, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: '#3A4048' }}>Keep it</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  const go = confirm.run;
+                  setConfirm(null);
+                  go();
+                }}
+                disabled={isSending}
+                style={{ flex: 1.35, minHeight: 44, backgroundColor: FUND.RED, borderRadius: 11, alignItems: 'center', justifyContent: 'center', opacity: isSending ? 0.6 : 1 }}
+              >
+                <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: '#fff' }}>{'Cancel & send new'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
     </View>
   );
 }

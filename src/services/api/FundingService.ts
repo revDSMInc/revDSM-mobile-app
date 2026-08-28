@@ -57,6 +57,114 @@ export type FundingRecordStatus = 'pending' | 'submitted';
 export type FundingApplicationClosed = 'abandoned' | 'canceled' | 'expired' | 'error';
 
 /**
+ * ── refunds (REVDSM-1160) ──────────────────────────────────────────────────
+ *
+ * A refund exists for exactly one reason on this app: the rep re-priced a deal
+ * BELOW what has already been collected, so money has to go back. Everything else
+ * an addendum can change — install date, scope, materials, a price that goes UP —
+ * needs no approval and creates no refund.
+ *
+ * ⚠️ **The eight states are the server's and must not be re-labelled or collapsed.**
+ * `RefundRules.ts` owns the machine:
+ *
+ * ```
+ * pendingApproval → pendingCustomer | declined | cancelled
+ * pendingCustomer → customerSigned  | cancelled
+ * customerSigned  → issuing         | cancelled
+ * issuing         → refunded        | failed
+ * failed          → issuing         | cancelled      ← retryable
+ * ```
+ *
+ * ⚠️ `refunded`, `declined` and `cancelled` are TERMINAL. A declined request is not
+ * re-openable — the rep raises a new refund.
+ */
+export type FundingRefundState =
+  | 'pendingApproval'
+  | 'pendingCustomer'
+  | 'customerSigned'
+  | 'issuing'
+  | 'refunded'
+  | 'failed'
+  | 'declined'
+  | 'cancelled';
+
+export type FundingRefundReason =
+  | 'priceDrop'
+  | 'jobCancelled'
+  | 'bankDecline'
+  | 'customerDispute'
+  | 'completionDispute'
+  | 'other';
+
+export type FundingRefundMethod = 'card' | 'check';
+
+/** A refund row, as it rides back on `payment.refunds[]`. */
+export interface FundingRefund {
+  rid: string;
+  /**
+   * ⚠️ **What the HOMEOWNER receives**, not what the company is out of pocket.
+   * `feeBorne` records who absorbs the processor's fee and `netAmount` is the
+   * server's arithmetic — never compute a net figure locally.
+   */
+  amount: number;
+  netAmount?: number | null;
+  feeBorne?: 'company' | 'customer' | null;
+  method: FundingRefundMethod;
+  reason: FundingRefundReason;
+  note?: string | null;
+  state: FundingRefundState;
+  requestedBy?: string | null;
+  approvalId?: string | null;
+  /** ⚠️ The join to the addendum the customer signs. See `requestRefund`. */
+  draftId?: string | null;
+  /** The processor's own refund id, once the money actually moved. */
+  providerRef?: string | null;
+  receipt?: string | null;
+  events?: FundingRowEvent[];
+  at?: string | null;
+}
+
+export type ApprovalState = 'pending' | 'approved' | 'declined' | 'cancelled';
+
+/** One approval request. `approved` and `declined` are terminal. */
+export interface ApprovalRecord {
+  _id?: string;
+  id?: string;
+  leadId?: string;
+  state: ApprovalState;
+  type?: 'refund' | string;
+  requestedBy?: { id?: string; name?: string } | string | null;
+  assignedToUserId?: string | null;
+  assignedTo?: { id?: string; name?: string } | null;
+  /**
+   * ⚠️ **Frozen at request time.** Editing the company config never invalidates a
+   * request already out, so render THIS rather than the live approver config.
+   */
+  eligibleRoles?: { id: string; name: string }[];
+  note?: string | null;
+  decidedAt?: string | null;
+  refund?: { rid?: string; amount?: number; method?: string; reason?: string } | null;
+  createdAt?: string | null;
+}
+
+/** `GET /lead/v1/approvals/approvers?type=refund`. */
+export interface ApproverFeed {
+  approvers: { id: string; name: string; email?: string; roleId?: string; roleName?: string }[];
+  roles: { id: string; name: string }[];
+  /**
+   * ⚠️ `false` ⇒ the list is empty ⇒ **a refund request will 409**. A company with
+   * no approvers configured cannot refund at all, by design — the alternative is
+   * waving an unapproved refund through. Say so before the rep fills the form.
+   */
+  isConfigured: boolean;
+  /**
+   * ⚠️ When `false`, exclude the signed-in user from the picker rather than letting
+   * the decide call 403 later.
+   */
+  allowSelfApproval: boolean;
+}
+
+/**
  * A payment row as the server holds it.
  *
  * ⚠️ Everything from `step` down is READ-ONLY to the app — an upsert sends only
@@ -117,6 +225,13 @@ export interface FundingPaymentRow {
   baseline?: number | null;
   liveUsage?: number | null;
   drifted?: boolean;
+
+  /**
+   * Refunds raised against this row. ⚠️ They stay here permanently once complete —
+   * the audit trail is the point, so a refunded row still shows what was originally
+   * collected beside what went back.
+   */
+  refunds?: FundingRefund[];
 
   /** The lender's ceiling — a short approval may still be raised up to this. */
   approvedCeiling?: number | null;
@@ -362,6 +477,16 @@ export type FundingErrorKind =
    * to check environment variables that were already correct.
    */
   | 'setupRequired'
+  /**
+   * 409 on `…/refund` — the company has **no refund approvers configured**.
+   *
+   * ⚠️ A second 409 that a refresh cannot fix, and it must not be mistaken for a
+   * stale-state one: nothing about the record is behind, the company simply has
+   * nobody who may approve, so re-`GET`ting returns the same answer forever. Only
+   * someone with portal access can set them. Surface it as "ask your admin", never
+   * as a generic failure or a retry.
+   */
+  | 'approversMissing'
   /** 402 — the processor declined the card. Nothing was collected. */
   | 'cardDeclined'
   /** 404 — the lead or the payment was not found. */
@@ -406,24 +531,43 @@ export function isLinkEndpointUrl(url?: string | null): boolean {
 }
 
 /**
+ * Is this the REQUEST-a-refund path (`…/refund`, not `…/refund/:rid/issue`)?
+ *
+ * Read off the failed request for the same reason `isLinkEndpointUrl` is: a 409
+ * here means "no approvers configured", and a call site that forgot to say so
+ * would fall into the generic stale handling, refetch, and report the failure as
+ * an informational "Funding updated" — which reads as success.
+ */
+export function isRefundRequestUrl(url?: string | null): boolean {
+  if (!url) return false;
+  const path = String(url).split('?')[0].split('#')[0].replace(/\/+$/, '');
+  return /\/refund$/.test(path);
+}
+
+/**
  * Normalize any funding rejection into `{ kind, message, blockers }`.
  *
  * `opts.linkEndpoint` forces the link-endpoint reading for a caller that knows it
  * (a re-classified error that has lost its axios `config`, say). Left undefined it
  * is inferred from the request url.
  */
-export function classifyFundingError(err: any, opts?: { linkEndpoint?: boolean }): FundingError {
+export function classifyFundingError(
+  err: any,
+  opts?: { linkEndpoint?: boolean; refundRequest?: boolean }
+): FundingError {
   const httpStatus: number | undefined = err?.httpStatus ?? err?.response?.status;
   const body = err?.response?.data ?? err;
   const blockers = body?.data?.blockers;
   const url = err?.config?.url ?? err?.response?.config?.url;
   const onLink = opts?.linkEndpoint ?? isLinkEndpointUrl(url);
+  const onRefund = opts?.refundRequest ?? isRefundRequestUrl(url);
 
   let kind: FundingErrorKind = (httpStatus && KIND_BY_STATUS[httpStatus]) || 'unknown';
-  // ⚠️ The ONE 409 a refresh cannot fix. Must be decided here rather than at the
-  // call sites, or the generic `stale` handling refetches and reports it as an
+  // ⚠️ The TWO 409s a refresh cannot fix. Both must be decided here rather than at
+  // the call sites, or the generic `stale` handling refetches and reports them as an
   // informational "Funding updated" — which reads as success.
   if (kind === 'stale' && onLink) kind = 'setupRequired';
+  else if (kind === 'stale' && onRefund) kind = 'approversMissing';
 
   return {
     kind,
@@ -439,8 +583,9 @@ export function classifyFundingError(err: any, opts?: { linkEndpoint?: boolean }
  * `stale` (409) always does. `notFound` on a PAYMENT does too — the row was
  * removed or re-keyed elsewhere — so both should trigger a re-`GET`.
  *
- * ⚠️ `setupRequired` deliberately does NOT: the record is perfectly current, the
- * company's Stripe account is not usable, and re-reading returns the same answer.
+ * ⚠️ `setupRequired` and `approversMissing` deliberately do NOT: the record is
+ * perfectly current in both cases — one company has an unusable Stripe account, the
+ * other has nobody configured to approve — and re-reading returns the same answer.
  */
 export function shouldRefetchAfter(error: FundingError): boolean {
   return error.kind === 'stale' || error.kind === 'notFound';
@@ -470,6 +615,26 @@ export const FundingEndpoints = {
   syncAll: (leadId: string) => `${base(leadId)}/sync-all`,
   submit: (leadId: string) => `${base(leadId)}/submit`,
   result: (leadId: string) => `${base(leadId)}/result`,
+  /** Raise a refund against a collected row. Creates the approval too. */
+  refund: (leadId: string, pid: string) => `${row(leadId, pid)}/refund`,
+} as const;
+
+/**
+ * Approvals. ⚠️ Lead-scoped for the per-deal read, **flat** for every action —
+ * declared separately for the same reason `DOWN_PAYMENT_LIMIT_ENDPOINT` is.
+ *
+ * ⚠️ `list` is TWO segments (`/approvals/list`), not one: `LeadController` owns
+ * `GET /lead/v1/:id`, so a bare `/lead/v1/approvals` is ambiguous with a lead of
+ * that id.
+ */
+export const ApprovalEndpoints = {
+  forLead: (leadId: string) => `/lead/v1/${encodeURIComponent(leadId)}/approvals`,
+  mine: '/lead/v1/approvals/mine',
+  list: '/lead/v1/approvals/list',
+  approvers: '/lead/v1/approvals/approvers',
+  decide: (id: string) => `/lead/v1/approvals/${encodeURIComponent(id)}/decide`,
+  reassign: (id: string) => `/lead/v1/approvals/${encodeURIComponent(id)}/reassign`,
+  resend: (id: string) => `/lead/v1/approvals/${encodeURIComponent(id)}/resend`,
 } as const;
 
 /**
@@ -727,6 +892,109 @@ export const FundingService = {
     userId?: string
   ): Promise<AxiosResponse<FundingEnvelope<DownPaymentLimit>>> =>
     api.get(DOWN_PAYMENT_LIMIT_ENDPOINT, cfg(companyId, userId)),
+
+  /**
+   * Raise a refund against a collected row — and the approval that gates it.
+   *
+   * ⚠️ **Submit the addendum draft FIRST and pass its `draftId`.** It is optional to
+   * the API and required in practice: it is the ONLY join between the refund and the
+   * paperwork the customer signs, it can only be set at creation (there is no endpoint
+   * to attach a draft afterwards), and the consent handler moves only refunds whose
+   * `draftId` matches the signed draft. A refund created without one reaches
+   * `pendingCustomer` and **waits there forever** — no signature will ever advance it.
+   *
+   * ⚠️ `amount` is what the HOMEOWNER receives, in whole dollars, `> 0` and no more
+   * than what is left refundable on the row. `feeBorne` records who absorbs the
+   * processor's fee; that arithmetic is the processor's, so never send a net figure.
+   *
+   * ⚠️ Always send `assignedToUserId`. It is optional server-side, but an unassigned
+   * request appears in NOBODY's `/approvals/mine` and simply sits there.
+   *
+   * ⚠️ A **409** here means the company has no approvers configured, not that the
+   * record is stale — `classifyFundingError` maps it to `approversMissing`.
+   */
+  requestRefund: (
+    leadId: string,
+    pid: string,
+    body: {
+      amount: number;
+      method: FundingRefundMethod;
+      reason: FundingRefundReason;
+      feeBorne?: 'company' | 'customer';
+      note?: string;
+      assignedToUserId?: string;
+      draftId?: string;
+    },
+    companyId?: string,
+    userId?: string
+  ): Promise<FundingResponse> =>
+    api.post(FundingEndpoints.refund(leadId, pid), body, cfg(companyId, userId)),
+};
+
+/**
+ * Approvals — the internal gate in front of a refund.
+ *
+ * ⚠️ **There is deliberately no `issueRefund` here.** The endpoint exists
+ * (`POST …/refund/:rid/issue`) and moves real money, but issuing is **Command Center
+ * only** — Lance, 24 Aug: *"Only managers who have access to command center can issue
+ * a refund."* The rep detects, requests and tracks; a manager releases the money.
+ * Shipping the method in the app every rep carries is how it ends up behind a button,
+ * which is the same reasoning that retired `mockProvider` above.
+ */
+export const ApprovalService = {
+  /**
+   * Who may approve a refund for this company, and whether anybody can.
+   *
+   * ⚠️ Read the list from HERE, never by filtering a user list client-side. The
+   * config stores ROLE ids; this endpoint is the join to people, and it is the same
+   * rule the decide guard enforces server-side. It is also the only user-list API
+   * available to the mobile client at all.
+   */
+  approvers: (type = 'refund', companyId?: string, userId?: string): Promise<AxiosResponse<any>> =>
+    api.get(`${ApprovalEndpoints.approvers}?type=${encodeURIComponent(type)}`, cfg(companyId, userId)),
+
+  /** Every approval on one deal — the detail read. */
+  forLead: (leadId: string, companyId?: string, userId?: string): Promise<AxiosResponse<any>> =>
+    api.get(ApprovalEndpoints.forLead(leadId), cfg(companyId, userId)),
+
+  /** Pending and assigned to the signed-in user. */
+  mine: (companyId?: string, userId?: string): Promise<AxiosResponse<any>> =>
+    api.get(ApprovalEndpoints.mine, cfg(companyId, userId)),
+
+  /**
+   * ⚠️ **Approving returns no money.** It advances the refund to `pendingCustomer` —
+   * it unlocks the customer's signature and nothing more. Never render the result as
+   * "Refunded".
+   *
+   * `403` is a guard refusal carrying its own wording (wrong role, or the company does
+   * not allow approving your own request) — show the server's message, it is the only
+   * thing that explains WHY.
+   */
+  decide: (
+    approvalId: string,
+    body: { decision: 'approved' | 'declined'; note?: string },
+    companyId?: string,
+    userId?: string
+  ): Promise<AxiosResponse<any>> =>
+    api.post(ApprovalEndpoints.decide(approvalId), body, cfg(companyId, userId)),
+
+  /** Send it to somebody else. ⚠️ `pending`-only — 409 otherwise. */
+  reassign: (
+    approvalId: string,
+    assignToUserId: string,
+    note?: string,
+    companyId?: string,
+    userId?: string
+  ): Promise<AxiosResponse<any>> =>
+    api.post(
+      ApprovalEndpoints.reassign(approvalId),
+      { userId: assignToUserId, ...(note ? { note } : {}) },
+      cfg(companyId, userId)
+    ),
+
+  /** Nudge the same approver. ⚠️ `pending`-only — 409 otherwise. */
+  resend: (approvalId: string, companyId?: string, userId?: string): Promise<AxiosResponse<any>> =>
+    api.post(ApprovalEndpoints.resend(approvalId), {}, cfg(companyId, userId)),
 };
 
 /**
