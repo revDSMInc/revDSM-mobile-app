@@ -2521,6 +2521,50 @@ explicit file name winning, `submissionPdf` never read as the certificate, a gen
 tsc 107 (baseline unchanged); the new util and its test are eslint-clean, `JobDetail` is
 byte-identical to its HEAD baseline (27 warnings) and `CoCStep` is +1 `react-native/no-inline-styles`.
 
+#### ⚠️ iOS: Paper Fallback froze the app — never present the scanner mid-transition
+
+Ticket: *"the paper fallback is not working on the IOS device, it works on the android perfectly. when
+we click on the paper fallback from the IOS device it blocks me and stuck the whole app."*
+
+`RNDocumentScanner.scanDocument` presents VisionKit on **`RCTPresentedViewController()`** with a bare
+`self.viewController?.present(...)` and **no error path** (`node_modules/react-native-document-scanner-plugin/ios/DocumentScanner.swift`).
+So a presentation UIKit refuses calls NONE of its three handlers — not success, not error, not cancel —
+and the JS promise **never settles**.
+
+`handlePaperFallback` used to `setShowForm(false)` and call the scanner in the same tick, which asks
+iOS to present while `CoCFormModal` is still dismissing. UIKit drops exactly that case, so the scanner
+never appeared, the `await` never returned, and the step was left with NO surface on screen: the
+sub-screen is gated on `hasResult`, which is false on a first scan. Android launches an Activity, which
+has no such rule — hence "perfect on Android".
+
+**The form now STAYS UP across the whole scan.** Nothing is transitioning when the scanner is asked
+for, on either platform, and the scanner covers the form while it runs. On the way back:
+
+| outcome | what happens |
+|---|---|
+| pages + a certificate read | `openForm('scan')` — REMOUNTS the form (bumps `formSession`) without closing it, so the values appear in a modal that never went away |
+| pages, nothing read | `setShowForm(false)` → the result view, as before |
+| cancelled, something already captured | `setShowForm(false)` → the result view |
+| cancelled, nothing captured | the form stays exactly as it was |
+
+⚠️ **There is no dismiss/present PAIR left anywhere in this flow**, and that is the point — not the
+platform branch it replaced. Do not "tidy" this by closing the form first again.
+
+⚠️ **The "Reading the scanned certificate…" indicator is no longer a `Modal`.** It was a third native
+modal raised over the step's own, which is the same hazard on iOS and is against this repo's standing
+rule (the signature pad and the exit prompt in this very file are in-card overlays for that reason).
+It is now `CoCFormModal`'s **`busyLabel`** prop — an absolute overlay inside the card, carrying the
+`zIndex` + `elevation` pair the note on `sigOverlay` explains.
+
+⚠️ Still outstanding, same class: the certificate `PdfPreviewModal` in `CoCStep` is a native modal
+rendered while `InstallerSubScreen`'s own modal is up. It is only reached by tapping the document card,
+so it is not in this ticket's path, but on iOS it is the same shape of risk — hoist it to `JobDetail`
+if it ever misbehaves.
+
+tsc: the error set is byte-identical to HEAD (108). `CoCFormModal` is at its HEAD baseline (18
+warnings) and `CoCStep` drops 4 → 3 — the removed modal took its own inline style with it. The iOS
+bundle builds (`platform=ios`, HTTP 200).
+
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area
