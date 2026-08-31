@@ -4,11 +4,7 @@ import { LeadService } from '../services/api/leads';
 import { resolveS3Url } from '../utils/s3-utils';
 import { ENV } from '../config/env';
 import { IMAGE_CATEGORIES } from '../constants/lead-center';
-import {
-  logLeadCheckOut,
-  logLeadSessionEnter,
-  persistActiveLeadId,
-} from '../utils/lead-activity-log';
+import { logLeadSessionEnter, persistActiveLeadId } from '../utils/lead-activity-log';
 
 // Frozen module-level singletons so the hook's return identity is stable across
 // renders — these are only ever read as fallbacks, never written.
@@ -334,7 +330,13 @@ export const useLeadCenterData = (
     }
 
     return () => {
-      logLeadCheckOut(user, lead);
+      // NOTE: no `unload` / `lead_check_out` log here any more. Web has no such event —
+      // backing out of the Lead Center is a session PAUSE there — so the portal timeline
+      // read differently depending on which client the rep used. `logLeadSessionPause`
+      // (fired by `LeadCenter`, which knows whether this is a deal) is the replacement.
+      //
+      // This call stays: it is mobile's `setLeadWork(leadId, null)`, which web makes on
+      // the same back press to release the work session.
       LeadService.endWorkLead(lead._id).catch((e) =>
         console.warn('[LeadCenter] Work end failed:', e)
       );

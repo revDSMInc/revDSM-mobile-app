@@ -20,6 +20,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Storage } from '../../utils/storage';
 import { logLeadSessionPause } from '../../utils/lead-activity-log';
+import { useLocationBroadcaster } from '../../hooks/useLocationBroadcaster';
 import { ENV } from '../../config/env';
 import { useTheme } from '../../theme/ThemeProvider';
 import Pitchbook from '../../widgets/modals/lead-center/Pitchbook';
@@ -51,7 +52,7 @@ import { JobDocsSection } from '../../widgets/components/LeadCenter/JobDocsSecti
 import { DealBanners } from '../../widgets/components/LeadCenter/DealBanners';
 import { ToolsSection, MapSection } from '../../widgets/components/LeadCenter/OperationalSections';
 import Icon from 'react-native-vector-icons/Ionicons';
-import { Header } from '../../widgets/common/MainHeader';
+import { Header, useHeader } from '../../widgets/common/MainHeader';
 import MaterialIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { EditCustomerModal, EditCustomerPayload } from '../../widgets/modals/lead-center/EditCustomerModal';
 import Feather from 'react-native-vector-icons/Feather';
@@ -189,6 +190,12 @@ export default function LeadCenterPage() {
     });
   }, [navigation, lead]);
 
+  // Web parity (`LocationBroadcaster`, mounted app-wide and keyed on `workLeadId`):
+  // while the rep has a lead open, push their position to its watch room every minute so
+  // ops can see whether they are on site. A DEAL has no on-site work session, so it does
+  // not broadcast — the same reason its back press logs no pause below.
+  useLocationBroadcaster(lead, !fromMyDeals);
+
   const hasLoggedPauseRef = useRef(false);
   const userRef = useRef(user);
   const leadRef = useRef(lead);
@@ -198,14 +205,62 @@ export default function LeadCenterPage() {
     leadRef.current = lead;
   }, [user, lead]);
 
+  /**
+   * The ONE exit path for the session pause. Every way out of this screen goes through
+   * it — the screen's own back arrow, Android hardware back, the global header's home
+   * button, and the unmount backstop — so no route can leave the ops session log
+   * thinking the rep is still on site.
+   *
+   * `hasLoggedPauseRef` makes it idempotent: `handleClose` navigates, which then
+   * unmounts, and both would otherwise log. Reads its inputs from refs because the
+   * unmount cleanup runs with whatever closure it was created with.
+   */
+  const pauseLeadSession = useCallback(() => {
+    // Web `job-capture-images-view.js`: a deal is opened to be read, not worked, so
+    // firing a pause would mark the rep as having worked a closed job in the ops
+    // session log. Every other route pauses the session check-in / resume started.
+    if (fromMyDeals) return Promise.resolve();
+    if (!leadRef.current?._id || hasLoggedPauseRef.current) return Promise.resolve();
+    hasLoggedPauseRef.current = true;
+    return logLeadSessionPause(userRef.current, leadRef.current).catch((err) => {
+      console.warn('[LeadCenter] Session pause logging failed:', err);
+    });
+  }, [fromMyDeals]);
+
+  const pauseLeadSessionRef = useRef(pauseLeadSession);
+  useEffect(() => {
+    pauseLeadSessionRef.current = pauseLeadSession;
+  }, [pauseLeadSession]);
+
+  /**
+   * The green `MainHeader` is rendered by the NAVIGATOR, outside this stack screen, so
+   * its "go home" brand button called `navigation.navigate('Leads')` directly and never
+   * touched `handleClose` — backing out that way logged no pause. Registering
+   * `onNavigate` for as long as this screen is focused routes it through the same exit.
+   *
+   * Not awaited: the log POST is queued in a module-level chain that outlives this
+   * screen, so the rep's tap is never delayed by a round trip.
+   */
+  const { setHeaderActions } = useHeader();
+  useFocusEffect(
+    useCallback(() => {
+      setHeaderActions({
+        onNavigate: (target: any) => {
+          // Not awaited (see above); `pauseLeadSession` swallows its own errors.
+          pauseLeadSessionRef.current();
+          navigation.navigate(target);
+        },
+      });
+      return () => setHeaderActions({ onNavigate: null });
+    }, [setHeaderActions, navigation])
+  );
+
   useEffect(() => {
     return () => {
-      if (leadRef.current?._id && !hasLoggedPauseRef.current) {
-        hasLoggedPauseRef.current = true;
-        logLeadSessionPause(userRef.current, leadRef.current).catch((err) => {
-          console.warn('[LeadCenter] Unmount session pause logging failed:', err);
-        });
-      }
+      // Backstop for the paths that unmount without announcing themselves — a
+      // `reset`/`replace` from a sub-flow, the iOS swipe-back gesture, or the OS
+      // tearing the screen down.
+      pauseLeadSessionRef.current();
     };
   }, []);
 
@@ -1034,20 +1089,13 @@ export default function LeadCenterPage() {
   }, [navigation]);
 
   const handleClose = useCallback(async () => {
-    if (lead?._id && !hasLoggedPauseRef.current) {
-      hasLoggedPauseRef.current = true;
-      try {
-        await logLeadSessionPause(user, lead);
-      } catch (err) {
-        console.warn('[LeadCenter] Session pause logging failed:', err);
-      }
-    }
+    await pauseLeadSession();
     if (fromZoneCanvasser) {
       returnToZoneCanvasser();
       return;
     }
     navigation.goBack();
-  }, [lead, user, fromZoneCanvasser, returnToZoneCanvasser, navigation]);
+  }, [pauseLeadSession, fromZoneCanvasser, returnToZoneCanvasser, navigation]);
 
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
