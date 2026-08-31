@@ -230,7 +230,7 @@ export default function ChatThreadsScreen({ navigation }: any) {
       <View className="px-5 border-b" style={{ borderColor: '#F4F6F8' }}>
         <View className="flex-row">
           <MainTabOption
-            label="My Leads"
+            label={isInstaller ? 'My Installs' : 'My Leads'}
             active={mainTab === 'myleads'}
             onPress={() => setMainTab('myleads')}
           />

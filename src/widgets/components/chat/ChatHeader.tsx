@@ -5,6 +5,7 @@ import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIc
 import { useNavigation } from '@react-navigation/native';
 import Pin from '../../../assets/svgs/icons/pin';
 import { useLeadPreviewUrl } from '../../../hooks/useLeadPreviewUrl';
+import { useUserRole } from '../../../hooks/useUserRole';
 import { PhotoPeekPressable } from '../../common/PhotoPeekPressable';
 import { ImageGalleryModal } from '../../modals/ImageGalleryModal';
 
@@ -92,6 +93,9 @@ export const ChatHeader = ({
   onNext,
 }: any) => {
   const navigation = useNavigation<any>();
+  // An installer's chat list is titled 'My Installs', so the way back out of a
+  // conversation has to name the same place (channels are shared by both roles).
+  const { isInstaller } = useUserRole();
 
   const handleBack = () => {
     if (navigation.canGoBack()) {
@@ -123,7 +127,7 @@ export const ChatHeader = ({
           <Icon name="arrow-back" size={18} color={colors.text} />
         </View>
         <Text className="font-bold text-sm" style={{ color: isDark ? '#A3E635' : '#65A30D' }}>
-          Back to {isChannel ? 'Channels' : 'Leads'}
+          Back to {isChannel ? 'Channels' : isInstaller ? 'Installs' : 'Leads'}
         </Text>
       </Pressable>
 
