@@ -1,18 +1,30 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Alert, ActivityIndicator, Modal } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+  Modal,
+  StyleSheet,
+} from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Svg, { Path } from 'react-native-svg';
 import DocumentScanner from 'react-native-document-scanner-plugin';
+import Pdf from 'react-native-pdf';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useTranslation } from '../../../i18n/LanguageProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
 import { CoCFormModal, type CoCFormData } from '../../../widgets/modals/installer/CoCFormModal';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
+import { PdfPreviewModal } from '../../../widgets/modals/PdfPreviewModal';
+import { resolvePacketUrl } from '../../../utils/installer-packet';
 import type {
   CapturedPhoto,
   CocScanFields,
   CocSignOff,
   InstallerJob,
+  JobPacket,
 } from '../../../config/types/installer';
 
 interface Props {
@@ -41,6 +53,13 @@ interface Props {
   onSignOff: (data: CoCFormData) => void;
   /** A certificate signed earlier in the visit, restored from the job progress. */
   signOff?: CocSignOff | null;
+  /**
+   * The SIGNED certificate as the server generated it, off the submit response.
+   *
+   * Its presence is what turns this step from a form into a filed document: the PDF is
+   * shown in the tab and the certificate can no longer be edited from here.
+   */
+  document?: JobPacket | null;
   onBack: () => void;
 }
 
@@ -69,6 +88,7 @@ export function CoCStep({
   onSignature,
   onSignOff,
   signOff,
+  document,
   onBack,
 }: Props) {
   const { colors } = useTheme();
@@ -135,7 +155,43 @@ export function CoCStep({
     : null;
 
   const hasPages = pages.length > 0;
-  const hasResult = !!shown || hasPages;
+  // A submitted certificate counts on its own: the crew may have signed it on another
+  // device, in which case the PDF is the only thing this one has.
+  const hasResult = !!shown || hasPages || !!document;
+
+  /**
+   * The signed certificate, resolved to something a viewer can open.
+   *
+   * The document arrives as a bucket-relative key, so it has to be exchanged for a
+   * signed URL (`resolvePacketUrl`, which caches inside S3's hour). Resolved only while
+   * the step is OPEN — a job list mounting seven steps must not sign seven URLs.
+   */
+  const [pdfUri, setPdfUri] = useState<string | null>(null);
+  const [pdfFailed, setPdfFailed] = useState(false);
+  const [showPdf, setShowPdf] = useState(false);
+
+  useEffect(() => {
+    if (!visible || !document) {
+      setPdfUri(null);
+      setPdfFailed(false);
+      return;
+    }
+    let cancelled = false;
+    setPdfFailed(false);
+    resolvePacketUrl(document)
+      .then((url) => {
+        if (cancelled) return;
+        setPdfUri(url);
+        if (!url) setPdfFailed(true);
+      })
+      .catch((err) => {
+        console.warn('[CoCStep] Could not resolve the certificate PDF:', err);
+        if (!cancelled) setPdfFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, document]);
 
   /**
    * Open the form the moment the step opens with nothing captured.
@@ -332,7 +388,10 @@ export function CoCStep({
             noise, especially beside the signed-certificate card. */}
         {/* Device-signed certificate — the signatures are replayed from the pad's own
             paths, so what was drawn is what the crew sees back. */}
-        {!!shown && (
+        {/* The certificate as SIGNED on this device. Replaced by the filed document the
+            moment there is one — two versions of the same certificate on one screen is
+            one more than the crew can act on, and only the PDF is what the office has. */}
+        {!document && !!shown && (
           <View
             className="rounded-2xl p-3 mb-3 border-2"
             style={{
@@ -394,16 +453,122 @@ export function CoCStep({
             form's own Paper Fallback pill, which is where sales puts it; this screen is
             the result, and a second way in from it read as a choice the installer had
             already made. `startScan` is still reached from there, so nothing is lost. */}
-        <TouchableOpacity
-          onPress={() => openForm('edit')}
-          className="h-12 rounded-xl items-center justify-center flex-row"
-          style={{ backgroundColor: colors.primary.main }}
-        >
-          <Icon name="fountain-pen-tip" size={18} color="#fff" />
-          <Text className="text-white ml-2 text-base font-bold text-center">
-            {shown ? t('installer.cocSignAgain') : t('installer.cocSignOnDevice')}
-          </Text>
-        </TouchableOpacity>
+        {/* The SUBMITTED certificate, as the office holds it.
+
+            Rendered here rather than behind a button because it IS the step now: the
+            certificate has been filed, so what the crew needs is to see the document,
+            not a way back into a form that can no longer change it. */}
+        {!!document && (
+          <View
+            className="rounded-2xl overflow-hidden border-2 mb-3"
+            style={{ borderColor: colors.primary.main, backgroundColor: colors.surface }}
+          >
+            <View
+              className="flex-row items-center px-3 py-2.5"
+              style={{ backgroundColor: colors.primary.main + '15' }}
+            >
+              <View
+                className="w-6 h-6 rounded-full items-center justify-center mr-2.5"
+                style={{ backgroundColor: colors.primary.main }}
+              >
+                <Icon name="check" size={14} color="#fff" />
+              </View>
+              <View className="flex-1">
+                <Text className="text-sm font-bold" style={{ color: colors.primary.main }}>
+                  {t('installer.cocSubmittedTitle')}
+                </Text>
+                {!!shown?.date && (
+                  <Text
+                    className="text-[11px] font-semibold"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    {t('installer.cocSignedBy', { name: customerName, date: shown.date })}
+                  </Text>
+                )}
+              </View>
+              <Icon name="file-pdf-box" size={22} color={colors.primary.main} />
+            </View>
+
+            <TouchableOpacity
+              activeOpacity={0.9}
+              disabled={!pdfUri}
+              onPress={() => setShowPdf(true)}
+              style={styles.pdfPreview}
+            >
+              {pdfUri ? (
+                // ⚠️ `pointerEvents="none"` is what keeps this page scrollable. The PDF
+                // view handles its own pan and pinch, and inside the step's ScrollView
+                // the two fight — the tab stops scrolling past the document. Deaf to
+                // touch, it is a picture, and the press below opens the real viewer.
+                <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                  <Pdf
+                    source={{ uri: pdfUri, cache: true }}
+                    singlePage
+                    trustAllCerts={false}
+                    onError={(err: any) => {
+                      console.warn('[CoCStep] Could not render the certificate PDF:', err);
+                      setPdfFailed(true);
+                    }}
+                    style={[styles.pdfPage, { backgroundColor: colors.background }]}
+                  />
+                </View>
+              ) : (
+                <View className="flex-1 items-center justify-center px-6">
+                  {pdfFailed ? (
+                    <Text
+                      className="text-xs font-semibold text-center"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      {t('installer.cocDocumentError')}
+                    </Text>
+                  ) : (
+                    <>
+                      <ActivityIndicator color={colors.primary.main} />
+                      <Text
+                        className="mt-2 text-xs font-semibold"
+                        style={{ color: colors.textSecondary }}
+                      >
+                        {t('installer.cocDocumentLoading')}
+                      </Text>
+                    </>
+                  )}
+                </View>
+              )}
+            </TouchableOpacity>
+
+            {!!pdfUri && (
+              <View
+                className="flex-row items-center justify-center py-2.5"
+                style={{ borderTopWidth: 1, borderTopColor: colors.border }}
+              >
+                <Icon name="arrow-expand" size={15} color={colors.textSecondary} />
+                <Text
+                  className="ml-1.5 text-[11px] font-bold"
+                  style={{ color: colors.textSecondary }}
+                >
+                  {t('installer.cocDocumentHint')}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* ⚠️ NO way back into the form once the certificate is SUBMITTED — the office
+            holds the signed PDF above, and a second certificate signed over it on the
+            device would disagree with the document the customer put their name to.
+            Requested explicitly; the button is otherwise unchanged. */}
+        {!document && (
+          <TouchableOpacity
+            onPress={() => openForm('edit')}
+            className="h-12 rounded-xl items-center justify-center flex-row"
+            style={{ backgroundColor: colors.primary.main }}
+          >
+            <Icon name="fountain-pen-tip" size={18} color="#fff" />
+            <Text className="text-white ml-2 text-base font-bold text-center">
+              {shown ? t('installer.cocSignAgain') : t('installer.cocSignOnDevice')}
+            </Text>
+          </TouchableOpacity>
+        )}
 
       </InstallerSubScreen>
 
@@ -467,6 +632,23 @@ export function CoCStep({
           </View>
         </View>
       </Modal>
+
+      {/* The signed certificate, full screen — the app-wide viewer, so it downloads,
+          zooms, shares and reports its own failures exactly like the job packet does. */}
+      {!!pdfUri && (
+        <PdfPreviewModal
+          visible={showPdf}
+          uri={pdfUri}
+          title={document?.fileName || t('installer.cocFormTitle')}
+          onClose={() => setShowPdf(false)}
+        />
+      )}
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  /** Tall enough to read the certificate's heading and its first fields at a glance. */
+  pdfPreview: { height: 420 },
+  pdfPage: { flex: 1 },
+});

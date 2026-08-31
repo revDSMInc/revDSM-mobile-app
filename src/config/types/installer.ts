@@ -355,6 +355,13 @@ export interface InstallerJob {
   contract?: ContractDetails;
   products?: SoldProduct[];
   packet?: JobPacket;
+  /**
+   * Step 6 · the SIGNED Certificate of Completion, as the server generated it.
+   *
+   * Returned once the certificate has been submitted (`stepData.coc`). Its presence is
+   * what turns the CoC step from a form into a filed document — see `CoCStep`.
+   */
+  cocPacket?: JobPacket;
   /** Rep capture set. Only returned by the check-in response (`{jobId}/work`). */
   preInstallPhotos?: PreInstallPhotos;
   /**
@@ -761,6 +768,13 @@ export interface CocSignOff extends CocStepPayload {
    */
   installerSignatureUrl?: string;
   customerSignatureUrl?: string;
+  /**
+   * The generated PDF of this certificate, off the submit response.
+   *
+   * Kept beside the certificate rather than only on the job, so it survives a relaunch
+   * (progress is persisted) and a job payload that does not repeat it.
+   */
+  document?: JobPacket;
 }
 
 export interface InstallerJobPatch {

@@ -29,6 +29,7 @@ import type {
 // branches are write no-ops (progress / result / discrepancy), which return nothing.
 import { stripUnsupportedFields } from '../../utils/installer-step-data';
 import { extractCocScanFields } from '../../utils/installer-coc-scan';
+import { extractCocPdf } from '../../utils/installer-coc-pdf';
 import { ENV } from '../../config/env';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -448,6 +449,10 @@ export const normalizeInstallerJob = (raw: any): InstallerJob => {
     products: normalizeProductDetails(raw?.productDetails),
     // Returned once the rep's submission PDF has been generated.
     packet: normalizeSubmissionPdf(raw?.submissionPdf, raw),
+    // Returned once the CERTIFICATE has been submitted. Read through a fixed list of
+    // containers and key names (`utils/installer-coc-pdf.ts`), so a deployment that
+    // does not generate one yet simply leaves it undefined.
+    cocPacket: extractCocPdf(raw) ?? undefined,
   };
 };
 

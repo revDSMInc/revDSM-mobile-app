@@ -2465,6 +2465,62 @@ unchanged); the new util is eslint-clean, `CoCFormModal` and `JobDetail` are byt
 HEAD baselines (18 and 27 warnings) and `CoCStep` is +1 `react-native/no-inline-styles` — the backdrop
 of the new card, the rule that file already carries.
 
+#### …and once it is SUBMITTED the step shows the PDF, not the form
+
+Ticket: *"when the installer submit their COC form than we receive the updated PDF document in the
+response after submit. when user reopen the tab than there is no option to edit the form once
+submitted — after submission you can use the pdf from the response and display that pdf in the COC
+tab."*
+
+`PATCH installer/v1/update/{jobId}` (`stepData.coc`) answers with the generated certificate, and the
+CoC step now renders it: a green **Certificate submitted** card holding the document, tap to open it
+full screen in the app-wide `PdfPreviewModal`, and **no way back into the form**.
+
+| where | what |
+|---|---|
+| `utils/installer-coc-pdf.ts` (new, pure) | `extractCocPdf(raw)` → `JobPacket \| null` |
+| `services/api/installer.ts` | `normalizeInstallerJob` → **`job.cocPacket`** |
+| `screens/Installer/JobDetail.tsx` | `sendStepData` now RETURNS the patched job; `handleCocSignOff` stores the document on the sign-off |
+| `steps/CoCStep.tsx` | new `document` prop — the PDF card, and the edit button gone |
+
+⚠️ **`sendStepData`'s return type changed** — it was `void`, it is now `Promise<InstallerJob \| null>`
+(`null` for every path that did not reach the server: no job, empty patch, unchanged step, or a
+failure, which is reported to the installer rather than thrown). Nothing else reads it.
+
+⚠️ **The document is stored on `CocSignOff`, not only on the job.** Progress is persisted, so it
+survives a relaunch and a job re-fetched from the LIST — which does not carry the certificate. The
+step reads `progress.cocSignOff?.document ?? job.cocPacket`, device copy first. It is written from the
+`signOff` object that was just filed, never re-read from progress, so the two cannot drift.
+
+⚠️ **`submissionPdf` is NOT a certificate key, and the generic names (`pdf`, `document`, `url`) are
+only read inside a `coc`-scoped container.** The rep's job packet lives on the same job; showing it as
+the certificate the customer signed would be a plausible-looking lie rather than a visible failure.
+
+⚠️ **`url` is classified, not assumed.** This API puts a bucket-relative KEY in a field called `url`
+(`submissionPdf.url`), so a value is only treated as ready-to-open when it actually starts `http`.
+Handing a key to the PDF viewer draws a blank sheet instead of failing.
+
+⚠️ **The inline preview is `pointerEvents="none"`.** `react-native-pdf` handles its own pan and pinch,
+and inside the step's `ScrollView` the two fight — the tab stops scrolling past the document. Deaf to
+touch it is a picture, and the press wrapping it opens the real viewer.
+
+⚠️ **The edit button is hidden on the DOCUMENT, not on the sign-off.** A submitted certificate whose
+PDF could not be read (an older job, or a deployment that does not generate one) keeps the button —
+hiding it there would leave the crew a step with nothing on it. Gate it on `signOff` instead if the
+rule is meant to hold even with no document.
+
+⚠️ **The response's key name is NOT confirmed against a real submit.** The reader walks a FIXED list of
+containers and key names, the discipline `readDocumentGroup` sets, so an unrecognised payload yields
+`null` and the step behaves exactly as it did before — signed card, edit button. Pin the list against a
+captured response before calling this done.
+
+Verified with 7 tests over the real reader: the `{ url, bucketName }` shape, the document inside a
+`coc` block, a ready URL told from a bucket key (with the signed query stripped from the name), an
+explicit file name winning, `submissionPdf` never read as the certificate, a generic `pdf` outside a
+`coc` container ignored, and a check-in-shaped payload / junk / an empty document object as `null`.
+tsc 107 (baseline unchanged); the new util and its test are eslint-clean, `JobDetail` is
+byte-identical to its HEAD baseline (27 warnings) and `CoCStep` is +1 `react-native/no-inline-styles`.
+
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area
