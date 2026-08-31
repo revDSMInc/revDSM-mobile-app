@@ -118,6 +118,15 @@ interface Props {
    * did not carry is `undefined` and falls through to what the form would have shown.
    */
   scanned?: CocScanFields | null;
+  /**
+   * Shown as a blocking card over the form while something the crew is waiting on runs
+   * — today, the backend reading a scanned page. `null` when nothing is pending.
+   *
+   * ⚠️ An in-card OVERLAY, not a second `Modal`. A native modal raised over this one is
+   * the thing that wedges iOS (see `CoCStep.handlePaperFallback`), and it is why the
+   * signature pad and the exit prompt below are overlays too.
+   */
+  busyLabel?: string | null;
   submitting?: boolean;
 }
 
@@ -155,6 +164,7 @@ export function CoCFormModal({
   onSignatureCaptured,
   initial,
   scanned,
+  busyLabel,
   submitting,
 }: Props) {
   const { colors, isDark } = useTheme();
@@ -764,6 +774,19 @@ export function CoCFormModal({
           </View>
         </KeyboardAvoidingView>
 
+        {/* Waiting on something — the scanned certificate being read, today.
+
+            Sits above the card on BOTH axes (see the note on `sigOverlay`), and takes
+            its own touches so nothing on the form can be edited underneath it. */}
+        {!!busyLabel && (
+          <View style={styles.busyOverlay}>
+            <View style={styles.busyCard}>
+              <ActivityIndicator color={colors.primary.main} />
+              <Text style={styles.busyText}>{busyLabel}</Text>
+            </View>
+          </View>
+        )}
+
         {/* ── Signature pad overlay (same Modal — see `renderSignature`) ── */}
         {!!sigSlot && (
           <View style={styles.sigOverlay}>
@@ -948,6 +971,29 @@ const styles = StyleSheet.create({
    * elevation for Android. Keep them above the card's, and the exit prompt above the
    * signature pad.
    */
+  busyOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 40,
+    zIndex: 999,
+    elevation: 40,
+  },
+  busyCard: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  busyText: {
+    marginTop: 12,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1C252E',
+    textAlign: 'center',
+  },
   sigOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.55)',

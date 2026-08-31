@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
-  Modal,
   StyleSheet,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -322,19 +321,32 @@ export function CoCStep({
    * empty result screen, so the form comes back.
    */
   const handlePaperFallback = async () => {
-    setShowForm(false);
+    // ⚠️ The form is NOT closed first, and that is the whole iOS fix.
+    //
+    // `RNDocumentScanner` presents VisionKit on `RCTPresentedViewController()` with a
+    // bare `present(...)` and no error path — so a presentation UIKit refuses calls
+    // NONE of its handlers and the promise never settles. Closing the form here asked
+    // iOS to present while that modal was still dismissing, which is exactly the case
+    // UIKit drops: the scanner never appeared, the await never returned, and the step
+    // was left with no surface on screen at all. Android launches an Activity, which
+    // has no such rule, which is why only iOS wedged.
+    //
+    // Leaving the form up means nothing is transitioning when the scanner is asked for,
+    // on either platform, and the scanner covers the form while it runs.
     const { pages: count, read } = await startScan();
     // Includes a cancelled pass (`pages: 0`) — a run of those is a scanner the crew
     // could not get to work, which is invisible if only successes are recorded.
     log.cocScanned({ pages: count, totalPages: pages.length + count });
     if (count === 0) {
-      if (!hasResult) openForm('scan_cancelled');
+      // Cancelled. With something already captured the result view is the right place
+      // to land, so the form steps aside; with nothing, it stays exactly as it was.
+      if (hasResult) setShowForm(false);
+      else openForm('scan_cancelled');
       return;
     }
 
-    // The read is a round trip behind the scanner closing, and the form is down while
-    // it runs — without saying so the crew is left on the result screen with no reason
-    // to think anything is still happening.
+    // The read is a round trip behind the scanner closing. Reported ON the form, which
+    // is still up, so the crew can see that something is still happening.
     setReadingScan(true);
     const fields = await read;
     setReadingScan(false);
@@ -343,7 +355,13 @@ export function CoCStep({
     // pages are filed and the result screen stands. Only a certificate that was
     // actually read reopens the form — an empty one would ask the crew to fill in, by
     // hand, the paper they have just scanned.
-    if (!fields) return;
+    if (!fields) {
+      setShowForm(false);
+      return;
+    }
+    // ⚠️ `openForm` REMOUNTS the form (it bumps `formSession`) without closing it, so
+    // the paper's values appear in a modal that never went away — no dismiss/present
+    // pair, and so nothing for iOS to drop.
     setScannedFields(fields);
     openForm('scan');
   };
@@ -581,6 +599,9 @@ export function CoCStep({
         // What was actually FILED, so reopening shows the certificate on the server
         // rather than whatever this device happens to remember. The `key` above still
         // discards anything typed and abandoned in a previous open.
+        // Reported on the form itself rather than in a modal of its own: a second native
+        // modal over this one is the pattern that wedges iOS.
+        busyLabel={readingScan ? t('installer.cocReadingScan') : null}
         initial={signOff}
         // Read off the paper by the backend. Outranks `initial` field by field — it is
         // the document in the crew's hand, and it carries the Job # and the date the
@@ -607,31 +628,6 @@ export function CoCStep({
           });
         }}
       />
-
-      {/* Reading the scanned certificate.
-
-          A blocking card rather than a spinner on the result screen: the form is down,
-          the pages are already filed, and the next thing that happens — the form coming
-          back with the paper's own values in it — is a surprise without this. */}
-      <Modal visible={visible && readingScan} transparent animationType="fade">
-        <View
-          className="flex-1 items-center justify-center px-10"
-          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
-        >
-          <View
-            className="rounded-2xl px-6 py-5 items-center"
-            style={{ backgroundColor: colors.surface }}
-          >
-            <ActivityIndicator color={colors.primary.main} />
-            <Text
-              className="mt-3 text-sm font-semibold text-center"
-              style={{ color: colors.text }}
-            >
-              {t('installer.cocReadingScan')}
-            </Text>
-          </View>
-        </View>
-      </Modal>
 
       {/* The signed certificate, full screen — the app-wide viewer, so it downloads,
           zooms, shares and reports its own failures exactly like the job packet does. */}
