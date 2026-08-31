@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, Alert, ActivityIndicator, Modal } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Svg, { Path } from 'react-native-svg';
 import DocumentScanner from 'react-native-document-scanner-plugin';
@@ -8,13 +8,25 @@ import { useTranslation } from '../../../i18n/LanguageProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
 import { CoCFormModal, type CoCFormData } from '../../../widgets/modals/installer/CoCFormModal';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
-import type { CapturedPhoto, CocSignOff, InstallerJob } from '../../../config/types/installer';
+import type {
+  CapturedPhoto,
+  CocScanFields,
+  CocSignOff,
+  InstallerJob,
+} from '../../../config/types/installer';
 
 interface Props {
   visible: boolean;
   job: InstallerJob;
   pages: CapturedPhoto[];
-  onAddPage: (page: CapturedPhoto) => void;
+  /**
+   * One scanned page, straight to the parent for upload.
+   *
+   * Resolves to the certificate the BACKEND read off that page, or `null` when it read
+   * nothing — the Paper Fallback path is the only one that gets anything back, and it
+   * is what prefills the form. A `null` leaves the form exactly as it would have been.
+   */
+  onAddPage: (page: CapturedPhoto) => Promise<CocScanFields | null>;
   /**
    * One rasterised signature from the on-device certificate, ready for
    * `installer/v1/{jobId}/images`. Called once per signature; the parent uploads and
@@ -67,6 +79,20 @@ export function CoCStep({
   const [signed, setSigned] = useState<CoCFormData | null>(null);
 
   /**
+   * What the backend read off the SCANNED paper certificate — Job #, date, who signed
+   * and the three attestations.
+   *
+   * Kept on the STEP rather than in the form: the form is remounted on every open (see
+   * `formSession`), so anything held there would be discarded the moment the crew
+   * closed it to check something. These values came off the paper the customer has
+   * already signed — they outlive one look at the form.
+   */
+  const [scannedFields, setScannedFields] = useState<CocScanFields | null>(null);
+
+  /** True while a scanned page is being read — see `handlePaperFallback`. */
+  const [readingScan, setReadingScan] = useState(false);
+
+  /**
    * Bumped on every open, and used as the form's `key`, so each open REMOUNTS it.
    *
    * ⚠️ Without this the form keeps its state for the life of this screen: the modal is
@@ -77,7 +103,7 @@ export function CoCStep({
    */
   const [formSession, setFormSession] = useState(0);
   const openForm = useCallback(
-    (source: 'auto' | 'edit' | 'scan_cancelled') => {
+    (source: 'auto' | 'edit' | 'scan_cancelled' | 'scan') => {
       log.cocFormOpened(source);
       setFormSession((n) => n + 1);
       setShowForm(true);
@@ -165,8 +191,19 @@ export function CoCStep({
     </View>
   );
 
-  /** Returns how many pages the pass produced, so the caller can react to a cancel. */
-  const startScan = useCallback(async (): Promise<number> => {
+  /**
+   * Returns how many pages the pass produced, so the caller can react to a cancel,
+   * alongside the certificate read back off them.
+   *
+   * WARNING: `read` is a PROMISE and is deliberately NOT awaited here. The page count is
+   * known the moment the scanner closes, and the scan log — including a cancelled pass —
+   * is written from it; the certificate only lands once the upload has been answered.
+   * Awaiting it here would hold the count, and the cancel path, behind a round trip.
+   */
+  const startScan = useCallback(async (): Promise<{
+    pages: number;
+    read: Promise<CocScanFields | null>;
+  }> => {
     try {
       const result = await DocumentScanner.scanDocument({
         maxNumDocuments: Math.max(1, 10 - pages.length),
@@ -174,7 +211,7 @@ export function CoCStep({
       } as any);
 
       const scanned: string[] = result?.scannedImages ?? [];
-      scanned.forEach((uri: string, i: number) => {
+      const reads = scanned.map((uri: string, i: number) => {
         const page = {
           id: `${Date.now()}-${i}`,
           uri,
@@ -184,15 +221,23 @@ export function CoCStep({
           takenAt: new Date(Date.now() + i).toISOString(),
         };
         // The parent adds it to state and uploads it; the upload hook logs the page
-        // once S3 has answered with the s3url and byte size the portal needs.
-        onAddPage(page);
+        // once S3 has answered with the s3url and byte size the portal needs. The
+        // certificate the backend read off the page comes back through the same call.
+        return onAddPage(page);
       });
-      return scanned.length;
+
+      return {
+        pages: scanned.length,
+        // The FIRST page that came back with a certificate wins. A multi-page scan is
+        // one document and the fields sit on the page carrying the signatures, so a
+        // later page that read nothing must not blank what an earlier one found.
+        read: Promise.all(reads).then((all) => all.find((fields) => !!fields) ?? null),
+      };
     } catch (error) {
       if (error instanceof Error && !error.message.includes('cancel')) {
         Alert.alert('Scanning Error', 'An error occurred while trying to scan the document.');
       }
-      return 0;
+      return { pages: 0, read: Promise.resolve(null) };
     }
   }, [onAddPage, pages.length]);
 
@@ -222,11 +267,29 @@ export function CoCStep({
    */
   const handlePaperFallback = async () => {
     setShowForm(false);
-    const scanned = await startScan();
+    const { pages: count, read } = await startScan();
     // Includes a cancelled pass (`pages: 0`) — a run of those is a scanner the crew
     // could not get to work, which is invisible if only successes are recorded.
-    log.cocScanned({ pages: scanned, totalPages: pages.length + scanned });
-    if (scanned === 0 && !hasResult) openForm('scan_cancelled');
+    log.cocScanned({ pages: count, totalPages: pages.length + count });
+    if (count === 0) {
+      if (!hasResult) openForm('scan_cancelled');
+      return;
+    }
+
+    // The read is a round trip behind the scanner closing, and the form is down while
+    // it runs — without saying so the crew is left on the result screen with no reason
+    // to think anything is still happening.
+    setReadingScan(true);
+    const fields = await read;
+    setReadingScan(false);
+
+    // Read nothing? Leave the step exactly as it was before any of this existed: the
+    // pages are filed and the result screen stands. Only a certificate that was
+    // actually read reopens the form — an empty one would ask the crew to fill in, by
+    // hand, the paper they have just scanned.
+    if (!fields) return;
+    setScannedFields(fields);
+    openForm('scan');
   };
 
   /** The form's ✕ / Exit. With nothing captured, leaving the form leaves the step. */
@@ -354,6 +417,10 @@ export function CoCStep({
         // rather than whatever this device happens to remember. The `key` above still
         // discards anything typed and abandoned in a previous open.
         initial={signOff}
+        // Read off the paper by the backend. Outranks `initial` field by field — it is
+        // the document in the crew's hand, and it carries the Job # and the date the
+        // certificate was actually signed on.
+        scanned={scannedFields}
         onClose={handleCloseForm}
         onPaperFallback={handlePaperFallback}
         onSignatureCaptured={handleSignatureCaptured}
@@ -375,6 +442,31 @@ export function CoCStep({
           });
         }}
       />
+
+      {/* Reading the scanned certificate.
+
+          A blocking card rather than a spinner on the result screen: the form is down,
+          the pages are already filed, and the next thing that happens — the form coming
+          back with the paper's own values in it — is a surprise without this. */}
+      <Modal visible={visible && readingScan} transparent animationType="fade">
+        <View
+          className="flex-1 items-center justify-center px-10"
+          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+        >
+          <View
+            className="rounded-2xl px-6 py-5 items-center"
+            style={{ backgroundColor: colors.surface }}
+          >
+            <ActivityIndicator color={colors.primary.main} />
+            <Text
+              className="mt-3 text-sm font-semibold text-center"
+              style={{ color: colors.text }}
+            >
+              {t('installer.cocReadingScan')}
+            </Text>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }

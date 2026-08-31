@@ -584,7 +584,9 @@ export default function InstallerJobDetail() {
     (page: CapturedPhoto) => {
       const index = progressRef.current.cocPages.length + 1;
       addCocPage(page);
-      upload.uploadCoc(page, index);
+      // Handed back to the step: on the Paper Fallback path the response carries the
+      // certificate the backend read off THIS page, and that is what prefills the form.
+      return upload.uploadCoc(page, index).then((result) => result?.scan ?? null);
     },
     [addCocPage, upload, progressRef]
   );
@@ -599,7 +601,8 @@ export default function InstallerJobDetail() {
    */
   const handleCocSignature = useCallback(
     (photo: CapturedPhoto, who: 'installer' | 'customer') => {
-      const task = upload.uploadCocSignature(photo, who).then((patch) => {
+      const task = upload.uploadCocSignature(photo, who).then((result) => {
+        const patch = result?.patch;
         if (patch?.s3url) {
           cocSignatureRefs.current[who] = {
             s3url: patch.s3url,

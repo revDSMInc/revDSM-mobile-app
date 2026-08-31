@@ -512,6 +512,12 @@ export type InstallerImagePhase =
   | 'post'
   | 'return'
   | 'coc'
+  /**
+   * A scanned page of the PAPER certificate — the CoC form's Paper Fallback pill.
+   * Its own phase so the office can tell a scanned document from the certificate
+   * signed on the device, which goes up under `coc`.
+   */
+  | 'cocPaperFallback'
   | 'result';
 
 /**
@@ -569,6 +575,26 @@ export interface InstallerStoredImage {
   coordinates?: GeoCoordinates | null;
 }
 
+/**
+ * What a SCANNED paper certificate came back as.
+ *
+ * Every field is optional and `undefined` means "the paper did not say" — the form then
+ * keeps what it would have shown anyway, rather than blanking a box or un-ticking an
+ * attestation. Read out of the upload response by `utils/installer-coc-scan.ts`, which
+ * is the only place that decides what a key means.
+ */
+export interface CocScanFields {
+  /** The Job # printed on the paper — NOT the mongo id the endpoint also returns. */
+  jobNumber?: string;
+  /** `MM/DD/YYYY` where it could be parsed, else verbatim off the page. */
+  date?: string;
+  relationship?: CocRelationshipType;
+  relationshipOther?: string;
+  isAdult?: boolean;
+  isAuthorizedSigner?: boolean;
+  installedPerContract?: boolean;
+}
+
 /** `data` of the upload response, normalized. */
 export interface InstallerImageUploadResult {
   jobId?: string;
@@ -578,6 +604,14 @@ export interface InstallerImageUploadResult {
   appended: InstallerStoredImage[];
   /** The full array for this phase after the append. */
   photos: InstallerStoredImage[];
+  /**
+   * The certificate the backend read off a scanned page — `cocPaperFallback` only.
+   *
+   * `null` on every other phase, and on a paper scan the backend could not read, so a
+   * caller can tell "no certificate in this response" from "a certificate with nothing
+   * in it".
+   */
+  scan?: CocScanFields | null;
 }
 
 /** A local file ready for multipart. */
