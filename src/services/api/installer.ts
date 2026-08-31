@@ -28,6 +28,7 @@ import type {
 // stand-in job can no longer reach the screen. The remaining `INSTALLER_USE_MOCKS`
 // branches are write no-ops (progress / result / discrepancy), which return nothing.
 import { stripUnsupportedFields } from '../../utils/installer-step-data';
+import { extractCocScanFields } from '../../utils/installer-coc-scan';
 import { ENV } from '../../config/env';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -487,7 +488,31 @@ export const normalizeImageUploadResult = (
   phase: InstallerImagePhase
 ): InstallerImageUploadResult => {
   const data = body?.data ?? body ?? {};
-  const appended = toStoredImages(data.appended);
+  let appended = toStoredImages(data.appended);
+
+  // The CoC paper fallback answers with ONE image on `data` itself — `s3url` /
+  // `bucketName` at the root plus a `data[phase]` block holding the same pair and a
+  // signed `url` — and carries NO `appended` array at all.
+  //
+  // WARNING: without this the caller reads `appended[0]` as undefined and treats a
+  // perfectly good upload as FAILED: the crew gets "Couldn't upload page 1 of the CoC",
+  // the s3url is never stored on the page, the step-data PATCH cannot reference it, and
+  // the certificate read off the page is dropped with it.
+  if (appended.length === 0) {
+    const block = data[phase] && typeof data[phase] === 'object' ? data[phase] : null;
+    const s3url = block?.s3url || data.s3url;
+    if (s3url) {
+      appended = [
+        {
+          // ⚠️ NOT `data._id` — on this shape that is the JOB's id, and storing it as
+          // the image's `serverId` would point every scanned page at the job record.
+          _id: block?._id || '',
+          s3url,
+          bucketName: block?.bucketName || data.bucketName,
+        } as InstallerStoredImage,
+      ];
+    }
+  }
 
   let photos = toStoredImages(data[PHASE_ARRAY_KEY[phase]]);
   if (photos.length === 0) {
@@ -505,6 +530,11 @@ export const normalizeImageUploadResult = (
     phase: data.phase ?? phase,
     appended,
     photos: photos.length ? photos : appended,
+    // The certificate the backend read off the scanned page. Gated on the phase, not
+    // read from every response: only Paper Fallback sends a document to be read, and
+    // running the extractor over a photo upload could only ever produce a false
+    // positive off a key that happens to be spelled the same way.
+    scan: phase === 'cocPaperFallback' ? extractCocScanFields(body) : null,
   };
 };
 

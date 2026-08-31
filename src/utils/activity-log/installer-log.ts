@@ -626,7 +626,7 @@ export const logCocCompleted = (user: any, totalPages: number) =>
  */
 export const logCocFormOpened = (
   user: any,
-  source: 'auto' | 'edit' | 'scan_cancelled'
+  source: 'auto' | 'edit' | 'scan_cancelled' | 'scan'
 ) => emit(user, LOG_ACTIONS.OPEN, COC, { source, action: 'coc_form_opened' });
 
 /**

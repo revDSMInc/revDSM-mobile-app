@@ -20,12 +20,25 @@ import {
 } from '../utils/activity-log/installer-log';
 import type {
   CapturedPhoto,
+  CocScanFields,
   InstallerImagePhase,
   InstallStepKey,
   PhotoPhase,
   PhotoSection,
   PhotoTag,
 } from '../config/types/installer';
+
+/**
+ * What one upload resolves to.
+ *
+ * `patch` is what was merged onto the local photo — callers read `s3url` off it. `scan`
+ * is the certificate the backend read off a scanned CoC page and is `null` everywhere
+ * else, so only the Paper Fallback path ever has anything to do with it.
+ */
+export interface InstallerUploadResult {
+  patch: UploadedPhotoPatch;
+  scan: CocScanFields | null;
+}
 
 /** What each caller knows about the shot, before the upload fills in the rest. */
 interface PhotoDescriptorContext {
@@ -72,7 +85,7 @@ export function useInstallerPhotoUpload(
       buildDescriptor: Parameters<typeof uploadInstallerPhoto>[3],
       context: PhotoDescriptorContext,
       failureLabel: string
-    ): Promise<UploadedPhotoPatch | null> => {
+    ): Promise<InstallerUploadResult | null> => {
       // Resolves to what was stored, for the callers that need the s3url back —
       // `patchPhoto` only reaches captures that live in `InstallProgress`, and a CoC
       // signature does not.
@@ -82,7 +95,7 @@ export function useInstallerPhotoUpload(
       setUploadingCount((n) => n + 1);
 
       const task = uploadInstallerPhoto(jobId, phase, photo, buildDescriptor)
-        .then(({ patch, size, coordinates, attempts }) => {
+        .then(({ patch, size, coordinates, attempts, scan }) => {
           patchPhoto(photo.id, patch);
 
           const meta: InstallerPhotoLogMeta = {
@@ -111,7 +124,7 @@ export function useInstallerPhotoUpload(
 
           if (context.replacing) logInstallerPhotoReplaced(userRef.current, meta);
           else logInstallerPhotoUploaded(userRef.current, meta);
-          return patch;
+          return { patch, scan };
         })
         .finally(() => {
           inFlight.current.delete(photo.id);

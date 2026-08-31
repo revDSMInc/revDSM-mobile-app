@@ -188,6 +188,7 @@ export const en = {
     cocDoneSigned: 'Done — Certificate Signed',
     cocFormTitle: 'Certificate of Completion',
     cocPaperFallback: 'Paper Fallback',
+    cocReadingScan: 'Reading the scanned certificate…',
     cocFormDisclaimerTitle: 'Certificate of Completion — Install',
     cocFormDisclaimerBody:
       'Please take a few minutes to review the completed work with the installer.',
@@ -459,6 +460,7 @@ export const es: TranslationTree = {
     cocDoneSigned: 'Listo — certificado firmado',
     cocFormTitle: 'Certificado de finalización',
     cocPaperFallback: 'Formulario en papel',
+    cocReadingScan: 'Leyendo el certificado escaneado…',
     cocFormDisclaimerTitle: 'Certificado de finalización — Instalación',
     cocFormDisclaimerBody:
       'Tómate unos minutos para revisar el trabajo terminado junto con el instalador.',

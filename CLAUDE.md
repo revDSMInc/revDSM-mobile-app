@@ -2356,6 +2356,115 @@ Ticket: the paper-fallback upload should use `PUT /installer/v1/{jobId}/images` 
   `cocpaperfallback` the scans land in `installerPreInstallPhotos` and vanish from the CoC step.
   Ship the backend arm first, or with this.
 
+#### …and a scanned certificate now FILLS THE FORM
+
+Ticket: *"when user scan the paper than the backend provide the JSON response against the paper
+scan… place the value directly to the boxes according to the JSON response. make sure in the case of
+paper Scan the Job number and date also get from the paper, and if user add the details directly than
+the date and job number should be getting Automatically."*
+
+The scan already went up under `phase: 'cocPaperFallback'` (above) and the response was thrown away
+past its `s3url`. It now carries the certificate the backend read off the page, and that reopens
+`CoCFormModal` with the paper's own values in it.
+
+**The chain, one link per file:**
+
+| where | what |
+|---|---|
+| `utils/installer-coc-scan.ts` (new, pure) | `extractCocScanFields(body)` → `CocScanFields \| null` |
+| `services/api/installer.ts` | `normalizeImageUploadResult` runs it — **gated on the phase** |
+| `utils/installer-upload.ts` | `UploadOutcome.scan` |
+| `hooks/useInstallerPhotoUpload.ts` | `run` now resolves to **`{ patch, scan }`** (`InstallerUploadResult`) |
+| `screens/Installer/JobDetail.tsx` | `handleCocPage` RETURNS that read |
+| `steps/CoCStep.tsx` | awaits it, holds it in `scannedFields`, reopens the form |
+| `modals/installer/CoCFormModal.tsx` | new `scanned` prop seeds every box |
+
+⚠️ **`run`'s return type changed** — it was the patch, it is now `{ patch, scan }`. Its one consumer
+that reads the value (`handleCocSignature`) takes `result?.patch`; every other caller ignores it.
+
+**Job # and Date.** Both stay READ-ONLY; only their SOURCE changed. A scan wins
+(`scanned?.jobNumber || job.jobNumber || …`, `scanned?.date || todayMMDDYYYY()`), because the paper
+carries its own number and its own date and the customer has already signed against them. Typed in
+directly, nothing is scanned and both are derived exactly as before — which is the second half of the
+ticket, and needed no change.
+
+⚠️ **`??`, not `||`, on the three tick boxes.** A box the page reports as UNTICKED is `false` and must
+stay unticked; `||` would fall through to the filed certificate and tick it back on — an attestation
+nobody made. `undefined` (the page did not say) is the only case that falls through.
+
+#### ✅ The live response — and the reason NOTHING was populating
+
+A device trace (`PUT installer/v1/{jobId}/images`, 2026-08-31) settled both halves. The extraction
+arrives as **`data.extraction`**:
+
+```json
+{ "jobNumber": "090078601", "date": "31-8-2026",
+  "homeowner": false, "spouse": false, "other": true, "relationToHomeowner": "Brother",
+  "age18OrOlder": true, "homeownerOrAuthorized": true, "installationStatusCompleted": true }
+```
+
+⚠️ **THE BUG WAS UPSTREAM OF THE EXTRACTOR: this response carries NO `appended` array.** It answers
+with ONE image on `data` itself — `s3url` / `bucketName` at the root plus a `data.cocPaperFallback`
+block — while `normalizeImageUploadResult` only ever read `data.appended`. So
+`uploadInstallerPhoto` read `appended[0]` as undefined, declared a perfectly good upload **FAILED**,
+flashed *"Couldn't upload page 1 of the CoC"*, stored no `s3url` on the page (nothing for the
+step-data PATCH to reference) — and the hook's failure branch returns `null`, which threw the
+certificate away with it. `normalizeImageUploadResult` now synthesizes the single row when there is no
+`appended`. ⚠️ It takes the id from the `data[phase]` block, **never `data._id`** — on this shape that
+is the JOB's id, and storing it as the image's `serverId` would point every scanned page at the job.
+
+Three key-name corrections fell out of the same payload — `age18OrOlder`, `installationStatusCompleted`
+and `relationToHomeowner` were all absent from the lists, so three of the six boxes would have stayed
+empty even once the read arrived.
+
+⚠️ **The relationship is THREE TICK BOXES, not a word** (`homeowner` / `spouse` / `other` + the
+`relationToHomeowner` write-in). The boxes win over the word; at least TWO of the three must be present
+as booleans before any is read, because `other` on its own is far too common a key to treat as an
+answer to "who signed"; and `relationshipOther` is only ever set for `other`, so a name cannot ride
+into the payload on a homeowner certificate.
+
+⚠️ **`31-8-2026` is DAY-first.** The extraction hyphenates and writes the day first, while a SLASHED
+date is the US month-first form this app prints everywhere else — so the separator decides, and a
+component over 12 settles it either way. Reading it month-first turns 31 August into an invalid month
+(the old rule produced `31/08/2026`).
+
+The extractor still reads FIXED key lists out of a bounded breadth-first walk, the same discipline as
+`readDocumentGroup`: nothing is guessed, an unknown shape yields `null`, and the step then behaves
+exactly as it did before this existed — pages filed, result screen, no form.
+
+⚠️ **`jobId` / `_id` / `leadId` are deliberately NOT job-number keys**, and `installDate` is not a date
+key. This endpoint's response root carries the job's mongo id, and a 24-character id in the Job # box
+would look plausible enough to file.
+
+⚠️ **The date is parsed as TEXT**, never through `new Date(...)` — an offset ISO string shifts the
+calendar day either side of midnight, and this is the date on a signed document (the rule
+`utils/job-change-summary.ts` records).
+
+⚠️ **The FIRST page that reads back a certificate wins.** A multi-page scan is one document and the
+fields sit on the page carrying the signatures, so a later page that read nothing must not blank it.
+
+⚠️ **The two SIGNATURES are still required to submit.** The paper's signatures live in the scanned
+image, and nothing weakens `canSubmit` — a legal control was not loosened on the way past. If the crew
+should be able to submit a scanned certificate without re-signing on the device, that is a deliberate
+change to `canSubmit` and needs asking for.
+
+The read is a round trip behind the scanner closing, so the step raises a small blocking
+**"Reading the scanned certificate…"** card (`installer.cocReadingScan`) while it runs — the form is
+down at that moment and the crew would otherwise have no reason to think anything was still happening.
+`logCocFormOpened` gained a `'scan'` source so the portal can tell that open from the other three.
+
+Verified with 25 tests over the real extractor, five of them driving the captured response VERBATIM
+(every box filled, the tick-box relationship, no box ticked, a lone `other` ignored, and the job id
+never read as the Job #): a flat response and three wrapper shapes, the
+shallowest value winning, the Job # never read off an id, the date never read off `installDate`, an
+unticked box staying `false`, a top-level `completed` (the JOB's status) NOT ticking the contract
+attestation while `checkboxes.completed` does, an unrecognised relationship becoming `Other` + the
+write-in, an explicit write-in outranking it, and a photo-shaped response / junk input as `null`. Plus
+the offset-ISO date asserted against what naive `Date` parsing would have given. tsc 138 (baseline
+unchanged); the new util is eslint-clean, `CoCFormModal` and `JobDetail` are byte-identical to their
+HEAD baselines (18 and 27 warnings) and `CoCStep` is +1 `react-native/no-inline-styles` — the backdrop
+of the new card, the rule that file already carries.
+
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area
