@@ -16,6 +16,7 @@ import {
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import DocumentScanner from 'react-native-document-scanner-plugin';
+import RNFS from 'react-native-fs';
 import { LeadService } from '../../../services/api/leads';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isPdfFile } from '../../../utils/document-file';
@@ -88,25 +89,67 @@ export const DocumentScannerModal = ({
     }
   }, [visible, initialFiles]);
 
+  /**
+   * Copy a scanned page into the app's OWN cache and return a plain `file://` uri.
+   *
+   * WARNING On Android the ML Kit scanner hands back a `content://` uri owned by
+   * Google Play services - both for a camera capture and for a gallery import -
+   * and older Play services builds (which is what an Android 11 device tends to
+   * carry) do this where newer ones return a file path. Everything downstream
+   * assumed `file://`: `document-payloads.readFileBytes` DROPPED any other uri
+   * outright, so a scanned order sheet silently never reached the Complete Job
+   * payload. The grant on those uris is also tied to the scanner's activity
+   * result, so reading them minutes later - which is when the upload happens - is
+   * not something to rely on.
+   *
+   * Copying here, in the same tick the result arrives, makes every later reader
+   * (upload, submit payload, the tile preview) see an ordinary app-private file
+   * that behaves identically on every Android and iOS version.
+   *
+   * A failed copy falls back to the scanner's own uri, so this can never be worse
+   * than the behaviour it replaces.
+   */
+  const localizeScannedPage = async (uri: string, fileName: string): Promise<string> => {
+    try {
+      const dest = `${RNFS.CachesDirectoryPath}/${fileName}`;
+      // RNFS resolves a bare path as a file and a `content://` uri through the
+      // ContentResolver; iOS needs the `file://` scheme stripped either way.
+      const src = uri.startsWith('file://') ? uri.replace('file://', '') : uri;
+      if (await RNFS.exists(dest)) await RNFS.unlink(dest).catch(() => {});
+      await RNFS.copyFile(src, dest);
+      return `file://${dest}`;
+    } catch (e) {
+      console.warn('[DocumentScannerModal] could not localize a scanned page', e);
+      return uri;
+    }
+  };
+
   const startScan = async () => {
     try {
       const result = await DocumentScanner.scanDocument({
-        maxNumDocuments: 10 - files.length,
+        // WARNING Never 0 or negative. ML Kit throws on a page limit below 1, and
+        // `getStartScanIntent` then fails before the camera ever opens - so with
+        // ten pages already on the document the scanner simply refused to start.
+        maxNumDocuments: Math.max(1, 10 - files.length),
         letUserAdjustCrop: true,
       } as any);
 
       if (result && result.scannedImages && result.scannedImages.length > 0) {
         const timestamp = Date.now();
-        const newScans = result.scannedImages.map((uri: string, index: number) => ({
-          uri,
-          isNew: true,
-          name: `scanned_${category}_${timestamp}_${index}.jpg`,
-        }));
+        setLoading(true);
+        const newScans = await Promise.all(
+          result.scannedImages.map(async (uri: string, index: number) => {
+            const name = `scanned_${category}_${timestamp}_${index}.jpg`;
+            return { uri: await localizeScannedPage(uri, name), isNew: true, name };
+          }),
+        );
+        setLoading(false);
         const updatedFiles = [...files, ...newScans];
         setFiles(updatedFiles);
         if (onChange) onChange(updatedFiles);
       }
     } catch (error) {
+      setLoading(false);
       console.error('Scanning error:', error);
       if (error instanceof Error && !error.message.includes('cancel')) {
         Alert.alert('Scanning Error', 'An error occurred while trying to scan the document.');

@@ -21,7 +21,7 @@ import { LeadService } from '../../../../services/api/leads';
 import { logEvent } from '../../../../services/api/LoggerService';
 import { logAgreementSigned } from '../../../../utils/activity-log/job-builder-logs';
 import { useAuth } from '../../../../hooks/useAuth';
-import { convertJpegToPdf } from '../../../../utils/jpeg-to-pdf';
+import { convertJpegToPdfAsync } from '../../../../utils/jpeg-to-pdf-native';
 import { PdfPreviewModal } from '../../../modals/PdfPreviewModal';
 import {
   fetchLeadOutcomeDocumentRows,
@@ -330,7 +330,11 @@ export function SummaryFinalizeCards({
         }
         if (!base64Body) continue;
 
-        const pdfBase64 = alreadyPdf ? base64Body : convertJpegToPdf(base64Body);
+        // Assembled through the filesystem: the in-memory builder decodes and
+        // re-encodes the whole document on the JS thread, which a low-RAM device
+        // can fail outright - and the throw surfaced here as a bare
+        // "Upload failed". Byte-identical output; falls back on any error.
+        const pdfBase64 = alreadyPdf ? base64Body : await convertJpegToPdfAsync(base64Body);
         const baseName = f.name || `${cat}_${Date.now()}`;
         payloads.push({
           name: baseName.replace(/\.[a-z]+$/i, '.pdf'),

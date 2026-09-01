@@ -1,6 +1,6 @@
 import RNFS from 'react-native-fs';
 import { LeadService } from '../../../services/api/leads';
-import { convertJpegToPdf } from '../../../utils/jpeg-to-pdf';
+import { convertJpegToPdfAsync } from '../../../utils/jpeg-to-pdf-native';
 
 /**
  * Build the top-level `agreements` / `orderSheets` arrays the job-builder submit
@@ -43,6 +43,26 @@ const dataUriOf = (f: any): string | null => {
   return (inline as string) || null;
 };
 
+/**
+ * The readable path for a LOCAL document, or null when the uri is remote / inline.
+ *
+ * WARNING It is not enough to test for `file://`. On Android the ML Kit document
+ * scanner can return a `content://` uri (older Play services builds do, which is
+ * what an Android 11 device tends to carry), and this function used to be an
+ * inline `startsWith('file://')` test - so a scanned order sheet was DROPPED from
+ * the submitted job with no error anywhere. RNFS reads both: a bare path as a
+ * file, a `content://` uri through the ContentResolver.
+ *
+ * `DocumentScannerModal` now copies every scanned page into the app's own cache,
+ * so new scans arrive as `file://` regardless; this stays as the safety net for
+ * a draft saved BEFORE that fix, whose stored uri is still a content one.
+ */
+const localFilePath = (uri: any): string | null => {
+  if (typeof uri !== 'string' || !uri) return null;
+  if (/^(https?|data):/i.test(uri)) return null;
+  return uri.startsWith('file://') ? uri.replace('file://', '') : uri;
+};
+
 const serverIdOf = (f: any): string | null => {
   const id = f?.serverId ?? f?._id ?? f?.id;
   return id ? String(id) : null;
@@ -77,10 +97,10 @@ async function readFileBytes(
   }
 
   // 3. On-disk capture / generated PDF.
-  const uri = typeof file?.uri === 'string' ? file.uri : null;
-  if (uri && uri.startsWith('file://')) {
+  const localPath = localFilePath(file?.uri);
+  if (localPath) {
     try {
-      const base64 = await RNFS.readFile(uri.replace('file://', ''), 'base64');
+      const base64 = await RNFS.readFile(localPath, 'base64');
       return { base64, isPdf: isPdfFile(file) };
     } catch (e) {
       console.warn('[document-payloads] could not read local document:', e);
@@ -125,13 +145,17 @@ async function fetchStoredDocuments(leadId?: string): Promise<StoredDocuments> {
 }
 
 /** A stored row (base64 already in hand) → the submit payload entry. */
-function storedRowToPayload(row: any, type: 'agreement' | 'orderSheet'): DocumentPayload | null {
+async function storedRowToPayload(
+  row: any,
+  type: 'agreement' | 'orderSheet'
+): Promise<DocumentPayload | null> {
   const raw = row?.base64Data;
   if (!raw) return null;
   const contentType = row?.fileData?.contentType || '';
   const base64 = String(raw).replace(/^data:[^;]*;base64,/, '');
   try {
-    const pdfBase64 = contentType.includes('pdf') || isPdfFile(row) ? base64 : convertJpegToPdf(base64);
+    const pdfBase64 =
+      contentType.includes('pdf') || isPdfFile(row) ? base64 : await convertJpegToPdfAsync(base64);
     return { name: '', file: `data:application/pdf;base64,${pdfBase64}`, type };
   } catch (e) {
     console.warn('[document-payloads] could not build PDF for a stored document:', e);
@@ -195,7 +219,7 @@ export async function buildDocumentPayloads({
   const needStoredAgreements = !agreementFiles.length && !allAgreements.length;
   const needStoredOrderSheets = !orderSheetFiles.length && !allOrderSheets.length;
   const localNeedsServerBytes = [...agreementFiles, ...orderSheetFiles].some(
-    (f) => !dataUriOf(f) && !String(f?.uri || '').startsWith('file://') && serverIdOf(f)
+    (f) => !dataUriOf(f) && !localFilePath(f?.uri) && serverIdOf(f)
   );
   const stored =
     localNeedsServerBytes || needStoredAgreements || needStoredOrderSheets
@@ -210,7 +234,9 @@ export async function buildDocumentPayloads({
       const bytes = await readFileBytes(file, stored.byId);
       if (!bytes) continue;
       try {
-        const pdfBase64 = bytes.isPdf ? bytes.base64 : convertJpegToPdf(bytes.base64);
+        // Filesystem-backed: see `utils/jpeg-to-pdf-native.ts`. Same bytes as the
+        // in-memory builder, without holding the decoded scan in the JS heap.
+        const pdfBase64 = bytes.isPdf ? bytes.base64 : await convertJpegToPdfAsync(bytes.base64);
         // Web sends `name: ''` and lets the backend name the stored document.
         payloads.push({ name: '', file: `data:application/pdf;base64,${pdfBase64}`, type });
       } catch (e) {
@@ -220,15 +246,23 @@ export async function buildDocumentPayloads({
     return payloads;
   };
 
-  const fromStored = (rows: any[], type: 'agreement' | 'orderSheet') =>
-    rows.map((r) => storedRowToPayload(r, type)).filter(Boolean) as DocumentPayload[];
+  // Sequential for the same reason `convert` above is: these are multi-MB strings
+  // and decoding them all at once is what spiked the JS heap.
+  const fromStored = async (rows: any[], type: 'agreement' | 'orderSheet') => {
+    const payloads: DocumentPayload[] = [];
+    for (const row of rows) {
+      const payload = await storedRowToPayload(row, type);
+      if (payload) payloads.push(payload);
+    }
+    return payloads;
+  };
 
   // Web: on a non-Sale result the agreements are submitted as ORDER SHEETS.
   const agreementType: 'agreement' | 'orderSheet' = isSale ? 'agreement' : 'orderSheet';
   const agreementPayloads = agreementFiles.length
     ? await convert(agreementFiles, agreementType)
     : needStoredAgreements
-      ? fromStored(stored.agreements, agreementType)
+      ? await fromStored(stored.agreements, agreementType)
       : [];
   if (isSale) out.agreements.push(...agreementPayloads);
   else out.orderSheets.push(...agreementPayloads);
@@ -237,7 +271,7 @@ export async function buildDocumentPayloads({
     ...(orderSheetFiles.length
       ? await convert(orderSheetFiles, 'orderSheet')
       : needStoredOrderSheets
-        ? fromStored(stored.orderSheets, 'orderSheet')
+        ? await fromStored(stored.orderSheets, 'orderSheet')
         : [])
   );
 
