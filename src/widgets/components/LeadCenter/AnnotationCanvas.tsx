@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Image,
@@ -29,7 +29,14 @@ interface AnnotationCanvasProps {
   currentPhoto: any;
   activeImageIndex: number;
   currentStrokes: any[];
-  activeStroke: any;
+  /** Static fallback for callers that do not publish a live stroke. */
+  activeStroke?: any;
+  /**
+   * Subscribe to the stroke being drawn right now. The editor publishes it here
+   * instead of holding it in its own state, so a touch move re-renders THIS
+   * component rather than the whole screen. Returns an unsubscribe.
+   */
+  subscribeActiveStroke?: (cb: (stroke: any) => void) => () => void;
   currentTexts: any[];
   getPathData: (points: any[]) => string;
   selectedTextId: string | null;
@@ -54,6 +61,7 @@ export const AnnotationCanvas = ({
   activeImageIndex,
   currentStrokes,
   activeStroke,
+  subscribeActiveStroke,
   currentTexts,
   getPathData,
   selectedTextId,
@@ -95,6 +103,30 @@ export const AnnotationCanvas = ({
   // JS thread (PanResponder), so they cannot read a shared value.
   const [jsScale, setJsScale] = useState(1);
 
+  // The stroke under the finger. Kept HERE rather than in the editor so drawing
+  // re-renders this component alone - see `subscribeActiveStroke`.
+  const [liveStroke, setLiveStroke] = useState<any | null>(null);
+  useEffect(() => {
+    if (!subscribeActiveStroke) return;
+    return subscribeActiveStroke(setLiveStroke);
+  }, [subscribeActiveStroke]);
+  const drawingStroke = liveStroke || activeStroke || null;
+
+  // Path strings for the strokes already committed. Rebuilt only when a stroke
+  // is added/removed or the canvas is re-laid out - NOT on every frame of the
+  // stroke being drawn, which is what made a photo with a few strokes on it feel
+  // progressively heavier to draw on.
+  const committedPaths = useMemo(() => {
+    const eraser: Array<{ id: any; d: string; width: number }> = [];
+    const ink: Array<{ id: any; d: string; width: number; color: string }> = [];
+    (currentStrokes || []).forEach((stroke) => {
+      const d = getPathData(stroke.points);
+      if (stroke.isEraser) eraser.push({ id: stroke.id, d, width: stroke.width });
+      else ink.push({ id: stroke.id, d, width: stroke.width, color: stroke.color });
+    });
+    return { eraser, ink };
+  }, [currentStrokes, getPathData]);
+
   const reportScale = useCallback(
     (next: number) => {
       setJsScale(next);
@@ -121,6 +153,7 @@ export const AnnotationCanvas = ({
     savedTx.value = 0;
     savedTy.value = 0;
     reportScale(1);
+    setLiveStroke(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeImageIndex]);
 
@@ -220,30 +253,30 @@ export const AnnotationCanvas = ({
             >
               <Mask id={`eraser-mask-${activeImageIndex}`}>
                 <Rect x={0} y={0} width={canvasLayout.width} height={canvasLayout.height} fill="white" />
-                {currentStrokes.filter(s => s.isEraser).map(stroke => (
+                {committedPaths.eraser.map(stroke => (
                   <Path
                     key={stroke.id}
-                    d={getPathData(stroke.points)}
+                    d={stroke.d}
                     stroke="black"
                     strokeWidth={stroke.width}
                     fill="none"
                   />
                 ))}
-                {activeStroke?.isEraser && (
+                {drawingStroke?.isEraser && (
                   <Path
-                    d={getPathData(activeStroke.points)}
+                    d={getPathData(drawingStroke.points)}
                     stroke="black"
-                    strokeWidth={activeStroke.width}
+                    strokeWidth={drawingStroke.width}
                     fill="none"
                   />
                 )}
               </Mask>
 
               <G mask={`url(#eraser-mask-${activeImageIndex})`}>
-                {currentStrokes.filter(s => !s.isEraser).map(stroke => (
+                {committedPaths.ink.map(stroke => (
                   <Path
                     key={stroke.id}
-                    d={getPathData(stroke.points)}
+                    d={stroke.d}
                     stroke={stroke.color}
                     strokeWidth={stroke.width}
                     fill="none"
@@ -251,11 +284,11 @@ export const AnnotationCanvas = ({
                     strokeLinejoin="round"
                   />
                 ))}
-                {activeStroke && !activeStroke.isEraser && (
+                {drawingStroke && !drawingStroke.isEraser && (
                   <Path
-                    d={getPathData(activeStroke.points)}
-                    stroke={activeStroke.color}
-                    strokeWidth={activeStroke.width}
+                    d={getPathData(drawingStroke.points)}
+                    stroke={drawingStroke.color}
+                    strokeWidth={drawingStroke.width}
                     fill="none"
                     strokeLinecap="round"
                     strokeLinejoin="round"
