@@ -67,9 +67,15 @@ export const WEEKDAY_BY_NAME: Record<string, number> = {
   saturday: 6,
 };
 
-/** The calendar currently hardcoded in `calculate-expected-payout-date`. */
+/**
+ * WARNING `scheduleType` is `'none'`, per PAYOUT-DATE-GUIDE.md - a company that
+ * has not configured a schedule has NO payout date, and the Job Tracker shows
+ * `TBD` rather than a fabricated one. The band table below is the guide's
+ * documented default for `dayOfMonthSchedule` ONLY (the legacy hardcoded
+ * rule), used when a `dayOfMonth` config arrives carrying no bands.
+ */
 export const DEFAULT_PAYOUT_CONFIG: PayoutConfig = {
-  scheduleType: 'dayOfMonth',
+  scheduleType: 'none',
   earnedDateField: 'installDate',
   payDateWeekday: 5, // Friday
   payDateAdjustment: 'next',
@@ -108,14 +114,18 @@ export function normalizePayoutConfig(raw: any): PayoutConfig {
     .sort((a: PayoutBucket, b: PayoutBucket) => a.fromDay - b.fromDay);
 
   return {
-    scheduleType: raw.scheduleType || 'dayOfMonth',
+    // No schedule means no date - never a guessed one. See the warning above.
+    scheduleType: raw.scheduleType || 'none',
     earnedDateField: raw.earnedDateField || 'installDate',
     payDateWeekday: resolveWeekday(raw.payDateWeekday, raw.payDateWeekdayName),
     payDateAdjustment: raw.payDateAdjustment || 'next', // 'next' | 'previous' | 'none'
     nonBankingDayAdjustment: raw.nonBankingDayAdjustment || 'next',
     nonBankingDays: Array.isArray(raw.nonBankingDays) ? raw.nonBankingDays : [],
-    // Period fields are inert while scheduleType is 'dayOfMonth'. Carried, not interpreted.
+    // Period fields are inert while scheduleType is 'dayOfMonth'; the day-of-month
+    // fields are inert while it is 'payPeriodLag'. Both are carried either way.
     periodEndWeekday: resolveWeekday(raw.periodEndWeekday, raw.periodEndWeekdayName),
+    // WARNING PAY DATES, not days. The engine floors it at 1: a 0 would put the
+    // pay date a week BEFORE the first one after the period closed.
     lagPeriods: Number(raw.lagPeriods) || 0,
     dayOfMonthSchedule: schedule.length ? schedule : DEFAULT_PAYOUT_CONFIG.dayOfMonthSchedule,
   };

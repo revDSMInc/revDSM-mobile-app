@@ -25,6 +25,7 @@ import { useTranslation } from '../../../i18n/LanguageProvider';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
 import type {
   CocRelationshipType,
+  CocScanFields,
   CocSignOff,
   InstallerJob,
 } from '../../../config/types/installer';
@@ -107,6 +108,25 @@ interface Props {
    * restored from the server is shown as its uploaded IMAGE.
    */
   initial?: CocSignOff | null;
+  /**
+   * The certificate the backend read off a SCANNED paper form, from the Paper Fallback
+   * pill (`utils/installer-coc-scan.ts`).
+   *
+   * OUTRANKS `initial` and the derived defaults, field by field: it is the paper in the
+   * crew's hand and the customer has already signed it, so its Job # and its date are
+   * the certificate's own rather than this job record's and today's. A field the page
+   * did not carry is `undefined` and falls through to what the form would have shown.
+   */
+  scanned?: CocScanFields | null;
+  /**
+   * Shown as a blocking card over the form while something the crew is waiting on runs
+   * — today, the backend reading a scanned page. `null` when nothing is pending.
+   *
+   * ⚠️ An in-card OVERLAY, not a second `Modal`. A native modal raised over this one is
+   * the thing that wedges iOS (see `CoCStep.handlePaperFallback`), and it is why the
+   * signature pad and the exit prompt below are overlays too.
+   */
+  busyLabel?: string | null;
   submitting?: boolean;
 }
 
@@ -143,6 +163,8 @@ export function CoCFormModal({
   onPaperFallback,
   onSignatureCaptured,
   initial,
+  scanned,
+  busyLabel,
   submitting,
 }: Props) {
   const { colors, isDark } = useTheme();
@@ -159,18 +181,33 @@ export function CoCFormModal({
    * certificate against the wrong job. The date is TODAY, because today is when it is
    * being signed; re-signing an existing certificate re-dates it, which is the honest
    * record of when the signatures were taken.
+   *
+   * WARNING: a SCANNED certificate overrides both. The paper carries its own Job # and
+   * its own date, the customer has already signed against them, and showing this job
+   * record's number and today's date beside a document that says otherwise would file
+   * two different answers for the same certificate.
    */
-  const jobNumber = job.jobNumber || job.leadDisplayId || job.leadId || 'N/A';
-  const signedDate = todayMMDDYYYY();
+  const jobNumber =
+    scanned?.jobNumber || job.jobNumber || job.leadDisplayId || job.leadId || 'N/A';
+  const signedDate = scanned?.date || todayMMDDYYYY();
 
   const [formData, setFormData] = useState({
-    relationshipOther: initial?.customer?.otherRelationship ?? '',
+    relationshipOther:
+      scanned?.relationshipOther ?? initial?.customer?.otherRelationship ?? '',
   });
 
+  /**
+   * WARNING: `??`, not `||`, on every scanned box. A box the page reported as UNTICKED
+   * is `false` and must stay unticked; `||` would fall through to the filed certificate
+   * and tick it back on, which is an attestation nobody made. `undefined` — the page did
+   * not say — is the only case that falls through.
+   */
   const [attest, setAttest] = useState({
-    adult: !!initial?.confirmations?.is18OrOlder,
-    authorized: !!initial?.confirmations?.isHomeownerOrAuthorized,
-    completed: !!initial?.confirmations?.installationCompletedAsPerContract,
+    adult: scanned?.isAdult ?? !!initial?.confirmations?.is18OrOlder,
+    authorized: scanned?.isAuthorizedSigner ?? !!initial?.confirmations?.isHomeownerOrAuthorized,
+    completed:
+      scanned?.installedPerContract ??
+      !!initial?.confirmations?.installationCompletedAsPerContract,
   });
 
   /**
@@ -181,7 +218,7 @@ export function CoCFormModal({
    * made it — the one thing on this certificate that must be an active choice.
    */
   const [relationship, setRelationship] = useState<CoCRelationship | null>(
-    initial?.customer?.relationshipType ?? null
+    scanned?.relationship ?? initial?.customer?.relationshipType ?? null
   );
 
   // Cancel / header-✕ raise a confirmation rather than dismissing, so a half-signed
@@ -737,6 +774,19 @@ export function CoCFormModal({
           </View>
         </KeyboardAvoidingView>
 
+        {/* Waiting on something — the scanned certificate being read, today.
+
+            Sits above the card on BOTH axes (see the note on `sigOverlay`), and takes
+            its own touches so nothing on the form can be edited underneath it. */}
+        {!!busyLabel && (
+          <View style={styles.busyOverlay}>
+            <View style={styles.busyCard}>
+              <ActivityIndicator color={colors.primary.main} />
+              <Text style={styles.busyText}>{busyLabel}</Text>
+            </View>
+          </View>
+        )}
+
         {/* ── Signature pad overlay (same Modal — see `renderSignature`) ── */}
         {!!sigSlot && (
           <View style={styles.sigOverlay}>
@@ -921,6 +971,29 @@ const styles = StyleSheet.create({
    * elevation for Android. Keep them above the card's, and the exit prompt above the
    * signature pad.
    */
+  busyOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 40,
+    zIndex: 999,
+    elevation: 40,
+  },
+  busyCard: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  busyText: {
+    marginTop: 12,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1C252E',
+    textAlign: 'center',
+  },
   sigOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.55)',

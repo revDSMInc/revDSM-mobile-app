@@ -453,13 +453,21 @@ export default function RooflineDeckScreen() {
     }
   };
 
-  const renderInteractiveTools = () => {
+  // `asModal` renders the drawer inside its OWN full-screen Modal. Outside
+  // fullscreen the drawer is mounted inside the screen's flex-1 body, so its
+  // StyleSheet.absoluteFill backdrop only ever reached the slide area - the
+  // toolbar and the navigator's MainHeader above it stayed undimmed while the
+  // sheet was open. A Modal is its own view tree over the whole window, so the
+  // backdrop now covers the header too. The FULLSCREEN path passes nothing:
+  // the drawer is already inside a Modal there (stacked native modals are
+  // unreliable) and that modal already owns the whole screen.
+  const renderInteractiveTools = (asModal = false) => {
     if (viewMode !== 'rep' || !showTools) return null;
     const drawerHeight = isLandscape
       ? winHeight - insets.top
       : winHeight * 0.7;
 
-    return (
+    const drawer = (
       <View style={[{ zIndex: 1000 }, StyleSheet.absoluteFill]}>
         <TouchableOpacity
           style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' }}
@@ -585,6 +593,32 @@ export default function RooflineDeckScreen() {
           </View>
         </Animated.View>
       </View>
+    );
+
+    if (!asModal) return drawer;
+
+    return (
+      <Modal
+        visible
+        transparent
+        statusBarTranslucent
+        animationType="none"
+        onRequestClose={toggleTools}
+        supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}
+      >
+        {drawer}
+        {/* The Risk tab's report opener is the ONLY way to reach the PDF viewer,
+            and it lives inside this drawer - so while the drawer is a Modal the
+            preview has to be presented from INSIDE it. Presenting it from the
+            screen's own tree would be a second modal presented from a root that
+            is already presenting this one. */}
+        <PdfPreviewModal
+          visible={showPdfModal}
+          onClose={() => setShowPdfModal(false)}
+          uri={pdfPreviewData.url}
+          title={pdfPreviewData.title}
+        />
+      </Modal>
     );
   };
 
@@ -1217,10 +1251,10 @@ export default function RooflineDeckScreen() {
           </GestureHandlerRootView>
         </Modal>
 
-        {!isFullscreen && renderInteractiveTools()}
+        {!isFullscreen && renderInteractiveTools(true)}
 
         <PdfPreviewModal
-          visible={showPdfModal && !isFullscreen}
+          visible={showPdfModal && !isFullscreen && !showTools}
           onClose={() => setShowPdfModal(false)}
           uri={pdfPreviewData.url}
           title={pdfPreviewData.title}

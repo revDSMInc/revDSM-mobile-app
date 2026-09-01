@@ -755,7 +755,7 @@ export default function JobTrackerPage() {
                                 </Text>
                                 <View className="w-36">
                                   {(() => {
-                                    const payoutStr = calculateExpectedPayout(job.installDate);
+                                    const payoutStr = calculateExpectedPayout(job);
                                     const style = getDateChipStyle(payoutStr, 'expectedPayout');
                                     if (style && payoutStr !== 'TBD' && payoutStr !== 'N/A') {
                                       return (

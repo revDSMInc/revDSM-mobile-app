@@ -21,6 +21,15 @@ interface Props {
    */
   onRemovePhoto: (photoId: string) => void | Promise<void>;
   onSkip: () => void;
+  /**
+   * Finish the step from the page itself.
+   *
+   * ⚠️ Wired to the SAME handler as `onBack`, deliberately: leaving a step is this
+   * module's save point (`handleCloseStep` logs the completion and PATCHes the step
+   * data), so Done must not become a second, slightly different way of saving. The
+   * button exists because backing out of a finished step does not read as finishing it.
+   */
+  onDone: () => void;
   onBack: () => void;
 }
 
@@ -38,6 +47,7 @@ export function MaterialPhotoStep({
   onAddPhoto,
   onRemovePhoto,
   onSkip,
+  onDone,
   onBack,
 }: Props) {
   const { colors } = useTheme();
@@ -174,6 +184,31 @@ export function MaterialPhotoStep({
             {state.photos.length === 0
               ? t('installer.takePhoto')
               : t('installer.takeAnotherPhoto')}
+          </Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Done.
+
+          Shown only once the step is SATISFIED — a photo taken, or the skip used.
+          Before that there is nothing to file, and "Done" on an empty step would claim
+          something the crew has not done; the back button still leaves either way.
+
+          Outlined rather than filled, so it does not compete with the green capture
+          button directly above it — the crew's next action here is usually another
+          photo, not leaving. */}
+      {satisfied && (
+        <TouchableOpacity
+          onPress={onDone}
+          className="h-12 rounded-xl items-center justify-center flex-row mt-3 border-2"
+          style={{ borderColor: colors.primary.main, backgroundColor: colors.background }}
+        >
+          <Icon name="check" size={18} color={colors.primary.main} />
+          <Text
+            className="ml-2 text-base font-bold text-center"
+            style={{ color: colors.primary.main }}
+          >
+            {t('common.done')}
           </Text>
         </TouchableOpacity>
       )}
