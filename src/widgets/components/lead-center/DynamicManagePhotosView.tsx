@@ -47,6 +47,7 @@ import { PhotoPeekPressable } from '../../common/PhotoPeekPressable';
 import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../common/PhotoPeekScrollLock';
 import { LoadingImage } from '../../common/LoadingImage';
 import { useSecureUrls } from '../../../hooks/useSecureUrls';
+import { useWarmedImageUris } from '../../../hooks/useWarmedImageUris';
 import { resolveS3Url } from '../../../utils/s3-utils';
 
 const GREEN = '#4CBB17';
@@ -317,6 +318,33 @@ export function DynamicManagePhotosView({
     [orphanPhotos, orphanUriByS3],
   );
 
+  // Every tile paints from the local FILE cache rather than from its pre-signed
+  // S3 url. Those urls carry no cache headers, so the OS image cache refuses to
+  // store them (CLAUDE.md section 6) and this grid re-downloaded every photo in
+  // full on EVERY open - 22 of them on Roofline. Now the first open warms them,
+  // and every later open, the hold-to-peek preview and the annotation editor all
+  // read the same file.
+  //
+  // WARNING The tile renders `warmedUris[uri]` and NOTHING while that is
+  // undefined - deliberately. Rendering the network url meanwhile would have the
+  // `<Image>` fetch the same bytes the warm is already fetching, so a first open
+  // would cost twice the bandwidth and land slower. `useWarmedImageUris` resolves
+  // every url to something (the url itself when it cannot be cached), so a tile
+  // can never be stranded on the spinner.
+  //
+  // Order matters: the cache runs a few downloads at a time, and this is the
+  // order the cards are laid out, so the tiles at the top of the list land first.
+  const cardUris = useMemo(() => {
+    const seen = new Set<string>();
+    const push = (u?: string | null) => { if (u && !seen.has(u)) seen.add(u); };
+    sections.forEach((sec) => sec.cards.forEach((c) => push(c.photo.secureUrl)));
+    extraCards.forEach((c) => push(c.photo.secureUrl));
+    annotated.forEach((c) => push(c.photo.secureUrl));
+    orphanCards.forEach((c) => push(c.photo.secureUrl));
+    return [...seen];
+  }, [sections, extraCards, annotated, orphanCards]);
+  const warmedUris = useWarmedImageUris(cardUris);
+
   const multiLeaf = sections.length > 1;
   const isEmpty =
     sections.length === 0 && extraCards.length === 0 && annotated.length === 0 && orphanCards.length === 0;
@@ -374,6 +402,8 @@ export function DynamicManagePhotosView({
     { showLabel = true, canMove = false, selectable = false }: { showLabel?: boolean; canMove?: boolean; selectable?: boolean } = {},
   ) => {
     const uri = card.photo.secureUrl || undefined;
+    // The local copy, once warm. Undefined means the download is still in flight.
+    const localUri = uri ? warmedUris[uri] : undefined;
     const busy = !!capture.deletingKeys[card.key] || !!capture.movingKeys?.[card.key];
     const isSelected = selectedMap.has(card.key);
     // An original that already has an annotated copy can't be re-annotated.
@@ -403,19 +433,25 @@ export function DynamicManagePhotosView({
           }}
         >
           <PhotoPeekPressable
-            uri={uri}
+            uri={localUri || uri}
             label={card.label}
             disabled={!uri || lockedFromSelect}
             peekDisabled={selectMode}
             onPress={() => {
               if (!uri) return;
               if (selectableNow) toggleSelect(card);
-              else if (!selectMode) setPreview({ uri, label: card.label });
+              // The preview opens on the warmed file, so a tap does not
+              // re-download the full-size photo the tile just fetched.
+              else if (!selectMode) setPreview({ uri: localUri || uri, label: card.label });
             }}
             style={{ width: '100%', aspectRatio: 1.6, alignItems: 'center', justifyContent: 'center' }}
           >
             {uri ? (
-              <LoadingImage uri={uri} style={{ width: '100%', height: '100%' }} resizeMode="cover" spinnerColor="#fff" />
+              localUri ? (
+                <LoadingImage uri={localUri} style={{ width: '100%', height: '100%' }} resizeMode="cover" spinnerColor="#fff" />
+              ) : (
+                <ActivityIndicator size="small" color="#fff" />
+              )
             ) : (
               <Icon name="image-outline" size={24} color="#C4CDD5" />
             )}
