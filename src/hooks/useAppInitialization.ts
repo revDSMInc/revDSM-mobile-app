@@ -8,6 +8,7 @@ import { migrateAsyncStorageToMMKV } from '../utils/migrate-storage';
 import { AuthService } from '../services/api/auth';
 import { setSessionHeader } from '../services/api';
 import { endStaleInstallerWorkSession } from '../utils/installer-work-session';
+import { endStaleLeadWorkSession } from '../utils/lead-work-session';
 import { setInitial } from '../redux/reducer/auth.reducer';
 import SocketManager from '../services/SocketManager';
 import { startOfflineSyncTimer, stopOfflineSyncTimer } from '../services/api/offlineUploadManager';
@@ -124,6 +125,11 @@ export function useAppInitialization() {
         // that crew on the job. Closed here, after the token is restored, because a
         // tokenless check-out is dropped.
         void endStaleInstallerWorkSession();
+
+        // The sales-side twin: a lead the rep was working when the app was killed. Same
+        // reasoning, same placement — after the token, because a tokenless release is
+        // skipped and a tokenless log is only held.
+        void endStaleLeadWorkSession();
       } else {
         setSessionHeader(null);
         dispatch(setInitial({ user: null }));

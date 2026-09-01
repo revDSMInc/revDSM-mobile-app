@@ -13,6 +13,7 @@ import {
   Modal,
   BackHandler,
   Alert,
+  AppState,
   PermissionsAndroid,
 } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
@@ -21,6 +22,7 @@ import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/nativ
 import { Storage } from '../../utils/storage';
 import { logLeadSessionPause } from '../../utils/lead-activity-log';
 import { useLocationBroadcaster } from '../../hooks/useLocationBroadcaster';
+import { clearLeadWorkSession } from '../../utils/lead-work-session';
 import { androidTextStyle } from '../../utils/platform-font';
 import { ENV } from '../../config/env';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -141,7 +143,7 @@ export default function LeadCenterPage() {
     isOutcomeLoading,
     sectionImages,
     setSectionImages,
-  } = useLeadCenterData(initialLead, user, { appointmentStarted });
+  } = useLeadCenterData(initialLead, user, { appointmentStarted, fromMyDeals });
 
   // ── Contract Details pencil opens the 4-step deal-edit wizard ───────────────
   // Install Date → Job Build → Job Price → Review & Submit, replacing the inline
@@ -221,8 +223,35 @@ export default function LeadCenterPage() {
     // firing a pause would mark the rep as having worked a closed job in the ops
     // session log. Every other route pauses the session check-in / resume started.
     if (fromMyDeals) return Promise.resolve();
+
+    /**
+     * ⚠️ A pause means the REP LEFT THE LEAD — and they can only do that while the app
+     * is the thing on screen.
+     *
+     * Opening the camera hands the foreground to another activity, and Android is free
+     * to tear this screen down behind it (it does so routinely on an emulator, and on
+     * any device with "Don't keep activities" on). That ran the unmount backstop below
+     * and filed a pause for a lead the rep was standing in front of — so ops saw them
+     * go offline in the middle of an inspection, and the screen came straight back with
+     * a fresh `work` call behind it. Reported against the camera; the same tear-down
+     * happens for any foreground hand-off.
+     *
+     * `AppState.currentState` is not sampled here — RN caches it from the host
+     * lifecycle event, so by the time an unmount caused by backgrounding runs, it
+     * already reads 'background'. A real back press is always 'active'.
+     *
+     * Consequence, and it is the right way round: if the OS kills the app while it is
+     * backgrounded, no pause is filed and the session stays open. That is the failure
+     * this ticket asked for — a lead wrongly marked offline is worse than one that
+     * stays on until the rep actually comes back and leaves it.
+     */
+    if (AppState.currentState !== 'active') return Promise.resolve();
+
     if (!leadRef.current?._id || hasLoggedPauseRef.current) return Promise.resolve();
     hasLoggedPauseRef.current = true;
+    // The rep left of their own accord, so the next launch must not treat this session
+    // as one a kill left behind and file a second pause for it.
+    clearLeadWorkSession();
     return logLeadSessionPause(userRef.current, leadRef.current).catch((err) => {
       console.warn('[LeadCenter] Session pause logging failed:', err);
     });

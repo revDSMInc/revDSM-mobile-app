@@ -29,6 +29,20 @@ class SocketManager {
   // Track which rooms we've joined so we can re-join on reconnect
   private joinedRooms: Map<string, RoomEvent> = new Map();
 
+  /**
+   * The lead whose on-site watch room this session is in, if any.
+   *
+   * ⚠️ Tracked SEPARATELY from `joinedRooms` because that map is chat-shaped — its
+   * re-join path also asks for pinned messages, which is meaningless here.
+   *
+   * It has to be tracked at all for the same reason chat rooms are: a room lives on the
+   * SERVER's socket, so every reconnect starts with none. Before this the join was a
+   * bare `emit`, so the first dropped connection — a tunnel, a backgrounded app, an
+   * idle timeout — silently took the rep off the ops board's live list while they were
+   * still standing in the customer's house, and nothing ever put them back.
+   */
+  private onsiteLeadId: string | null = null;
+
   // Pending queue: emits that arrived while socket was reconnecting
   private pendingQueue: Array<{ event: string; payload?: any }> = [];
 
@@ -69,6 +83,7 @@ class SocketManager {
       console.log('[SocketManager] Connected ✓', this.socket?.id);
       // Re-join every room we were in before the reconnect
       this.rejoinAllRooms();
+      this.rejoinLeadOnsiteWatch();
       // Flush any emits that were queued during the reconnect window
       this.flushPendingQueue();
     });
@@ -92,6 +107,7 @@ class SocketManager {
     console.log('[SocketManager] Disconnecting (logout)');
     this.stopAppStateWatcher();
     this.joinedRooms.clear();
+    this.onsiteLeadId = null;
     this.pendingQueue = [];
     this.token = null;
 
@@ -144,6 +160,28 @@ class SocketManager {
     // Without it the socket stays in the room after the screen closes and keeps
     // receiving every `new-message` for a chat nobody is looking at.
     this.socket?.emit('leave-chat', roomId);
+  }
+
+  /**
+   * Announce the rep is on site for this lead — the room the ops board reads to show
+   * them LIVE. Paired with `leaveLeadOnsiteWatch` on the session pause.
+   *
+   * Unlike a bare emit this REMEMBERS the lead, so the join is re-sent on every
+   * reconnect for as long as the session lasts.
+   */
+  joinLeadOnsiteWatch(leadId: string): void {
+    if (!leadId) return;
+    this.onsiteLeadId = leadId;
+    console.log('[SocketManager] join-lead-onsite-watch:', leadId);
+    this.emit('join-lead-onsite-watch', leadId);
+  }
+
+  /** Stop watching — the rep left the lead. */
+  leaveLeadOnsiteWatch(leadId: string): void {
+    if (!leadId) return;
+    if (this.onsiteLeadId === leadId) this.onsiteLeadId = null;
+    console.log('[SocketManager] leave-lead-onsite-watch:', leadId);
+    this.emit('leave-lead-onsite-watch', leadId);
   }
 
   // ─── Event emitters ────────────────────────────────────────────────────────
@@ -203,6 +241,12 @@ class SocketManager {
         this.socket?.emit('get-pinned-messages', roomId);
       });
     });
+  }
+
+  private rejoinLeadOnsiteWatch(): void {
+    if (!this.onsiteLeadId) return;
+    console.log('[SocketManager] Re-joining lead on-site watch:', this.onsiteLeadId);
+    this.socket?.emit('join-lead-onsite-watch', this.onsiteLeadId);
   }
 
   private flushPendingQueue(): void {

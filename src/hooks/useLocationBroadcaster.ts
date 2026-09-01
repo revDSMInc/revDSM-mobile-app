@@ -42,36 +42,52 @@ export function useLocationBroadcaster(lead: any, enabled: boolean = true) {
 
     let cancelled = false;
 
+    const broadcast = (position: any) => {
+      if (cancelled) return;
+      const { latitude, longitude } = position.coords;
+
+      // The lead's own coordinates are [lng, lat] (GeoJSON), same as web.
+      const coords = leadRef.current?.location?.coordinates;
+      let distance: number | null = null;
+      let withinRange = false;
+      if (Array.isArray(coords) && coords.length >= 2) {
+        distance =
+          Math.round(calculateDistance(latitude, longitude, coords[1], coords[0]) * 100) / 100;
+        withinRange = distance <= GEOFENCE_RADIUS_MILES;
+      }
+
+      SocketManager.emit('update-rep-location', {
+        leadId,
+        latitude,
+        longitude,
+        distance,
+        withinRange,
+      });
+      broadcastingIdRef.current = leadId;
+    };
+
+    const onFailure = (err: any) => {
+      // A denied permission or a failed fix must never surface to the rep — this is
+      // background telemetry for the ops side, not something they asked for.
+      console.warn('[LocationBroadcaster] position error:', err?.message ?? err);
+    };
+
     const sendLocation = () => {
       Geolocation.getCurrentPosition(
-        (position) => {
-          if (cancelled) return;
-          const { latitude, longitude } = position.coords;
-
-          // The lead's own coordinates are [lng, lat] (GeoJSON), same as web.
-          const coords = leadRef.current?.location?.coordinates;
-          let distance: number | null = null;
-          let withinRange = false;
-          if (Array.isArray(coords) && coords.length >= 2) {
-            distance =
-              Math.round(calculateDistance(latitude, longitude, coords[1], coords[0]) * 100) / 100;
-            withinRange = distance <= GEOFENCE_RADIUS_MILES;
-          }
-
-          SocketManager.emit('update-rep-location', {
-            leadId,
-            latitude,
-            longitude,
-            distance,
-            withinRange,
-          });
-          broadcastingIdRef.current = leadId;
-        },
-        (err) => {
-          // A denied permission or a failed fix must never surface to the rep — this is
-          // background telemetry for the ops side, not something they asked for.
-          console.warn('[LocationBroadcaster] position error:', err?.message ?? err);
-        },
+        broadcast,
+        // ⚠️ A failed fix used to end the tick, so NOTHING went out for that minute —
+        // and on a simulator, indoors, or with the radio busy that is every minute, which
+        // leaves the ops board with a rep who joined the room and then never reported.
+        // The retry accepts a much older fix rather than giving up: a five-minute-old
+        // position still answers "is the rep at the house", and a stale answer beats
+        // silence. It is a SECOND call, not a widened first one — the fresh reading is
+        // still preferred whenever the device can produce one.
+        () =>
+          Geolocation.getCurrentPosition(broadcast, onFailure, {
+            enableHighAccuracy: false,
+            maximumAge: 300000,
+            timeout: 15000,
+          }),
         // Web's options verbatim: a cached, low-accuracy fix is enough to answer
         // "is the rep at the house", and it keeps the GPS radio off.
         { enableHighAccuracy: false, maximumAge: 30000, timeout: 5000 }

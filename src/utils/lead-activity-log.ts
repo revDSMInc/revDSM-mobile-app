@@ -232,7 +232,11 @@ export async function executeStartAppointmentFlow(
     // Web parity (useJobCard / submitted-lead-popup): the ops side watches this room to
     // see the rep is on site. `useLocationBroadcaster` then feeds it a position every
     // minute; `logLeadSessionPause` leaves it when the rep backs out.
-    SocketManager.emit('join-lead-onsite-watch', leadId);
+    //
+    // Goes through the MANAGER's own method, not a bare `emit`, so the join is re-sent
+    // after a reconnect — a room only exists on the server's socket, and a dropped
+    // connection used to take the rep off the ops board's live list silently.
+    SocketManager.joinLeadOnsiteWatch(leadId);
     const workData = res.data?.data || res.data;
     if (workData) {
       targetLead = { ...lead, ...workData };
@@ -282,5 +286,6 @@ export async function logLeadSessionPause(user: any, lead: any) {
 
   // Web emits this beside the pause log so the ops side stops watching the rep on this
   // lead. The paired join happens on check-in / resume in `executeStartAppointmentFlow`.
-  SocketManager.emit('leave-lead-onsite-watch', leadId);
+  // Clearing it here is what stops the reconnect handler re-joining a lead the rep left.
+  SocketManager.leaveLeadOnsiteWatch(leadId);
 }
