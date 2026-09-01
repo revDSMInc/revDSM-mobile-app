@@ -46,7 +46,7 @@ export type LogAction = (typeof LOG_ACTIONS)[keyof typeof LOG_ACTIONS];
  * Installer-module surfaces.
  *
  * The job-session trio mirrors how the sales side splits a lead visit
- * (`lead_check_in` / `lead_resume` / `lead_check_out`): the first open of a job is a
+ * (`lead_check_in` / `lead_resume` / `lead_session`): the first open of a job is a
  * check-in, backing out pauses the session, and coming back is a resume. Everything
  * inside the timeline is logged under the step it happened in — see
  * `INSTALLER_STEP_MODULES` — so the portal can group a job's activity by step.

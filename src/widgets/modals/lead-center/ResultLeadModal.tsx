@@ -3,7 +3,6 @@ import { View, Text, TouchableOpacity, Modal, ScrollView, ActivityIndicator, Sty
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BlurView } from '@react-native-community/blur';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
 import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
@@ -98,18 +97,16 @@ export const ResultLeadModal = ({
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <View className="flex-1 justify-end">
+        {/* Backdrop matches the pitch-book Interactive Tools sheet. It was a
+            `blurType="light"` BlurView, which frosts the page WHITE, and over
+            the Lead Center's own white body that reads as the screen having
+            been wiped rather than dimmed behind a sheet. The flat dark scrim
+            keeps the lead details legible underneath. */}
         <TouchableOpacity
-          style={StyleSheet.absoluteFill}
+          style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)' }]}
           activeOpacity={1}
           onPress={onClose}
-        >
-          <BlurView
-            style={StyleSheet.absoluteFill}
-            blurType={isDark ? 'dark' : 'light'}
-            blurAmount={1}
-            reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
-          />
-        </TouchableOpacity>
+        />
 
         <View
           className="w-full rounded-t-[32px] px-6 pt-5"

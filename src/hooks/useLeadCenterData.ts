@@ -1,14 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { AppState } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
 import { resolveS3Url } from '../utils/s3-utils';
 import { ENV } from '../config/env';
 import { IMAGE_CATEGORIES } from '../constants/lead-center';
-import {
-  logLeadCheckOut,
-  logLeadSessionEnter,
-  persistActiveLeadId,
-} from '../utils/lead-activity-log';
+import { logLeadSessionEnter, persistActiveLeadId } from '../utils/lead-activity-log';
+import { beginLeadWorkSession, clearLeadWorkSession } from '../utils/lead-work-session';
 
 // Frozen module-level singletons so the hook's return identity is stable across
 // renders — these are only ever read as fallbacks, never written.
@@ -45,7 +43,7 @@ const isRouteMissing = (err: any): boolean =>
 export const useLeadCenterData = (
   initialLead: any,
   user: any,
-  options?: { appointmentStarted?: boolean }
+  options?: { appointmentStarted?: boolean; fromMyDeals?: boolean }
 ) => {
   const queryClient = useQueryClient();
   const [lead, setLead] = useState<any>(initialLead);
@@ -327,6 +325,10 @@ export const useLeadCenterData = (
     persistActiveLeadId(lead._id);
     logLeadSessionEnter(user, lead);
 
+    // Remember the session OUTSIDE React, so the one exit that runs no cleanup at all —
+    // the app being killed — can still be closed, on the next launch.
+    beginLeadWorkSession(lead, user, options?.fromMyDeals);
+
     if (!options?.appointmentStarted) {
       LeadService.workLead(lead._id, user._id).catch((e) =>
         console.warn('[LeadCenter] Work start failed:', e)
@@ -334,12 +336,32 @@ export const useLeadCenterData = (
     }
 
     return () => {
-      logLeadCheckOut(user, lead);
+      // NOTE: no `unload` / `lead_check_out` log here any more. Web has no such event —
+      // backing out of the Lead Center is a session PAUSE there — so the portal timeline
+      // read differently depending on which client the rep used. `logLeadSessionPause`
+      // (fired by `LeadCenter`, which knows whether this is a deal) is the replacement.
+      //
+      // This call stays: it is mobile's `setLeadWork(leadId, null)`, which web makes on
+      // the same back press to release the work session.
+      //
+      // ⚠️ Guarded on the app being in the FOREGROUND, for the same reason — and it is
+      // the half that actually matters. Opening the camera hands the foreground to
+      // another activity, and Android can tear this screen down behind it; this cleanup
+      // then released the work session, which is what marks the rep offline on the ops
+      // side. Suppressing only the pause LOG would have left the lead going offline
+      // exactly as reported. `LeadCenter.pauseLeadSession` carries the same check and
+      // the reasoning in full.
+      if (AppState.currentState !== 'active') return;
+
+      // Closed here and now, so the next launch does not treat it as stale and file a
+      // second pause for a lead the rep already left.
+      clearLeadWorkSession();
+
       LeadService.endWorkLead(lead._id).catch((e) =>
         console.warn('[LeadCenter] Work end failed:', e)
       );
     };
-  }, [lead?._id, user?._id, options?.appointmentStarted]);
+  }, [lead?._id, user?._id, options?.appointmentStarted, options?.fromMyDeals]);
 
   useEffect(() => {
     return () => {

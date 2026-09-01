@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -25,12 +25,20 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import { IMAGE_CATEGORIES } from '../../constants/lead-center';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
+import { useWarmedImageUris } from '../../hooks/useWarmedImageUris';
+import { warmToLocalCache } from '../../utils/imageFileCache';
 
 // Subcomponents
 import { AnnotationCanvas } from '../../widgets/components/LeadCenter/AnnotationCanvas';
 import { AnnotationTextToolbar } from '../../widgets/components/LeadCenter/AnnotationTextToolbar';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+/**
+ * Squared distance, in canvas pixels, a finger must travel before the stroke
+ * takes another point. Squared so the move handler needs no `Math.sqrt`.
+ */
+const MIN_POINT_DISTANCE_SQ = 2.25; // 1.5px
 
 interface SectionImage {
   uri: string;
@@ -54,6 +62,30 @@ export default function ImageAnnotationScreen() {
   const [activeImageIndex, setActiveImageIndex] = useState<number>(0);
   const currentPhoto = selectedPhotos[activeImageIndex];
   const photoId = currentPhoto ? (currentPhoto.id || currentPhoto.uri) : '';
+
+  // These are pre-signed S3 urls with no cache headers, so the OS image cache
+  // refuses to store them (the standing gotcha in CLAUDE.md section 6) and the
+  // SAME full-size photo was downloaded three times over one edit: once by
+  // `Image.getSize`, once by the canvas `<Image>`, and once more by Save. One
+  // local file now serves all three, and Manage Photos' own thumbnail warming
+  // has usually put it on disk before the editor even opens.
+  // The photo on screen is warmed FIRST: the cache runs at most three downloads
+  // at a time, so on a multi-photo selection the visible one would otherwise
+  // queue behind photos the rep has not reached yet.
+  const photoUris = useMemo(() => {
+    const all = selectedPhotos.map((p: any) => p?.uri).filter(Boolean) as string[];
+    const current = currentPhoto?.uri;
+    return current ? [current, ...all.filter((u) => u !== current)] : all;
+  }, [selectedPhotos, currentPhoto?.uri]);
+  const warmedUris = useWarmedImageUris(photoUris);
+  const displayUri = currentPhoto ? warmedUris[currentPhoto.uri] || currentPhoto.uri : '';
+  // WARNING Only the DISPLAY uri is swapped. `photoId` above still keys off the
+  // original url - re-keying it when the warm lands would orphan every stroke
+  // and text already drawn on this photo.
+  const displayPhoto = useMemo(
+    () => (currentPhoto ? { ...currentPhoto, uri: displayUri } : currentPhoto),
+    [currentPhoto, displayUri],
+  );
   const [activeTool, setActiveTool] = useState<'none' | 'zoom' | 'draw' | 'text'>('none');
   
   // Sub-modes settings
@@ -93,15 +125,17 @@ export default function ImageAnnotationScreen() {
   }, [user, selectedPhotos.length]);
 
   useEffect(() => {
-    if (currentPhoto?.uri) {
-      Image.getSize(currentPhoto.uri, (w, h) => {
+    if (displayUri) {
+      // Reads the local file once it is warm, so this stops being a network
+      // round trip of its own.
+      Image.getSize(displayUri, (w, h) => {
         setImageSize({ width: w, height: h });
       }, (error) => {
         console.warn('Failed to get image size', error);
         setImageSize({ width: 4, height: 3 }); // fallback
       });
     }
-  }, [currentPhoto?.uri]);
+  }, [displayUri]);
 
   useEffect(() => {
     const backAction = () => {
@@ -136,11 +170,53 @@ export default function ImageAnnotationScreen() {
     }
   }, [containerLayout, imageSize]);
 
-  // Current active drawing stroke
-  const [activeStroke, setActiveStroke] = useState<any | null>(null);
+  // Current active drawing stroke.
+  //
+  // WARNING This is NOT React state, deliberately. It used to be, and a
+  // `setState` per touch move re-rendered the ENTIRE editor - toolbars, colour
+  // panel, text dialog, the rasterizer WebView node - 60+ times a second while
+  // the rep was drawing. The live stroke is published straight to
+  // `AnnotationCanvas` instead, so a stroke re-renders one component.
   const activeStrokeRef = useRef<any | null>(null);
   const startXRef = useRef<number>(0);
   const startYRef = useRef<number>(0);
+  // Last accepted point, in canvas pixels, for the sampling test below.
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
+
+  const liveStrokeListenerRef = useRef<((stroke: any) => void) | null>(null);
+  const liveStrokeFrameRef = useRef<number | null>(null);
+
+  const subscribeLiveStroke = useCallback((cb: (stroke: any) => void) => {
+    liveStrokeListenerRef.current = cb;
+    return () => {
+      if (liveStrokeListenerRef.current === cb) liveStrokeListenerRef.current = null;
+    };
+  }, []);
+
+  const emitLiveStroke = useCallback(() => {
+    liveStrokeFrameRef.current = null;
+    const stroke = activeStrokeRef.current;
+    // A fresh wrapper each emit so the canvas re-renders; `points` is the SAME
+    // array, appended in place - copying it per move made a long stroke O(n^2).
+    liveStrokeListenerRef.current?.(stroke ? { ...stroke } : null);
+  }, []);
+
+  // Android fires touch-move far faster than it can paint, so publishing on
+  // every event only queues renders the screen never shows. One per frame is
+  // the most that can be drawn.
+  const scheduleLiveStroke = useCallback(() => {
+    if (liveStrokeFrameRef.current !== null) return;
+    liveStrokeFrameRef.current = requestAnimationFrame(emitLiveStroke);
+  }, [emitLiveStroke]);
+
+  const cancelScheduledStroke = useCallback(() => {
+    if (liveStrokeFrameRef.current !== null) {
+      cancelAnimationFrame(liveStrokeFrameRef.current);
+      liveStrokeFrameRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => cancelScheduledStroke, [cancelScheduledStroke]);
 
   // Backup arrays for transaction cancel/commit
   const backupStrokesRef = useRef<any[]>([]);
@@ -180,7 +256,10 @@ export default function ImageAnnotationScreen() {
     return subIdOrName;
   };
 
-  const getPathData = (points: { px: number; py: number }[]) => {
+  // Stable identity (it only depends on the canvas box), so `AnnotationCanvas`
+  // can memoize the committed strokes' path strings instead of rebuilding every
+  // one of them on each touch move.
+  const getPathData = useCallback((points: { px: number; py: number }[]) => {
     if (points.length === 0) return '';
     const first = points[0];
     let d = `M ${first.px * canvasLayout.width} ${first.py * canvasLayout.height}`;
@@ -193,7 +272,7 @@ export default function ImageAnnotationScreen() {
       }
     }
     return d;
-  };
+  }, [canvasLayout]);
 
   // Latest state reference for PanResponder callbacks
   const stateRef = useRef({
@@ -246,7 +325,9 @@ export default function ImageAnnotationScreen() {
             isEraser: activeDrawTool === 'eraser',
           };
           activeStrokeRef.current = newStroke;
-          setActiveStroke(newStroke);
+          lastPointRef.current = { x: locationX, y: locationY };
+          cancelScheduledStroke();
+          emitLiveStroke();
         }
       },
       onPanResponderMove: (evt, gestureState) => {
@@ -262,20 +343,33 @@ export default function ImageAnnotationScreen() {
           const scale = zoomScale > 0 ? zoomScale : 1;
           const curX = startXRef.current + gestureState.dx / scale;
           const curY = startYRef.current + gestureState.dy / scale;
+          // Sampling: a finger crossing the canvas emits hundreds of points a
+          // second, and every one of them lengthens the SVG path string that is
+          // rebuilt on each frame - and again for the saved copy. Dropping the
+          // sub-pixel ones is invisible and cuts the point count several-fold.
+          const last = lastPointRef.current;
+          if (last) {
+            const dx = curX - last.x;
+            const dy = curY - last.y;
+            if (dx * dx + dy * dy < MIN_POINT_DISTANCE_SQ) return;
+          }
+          lastPointRef.current = { x: curX, y: curY };
+
           const px = Math.max(0, Math.min(1, curX / canvasLayout.width));
           const py = Math.max(0, Math.min(1, curY / canvasLayout.height));
-          const updatedStroke = {
-            ...activeStrokeRef.current,
-            points: [...activeStrokeRef.current.points, { px, py }],
-          };
-          activeStrokeRef.current = updatedStroke;
-          setActiveStroke(updatedStroke);
+          // Appended IN PLACE - see the warning on `activeStrokeRef`.
+          activeStrokeRef.current.points.push({ px, py });
+          scheduleLiveStroke();
         }
       },
       onPanResponderRelease: (evt, gestureState) => {
         const { activeTool, photoId, canvasLayout } = stateRef.current;
         if (activeTool === 'draw') {
-          const finishedStroke = activeStrokeRef.current;
+          cancelScheduledStroke();
+          const pending = activeStrokeRef.current;
+          // Snapshot the points on commit: the live array is mutated in place,
+          // and what goes into `strokesMap` must never alias it.
+          const finishedStroke = pending ? { ...pending, points: pending.points.slice() } : null;
           if (finishedStroke) {
             setStrokesMap((sm) => {
               const existing = sm[photoId] || [];
@@ -289,7 +383,8 @@ export default function ImageAnnotationScreen() {
             setRedoMap((rm) => ({ ...rm, [photoId]: [] }));
           }
           activeStrokeRef.current = null;
-          setActiveStroke(null);
+          lastPointRef.current = null;
+          emitLiveStroke();
         } else if (activeTool === 'text') {
           const { locationX, locationY } = evt.nativeEvent;
           const px = locationX / canvasLayout.width;
@@ -490,6 +585,25 @@ export default function ImageAnnotationScreen() {
 
   const saveQueueRef = useRef<any[]>([]);
   const saveResultsRef = useRef<any[]>([]);
+  // Kicked off when Save is pressed and awaited only at upload time: the fix can
+  // take its full 5s timeout, and it used to sit on the critical path AFTER every
+  // image had already been rasterized. It now resolves while they rasterize.
+  const locationRef = useRef<Promise<{ latitude: number; longitude: number }> | null>(null);
+
+  const requestCoords = (): Promise<{ latitude: number; longitude: number }> =>
+    new Promise((resolve) => {
+      Geolocation.getCurrentPosition(
+        (position) => resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        }),
+        (error) => {
+          console.warn('Could not get location for annotated photos', error);
+          resolve({ latitude: 0, longitude: 0 });
+        },
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 300000 },
+      );
+    });
 
   const getBase64FromUri = async (uri: string): Promise<string> => {
     if (uri.startsWith('file://')) {
@@ -497,6 +611,21 @@ export default function ImageAnnotationScreen() {
       const data = await ReactNativeBlobUtil.fs.readFile(cleanPath, 'base64');
       return `data:image/jpeg;base64,${data}`;
     }
+
+    // The editor warmed this photo on open, so this normally resolves to a disk
+    // read rather than downloading the full-size original a second time.
+    // `warmToLocalCache` returns immediately when the file is already there and
+    // shares one request between callers when it is not.
+    try {
+      const cached = await warmToLocalCache(uri);
+      if (cached) {
+        const data = await ReactNativeBlobUtil.fs.readFile(cached.replace('file://', ''), 'base64');
+        return `data:image/jpeg;base64,${data}`;
+      }
+    } catch {
+      // Fall through to the direct fetch below - a cache miss must never fail a save.
+    }
+
     const res = await ReactNativeBlobUtil.config({ fileCache: true }).fetch('GET', uri, {
       'Accept-Encoding': 'identity',
     });
@@ -523,6 +652,11 @@ export default function ImageAnnotationScreen() {
       navigation.goBack();
       return;
     }
+
+    // Started here rather than at upload time so the fix resolves while the
+    // images rasterize - but only once there is something to upload, so a save
+    // with nothing annotated does not ask for a location it will never use.
+    locationRef.current = requestCoords();
 
     setSaveProgressText('Downloading original images...');
 
@@ -644,24 +778,10 @@ export default function ImageAnnotationScreen() {
       return;
     }
 
-    setSaveProgressText('Getting location & uploading annotated images...');
+    setSaveProgressText('Uploading annotated images...');
 
-    let coords = { latitude: 0, longitude: 0 };
-    try {
-      const position = await new Promise<any>((resolve, reject) => {
-        Geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 5000,
-          maximumAge: 300000, // 5 minutes cache
-        });
-      });
-      coords = {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-      };
-    } catch (error) {
-      console.warn('Could not get location for annotated photos', error);
-    }
+    // Already in flight since Save was pressed; this is normally instant.
+    const coords = await (locationRef.current || requestCoords());
     
     // Process uploads sequentially to prevent backend database write race conditions
     for (let i = 0; i < results.length; i++) {
@@ -798,10 +918,10 @@ export default function ImageAnnotationScreen() {
               <AnnotationCanvas
                 canvasLayout={canvasLayout}
                 activeTool={activeTool}
-                currentPhoto={currentPhoto}
+                currentPhoto={displayPhoto}
                 activeImageIndex={activeImageIndex}
                 currentStrokes={currentStrokes}
-                activeStroke={activeStroke}
+                subscribeActiveStroke={subscribeLiveStroke}
                 currentTexts={currentTexts}
                 getPathData={getPathData}
                 selectedTextId={selectedTextId}

@@ -397,8 +397,9 @@ export default function LeadsPage() {
             placeholderTextColor={colors.textSecondary}
             value={searchQuery}
             onChangeText={setSearchQuery}
-            className="flex-1 ml-2 text-base"
-            style={{ color: colors.text }}
+            // `text-base` is gone from here on purpose — see `styles.searchInput`.
+            className="flex-1 ml-2"
+            style={[styles.searchInput, { color: colors.text,fontSize:Platform.OS==='android'?17:16 }]}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')} className="p-1 rounded-full bg-text-secondary">
@@ -444,10 +445,12 @@ export default function LeadsPage() {
               ]}
             >
               <Text
-                className="text-base font-medium"
-                style={{
-                  color: currentTab === tab ? '#FFFFFF' : colors.textSecondary,
-                }}
+                // `text-base` is gone from here on purpose — see `styles.tabLabel`.
+                className="font-medium"
+                style={[
+                  styles.tabLabel,
+                  { color: currentTab === tab ? '#FFFFFF' : colors.textSecondary },
+                ]}
               >
                 {tab === 'issued' ? 'Issued' : tab === 'selfGen' ? 'Self Gens' : 'Rehash'}
               </Text>
@@ -663,6 +666,47 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
   },
+  /**
+   * The leads search field, matched across platforms.
+   *
+   * It used to be styled by the `text-base` class alone, which supplies `lineHeight: 24`
+   * as well as the size — and a TextInput is not a Text. iOS lays the glyphs out inside
+   * that taller line box and sits them HIGH in it, so the tail of a `q` was clipped at
+   * the bottom edge and the whole string read as sitting above centre. Android reserved
+   * its own font padding on top of the container's, landing the text somewhere else
+   * again, so the two platforms disagreed about both size and position.
+   *
+   * ⚠️ Do NOT put `lineHeight` back on this input. It is the cause of the clipping, and
+   * a single-line field has no use for one: the height comes from `minHeight` plus the
+   * wrapper's own `py-2`, which is what keeps the bar the same height as before.
+   */
+  searchInput: {
+    fontSize: 16,
+    // Zeroes the platform default input padding so the wrapper's `py-2` is the only
+    // vertical padding in play, on both platforms.
+    padding: 0,
+    // Android-only, ignored by iOS: drop the reserved metric padding and centre what is
+    // left, so the text sits on the same line as iOS instead of riding low.
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+    // Room for the descender — without it the box can collapse to the glyph and clip
+    // the tail again.
+    minHeight: 24,
+  },
+  /**
+   * The Issued / Self Gens / Rehash tab labels.
+   *
+   * Same cause as `searchInput`, different symptom: `text-base` also supplies
+   * `lineHeight: 24`, and on Android that line box cuts the descender off the `g` in
+   * "Self Gens" — the client's "hiding from bottom". iOS renders the same label
+   * correctly, so the line height is KEPT there rather than changing the platform that
+   * already looks right; only Android drops it and measures the label by its own font
+   * metrics instead. The pill's `paddingVertical: 8` supplies the height either way.
+   */
+  tabLabel: {
+    fontSize: 16,
+    ...Platform.select({ ios: { lineHeight: 24 }, default: {} }),
+  },
   addBtn: {
     width: 44,
     height: 44,
@@ -708,8 +752,9 @@ function SubTab({
         className="text-base pb-1.5"
         style={{
           color: active ? colors.primary.main : colors.textSecondary,
-          borderBottomWidth: 2,
+          borderBottomWidth: Platform.OS==='android'?2.3:2,
           borderBottomColor: active ? colors.primary.main : 'transparent',
+          fontWeight:Platform.OS==='android'?'500':'400'
         }}
       >
         {label}

@@ -95,6 +95,7 @@ import type {
   InstallerDeletePhase,
   InstallerJob,
   CocSignatureRef,
+  CocSignOff,
   InstallerJobPatch,
   InstallStepKey,
   InstallerResultType,
@@ -584,7 +585,9 @@ export default function InstallerJobDetail() {
     (page: CapturedPhoto) => {
       const index = progressRef.current.cocPages.length + 1;
       addCocPage(page);
-      upload.uploadCoc(page, index);
+      // Handed back to the step: on the Paper Fallback path the response carries the
+      // certificate the backend read off THIS page, and that is what prefills the form.
+      return upload.uploadCoc(page, index).then((result) => result?.scan ?? null);
     },
     [addCocPage, upload, progressRef]
   );
@@ -599,7 +602,8 @@ export default function InstallerJobDetail() {
    */
   const handleCocSignature = useCallback(
     (photo: CapturedPhoto, who: 'installer' | 'customer') => {
-      const task = upload.uploadCocSignature(photo, who).then((patch) => {
+      const task = upload.uploadCocSignature(photo, who).then((result) => {
+        const patch = result?.patch;
         if (patch?.s3url) {
           cocSignatureRefs.current[who] = {
             s3url: patch.s3url,
@@ -709,9 +713,18 @@ export default function InstallerJobDetail() {
    * wraps it — and `status` never travels on a step save; only the final sign-off and
    * the result actions set it.
    */
+  /**
+   * Returns the job the PATCH answered with, for the callers that need something out of
+   * it — today that is the CoC, whose response carries the generated certificate PDF.
+   * `null` covers every path that did not reach the server: no job, an empty patch, an
+   * unchanged step, or a failure (which is reported to the installer, not thrown).
+   */
   const sendStepData = useCallback(
-    async (step: InstallStepKey, options: StepDataOptions = {}) => {
-      if (!job?._id) return;
+    async (
+      step: InstallStepKey,
+      options: StepDataOptions = {}
+    ): Promise<InstallerJob | null> => {
+      if (!job?._id) return null;
       await upload.waitForUploads();
 
       const body = buildStepData(step, options);
@@ -720,18 +733,19 @@ export default function InstallerJobDetail() {
         // indistinguishable from a request that failed. The usual cause is a photo
         // whose upload hasn't produced an s3url, so there is nothing to reference yet.
         console.log(`[InstallerJob] "${step}" has nothing to save — request skipped`);
-        return;
+        return null;
       }
 
       const signature = signatureOf(body!);
       if (lastSentRef.current[step] === signature) {
         console.log(`[InstallerJob] "${step}" unchanged since its last save — skipped`);
-        return;
+        return null;
       }
 
       try {
-        await InstallerService.updateJob(job._id, body!);
+        const updated = await InstallerService.updateJob(job._id, body!);
         lastSentRef.current[step] = signature;
+        return updated;
       } catch (err: any) {
         // The body is logged alongside the error: when the server objects to the shape
         // rather than the connection, the payload is the only thing that explains why.
@@ -742,6 +756,7 @@ export default function InstallerJobDetail() {
             'Your work is stored on this device — reopen the step once you have signal.'
         );
       }
+      return null;
     },
     [job, upload, buildStepData]
   );
@@ -776,7 +791,7 @@ export default function InstallerJobDetail() {
       await Promise.all(cocSignatureTasks.current);
       cocSignatureTasks.current = [];
 
-      setCocSignOff({
+      const signOff: CocSignOff = {
         confirmations: {
           is18OrOlder: data.isAdult,
           isHomeownerOrAuthorized: data.isAuthorizedSigner,
@@ -800,9 +815,17 @@ export default function InstallerJobDetail() {
         installerSignaturePaths: data.installerSignaturePaths,
         customerSignaturePaths: data.customerSignaturePaths,
         signatureSize: data.signatureSize,
-      });
+      };
+      setCocSignOff(signOff);
 
-      await sendStepData('coc');
+      // The PATCH answers with the generated certificate PDF. Stored ON the sign-off,
+      // so it survives a relaunch (progress is persisted) and a later job payload that
+      // does not repeat it — that document is what the step shows from now on.
+      //
+      // ⚠️ Written from `signOff`, not re-read from progress: this is the certificate
+      // that was just filed, and the two must not be able to drift apart.
+      const updated = await sendStepData('coc');
+      if (updated?.cocPacket) setCocSignOff({ ...signOff, document: updated.cocPacket });
     },
     [sendStepData, setCocSignOff, progressRef]
   );
@@ -1895,6 +1918,9 @@ export default function InstallerJobDetail() {
           skipMaterial('pickup');
           handleCloseStep();
         }}
+        // The same handler the back button gets: leaving a step is the save point, and
+        // Done must not become a second way of saving that can drift from it.
+        onDone={handleCloseStep}
         onBack={handleCloseStep}
       />
 
@@ -1908,6 +1934,7 @@ export default function InstallerJobDetail() {
           skipMaterial('return');
           handleCloseStep();
         }}
+        onDone={handleCloseStep}
         onBack={handleCloseStep}
       />
 
@@ -1981,6 +2008,10 @@ export default function InstallerJobDetail() {
         visible={openStep === 'coc'}
         job={job}
         pages={progress.cocPages}
+        // The generated certificate. The device's own copy (kept on the sign-off from
+        // the submit response) wins over the job payload's, because a job re-fetched
+        // from the list does not carry it.
+        document={progress.cocSignOff?.document ?? job.cocPacket}
         onAddPage={handleCocPage}
         onSignature={handleCocSignature}
         onSignOff={handleCocSignOff}

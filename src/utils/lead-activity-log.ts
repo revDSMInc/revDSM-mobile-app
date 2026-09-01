@@ -11,6 +11,7 @@ import {
 } from './location-util';
 import { logEvent } from '../services/api/LoggerService';
 import ChatService from '../services/api/ChatService';
+import SocketManager from '../services/SocketManager';
 
 export type UserLocation = { latitude: number; longitude: number } | null;
 export type LeadLogModule = 'lead_check_in' | 'lead_resume' | 'lead_review' | '';
@@ -167,6 +168,12 @@ export async function logLeadActionClick(
     created_by: userId,
     meta: {
       leadId: lead._id || lead.id,
+      // The HUMAN lead number, which web sends alongside the record id
+      // (`useJobCard.logActionEvent`: `jobLeadId: job?.leadId`). Mobile dropped it, so a
+      // portal row from the app could not be matched to the lead the rep sees on the card.
+      // A self-gen lead has none, and web sends its literal `'N/A'` rather than omitting
+      // the key — the captured payload shows `jobLeadId: "N/A"`.
+      jobLeadId: lead.leadId || 'N/A',
       // `hasSalesPhotos` FIRST — this runs on a lead straight off the list, and a slim
       // (`view=summary`) row carries `salesPhotos: []` regardless of whether the lead
       // actually has any. Counting the array alone would log `false` for every lead.
@@ -221,6 +228,15 @@ export async function executeStartAppointmentFlow(
     if (plan.logModule) {
       await logLeadActionClick(user, plan.logModule, lead);
     }
+
+    // Web parity (useJobCard / submitted-lead-popup): the ops side watches this room to
+    // see the rep is on site. `useLocationBroadcaster` then feeds it a position every
+    // minute; `logLeadSessionPause` leaves it when the rep backs out.
+    //
+    // Goes through the MANAGER's own method, not a bare `emit`, so the join is re-sent
+    // after a reconnect — a room only exists on the server's socket, and a dropped
+    // connection used to take the rep off the ops board's live list silently.
+    SocketManager.joinLeadOnsiteWatch(leadId);
     const workData = res.data?.data || res.data;
     if (workData) {
       targetLead = { ...lead, ...workData };
@@ -238,18 +254,38 @@ export async function logLeadSessionEnter(user: any, lead: any) {
   await persistActiveLeadId(leadId);
 }
 
+/**
+ * Backing out of the Lead Center PAUSES the on-site work session.
+ *
+ * Web fires this from both back paths of `job-capture-images-view.js` (the header arrow
+ * and `useDetectBack`) as `logEvent('pause', { module_type: 'lead_session', ... })`, then
+ * releases the session with `setLeadWork(leadId, null)` and leaves the ops watch room.
+ *
+ * Mobile used to send `unload` / `lead_check_out` / `check_out_unloaded` here instead —
+ * an event web has never had, so the portal timeline read differently depending on which
+ * client the rep used. That log is gone; this is its replacement.
+ *
+ * The work release itself stays where it already was, in `useLeadCenterData`'s unmount
+ * cleanup (`LeadService.endWorkLead`) — that is mobile's `setLeadWork(leadId, null)`.
+ */
 export async function logLeadSessionPause(user: any, lead: any) {
-  // No-op - removed irrelevant telemetry logs
-}
-
-export async function logLeadCheckOut(user: any, lead: any) {
   const userId = user?._id || user?.id;
-  if (!userId || !lead?._id) return;
-  await logEvent('unload', {
+  const leadId = lead?._id || lead?.id;
+  if (!userId || !leadId) return;
+
+  await logEvent('pause', {
     user_id: userId,
-    module_type: 'lead_check_out',
-    action: 'check_out_unloaded',
+    module_type: 'lead_session',
+    action: 'session_pause',
     created_by: userId,
-    meta: { leadId: lead._id || lead.id, unload: true },
+    meta: {
+      leadId,
+      jobLeadId: lead?.leadId || 'N/A',
+    },
   });
+
+  // Web emits this beside the pause log so the ops side stops watching the rep on this
+  // lead. The paired join happens on check-in / resume in `executeStartAppointmentFlow`.
+  // Clearing it here is what stops the reconnect handler re-joining a lead the rep left.
+  SocketManager.leaveLeadOnsiteWatch(leadId);
 }

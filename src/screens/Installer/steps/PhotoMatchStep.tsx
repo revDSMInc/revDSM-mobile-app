@@ -316,6 +316,22 @@ export function PhotoMatchStep({
   const selectedRef = selected ? referenceUri(selected) : undefined;
 
   /**
+   * What the big pane actually shows: the installer's OWN shot once this tag has one,
+   * otherwise the reference, otherwise the line-art house.
+   *
+   * The reference is what the shot has to match, so it owns the pane right up until
+   * there is a shot — at which point the thing worth looking at is what was taken. Both
+   * halves stay reachable: `MATCHED — tap to review` opens the two-up comparison, which
+   * is unchanged, and re-shooting still ghosts against `referenceUri`.
+   *
+   * ⚠️ Written as `??` on the captured uri rather than as a branch on `phase`, so it
+   * reads the same in both passes: pre ghosts against the rep's sale photo, post against
+   * the installer's own pre shot, and either way the pane flips to the new shot.
+   */
+  const capturedUri = selected ? matched[selected.id]?.uri : undefined;
+  const heroUri = capturedUri ?? selectedRef;
+
+  /**
    * A signed URL is genuinely on its way: the tag carries an S3 key that
    * `useRepPhotoSections` hasn't exchanged yet.
    *
@@ -486,10 +502,12 @@ export function PhotoMatchStep({
           className="flex-1 overflow-hidden"
           style={{ backgroundColor: selected ? tagTint(selected.id) : T_CARD }}
         >
-          {selectedRef ? (
-            <TaggerImage uri={selectedRef} tint={selected ? tagTint(selected.id) : undefined} />
+          {heroUri ? (
+            <TaggerImage uri={heroUri} tint={selected ? tagTint(selected.id) : undefined} />
           ) : (
             <>
+              {/* Nothing from the rep and nothing shot yet — the house stands in, and
+                  the chip below invites a shot rather than a match. */}
               <HouseGhost opacity={0.8} />
               {awaitingReference && <TaggerImageSpinner />}
             </>
@@ -499,8 +517,13 @@ export function PhotoMatchStep({
             <View className="rounded-2xl px-3 py-1.5" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}>
               <Text className="text-white text-xs font-bold">
                 {/* "REP PHOTO" over a blank frame reads as a photo that failed to load.
-                    A tag with no reference is an addition, so it says so. */}
-                {referenceUnavailable
+                    A tag with no reference is an addition, so it says so — and once a
+                    shot exists the pane is showing THAT, so the chip has to say whose
+                    photo is on screen or the installer reads their own work as the
+                    reference they are supposed to be matching. */}
+                {capturedUri
+                  ? t('installer.yourPhoto')
+                  : referenceUnavailable
                   ? t('installer.addPhoto')
                   : phase === 'pre'
                   ? t('installer.repPhoto')

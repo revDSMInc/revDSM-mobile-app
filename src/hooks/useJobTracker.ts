@@ -1,9 +1,15 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Alert, Platform } from 'react-native';
-import { format, parseISO, isValid, addDays, parse } from 'date-fns';
+import { format, parseISO, isValid, parse } from 'date-fns';
 import JobService, { JobEntry } from '../services/api/JobService';
 import { parseSafeISO } from '../utils/date-util';
 import { triggerThresholdCrossing } from '../utils/haptics';
+import { useCommissionConfig } from './useCommissionConfig';
+import {
+  expectedPayoutDateFor,
+  parseEarnedDate,
+  resolveEarnedDate,
+} from '../utils/calculator/calculate-expected-payout-date';
 
 export const useJobTracker = (selectedYear: number) => {
   const [jobs, setJobs] = useState<JobEntry[]>([]);
@@ -19,12 +25,49 @@ export const useJobTracker = (selectedYear: number) => {
   const [statusFilter, setStatusFilter] = useState('');
   const [paymentMethodFilter, setPaymentMethodFilter] = useState('');
 
-  const calculateExpectedPayout = (installDate: string | null) => {
-    if (!installDate || installDate === 'TBD') return 'TBD';
-    const date = parseSafeISO(installDate);
-    if (!isValid(date)) return 'N/A';
-    return format(addDays(date, 14), 'MM/dd/yyyy');
-  };
+  // The company's payout calendar. Null / unconfigured / a failed read all
+  // resolve to a `scheduleType: 'none'` config, which yields no date at all -
+  // see the warning below.
+  const { payoutConfig } = useCommissionConfig();
+
+  /**
+   * The job's expected payout date, per the company's configured schedule
+   * (`payPeriodLag` or `dayOfMonth`). Port notes live in
+   * `utils/calculator/calculate-expected-payout-date.ts`.
+   *
+   * WARNING This REPLACES a flat `installDate + 14 days`, which matched neither
+   * the portal's legacy band table nor any configured schedule - it was a
+   * fabricated date that happened to look plausible. Expect existing rows to
+   * move.
+   *
+   * WARNING The result is DERIVED at render and deliberately never stored on
+   * the job: an admin editing the schedule has to move every unpaid row with it.
+   *
+   * `TBD` is the guide's "To be determined" - no install date yet, no schedule
+   * configured, or a gap in the day-of-month bands. `N/A` is kept for a stored
+   * date that cannot be parsed at all, which is a data problem rather than an
+   * unanswerable question.
+   */
+  const calculateExpectedPayout = useCallback(
+    (job: JobEntry | string | null | undefined) => {
+      // Callers may pass a bare earned date; a job record resolves its own
+      // field per `earnedDateField` (installDate today, soldDate if configured).
+      const isRecord = !!job && typeof job === 'object';
+      const earned = isRecord
+        ? resolveEarnedDate(job, payoutConfig)
+        : (job as string | null | undefined);
+
+      if (!earned || earned === 'TBD') return 'TBD';
+      if (!parseEarnedDate(earned)) return 'N/A';
+
+      const payDate = isRecord
+        ? expectedPayoutDateFor(job, payoutConfig)
+        : expectedPayoutDateFor({ installDate: earned, soldDate: earned }, payoutConfig);
+
+      return payDate ? format(payDate, 'MM/dd/yyyy') : 'TBD';
+    },
+    [payoutConfig]
+  );
 
   const fetchJobs = useCallback(async () => {
     try {
@@ -111,7 +154,7 @@ export const useJobTracker = (selectedYear: number) => {
       // 3. Payout Date Filter: Exact day match on calculated expected payout
       let matchPayoutDate = true;
       if (payoutDateFilter) {
-        const expectedPayoutStr = calculateExpectedPayout(j.installDate);
+        const expectedPayoutStr = calculateExpectedPayout(j);
         const filterDateStr = format(parseSafeISO(payoutDateFilter), 'MM/dd/yyyy');
         matchPayoutDate = expectedPayoutStr === filterDateStr;
       }
@@ -132,6 +175,9 @@ export const useJobTracker = (selectedYear: number) => {
     payoutDateFilter,
     statusFilter,
     paymentMethodFilter,
+    // The payout filter matches against the derived date, so a config change
+    // has to re-run the filter as well as the column.
+    calculateExpectedPayout,
   ]);
 
   const { groupedJobs, totalEarnings } = useMemo(() => {

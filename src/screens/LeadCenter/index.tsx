@@ -13,6 +13,7 @@ import {
   Modal,
   BackHandler,
   Alert,
+  AppState,
   PermissionsAndroid,
 } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
@@ -20,6 +21,9 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Storage } from '../../utils/storage';
 import { logLeadSessionPause } from '../../utils/lead-activity-log';
+import { useLocationBroadcaster } from '../../hooks/useLocationBroadcaster';
+import { clearLeadWorkSession } from '../../utils/lead-work-session';
+import { androidTextStyle } from '../../utils/platform-font';
 import { ENV } from '../../config/env';
 import { useTheme } from '../../theme/ThemeProvider';
 import Pitchbook from '../../widgets/modals/lead-center/Pitchbook';
@@ -51,7 +55,7 @@ import { JobDocsSection } from '../../widgets/components/LeadCenter/JobDocsSecti
 import { DealBanners } from '../../widgets/components/LeadCenter/DealBanners';
 import { ToolsSection, MapSection } from '../../widgets/components/LeadCenter/OperationalSections';
 import Icon from 'react-native-vector-icons/Ionicons';
-import { Header } from '../../widgets/common/MainHeader';
+import { Header, useHeader } from '../../widgets/common/MainHeader';
 import MaterialIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { EditCustomerModal, EditCustomerPayload } from '../../widgets/modals/lead-center/EditCustomerModal';
 import Feather from 'react-native-vector-icons/Feather';
@@ -139,7 +143,7 @@ export default function LeadCenterPage() {
     isOutcomeLoading,
     sectionImages,
     setSectionImages,
-  } = useLeadCenterData(initialLead, user, { appointmentStarted });
+  } = useLeadCenterData(initialLead, user, { appointmentStarted, fromMyDeals });
 
   // ── Contract Details pencil opens the 4-step deal-edit wizard ───────────────
   // Install Date → Job Build → Job Price → Review & Submit, replacing the inline
@@ -189,6 +193,12 @@ export default function LeadCenterPage() {
     });
   }, [navigation, lead]);
 
+  // Web parity (`LocationBroadcaster`, mounted app-wide and keyed on `workLeadId`):
+  // while the rep has a lead open, push their position to its watch room every minute so
+  // ops can see whether they are on site. A DEAL has no on-site work session, so it does
+  // not broadcast — the same reason its back press logs no pause below.
+  useLocationBroadcaster(lead, !fromMyDeals);
+
   const hasLoggedPauseRef = useRef(false);
   const userRef = useRef(user);
   const leadRef = useRef(lead);
@@ -198,14 +208,89 @@ export default function LeadCenterPage() {
     leadRef.current = lead;
   }, [user, lead]);
 
+  /**
+   * The ONE exit path for the session pause. Every way out of this screen goes through
+   * it — the screen's own back arrow, Android hardware back, the global header's home
+   * button, and the unmount backstop — so no route can leave the ops session log
+   * thinking the rep is still on site.
+   *
+   * `hasLoggedPauseRef` makes it idempotent: `handleClose` navigates, which then
+   * unmounts, and both would otherwise log. Reads its inputs from refs because the
+   * unmount cleanup runs with whatever closure it was created with.
+   */
+  const pauseLeadSession = useCallback(() => {
+    // Web `job-capture-images-view.js`: a deal is opened to be read, not worked, so
+    // firing a pause would mark the rep as having worked a closed job in the ops
+    // session log. Every other route pauses the session check-in / resume started.
+    if (fromMyDeals) return Promise.resolve();
+
+    /**
+     * ⚠️ A pause means the REP LEFT THE LEAD — and they can only do that while the app
+     * is the thing on screen.
+     *
+     * Opening the camera hands the foreground to another activity, and Android is free
+     * to tear this screen down behind it (it does so routinely on an emulator, and on
+     * any device with "Don't keep activities" on). That ran the unmount backstop below
+     * and filed a pause for a lead the rep was standing in front of — so ops saw them
+     * go offline in the middle of an inspection, and the screen came straight back with
+     * a fresh `work` call behind it. Reported against the camera; the same tear-down
+     * happens for any foreground hand-off.
+     *
+     * `AppState.currentState` is not sampled here — RN caches it from the host
+     * lifecycle event, so by the time an unmount caused by backgrounding runs, it
+     * already reads 'background'. A real back press is always 'active'.
+     *
+     * Consequence, and it is the right way round: if the OS kills the app while it is
+     * backgrounded, no pause is filed and the session stays open. That is the failure
+     * this ticket asked for — a lead wrongly marked offline is worse than one that
+     * stays on until the rep actually comes back and leaves it.
+     */
+    if (AppState.currentState !== 'active') return Promise.resolve();
+
+    if (!leadRef.current?._id || hasLoggedPauseRef.current) return Promise.resolve();
+    hasLoggedPauseRef.current = true;
+    // The rep left of their own accord, so the next launch must not treat this session
+    // as one a kill left behind and file a second pause for it.
+    clearLeadWorkSession();
+    return logLeadSessionPause(userRef.current, leadRef.current).catch((err) => {
+      console.warn('[LeadCenter] Session pause logging failed:', err);
+    });
+  }, [fromMyDeals]);
+
+  const pauseLeadSessionRef = useRef(pauseLeadSession);
+  useEffect(() => {
+    pauseLeadSessionRef.current = pauseLeadSession;
+  }, [pauseLeadSession]);
+
+  /**
+   * The green `MainHeader` is rendered by the NAVIGATOR, outside this stack screen, so
+   * its "go home" brand button called `navigation.navigate('Leads')` directly and never
+   * touched `handleClose` — backing out that way logged no pause. Registering
+   * `onNavigate` for as long as this screen is focused routes it through the same exit.
+   *
+   * Not awaited: the log POST is queued in a module-level chain that outlives this
+   * screen, so the rep's tap is never delayed by a round trip.
+   */
+  const { setHeaderActions } = useHeader();
+  useFocusEffect(
+    useCallback(() => {
+      setHeaderActions({
+        onNavigate: (target: any) => {
+          // Not awaited (see above); `pauseLeadSession` swallows its own errors.
+          pauseLeadSessionRef.current();
+          navigation.navigate(target);
+        },
+      });
+      return () => setHeaderActions({ onNavigate: null });
+    }, [setHeaderActions, navigation])
+  );
+
   useEffect(() => {
     return () => {
-      if (leadRef.current?._id && !hasLoggedPauseRef.current) {
-        hasLoggedPauseRef.current = true;
-        logLeadSessionPause(userRef.current, leadRef.current).catch((err) => {
-          console.warn('[LeadCenter] Unmount session pause logging failed:', err);
-        });
-      }
+      // Backstop for the paths that unmount without announcing themselves — a
+      // `reset`/`replace` from a sub-flow, the iOS swipe-back gesture, or the OS
+      // tearing the screen down.
+      pauseLeadSessionRef.current();
     };
   }, []);
 
@@ -1034,20 +1119,13 @@ export default function LeadCenterPage() {
   }, [navigation]);
 
   const handleClose = useCallback(async () => {
-    if (lead?._id && !hasLoggedPauseRef.current) {
-      hasLoggedPauseRef.current = true;
-      try {
-        await logLeadSessionPause(user, lead);
-      } catch (err) {
-        console.warn('[LeadCenter] Session pause logging failed:', err);
-      }
-    }
+    await pauseLeadSession();
     if (fromZoneCanvasser) {
       returnToZoneCanvasser();
       return;
     }
     navigation.goBack();
-  }, [lead, user, fromZoneCanvasser, returnToZoneCanvasser, navigation]);
+  }, [pauseLeadSession, fromZoneCanvasser, returnToZoneCanvasser, navigation]);
 
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -1119,7 +1197,10 @@ export default function LeadCenterPage() {
               </TouchableOpacity>
               <View>
                 {/* Same screen, two entry points: from My Deals it IS a deal. */}
-                <Text className="text-lg font-black" style={{ color: colors.text }}>
+                <Text
+                  className="text-lg font-black"
+                  style={[{ color: colors.text }, androidTextStyle(14)]}
+                >
                   {fromMyDeals ? 'Deal' : 'Lead Center'}
                 </Text>
               </View>
@@ -1146,7 +1227,10 @@ export default function LeadCenterPage() {
           <View className="px-4">
             <View className="flex-row gap-4 mb-4">
               <View className="flex-1 flex-col gap-4">
-                <Text className="text-base font-semibold" style={{ color: '#72BD00' }}>
+                <Text
+                  className="text-base font-semibold"
+                  style={[{ color: '#72BD00' }, androidTextStyle(14)]}
+                >
                   Lead ID:
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadId}
@@ -1158,7 +1242,10 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 shrink text-base font-semibold text-text-primary">
+                  <Text
+                    className="ml-1 shrink text-base font-semibold text-text-primary"
+                    style={androidTextStyle(16)}
+                  >
                     {lead.customerDetails?.firstName} {lead.customerDetails?.lastName}
                   </Text>
                   <TouchableOpacity
@@ -1185,7 +1272,10 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-base font-semibold" style={{ color: '#72BD00' }}>
+                  <Text
+                    className="ml-1 text-base font-semibold"
+                    style={[{ color: '#72BD00' }, androidTextStyle(14)]}
+                  >
                     {/* The record stores the number RAW or E.164 (`18757575799`), which is
                         what the header used to print. `EditCustomerModal` seeds its own
                         field through this same formatter, so the two surfaces now read the
@@ -1201,14 +1291,20 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-base font-semibold text-text-primary">
+                  <Text
+                    className="ml-1 text-base font-semibold text-text-primary"
+                    style={androidTextStyle(16)}
+                  >
                     {formatDate(lead?.leadDatetime)}
                   </Text>
                 </View>
               </View>
 
               <View className="flex-1 flex-col gap-4">
-                <Text className="text-base font-semibold" style={{ color: '#72BD00' }}>
+                <Text
+                  className="text-base font-semibold"
+                  style={[{ color: '#72BD00' }, androidTextStyle(14)]}
+                >
                   Lead Code:{' '}
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadCode || 'N/A'}
@@ -1226,7 +1322,10 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-base font-semibold" style={{ color: '#72BD00' }}>
+                  <Text
+                    className="ml-1 text-base font-semibold"
+                    style={[{ color: '#72BD00' }, androidTextStyle(14)]}
+                  >
                     {lead?.customerDetails?.email || 'N/A'}
                   </Text>
                 </TouchableOpacity>
@@ -1236,7 +1335,10 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-base font-semibold  text-text-primary">
+                  <Text
+                    className="ml-1 text-base font-semibold  text-text-primary"
+                    style={androidTextStyle(16)}
+                  >
                     {lead.leadTime}
                   </Text>
                 </View>
@@ -1248,7 +1350,10 @@ export default function LeadCenterPage() {
                 size={14}
                 color="#72BD00"
               />
-              <Text className="ml-1 text-base font-semibold " style={{ color: "#72BD00" }}>
+              <Text
+                className="ml-1 text-base font-semibold "
+                style={[{ color: '#72BD00' }, androidTextStyle(14)]}
+              >
                 {lead?.fullAddress || lead?.customerDetails?.address || 'N/A'}
               </Text>
             </TouchableOpacity>
@@ -1807,7 +1912,7 @@ function TabButton({ label, i, active, onPress, colors, isDark }: any) {
       />
       <Text
         className="text-base font-semibold mt-1"
-        style={{ color: active ? 'white' : colors.textSecondary }}
+        style={[{ color: active ? 'white' : colors.textSecondary }, androidTextStyle(14)]}
       >
         {label}
       </Text>

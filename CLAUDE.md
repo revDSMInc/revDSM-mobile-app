@@ -6379,6 +6379,338 @@ Verified with 6 tests driving the real helpers for this canvas's geometry: the a
 already-panned state. tsc 44 (baseline unchanged); `DraggableText` and `ImageAnnotation/index.tsx`
 identical to HEAD, `AnnotationCanvas` +1 `react-native/no-inline-styles`.
 
+### CoC Paper Fallback scans upload under `phase: 'cocPaperFallback'`
+
+Ticket: the paper-fallback upload should use `PUT /installer/v1/{jobId}/images` with
+`phase=cocPaperFallback`. The endpoint and method were already right (`IMAGE_UPLOAD_METHOD` is
+`'put'`), so the whole change is the phase.
+
+- `'cocPaperFallback'` added to `InstallerImagePhase` (`config/types/installer.ts`) and to
+  `PHASE_ARRAY_KEY` (`services/api/installer.ts`), where it maps to **`installerCocPhotos`** — the
+  array `installer-hydrate` already reads, so a scanned page still comes back onto the step.
+  `InstallerDeletePhase` is derived from the union, so the delete route inherits it (no CoC delete
+  call site exists today).
+- `useInstallerPhotoUpload.uploadCoc` sends the new phase; **`uploadCocSignature` stays on `'coc'`**.
+  That split is the point of the ticket: the phase is now what tells a SCANNED paper certificate from
+  one SIGNED on the device. Both still send `subcategory: 'coc'` (`cocDescriptor` is shared), so
+  within a phase only the file distinguishes them, exactly as before.
+- ⚠️ `uploadCoc` is reached ONLY from the Paper Fallback pill — `CoCStep.startScan` has no other
+  caller (`handlePaperFallback` is its one entry point, by design: *"its only entry point is the
+  form's own Paper Fallback pill"*). That is what makes retagging the whole function safe.
+- ⚠️ **The BACKEND does not know this phase yet.** `InstallerHandler.uploadJobImages` normalises the
+  form field through a ternary chain whose fallback is **`'pre'`**, so until it learns
+  `cocpaperfallback` the scans land in `installerPreInstallPhotos` and vanish from the CoC step.
+  Ship the backend arm first, or with this.
+
+#### …and a scanned certificate now FILLS THE FORM
+
+Ticket: *"when user scan the paper than the backend provide the JSON response against the paper
+scan… place the value directly to the boxes according to the JSON response. make sure in the case of
+paper Scan the Job number and date also get from the paper, and if user add the details directly than
+the date and job number should be getting Automatically."*
+
+The scan already went up under `phase: 'cocPaperFallback'` (above) and the response was thrown away
+past its `s3url`. It now carries the certificate the backend read off the page, and that reopens
+`CoCFormModal` with the paper's own values in it.
+
+**The chain, one link per file:**
+
+| where | what |
+|---|---|
+| `utils/installer-coc-scan.ts` (new, pure) | `extractCocScanFields(body)` → `CocScanFields \| null` |
+| `services/api/installer.ts` | `normalizeImageUploadResult` runs it — **gated on the phase** |
+| `utils/installer-upload.ts` | `UploadOutcome.scan` |
+| `hooks/useInstallerPhotoUpload.ts` | `run` now resolves to **`{ patch, scan }`** (`InstallerUploadResult`) |
+| `screens/Installer/JobDetail.tsx` | `handleCocPage` RETURNS that read |
+| `steps/CoCStep.tsx` | awaits it, holds it in `scannedFields`, reopens the form |
+| `modals/installer/CoCFormModal.tsx` | new `scanned` prop seeds every box |
+
+⚠️ **`run`'s return type changed** — it was the patch, it is now `{ patch, scan }`. Its one consumer
+that reads the value (`handleCocSignature`) takes `result?.patch`; every other caller ignores it.
+
+**Job # and Date.** Both stay READ-ONLY; only their SOURCE changed. A scan wins
+(`scanned?.jobNumber || job.jobNumber || …`, `scanned?.date || todayMMDDYYYY()`), because the paper
+carries its own number and its own date and the customer has already signed against them. Typed in
+directly, nothing is scanned and both are derived exactly as before — which is the second half of the
+ticket, and needed no change.
+
+⚠️ **`??`, not `||`, on the three tick boxes.** A box the page reports as UNTICKED is `false` and must
+stay unticked; `||` would fall through to the filed certificate and tick it back on — an attestation
+nobody made. `undefined` (the page did not say) is the only case that falls through.
+
+#### ✅ The live response — and the reason NOTHING was populating
+
+A device trace (`PUT installer/v1/{jobId}/images`, 2026-08-31) settled both halves. The extraction
+arrives as **`data.extraction`**:
+
+```json
+{ "jobNumber": "090078601", "date": "31-8-2026",
+  "homeowner": false, "spouse": false, "other": true, "relationToHomeowner": "Brother",
+  "age18OrOlder": true, "homeownerOrAuthorized": true, "installationStatusCompleted": true }
+```
+
+⚠️ **THE BUG WAS UPSTREAM OF THE EXTRACTOR: this response carries NO `appended` array.** It answers
+with ONE image on `data` itself — `s3url` / `bucketName` at the root plus a `data.cocPaperFallback`
+block — while `normalizeImageUploadResult` only ever read `data.appended`. So
+`uploadInstallerPhoto` read `appended[0]` as undefined, declared a perfectly good upload **FAILED**,
+flashed *"Couldn't upload page 1 of the CoC"*, stored no `s3url` on the page (nothing for the
+step-data PATCH to reference) — and the hook's failure branch returns `null`, which threw the
+certificate away with it. `normalizeImageUploadResult` now synthesizes the single row when there is no
+`appended`. ⚠️ It takes the id from the `data[phase]` block, **never `data._id`** — on this shape that
+is the JOB's id, and storing it as the image's `serverId` would point every scanned page at the job.
+
+Three key-name corrections fell out of the same payload — `age18OrOlder`, `installationStatusCompleted`
+and `relationToHomeowner` were all absent from the lists, so three of the six boxes would have stayed
+empty even once the read arrived.
+
+⚠️ **The relationship is THREE TICK BOXES, not a word** (`homeowner` / `spouse` / `other` + the
+`relationToHomeowner` write-in). The boxes win over the word; at least TWO of the three must be present
+as booleans before any is read, because `other` on its own is far too common a key to treat as an
+answer to "who signed"; and `relationshipOther` is only ever set for `other`, so a name cannot ride
+into the payload on a homeowner certificate.
+
+⚠️ **`31-8-2026` is DAY-first.** The extraction hyphenates and writes the day first, while a SLASHED
+date is the US month-first form this app prints everywhere else — so the separator decides, and a
+component over 12 settles it either way. Reading it month-first turns 31 August into an invalid month
+(the old rule produced `31/08/2026`).
+
+The extractor still reads FIXED key lists out of a bounded breadth-first walk, the same discipline as
+`readDocumentGroup`: nothing is guessed, an unknown shape yields `null`, and the step then behaves
+exactly as it did before this existed — pages filed, result screen, no form.
+
+⚠️ **`jobId` / `_id` / `leadId` are deliberately NOT job-number keys**, and `installDate` is not a date
+key. This endpoint's response root carries the job's mongo id, and a 24-character id in the Job # box
+would look plausible enough to file.
+
+⚠️ **The date is parsed as TEXT**, never through `new Date(...)` — an offset ISO string shifts the
+calendar day either side of midnight, and this is the date on a signed document (the rule
+`utils/job-change-summary.ts` records).
+
+⚠️ **The FIRST page that reads back a certificate wins.** A multi-page scan is one document and the
+fields sit on the page carrying the signatures, so a later page that read nothing must not blank it.
+
+⚠️ **The two SIGNATURES are still required to submit.** The paper's signatures live in the scanned
+image, and nothing weakens `canSubmit` — a legal control was not loosened on the way past. If the crew
+should be able to submit a scanned certificate without re-signing on the device, that is a deliberate
+change to `canSubmit` and needs asking for.
+
+The read is a round trip behind the scanner closing, so the step raises a small blocking
+**"Reading the scanned certificate…"** card (`installer.cocReadingScan`) while it runs — the form is
+down at that moment and the crew would otherwise have no reason to think anything was still happening.
+`logCocFormOpened` gained a `'scan'` source so the portal can tell that open from the other three.
+
+Verified with 25 tests over the real extractor, five of them driving the captured response VERBATIM
+(every box filled, the tick-box relationship, no box ticked, a lone `other` ignored, and the job id
+never read as the Job #): a flat response and three wrapper shapes, the
+shallowest value winning, the Job # never read off an id, the date never read off `installDate`, an
+unticked box staying `false`, a top-level `completed` (the JOB's status) NOT ticking the contract
+attestation while `checkboxes.completed` does, an unrecognised relationship becoming `Other` + the
+write-in, an explicit write-in outranking it, and a photo-shaped response / junk input as `null`. Plus
+the offset-ISO date asserted against what naive `Date` parsing would have given. tsc 138 (baseline
+unchanged); the new util is eslint-clean, `CoCFormModal` and `JobDetail` are byte-identical to their
+HEAD baselines (18 and 27 warnings) and `CoCStep` is +1 `react-native/no-inline-styles` — the backdrop
+of the new card, the rule that file already carries.
+
+#### …and once it is SUBMITTED the step shows the PDF, not the form
+
+Ticket: *"when the installer submit their COC form than we receive the updated PDF document in the
+response after submit. when user reopen the tab than there is no option to edit the form once
+submitted — after submission you can use the pdf from the response and display that pdf in the COC
+tab."*
+
+`PATCH installer/v1/update/{jobId}` (`stepData.coc`) answers with the generated certificate, and the
+CoC step now renders it: a green **Certificate submitted** card holding the document, tap to open it
+full screen in the app-wide `PdfPreviewModal`, and **no way back into the form**.
+
+| where | what |
+|---|---|
+| `utils/installer-coc-pdf.ts` (new, pure) | `extractCocPdf(raw)` → `JobPacket \| null` |
+| `services/api/installer.ts` | `normalizeInstallerJob` → **`job.cocPacket`** |
+| `screens/Installer/JobDetail.tsx` | `sendStepData` now RETURNS the patched job; `handleCocSignOff` stores the document on the sign-off |
+| `steps/CoCStep.tsx` | new `document` prop — the PDF card, and the edit button gone |
+
+⚠️ **`sendStepData`'s return type changed** — it was `void`, it is now `Promise<InstallerJob \| null>`
+(`null` for every path that did not reach the server: no job, empty patch, unchanged step, or a
+failure, which is reported to the installer rather than thrown). Nothing else reads it.
+
+⚠️ **The document is stored on `CocSignOff`, not only on the job.** Progress is persisted, so it
+survives a relaunch and a job re-fetched from the LIST — which does not carry the certificate. The
+step reads `progress.cocSignOff?.document ?? job.cocPacket`, device copy first. It is written from the
+`signOff` object that was just filed, never re-read from progress, so the two cannot drift.
+
+⚠️ **`submissionPdf` is NOT a certificate key, and the generic names (`pdf`, `document`, `url`) are
+only read inside a `coc`-scoped container.** The rep's job packet lives on the same job; showing it as
+the certificate the customer signed would be a plausible-looking lie rather than a visible failure.
+
+⚠️ **`url` is classified, not assumed.** This API puts a bucket-relative KEY in a field called `url`
+(`submissionPdf.url`), so a value is only treated as ready-to-open when it actually starts `http`.
+Handing a key to the PDF viewer draws a blank sheet instead of failing.
+
+⚠️ **The inline preview is `pointerEvents="none"`.** `react-native-pdf` handles its own pan and pinch,
+and inside the step's `ScrollView` the two fight — the tab stops scrolling past the document. Deaf to
+touch it is a picture, and the press wrapping it opens the real viewer.
+
+⚠️ **The edit button is hidden on the DOCUMENT, not on the sign-off.** A submitted certificate whose
+PDF could not be read (an older job, or a deployment that does not generate one) keeps the button —
+hiding it there would leave the crew a step with nothing on it. Gate it on `signOff` instead if the
+rule is meant to hold even with no document.
+
+⚠️ **The response's key name is NOT confirmed against a real submit.** The reader walks a FIXED list of
+containers and key names, the discipline `readDocumentGroup` sets, so an unrecognised payload yields
+`null` and the step behaves exactly as it did before — signed card, edit button. Pin the list against a
+captured response before calling this done.
+
+Verified with 7 tests over the real reader: the `{ url, bucketName }` shape, the document inside a
+`coc` block, a ready URL told from a bucket key (with the signed query stripped from the name), an
+explicit file name winning, `submissionPdf` never read as the certificate, a generic `pdf` outside a
+`coc` container ignored, and a check-in-shaped payload / junk / an empty document object as `null`.
+tsc 107 (baseline unchanged); the new util and its test are eslint-clean, `JobDetail` is
+byte-identical to its HEAD baseline (27 warnings) and `CoCStep` is +1 `react-native/no-inline-styles`.
+
+#### ⚠️ iOS: Paper Fallback froze the app — never present the scanner mid-transition
+
+Ticket: *"the paper fallback is not working on the IOS device, it works on the android perfectly. when
+we click on the paper fallback from the IOS device it blocks me and stuck the whole app."*
+
+`RNDocumentScanner.scanDocument` presents VisionKit on **`RCTPresentedViewController()`** with a bare
+`self.viewController?.present(...)` and **no error path** (`node_modules/react-native-document-scanner-plugin/ios/DocumentScanner.swift`).
+So a presentation UIKit refuses calls NONE of its three handlers — not success, not error, not cancel —
+and the JS promise **never settles**.
+
+`handlePaperFallback` used to `setShowForm(false)` and call the scanner in the same tick, which asks
+iOS to present while `CoCFormModal` is still dismissing. UIKit drops exactly that case, so the scanner
+never appeared, the `await` never returned, and the step was left with NO surface on screen: the
+sub-screen is gated on `hasResult`, which is false on a first scan. Android launches an Activity, which
+has no such rule — hence "perfect on Android".
+
+**The form now STAYS UP across the whole scan.** Nothing is transitioning when the scanner is asked
+for, on either platform, and the scanner covers the form while it runs. On the way back:
+
+| outcome | what happens |
+|---|---|
+| pages + a certificate read | `openForm('scan')` — REMOUNTS the form (bumps `formSession`) without closing it, so the values appear in a modal that never went away |
+| pages, nothing read | `setShowForm(false)` → the result view, as before |
+| cancelled, something already captured | `setShowForm(false)` → the result view |
+| cancelled, nothing captured | the form stays exactly as it was |
+
+⚠️ **There is no dismiss/present PAIR left anywhere in this flow**, and that is the point — not the
+platform branch it replaced. Do not "tidy" this by closing the form first again.
+
+⚠️ **The "Reading the scanned certificate…" indicator is no longer a `Modal`.** It was a third native
+modal raised over the step's own, which is the same hazard on iOS and is against this repo's standing
+rule (the signature pad and the exit prompt in this very file are in-card overlays for that reason).
+It is now `CoCFormModal`'s **`busyLabel`** prop — an absolute overlay inside the card, carrying the
+`zIndex` + `elevation` pair the note on `sigOverlay` explains.
+
+⚠️ Still outstanding, same class: the certificate `PdfPreviewModal` in `CoCStep` is a native modal
+rendered while `InstallerSubScreen`'s own modal is up. It is only reached by tapping the document card,
+so it is not in this ticket's path, but on iOS it is the same shape of risk — hoist it to `JobDetail`
+if it ever misbehaves.
+
+tsc: the error set is byte-identical to HEAD (108). `CoCFormModal` is at its HEAD baseline (18
+warnings) and `CoCStep` drops 4 → 3 — the removed modal took its own inline style with it. The iOS
+bundle builds (`platform=ios`, HTTP 200).
+
+### Pre-install: the big pane shows the INSTALLER'S shot once there is one
+
+Ticket: *"inside the pre install phase… first time when user open the pre install phase and there is no
+image from the sale side then show the house placeholder, and when installer click the image then show
+that image on the front screen… if the pre install received images from the sale side then show that
+image on the front screen unless installer not capture the image; when user capture the image then
+show that image on the front, and when user click on tap to review the flow should be the same for the
+image comparison."*
+
+`PhotoMatchStep`'s hero pane rendered `selectedRef` — the REFERENCE — and nothing else, so a tag kept
+showing the rep's sale photo (or the line-art house) even after the installer had shot it. The only
+place their own shot appeared was the review modal.
+
+One expression now decides the pane:
+
+```ts
+const capturedUri = selected ? matched[selected.id]?.uri : undefined;
+const heroUri = capturedUri ?? selectedRef;   // own shot › reference › HouseGhost
+```
+
+| state | pane |
+|---|---|
+| no rep photo, nothing shot | `HouseGhost` (unchanged) |
+| rep photo, nothing shot | the rep's photo (unchanged) |
+| shot taken, either way | **the installer's own photo** |
+
+⚠️ **The chip had to follow.** It read `REP PHOTO • Back-Left` over whatever was on screen; showing the
+installer's own work under that label tells them their shot IS the reference they are supposed to be
+matching. New `installer.yourPhoto` (`YOUR PHOTO` / `TU FOTO`) is used whenever `capturedUri` is set.
+
+⚠️ **Nothing about the review or the re-shoot changed**, which is the ticket's own requirement:
+`MATCHED — tap to review` still opens `ReviewPair` with `referenceUri(tag)` beside the shot, and the
+ghost camera still ghosts against `referenceUri` — so the comparison is against the rep's photo exactly
+as before. Only the resting pane moved.
+
+⚠️ **This applies to the POST pass too**, deliberately — the rule is written on `capturedUri`, not on a
+`phase` branch. Post ghosts against the installer's own pre-install shot, so the same sentence describes
+it: the reference holds the pane until there is a shot. Gate it with `phase === 'pre' &&` if it is ever
+wanted on pre only.
+
+tsc: error set identical to HEAD. `PhotoMatchStep.tsx` is byte-identical to its HEAD eslint baseline
+(31 warnings, 0 errors); the iOS bundle builds (HTTP 200).
+
+### The Investment Center never saw the down payment entered on the DROP screen
+
+Ticket: *"Sale Resulted | Down payment did not save or reflect in Contract Details … when i add down
+payment from drop price and after that i go to investement center and opt in, the modal again appear
+there down payment changes not going to reflect."* Client's rule alongside it: *"It's determined by the
+screen they resulted it as a sale on and if that screen had down payment then include it."*
+
+A down payment can be entered in **two** places and only one of them lands on the calculator:
+
+| where | stored on |
+|---|---|
+| the rollout card's own "Add Down Payment" | `calculator.downPayment` |
+| **the drop modal** (`DropOutcomeModal`) | the drop ROW — `dropPrice[i].downPayment` |
+
+`InvestmentPanel` seeded its editor from `calculator.downPayment` **alone**, so after a negotiation the
+screen opened on **"Add Down Payment"** for a deal that already had $100 down — and since the opt-in
+hands `downPayment: downPay` to the Result flow, opting in resulted the sale at **$0 down**, which is
+the blank Contract Details in the ticket title.
+
+⚠️ **Everything downstream was already correct and none of it was touched.** `OptInConfirmModal` has
+rendered the Down Payment / Balance block since it shipped (gated on `> 0` — it had no value, not no
+UI); `handleOptIn` → `resultOptIn` → `handleResultJob` → `initialDownPayment` already threads the
+figure into `ResultJobModal`; and the ROLLOUT screen's own Result path already carries the drop's down
+payment (`openResultChooser` → `chooseDown`). The single break was the seed.
+
+**New pure `resolveActiveDownPayment(drops, fallback)` in `utils/drop-prices.ts`**, the documented home
+for this family of rules. It mirrors the rollout screen's Result path so the two screens cannot disagree
+about what the customer put down: the **SECURED** drop, else the **LAST** drop (because Result Lead
+auto-secures that row — `resolveAutoSecureIndex`, so it is the round the sale actually lands on), else
+the fallback. The un-secured branch **defers to `resolveAutoSecureIndex` itself** rather than
+re-deriving "the last one", so the two can never drift.
+
+⚠️ **A drop round is authoritative even when its down payment is ZERO.** Securing a round with nothing
+down IS the decision; falling through to `calculator.downPayment` there would resurrect a rollout-card
+figure the rep has since moved off. `openResultChooser` reads the row the same way
+(`Number(row?.downPayment) || 0`) — only the **no-drops** case reaches the fallback.
+
+⚠️ **The PRICE is deliberately still the confirmed rollout price.** The standing product decision
+("don't ever change it on drops") is untouched — a drop moves the down payment onto this screen, never
+MSRP, the two grand totals or the monthly. Only the down payment travels.
+
+⚠️ `lastLoggedDownRef.inhome` is seeded from the SAME resolved value, or the first edit would fire a
+`down payment changed` log against a baseline the rep never saw.
+
+Verified with 10 tests driving the real helper plus the panel's exact seed expressions: the ticket repro
+(**asserted to seed `''` under the old rule** and `100` under the new one), the opt-in modal's balance
+following from it, the secured round winning over a newer one, the last-round branch asserted against
+`autoSecureLastDrop` itself, a round secured with `0` down staying at 0, a row with no `downPayment` key,
+the no-drops fallback, an untouched deal seeding nothing, junk/negative/NaN as 0 rather than a `NaN` on
+screen, and only a positive `'accepted'` counting (matching `hasAcceptedDrop`). tsc 44 (baseline
+unchanged); `drop-prices.ts` and the new test are eslint-clean and `InvestmentPanel.tsx` is at its HEAD
+baseline (56 problems: 1 pre-existing error / 55 warnings).
+
+⚠️ Both files are CRLF — `newline=''` on both ends.
+
+---
+
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area

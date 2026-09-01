@@ -22,6 +22,7 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 import { InstallerService } from '../services/api/installer';
 import type {
   CapturedPhoto,
+  CocScanFields,
   GeoCoordinates,
   InstallerImageDescriptor,
   InstallerImagePhase,
@@ -256,6 +257,11 @@ export interface UploadOutcome {
   coordinates: GeoCoordinates | null;
   /** How many times the photo was sent — 1 when it landed first try. */
   attempts: number;
+  /**
+   * The certificate read off a scanned page — `cocPaperFallback` only, `null` on
+   * every other phase and on a page the backend could not read.
+   */
+  scan: CocScanFields | null;
 }
 
 /**
@@ -331,6 +337,7 @@ export const uploadInstallerPhoto = async (
     size,
     coordinates,
     attempts,
+    scan: null,
   });
 
   for (let attempt = 1; attempt <= UPLOAD_ATTEMPTS; attempt++) {
@@ -361,6 +368,7 @@ export const uploadInstallerPhoto = async (
         size,
         coordinates,
         attempts: attempt,
+        scan: result.scan ?? null,
       };
     } catch (err) {
       const isLast = attempt === UPLOAD_ATTEMPTS;
