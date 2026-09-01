@@ -2565,6 +2565,49 @@ tsc: the error set is byte-identical to HEAD (108). `CoCFormModal` is at its HEA
 warnings) and `CoCStep` drops 4 → 3 — the removed modal took its own inline style with it. The iOS
 bundle builds (`platform=ios`, HTTP 200).
 
+### Pre-install: the big pane shows the INSTALLER'S shot once there is one
+
+Ticket: *"inside the pre install phase… first time when user open the pre install phase and there is no
+image from the sale side then show the house placeholder, and when installer click the image then show
+that image on the front screen… if the pre install received images from the sale side then show that
+image on the front screen unless installer not capture the image; when user capture the image then
+show that image on the front, and when user click on tap to review the flow should be the same for the
+image comparison."*
+
+`PhotoMatchStep`'s hero pane rendered `selectedRef` — the REFERENCE — and nothing else, so a tag kept
+showing the rep's sale photo (or the line-art house) even after the installer had shot it. The only
+place their own shot appeared was the review modal.
+
+One expression now decides the pane:
+
+```ts
+const capturedUri = selected ? matched[selected.id]?.uri : undefined;
+const heroUri = capturedUri ?? selectedRef;   // own shot › reference › HouseGhost
+```
+
+| state | pane |
+|---|---|
+| no rep photo, nothing shot | `HouseGhost` (unchanged) |
+| rep photo, nothing shot | the rep's photo (unchanged) |
+| shot taken, either way | **the installer's own photo** |
+
+⚠️ **The chip had to follow.** It read `REP PHOTO • Back-Left` over whatever was on screen; showing the
+installer's own work under that label tells them their shot IS the reference they are supposed to be
+matching. New `installer.yourPhoto` (`YOUR PHOTO` / `TU FOTO`) is used whenever `capturedUri` is set.
+
+⚠️ **Nothing about the review or the re-shoot changed**, which is the ticket's own requirement:
+`MATCHED — tap to review` still opens `ReviewPair` with `referenceUri(tag)` beside the shot, and the
+ghost camera still ghosts against `referenceUri` — so the comparison is against the rep's photo exactly
+as before. Only the resting pane moved.
+
+⚠️ **This applies to the POST pass too**, deliberately — the rule is written on `capturedUri`, not on a
+`phase` branch. Post ghosts against the installer's own pre-install shot, so the same sentence describes
+it: the reference holds the pane until there is a shot. Gate it with `phase === 'pre' &&` if it is ever
+wanted on pre only.
+
+tsc: error set identical to HEAD. `PhotoMatchStep.tsx` is byte-identical to its HEAD eslint baseline
+(31 warnings, 0 errors); the iOS bundle builds (HTTP 200).
+
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area
