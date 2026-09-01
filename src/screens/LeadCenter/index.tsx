@@ -21,6 +21,7 @@ import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/nativ
 import { Storage } from '../../utils/storage';
 import { logLeadSessionPause } from '../../utils/lead-activity-log';
 import { useLocationBroadcaster } from '../../hooks/useLocationBroadcaster';
+import { androidTextStyle } from '../../utils/platform-font';
 import { ENV } from '../../config/env';
 import { useTheme } from '../../theme/ThemeProvider';
 import Pitchbook from '../../widgets/modals/lead-center/Pitchbook';
@@ -1167,7 +1168,10 @@ export default function LeadCenterPage() {
               </TouchableOpacity>
               <View>
                 {/* Same screen, two entry points: from My Deals it IS a deal. */}
-                <Text className="text-lg font-black" style={{ color: colors.text }}>
+                <Text
+                  className="text-lg font-black"
+                  style={[{ color: colors.text }, androidTextStyle(14)]}
+                >
                   {fromMyDeals ? 'Deal' : 'Lead Center'}
                 </Text>
               </View>
@@ -1194,7 +1198,10 @@ export default function LeadCenterPage() {
           <View className="px-4">
             <View className="flex-row gap-4 mb-4">
               <View className="flex-1 flex-col gap-4">
-                <Text className="text-base font-semibold" style={{ color: '#72BD00' }}>
+                <Text
+                  className="text-base font-semibold"
+                  style={[{ color: '#72BD00' }, androidTextStyle(14)]}
+                >
                   Lead ID:
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadId}
@@ -1206,7 +1213,10 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 shrink text-base font-semibold text-text-primary">
+                  <Text
+                    className="ml-1 shrink text-base font-semibold text-text-primary"
+                    style={androidTextStyle(16)}
+                  >
                     {lead.customerDetails?.firstName} {lead.customerDetails?.lastName}
                   </Text>
                   <TouchableOpacity
@@ -1233,7 +1243,10 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-base font-semibold" style={{ color: '#72BD00' }}>
+                  <Text
+                    className="ml-1 text-base font-semibold"
+                    style={[{ color: '#72BD00' }, androidTextStyle(14)]}
+                  >
                     {/* The record stores the number RAW or E.164 (`18757575799`), which is
                         what the header used to print. `EditCustomerModal` seeds its own
                         field through this same formatter, so the two surfaces now read the
@@ -1249,14 +1262,20 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-base font-semibold text-text-primary">
+                  <Text
+                    className="ml-1 text-base font-semibold text-text-primary"
+                    style={androidTextStyle(16)}
+                  >
                     {formatDate(lead?.leadDatetime)}
                   </Text>
                 </View>
               </View>
 
               <View className="flex-1 flex-col gap-4">
-                <Text className="text-base font-semibold" style={{ color: '#72BD00' }}>
+                <Text
+                  className="text-base font-semibold"
+                  style={[{ color: '#72BD00' }, androidTextStyle(14)]}
+                >
                   Lead Code:{' '}
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadCode || 'N/A'}
@@ -1274,7 +1293,10 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-base font-semibold" style={{ color: '#72BD00' }}>
+                  <Text
+                    className="ml-1 text-base font-semibold"
+                    style={[{ color: '#72BD00' }, androidTextStyle(14)]}
+                  >
                     {lead?.customerDetails?.email || 'N/A'}
                   </Text>
                 </TouchableOpacity>
@@ -1284,7 +1306,10 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-base font-semibold  text-text-primary">
+                  <Text
+                    className="ml-1 text-base font-semibold  text-text-primary"
+                    style={androidTextStyle(16)}
+                  >
                     {lead.leadTime}
                   </Text>
                 </View>
@@ -1296,7 +1321,10 @@ export default function LeadCenterPage() {
                 size={14}
                 color="#72BD00"
               />
-              <Text className="ml-1 text-base font-semibold " style={{ color: "#72BD00" }}>
+              <Text
+                className="ml-1 text-base font-semibold "
+                style={[{ color: '#72BD00' }, androidTextStyle(14)]}
+              >
                 {lead?.fullAddress || lead?.customerDetails?.address || 'N/A'}
               </Text>
             </TouchableOpacity>
@@ -1855,7 +1883,7 @@ function TabButton({ label, i, active, onPress, colors, isDark }: any) {
       />
       <Text
         className="text-base font-semibold mt-1"
-        style={{ color: active ? 'white' : colors.textSecondary }}
+        style={[{ color: active ? 'white' : colors.textSecondary }, androidTextStyle(14)]}
       >
         {label}
       </Text>
