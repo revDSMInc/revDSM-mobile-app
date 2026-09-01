@@ -2608,6 +2608,63 @@ wanted on pre only.
 tsc: error set identical to HEAD. `PhotoMatchStep.tsx` is byte-identical to its HEAD eslint baseline
 (31 warnings, 0 errors); the iOS bundle builds (HTTP 200).
 
+### The Investment Center never saw the down payment entered on the DROP screen
+
+Ticket: *"Sale Resulted | Down payment did not save or reflect in Contract Details … when i add down
+payment from drop price and after that i go to investement center and opt in, the modal again appear
+there down payment changes not going to reflect."* Client's rule alongside it: *"It's determined by the
+screen they resulted it as a sale on and if that screen had down payment then include it."*
+
+A down payment can be entered in **two** places and only one of them lands on the calculator:
+
+| where | stored on |
+|---|---|
+| the rollout card's own "Add Down Payment" | `calculator.downPayment` |
+| **the drop modal** (`DropOutcomeModal`) | the drop ROW — `dropPrice[i].downPayment` |
+
+`InvestmentPanel` seeded its editor from `calculator.downPayment` **alone**, so after a negotiation the
+screen opened on **"Add Down Payment"** for a deal that already had $100 down — and since the opt-in
+hands `downPayment: downPay` to the Result flow, opting in resulted the sale at **$0 down**, which is
+the blank Contract Details in the ticket title.
+
+⚠️ **Everything downstream was already correct and none of it was touched.** `OptInConfirmModal` has
+rendered the Down Payment / Balance block since it shipped (gated on `> 0` — it had no value, not no
+UI); `handleOptIn` → `resultOptIn` → `handleResultJob` → `initialDownPayment` already threads the
+figure into `ResultJobModal`; and the ROLLOUT screen's own Result path already carries the drop's down
+payment (`openResultChooser` → `chooseDown`). The single break was the seed.
+
+**New pure `resolveActiveDownPayment(drops, fallback)` in `utils/drop-prices.ts`**, the documented home
+for this family of rules. It mirrors the rollout screen's Result path so the two screens cannot disagree
+about what the customer put down: the **SECURED** drop, else the **LAST** drop (because Result Lead
+auto-secures that row — `resolveAutoSecureIndex`, so it is the round the sale actually lands on), else
+the fallback. The un-secured branch **defers to `resolveAutoSecureIndex` itself** rather than
+re-deriving "the last one", so the two can never drift.
+
+⚠️ **A drop round is authoritative even when its down payment is ZERO.** Securing a round with nothing
+down IS the decision; falling through to `calculator.downPayment` there would resurrect a rollout-card
+figure the rep has since moved off. `openResultChooser` reads the row the same way
+(`Number(row?.downPayment) || 0`) — only the **no-drops** case reaches the fallback.
+
+⚠️ **The PRICE is deliberately still the confirmed rollout price.** The standing product decision
+("don't ever change it on drops") is untouched — a drop moves the down payment onto this screen, never
+MSRP, the two grand totals or the monthly. Only the down payment travels.
+
+⚠️ `lastLoggedDownRef.inhome` is seeded from the SAME resolved value, or the first edit would fire a
+`down payment changed` log against a baseline the rep never saw.
+
+Verified with 10 tests driving the real helper plus the panel's exact seed expressions: the ticket repro
+(**asserted to seed `''` under the old rule** and `100` under the new one), the opt-in modal's balance
+following from it, the secured round winning over a newer one, the last-round branch asserted against
+`autoSecureLastDrop` itself, a round secured with `0` down staying at 0, a row with no `downPayment` key,
+the no-drops fallback, an untouched deal seeding nothing, junk/negative/NaN as 0 rather than a `NaN` on
+screen, and only a positive `'accepted'` counting (matching `hasAcceptedDrop`). tsc 44 (baseline
+unchanged); `drop-prices.ts` and the new test are eslint-clean and `InvestmentPanel.tsx` is at its HEAD
+baseline (56 problems: 1 pre-existing error / 55 warnings).
+
+⚠️ Both files are CRLF — `newline=''` on both ends.
+
+---
+
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area

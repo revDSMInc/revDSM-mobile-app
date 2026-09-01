@@ -22,6 +22,7 @@ import {
 } from '../DynamicDealCenter/utils/dynamic-rollout-pricing';
 import { buildInvestmentJobScope } from '../DynamicDealCenter/utils/investment-job-scope';
 import { formatAmountInput, stripAmount } from '../DynamicDealCenter/utils/format-amount';
+import { resolveActiveDownPayment } from '../DynamicDealCenter/utils/drop-prices';
 import { ProgramCard } from './ProgramCard';
 import { OptInConfirmModal } from './OptInConfirmModal';
 import { describeFullPackage } from '../DynamicDealCenter/utils/tab-naming';
@@ -215,9 +216,15 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const confirmedPrice = Number(calculator.price) || 0;
   const endPrice = confirmedPrice;
 
+  // The down payment the deal ALREADY carries: the secured (or last-negotiated) drop's,
+  // else the rollout card's. The drop modal stores its down payment on the drop ROW, not
+  // on the calculator, so seeding from `calculator.downPayment` alone opened this screen
+  // on "Add Down Payment" for a deal that already had one -- and opting in then resulted
+  // the sale at $0 down, leaving Contract Details with no down payment.
+  const seededDownPayment = resolveActiveDownPayment(calculator.dropPrice, calculator.downPayment);
   // Live-adjustable during the presentation.
-  const [downText, setDownText] = useState(calculator.downPayment ? String(calculator.downPayment) : '');
-  const [showDownInput, setShowDownInput] = useState((calculator.downPayment || 0) > 0);
+  const [downText, setDownText] = useState(seededDownPayment ? String(seededDownPayment) : '');
+  const [showDownInput, setShowDownInput] = useState(seededDownPayment > 0);
   // Pre-order discount is fixed at the calculator's saved value (else the config
   // default) — the live % selector was removed per the Investment Center redesign.
   const discountPct = calculator.discountPercentage || pricing.defaultPreOrder;
@@ -509,10 +516,10 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
 
   // Forever Record: log a down-payment change once per distinct value per program
   // (commit fires on both blur and end-editing, so dedupe against the last logged
-  // amount; seeded from the calculator's persisted down payment). The panel remounts
+  // amount; seeded from the down payment the deal opened with). The panel remounts
   // per calculator (keyed by tab id), so these refs reset with it.
   const lastLoggedDownRef = useRef<{ inhome: number; oneyear: number }>({
-    inhome: calculator.downPayment || 0,
+    inhome: seededDownPayment,
     oneyear: 0,
   });
   const logDownPaymentChange = (program: 'inhome' | 'oneyear', amount: number) => {

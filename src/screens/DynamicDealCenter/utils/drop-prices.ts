@@ -265,3 +265,40 @@ export function autoSecureLastDrop<T extends Record<string, any>>(
   if (idx < 0) return list;
   return list.map((d, i) => (i === idx ? { ...d, status: 'accepted' } : d));
 }
+
+/**
+ * The down payment the deal currently carries, as the DROP screen left it.
+ *
+ * A down payment can be entered in two places and only one of them lands on the
+ * calculator: the rollout card's own editor persists `calculator.downPayment`, while
+ * the drop modal stores it on the drop ROW (`dropPrice[i].downPayment`). Anything
+ * reading only the calculator therefore shows nothing once the rep has negotiated —
+ * which is what left the Investment Center offering "Add Down Payment" on a deal that
+ * already had one, and resulted that sale at $0 down.
+ *
+ * Resolution mirrors the rollout screen's own Result path, so the two screens cannot
+ * disagree about what the customer put down:
+ *   1. the SECURED drop — the round the customer took;
+ *   2. else the LAST drop, because Result Lead auto-secures that row
+ *      (`resolveAutoSecureIndex`), so it is the round the sale actually lands on;
+ *   3. else `fallback` — nothing was negotiated, so the rollout card's figure stands.
+ *
+ * WARNING: a drop round is authoritative even when its down payment is ZERO. Securing
+ * a round with nothing down IS the decision, and falling past it would resurrect a
+ * rollout-card figure the rep has since moved off. `openResultChooser` reads the row
+ * the same way (`Number(row?.downPayment) || 0`); only the NO-drops case reaches the
+ * fallback.
+ */
+export function resolveActiveDownPayment(
+  drops: any[] | null | undefined,
+  fallback?: number | string | null
+): number {
+  const list = Array.isArray(drops) ? drops : [];
+  const acceptedIdx = list.findIndex((d) => d?.status === 'accepted');
+  // The un-secured branch defers to the same helper Result Lead uses, so the two can
+  // never drift apart on which round a sale is about to be filed against.
+  const idx = acceptedIdx >= 0 ? acceptedIdx : resolveAutoSecureIndex(list);
+  const raw = idx >= 0 ? list[idx]?.downPayment : fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
