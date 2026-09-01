@@ -228,6 +228,7 @@ export const en = {
     /** Free-form phase (no rep capture set) — a count, never a fraction. */
     shotsTakenCount: '{done} TAKEN',
     repPhoto: 'REP PHOTO',
+    yourPhoto: 'YOUR PHOTO',
     preInstallPhoto: 'PRE-INSTALL PHOTO',
     matchedTapReview: '✓ MATCHED — tap to review',
     noRepPhoto: 'NO REP PHOTO FOR THIS TAG — TAP TO SHOOT',
@@ -502,6 +503,7 @@ export const es: TranslationTree = {
     matchedCount: '{done}/{total} COINCIDEN',
     shotsTakenCount: '{done} TOMADAS',
     repPhoto: 'FOTO DEL REPRESENTANTE',
+    yourPhoto: 'TU FOTO',
     preInstallPhoto: 'FOTO DE PREINSTALACIÓN',
     matchedTapReview: '✓ COINCIDE — toca para revisar',
     noRepPhoto: 'NO HAY FOTO PARA ESTA ETIQUETA — TOCA PARA FOTOGRAFIAR',
