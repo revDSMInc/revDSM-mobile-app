@@ -1,0 +1,579 @@
+{
+    "code": 200,
+    "message": "Demo lead retrieved successfully",
+    "data": {
+        "lead": {
+            "_id": "6a886e50bf878d3257c737ee",
+            "leadId": "N/A",
+            "leadDate": "2026-08-21T00:00:00-04:00",
+            "leadTime": "N/A",
+            "leadDatetime": "2026-08-21T11:27:12-04:00",
+            "leadCreationTimestamp": "2026-08-21T11:27:12-04:00",
+            "leadCode": "SelfGen",
+            "office": "",
+            "assignedRep": "Lance Weiner",
+            "assignedRepId": "6a507e15975d364ba2753d1f",
+            "previousRepIds": [],
+            "assignedShadowRepId": null,
+            "workStartedBy": "6a507e15975d364ba2753d1f",
+            "customerId": "6a886e50bf878d3257c737eb",
+            "fromRouteId": null,
+            "fullAddress": "4328 Tampa Bay Boulevard, Tampa, Florida, USA",
+            "houseAndStreetNumber": "",
+            "streetName": null,
+            "city": "Florida",
+            "state": null,
+            "zip": null,
+            "companyId": "6a5071229f0cc250ffecbb6e",
+            "issuedLeadBy": null,
+            "location": {
+                "type": "Point",
+                "coordinates": [
+                    -82.51890999999999,
+                    27.9741224
+                ]
+            },
+            "status": "sale",
+            "installerDispatchStatus": "notDispatched",
+            "workflowState": "resume",
+            "lowesLead": false,
+            "bypass": {
+                "gpsBypass": true,
+                "gpsBypassReason": "Lead address incorrect in system (rep is at correct physical location, system has wrong coordinates)",
+                "earlyStart": false,
+                "earlyStartReason": null
+            },
+            "note": null,
+            "oneLeg": "No",
+            "reason": "",
+            "lastPriceQuoted": "",
+            "originalContractPrice": "9915",
+            "downPayment": "0",
+            "paymentMethod": "wf1157",
+            "balancePaymentMethod": "wf1157",
+            "balance": "9915",
+            "lfCalculator": null,
+            "selectedCalculatorId": "6a8b559fbf878d3257cae60b",
+            "selectedAppointmentId": "6a898a6abf878d3257c8d9b9",
+            "isArchive": false,
+            "isRehashed": false,
+            "zoneId": null,
+            "buildingId": null,
+            "resetCycleCount": 0,
+            "routeInfo": {
+                "fromLeadId": null,
+                "distance": null,
+                "time": null
+            },
+            "hasRendered": false,
+            "repLastLocation": {
+                "latitude": null,
+                "longitude": null,
+                "updatedAt": null
+            },
+            "repOnSiteStatus": "unknown",
+            "repOnSiteStatusUpdatedAt": null,
+            "previewImages": {
+                "streetView": {
+                    "filePath": "lead-preview-images/6a886e50bf878d3257c737ee/streetView.jpeg",
+                    "bucketName": "np-revdsm-staging",
+                    "googleUrl": "https://maps.googleapis.com/maps/api/streetview?size=640x640&location=4328+Tampa+Bay+Boulevard%2C+Tampa%2C+Florida%2C+USA"
+                },
+                "aerial": null,
+                "frontPhoto": null,
+                "active": "streetView",
+                "activeSetByUser": false
+            },
+            "savedFilters": null,
+            "ghlContactId": null,
+            "deletedAt": null,
+            "salesPhotos": [],
+            "wearhousePhotos": [],
+            "arrivalPhotos": [],
+            "inprogressPhotos": [],
+            "completionPhotos": [],
+            "dropoffPhotos": [],
+            "timelineProgress": [
+                {
+                    "cycle": 0,
+                    "salesProcess": "completed",
+                    "salesProcessTimestamp": null,
+                    "leadResulted": "completed",
+                    "leadResultedTimestamp": null,
+                    "jobBuild": "completed",
+                    "jobBuildTimestamp": "2026-08-22T11:42:10.077Z",
+                    "scheduledInstall": {
+                        "status": "completed",
+                        "timestamp": "2026-08-22T11:42:10.077Z",
+                        "installDate": "TBD",
+                        "timeWindow": null,
+                        "reason": "HOA",
+                        "loggedAt": "2026-08-22T11:42:10.077Z"
+                    },
+                    "agreement": {
+                        "generated": "2026-08-22T11:42:10.077Z",
+                        "signed": null,
+                        "uploaded": "2026-08-22T11:42:10.077Z"
+                    },
+                    "orderSheet": {
+                        "generated": "2026-08-22T11:42:10.077Z",
+                        "uploaded": "2026-08-22T11:42:10.077Z"
+                    },
+                    "downPaymentReceipt": {
+                        "generated": null,
+                        "uploaded": null
+                    },
+                    "_id": "6a898b13bf878d3257c8e79b"
+                }
+            ],
+            "createdAt": "2026-08-21T11:27:12-04:00",
+            "updatedAt": "2026-09-01T03:55:39-04:00",
+            "id": "6a886e50bf878d3257c737ee",
+            "assignedRepDetails": {
+                "_id": "6a507e15975d364ba2753d1f",
+                "email": "lw3.0@gmail.com",
+                "firstName": "Lance",
+                "userName": "lanweiner",
+                "lastName": "Weiner",
+                "regionId": [
+                    "6a5075db975d364ba27528c0"
+                ],
+                "officeId": [
+                    "6a507706975d364ba2752b93",
+                    "6a507728975d364ba2752bda"
+                ],
+                "office": [
+                    {
+                        "_id": "6a507706975d364ba2752b93",
+                        "name": "St Petersburg",
+                        "code": "SPG",
+                        "location": {
+                            "city": "St Petersburg",
+                            "street": "3360 Scherer Dr Suite E",
+                            "zipCode": "33716"
+                        },
+                        "timezone": "America/New_York",
+                        "workingHours": {
+                            "start": "",
+                            "end": ""
+                        }
+                    },
+                    {
+                        "_id": "6a507728975d364ba2752bda",
+                        "name": "Tampa",
+                        "code": "TAM",
+                        "location": {
+                            "city": "Tampa",
+                            "street": "4422 Eagle Falls PI",
+                            "zipCode": "33619"
+                        },
+                        "timezone": "America/New_York",
+                        "workingHours": {
+                            "start": "08:00",
+                            "end": "21:00"
+                        }
+                    }
+                ],
+                "region": [
+                    {
+                        "_id": "6a5075db975d364ba27528c0",
+                        "regionID": "001",
+                        "name": "LF South East",
+                        "assigned": true,
+                        "assignedTo": "6a85c9140693c8c0a0a1b1bb",
+                        "companyId": "6a5071229f0cc250ffecbb6e",
+                        "divisionId": "6a507567975d364ba27527dd",
+                        "status": "active",
+                        "deletedAt": null,
+                        "createdAt": "2026-07-10T04:32:27.018Z",
+                        "updatedAt": "2026-08-19T15:17:40.821Z"
+                    }
+                ],
+                "revDSMLogin": {
+                    "exists": false,
+                    "loginDate": null,
+                    "isActive": false
+                },
+                "lastLogin": "2026-09-01T03:44:08-04:00"
+            },
+            "customerDetails": {
+                "_id": "6a886e50bf878d3257c737eb",
+                "firstName": "go",
+                "lastName": "now",
+                "dateTime": "2026-08-21T11:27:12-04:00",
+                "phone": "4438784937",
+                "email": "lancehome@hotmail.com",
+                "address": "4328 Tampa Bay Boulevard, Tampa, Florida, USA",
+                "companyId": "6a5071229f0cc250ffecbb6e",
+                "coBuyers": [
+                    {
+                        "firstName": "Joe",
+                        "lastName": "Tough",
+                        "phone": "4313181818",
+                        "email": "",
+                        "_id": "6a887db7bf878d3257c793b8",
+                        "createdAt": "2026-08-21T16:32:55.160Z",
+                        "updatedAt": "2026-08-21T16:32:55.160Z"
+                    }
+                ],
+                "createdAt": "2026-08-21T11:27:12-04:00",
+                "updatedAt": "2026-08-23T16:18:16-04:00"
+            },
+            "leadStatus": null,
+            "leadSaleDetails": null,
+            "generatedReports": [
+                {
+                    "_id": "6a898b13e53bbca92b7e09d0",
+                    "reportName": "job_submission",
+                    "bucketName": "np-revdsm-staging",
+                    "createdAt": "2026-08-22T07:42:11-04:00",
+                    "generatedBy": {
+                        "_id": "6a507e15975d364ba2753d1f",
+                        "email": "lw3.0@gmail.com",
+                        "roleId": "6a507aa5975d364ba275345f",
+                        "firstName": "Lance",
+                        "userName": "lanweiner",
+                        "lastName": "Weiner",
+                        "regionId": [
+                            "6a5075db975d364ba27528c0"
+                        ],
+                        "officeId": [
+                            "6a507706975d364ba2752b93",
+                            "6a507728975d364ba2752bda"
+                        ],
+                        "divisionId": [],
+                        "phoneNo": "+1 (786) 837-2687",
+                        "companyId": "6a5071229f0cc250ffecbb6e",
+                        "createdByUserId": "6a5071239f0cc250ffecbc34",
+                        "type": "user",
+                        "status": "active",
+                        "deletedAt": null,
+                        "notificationPreferences": {
+                            "orderConfirmation": false,
+                            "orderStatusChanged": false,
+                            "orderDelivered": false,
+                            "emailNotifications": false,
+                            "countOfGoBacksPending": false,
+                            "oldestUnvisitedHomes": false
+                        },
+                        "defaultPercentage": 25,
+                        "defaultPaymentMethod": "wf1157",
+                        "favoriteJobs": [
+                            "6a50d9cc975d364ba27bc685"
+                        ],
+                        "address": "8761 Castries Prt Pl, Tampa, FL 33619, USA",
+                        "latitude": 27.9033597,
+                        "longitude": -82.35953169999999,
+                        "installerCompanyName": "",
+                        "twoFactorAuth": {
+                            "enabled": false,
+                            "method": null,
+                            "secret": null,
+                            "backupCodes": []
+                        },
+                        "createdAt": "2026-07-10T05:07:33.563Z",
+                        "updatedAt": "2026-07-25T15:37:28.759Z"
+                    },
+                    "isReset": false,
+                    "reportPath": "job_submission/6a5071229f0cc250ffecbb6e/6a886e50bf878d3257c737ee/job-submission.pdf",
+                    "updatedAt": "2026-08-23T16:18:43-04:00"
+                }
+            ],
+            "jobBuilder": {
+                "_id": "6a898b12bf878d3257c8e6f4",
+                "calculatorId": "6a8b559fbf878d3257cae60b",
+                "appointmentId": "6a898a6abf878d3257c8d9b9",
+                "gutter": null,
+                "leaffilter": null,
+                "soffit": null,
+                "fascia": null,
+                "lighting": null,
+                "additional": null,
+                "scheduleTime": {
+                    "customerName": "go now",
+                    "date": "TBD",
+                    "timeWindow": "",
+                    "reason": "HOA"
+                },
+                "isDynamic": true,
+                "dynamicJobState": {
+                    "_storageVersion": 1,
+                    "scheduleTime": {
+                        "customerName": "go now",
+                        "date": "TBD",
+                        "timeWindow": "",
+                        "reason": "HOA"
+                    },
+                    "agreements": [],
+                    "orderSheets": [],
+                    "6a707a70dd8f62201b011a51__gutters-roofline": {
+                        "6a707a70dd8f62201b011a51__6a45f1df78fdcf9553314a17": {
+                            "sectionFields": {
+                                "section_1781685061809__extras": {
+                                    "field_1781685314090_f75xt__textvalue": "",
+                                    "field_1781691079165_vu6qk__textvalue-copy": "",
+                                    "field_1781873094382_sjb5t__textvalue-2": "",
+                                    "field_1781873121087_9r5au__selection": [],
+                                    "field_1781873407628_9hhi0__textvalue-3": "",
+                                    "field_1781873462203_n44h8__color": "",
+                                    "field_1781873537058_tk016__textvalue-uuu1l": "",
+                                    "field_1781873540360_ny9fm__color-gem7v": "",
+                                    "field_1781873543896_fjptt__textvalue-sn28y": "",
+                                    "field_1781873546952_ide0x__color-uq368": "",
+                                    "field_1781873549873_sdpt6__textvalue-36l5c": "",
+                                    "field_1781873553401_ewfp1__color-grdex": "",
+                                    "colorValues": {
+                                        "field_1781685314090_f75xt__textvalue": 0,
+                                        "field_1781691079165_vu6qk__textvalue-copy": 0,
+                                        "field_1781873094382_sjb5t__textvalue-2": 0,
+                                        "field_1781873121087_9r5au__selection": [],
+                                        "field_1781873407628_9hhi0__textvalue-3": 0,
+                                        "field_1781873537058_tk016__textvalue-uuu1l": 0,
+                                        "field_1781873543896_fjptt__textvalue-sn28y": 0,
+                                        "field_1781873549873_sdpt6__textvalue-36l5c": 0
+                                    }
+                                }
+                            },
+                            "comboGroups": {
+                                "section_1781585651515__section-2": {
+                                    "combinations": [
+                                        {
+                                            "field_1781585688652_fwjf5__selection-ycsmh": "6\" K-Style",
+                                            "field_1782714923560_3um7t__selection": "No",
+                                            "field_1784706391034_eksfk__quantity-mppyd": "60",
+                                            "field_1782469684711_jr4od__color": "White 30",
+                                            "field_1781585719275_fw2xm__grid": {
+                                                "Front": {
+                                                    "1st": 124
+                                                },
+                                                "Rear": {
+                                                    "1st": 126
+                                                }
+                                            },
+                                            "field_1781677587232_6tdam__quantity": "0",
+                                            "field_1781682369400_1ws9c__quantity-copy": "0",
+                                            "field_1781682470351_5gdoj__quantity-copy-copy": "5",
+                                            "field_1781682517129_ufcgy__quantity-copy-copy-copy": "5",
+                                            "colorValues": {
+                                                "field_1781585688652_fwjf5__selection-ycsmh": "6\" K-Style",
+                                                "field_1782714923560_3um7t__selection": "No",
+                                                "field_1784706391034_eksfk__quantity-mppyd": "60",
+                                                "field_1782469684711_jr4od__color": "White 30",
+                                                "field_1781585719275_fw2xm__grid": {
+                                                    "Front": {
+                                                        "1st": 124
+                                                    },
+                                                    "Rear": {
+                                                        "1st": 126
+                                                    }
+                                                },
+                                                "field_1781677587232_6tdam__quantity": "0",
+                                                "field_1781682369400_1ws9c__quantity-copy": "0",
+                                                "field_1781682470351_5gdoj__quantity-copy-copy": "5",
+                                                "field_1781682517129_ufcgy__quantity-copy-copy-copy": "5"
+                                            }
+                                        }
+                                    ]
+                                },
+                                "section_1783499358598__downspout-accessories": {
+                                    "combinations": []
+                                }
+                            }
+                        },
+                        "6a707a70dd8f62201b011a51__6a45fc7278fdcf9553315d56": {
+                            "sectionFields": {
+                                "section_1782389423259__extras": {
+                                    "field_1782389454491_0qgrv__textvalue": "",
+                                    "field_1782389456617_vp8hr__textvalue-di6nr": "",
+                                    "field_1782389460577_zydmw__textvalue-zgp4g": "",
+                                    "field_1782389463025_0d91g__textvalue-nr39d": "",
+                                    "field_1782389464784_jsdri__textvalue-dqbno": "",
+                                    "colorValues": {
+                                        "field_1782389454491_0qgrv__textvalue": 0,
+                                        "field_1782389456617_vp8hr__textvalue-di6nr": 0,
+                                        "field_1782389460577_zydmw__textvalue-zgp4g": 0,
+                                        "field_1782389463025_0d91g__textvalue-nr39d": 0,
+                                        "field_1782389464784_jsdri__textvalue-dqbno": 0
+                                    }
+                                }
+                            },
+                            "comboGroups": {
+                                "section_1782365542087__section-2": {
+                                    "combinations": []
+                                },
+                                "section_1782373723139__section-3": {
+                                    "combinations": []
+                                },
+                                "section_1782373742457__section-4": {
+                                    "combinations": []
+                                },
+                                "section_1782386890583__section-5": {
+                                    "combinations": []
+                                }
+                            }
+                        },
+                        "6a707a70dd8f62201b011a51__6a45fc7278fdcf9553315d57": {
+                            "comboGroups": {
+                                "section_1784638606026__vinyl-soffit": {
+                                    "combinations": [
+                                        {
+                                            "field_1782131179372_t440g__selection": "PARTIAL",
+                                            "field_1785476274871_ztjz9__quantity": "200",
+                                            "field_1782131403608_u5zbn__selection-2": "HIDDEN VENT VINYL",
+                                            "field_1782131715424_ctppy__color": "White",
+                                            "colorValues": {
+                                                "field_1782131179372_t440g__selection": "PARTIAL",
+                                                "field_1785476274871_ztjz9__quantity": "200",
+                                                "field_1782131403608_u5zbn__selection-2": "HIDDEN VENT VINYL",
+                                                "field_1782131715424_ctppy__color": "White"
+                                            }
+                                        },
+                                        {
+                                            "field_1782131179372_t440g__selection": "PARTIAL",
+                                            "field_1785476274871_ztjz9__quantity": "100",
+                                            "field_1782131403608_u5zbn__selection-2": "HIDDEN VENT VINYL",
+                                            "field_1782131715424_ctppy__color": "Musket Brown",
+                                            "colorValues": {
+                                                "field_1782131179372_t440g__selection": "PARTIAL",
+                                                "field_1785476274871_ztjz9__quantity": "100",
+                                                "field_1782131403608_u5zbn__selection-2": "HIDDEN VENT VINYL",
+                                                "field_1782131715424_ctppy__color": "Musket Brown"
+                                            },
+                                            "_combinationNumber": 2
+                                        }
+                                    ]
+                                },
+                                "section_1784638692663__porch-ceiling-sqft": {
+                                    "combinations": []
+                                },
+                                "section_1784638806371__nailer-build-out": {
+                                    "combinations": []
+                                }
+                            }
+                        },
+                        "6a707a70dd8f62201b011a51__6a45fc7278fdcf9553315d58": {
+                            "sectionFields": {
+                                "section_1784877657953__section-2": {
+                                    "field_1784877710818_i2zst__textvalue": "",
+                                    "colorValues": {
+                                        "field_1784877710818_i2zst__textvalue": 0
+                                    }
+                                }
+                            },
+                            "comboGroups": {
+                                "section_1784870268821__fascia-wrap": {
+                                    "combinations": []
+                                },
+                                "section_1784877035492__fascia-boards": {
+                                    "combinations": []
+                                }
+                            }
+                        },
+                        "6a707a70dd8f62201b011a51__6a45fc7278fdcf9553315d59": {
+                            "sectionFields": {
+                                "section_1782453381905__extras": {
+                                    "field_1782453446929_bgvfu__textvalue": "",
+                                    "field_1782453450585_2qs2v__textvalue-si5yz": "",
+                                    "field_1782453452971_cigqg__textvalue-q8329": "",
+                                    "field_1782453454865_2nrfx__textvalue-oz29o": "",
+                                    "colorValues": {
+                                        "field_1782453446929_bgvfu__textvalue": 0,
+                                        "field_1782453450585_2qs2v__textvalue-si5yz": 0,
+                                        "field_1782453452971_cigqg__textvalue-q8329": 0,
+                                        "field_1782453454865_2nrfx__textvalue-oz29o": 0
+                                    }
+                                }
+                            },
+                            "comboGroups": {
+                                "section_1782289618567__section": {
+                                    "combinations": []
+                                }
+                            }
+                        },
+                        "6a707a70dd8f62201b011a51__6a460b3978fdcf95533181dd": {
+                            "sectionFields": {
+                                "section_1782477680389__section": {
+                                    "field_1782477692853_mjb9v__textvalue": "",
+                                    "field_1782477694448_p6sxu__textvalue-1skfd": "",
+                                    "field_1782477864148_3sj98__notes": "",
+                                    "field_1782478013084_ytd72__textvalue-2": "",
+                                    "field_1783593623830_ashds__quantity": "",
+                                    "field_1782478110353_pw5mf__textvalue-6ffuq-ledxc": "",
+                                    "field_1782478211743_o9tqo__selection": "",
+                                    "field_1782478239747_bi1be__selection-vfyh4": "",
+                                    "colorValues": {
+                                        "field_1782477692853_mjb9v__textvalue": 0,
+                                        "field_1782477694448_p6sxu__textvalue-1skfd": 0
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "configId": "6a450af8dcb87903dbea984e",
+                "configSnapshotId": "6a450af8dcb87903dbea984e",
+                "resultedProducts": [
+                    {
+                        "key": "6a707a70dd8f62201b011a51",
+                        "name": "Gutters/Roofline",
+                        "id": "6a707a70dd8f62201b011a51"
+                    }
+                ],
+                "status": "submitted",
+                "deletedAt": null,
+                "createdAt": "2026-08-22T07:42:10-04:00",
+                "updatedAt": "2026-08-23T16:18:39-04:00"
+            },
+            "assignmentProducts": [
+                {
+                    "id": "6a707a70dd8f62201b011a51",
+                    "name": "Gutters/Roofline"
+                }
+            ],
+            "jobBuilderDocuments": {
+                "agreements": [
+                    {
+                        "_id": "6a898b12bf878d3257c8e72e",
+                        "name": "",
+                        "documentType": "agreement",
+                        "filePath": "job-builder-docs/6a5071229f0cc250ffecbb6e/6a898b12bf878d3257c8e6f4/agreements/1787398930096-0-document.pdf",
+                        "bucketName": "np-revdsm-staging",
+                        "fileData": {
+                            "contentType": "application/pdf",
+                            "size": 70805
+                        },
+                        "deletedAt": null,
+                        "createdAt": "2026-08-22T07:42:10-04:00",
+                        "updatedAt": "2026-08-22T07:42:10-04:00"
+                    }
+                ],
+                "orderSheets": [
+                    {
+                        "_id": "6a898b12bf878d3257c8e73a",
+                        "name": "",
+                        "documentType": "orderSheet",
+                        "filePath": "job-builder-docs/6a5071229f0cc250ffecbb6e/6a898b12bf878d3257c8e6f4/orderSheets/1787398930105-0-document.pdf",
+                        "bucketName": "np-revdsm-staging",
+                        "fileData": {
+                            "contentType": "application/pdf",
+                            "size": 4418986
+                        },
+                        "deletedAt": null,
+                        "createdAt": "2026-08-22T07:42:10-04:00",
+                        "updatedAt": "2026-08-22T07:42:10-04:00"
+                    }
+                ],
+                "paperWork": [],
+                "downPaymentReceipt": []
+            },
+            "waiverForm": null,
+            "actionLogs": [],
+            "actionCounts": {
+                "lead_check_in": 0,
+                "lead_resume": 0,
+                "lead_review": 0
+            },
+            "pendingAddendumCount": 0
+        }
+    }
+}
