@@ -2608,6 +2608,123 @@ wanted on pre only.
 tsc: error set identical to HEAD. `PhotoMatchStep.tsx` is byte-identical to its HEAD eslint baseline
 (31 warnings, 0 errors); the iOS bundle builds (HTTP 200).
 
+### Public Sans is now the app-wide default, so Android's device font can't win
+
+Ticket: *"some of the fonts on android are the android default font, not public sans … make sure all
+fonts are connected and are public sans … make sure public sans will show even though we change the
+font from over android device setting."*
+
+**The fonts were never missing.** All nine upright faces are bundled and registered on both platforms
+(`src/assets/fonts` + `react-native.config.js`; `UIAppFonts`; `android/app/src/main/assets/fonts`). The
+gap is that a `<Text>` only gets Public Sans when something **names a face** — the NativeWind `font-*`
+classes do (`tailwind.config.js` maps every one of them to a `PublicSans-*` file, ~1,450 sites) and the
+**~850 inline `style={{ fontWeight: '700' }}` sites do not**. With no `fontFamily` each platform falls
+back to its own system font: on Android that is **whatever the user picked in the device font setting**.
+
+**Pure `src/utils/default-font.ts`** (`resolveFontPatch`) decides the face; it is applied from the
+`ScaledText` / `ScaledTextInput` wrappers in **`index.js`** — the same wrappers that do tablet font
+scaling, and which already patch the `react-native` exports, so text inside third-party components
+(navigation headers, chat, pickers) is covered too rather than 201 files being edited.
+
+⚠️ **The util is INERT without that `index.js` wiring**, and it has already been lost once: `a96b3ac`
+committed `default-font.ts` alone, leaving nothing that imports it — which reads on device exactly like
+the original bug. If unclassed text is following the device font again, check `index.js` FIRST.
+
+#### ⚠️ Naming a face is NOT enough on Android — the WEIGHT has to go with it
+
+`ReactFontManager.createAssetTypeface` resolves a family + weight by looking for the FILE
+`fonts/<family><variant>.ttf`. So `PublicSans-Regular` + `fontWeight: '700'` looks for
+**`PublicSans-Regular_bold.ttf`**, misses, and falls through to
+`Typeface.create("PublicSans-Regular", BOLD)` — an unknown family — so Android returns the **system
+font, synthetically bolded**. Silent, and indistinguishable from the missing-font bug.
+
+Every patch is therefore a PAIR — the face **plus `fontWeight: 'normal'`**:
+
+| | why the pair works |
+|---|---|
+| Android | `TypefaceStyle.nearestStyle` stays NORMAL (or ITALIC), so the exact `.ttf` is loaded |
+| iOS | `RCTFontUtils` reads the name, recovers its real family, then `fontWeight = (fontWeight != 0.0) ?: RCTGetFontWeight(font)` — and `normal` **IS** `UIFontWeightRegular`, which is literally `0.0`, so the named face's own weight wins |
+
+⚠️ This is the exact pair `tailwind.config.js` has always emitted (every `fontWeight` value there is
+remapped to `'normal'`) — so it is not a new rendering path, just one applied to the styles that had
+none. Do not "tidy" those `'normal'`s away in either place.
+
+#### What it deliberately leaves alone
+
+- ⚠️ **Any font that is not ours** — `Ionicons`, `MaterialCommunityIcons`, … Every icon in the app is a
+  `<Text>` with an icon `fontFamily`; rewriting those to Public Sans would replace every icon with a
+  missing glyph. Tested.
+- ⚠️ **`fontWeight: 'normal'` / `400` beside a face that is already ours.** That value is usually not an
+  author's opinion — Tailwind emits it mechanically next to every `font-*` family class — so honouring
+  it would turn **every `font-bold` in the app back into a regular face**. A heavier explicit weight
+  DOES win, because that is a real instruction and it is also the Android trap above
+  (`font-sans` + `fontWeight: '700'`), where iOS already resolves Public Sans Bold and Android does not.
+
+⚠️ **iOS changes too, and that is the point.** Unstyled text there was San Francisco; it is now Public
+Sans, so the two platforms finally agree and match the design system. Scope it to Android with a
+`Platform.OS` test in `index.js` if that is ever unwanted — but then the platforms diverge again, which
+was the complaint one ticket earlier.
+
+⚠️ **Not covered, by nature:** `Animated.Text` (one site, `CustomCameraModal`'s zoom label — RN's
+`Animated` namespace wraps the internal Text module, not the patched export), and anything the OS draws
+itself (`Alert`, native date pickers, WebView/PDF content).
+
+⚠️ **Font SIZE is untouched.** The device's text-size setting still scales the app (`allowFontScaling`
+stays on) — that is accessibility, and this ticket is about the typeface.
+
+#### …and the follow-up: the last Text still following the device font was ITALIC
+
+Ticket, with an Android screenshot whose system font was a script face: *"this text should be change if
+we change the font from the android settings"* — pointing at `Leads/index.tsx`'s
+`className="text-[10px] italic"` caption (*All Self Gen Leads will be archived end of day unless
+deleted*), rendering in that script font while everything around it was Public Sans.
+
+Italic was the one case the first pass skipped, because no italic face was bundled. **Fixed by shipping
+the missing faces** rather than by dropping the slant: `PublicSans-Regular_italic.ttf` and
+`PublicSans-Bold_italic.ttf`, taken from the official OFL source (`uswds/public-sans`) and verified to
+carry the same `Public Sans` family name (and the italic bit, at weights 400/700) as the nine upright
+faces — which is what lets iOS find them, since it matches on family + the italic trait, never on the
+file name.
+
+⚠️ **Dropping `italic` was NOT an option**, and this is worth knowing before anyone "simplifies" it:
+`LeadCenter/DraggableText.tsx` lets the rep CHOOSE Italic / Bold Italic on an annotation, and
+`agreement/blocks/SignatureSectionBlock.tsx` uses italic as the stand-in for web's cursive signature
+font. Forcing those upright would have broken two features to fix a caption.
+
+⚠️ **An italic style may name ONLY those two families**, and the file NAMES are load-bearing. Android
+looks for `fonts/<family>_italic.ttf`, so the files are named after the family the resolver asks for —
+not after the fonts' own `PublicSans-Italic` / `PublicSans-BoldItalic` PostScript names. Adding
+`PublicSans-SemiBold` to `ITALIC_FACE` selection without shipping `PublicSans-SemiBold_italic.ttf`
+sends that text **straight back to the device font**, silently. A heavier italic therefore renders Bold
+Italic rather than Black Italic.
+
+⚠️ And it is the `fontWeight: 'normal'` half of the pair that keeps `nearestStyle` at **`ITALIC`** rather
+than `BOLD_ITALIC` — without it Android would look for `PublicSans-Bold_bold_italic.ttf` and miss.
+
+⚠️ Linked by hand rather than by re-running `react-native-asset`: two `UIAppFonts` entries plus the four
+`project.pbxproj` entries each font needs (`PBXBuildFile`, `PBXFileReference`, the group's children, and
+the Resources phase), modelled on the existing `PublicSans-Light.ttf` rows. Both files pass
+`plutil -lint`. **iOS needs a rebuild for the new resources to reach the bundle.**
+
+⚠️ **`ios/revDSM_Sales/Info.plist` and `project.pbxproj` are CRLF** — editing them in text mode rewrote
+every line to LF and turned a 10-line change into a 262-line one. Use `newline=''`. (Same trap already
+recorded here for `dynamic-deal-diff.ts` and `EditCustomerModal.tsx`.)
+
+Verified with 14 tests over the real resolver: both repros (an inline weight with no family; the italic
+caption), a style with no font information at all, every one of the nine weights mapping to a face that
+is actually bundled and always paired with `'normal'`, italic resolving to one of exactly the two
+shipped `_italic` families across all nine weights, a bold italic surviving the Tailwind pair, icon
+fonts untouched upright AND italic, the named-face + heavier-weight re-derive, patches returned as the
+SAME frozen object per face (so style diffing sees no change), odd weights (450/1000/50) snapping to a
+real file, and junk reading as "no opinion". tsc adds nothing (48 before and after — the four above the
+old 44 are the parallel offline branch's own test files); `index.js`, `default-font.ts` and the test are
+eslint-clean; the Android release bundle builds (exit 0).
+
+⚠️ Needs a device check (this repo cannot render-test): set a custom system font on Android and confirm
+the app ignores it, italics included; and watch the tight inputs — Public Sans has different
+ascent/descent than SF, so the Leads search field (whose descender clipping was tuned in an earlier
+ticket) is where a metric shift would show first.
+
 ### The Investment Center never saw the down payment entered on the DROP screen
 
 Ticket: *"Sale Resulted | Down payment did not save or reflect in Contract Details … when i add down
