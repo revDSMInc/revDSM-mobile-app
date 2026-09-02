@@ -10,6 +10,11 @@ import { logLogout } from '../utils/activity-log/auth-log';
 import { clearPendingLogs } from '../services/api/LoggerService';
 import { clearActiveInstallerJob } from '../utils/activity-log/installer-log';
 import { endInstallerWorkSession } from '../utils/installer-work-session';
+// Safe to import statically: PushNotificationService is pure JS and reaches the
+// native SDKs only through `services/push-native.ts`, which requires them lazily
+// inside a try/catch. It must stay that way — a static native import anywhere in
+// this chain makes SIGN-IN depend on the push modules being present.
+import PushNotificationService from '../services/PushNotificationService';
 
 
 export const useAuth = () => {
@@ -36,21 +41,29 @@ export const useAuth = () => {
       //    still on the job.
       await endInstallerWorkSession('logout');
 
-      // 3. Clear session from persistent storage & headers
+      // 3. Release the push token — BEFORE the header is cleared, because the
+      //    DELETE is authenticated.
+      //    ⚠️ SECURITY, not housekeeping: field crews share handsets, and a token
+      //    left bound puts the previous rep's lead names, customer addresses and
+      //    chat messages on the next rep's lock screen. The backend only prunes a
+      //    dead token on its next send, so leaving it is a real window.
+      await PushNotificationService.unbind();
+
+      // 4. Clear session from persistent storage & headers
       await setSessionHeader(null);
-      // 4. Disconnect the global socket before wiping auth state
+      // 5. Disconnect the global socket before wiping auth state
       SocketManager.disconnect();
-      // 5. Clear API cache (React Query)
+      // 6. Clear API cache (React Query)
       if (queryClient) queryClient.clear();
 
-      // 6. Wipe memory / Redux state
+      // 7. Wipe memory / Redux state
       dispatch(logoutAction());
 
-      // 7. Drop the installer job bound to the activity log, so the next session
+      // 8. Drop the installer job bound to the activity log, so the next session
       //    can't attach this user's job/lead context to its events.
       clearActiveInstallerJob();
 
-      // 8. Drop anything the logger is holding for a session that never opened, for
+      // 9. Drop anything the logger is holding for a session that never opened, for
       //    the same reason — the next person to sign in on this device must not
       //    inherit it.
       clearPendingLogs();

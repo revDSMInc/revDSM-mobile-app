@@ -7,6 +7,40 @@ import { AppRegistry, Text, TextInput, StyleSheet, Dimensions, Platform } from '
 import App from './App';
 import { name as appName } from './app.json';
 
+/**
+ * FCM background handler.
+ *
+ * ⚠️ MUST be registered at MODULE SCOPE, outside any component, and before
+ * `AppRegistry.registerComponent`. When the app has been killed there is no React
+ * tree to register it from — this is the single most common reason a push works
+ * in the foreground and appears to vanish in the background.
+ *
+ * The backend sends a `notification` block alongside `data`, so the OS has already
+ * drawn the banner by the time this runs. It exists only for cheap side effects.
+ *
+ * ⚠️ Do NOT fetch here. This is a headless JS task with a hard time budget, and on
+ * a cold start no session header has been restored yet — a hung request gets the
+ * process killed.
+ */
+try {
+  // Required lazily, NOT imported at the top. @notifee and @react-native-firebase
+  // resolve their native modules at IMPORT time and throw when those are missing,
+  // which is exactly what a JS-only reload against a stale native binary gives
+  // you. A static import here would take the entire bundle down at startup.
+  // eslint-disable-next-line global-require
+  const { getApp } = require('@react-native-firebase/app');
+  // eslint-disable-next-line global-require
+  const { getMessaging, setBackgroundMessageHandler } = require('@react-native-firebase/messaging');
+
+  setBackgroundMessageHandler(getMessaging(getApp()), async (message) => {
+    console.log('[Push] background message:', message?.data?.eventType);
+  });
+} catch (e) {
+  // Missing native modules (needs a rebuild), or iOS before
+  // GoogleService-Info.plist is added to the Xcode target.
+  console.warn('[Push] background handler not registered:', e?.message || e);
+}
+
 // Detect tablet device dynamically
 const isTablet = () => {
   const { width, height } = Dimensions.get('window');

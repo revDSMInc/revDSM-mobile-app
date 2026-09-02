@@ -12,6 +12,7 @@ import AppointmentsPage from '../screens/Appointments/index';
 import LearningPage from '../screens/Learning/index';
 import ChatThreadsScreen from '../screens/ChatThreads/index';
 import ChatDetailScreen from '../screens/ChatDetail/index';
+import NotificationsScreen from '../screens/Notifications';
 import MapDetailPage from '../screens/MapDetail';
 import LeadCenterPage from '../screens/LeadCenter';
 import PitchbookScreen from '../screens/Pitchbook';
@@ -50,6 +51,7 @@ export type RootStackParamList = {
   JobTracker: undefined;
   MyLearning: undefined;
   ChatThreads: undefined;
+  Notifications: undefined;
   ChatDetail: {
     leadId?: string;
     chatId: string;
@@ -225,6 +227,10 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                 <Stack.Screen name="MyLearning" component={LearningPage} />
                 <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
                 <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+                {/* Installers are chat participants, so they receive the four chat
+                    push types. Registering the screen here as well is what stops a
+                    tapped notification from throwing on an unknown route. */}
+                <Stack.Screen name="Notifications" component={NotificationsScreen} />
               </>
             ) : (
               <>
@@ -237,6 +243,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                 <Stack.Screen name="MyLearning" component={LearningPage} />
                 <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
                 <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+                <Stack.Screen name="Notifications" component={NotificationsScreen} />
                 <Stack.Screen name="MapDetail" component={MapDetailPage} />
                 <Stack.Screen
                   name="LeadCenter"

@@ -8,6 +8,7 @@ import { useSecureLogo } from '../../hooks/useSecureLogo';
 import { useTheme } from '../../theme/ThemeProvider';
 import { AccountPopover } from '../components/AccountPopover';
 import { ChatThreadsManager } from './ChatThreadsManager';
+import { NotificationBell } from './NotificationBell';
 import { useNavigation } from '@react-navigation/native';
 import Logo from '../../assets/svgs/light-logo';
 import { GlobalModal } from '../common/modal/GlobalModal';
@@ -135,6 +136,11 @@ export function Header({
               <Icon name="format-list-bulleted" size={22} color="white" />
             </TouchableOpacity>
           )}
+
+          {/* Bell first, then chat — the bell counts NOTIFICATIONS across all
+              nine event types, the chat badge counts unread MESSAGES. Two
+              different numbers, so they must not be merged into one control. */}
+          <NotificationBell onNavigate={onNavigate} />
 
           <ChatThreadsManager onNavigate={onNavigate} />
 
