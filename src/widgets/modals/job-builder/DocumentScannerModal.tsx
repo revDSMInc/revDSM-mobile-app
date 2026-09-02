@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -16,9 +16,19 @@ import {
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import DocumentScanner from 'react-native-document-scanner-plugin';
+import RNFS from 'react-native-fs';
+import ReactNativeBlobUtil from 'react-native-blob-util';
 import { LeadService } from '../../../services/api/leads';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isPdfFile } from '../../../utils/document-file';
+import {
+  appendScannedPages,
+  buildScanPageName,
+  mergeFiledPages,
+  remainingPageCapacity,
+  removeScannerPage,
+  seedScannerPages,
+} from '../../../utils/document-scanner-pages';
 
 // A server document's source lives on `secureUrl`/`url`, NOT on `uri`, and a signed
 // agreement is a PDF that `Image` cannot decode. Both are why the tile rendered as a
@@ -71,42 +81,146 @@ export const DocumentScannerModal = ({
 
   const columnWidth = (width - 48) / 2;
 
+  // WARNING Seeded when the sheet OPENS, and never again while it stays open.
+  //
+  // This used to run on `[visible, initialFiles]`, and `initialFiles` is a derived
+  // array (`mergeDocSources(...)` in SummaryFinalizeCards) whose identity changes
+  // whenever the parent re-renders - which the parent does on its own, e.g. when the
+  // documents query settles after the app returns from the scanner Activity. Every
+  // one of those re-renders reset the list to what was on the RECORD, wiping the
+  // pages scanned in this session: capture a page, import a second from the gallery,
+  // and the first one is gone. Nothing outside this sheet may replace its list while
+  // the rep is working in it.
+  const wasVisibleRef = useRef(false);
   useEffect(() => {
-    if (visible) {
-      // Carry the WHOLE file object through. The old projection kept only
-      // `{ uri, serverId, isNew, name }`, which (a) dropped `url`/`secureUrl`/
-      // `contentType` so the tile had nothing to render, and (b) dropped
-      // `filePath`, so a document identified by filePath alone no longer matched
-      // itself on the way back out and got pruned from the card on Update.
-      const initial = (initialFiles || []).map((f) => ({
-        ...f,
-        serverId: f.serverId || f._id,
-        isNew: false,
-      }));
-      setFiles(initial);
+    if (visible && !wasVisibleRef.current) {
+      setFiles(seedScannerPages(initialFiles));
       setRemovedServerIds([]);
     }
+    wasVisibleRef.current = visible;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  // The other half of seeding once: the filed documents come from a query, so they
+  // can land AFTER the sheet opened. They are MERGED in - never substituted for the
+  // list on screen - so a late read adds what it found without touching anything the
+  // rep scanned or crossed out. Without this, saving would send a list missing those
+  // documents and the card, which prunes by identity, would drop them from the record.
+  useEffect(() => {
+    if (!visible) return;
+    setFiles((prev) => mergeFiledPages(prev, initialFiles, removedServerIds));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initialFiles]);
+
+  /** Did the copy actually land, and is the file non-empty? */
+  const landed = async (dest: string): Promise<boolean> => {
+    try {
+      if (!(await RNFS.exists(dest))) return false;
+      const stat = await RNFS.stat(dest);
+      return Number(stat?.size) > 0;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * Copy a scanned page into the app's OWN cache and return a plain `file://` uri.
+   *
+   * WARNING On Android the ML Kit scanner hands back a `content://` uri owned by
+   * Google Play services - both for a camera capture and for a gallery import -
+   * and older Play services builds (which is what an Android 11 device tends to
+   * carry) do this where newer ones return a file path. Two separate things break
+   * when the page is left on that uri: everything downstream assumed `file://`
+   * (`document-payloads.readFileBytes` dropped any other uri outright, so a scanned
+   * order sheet never reached the Complete Job payload), AND the scanner reuses its
+   * cache path, so the NEXT scan session overwrites or clears the file the earlier
+   * page points at - which is what made a captured page vanish when a second was
+   * imported from the gallery.
+   *
+   * Copying here, in the same tick the result arrives, makes every later reader
+   * (upload, submit payload, the tile preview) see an ordinary app-private file
+   * that behaves identically on every Android and iOS version - and one that no
+   * other scan can touch, because `buildScanPageName` never repeats a name.
+   *
+   * Two strategies, each VERIFIED to have produced a real file, then the original
+   * uri as a last resort so a page is never simply lost.
+   */
+  const localizeScannedPage = async (uri: string, fileName: string): Promise<string> => {
+    const dest = `${RNFS.CachesDirectoryPath}/${fileName}`;
+    // RNFS resolves a bare path as a file and a `content://` uri through the
+    // ContentResolver; iOS needs the `file://` scheme stripped either way.
+    const src = uri.startsWith('file://') ? uri.replace('file://', '') : uri;
+
+    try {
+      if (await RNFS.exists(dest)) await RNFS.unlink(dest).catch(() => {});
+    } catch {
+      // A stale destination that cannot be removed is not worth failing over; the
+      // copy below either overwrites it or falls through to the second strategy.
+    }
+
+    // 1. Native stream copy - the cheap path, and the only one iOS needs.
+    try {
+      await RNFS.copyFile(src, dest);
+      if (await landed(dest)) return `file://${dest}`;
+    } catch (e) {
+      console.warn('[DocumentScannerModal] copyFile failed for a scanned page', e);
+    }
+
+    // 2. Read the bytes and write them out. WARNING This exists because the copy
+    //    above is NOT dependable for every uri the scanner can return: on Android
+    //    a page can arrive as a `content://` uri owned by Play services, and
+    //    whether RNFS can stream from one varies by device and OS version.
+    //    `react-native-blob-util` resolves content uris through the ContentResolver
+    //    explicitly, so it covers the cases the copy does not.
+    try {
+      const base64 = await ReactNativeBlobUtil.fs.readFile(uri, 'base64');
+      if (base64) {
+        await ReactNativeBlobUtil.fs.writeFile(dest, base64 as string, 'base64');
+        if (await landed(dest)) return `file://${dest}`;
+      }
+    } catch (e) {
+      console.warn('[DocumentScannerModal] could not localize a scanned page', e);
+    }
+
+    // WARNING Last resort. Keeping the scanner's own uri is what the lost-page bug
+    // was made of: the scanner reuses its cache path, so the NEXT session can
+    // overwrite or clear the file this uri points at and the earlier tile changes
+    // or empties. Better a page that may go stale than no page at all - but if this
+    // line is reached, that IS the bug, and the warnings above name which step failed.
+    console.warn('[DocumentScannerModal] keeping the scanner uri - page may not survive another scan');
+    return uri;
+  };
 
   const startScan = async () => {
     try {
       const result = await DocumentScanner.scanDocument({
-        maxNumDocuments: 10 - files.length,
+        maxNumDocuments: remainingPageCapacity(files.length),
         letUserAdjustCrop: true,
       } as any);
 
       if (result && result.scannedImages && result.scannedImages.length > 0) {
-        const timestamp = Date.now();
-        const newScans = result.scannedImages.map((uri: string, index: number) => ({
-          uri,
-          isNew: true,
-          name: `scanned_${category}_${timestamp}_${index}.jpg`,
-        }));
-        const updatedFiles = [...files, ...newScans];
-        setFiles(updatedFiles);
-        if (onChange) onChange(updatedFiles);
+        setLoading(true);
+        const newScans = await Promise.all(
+          result.scannedImages.map(async (uri: string, index: number) => {
+            const name = buildScanPageName(category, index);
+            return { uri: await localizeScannedPage(uri, name), isNew: true, name };
+          }),
+        );
+        setLoading(false);
+
+        // WARNING Applied to the CURRENT list, not to `files`. The scanner Activity
+        // can sit open for minutes with the app backgrounded, so `files` here is a
+        // snapshot from before it opened - writing that back is how the page from the
+        // previous session disappeared when the next one returned.
+        let merged: any[] = [];
+        setFiles((prev) => {
+          merged = appendScannedPages(prev, newScans);
+          return merged;
+        });
+        if (onChange) onChange(merged);
       }
     } catch (error) {
+      setLoading(false);
       console.error('Scanning error:', error);
       if (error instanceof Error && !error.message.includes('cancel')) {
         Alert.alert('Scanning Error', 'An error occurred while trying to scan the document.');
@@ -116,13 +230,18 @@ export const DocumentScannerModal = ({
 
   const handleRemove = (index: number) => {
     const itemToRemove = files[index];
+    if (!itemToRemove) return;
     if (itemToRemove.serverId) {
       setRemovedServerIds((prev) => [...prev, itemToRemove.serverId!]);
     }
-    const newFiles = [...files];
-    newFiles.splice(index, 1);
-    setFiles(newFiles);
-    if (onChange) onChange(newFiles);
+    // Removed by the page ITSELF: an index is only valid against the list the rep
+    // was looking at, and a scan landing in between would shift it onto another tile.
+    let remaining: any[] = [];
+    setFiles((prev) => {
+      remaining = removeScannerPage(prev, itemToRemove, index);
+      return remaining;
+    });
+    if (onChange) onChange(remaining);
   };
 
   const handleSave = async () => {
