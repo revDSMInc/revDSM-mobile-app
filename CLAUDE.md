@@ -2608,6 +2608,46 @@ wanted on pre only.
 tsc: error set identical to HEAD. `PhotoMatchStep.tsx` is byte-identical to its HEAD eslint baseline
 (31 warnings, 0 errors); the iOS bundle builds (HTTP 200).
 
+### Pre-Install references drop the rep's ANNOTATED copies
+
+Ticket: *"inside the installer when user open the lead and go to the step pre install photos, at that
+point show us only actual photos — if any photo is having the Annotated tag then don't show that
+photo."*
+
+`RepPhoto` has declared `isAnnotated?: boolean` since the type was written and **nothing ever read
+it**, so an annotated row went into the tagger like any other. `repPhotoOf` took the first non-installer
+photo in the slot, and the annotated copy is filed AFTER the shot it marks up — so whenever the rep
+annotated a photo, its marked-up duplicate became the reference and the crew was asked to ghost-match
+against arrows and circles drawn over the house.
+
+**New `isAnnotatedRepPhoto` + `actualPhotosOf` in `utils/installer-photo-sections.ts`**; `repPhotoOf`
+and the `reference` fallback both read the filtered list.
+
+⚠️ **Three spellings, because three parts of the app write it**: `isAnnotated: true` (what the installer
+payload declares), `category: 'annotated'`, and a `"<slot> (Annotated)"` subcategory — the latter pair
+is what `screens/ImageAnnotation` files its copy under, and what `utils/inspection-photos.ts` and
+`screens/RevRender` already exclude on. `RepPhoto` declares neither of the last two, so they are read
+off the raw row.
+
+⚠️ **`category` must EQUAL `annotated`, not merely contain it** (the subcategory test is a `includes`
+on the parenthesised suffix). A real category could legitimately be named for what it documents —
+"Annotated Damage Notes" is a photo of a house, not a markup layer. Tested both ways.
+
+⚠️ **The fallback is filtered too.** `reference = rep ?? actualPhotosOf(slot)[0]` — a slot the rep
+skipped, whose only other row is a marked-up duplicate, still has no reference to pair with, and the
+`repPhotoId` the matched shot uploads under must never be the annotated row's.
+
+⚠️ A slot holding ONLY an annotated copy now reads as a slot the rep never shot, so its category is
+omitted entirely (`buildRepPhotoSections` already skips a category with no rep photo in it). That is
+the same treatment a skipped category gets and is deliberate — there is nothing to match against.
+
+Verified with 7 tests over the real builder, including the repro asserted against the PRE-FIX code:
+`git show HEAD:` of the util, driven over the same payload, returns `back-left-annotated.jpeg` /
+`annotated-1` as the reference, and returns the real photo after. Plus all three spellings, the
+`Annotated Damage Notes` negative, a slot holding only an annotated copy, an annotated copy not standing
+in for a skipped slot, a clean slot unchanged, and empty input as a no-op. tsc error set unchanged; the
+util and its test are eslint-clean.
+
 ### The Investment Center never saw the down payment entered on the DROP screen
 
 Ticket: *"Sale Resulted | Down payment did not save or reflect in Contract Details … when i add down
