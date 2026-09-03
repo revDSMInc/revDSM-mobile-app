@@ -51,7 +51,22 @@ import {
 import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
-import { logDealAddendumSubmitted } from '../../../utils/activity-log/my-deal-log';
+import {
+  logDealAddendumSubmitted,
+  logDealInstallDateChanged,
+  logDealInstallDateModifyOpened,
+  logDealInstallDateSelected,
+  logDealInstallDateUnchanged,
+  logDealInstallWindowsDeclined,
+  logDealJobCancelled,
+  logDealPriceAutoAdjusted,
+  logDealPriceFieldChanged,
+  logDealStepNavigation,
+} from '../../../utils/activity-log/my-deal-log';
+import {
+  diffScreenValues,
+  snapshotScreenValues,
+} from '../../../utils/activity-log/screen-value-diff';
 import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
 import { validateEmail } from '../../../utils/validation';
 import { readLeadPhone, readLeadEmail } from '../../../utils/addendum-recipients';
@@ -82,6 +97,13 @@ import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 const STEP_LABELS = ['Install Date', 'Job Build', 'Job Price', 'Review & Submit'];
 
 const fmtMoney = (n: any) => `$${Math.round(Number(n) || 0).toLocaleString()}`;
+
+/**
+ * How long a Job Price edit settles before it is logged. Matches web
+ * (): a contract price typed digit by digit is ONE decision,
+ * and a row per keystroke would bury the figure the rep settled on.
+ */
+const PRICE_LOG_DEBOUNCE_MS = 1000;
 
 // The two install windows offered on the confirm-time step, in order (web parity:
 // `TIME_SLOTS`). "Doesn't Work" walks this list, then returns to the calendar.
@@ -583,13 +605,192 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     downPaymentMethodChanged ||
     balanceMethodChanged;
 
+  // ── activity log ────────────────────────────────────────────────────────────
+  // Every Install Date event names the same deal. Built once here for the reason
+  // `dealEditMeta` exists: the portal scopes `my_deal` by leadId + calculatorId, so
+  // a row that spells either differently never shows up on the deal. `null` when
+  // there is no user to attribute it to - the helpers no-op on that, matching the
+  // submit log's own `if (logUserId)` guard.
+  const dealLogTarget = useMemo(() => {
+    const userId = user?._id || user?.id;
+    if (!userId || !leadId) return null;
+    return {
+      userId,
+      leadId,
+      ...(editCalculatorId ? { calculatorId: editCalculatorId } : {}),
+      result: lead?.result || 'Sale',
+    };
+  }, [user, leadId, editCalculatorId, lead?.result]);
+
+  // The schedule as it stands, echoed on every decision row so the timeline reads
+  // without having to join back to the deal.
+  const loggedSchedule = useCallback(
+    () => ({
+      currentDate: scheduleDate || 'TBD',
+      currentTimeWindow: scheduleTimeWindow || 'TBD',
+    }),
+    [scheduleDate, scheduleTimeWindow]
+  );
+
+  // The four wizard steps, by the names the portal shows them under.
+  const stepName = useCallback((n: number) => STEP_LABELS[n] || `STEP_${n + 1}`, []);
+
+  const logStepMove = useCallback(
+    (from: number, to: number, direction: 'forward' | 'back') => {
+      if (!dealLogTarget || from === to) return;
+      logDealStepNavigation({
+        ...dealLogTarget,
+        fromStep: from + 1,
+        fromStepName: stepName(from),
+        toStep: to + 1,
+        toStepName: stepName(to),
+        direction,
+      });
+    },
+    [dealLogTarget, stepName]
+  );
+
+  // ── Job Price change tracking ───────────────────────────────────────────────
+  // The five values a rep can move on step 2, in the shape the diff reads. The
+  // money fields carry the markup each side of the change sat at, resolved from the
+  // pair the log actually reports (web `markupFor`) - a burst of keystrokes
+  // coalesces to one row, and stamping the markup at render time would stamp an
+  // intermediate one.
+  const markupText = useCallback(
+    (value: any) => {
+      const info = getMarkupInfo(parsePrice(value), tierResult.next, undefined);
+      if (!info?.text) return '';
+      const pct = info.markupPct !== null && info.markupPct !== undefined
+        ? ` ${info.markupPct > 0 ? '+' : ''}${info.markupPct}%`
+        : '';
+      return `${info.text}${pct}`;
+    },
+    [tierResult]
+  );
+
+  const priceScreenValues = useMemo(
+    () => ({
+      contractPrice: {
+        label: 'Contract Price',
+        value: fmtMoney(contractPrice),
+        meta: (from: string, to: string) => ({ oldMarkup: markupText(from), markup: markupText(to) }),
+      },
+      downPayment: {
+        label: 'Down Payment',
+        value: fmtMoney(downPayment),
+      },
+      balance: {
+        label: 'Balance',
+        value: fmtMoney(balance),
+      },
+      paymentMethod: {
+        label: 'Down Pmt Method',
+        value: resolvePlanLabel(downPaymentMethodKey, ''),
+      },
+      balancePaymentMethod: {
+        label: 'Balance Method',
+        value: resolvePlanLabel(balanceMethodKey, ''),
+      },
+    }),
+    [contractPrice, downPayment, balance, downPaymentMethodKey, balanceMethodKey, resolvePlanLabel, markupText]
+  );
+
+  // WARNING The FIRST snapshot is the baseline and logs nothing - it is what the
+  // deal was saved with, not something the rep did. Without it, merely opening the
+  // step would report all five fields as changed. Cleared when the step is left so
+  // coming back re-baselines against what is on screen then.
+  const priceSnapshotRef = useRef<Record<string, string> | null>(null);
+  const priceValuesRef = useRef(priceScreenValues);
+  priceValuesRef.current = priceScreenValues;
+  const priceFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushPriceChanges = useCallback(() => {
+    if (priceFlushRef.current) {
+      clearTimeout(priceFlushRef.current);
+      priceFlushRef.current = null;
+    }
+    const prev = priceSnapshotRef.current;
+    const values = priceValuesRef.current;
+    priceSnapshotRef.current = snapshotScreenValues(values);
+    if (!dealLogTarget) return;
+    diffScreenValues(prev, values).forEach((change) => {
+      logDealPriceFieldChanged({
+        ...dealLogTarget,
+        fieldName: change.fieldName,
+        fieldLabel: change.fieldLabel,
+        oldValue: change.oldValue,
+        newValue: change.newValue,
+        extra: change.meta,
+      });
+    });
+  }, [dealLogTarget]);
+
+  useEffect(() => {
+    if (step !== 2) {
+      // Leaving the step: flush anything still pending, then drop the baseline.
+      if (priceFlushRef.current) flushPriceChanges();
+      priceSnapshotRef.current = null;
+      return;
+    }
+    if (priceSnapshotRef.current === null) {
+      priceSnapshotRef.current = snapshotScreenValues(priceScreenValues);
+      return;
+    }
+    // Debounced, like web: a price typed digit by digit is ONE decision.
+    if (priceFlushRef.current) clearTimeout(priceFlushRef.current);
+    priceFlushRef.current = setTimeout(flushPriceChanges, PRICE_LOG_DEBOUNCE_MS);
+  }, [step, priceScreenValues, flushPriceChanges]);
+
+  // A pending edit must not be lost when the rep closes the wizard.
+  useEffect(
+    () => () => {
+      if (priceFlushRef.current) clearTimeout(priceFlushRef.current);
+    },
+    []
+  );
+
   // ── handlers ────────────────────────────────────────────────────────────────
   // Tapping a calendar day only SELECTS it (web `handleDatePick`) — the rep then
   // confirms with "Use <date>", which opens the confirm-time card.
-  const handleInlineDateSelect = useCallback((day: Date) => {
-    setProposedDate(day);
-    setProposedSlotIdx(0);
-  }, []);
+  const handleInlineDateSelect = useCallback(
+    (day: Date) => {
+      const nextDate = format(day, 'M/d/yyyy');
+      // Only when the selection actually MOVES. The calendar re-selects on every
+      // tap, and tapping the same day twice is one decision, not two.
+      const already = proposedDate ? format(proposedDate, 'M/d/yyyy') === nextDate : false;
+      if (dealLogTarget && !already) {
+        logDealInstallDateSelected({
+          ...dealLogTarget,
+          selectedDate: nextDate,
+          ...loggedSchedule(),
+        });
+      }
+      setProposedDate(day);
+      setProposedSlotIdx(0);
+    },
+    [dealLogTarget, loggedSchedule, proposedDate]
+  );
+
+  // "Next · Review" from Job Price. Flushed first, so a price typed and immediately
+  // confirmed is reported BEFORE the step it was entered on is left behind.
+  const handleNextToReview = useCallback(() => {
+    flushPriceChanges();
+    logStepMove(2, 3, 'forward');
+    setStep(3);
+  }, [flushPriceChanges, logStepMove]);
+
+  // "Modify Install Date" → the calendar. Logged so the timeline can tell a rep who
+  // looked at the date from one who never opened the step.
+  const handleOpenInstallCalendar = useCallback(() => {
+    if (dealLogTarget) logDealInstallDateModifyOpened({ ...dealLogTarget, ...loggedSchedule() });
+    setDateStep('calendar');
+  }, [dealLogTarget, loggedSchedule]);
+
+  // "No Change — Skip" → straight to Job Build, with the date left as it was.
+  const handleSkipInstallDate = useCallback(() => {
+    if (dealLogTarget) logDealInstallDateUnchanged({ ...dealLogTarget, ...loggedSchedule() });
+    setStep(1);
+  }, [dealLogTarget, loggedSchedule]);
 
   // "Use <date>" → offer the first time window for the selected day.
   const handleUseSelectedDate = useCallback(() => {
@@ -600,12 +801,21 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   // "TBD" → clear the scheduled date/window, then show the confirmation card
   // (web `handleSelectTbd` → `showSuccess`). "Done — Next →" moves on to Job Build.
   const handleSelectTbd = useCallback(() => {
+    if (dealLogTarget) {
+      logDealInstallDateChanged({
+        ...dealLogTarget,
+        oldDate: scheduleDate,
+        oldTimeWindow: scheduleTimeWindow,
+        newDate: 'TBD',
+        newTimeWindow: '',
+      });
+    }
     setScheduleDate('TBD');
     setScheduleTimeWindow('');
     setProposedDate(null);
     setProposedSlotIdx(0);
     setDateStep('success');
-  }, []);
+  }, [dealLogTarget, scheduleDate, scheduleTimeWindow]);
 
   // "Doesn't Work" → offer the next window for the SAME day; once both windows have
   // been declined, send the rep back to the calendar to pick another date (web
@@ -616,19 +826,40 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       setProposedSlotIdx(proposedSlotIdx + 1);
       return;
     }
+    // Logged only on the SECOND decline - the one that sends the rep back to the
+    // calendar. Logging the first would say the window was refused when the rep is
+    // simply being offered the other one.
+    if (dealLogTarget) {
+      logDealInstallWindowsDeclined({
+        ...dealLogTarget,
+        proposedDate: proposedDate ? format(proposedDate, 'M/d/yyyy') : undefined,
+        declinedWindows: INSTALL_WINDOWS.map((w) => w.value),
+      });
+    }
     setProposedSlotIdx(0);
     setDateStep('calendar');
-  }, [proposedSlotIdx]);
+  }, [proposedSlotIdx, proposedDate, dealLogTarget]);
 
   // "Confirm" → commit the proposed schedule, then show the confirmation card (web
   // `handleProposalYes` → `showSuccess`). `proposedDate` is intentionally kept so the
   // card can echo the committed date; `handleFinishInstallDate` clears it.
   const handleAcceptProposedTime = useCallback(() => {
     if (!proposedDate) return;
-    setScheduleDate(format(proposedDate, 'M/d/yyyy'));
-    setScheduleTimeWindow(INSTALL_WINDOWS[proposedSlotIdx].value);
+    const nextDate = format(proposedDate, 'M/d/yyyy');
+    const nextWindow = INSTALL_WINDOWS[proposedSlotIdx].value;
+    if (dealLogTarget) {
+      logDealInstallDateChanged({
+        ...dealLogTarget,
+        oldDate: scheduleDate,
+        oldTimeWindow: scheduleTimeWindow,
+        newDate: nextDate,
+        newTimeWindow: nextWindow,
+      });
+    }
+    setScheduleDate(nextDate);
+    setScheduleTimeWindow(nextWindow);
     setDateStep('success');
-  }, [proposedDate, proposedSlotIdx]);
+  }, [proposedDate, proposedSlotIdx, dealLogTarget, scheduleDate, scheduleTimeWindow]);
 
   // "Done — Next →" on the confirmation card → Job Build. Resets Step 0 back to its
   // landing card so stepping back to Install Date shows the intro, not the success card.
@@ -642,6 +873,20 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const handleAutoAdjust = useCallback(() => {
     const { previous, next } = tierResult;
     const original = parsePrice(lead?.originalContractPrice) || contractPrice;
+    const before = contractPrice;
+    // Logged as its own action: the debounced diff will ALSO report the resulting
+    // contract price, and the two rows say different things - this one records that
+    // the rep asked for the figure rather than typing it.
+    const logAdjusted = (value: number) => {
+      if (!dealLogTarget) return;
+      logDealPriceAutoAdjusted({
+        ...dealLogTarget,
+        oldValue: fmtMoney(before),
+        newValue: fmtMoney(value),
+        oldMarkup: markupText(before),
+        markup: markupText(value),
+      });
+    };
     // Preserve the markup the PREVIOUS card shows (e.g. "COST +75%"), not the raw
     // retail ratio. The badge measures the premium over the nearest LOWER tier, and
     // the tiers do NOT scale uniformly when the build changes (cost/par/retail each
@@ -655,19 +900,30 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     const prevBase = baseKey ? previous[baseKey] : 0;
     const nextBase = baseKey ? next[baseKey] : 0;
     if (baseKey && prevBase > 0 && nextBase > 0) {
-      setContractPrice(Math.round(nextBase * (original / prevBase)));
+      const adjusted = Math.round(nextBase * (original / prevBase));
+      setContractPrice(adjusted);
+      logAdjusted(adjusted);
     } else if (previous.retail > 0 && next.retail > 0) {
-      setContractPrice(Math.round(next.retail * (original / previous.retail)));
+      const adjusted = Math.round(next.retail * (original / previous.retail));
+      setContractPrice(adjusted);
+      logAdjusted(adjusted);
     } else if (next.par > 0) {
-      setContractPrice(Math.round(next.par * 1.1));
+      const adjusted = Math.round(next.par * 1.1);
+      setContractPrice(adjusted);
+      logAdjusted(adjusted);
     }
-  }, [tierResult, lead, contractPrice]);
+    // No else: with no tier to scale against, Auto Adjust changes nothing, and a
+    // row saying it ran would claim a re-price that never happened.
+  }, [tierResult, lead, contractPrice, dealLogTarget, markupText]);
 
   const handleCancelJob = useCallback(async () => {
     if (!leadId) return;
     setIsSubmitting(true);
     try {
       await LeadService.cancelLead(leadId, lead);
+      // After the server accepted it, never before: a failed cancel that logged
+      // anyway would leave the timeline claiming a job was cancelled when it was not.
+      if (dealLogTarget) logDealJobCancelled({ ...dealLogTarget, ...loggedSchedule() });
       FlashMessage.success('Job Cancelled', 'This job was marked cancelled');
       setShowCancelConfirm(false);
       navigation?.goBack();
@@ -676,7 +932,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     } finally {
       setIsSubmitting(false);
     }
-  }, [leadId, lead, navigation]);
+  }, [leadId, lead, navigation, dealLogTarget, loggedSchedule]);
 
   const handleSubmit = useCallback(async () => {
     if (!leadId) return;
@@ -885,7 +1141,16 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     noteChanged,
   ]);
 
-  const goBack = () => setStep((s) => Math.max(0, s - 1));
+  const goBack = useCallback(() => {
+    // Flushed before the step changes: an edit made and immediately walked back from
+    // is still an edit, and the tracker drops its baseline on leaving the step.
+    flushPriceChanges();
+    setStep((s) => {
+      const next = Math.max(0, s - 1);
+      logStepMove(s, next, 'back');
+      return next;
+    });
+  }, [flushPriceChanges, logStepMove]);
 
   // Wait on the calculator schemas too (web parity): the Step-2 tiers price the
   // edited build THROUGH those schemas, so rendering before they load would show
@@ -995,11 +1260,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   <Text style={styles.currentInstallTime}>{currentInstallTimeText}</Text>
                 </View>
 
-                <TouchableOpacity onPress={() => setDateStep('calendar')} style={styles.primaryBtn}>
+                <TouchableOpacity onPress={handleOpenInstallCalendar} style={styles.primaryBtn}>
                   <Text style={styles.primaryBtnText}>Modify Install Date</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={() => setStep(1)} style={styles.outlineBtn}>
+                <TouchableOpacity onPress={handleSkipInstallDate} style={styles.outlineBtn}>
                   <Text style={styles.outlineBtnText}>No Change — Skip</Text>
                 </TouchableOpacity>
 
@@ -1445,7 +1710,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             // Web parity: a price below cost (or a down payment above it) blocks the
             // step — the rep must correct it before Review, not discover it later.
             <TouchableOpacity
-              onPress={() => setStep(3)}
+              onPress={handleNextToReview}
               disabled={hasPriceError}
               style={{ backgroundColor: hasPriceError ? '#CBD5E1' : '#0F172A', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}
             >

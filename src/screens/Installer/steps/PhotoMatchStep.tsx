@@ -18,7 +18,7 @@ import {
   footerBottomPadding,
   headerTopPadding,
 } from '../../../utils/installer-insets';
-import { HouseGhost, tagTint } from '../../../widgets/components/installer/HouseGhost';
+import { tagTint } from '../../../widgets/components/installer/HouseGhost';
 import {
   TaggerImage,
   TaggerImageSpinner,
@@ -505,12 +505,12 @@ export function PhotoMatchStep({
           {heroUri ? (
             <TaggerImage uri={heroUri} tint={selected ? tagTint(selected.id) : undefined} />
           ) : (
-            <>
-              {/* Nothing from the rep and nothing shot yet — the house stands in, and
-                  the chip below invites a shot rather than a match. */}
-              <HouseGhost opacity={0.8} />
+            <View className="flex-1 items-center justify-center px-6">
+              <Text className="text-sm font-semibold text-center" style={{ color: T_DIM }}>
+                No Pre-Install Photo From Sale Side
+              </Text>
               {awaitingReference && <TaggerImageSpinner />}
-            </>
+            </View>
           )}
 
           <View className="absolute top-2.5 left-0 right-0 items-center">
