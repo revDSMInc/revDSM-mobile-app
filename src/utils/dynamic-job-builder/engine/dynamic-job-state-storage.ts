@@ -321,6 +321,10 @@ export function buildConfigStorageIndex(config: any) {
   // exact form is no longer in the config (see `resolveVerticalIdFromStorage` /
   // `resolveTabIdFromStorage`). Never used when the exact key still matches.
   const verticalIds = new Set<string>();
+  // Label slug -> the vertical ids using it. A LIST, not a single id: two products
+  // can carry the same name, and the recovery must be able to see that it is
+  // ambiguous rather than silently pick the first.
+  const verticalIdsBySlug = new Map<string, string[]>();
   const tabIds = new Set<string>();
   const tabsByVertical = new Map<string, Array<{ id: string; slug: string }>>();
   const sectionToStorage = new Map<string, string>();
@@ -336,6 +340,7 @@ export function buildConfigStorageIndex(config: any) {
     verticalToStorage.set(verticalId, verticalStorageKey);
     verticalFromStorage.set(verticalStorageKey, verticalId);
     verticalIds.add(verticalId);
+    verticalIdsBySlug.set(verticalSlug, [...(verticalIdsBySlug.get(verticalSlug) || []), verticalId]);
 
     const verticalTabs: Array<{ id: string; slug: string }> = [];
 
@@ -409,6 +414,7 @@ export function buildConfigStorageIndex(config: any) {
     fieldToStorage,
     fieldFromStorage,
     verticalIds,
+    verticalIdsBySlug,
     tabIds,
     tabsByVertical,
   };
@@ -437,22 +443,113 @@ function recoverCanonicalId(storageKey: string, knownIds: Set<string>): string |
 }
 
 /**
- * Saved vertical key → runtime vertical id.
+ * The saved vertical's own tab keys, reduced to the slug half of each key.
  *
- * ⚠️ The stored key is `${vertical.id}__${slug(vertical.label)}`, so it embeds the
- * LABEL. Rename a product in the job-builder config and every previously-saved build
- * stops matching: the old key isn't in `verticalFromStorage`, and the pre-existing
- * `.get(key) || key` fallback then filed the whole vertical under the raw storage key
- * — which no renderer reads, so the restored build came up completely blank while the
- * data sat in memory under an unreadable id. Sections and fields already recovered
- * this way (`resolveCanonicalKeyFromStorage`); verticals and tabs did not.
+ * A tab key is `buildTabKey(productId, productCategory)`, so its slug is the
+ * CATEGORY - which survives a product being recreated, while the id half does not.
+ * That is what makes it usable as a fingerprint for the product a build belongs to.
  */
-function resolveVerticalIdFromStorage(storageKey: string, index: any): string {
-  return (
-    index.verticalFromStorage.get(storageKey) ||
-    recoverCanonicalId(storageKey, index.verticalIds) ||
-    storageKey
-  );
+function savedTabSlugs(savedVerticalState: any): Set<string> {
+  if (!savedVerticalState || typeof savedVerticalState !== 'object' || Array.isArray(savedVerticalState)) {
+    return new Set();
+  }
+  const slugs = new Set<string>();
+  Object.keys(savedVerticalState).forEach((tabKey) => {
+    const slug = storageKeySlug(tabKey) || tabKey;
+    if (slug) slugs.add(slug);
+  });
+  return slugs;
+}
+
+/** How many of the saved tabs a config vertical actually has. */
+function tabOverlap(verticalId: string, saved: Set<string>, index: any): number {
+  const tabs = index.tabsByVertical.get(verticalId) || [];
+  const configSlugs = new Set(tabs.map((t: any) => t.slug).filter(Boolean));
+  let hits = 0;
+  saved.forEach((slug) => {
+    if (configSlugs.has(slug)) hits += 1;
+  });
+  return hits;
+}
+
+/**
+ * Saved vertical key -> runtime vertical id.
+ *
+ * WARNING The stored key is `${vertical.id}__${slug(vertical.label)}`, so it embeds
+ * the LABEL. Rename a product in the job-builder config and every previously-saved
+ * build stops matching: the old key isn't in `verticalFromStorage`, and the
+ * pre-existing `.get(key) || key` fallback then filed the whole vertical under the
+ * raw storage key - which no renderer reads, so the restored build came up
+ * completely blank while the data sat in memory under an unreadable id. Sections
+ * and fields already recovered this way (`resolveCanonicalKeyFromStorage`);
+ * verticals and tabs did not.
+ *
+ * WARNING The id recovery below is not enough on its own. A product REPLACED in the
+ * portal comes back with a NEW id, and the saved build then references an id that is
+ * no longer in the config at all - proven against two real leads on one company
+ * whose Gutters/Roofline product was rebuilt: the newer lead restored, the older one
+ * came up blank with its data intact under `6a45f1df...__gutters-roofline`. Hence
+ * the two content-based recoveries after it.
+ *
+ * The order is cheapest-and-most-certain first:
+ *   1. exact key            - the normal path, and the ONLY one a healthy lead takes
+ *   2. the id before `__`   - covers a renamed product (id unchanged)
+ *   3. the label slug       - covers a replaced product that kept its name
+ *   4. the tab fingerprint  - covers a replaced product that was ALSO renamed
+ *
+ * WARNING Steps 3 and 4 accept a candidate only when it is UNAMBIGUOUS, and give up
+ * otherwise. Restoring a build onto the wrong product is worse than restoring
+ * nothing: the state is what the addendum diff calls the ORIGINAL, so a wrong match
+ * would describe someone else's job on a document the customer signs. Leaving it
+ * unresolved keeps today's behaviour - blank, data intact, recoverable later.
+ */
+function resolveVerticalIdFromStorage(
+  storageKey: string,
+  index: any,
+  savedVerticalState?: any
+): string {
+  const exact = index.verticalFromStorage.get(storageKey);
+  if (exact) return exact;
+
+  const byId = recoverCanonicalId(storageKey, index.verticalIds);
+  if (byId) return byId;
+
+  const saved = savedTabSlugs(savedVerticalState);
+
+  // 3. Same name, new id. Accepted only when exactly one product carries the name,
+  //    and - when the build has tabs to check against - only when that product
+  //    actually holds some of them. Two unrelated products can share a name; they
+  //    cannot also share their tabs.
+  const slug = storageKeySlug(storageKey);
+  const bySlug = slug ? index.verticalIdsBySlug.get(slug) || [] : [];
+  if (bySlug.length === 1 && (!saved.size || tabOverlap(bySlug[0], saved, index) > 0)) {
+    return bySlug[0];
+  }
+
+  // 4. Renamed AND replaced: the tabs are the only handle left. The winner must beat
+  //    every other product outright and account for at least half of the saved tabs,
+  //    so a stray shared category can never carry a match on its own. Half rather
+  //    than all, because a tab deleted from the config since the sale should not
+  //    strand the remaining ones - they are still renderable.
+  let winner: string | undefined;
+  let best = 0;
+  let tied = false;
+  if (saved.size) {
+    index.tabsByVertical.forEach((_tabs: any, verticalId: string) => {
+      const hits = tabOverlap(verticalId, saved, index);
+      if (!hits) return;
+      if (hits > best) {
+        winner = verticalId;
+        best = hits;
+        tied = false;
+      } else if (hits === best) {
+        tied = true;
+      }
+    });
+  }
+  if (winner && !tied && best * 2 >= saved.size) return winner;
+
+  return storageKey;
 }
 
 /**
@@ -787,7 +884,7 @@ export function deserializeDynamicJobStateFromStorage(saved: any, config: any) {
       return;
     }
 
-    const canonicalVerticalId = resolveVerticalIdFromStorage(verticalKey, index);
+    const canonicalVerticalId = resolveVerticalIdFromStorage(verticalKey, index, verticalState);
 
     runtime[canonicalVerticalId] = {};
 

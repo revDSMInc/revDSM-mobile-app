@@ -299,5 +299,36 @@ export const RESULT_COLORS: Record<InstallerResultType, string> = {
 
 export const PRODUCT_PALETTE = ['#4CBB17', '#22C55E', '#8E33FF', '#FFAB00', '#00B8D9'];
 
-export const productColor = (index: number, explicit?: string) =>
-  explicit || PRODUCT_PALETTE[index % PRODUCT_PALETTE.length];
+/**
+ * Accent + glyph per sold product, so a scope card reads the way the same product reads
+ * on the sales side (gutters blue, leaf guards green, fascia purple, lighting amber).
+ *
+ * Matched on a NORMALISED name — the subcategory label is portal-authored and arrives
+ * as "Gutters" / "Gutter Guards" / "LeafFilter" depending on the company — and anything
+ * unrecognised falls through to the palette rotation and the generic package glyph, so
+ * a product this list has never heard of still gets a distinct colour.
+ */
+const PRODUCT_STYLES: { match: RegExp; color: string; icon: string }[] = [
+  // Guards before gutters: "Gutter Guards" contains "gutter" and would otherwise be
+  // claimed by the rule below it.
+  { match: /(guard|leaf\s*filter|leaffilter|micro\s*mesh)/i, color: '#22C55E', icon: 'leaf' },
+  { match: /gutter|downspout|roofline/i, color: '#00B8D9', icon: 'home-variant' },
+  { match: /soffit|porch\s*ceiling|nailer/i, color: '#00B8D9', icon: 'home-outline' },
+  { match: /fascia|trim\s*wrap/i, color: '#8E33FF', icon: 'wrench' },
+  { match: /light/i, color: '#FFAB00', icon: 'lightbulb-on-outline' },
+  { match: /(additional|service|labor|misc)/i, color: '#FFAB00', icon: 'briefcase-outline' },
+];
+
+const styleFor = (name?: string) =>
+  name ? PRODUCT_STYLES.find((s) => s.match.test(name)) : undefined;
+
+/**
+ * The card accent. An explicit API colour always wins; then the product's own name;
+ * then the rotation, so two unnamed products are still told apart.
+ */
+export const productColor = (index: number, explicit?: string, name?: string) =>
+  explicit || styleFor(name)?.color || PRODUCT_PALETTE[index % PRODUCT_PALETTE.length];
+
+/** MaterialCommunityIcons glyph for a sold product. */
+export const productIcon = (name?: string) =>
+  styleFor(name)?.icon || 'package-variant-closed';

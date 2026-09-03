@@ -1,23 +1,15 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useTranslation } from '../../../i18n/LanguageProvider';
 import { productColor } from '../../../constants/installer';
 import { formatCurrency } from '../../../utils/currency';
+import { ProductScopeCard } from './ProductScopeCard';
 import type { ContractDetails, JobPacket, SoldProduct } from '../../../config/types/installer';
 
 // Same output as the old `toLocaleString('en-US')` call, minus the dependency on the
 // engine shipping Intl data — see `utils/currency`.
 const currency = (n?: number) => formatCurrency(n);
-
-/**
- * Line height of a product spec line — also the height of its bullet's centring box.
- *
- * 20 on the 14 px (`text-sm`) spec line. Same pairing as `VerifyScopeStep`, and it has to
- * stay in step with the font size or every dot drifts off the middle of its line.
- */
-const LINE_HEIGHT = 20;
 
 interface Props {
   packet?: JobPacket;
@@ -161,48 +153,13 @@ export function JobReferenceCards({
           <Text className="text-base font-black mb-2" style={{ color: colors.text }}>
             {t('installer.products')}
           </Text>
-          {products.map((p, idx) => {
-            const accent = productColor(idx, p.color);
-            return (
-              <View
-                key={p.id}
-                className="rounded-xl p-2.5 mb-2 border"
-                style={{ backgroundColor: accent + '10', borderColor: accent }}
-              >
-                <View className="flex-row items-center mb-1">
-                  <Icon name="package-variant-closed" size={14} color={accent} />
-                  {/* One step under the card's own "Products" heading, which is
-                      `font-black` — so bold at the same 16 px, not black. Verify Job Scope
-                      renders this product as a card in its own right and titles it
-                      `text-base font-black` there. */}
-                  <Text className="ml-1.5 text-base font-bold" style={{ color: colors.text }}>
-                    {p.name}
-                  </Text>
-                </View>
-                {p.lines.map((line, lineIdx) => (
-                  <View key={`${p.id}-${lineIdx}`} className="flex-row items-start mb-1">
-                    {/* Same one-line-tall centring box as Verify Job Scope — keeps the dot on
-                        the middle of the first line instead of drifting with the font size. */}
-                    <View
-                      className="items-center justify-center mr-2"
-                      style={{ width: 6, height: LINE_HEIGHT }}
-                    >
-                      <View
-                        className="rounded-full"
-                        style={{ width: 6, height: 6, backgroundColor: accent }}
-                      />
-                    </View>
-                    <Text
-                      className="flex-1 text-sm font-semibold"
-                      style={{ color: colors.text, lineHeight: LINE_HEIGHT }}
-                    >
-                      {line}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            );
-          })}
+          {products.map((p, idx) => (
+            <ProductScopeCard
+              key={p.id}
+              product={p}
+              accent={productColor(idx, p.color, p.name)}
+            />
+          ))}
         </View>
       )}
     </>
