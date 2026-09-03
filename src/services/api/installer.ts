@@ -8,7 +8,6 @@ import type {
   InstallerResultSubmission,
   DiscrepancyReport,
   JobStatus,
-  SoldProduct,
   JobNote,
   JobPacket,
   InstallerImageDescriptor,
@@ -30,6 +29,9 @@ import type {
 import { stripUnsupportedFields } from '../../utils/installer-step-data';
 import { extractCocScanFields } from '../../utils/installer-coc-scan';
 import { extractCocPdf } from '../../utils/installer-coc-pdf';
+// Product scope parsing lives in a pure module so it can be tested — this file pulls in
+// the axios wrapper (and MMKV through it) and cannot be loaded under jest.
+import { normalizeProductDetails } from '../../utils/installer-product-scope';
 import { ENV } from '../../config/env';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -184,121 +186,6 @@ const normalizeContract = (raw: any): ContractDetails | undefined => {
   };
 
   return Object.values(contract).some((v) => v !== undefined) ? contract : undefined;
-};
-
-/**
- * Auto-generated schema ids leak through as field/section labels (e.g.
- * "section_1781585651515", "selection_ycsmh"). They carry no meaning to the
- * installer, so a label matching this pattern is dropped and only the value shown.
- */
-const AUTO_LABEL = /^(section_|field_|selection_)/i;
-
-/**
- * A `locationGrid` measurement arrives as a JSON string, e.g.
- * `{"Left Side":{"1st":5}}` → "Left Side 1st: 5". Anything unparseable is
- * returned untouched.
- */
-const formatMeasurements = (raw: string): string => {
-  try {
-    const obj = JSON.parse(raw);
-    if (!obj || typeof obj !== 'object') return raw;
-    const parts: string[] = [];
-    Object.entries(obj).forEach(([location, stories]) => {
-      if (stories && typeof stories === 'object') {
-        Object.entries(stories as Record<string, unknown>).forEach(([story, val]) => {
-          parts.push(`${location} ${story}: ${val}`);
-        });
-      } else {
-        parts.push(`${location}: ${stories}`);
-      }
-    });
-    return parts.length ? parts.join(' · ') : raw;
-  } catch {
-    return raw;
-  }
-};
-
-/** One `{ label, value }` schema field → a human line, or null when empty. */
-const formatProductField = (field: any): string | null => {
-  const rawValue = field?.value;
-  if (rawValue === null || rawValue === undefined || rawValue === '') return null;
-  let value = String(rawValue).trim();
-  if (!value) return null;
-
-  const rawLabel = String(field?.label ?? '').trim();
-  const isMeasurement =
-    rawLabel.toLowerCase() === 'measurements' ||
-    (value.startsWith('{') && value.endsWith('}'));
-  if (isMeasurement) value = formatMeasurements(value);
-
-  const humanLabel = !rawLabel || AUTO_LABEL.test(rawLabel) ? '' : rawLabel;
-  return humanLabel ? `${humanLabel}: ${value}` : value;
-};
-
-/**
- * `productDetails` (API) → `SoldProduct[]` (app) for the Verify Scope step.
- *
- * The sold scope the installer confirms is the set of subcategories (e.g. "Gutters",
- * "Gutter Guards"), so each subcategory becomes one scope card. Its `lines` are the
- * entered measurements, colors and selections — combinations are numbered when a
- * subcategory has more than one; loose section fields (Extras) are appended flat.
- */
-export const normalizeProductDetails = (raw: any): SoldProduct[] | undefined => {
-  const products: any[] = Array.isArray(raw?.products) ? raw.products : [];
-  if (products.length === 0) return undefined;
-
-  const out: SoldProduct[] = [];
-
-  products.forEach((product) => {
-    const subs: any[] = Array.isArray(product?.subcategories) ? product.subcategories : [];
-
-    if (subs.length === 0) {
-      out.push({
-        id: String(product?.id ?? product?.verticalId ?? product?.name ?? ''),
-        name: product?.name ?? 'Product',
-        lines: [],
-      });
-      return;
-    }
-
-    subs.forEach((sub) => {
-      const lines: string[] = [];
-      const sections: any[] = Array.isArray(sub?.sections) ? sub.sections : [];
-
-      sections.forEach((section) => {
-        const combinations: any[] = Array.isArray(section?.combinations)
-          ? section.combinations
-          : [];
-        const multiCombo = combinations.length > 1;
-
-        combinations.forEach((combo, i) => {
-          const fieldLines = (Array.isArray(combo?.fields) ? combo.fields : [])
-            .map(formatProductField)
-            .filter(Boolean) as string[];
-          if (fieldLines.length === 0) return;
-          if (multiCombo) {
-            lines.push(`Combination #${combo?.index ?? i + 1} — ${fieldLines.join(' · ')}`);
-          } else {
-            lines.push(...fieldLines);
-          }
-        });
-
-        // Loose fields outside any combination (e.g. an "Extras" section).
-        const looseLines = (Array.isArray(section?.fields) ? section.fields : [])
-          .map(formatProductField)
-          .filter(Boolean) as string[];
-        lines.push(...looseLines);
-      });
-
-      out.push({
-        id: String(sub?.id ?? `${product?.id ?? ''}__${sub?.label ?? ''}`),
-        name: sub?.label ?? product?.name ?? 'Product',
-        lines,
-      });
-    });
-  });
-
-  return out.length ? out : undefined;
 };
 
 /**

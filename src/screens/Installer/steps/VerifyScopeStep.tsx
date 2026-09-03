@@ -9,18 +9,10 @@ import {
   type JobPhotoRef,
 } from '../../../widgets/modals/installer/DiscrepancyModal';
 import { productColor } from '../../../constants/installer';
+import { ProductScopeCard } from '../../../widgets/components/installer/ProductScopeCard';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
 import { FlashMessage } from '../../../config/message';
 import type { ScopeStatus, SoldProduct } from '../../../config/types/installer';
-
-/**
- * Line height of a spec line — also the height of its bullet's centring box.
- *
- * 20 on the 14 px (`text-sm`) spec line, the size the SALES cards set their rows in.
- * Keep the two in step: the bullet centres itself in a box exactly this tall, so a font
- * size change without a matching line height puts every dot off the middle of its line.
- */
-const LINE_HEIGHT = 20;
 
 interface Props {
   visible: boolean;
@@ -201,40 +193,14 @@ export function VerifyScopeStep({
 
       {products.map((product, idx) => {
         const st = scope[product.id];
-        const accent = productColor(idx, product.color);
+        const accent = productColor(idx, product.color, product.name);
 
         return (
-          <View
+          <ProductScopeCard
             key={product.id}
-            className="rounded-2xl p-3 mb-2.5 border"
-            style={{ backgroundColor: accent + '10', borderColor: accent }}
+            product={product}
+            accent={accent}
           >
-            <Text className="text-base font-black mb-1.5" style={{ color: colors.text }}>
-              {product.name}
-            </Text>
-            {product.lines.map((line, lineIdx) => (
-              <View key={`${product.id}-${lineIdx}`} className="flex-row items-start mb-1">
-                {/* The dot sits in a box exactly one line tall and centres itself in it, so it
-                    lines up with the middle of the first line however the text wraps or scales —
-                    a bare `mt` guess drifts as soon as the font size does. */}
-                <View
-                  className="items-center justify-center mr-2"
-                  style={{ width: 6, height: LINE_HEIGHT }}
-                >
-                  <View
-                    className="rounded-full"
-                    style={{ width: 6, height: 6, backgroundColor: accent }}
-                  />
-                </View>
-                <Text
-                  className="flex-1 text-sm font-semibold"
-                  style={{ color: colors.text, lineHeight: LINE_HEIGHT }}
-                >
-                  {line}
-                </Text>
-              </View>
-            ))}
-
             {/* Verification state */}
             {!st ? (
               <View className="flex-row mt-2" style={{ gap: 8 }}>
@@ -353,7 +319,7 @@ export function VerifyScopeStep({
                 </Text>
               </View>
             )}
-          </View>
+          </ProductScopeCard>
         );
       })}
 

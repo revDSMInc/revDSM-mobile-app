@@ -2648,6 +2648,90 @@ Verified with 7 tests over the real builder, including the repro asserted agains
 in for a skipped slot, a clean slot unchanged, and empty input as a no-op. tsc error set unchanged; the
 util and its test are eslint-clean.
 
+### The sold scope renders as SECTIONS and COMBINATIONS, not one bullet list
+
+Ticket: *"inside the installer when we open the lead and go to the bottom we see the products section
+— now i want to show the products like these combinations … because backend already share the data in
+the sections; also show the products as a section wise in the step of verify job scope, update the UI
+according to screenshots"*, against six screenshots of the sales build card (Gutter / LeafFilter /
+Soffit / Fascia / Lighting / Additional Services).
+
+`normalizeProductDetails` collapsed the whole build into `SoldProduct.lines: string[]` and both
+surfaces — Job Reference ▸ Products and Verify Job Scope — drew it as one flat run of bullets. The
+backend has always sent it as structure:
+
+```
+productDetails.products[].subcategories[].sections[].combinations[].fields[]{ label, value }
+```
+
+so flattening threw away the two facts an installer needs most on site: **which measurement belongs to
+which run, and how many runs there are.** A gutter job sold as two runs read as one list of numbers.
+
+**New pure `src/utils/installer-product-scope.ts`** (`measurementRows` / `fieldRows` /
+`flattenScopeSections` / `rowText` / `normalizeProductDetails`) — the parsing MOVED here out of
+`services/api/installer.ts`, which pulls in the axios wrapper (and MMKV through it) and cannot be
+loaded under jest, the same reason `utils/installer-coc-scan.ts` and `utils/installer-coc-pdf.ts`
+exist. `SoldProduct` gained `sections?: ScopeSection[]` (`ScopeSection` → `ScopeCombination` →
+`ScopeFieldRow`, all in `config/types/installer.ts`).
+
+**New `src/widgets/components/installer/ProductScopeCard.tsx`** draws it, and **both surfaces now share
+it** — Verify Job Scope passes its confirm / discrepancy controls as `children`. They were
+byte-identical spec lists before and had already begun to drift (two copies of the bullet geometry, two
+different title weights, one with an icon and one without); one component is what stops the same
+product looking like two different jobs on two screens.
+
+| screenshot | what drives it |
+|---|---|
+| product name + coloured glyph | `productIcon(name)` / `productColor(idx, color, name)` |
+| section heading ("Vinyl Soffit") | a section with a HUMAN label that holds combinations |
+| tinted `Combination #N` block | one per combination, numbered from the payload's own `index` |
+| bold headline (`5" K-Style`) | the combination's UNLABELLED fields, joined with ` · ` |
+| `label ⟷ value` rows | its labelled fields, in config order |
+| tinted `Extras` block | a section with a human label and NO combinations |
+| a loose bullet list | a section with an auto label and no combinations |
+
+⚠️ **A `locationGrid` is stored location-first and read storey-first.** `{"Left Side":{"1st":5}}`
+renders `1st Story ⟷ Left Side: 5`, because that is the layout the sales card the installer is
+comparing against uses; reading it as stored puts the SIDE in the label column, and on a two-storey job
+that reads as two products. Blank and zero cells are dropped — an 18-cell grid of zeroes buries the one
+measurement that matters — and an unparseable value is shown verbatim rather than dropped.
+
+⚠️ **" Story" is appended for DISPLAY only, and only to a bare ordinal** (`/^\d+(st|nd|rd|th)$/`). A
+column a config already spells out ("1st Story") fails that test, as does one named anything else, and
+both print exactly as authored.
+
+⚠️ **A label matching `^(section_|field_|selection_)` is an auto-generated schema id and is dropped** —
+that rule predates this ticket. What is new is where the value then goes: a field with no human label
+is a bare selection, so its VALUE is hoisted into the combination's headline rather than given a column
+with an empty label beside it.
+
+⚠️ **`SoldProduct.lines` is KEPT**, derived from the same walk, and is the render FALLBACK when
+`sections` comes out empty — a payload shape we have not seen still shows what was sold. Nothing else
+reads it: `installer-step-data.ts` and the activity log take only `id` and `name`, and **`id` is what
+`scopeItems` is keyed by**, so the reshape cannot move a discrepancy onto the wrong product.
+
+⚠️ **A subcategory-less product still gets a card**, empty. It IS on the job; a missing card reads as
+"not sold" rather than "nothing entered".
+
+⚠️ `productColor` gained a THIRD optional `name` argument rather than a second function — an explicit
+API colour still wins, then the name, then the palette rotation. `RepPhotoCard` passes no name and is
+unaffected.
+
+Verified with 21 tests driving the real normalizer over the `update-job-status.txt` capture verbatim:
+one card per subcategory with its `scopeItems` id intact, the two sections kept apart, the unlabelled
+selection hoisted to the headline and never repeated as a row, every labelled field beside its own
+label, a combination of only labelled fields carrying no headline, the flat form unchanged; the grid
+read storey-first across two storeys and two sides, the ordinal suffix and its two negatives, zero and
+blank cells dropped, a storey-less grid, an unparseable one, and a grid identified by its braces rather
+than its label; two runs staying two runs, positional numbering with no stated `index`, empty
+combinations and sections dropped; and the shapes that must not break the card — subcategory-less, id
+fallbacks, an unlabelled subcategory named after its product, junk input, and a value-less field.
+tsc 107 (baseline unchanged); zero eslint errors, and the two edited components together hold the same
+9 warnings as their HEAD baseline (all `react-native/no-inline-styles`).
+
+⚠️ Needs a device check — this repo cannot render-test, and the whole ticket is layout: the section
+headings, one block per combination, and the `Extras` block reading as a block rather than a heading.
+
 ### The Investment Center never saw the down payment entered on the DROP screen
 
 Ticket: *"Sale Resulted | Down payment did not save or reflect in Contract Details … when i add down
