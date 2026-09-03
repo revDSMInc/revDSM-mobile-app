@@ -6411,6 +6411,48 @@ passes that rect as `anchorRect`:
 `HorizontalDraggableTabs` gained `onShowPackageInfo` and reads `calc.isFullPackage`. **The classic deal
 center never sets that flag**, so its tabs are untouched.
 
+#### …and the STORED title carries the box too
+
+Follow-up: *"i want you to add this emoji with the payload of calculatore title when full package
+includes"*, with a devtools capture of `PUT /lfcalculators/{id}` reading
+`title: "G+VMax+Versa+S+FWrap+FBoard+FAluminum"` while the tab above it showed the package badge.
+
+Everything above is a RENDERING swap — the surfaces replace the derived name with the icon, and the
+name itself never changed. The portal has no such rendering and only ever sees the string, so a
+package was indistinguishable there from a long product list. **New `FULL_PACKAGE_TITLE_PREFIX`
+(`'📦 '`)**, applied in `computeDerivedTitles`.
+
+- **Named at the SOURCE, so nothing can drift.** `resolveSafeTitle` (the PUT payload) and `retitle`
+  (the in-memory `tab.title`, which the `calculator viewed` log sends as `calculatorTitle`) both read
+  that one function — the same reasoning as the customer-name ticket above, where naming the calculator
+  at the source fixed the portal without touching either log.
+- **The derived name survives behind the prefix** (`📦 G+VMax+S+FWrap+FBoard`), rather than being
+  replaced by the badge's `+FBoard` extras. The mobile badge can afford to drop the letters because the
+  ⓘ lists what a package includes; a bare `+FBoard` in the portal would name only the leftovers.
+- ⚠️ **Applied LAST, after the `(SM)`/`(LG)` and duplicate-price passes.** Prefixing the BASE name
+  would put the emoji inside the grouping key that disambiguation runs on. Tested: two identical
+  packages at different prices still read `(SM)` / `(LG)`, and at the same price still read `⚠️ … ⚠️`.
+- ⚠️ **Idempotent by construction** (`startsWith` guard). The hydrate path reads the server's
+  already-prefixed title back in as `storedTitle`, and `retitle` recomputes over it on every mutation.
+- ⚠️ **A MANUAL rename is left alone** — the rep chose that name. Unreachable today (the dynamic tab
+  menu offers only Duplicate/Delete), so it is a guard rather than a live case.
+
+⚠️ **No double box on any surface**, because every one of them replaces the name outright when
+`isFullPackage`: `HorizontalDraggableTabs` renders `icon + packageExtras` and `FullPackageTitle` renders
+`icon + extras`, neither printing `title`. The two places that DO print the raw title are the Job
+Tracker "Add This Job" modal (`JobTrackerButton title={activeTab?.title}`) and the delete-confirm
+sheet — both now show the box, which is correct but is the visible reach of this change beyond the
+payload.
+
+⚠️ **Existing rows are not migrated.** A package saved before this reads without the box until its next
+save; the prefix is added by the ordinary retitle pass, not by a backfill.
+
+Verified with 9 tests (`__tests__/screens/DynamicDealCenter/full-package-title.test.ts`) driving the real
+`computeDerivedTitles`: the ticket repro, extras kept in the stored name, a non-package untouched, an
+empty calculator keeping its placeholder, the size-suffix and duplicate-price passes both surviving,
+idempotence asserted as exactly ONE 📦 after a re-derive, a manual rename untouched, and no schemas → no
+prefix. tsc adds nothing; `tab-naming.ts` and the test are eslint-clean.
+
 Verified with 12 tests (`__tests__/screens/DynamicDealCenter/full-package-tab.test.ts`) over a
 gutter-roofline schema: the four-part package, `Versa` in place of `VMax`, each of the four missing in
 turn, the field-by-field runtime transition, clearing a value, an add-on not counting as the guard,
