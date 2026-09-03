@@ -6654,6 +6654,130 @@ wanted on pre only.
 tsc: error set identical to HEAD. `PhotoMatchStep.tsx` is byte-identical to its HEAD eslint baseline
 (31 warnings, 0 errors); the iOS bundle builds (HTTP 200).
 
+### Pre-Install references drop the rep's ANNOTATED copies
+
+Ticket: *"inside the installer when user open the lead and go to the step pre install photos, at that
+point show us only actual photos — if any photo is having the Annotated tag then don't show that
+photo."*
+
+`RepPhoto` has declared `isAnnotated?: boolean` since the type was written and **nothing ever read
+it**, so an annotated row went into the tagger like any other. `repPhotoOf` took the first non-installer
+photo in the slot, and the annotated copy is filed AFTER the shot it marks up — so whenever the rep
+annotated a photo, its marked-up duplicate became the reference and the crew was asked to ghost-match
+against arrows and circles drawn over the house.
+
+**New `isAnnotatedRepPhoto` + `actualPhotosOf` in `utils/installer-photo-sections.ts`**; `repPhotoOf`
+and the `reference` fallback both read the filtered list.
+
+⚠️ **Three spellings, because three parts of the app write it**: `isAnnotated: true` (what the installer
+payload declares), `category: 'annotated'`, and a `"<slot> (Annotated)"` subcategory — the latter pair
+is what `screens/ImageAnnotation` files its copy under, and what `utils/inspection-photos.ts` and
+`screens/RevRender` already exclude on. `RepPhoto` declares neither of the last two, so they are read
+off the raw row.
+
+⚠️ **`category` must EQUAL `annotated`, not merely contain it** (the subcategory test is a `includes`
+on the parenthesised suffix). A real category could legitimately be named for what it documents —
+"Annotated Damage Notes" is a photo of a house, not a markup layer. Tested both ways.
+
+⚠️ **The fallback is filtered too.** `reference = rep ?? actualPhotosOf(slot)[0]` — a slot the rep
+skipped, whose only other row is a marked-up duplicate, still has no reference to pair with, and the
+`repPhotoId` the matched shot uploads under must never be the annotated row's.
+
+⚠️ A slot holding ONLY an annotated copy now reads as a slot the rep never shot, so its category is
+omitted entirely (`buildRepPhotoSections` already skips a category with no rep photo in it). That is
+the same treatment a skipped category gets and is deliberate — there is nothing to match against.
+
+Verified with 7 tests over the real builder, including the repro asserted against the PRE-FIX code:
+`git show HEAD:` of the util, driven over the same payload, returns `back-left-annotated.jpeg` /
+`annotated-1` as the reference, and returns the real photo after. Plus all three spellings, the
+`Annotated Damage Notes` negative, a slot holding only an annotated copy, an annotated copy not standing
+in for a skipped slot, a clean slot unchanged, and empty input as a no-op. tsc error set unchanged; the
+util and its test are eslint-clean.
+
+### The sold scope renders as SECTIONS and COMBINATIONS, not one bullet list
+
+Ticket: *"inside the installer when we open the lead and go to the bottom we see the products section
+— now i want to show the products like these combinations … because backend already share the data in
+the sections; also show the products as a section wise in the step of verify job scope, update the UI
+according to screenshots"*, against six screenshots of the sales build card (Gutter / LeafFilter /
+Soffit / Fascia / Lighting / Additional Services).
+
+`normalizeProductDetails` collapsed the whole build into `SoldProduct.lines: string[]` and both
+surfaces — Job Reference ▸ Products and Verify Job Scope — drew it as one flat run of bullets. The
+backend has always sent it as structure:
+
+```
+productDetails.products[].subcategories[].sections[].combinations[].fields[]{ label, value }
+```
+
+so flattening threw away the two facts an installer needs most on site: **which measurement belongs to
+which run, and how many runs there are.** A gutter job sold as two runs read as one list of numbers.
+
+**New pure `src/utils/installer-product-scope.ts`** (`measurementRows` / `fieldRows` /
+`flattenScopeSections` / `rowText` / `normalizeProductDetails`) — the parsing MOVED here out of
+`services/api/installer.ts`, which pulls in the axios wrapper (and MMKV through it) and cannot be
+loaded under jest, the same reason `utils/installer-coc-scan.ts` and `utils/installer-coc-pdf.ts`
+exist. `SoldProduct` gained `sections?: ScopeSection[]` (`ScopeSection` → `ScopeCombination` →
+`ScopeFieldRow`, all in `config/types/installer.ts`).
+
+**New `src/widgets/components/installer/ProductScopeCard.tsx`** draws it, and **both surfaces now share
+it** — Verify Job Scope passes its confirm / discrepancy controls as `children`. They were
+byte-identical spec lists before and had already begun to drift (two copies of the bullet geometry, two
+different title weights, one with an icon and one without); one component is what stops the same
+product looking like two different jobs on two screens.
+
+| screenshot | what drives it |
+|---|---|
+| product name + coloured glyph | `productIcon(name)` / `productColor(idx, color, name)` |
+| section heading ("Vinyl Soffit") | a section with a HUMAN label that holds combinations |
+| tinted `Combination #N` block | one per combination, numbered from the payload's own `index` |
+| bold headline (`5" K-Style`) | the combination's UNLABELLED fields, joined with ` · ` |
+| `label ⟷ value` rows | its labelled fields, in config order |
+| tinted `Extras` block | a section with a human label and NO combinations |
+| a loose bullet list | a section with an auto label and no combinations |
+
+⚠️ **A `locationGrid` is stored location-first and read storey-first.** `{"Left Side":{"1st":5}}`
+renders `1st Story ⟷ Left Side: 5`, because that is the layout the sales card the installer is
+comparing against uses; reading it as stored puts the SIDE in the label column, and on a two-storey job
+that reads as two products. Blank and zero cells are dropped — an 18-cell grid of zeroes buries the one
+measurement that matters — and an unparseable value is shown verbatim rather than dropped.
+
+⚠️ **" Story" is appended for DISPLAY only, and only to a bare ordinal** (`/^\d+(st|nd|rd|th)$/`). A
+column a config already spells out ("1st Story") fails that test, as does one named anything else, and
+both print exactly as authored.
+
+⚠️ **A label matching `^(section_|field_|selection_)` is an auto-generated schema id and is dropped** —
+that rule predates this ticket. What is new is where the value then goes: a field with no human label
+is a bare selection, so its VALUE is hoisted into the combination's headline rather than given a column
+with an empty label beside it.
+
+⚠️ **`SoldProduct.lines` is KEPT**, derived from the same walk, and is the render FALLBACK when
+`sections` comes out empty — a payload shape we have not seen still shows what was sold. Nothing else
+reads it: `installer-step-data.ts` and the activity log take only `id` and `name`, and **`id` is what
+`scopeItems` is keyed by**, so the reshape cannot move a discrepancy onto the wrong product.
+
+⚠️ **A subcategory-less product still gets a card**, empty. It IS on the job; a missing card reads as
+"not sold" rather than "nothing entered".
+
+⚠️ `productColor` gained a THIRD optional `name` argument rather than a second function — an explicit
+API colour still wins, then the name, then the palette rotation. `RepPhotoCard` passes no name and is
+unaffected.
+
+Verified with 21 tests driving the real normalizer over the `update-job-status.txt` capture verbatim:
+one card per subcategory with its `scopeItems` id intact, the two sections kept apart, the unlabelled
+selection hoisted to the headline and never repeated as a row, every labelled field beside its own
+label, a combination of only labelled fields carrying no headline, the flat form unchanged; the grid
+read storey-first across two storeys and two sides, the ordinal suffix and its two negatives, zero and
+blank cells dropped, a storey-less grid, an unparseable one, and a grid identified by its braces rather
+than its label; two runs staying two runs, positional numbering with no stated `index`, empty
+combinations and sections dropped; and the shapes that must not break the card — subcategory-less, id
+fallbacks, an unlabelled subcategory named after its product, junk input, and a value-less field.
+tsc 107 (baseline unchanged); zero eslint errors, and the two edited components together hold the same
+9 warnings as their HEAD baseline (all `react-native/no-inline-styles`).
+
+⚠️ Needs a device check — this repo cannot render-test, and the whole ticket is layout: the section
+headings, one block per combination, and the `Extras` block reading as a block rather than a heading.
+
 ### The Investment Center never saw the down payment entered on the DROP screen
 
 Ticket: *"Sale Resulted | Down payment did not save or reflect in Contract Details … when i add down

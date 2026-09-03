@@ -7,6 +7,36 @@ import type {
 } from '../config/types/installer';
 
 /**
+ * An ANNOTATED copy — the sales app's marked-up duplicate of a photo, not a photo of
+ * the house.
+ *
+ * ⚠️ It must never reach the tagger. It is a DUPLICATE of a shot that is already in the
+ * same slot, so it either takes the reference's place (the crew then ghost-matches
+ * against arrows and circles drawn over the real thing) or sits behind it as a second
+ * copy of the same view. Only the actual photo is a reference.
+ *
+ * Three spellings, because three parts of the app write it: `isAnnotated` is what the
+ * installer payload declares, while the sales annotation flow files its copy with
+ * `category: 'annotated'` and a `"<slot> (Annotated)"` subcategory
+ * (`screens/ImageAnnotation`) — the same pair `utils/inspection-photos.ts` and
+ * `screens/RevRender` already exclude on. `RepPhoto` does not declare the latter two,
+ * so they are read off the raw row.
+ */
+export const isAnnotatedRepPhoto = (photo?: RepPhoto | null): boolean => {
+  if (!photo) return false;
+  if (photo.isAnnotated === true) return true;
+  const raw = photo as unknown as { category?: unknown; subcategory?: unknown };
+  return (
+    String(raw.category ?? '').trim().toLowerCase() === 'annotated' ||
+    String(raw.subcategory ?? '').toLowerCase().includes('(annotated)')
+  );
+};
+
+/** A slot's real photos — annotated copies dropped. See `isAnnotatedRepPhoto`. */
+const actualPhotosOf = (slot: PhotoSlot): RepPhoto[] =>
+  (slot.photos ?? []).filter((photo) => !isAnnotatedRepPhoto(photo));
+
+/**
  * The REP's photo for a slot — the only kind that can be ghost-matched against.
  *
  * ⚠️ The endpoint returns the crew's OWN pre-install captures in these same slots,
@@ -16,7 +46,7 @@ import type {
  * START, with the crew asked to ghost-match their own photo.
  */
 const repPhotoOf = (slot: PhotoSlot): RepPhoto | undefined =>
-  (slot.photos ?? []).find((photo) => (photo.source ?? '').trim().toLowerCase() !== 'installer');
+  actualPhotosOf(slot).find((photo) => (photo.source ?? '').trim().toLowerCase() !== 'installer');
 
 /** Best-effort MaterialCommunityIcons glyph for a rep-photo category label. */
 const ICON_BY_KEYWORD: Array<[RegExp, string]> = [
@@ -68,7 +98,9 @@ export const buildRepPhotoSections = (photos?: PreInstallPhotos): PhotoSection[]
         // The pairing id falls back to the crew's own capture when the rep skipped the
         // slot: the POST pass ghosts against the PRE shot, and its upload still has to
         // reference it — as `preInstallPhotoId`, which `repPhotoSource` selects.
-        const reference = rep ?? slot.photos?.[0];
+        // Annotated copies are out of this fallback too — a slot the rep skipped, whose
+        // only other row is a marked-up duplicate, still has no reference to pair with.
+        const reference = rep ?? actualPhotosOf(slot)[0];
         return {
           id: slot.id,
           label: slot.name || slot.storageName || 'Photo',

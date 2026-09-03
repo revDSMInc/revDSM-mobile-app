@@ -179,12 +179,54 @@ export interface CapturedPhoto {
 // Job scope (sold products the installer verifies)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * One `label: value` pair as the installer reads it.
+ *
+ * `label` is `''` when the schema's own label is auto-generated (`selection_ycsmh`) —
+ * such a field is a bare selection and its VALUE is the whole of what it says, so it is
+ * hoisted into the combination's headline rather than given a column of its own.
+ */
+export interface ScopeFieldRow {
+  label: string;
+  value: string;
+}
+
+/** One combination of a section — the unit the rep enters a product in. */
+export interface ScopeCombination {
+  /** 1-based, from the schema's own `index` where it carries one. */
+  number: number;
+  /** The unlabelled values, joined — e.g. `5" K-Style · White 80`. `''` when none. */
+  headline: string;
+  rows: ScopeFieldRow[];
+}
+
+/**
+ * One section of a sold subcategory: its combinations, plus any fields entered
+ * outside one (an "Extras" section).
+ */
+export interface ScopeSection {
+  id: string;
+  /** `''` for an auto-generated id (`section_1781585651515`) — it names nothing. */
+  label: string;
+  combinations: ScopeCombination[];
+  /** Fields outside any combination. */
+  rows: ScopeFieldRow[];
+}
+
 export interface SoldProduct {
   id: string;
   name: string;
   /** Accent hex. Falls back to a palette rotation when the API omits it. */
   color?: string;
+  /**
+   * The flat form of `sections`, one string per entered field.
+   *
+   * Kept as the render FALLBACK for a payload whose sections came out empty, and as a
+   * ready description for logs. `sections` is what the scope cards draw.
+   */
   lines: string[];
+  /** The structure the API sends: sections → combinations → fields. */
+  sections?: ScopeSection[];
 }
 
 export type ScopeItemState = 'confirmed' | 'pending' | 'resolved';
