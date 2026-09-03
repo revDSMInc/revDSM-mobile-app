@@ -1,0 +1,508 @@
+{
+    "code": 200,
+    "message": "Demo lead retrieved successfully",
+    "data": {
+        "lead": {
+            "_id": "6a6e34686636b609dcaf112b",
+            "leadId": "N/A",
+            "leadDate": "2026-08-01T00:00:00-04:00",
+            "leadTime": "N/A",
+            "leadDatetime": "2026-08-01T14:01:12-04:00",
+            "leadCreationTimestamp": "2026-08-01T14:01:12-04:00",
+            "leadCode": "SelfGen",
+            "office": "",
+            "assignedRep": "Lance Weiner",
+            "assignedRepId": "6a507e15975d364ba2753d1f",
+            "previousRepIds": [],
+            "assignedShadowRepId": null,
+            "workStartedBy": null,
+            "customerId": "6a6e34686636b609dcaf1128",
+            "fromRouteId": null,
+            "fullAddress": "2158 Horseshoe Dr, Lakeland, FL 33810, USA",
+            "houseAndStreetNumber": "",
+            "streetName": null,
+            "city": "Lakeland",
+            "state": null,
+            "zip": null,
+            "companyId": "6a5071229f0cc250ffecbb6e",
+            "issuedLeadBy": null,
+            "location": {
+                "type": "Point",
+                "coordinates": [
+                    -81.99321635215573,
+                    28.17482681808212
+                ]
+            },
+            "status": "sale",
+            "installerDispatchStatus": "notDispatched",
+            "workflowState": "resume",
+            "lowesLead": false,
+            "bypass": {
+                "gpsBypass": false,
+                "gpsBypassReason": null,
+                "earlyStart": false,
+                "earlyStartReason": null
+            },
+            "note": null,
+            "oneLeg": "No",
+            "reason": null,
+            "lastPriceQuoted": "2863",
+            "originalContractPrice": "2863",
+            "downPayment": null,
+            "paymentMethod": "wf1157",
+            "balancePaymentMethod": "wf1157",
+            "balance": "2863",
+            "lfCalculator": null,
+            "selectedCalculatorId": "6a6e346d6636b609dcaf1508",
+            "selectedAppointmentId": "6a6e34686636b609dcaf112b",
+            "isArchive": false,
+            "isRehashed": false,
+            "zoneId": null,
+            "buildingId": null,
+            "resetCycleCount": 0,
+            "routeInfo": {
+                "fromLeadId": null,
+                "distance": null,
+                "time": null
+            },
+            "hasRendered": false,
+            "repLastLocation": {
+                "latitude": null,
+                "longitude": null,
+                "updatedAt": null
+            },
+            "repOnSiteStatus": "unknown",
+            "repOnSiteStatusUpdatedAt": null,
+            "previewImages": {
+                "streetView": null,
+                "aerial": null,
+                "frontPhoto": null,
+                "active": "streetView",
+                "activeSetByUser": false
+            },
+            "savedFilters": null,
+            "ghlContactId": null,
+            "deletedAt": null,
+            "salesPhotos": [],
+            "wearhousePhotos": [],
+            "arrivalPhotos": [],
+            "inprogressPhotos": [],
+            "completionPhotos": [],
+            "dropoffPhotos": [],
+            "timelineProgress": [
+                {
+                    "cycle": 0,
+                    "salesProcess": "completed",
+                    "salesProcessTimestamp": null,
+                    "leadResulted": "completed",
+                    "leadResultedTimestamp": null,
+                    "jobBuild": "completed",
+                    "jobBuildTimestamp": "2026-08-02T12:46:04.676Z",
+                    "scheduledInstall": {
+                        "status": "completed",
+                        "timestamp": "2026-08-02T12:46:04.676Z",
+                        "installDate": "TBD",
+                        "timeWindow": null,
+                        "reason": "HOA",
+                        "loggedAt": "2026-08-02T12:46:04.676Z"
+                    },
+                    "agreement": {
+                        "generated": "2026-08-02T12:46:04.676Z",
+                        "signed": null,
+                        "uploaded": "2026-08-02T12:46:04.676Z"
+                    },
+                    "orderSheet": {
+                        "generated": null,
+                        "uploaded": null
+                    },
+                    "downPaymentReceipt": {
+                        "generated": null,
+                        "uploaded": null
+                    },
+                    "_id": "6a6f3c0d6636b609dcb05f2b"
+                }
+            ],
+            "createdAt": "2026-08-01T14:01:12-04:00",
+            "updatedAt": "2026-09-01T03:55:28-04:00",
+            "id": "6a6e34686636b609dcaf112b",
+            "assignedRepDetails": {
+                "_id": "6a507e15975d364ba2753d1f",
+                "email": "lw3.0@gmail.com",
+                "firstName": "Lance",
+                "userName": "lanweiner",
+                "lastName": "Weiner",
+                "regionId": [
+                    "6a5075db975d364ba27528c0"
+                ],
+                "officeId": [
+                    "6a507706975d364ba2752b93",
+                    "6a507728975d364ba2752bda"
+                ],
+                "office": [
+                    {
+                        "_id": "6a507706975d364ba2752b93",
+                        "name": "St Petersburg",
+                        "code": "SPG",
+                        "location": {
+                            "city": "St Petersburg",
+                            "street": "3360 Scherer Dr Suite E",
+                            "zipCode": "33716"
+                        },
+                        "timezone": "America/New_York",
+                        "workingHours": {
+                            "start": "",
+                            "end": ""
+                        }
+                    },
+                    {
+                        "_id": "6a507728975d364ba2752bda",
+                        "name": "Tampa",
+                        "code": "TAM",
+                        "location": {
+                            "city": "Tampa",
+                            "street": "4422 Eagle Falls PI",
+                            "zipCode": "33619"
+                        },
+                        "timezone": "America/New_York",
+                        "workingHours": {
+                            "start": "08:00",
+                            "end": "21:00"
+                        }
+                    }
+                ],
+                "region": [
+                    {
+                        "_id": "6a5075db975d364ba27528c0",
+                        "regionID": "001",
+                        "name": "LF South East",
+                        "assigned": true,
+                        "assignedTo": "6a85c9140693c8c0a0a1b1bb",
+                        "companyId": "6a5071229f0cc250ffecbb6e",
+                        "divisionId": "6a507567975d364ba27527dd",
+                        "status": "active",
+                        "deletedAt": null,
+                        "createdAt": "2026-07-10T04:32:27.018Z",
+                        "updatedAt": "2026-08-19T15:17:40.821Z"
+                    }
+                ],
+                "revDSMLogin": {
+                    "exists": true,
+                    "loginDate": "2026-09-01T03:54:51-04:00",
+                    "isActive": true
+                },
+                "lastLogin": "2026-09-01T03:44:08-04:00"
+            },
+            "customerDetails": {
+                "_id": "6a6e34686636b609dcaf1128",
+                "firstName": "ggg",
+                "lastName": "cfff",
+                "dateTime": "2026-08-01T14:01:12-04:00",
+                "phone": "+1 (046) 161-6161",
+                "email": "",
+                "address": "2158 Horseshoe Dr, Lakeland, FL 33810, USA",
+                "companyId": "6a5071229f0cc250ffecbb6e",
+                "coBuyers": [],
+                "createdAt": "2026-08-01T14:01:12-04:00",
+                "updatedAt": "2026-08-01T14:01:12-04:00"
+            },
+            "leadStatus": null,
+            "leadSaleDetails": null,
+            "generatedReports": [
+                {
+                    "_id": "6a6f3c0e6636b609dcb0608f",
+                    "reportName": "job_submission",
+                    "reportPath": "job_submission/6a5071229f0cc250ffecbb6e/6a6e34686636b609dcaf112b/5cabccd9-8182-456e-8cbd-95436df33e63.pdf",
+                    "bucketName": "np-revdsm-staging",
+                    "generatedBy": {
+                        "_id": "6a507e15975d364ba2753d1f",
+                        "email": "lw3.0@gmail.com",
+                        "roleId": "6a507aa5975d364ba275345f",
+                        "firstName": "Lance",
+                        "userName": "lanweiner",
+                        "lastName": "Weiner",
+                        "regionId": [
+                            "6a5075db975d364ba27528c0"
+                        ],
+                        "officeId": [
+                            "6a507706975d364ba2752b93",
+                            "6a507728975d364ba2752bda"
+                        ],
+                        "divisionId": [],
+                        "phoneNo": "+1 (786) 837-2687",
+                        "companyId": "6a5071229f0cc250ffecbb6e",
+                        "createdByUserId": "6a5071239f0cc250ffecbc34",
+                        "type": "user",
+                        "status": "active",
+                        "deletedAt": null,
+                        "notificationPreferences": {
+                            "orderConfirmation": false,
+                            "orderStatusChanged": false,
+                            "orderDelivered": false,
+                            "emailNotifications": false,
+                            "countOfGoBacksPending": false,
+                            "oldestUnvisitedHomes": false
+                        },
+                        "defaultPercentage": 25,
+                        "defaultPaymentMethod": "wf1157",
+                        "favoriteJobs": [
+                            "6a50d9cc975d364ba27bc685"
+                        ],
+                        "address": "8761 Castries Prt Pl, Tampa, FL 33619, USA",
+                        "latitude": 27.9033597,
+                        "longitude": -82.35953169999999,
+                        "installerCompanyName": "",
+                        "twoFactorAuth": {
+                            "enabled": false,
+                            "method": null,
+                            "secret": null,
+                            "backupCodes": []
+                        },
+                        "createdAt": "2026-07-10T05:07:33.563Z",
+                        "updatedAt": "2026-07-25T15:37:28.759Z"
+                    },
+                    "isReset": false,
+                    "createdAt": "2026-08-02T08:46:06-04:00",
+                    "updatedAt": "2026-08-02T08:46:06-04:00"
+                }
+            ],
+            "jobBuilder": {
+                "_id": "6a6f3c0c6636b609dcb05ea7",
+                "calculatorId": "6a6e346d6636b609dcaf1508",
+                "appointmentId": "6a6e34686636b609dcaf112b",
+                "gutter": null,
+                "leaffilter": null,
+                "soffit": null,
+                "fascia": null,
+                "lighting": null,
+                "additional": null,
+                "scheduleTime": {
+                    "customerName": "ggg cfff",
+                    "date": "TBD",
+                    "timeWindow": null,
+                    "reason": "HOA"
+                },
+                "isDynamic": true,
+                "dynamicJobState": {
+                    "_storageVersion": 1,
+                    "scheduleTime": {
+                        "date": "TBD",
+                        "reason": "HOA",
+                        "customerName": "ggg cfff"
+                    },
+                    "6a45f1df78fdcf9553314a16__gutters-roofline": {
+                        "6a45f1df78fdcf9553314a16__6a45f1df78fdcf9553314a17": {
+                            "sectionFields": {
+                                "section_1781685061809__extras": {
+                                    "field_1781685314090_f75xt__textvalue": "",
+                                    "field_1781691079165_vu6qk__textvalue-copy": "",
+                                    "field_1781873094382_sjb5t__textvalue-2": "",
+                                    "field_1781873121087_9r5au__selection": [],
+                                    "field_1781873407628_9hhi0__textvalue-3": "",
+                                    "field_1781873462203_n44h8__color": "Black",
+                                    "field_1781873537058_tk016__textvalue-uuu1l": "",
+                                    "field_1781873540360_ny9fm__color-gem7v": "",
+                                    "field_1781873543896_fjptt__textvalue-sn28y": "",
+                                    "field_1781873546952_ide0x__color-uq368": "",
+                                    "field_1781873549873_sdpt6__textvalue-36l5c": "",
+                                    "field_1781873553401_ewfp1__color-grdex": "",
+                                    "colorValues": {
+                                        "field_1781685314090_f75xt__textvalue": 0,
+                                        "field_1781691079165_vu6qk__textvalue-copy": 0,
+                                        "field_1781873094382_sjb5t__textvalue-2": 0,
+                                        "field_1781873121087_9r5au__selection": [],
+                                        "field_1781873407628_9hhi0__textvalue-3": 0,
+                                        "field_1781873537058_tk016__textvalue-uuu1l": 0,
+                                        "field_1781873543896_fjptt__textvalue-sn28y": 0,
+                                        "field_1781873549873_sdpt6__textvalue-36l5c": 0,
+                                        "field_1781873462203_n44h8__color": "Black"
+                                    }
+                                }
+                            },
+                            "comboGroups": {
+                                "section_1781585651515__section-2": {
+                                    "combinations": []
+                                },
+                                "section_1783499358598__downspout-accessories": {
+                                    "combinations": []
+                                }
+                            }
+                        },
+                        "6a45f1df78fdcf9553314a16__6a45fc7278fdcf9553315d56": {
+                            "sectionFields": {
+                                "section_1782389423259__extras": {
+                                    "field_1782389454491_0qgrv__textvalue": "",
+                                    "field_1782389456617_vp8hr__textvalue-di6nr": "",
+                                    "field_1782389460577_zydmw__textvalue-zgp4g": "",
+                                    "field_1782389463025_0d91g__textvalue-nr39d": "",
+                                    "field_1782389464784_jsdri__textvalue-dqbno": 48,
+                                    "colorValues": {
+                                        "field_1782389454491_0qgrv__textvalue": 0,
+                                        "field_1782389456617_vp8hr__textvalue-di6nr": 0,
+                                        "field_1782389460577_zydmw__textvalue-zgp4g": 0,
+                                        "field_1782389463025_0d91g__textvalue-nr39d": 0,
+                                        "field_1782389464784_jsdri__textvalue-dqbno": 48
+                                    }
+                                }
+                            },
+                            "comboGroups": {
+                                "section_1782365542087__section-2": {
+                                    "combinations": [
+                                        {
+                                            "field_1782365664306_t7qef__textvalue": "6\"",
+                                            "field_1782365732617_cgzrz__textvalue-atgx2": "Versa",
+                                            "field_1782365909753_9ixg8__selection": "K-Style",
+                                            "field_1782366823048_xzbe6__color": "White",
+                                            "field_1782366872815_83p3i__grid": {
+                                                "Left Side": {
+                                                    "1st": 48
+                                                }
+                                            },
+                                            "colorValues": {
+                                                "field_1782365664306_t7qef__textvalue": "6\"",
+                                                "field_1782365732617_cgzrz__textvalue-atgx2": "Micro Mesh ",
+                                                "field_1782365909753_9ixg8__selection": "K-Style",
+                                                "field_1782366823048_xzbe6__color": "White",
+                                                "field_1782366872815_83p3i__grid": {
+                                                    "Left Side": {
+                                                        "1st": 48
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    ]
+                                },
+                                "section_1782373723139__section-3": {
+                                    "combinations": []
+                                },
+                                "section_1782373742457__section-4": {
+                                    "combinations": []
+                                },
+                                "section_1782386890583__section-5": {
+                                    "combinations": []
+                                }
+                            }
+                        },
+                        "6a45f1df78fdcf9553314a16__6a45fc7278fdcf9553315d57": {
+                            "comboGroups": {
+                                "section_1784638606026__vinyl-soffit": {
+                                    "combinations": []
+                                },
+                                "section_1784638692663__porch-ceiling-sqft": {
+                                    "combinations": []
+                                },
+                                "section_1784638806371__nailer-build-out": {
+                                    "combinations": []
+                                }
+                            }
+                        },
+                        "6a45f1df78fdcf9553314a16__6a45fc7278fdcf9553315d58": {
+                            "sectionFields": {
+                                "section_1784877657953__section-2": {
+                                    "field_1785352315477_l1d7m__quantity": 0,
+                                    "colorValues": {
+                                        "field_1785352315477_l1d7m__quantity": 0
+                                    }
+                                }
+                            },
+                            "comboGroups": {
+                                "section_1784870268821__fascia-wrap": {
+                                    "combinations": []
+                                },
+                                "section_1784877035492__fascia-boards": {
+                                    "combinations": []
+                                }
+                            }
+                        },
+                        "6a45f1df78fdcf9553314a16__6a45fc7278fdcf9553315d59": {
+                            "sectionFields": {
+                                "section_1782453381905__extras": {
+                                    "field_1782453446929_bgvfu__textvalue": "",
+                                    "field_1782453450585_2qs2v__textvalue-si5yz": "",
+                                    "field_1782453452971_cigqg__textvalue-q8329": "",
+                                    "field_1782453454865_2nrfx__textvalue-oz29o": "",
+                                    "colorValues": {
+                                        "field_1782453446929_bgvfu__textvalue": 0,
+                                        "field_1782453450585_2qs2v__textvalue-si5yz": 0,
+                                        "field_1782453452971_cigqg__textvalue-q8329": 0,
+                                        "field_1782453454865_2nrfx__textvalue-oz29o": 0
+                                    }
+                                }
+                            },
+                            "comboGroups": {
+                                "section_1782289618567__section": {
+                                    "combinations": []
+                                }
+                            }
+                        },
+                        "6a45f1df78fdcf9553314a16__6a460b3978fdcf95533181dd": {
+                            "sectionFields": {
+                                "section_1782477680389__section": {
+                                    "field_1782477692853_mjb9v__textvalue": "",
+                                    "field_1782477694448_p6sxu__textvalue-1skfd": "",
+                                    "field_1782477864148_3sj98__notes": "",
+                                    "field_1782478013084_ytd72__textvalue-2": "",
+                                    "field_1783593623830_ashds__quantity": "",
+                                    "field_1782478110353_pw5mf__textvalue-6ffuq-ledxc": "",
+                                    "field_1782478211743_o9tqo__selection": "",
+                                    "field_1782478239747_bi1be__selection-vfyh4": "",
+                                    "colorValues": {
+                                        "field_1782477692853_mjb9v__textvalue": 0,
+                                        "field_1782477694448_p6sxu__textvalue-1skfd": 0
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "configId": "6a450af8dcb87903dbea984e",
+                "configSnapshotId": "6a450af8dcb87903dbea984e",
+                "resultedProducts": [
+                    {
+                        "key": "6a45f1df78fdcf9553314a16",
+                        "name": "Gutters/Roofline",
+                        "id": "6a45f1df78fdcf9553314a16"
+                    }
+                ],
+                "status": "submitted",
+                "deletedAt": null,
+                "createdAt": "2026-08-02T08:46:04-04:00",
+                "updatedAt": "2026-08-02T08:46:04-04:00"
+            },
+            "assignmentProducts": [
+                {
+                    "id": "6a45f1df78fdcf9553314a16",
+                    "name": "Gutters Roofline"
+                }
+            ],
+            "jobBuilderDocuments": {
+                "agreements": [
+                    {
+                        "_id": "6a6f3c0c6636b609dcb05ee3",
+                        "name": "",
+                        "documentType": "agreement",
+                        "filePath": "job-builder-docs/6a5071229f0cc250ffecbb6e/6a6f3c0c6636b609dcb05ea7/agreements/1785674764700-0-document.pdf",
+                        "bucketName": "np-revdsm-staging",
+                        "fileData": {
+                            "contentType": "application/pdf",
+                            "size": 68331
+                        },
+                        "deletedAt": null,
+                        "createdAt": "2026-08-02T08:46:04-04:00",
+                        "updatedAt": "2026-08-02T08:46:04-04:00"
+                    }
+                ],
+                "orderSheets": [],
+                "paperWork": [],
+                "downPaymentReceipt": []
+            },
+            "waiverForm": null,
+            "actionLogs": [],
+            "actionCounts": {
+                "lead_check_in": 0,
+                "lead_resume": 0,
+                "lead_review": 0
+            },
+            "pendingAddendumCount": 0
+        }
+    }
+}
