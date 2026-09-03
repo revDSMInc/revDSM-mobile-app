@@ -4805,6 +4805,125 @@ session hook clean.
 Dynamic Agreement**, sign, then watch the next `PUT …/outcome/{calcId}` and confirm
 `jobBuilder.dynamicJobState.agreements` is present alongside `scheduleTime`.
 
+### The Summary tab logs the scheduler OPENING, and every document add / remove
+
+Ticket: *"you have to add logs while we are trying to open Schedule Appointment"* (with the
+payload verbatim), plus *"three more logs — while update the agreement i mean remove it and press
+the update button… while we add the document (order sheet)… and while we remove the document"*.
+
+Four rows, all `module_type: 'job_builder'`, all from
+`widgets/components/dynamic-job-builder/agreement/SummaryFinalizeCards.tsx` (the card suite
+`DynamicJobBuilderScreen` renders through `VerticalSummaryTab` — the screen itself holds none of
+these handlers).
+
+| when | `action_type` | `meta.action` |
+|---|---|---|
+| the scheduler is OPENED | `click` | `appointment_scheduled` |
+| an Update REMOVES a filed agreement | `delete` | `agreement_removed` |
+| an Update ADDS order-sheet pages | `add` | `order_sheet_uploaded` |
+| an Update REMOVES an order sheet | `delete` | `order_sheet_removed` |
+
+**Only ONE of the four is new machinery; the other three are one path.** The scan sheet's Update
+is a single button for two different events — the rep may add pages, cross filed ones out, or both
+— and `DocumentScannerModal.onSave` hands back **only the survivors**, so a removal has to be
+recovered by diffing against what the card held before it opened.
+
+- **`logSchedulerOpened` is DISTINCT from the `change` row `saveAppointment` already files.** It
+  reports the appointment **as it stands when the rep opens the sheet**, so the portal can tell an
+  open that changed nothing from one that did. Fired from **both** entry points — the pencil on a
+  scheduled card and the `Schedule Appointment` button on an unscheduled one.
+  ⚠️ `date`/`timeWindow` go out as **`null`, not omitted**, on the unscheduled path: an absent key
+  reads as "not reported", and here it is genuinely "not yet set".
+- **The removal log is fired BEFORE the delete-only early return**, so a removal is recorded whether
+  or not the same Update also added something. The scanner has already awaited its `DELETE`s by the
+  time it calls back, so the row reports what happened rather than what was attempted.
+- **The agreement upload log was already there; the order sheet's was NOT.** Adding an agreement
+  left a trace and adding an order sheet left none. Both now go through one `logDocumentAudit`, so
+  the two categories can never file differently-shaped rows for the same act.
+
+⚠️ **`documentCount` counts the pages the rep ADDED, while `documents` (the S3 refs) come from the
+SERVER rows** — and the split is the point, not fussiness. `uploadNewFiles` resolves to the
+category's **whole server list**, so counting it would report "3 uploaded" for one new page (the
+trap the down-payment-receipt log records). But a locally-scanned page has **no `filePath`** — that
+is generated server-side — so the refs have to come from the rows that landed, picked as the ones
+the card did not already hold. `documentNames` sits beside them because a scanned page has a name
+long before it has a path, and `toDocumentRefs` drops a path-less row.
+
+**Rules live in the pure `src/utils/document-audit.ts`** — `documentAuditDescriptor`,
+`pickUnknownDocuments`, `buildDocumentAuditMeta` — for the reason `utils/uploaded-document-refs.ts`
+and `utils/addendum-drafts.ts` exist: the card pulls in React Native and is untestable under jest
+here, and a removal attributed to the wrong category, or a diff reporting a document nobody
+touched, leaves **no trace on the device**.
+
+- ⚠️ **`pickUnknownDocuments` takes the caller's `identityOf`, it does not re-derive one.** The card
+  already reconciles these documents across the scanner round-trip with its own `docIdentity`
+  (`serverId ?? _id ?? filePath ?? id ?? url ?? uri ?? name`); a second, subtly different notion of
+  "the same document" would report a removal on a document that is still on the card.
+- ⚠️ **A row with no resolvable identity is treated as KNOWN** — neither removed nor added. That is
+  the conservative direction on both sides: the scanner cannot have deleted what it could not
+  identify either, and inventing an event is worse than missing one.
+- **One primitive, both directions**: removals are `pickUnknownDocuments(priorList, survivorIds)`
+  and additions `pickUnknownDocuments(serverRows, priorIds)`. Naming them separately would have
+  meant two copies of the one rule that matters.
+- **`documentAuditDescriptor` is the WHOLE vocabulary** (4 rows). An unknown category yields `null`
+  and nothing is logged, rather than a row whose `action` the portal cannot route.
+- `agreement_uploaded` keeps the exact `fieldLabel: 'Agreement Uploaded'` it already shipped (web
+  parity — `document-summary-cards.js` labels the uploaded path that way and only the GENERATED
+  path plain `Agreement`), and `order_sheet_uploaded` matches the LEGACY job builder's own
+  `logOrderSheetUploaded`, so both builders file the same action for the same act.
+
+#### …and the three controls that OPEN a document sheet
+
+Follow-up: *"add click log for agreement and ordersheet as well just like we add for Scheduled
+Appointment — when we click generate a log with click action type will call; when we click add
+document from agreement same log will call, you can change in mata like if we are generating or
+adding; same like in order sheet."*
+
+Three more `action_type: 'click'` rows, one per control on the two document cards:
+
+| control | `meta.action` | `meta.source` |
+|---|---|---|
+| Agreements ▸ **Generate** | `agreement_generated` | `generate` |
+| Agreements ▸ **Add Document** | `agreement_uploaded` | `add_document` |
+| Order Sheets ▸ **Add Document** | `order_sheet_uploaded` | `add_document` |
+| either card's **pencil** | `<category>_uploaded` | `edit_documents` |
+
+⚠️ **The click carries the SAME `meta.action` as the act it leads to**, told apart only by
+`action_type: 'click'` — exactly how the scheduler's open row relates to the `change` row its
+confirm files. So the portal reads "they opened the agreement sheet" and "they filed an agreement"
+as one story rather than two vocabularies, and `source` says which control started it. The Generate
+row therefore reuses the exact `agreement_generated` / `fieldLabel: 'Agreement'` that
+`DynamicAgreementDialog` files when the document actually exists (web parity: only the GENERATED
+path is plain `Agreement`).
+
+⚠️ **The PENCIL is logged too, though the ticket named three controls.** It is the *same*
+`setScannerCategory(cat)` call — **Add Document simply becomes a pencil once the card holds a
+document** — so logging only the empty-state button would make the row stop firing the moment
+there is anything to edit. `source` keeps the two apart.
+
+⚠️ **`orderSheet` has no `generated` descriptor, on purpose**, so `buildDocumentOpenMeta` returns
+`null` there and nothing is logged: there is no order sheet generator, and aliasing it onto the
+upload row would report a document as produced by a button that does not exist.
+
+⚠️ **The open row deliberately carries NO `documentCount`/`documents`.** Nothing has been chosen at
+click time, and a `documentCount: 0` beside an action named `..._uploaded` reads as an upload that
+filed nothing.
+
+Verified with 5 further tests (20 in the suite): the Generate row matching the dialog's own payload
+verbatim, both Add Document rows, the pencil sharing the action but not the `source`, no count keys
+on an open row, and the order-sheet generate returning `null`.
+
+Verified with 15 tests driving the real helpers and the card's own `docIdentity` verbatim: the
+ticket repro (the crossed-out agreement reported, and only it), one of several removed, nothing
+removed, a survivor whose re-signed url changed still matching on `serverId`, an identity-less row
+inventing nothing, junk input as a no-op; the addition diff against a whole server list; and the
+meta — a removal carrying `filePath`/`bucketName`, the add counting **the pages added and not the
+server total** while still resolving its refs, a multi-page scan, a path-less row keeping its name,
+an unknown category as `null`, and the two categories never crossing. tsc 47 (baseline unchanged);
+`document-audit.ts` and its test are eslint-clean and `SummaryFinalizeCards.tsx` is byte-identical
+to its HEAD baseline (36 problems: 1 error / 35 warnings). ⚠️ That file is **CRLF** — `newline=''`
+on both ends.
+
 ### Edit Customer Details now logs opened / per-field change / saved
 
 Ticket: *"you have to add logs while we are opening customer details from pencil like web / also you
