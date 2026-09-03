@@ -27,6 +27,10 @@ export interface NativePush {
   app: any;
   messaging: any;
   notifee: any;
+  /** Resolved Firebase app — proven to exist before this object is handed out. */
+  firebaseApp: any;
+  /** Resolved messaging instance, for the same reason. */
+  messagingInstance: any;
   AndroidImportance: any;
   EventType: any;
   AuthorizationStatus: any;
@@ -49,11 +53,36 @@ export function getNativePush(): NativePush | null {
     const notifeeModule = require('@notifee/react-native');
     /* eslint-enable global-require */
 
+    /**
+     * ⚠️ PROBE EAGERLY — this is the part that makes the guard actually work.
+     *
+     * `require()` alone proves nothing: the modular API hands back a Proxy and
+     * RNFirebase resolves its TurboModule LAZILY, on first property access. So a
+     * require can succeed on a binary with no native Firebase, and the real throw
+     * ("Native module NativeRNFBTurboApp is not registered") then escapes at some
+     * arbitrary later call site — including inside a promise chain or a headless
+     * task, where it surfaces as an UNCAUGHT error and takes the screen down.
+     *
+     * Forcing the resolution here means a missing native module fails inside this
+     * try/catch, `cached` becomes null, and every consumer takes its no-op path.
+     * It also correctly catches iOS before GoogleService-Info.plist is bundled,
+     * where the modules exist but no default app is configured.
+     */
+    const firebaseApp = app.getApp();
+    const messagingInstance = messaging.getMessaging(firebaseApp);
+    const notifee = notifeeModule?.default || notifeeModule;
+    // Touch a notifee member too, so its native side is proven on the same path.
+    if (typeof notifee?.createChannel !== 'function') {
+      throw new Error('notifee unavailable');
+    }
+
     cached = {
       app,
       messaging,
       // Interop: the package ships a default export under CJS.
-      notifee: notifeeModule?.default || notifeeModule,
+      notifee,
+      firebaseApp,
+      messagingInstance,
       AndroidImportance: notifeeModule?.AndroidImportance,
       EventType: notifeeModule?.EventType,
       AuthorizationStatus: notifeeModule?.AuthorizationStatus,

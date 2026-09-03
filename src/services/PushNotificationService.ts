@@ -38,17 +38,16 @@ const USER_KEY = 'pushBoundUserId';
 
 let unsubscribeTokenRefresh: (() => void) | null = null;
 
-/** The messaging instance, or null when the native modules are unavailable. */
+/**
+ * The messaging instance, or null when the native modules are unavailable.
+ *
+ * No try/catch needed: `getNativePush()` probes the native side before returning,
+ * so a non-null result means these instances already resolved successfully.
+ */
 function messagingInstance(): { np: any; instance: any } | null {
   const np = getNativePush();
   if (!np) return null;
-  try {
-    return { np, instance: np.messaging.getMessaging(np.app.getApp()) };
-  } catch (err) {
-    // Firebase present but not configured — iOS without GoogleService-Info.plist.
-    console.warn('[Push] Firebase app not configured:', err);
-    return null;
-  }
+  return { np, instance: np.messagingInstance };
 }
 
 // ─── Device description ──────────────────────────────────────────────────────

@@ -108,6 +108,11 @@ interface DynamicJobBuilderScreenProps {
   // Web `hideAllocationTrackers`: hide the pinned footage/allocation trackers.
   // Defaults to true in edit mode.
   hideAllocationTrackers?: boolean;
+  /**
+   * Open on the SUMMARY step instead of step 1. Set by the `agreement-signed`
+   * notification deep link, where the rep's next action is Complete Job.
+   */
+  openOnSummary?: boolean;
   appointmentId?: string;
   // --- Embedded (4-step deal-edit wizard, step "Job Build") -------------------
   // When true this renders as the wizard's inner build step (web `<DynamicJobBuilder
@@ -199,6 +204,7 @@ function DynamicJobBuilderInner({
   initialJobState: initialJobStateProp,
   portalUnrestrictedEdit: portalUnrestrictedEditProp,
   hideAllocationTrackers: hideAllocationTrackersProp,
+  openOnSummary = false,
   appointmentId,
   embedded = false,
   scheduleTimeOverride,
@@ -771,6 +777,30 @@ function DynamicJobBuilderInner({
     () => availableTabs.find((t: any) => t.isSummary),
     [availableTabs]
   );
+
+  /**
+   * Deep link from the `agreement-signed` notification: land on SUMMARY, not on
+   * step 1. The customer has signed, so the rep's next action is Complete Job —
+   * dropping them on Gutters means scrolling through every step to reach it.
+   *
+   * ⚠️ Waits for `availableTabs` to resolve. The tabs come from the config fetch,
+   * so on the first renders `summaryTab` is undefined and setting the id then
+   * would be overwritten by the default-tab effect.
+   *
+   * ⚠️ Deliberately bypasses `handleGoToTab`'s forward gate. That gate stops a rep
+   * SKIPPING incomplete work; here they are being sent to review a build that is
+   * already complete enough to have produced a signed agreement, and "Complete
+   * Job" runs its own validation regardless (the order-sheet requirement).
+   *
+   * Fires once — re-running would fight the rep the moment they pressed Back.
+   */
+  const openedOnSummaryRef = useRef(false);
+  useEffect(() => {
+    if (!openOnSummary || openedOnSummaryRef.current) return;
+    if (!summaryTab) return;
+    openedOnSummaryRef.current = true;
+    setSelectedTabId(summaryTab.id);
+  }, [openOnSummary, summaryTab]);
 
   const currentTabIndex = useMemo(() => {
     if (!selectedTabId) return -1;

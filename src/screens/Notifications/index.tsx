@@ -23,6 +23,7 @@ import {
 } from '../../hooks/useNotifications';
 import { resolvePushRoute } from '../../utils/push-routing';
 import { LeadService } from '../../services/api/leads';
+import { resolveBuildIds } from '../../hooks/usePushNotifications';
 import { FlashMessage } from '../../config/message';
 
 /**
@@ -78,9 +79,55 @@ export default function NotificationsScreen() {
           return;
         }
 
+        // `agreement-signed` — the job can now be submitted, so land on the Job
+        // Builder Summary. Same branch as the push tap; see usePushNotifications.
+        if (route.kind === 'jobBuilder') {
+          const res = await LeadService.getLeadDetailsById(route.leadId);
+          const body: any = res?.data;
+          const lead = body?.data?.lead || body?.data || body?.lead || body;
+          if (!lead?._id && !lead?.id) {
+            FlashMessage.error('Not found', 'That lead could not be loaded.');
+            return;
+          }
+
+          // Same rule as the push tap: only an EXPLICIT "not dynamic" diverts to
+          // the documents. The lead cannot answer this before the job is
+          // submitted — see the note in usePushNotifications.
+          if (route.isDynamic === false) {
+            navigation.navigate('LeadCenter', { lead, tab: 'job_docs' });
+            return;
+          }
+
+          // Shared with the push tap so a row and a banner cannot resolve a
+          // different calculator — and so both benefit from the sales-portal
+          // fallback when `lead/v1/details` has no calculator on it.
+          const ids = await resolveBuildIds(lead);
+          if (!ids.calculatorId) {
+            navigation.navigate('LeadCenter', { lead, tab: 'job_docs' });
+            return;
+          }
+
+          navigation.navigate('DynamicDealCenter', {
+            // appointmentId merged onto the lead — see the note in
+            // usePushNotifications; it is the only field resolveAppointmentId reads.
+            lead: ids.appointmentId
+              ? { ...ids.lead, appointmentId: ids.lead?.appointmentId || ids.appointmentId }
+              : ids.lead,
+            openJobBuilder: true,
+            calculatorResultData: {
+              calculatorId: ids.calculatorId,
+              appointmentId: ids.appointmentId,
+            },
+          });
+          return;
+        }
+
         if (route.kind === 'lead') {
           // LeadCenter's params take a full lead object, not an id.
-          const res = await LeadService.getSalesDealById(route.leadId);
+          // ⚠️ Same route as the push tap (`lead/v1/details/{id}`) — a row and a
+          // banner must resolve the lead identically or they can land on
+          // different data for the same notification.
+          const res = await LeadService.getLeadDetailsById(route.leadId);
           const lead = (res?.data as any)?.data || res?.data;
           if (!lead) {
             FlashMessage.error('Not found', 'That lead could not be loaded.');

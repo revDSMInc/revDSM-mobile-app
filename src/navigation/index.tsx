@@ -124,6 +124,16 @@ export type RootStackParamList = {
     calculatorResultData?: any;
     // Opt-in handoff from the Investment Center → open Result Lead (Sale).
     resultOptIn?: { calculatorId?: string; price?: number; paymentMethod?: string; downPayment?: number };
+    /**
+     * Open straight on the dynamic Job Builder (its Summary step), skipping the
+     * calculator and rollout steps. Set by the `agreement-signed` notification:
+     * the customer has signed, so the rep's next action is Complete Job.
+     *
+     * ⚠️ Honoured only once the calculators and config have loaded — the builder
+     * mounted early would render an empty summary. See the effect in
+     * `DynamicDealCenterScreen`.
+     */
+    openJobBuilder?: boolean;
   };
   MyDeals: undefined;
   // Deal Detail — opened from My Deals; hosts the contract summary + the Edit

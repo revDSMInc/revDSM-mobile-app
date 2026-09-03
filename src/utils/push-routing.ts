@@ -45,6 +45,39 @@ export type PushData = Record<string, string | undefined>;
 export type PushRoute =
   | { kind: 'chat'; chatId: string; leadId?: string; chatType: 'lead' | 'channel' }
   | { kind: 'lead'; leadId: string; tab?: 'job_docs' | 'tools' }
+  /**
+   * Straight into the dynamic Job Builder, on its Summary step.
+   *
+   * Only `agreement-signed` resolves here, and the reason is the order of the real
+   * flow: the customer signing the agreement is what UNBLOCKS submitting the job,
+   * so at the moment this notification fires the build is always still open. The
+   * rep's next action is "Complete Job", and Job Docs is a detour.
+   *
+   * ⚠️ `addendum-signed` deliberately does NOT resolve here. An addendum is raised
+   * against an ALREADY-submitted deal, so there is no job left to complete.
+   *
+   * ⚠️ The Job Builder is NOT a route — it is a step inside `DynamicDealCenter`,
+   * which assembles the nine props it needs from four hooks. The caller therefore
+   * navigates to `DynamicDealCenter` with `openJobBuilder`, never to the builder
+   * itself; anything that skipped it would mount an empty summary.
+   *
+   * ⚠️ Requires a DYNAMIC lead with a resolvable calculator. The caller falls back
+   * to `{ kind: 'lead', tab: 'job_docs' }` when either is missing — a legacy lead
+   * has no dynamic builder to open.
+   */
+  | {
+      kind: 'jobBuilder';
+      leadId: string;
+      /**
+       * From the push's own `isDynamic`, when it sent one.
+       *
+       * ⚠️ `undefined` is a THIRD state, not a false — the in-person sign flow
+       * (`/pdf-reports/v1/agreement/:leadId/sign`) sends neither `isDynamic` nor
+       * `count`, so the key is simply absent. Callers must fall back to the lead
+       * record rather than reading an absent flag as "not dynamic".
+       */
+      isDynamic?: boolean;
+    }
   | { kind: 'leadList' }
   | null;
 
@@ -135,8 +168,23 @@ export function resolvePushRoute(data: PushData | undefined | null): PushRoute {
       return leadId ? { kind: 'lead', leadId } : null;
 
     // Both land on Contract Details, which lives in the Job Docs tab.
-    case 'addendum-signed':
+    /**
+     * The agreement is signed, so the job can now be submitted — take the rep to
+     * the builder's Summary rather than to the documents. See the `jobBuilder`
+     * note on `PushRoute` for why this one event differs from the addendum.
+     */
     case 'agreement-signed':
+      return leadId
+        ? {
+            kind: 'jobBuilder',
+            leadId,
+            // Absent key stays undefined — see the note on the route type.
+            isDynamic:
+              data?.isDynamic === undefined ? undefined : pushBool(data?.isDynamic),
+          }
+        : null;
+
+    case 'addendum-signed':
       return leadId ? { kind: 'lead', leadId, tab: 'job_docs' } : null;
 
     default:

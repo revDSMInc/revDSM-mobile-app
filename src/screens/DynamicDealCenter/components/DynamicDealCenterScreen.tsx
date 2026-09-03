@@ -19,7 +19,7 @@ import { buildDealCenterData } from '../utils/build-deal-center-data';
 import { resolveSubmittedCalculatorId } from '../utils/job-builder-submission';
 import { FlashMessage } from '../../../config/message';
 import { buildSectionLabelMap } from '../utils/item-format';
-import { LeadService } from '../../../services/api/leads';
+import { LeadService, resolveLeadCalculatorId } from '../../../services/api/leads';
 import { useAuth } from '../../../hooks/useAuth';
 import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
 import { useQueryClient } from '@tanstack/react-query';
@@ -40,6 +40,10 @@ interface DynamicDealCenterScreenProps {
       // Opt-in handoff from the Investment Center — opens the Result Lead (Sale)
       // modal for this calculator with the secured price/plan/down payment.
       resultOptIn?: { calculatorId?: string; price?: number; paymentMethod?: string; downPayment?: number };
+      // Deep link from the `agreement-signed` notification — open straight on the
+      // Job Builder's Summary step so the rep can Complete Job. Honoured only once
+      // the calculators and job-builder config have loaded.
+      openJobBuilder?: boolean;
     };
   };
 }
@@ -235,6 +239,54 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     handleResultJob(optIn.calculatorId, 'sale', optIn.price, optIn.paymentMethod, optIn.downPayment);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route?.params?.resultOptIn, isCalcLoading, tabs]);
+
+  /**
+   * Deep link from the `agreement-signed` notification: open straight on the Job
+   * Builder's Summary so the rep can Complete Job, skipping calculator + rollout.
+   *
+   * ⚠️ GATED ON THE DATA, not just the param. `DynamicJobBuilderScreen` takes nine
+   * props this screen assembles from four hooks (`jobBuilderConfig`, `verticals`,
+   * `consolidatedDealCenterData`, the calculator `tabs`). Flipping `flowStep`
+   * before those resolve mounts the builder against empty state and the summary
+   * renders blank — which is exactly the "opened but nothing populated" failure
+   * this deep link exists to avoid. Waiting costs a spinner; not waiting costs the
+   * rep their build.
+   *
+   * ⚠️ Also waits for `jobBuilderConfig`. `isCalcLoading` only covers System A
+   * (the calculators); the System B job-builder config is a separate fetch and is
+   * what actually renders the tabs.
+   *
+   * Runs once per navigation — `setFlowStep` is a one-way handoff, and re-firing
+   * would yank the rep back to Summary after they pressed Back.
+   */
+  /**
+   * Latched rather than read from the param, because the effect below CLEARS the
+   * param once handled — reading it live would flip this back to false on the very
+   * next render and the builder would fall back to step 1.
+   */
+  const [openedViaNotification, setOpenedViaNotification] = useState(false);
+  const openJobBuilderHandledRef = useRef(false);
+  useEffect(() => {
+    if (!route?.params?.openJobBuilder || openJobBuilderHandledRef.current) return;
+    if (isCalcLoading || !jobBuilderConfig || tabs.length === 0) return;
+
+    openJobBuilderHandledRef.current = true;
+    setOpenedViaNotification(true);
+    if (__DEV__) {
+      console.log(`[DynamicDealCenter] openJobBuilder → Summary (tabs=${tabs.length})`);
+    }
+
+    // Prefer the calculator the notification named; fall back to the lead's own
+    // selected one, which is what the Lead Center's auto-open uses.
+    const targetId =
+      calculatorResultData?.calculatorId || resolveLeadCalculatorId(lead) || undefined;
+    if (targetId && tabs.some((t) => t.id === targetId)) setActiveTabId(targetId);
+
+    setFlowStep('jobBuilder');
+    // Clear it so a later re-render (or a Back into this screen) cannot re-trigger.
+    navigation?.setParams({ openJobBuilder: undefined } as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route?.params?.openJobBuilder, isCalcLoading, jobBuilderConfig, tabs]);
 
   /**
    * Rendered alongside BOTH result-modal mounts (calculator step and rollout step) —
@@ -436,6 +488,9 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         allCalculators={summaryCalculators}
         // Rehash + "Start Fresh": load the outcome but not its saved build.
         startFresh={rehashBuild.startFresh}
+        // Deep-linked from the `agreement-signed` notification — land on Summary,
+        // one tap from Complete Job, rather than on step 1.
+        openOnSummary={openedViaNotification}
         onGoBack={handleJobBuilderBack}
         onJobComplete={handleJobBuilderComplete}
       />

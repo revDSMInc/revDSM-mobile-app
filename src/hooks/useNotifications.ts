@@ -72,7 +72,14 @@ export function useUnreadNotificationCount() {
   useEffect(() => {
     // Reached through the lazy shim: a build without the native modules must not
     // take the header bell down with it. See services/push-native.ts.
-    getNativePush()?.notifee?.setBadgeCount(unreadCount)?.catch?.(() => {});
+    //
+    // ⚠️ try/catch as well as `.catch` — `setBadgeCount` can throw SYNCHRONOUSLY
+    // when the native side is missing, which a promise `.catch` does not cover.
+    try {
+      getNativePush()?.notifee?.setBadgeCount(unreadCount)?.catch?.(() => {});
+    } catch {
+      // Cosmetic only — a launcher that cannot show a badge must never surface.
+    }
   }, [unreadCount]);
 
   return { unreadCount, isLoading: query.isLoading, refetch: query.refetch };

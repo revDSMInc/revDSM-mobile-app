@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { navigationRef } from '../navigation';
 import { queryClient } from '../services/api/queryClient';
-import { LeadService } from '../services/api/leads';
+import { LeadService, resolveLeadCalculatorId } from '../services/api/leads';
 import { getNativePush } from '../services/push-native';
 import {
   resolvePushRoute,
@@ -51,7 +51,7 @@ export function usePushNotifications(
 
     let unsubscribe: (() => void) | undefined;
     try {
-      const instance = np.messaging.getMessaging(np.app.getApp());
+      const instance = np.messagingInstance;
       unsubscribe = np.messaging.onMessage(instance, async (message: any) => {
         const data = (message?.data || {}) as PushData;
 
@@ -115,7 +115,7 @@ export function usePushNotifications(
         }
       });
 
-      const instance = np.messaging.getMessaging(np.app.getApp());
+      const instance = np.messagingInstance;
 
       unsubOpened = np.messaging.onNotificationOpenedApp(instance, (message: any) => {
         void openFromPush(message?.data as PushData);
@@ -188,6 +188,85 @@ async function waitForNavigation(timeoutMs = 10000): Promise<boolean> {
   return true;
 }
 
+/**
+ * Resolve the lead a deep link names.
+ *
+ * ⚠️ `getLeadDetailsById` (`lead/v1/details/{id}`), NOT `getSalesDealById`
+ * (`demo/v1/leads/sales/{id}`). A push carries only a lead id and the lead may not
+ * be a sales deal at all — issued, cancelled, or one whose agreement was just
+ * signed — so the sales-deal route is the wrong lookup for this entry point.
+ */
+async function fetchLead(leadId: string): Promise<any | null> {
+  try {
+    const res = await LeadService.getLeadDetailsById(leadId);
+    const body: any = res?.data;
+    const lead = body?.data?.lead || body?.data || body?.lead || body;
+    if (!lead || !(lead._id || lead.id)) {
+      console.warn('[Push] lead not found for deep link:', leadId);
+      return null;
+    }
+    return lead;
+  } catch (err) {
+    console.warn('[Push] lead fetch failed for deep link:', leadId, err);
+    return null;
+  }
+}
+
+/**
+ * Resolve the calculator (and its appointment) whose saved build the Job Builder
+ * should open.
+ *
+ * ⚠️ TWO SOURCES, and the second one is why this exists. `lead/v1/details` does
+ * NOT carry the selected calculator — a device trace on a real
+ * `agreement-signed` tap logged `calculatorId=NONE` from it. The richer
+ * `demo/v1/leads/sales-portal/{id}` payload does, which is why
+ * `LeadCenter.handleEditDeal` resolves it successfully from the lead IT holds.
+ *
+ * So: try the lead we already have, and fall back to the sales-portal read only
+ * when that misses. The returned `lead` is whichever record actually answered, so
+ * the screen gets the richer object when we had to fetch it.
+ *
+ * ⚠️ The sales-portal route 404s when the lead is not the caller's own (the server
+ * matches `assignedRepId`/`assignedShadowRepId`), so a miss is an expected outcome
+ * here, not an error.
+ */
+export async function resolveBuildIds(lead: any): Promise<{
+  lead: any;
+  calculatorId: string | null;
+  appointmentId: string | null;
+  source: string;
+}> {
+  const pick = (l: any) => ({
+    calculatorId: resolveLeadCalculatorId(l),
+    appointmentId:
+      l?.selectedAppointmentId ||
+      l?.jobBuilder?.appointmentId ||
+      l?.outcome?.selectedAppointmentId ||
+      l?.leadData?.selectedAppointmentId ||
+      l?.appointmentId ||
+      null,
+  });
+
+  const fromDetails = pick(lead);
+  if (fromDetails.calculatorId) {
+    return { lead, ...fromDetails, source: 'lead/v1/details' };
+  }
+
+  try {
+    const res = await LeadService.getSalesPortalLeadById(lead?._id || lead?.id);
+    const body: any = res?.data;
+    const richer = body?.data?.lead || body?.data || body?.lead || body;
+    const fromPortal = pick(richer);
+    if (fromPortal.calculatorId) {
+      return { lead: richer || lead, ...fromPortal, source: 'sales-portal' };
+    }
+  } catch (err) {
+    console.warn('[Push] sales-portal lead lookup failed:', err);
+  }
+
+  return { lead, calculatorId: null, appointmentId: null, source: 'none' };
+}
+
 async function openFromPush(data: PushData | undefined) {
   const route = resolvePushRoute(data);
   // Unknown type, control event, or a known type missing the id it needs. The app
@@ -205,6 +284,89 @@ async function openFromPush(data: PushData | undefined) {
       return;
     }
 
+    /**
+     * `agreement-signed` — the customer has signed, so the job can now be
+     * submitted. Land the rep on the Job Builder Summary, one tap from
+     * Complete Job.
+     *
+     * ⚠️ Navigates to `DynamicDealCenter`, NOT to the builder. The builder is a
+     * STEP inside that screen and needs nine props it assembles from four hooks;
+     * `openJobBuilder` makes it seed `flowStep` once that data has loaded.
+     *
+     * ⚠️ Falls back to Job Docs for a LEGACY lead or one with no resolvable
+     * calculator — there is no dynamic builder to open, and an empty summary is
+     * worse than the documents.
+     */
+    if (route.kind === 'jobBuilder') {
+      const lead = await fetchLead(route.leadId);
+      if (!lead) return;
+
+      /**
+       * ⚠️ ONLY an EXPLICIT `isDynamic: "false"` diverts to the documents.
+       *
+       * This first shipped gated on `calculatorId && isDynamic` and fell through
+       * to Job Docs every time — the device log read
+       * `calculatorId=NONE isDynamic=false (push=undefined)`. Both halves were
+       * wrong for the same underlying reason: at `agreement-signed` time the job
+       * has NOT been submitted, so the lead record carries neither a selected
+       * calculator nor a dynamic marker yet. Gating on the lead asks it for facts
+       * it cannot have.
+       */
+      if (route.isDynamic === false) {
+        if (__DEV__) console.log('[Push] agreement-signed → push says not dynamic → job_docs');
+        navigationRef.navigate('LeadCenter', { lead, tab: 'job_docs' });
+        return;
+      }
+
+      /**
+       * ⚠️ The calculator id is REQUIRED, and an earlier version of this comment
+       * claiming it was "a preference" was wrong.
+       *
+       * `DynamicJobBuilderScreen` loads the saved build with
+       * `getLeadOutcomeByCalculator(leadId, calculatorResultData.calculatorId)`
+       * (`DynamicJobBuilderScreen.tsx:230-235`). Without the id there is no outcome
+       * GET, so the builder opens on step 1 with every field blank — and worse,
+       * `useDynamicCalculators` then bootstraps a NEW appointment and an EMPTY
+       * calculator, which is the "Avail 1ft" reading on a job that had real
+       * measurements.
+       */
+      const ids = await resolveBuildIds(lead);
+      if (__DEV__) {
+        console.log(
+          `[Push] agreement-signed → JobBuilder calculatorId=${ids.calculatorId ?? 'NONE'} ` +
+            `appointmentId=${ids.appointmentId ?? 'NONE'} (via ${ids.source})`
+        );
+      }
+
+      // No calculator anywhere means no saved build to open. Job Docs is the
+      // honest destination — an empty Summary would look like data loss.
+      if (!ids.calculatorId) {
+        navigationRef.navigate('LeadCenter', { lead, tab: 'job_docs' });
+        return;
+      }
+
+      navigationRef.navigate('DynamicDealCenter', {
+        /**
+         * ⚠️ The appointment id is MERGED ONTO THE LEAD, not just passed in
+         * `calculatorResultData` — because that is the only field anything reads.
+         * `useDynamicCalculators.resolveAppointmentId` checks `lead.appointmentId`
+         * FIRST and otherwise falls back to matching appointments by lead date,
+         * then to CREATING one. A created appointment brings a brand-new empty
+         * calculator with it, which is what makes the allocation trackers read
+         * "Avail 1ft" on a job that has real measurements.
+         */
+        lead: ids.appointmentId
+          ? { ...ids.lead, appointmentId: ids.lead?.appointmentId || ids.appointmentId }
+          : ids.lead,
+        openJobBuilder: true,
+        calculatorResultData: {
+          calculatorId: ids.calculatorId,
+          appointmentId: ids.appointmentId,
+        },
+      });
+      return;
+    }
+
     if (route.kind === 'lead') {
       /**
        * ⚠️ `RootStackParamList` types `LeadCenter` as taking a FULL lead object,
@@ -213,13 +375,14 @@ async function openFromPush(data: PushData | undefined) {
        * letting the screen self-hydrate — is the better long-term shape. Until
        * then a failed fetch means the tap does nothing rather than opening an
        * empty screen.
+       *
+       * ⚠️ `getLeadDetailsById` (`lead/v1/details/{id}`), NOT `getSalesDealById`
+       * (`demo/v1/leads/sales/{id}`). A push carries only a lead id and the lead
+       * may not be a sales deal at all — issued, cancelled, or one whose addendum
+       * was just signed — so the sales-deal route is the wrong lookup here.
        */
-      const res = await LeadService.getSalesDealById(route.leadId);
-      const lead = (res?.data as any)?.data || res?.data;
-      if (!lead) {
-        console.warn('[Push] lead not found for deep link:', route.leadId);
-        return;
-      }
+      const lead = await fetchLead(route.leadId);
+      if (!lead) return;
       navigationRef.navigate('LeadCenter', { lead, tab: route.tab });
       return;
     }
