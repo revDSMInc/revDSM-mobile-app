@@ -2732,6 +2732,82 @@ tsc 107 (baseline unchanged); zero eslint errors, and the two edited components 
 ⚠️ Needs a device check — this repo cannot render-test, and the whole ticket is layout: the section
 headings, one block per combination, and the `Extras` block reading as a block rather than a heading.
 
+#### …and the number is the CARD's, not the section's
+
+Follow-up, with a screenshot of a LeafFilter card reading **Combination #1** three times over three
+different gutter widths: *"the same combination number is displayed on every combination — make it auto
+increment according to the receiving combination, if 4 received then show #1, #2, #3, #4. These should
+be for every case of combinations."*
+
+⚠️ **`combo.index` RESTARTS AT 1 IN EVERY SECTION, and a subcategory is routinely authored as several
+one-combination sections** — LeafFilter arrives as four, one per gutter width (this file already records
+that, under the addendum-review ticket). So trusting the payload's own index was guaranteed to print
+`#1` once per section. New **`renumberScopeCombinations`** assigns the number by position across the
+whole card once its sections are built, and `toCombination` no longer reads `index` at all.
+
+That is also what the sales card does — Soffit: *Vinyl Soffit* #1, *Porch Ceiling SqFT* #2, *Nailer
+Build Out* #3 — so the two surfaces now agree on what "Combination #2" refers to.
+
+⚠️ **An empty combination is dropped BEFORE numbering**, so a card whose first combination held nothing
+still starts at #1 rather than #2. Numbers name what is on screen; a gap invites the installer to look
+for a run that was never sold.
+
+⚠️ **`flattenScopeSections` counts the CARD too** (`countCombinations`), not the section it is walking.
+Left per-section, four one-combination sections would each have read as a lone *unnumbered* run while
+the cards above them numbered 1–4.
+
+Verified with 4 more tests (25 total): the repro — asserted first against the payload, whose three
+sections really do all carry `index: 1`, so the old rule could only ever have produced `[1, 1, 1]` —
+each number still belonging to the width it was entered against; a stated index that repeats AND one
+that skips (`7`) both ignored across two sections; an empty combination not consuming a number; and the
+flat form numbering off the same count.
+
+#### …and an Extras colour is folded into the quantity it belongs to
+
+Follow-up, with a screenshot of the Extras block: *"make sure when we receive the Ground Spout value
+then append with the colour also, like in the image"* — `Ground Spout ⟷ 3 · Black`,
+`Replace Corner Miter ⟷ 3 · Cream`, while `Wedges` / `Straps` / `Modify Height` stay bare.
+
+**The colour is a SEPARATE field with its own id**, immediately following the quantity it belongs to.
+Settled from `payload for testing extras.txt` (`section_1781685061809__extras`), which stores exactly
+that alternation:
+
+```
+field_1781873407628_9hhi0__textvalue-3      2            ← Ground Spout
+field_1781873462203_n44h8__color            "Black"      ← its colour
+field_1781873537058_tk016__textvalue-uuu1l  2
+field_1781873540360_ny9fm__color-gem7v      "Forest Green"
+```
+
+⚠️ **The pairing is POSITIONAL, and it has to be**: the colour carries nothing linking it back — no
+`dcField`, no parent id, a different field id from its quantity. The authoring convention is the only
+link there is, and `utils/dynamic-job-builder/engine/locked-color-defaults.ts` leans on the same one on
+the sales side, for the same absence.
+
+⚠️ **A colour folds ONLY into a QUANTITY** — `isQuantityValue`, a bare number and nothing else. That
+single guard is what makes the rule safe, and it is deliberately strict:
+
+| the field before the swatch | folds? | why |
+|---|---|---|
+| `Ground Spout: 3` | ✅ | a count, and the swatch is its colour |
+| `Gutter Partial?: Yes` | ❌ | a SELECTION — folding it reads as though "Yes" was measured in Musket Brown |
+| `Size: 1 x 4`, `Footage: 111'`, `6"` | ❌ | contains a number; is not one |
+| `Measurements` (a grid) | ❌ | expands to several rows; never a fold target |
+| another colour (`Track Color` → `Wire Color`) | ❌ | falls out of the same test — a colour's value is not a number |
+
+⚠️ **A swatch authored with NO label arrives as its schema KEY** (`color`, `color_gem7v`,
+`color-uq368`) — the portal's own fallback — so a standalone one is displayed as **`Color`**
+(`BARE_COLOR_KEY`). An authored label is kept verbatim, so `LeafFilter Color` and `Track Color` are
+untouched. A folded colour shows no label at all, being part of its quantity's value.
+
+`buildFieldRows` runs the pass over BOTH a section's loose fields and a combination's, so a folded
+colour rides into the combination headline too (`5 · Clay`) where the quantity was unlabelled.
+
+Verified with 8 more tests (33 total): the screenshot's own row set, the selection case left alone, a
+colour never folding into a colour, `1 x 4` / `111'` refused, a grid refused, folding inside a
+combination and into its headline, a colour with no quantity before it, and an empty colour skipped
+rather than folded as a blank.
+
 ### The Investment Center never saw the down payment entered on the DROP screen
 
 Ticket: *"Sale Resulted | Down payment did not save or reflect in Contract Details … when i add down
