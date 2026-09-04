@@ -296,35 +296,56 @@ export function SummaryFinalizeCards({
     });
   };
 
+  // appointment_scheduled (web parity: schedule-appointment-summary-card handleConfirm).
+  const logAppointmentScheduled = (data: any) => {
+    if (!user?._id) return;
+    logEvent('change', {
+      user_id: user._id,
+      created_by: user._id,
+      module_type: 'job_builder',
+      meta: {
+        draft: true,
+        leadId,
+        date: data?.date,
+        timeWindow: data?.timeWindow || null,
+        isTBD: data?.date === 'TBD',
+        tbdReason: data?.reason || null,
+        customerName: data?.customerName || customerName,
+        action: 'appointment_scheduled',
+      },
+    });
+  };
+
   // The scheduler's NEW-appointment flow (isEdit=false) never calls onConfirm — it
   // calls onGenerate ("Generate Dynamic Agreement") or onUpload ("Add Presigned
   // Agreement"). Both must (a) persist scheduleTime and (b) proceed to the next
   // step, exactly like the normal JB. onConfirm is only used by the EDIT flow.
   const saveAppointment = (data: any) => {
     onUpdateRootState?.('scheduleTime', { ...data, customerName: data.customerName || customerName });
-    // appointment_scheduled (web parity: schedule-appointment-summary-card handleConfirm).
-    if (user?._id) {
-      logEvent('change', {
-        user_id: user._id,
-        created_by: user._id,
-        module_type: 'job_builder',
-        meta: {
-          draft: true,
-          leadId,
-          date: data?.date,
-          timeWindow: data?.timeWindow || null,
-          isTBD: data?.date === 'TBD',
-          tbdReason: data?.reason || null,
-          customerName: data?.customerName || customerName,
-          action: 'appointment_scheduled',
-        },
-      });
-    }
     setSchedulerVisible(false);
     setIsEditingAppt(false);
   };
 
-  const handleScheduleConfirm = (data: any) => saveAppointment(data);
+  // The rep answered YES to the offered window (or confirmed a TBD reason) and the
+  // modal is showing 'Job Booked!'. THAT is when the appointment is booked, so the
+  // row is filed here — not on 'Generate Dynamic Agreement' / 'Add Presigned
+  // Agreement', which are what the rep does with the booking afterwards. Those two
+  // still persist it (the create flow never calls onConfirm), they just no longer
+  // log it, so one booking is one row either way.
+  //
+  // ⚠️ NOT in the EDIT flow. Re-scheduling a booked job commits at 'Save Changes',
+  // and when `requireScheduleAmendment` is on it commits only once the customer has
+  // SIGNED the amendment — logging at 'Yes' would record a reschedule the customer
+  // can still refuse. `handleScheduleConfirm` covers that path.
+  const handleAppointmentBooked = (data: any) => {
+    if (isEditingAppt) return;
+    logAppointmentScheduled(data);
+  };
+
+  const handleScheduleConfirm = (data: any) => {
+    logAppointmentScheduled(data);
+    saveAppointment(data);
+  };
 
   const handleScheduleAndGenerate = (data: any) => {
     saveAppointment(data);
@@ -1023,6 +1044,7 @@ export function SummaryFinalizeCards({
           setIsEditingAppt(false);
         }}
         onConfirm={handleScheduleConfirm}
+        onBooked={handleAppointmentBooked}
         onGenerate={handleScheduleAndGenerate}
         onUpload={handleScheduleAndUpload}
         customerName={customerName}

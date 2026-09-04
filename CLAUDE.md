@@ -4872,6 +4872,38 @@ touched, leaves **no trace on the device**.
   path plain `Agreement`), and `order_sheet_uploaded` matches the LEGACY job builder's own
   `logOrderSheetUploaded`, so both builders file the same action for the same act.
 
+#### ⚠️ `appointment_scheduled` fires on **Yes**, not on "Generate Dynamic Agreement"
+
+Ticket: *"one log is calling in the wrong button — it should be call while we click the yes button
+instead of calling Generate Dynamic Agreement."*
+
+The `change` row was filed by `saveAppointment`, and **the create flow never calls `onConfirm`** —
+it calls `onGenerate` / `onUpload`, i.e. the two buttons on the *"Job Booked!"* card. So the row
+was only filed once the rep chose what to do with the booking, and a rep who booked the job and
+then closed the modal filed nothing at all. The booking happens one screen earlier, at
+**"Does this time work for the customer?" ▸ Yes**.
+
+- **New optional `onBooked` on `AppointmentSchedulerModal`**, fired from `handleAcceptSlot` (Yes)
+  AND `handleConfirmTBDStep` (the TBD path reaches the same card). Audit only — the appointment is
+  still persisted by `onGenerate` / `onUpload` / `onConfirm` exactly as before, so nothing about
+  when it is SAVED changed. Optional, so `SummarySection` and `EditContractDetailsModal` are
+  untouched.
+- **The log moved OUT of `saveAppointment`** into a named `logAppointmentScheduled`, called from
+  the booked callback and from `handleScheduleConfirm`. `handleScheduleAndGenerate` /
+  `handleScheduleAndUpload` no longer log, so one booking is still exactly one row.
+- ⚠️ **The booked row is suppressed in the EDIT flow** (`if (isEditingAppt) return`). Re-scheduling
+  a booked job commits at **Save Changes**, and with `requireScheduleAmendment` on it commits only
+  once the customer has **SIGNED** the amendment — logging at "Yes" would record a reschedule the
+  customer can still refuse. `handleScheduleConfirm` is that path's commit point and keeps the row.
+- ⚠️ **New `bookedAppointmentData(tbd)` takes `tbd` as an ARGUMENT, never reading `isTBD`.** Both
+  accept handlers set that state in the same tick, so reading it would see the previous value and
+  a TBD booking would log as a dated one. It also de-duplicates the appointment-shape expression
+  the two success-card buttons already repeated.
+
+tsc 48 (baseline unchanged); `SummaryFinalizeCards.tsx` (36 problems) and
+`AppointmentSchedulerModal.tsx` (78) are each byte-identical to their HEAD eslint baselines.
+⚠️ Both files are CRLF — `newline=''` on both ends.
+
 #### …and the three controls that OPEN a document sheet
 
 Follow-up: *"add click log for agreement and ordersheet as well just like we add for Scheduled
