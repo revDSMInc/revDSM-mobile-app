@@ -795,10 +795,18 @@ function DynamicJobBuilderInner({
    * Fires once — re-running would fight the rep the moment they pressed Back.
    */
   const openedOnSummaryRef = useRef(false);
+  /**
+   * ⚠️ Held across ONE commit so the fallback effect below cannot undo this.
+   * Both effects run in the same mount commit and both read the SAME pre-commit
+   * `selectedTabId` (still `''`), so the one defined later wins — which dropped
+   * the rep on step 1 with the deep link silently discarded.
+   */
+  const summaryPinnedRef = useRef(false);
   useEffect(() => {
     if (!openOnSummary || openedOnSummaryRef.current) return;
     if (!summaryTab) return;
     openedOnSummaryRef.current = true;
+    summaryPinnedRef.current = true;
     setSelectedTabId(summaryTab.id);
   }, [openOnSummary, summaryTab]);
 
@@ -822,6 +830,14 @@ function DynamicJobBuilderInner({
   // to step 1 — the job builder must open on the first tab, not the summary.
   const autoSummaryRef = useRef(false);
   useEffect(() => {
+    // Yield to the `openOnSummary` deep link for exactly as long as it takes to
+    // land. Cleared the moment the selection is observed to BE the summary, so a
+    // later vertical switch (which resets `selectedTabId` to '') still gets its
+    // fallback and the screen can never be left blank.
+    if (summaryPinnedRef.current) {
+      if (summaryTab && selectedTabId === summaryTab.id) summaryPinnedRef.current = false;
+      return;
+    }
     if (nonSummaryTabs.length > 0) {
       // Product tabs are available: open on the first one. Also correct a Summary
       // selection that was only a fallback picked before the tabs resolved (the

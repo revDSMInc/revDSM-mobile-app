@@ -27,6 +27,21 @@ import { markLeadRolloutsConfirmed } from '../../../hooks/useLeadCalculatorStatu
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
 
+/**
+ * Sale vs demo for a deep link that SKIPS the Result modal (the `agreement-signed`
+ * push). `isSale` in the builder gates which cards render, the Complete Job
+ * enablement and the `result` the submit payload reports, so an empty `resultType`
+ * reads as NEITHER sale nor demo and the rep lands on a job they cannot submit.
+ *
+ * `lead.status` is the same field `JobDocsSection`'s `hasContract` reads, and a lead
+ * whose agreement was just signed is resulted by definition — so sale is the right
+ * default and only an explicit demo status moves off it.
+ */
+const resultTypeFromLead = (lead: any): 'sale' | 'demo' => {
+  const status = String(lead?.status || '').toLowerCase().replace(/[^a-z]/g, '');
+  return status === 'demo' || status === 'demonosale' ? 'demo' : 'sale';
+};
+
 interface DynamicDealCenterScreenProps {
   navigation?: NativeStackNavigationProp<any>;
   route?: {
@@ -273,13 +288,40 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     openJobBuilderHandledRef.current = true;
     setOpenedViaNotification(true);
     if (__DEV__) {
-      console.log(`[DynamicDealCenter] openJobBuilder → Summary (tabs=${tabs.length})`);
+      console.log(
+        `[DynamicDealCenter] openJobBuilder → Summary (tabs=${tabs.length}, calcId=${
+          route?.params?.calculatorResultData?.calculatorId || 'NONE'
+        })`
+      );
+    }
+
+    // ⚠️ THE NOTIFICATION'S calculatorId HAS TO LAND IN STATE, NOT JUST IN THE PARAM.
+    // `calculatorResultData` is LOCAL STATE seeded to null — the normal flow fills it
+    // from the Result modal — and the route param of the same name is read ONLY by the
+    // edit branch at the top of this file. So the deep link mounted the builder with
+    // `calcId` undefined, its `GET lead/v1/{id}/outcome/{calcId}` query stayed DISABLED
+    // (`enabled: Boolean(leadId && calcId)`), and the rep landed on an EMPTY build
+    // reading `Avail 1234 / Used 0` — the calculator's budget resolved from the tab's
+    // entries, the saved job state never loaded at all.
+    //
+    // Batched with `setFlowStep` below, so the builder mounts with it already set
+    // rather than mounting empty and refetching a frame later.
+    const pushedResult = route?.params?.calculatorResultData;
+    const pushedCalcId = pushedResult?.calculatorId ? String(pushedResult.calculatorId) : '';
+    if (pushedCalcId) {
+      // Never clobber a real Result-modal payload: if the rep resulted the deal in
+      // THIS session, that object carries the contract price and payment methods the
+      // push does not have.
+      setCalculatorResultData((prev: any) =>
+        prev?.calculatorId
+          ? prev
+          : { ...pushedResult, resultType: resultTypeFromLead(lead) }
+      );
     }
 
     // Prefer the calculator the notification named; fall back to the lead's own
     // selected one, which is what the Lead Center's auto-open uses.
-    const targetId =
-      calculatorResultData?.calculatorId || resolveLeadCalculatorId(lead) || undefined;
+    const targetId = pushedCalcId || resolveLeadCalculatorId(lead) || undefined;
     if (targetId && tabs.some((t) => t.id === targetId)) setActiveTabId(targetId);
 
     setFlowStep('jobBuilder');
