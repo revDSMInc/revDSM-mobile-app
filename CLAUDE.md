@@ -2765,6 +2765,166 @@ Verified with 7 tests over the real builder, including the repro asserted agains
 in for a skipped slot, a clean slot unchanged, and empty input as a no-op. tsc error set unchanged; the
 util and its test are eslint-clean.
 
+### The sold scope renders as SECTIONS and COMBINATIONS, not one bullet list
+
+Ticket: *"inside the installer when we open the lead and go to the bottom we see the products section
+— now i want to show the products like these combinations … because backend already share the data in
+the sections; also show the products as a section wise in the step of verify job scope, update the UI
+according to screenshots"*, against six screenshots of the sales build card (Gutter / LeafFilter /
+Soffit / Fascia / Lighting / Additional Services).
+
+`normalizeProductDetails` collapsed the whole build into `SoldProduct.lines: string[]` and both
+surfaces — Job Reference ▸ Products and Verify Job Scope — drew it as one flat run of bullets. The
+backend has always sent it as structure:
+
+```
+productDetails.products[].subcategories[].sections[].combinations[].fields[]{ label, value }
+```
+
+so flattening threw away the two facts an installer needs most on site: **which measurement belongs to
+which run, and how many runs there are.** A gutter job sold as two runs read as one list of numbers.
+
+**New pure `src/utils/installer-product-scope.ts`** (`measurementRows` / `fieldRows` /
+`flattenScopeSections` / `rowText` / `normalizeProductDetails`) — the parsing MOVED here out of
+`services/api/installer.ts`, which pulls in the axios wrapper (and MMKV through it) and cannot be
+loaded under jest, the same reason `utils/installer-coc-scan.ts` and `utils/installer-coc-pdf.ts`
+exist. `SoldProduct` gained `sections?: ScopeSection[]` (`ScopeSection` → `ScopeCombination` →
+`ScopeFieldRow`, all in `config/types/installer.ts`).
+
+**New `src/widgets/components/installer/ProductScopeCard.tsx`** draws it, and **both surfaces now share
+it** — Verify Job Scope passes its confirm / discrepancy controls as `children`. They were
+byte-identical spec lists before and had already begun to drift (two copies of the bullet geometry, two
+different title weights, one with an icon and one without); one component is what stops the same
+product looking like two different jobs on two screens.
+
+| screenshot | what drives it |
+|---|---|
+| product name + coloured glyph | `productIcon(name)` / `productColor(idx, color, name)` |
+| section heading ("Vinyl Soffit") | a section with a HUMAN label that holds combinations |
+| tinted `Combination #N` block | one per combination, numbered from the payload's own `index` |
+| bold headline (`5" K-Style`) | the combination's UNLABELLED fields, joined with ` · ` |
+| `label ⟷ value` rows | its labelled fields, in config order |
+| tinted `Extras` block | a section with a human label and NO combinations |
+| a loose bullet list | a section with an auto label and no combinations |
+
+⚠️ **A `locationGrid` is stored location-first and read storey-first.** `{"Left Side":{"1st":5}}`
+renders `1st Story ⟷ Left Side: 5`, because that is the layout the sales card the installer is
+comparing against uses; reading it as stored puts the SIDE in the label column, and on a two-storey job
+that reads as two products. Blank and zero cells are dropped — an 18-cell grid of zeroes buries the one
+measurement that matters — and an unparseable value is shown verbatim rather than dropped.
+
+⚠️ **" Story" is appended for DISPLAY only, and only to a bare ordinal** (`/^\d+(st|nd|rd|th)$/`). A
+column a config already spells out ("1st Story") fails that test, as does one named anything else, and
+both print exactly as authored.
+
+⚠️ **A label matching `^(section_|field_|selection_)` is an auto-generated schema id and is dropped** —
+that rule predates this ticket. What is new is where the value then goes: a field with no human label
+is a bare selection, so its VALUE is hoisted into the combination's headline rather than given a column
+with an empty label beside it.
+
+⚠️ **`SoldProduct.lines` is KEPT**, derived from the same walk, and is the render FALLBACK when
+`sections` comes out empty — a payload shape we have not seen still shows what was sold. Nothing else
+reads it: `installer-step-data.ts` and the activity log take only `id` and `name`, and **`id` is what
+`scopeItems` is keyed by**, so the reshape cannot move a discrepancy onto the wrong product.
+
+⚠️ **A subcategory-less product still gets a card**, empty. It IS on the job; a missing card reads as
+"not sold" rather than "nothing entered".
+
+⚠️ `productColor` gained a THIRD optional `name` argument rather than a second function — an explicit
+API colour still wins, then the name, then the palette rotation. `RepPhotoCard` passes no name and is
+unaffected.
+
+Verified with 21 tests driving the real normalizer over the `update-job-status.txt` capture verbatim:
+one card per subcategory with its `scopeItems` id intact, the two sections kept apart, the unlabelled
+selection hoisted to the headline and never repeated as a row, every labelled field beside its own
+label, a combination of only labelled fields carrying no headline, the flat form unchanged; the grid
+read storey-first across two storeys and two sides, the ordinal suffix and its two negatives, zero and
+blank cells dropped, a storey-less grid, an unparseable one, and a grid identified by its braces rather
+than its label; two runs staying two runs, positional numbering with no stated `index`, empty
+combinations and sections dropped; and the shapes that must not break the card — subcategory-less, id
+fallbacks, an unlabelled subcategory named after its product, junk input, and a value-less field.
+tsc 107 (baseline unchanged); zero eslint errors, and the two edited components together hold the same
+9 warnings as their HEAD baseline (all `react-native/no-inline-styles`).
+
+⚠️ Needs a device check — this repo cannot render-test, and the whole ticket is layout: the section
+headings, one block per combination, and the `Extras` block reading as a block rather than a heading.
+
+#### …and the number is the CARD's, not the section's
+
+Follow-up, with a screenshot of a LeafFilter card reading **Combination #1** three times over three
+different gutter widths: *"the same combination number is displayed on every combination — make it auto
+increment according to the receiving combination, if 4 received then show #1, #2, #3, #4. These should
+be for every case of combinations."*
+
+⚠️ **`combo.index` RESTARTS AT 1 IN EVERY SECTION, and a subcategory is routinely authored as several
+one-combination sections** — LeafFilter arrives as four, one per gutter width (this file already records
+that, under the addendum-review ticket). So trusting the payload's own index was guaranteed to print
+`#1` once per section. New **`renumberScopeCombinations`** assigns the number by position across the
+whole card once its sections are built, and `toCombination` no longer reads `index` at all.
+
+That is also what the sales card does — Soffit: *Vinyl Soffit* #1, *Porch Ceiling SqFT* #2, *Nailer
+Build Out* #3 — so the two surfaces now agree on what "Combination #2" refers to.
+
+⚠️ **An empty combination is dropped BEFORE numbering**, so a card whose first combination held nothing
+still starts at #1 rather than #2. Numbers name what is on screen; a gap invites the installer to look
+for a run that was never sold.
+
+⚠️ **`flattenScopeSections` counts the CARD too** (`countCombinations`), not the section it is walking.
+Left per-section, four one-combination sections would each have read as a lone *unnumbered* run while
+the cards above them numbered 1–4.
+
+Verified with 4 more tests (25 total): the repro — asserted first against the payload, whose three
+sections really do all carry `index: 1`, so the old rule could only ever have produced `[1, 1, 1]` —
+each number still belonging to the width it was entered against; a stated index that repeats AND one
+that skips (`7`) both ignored across two sections; an empty combination not consuming a number; and the
+flat form numbering off the same count.
+
+#### …and an Extras colour is folded into the quantity it belongs to
+
+Follow-up, with a screenshot of the Extras block: *"make sure when we receive the Ground Spout value
+then append with the colour also, like in the image"* — `Ground Spout ⟷ 3 · Black`,
+`Replace Corner Miter ⟷ 3 · Cream`, while `Wedges` / `Straps` / `Modify Height` stay bare.
+
+**The colour is a SEPARATE field with its own id**, immediately following the quantity it belongs to.
+Settled from `payload for testing extras.txt` (`section_1781685061809__extras`), which stores exactly
+that alternation:
+
+```
+field_1781873407628_9hhi0__textvalue-3      2            ← Ground Spout
+field_1781873462203_n44h8__color            "Black"      ← its colour
+field_1781873537058_tk016__textvalue-uuu1l  2
+field_1781873540360_ny9fm__color-gem7v      "Forest Green"
+```
+
+⚠️ **The pairing is POSITIONAL, and it has to be**: the colour carries nothing linking it back — no
+`dcField`, no parent id, a different field id from its quantity. The authoring convention is the only
+link there is, and `utils/dynamic-job-builder/engine/locked-color-defaults.ts` leans on the same one on
+the sales side, for the same absence.
+
+⚠️ **A colour folds ONLY into a QUANTITY** — `isQuantityValue`, a bare number and nothing else. That
+single guard is what makes the rule safe, and it is deliberately strict:
+
+| the field before the swatch | folds? | why |
+|---|---|---|
+| `Ground Spout: 3` | ✅ | a count, and the swatch is its colour |
+| `Gutter Partial?: Yes` | ❌ | a SELECTION — folding it reads as though "Yes" was measured in Musket Brown |
+| `Size: 1 x 4`, `Footage: 111'`, `6"` | ❌ | contains a number; is not one |
+| `Measurements` (a grid) | ❌ | expands to several rows; never a fold target |
+| another colour (`Track Color` → `Wire Color`) | ❌ | falls out of the same test — a colour's value is not a number |
+
+⚠️ **A swatch authored with NO label arrives as its schema KEY** (`color`, `color_gem7v`,
+`color-uq368`) — the portal's own fallback — so a standalone one is displayed as **`Color`**
+(`BARE_COLOR_KEY`). An authored label is kept verbatim, so `LeafFilter Color` and `Track Color` are
+untouched. A folded colour shows no label at all, being part of its quantity's value.
+
+`buildFieldRows` runs the pass over BOTH a section's loose fields and a combination's, so a folded
+colour rides into the combination headline too (`5 · Clay`) where the quantity was unlabelled.
+
+Verified with 8 more tests (33 total): the screenshot's own row set, the selection case left alone, a
+colour never folding into a colour, `1 x 4` / `111'` refused, a grid refused, folding inside a
+combination and into its headline, a colour with no quantity before it, and an empty colour skipped
+rather than folded as a blank.
+
 ### The Investment Center never saw the down payment entered on the DROP screen
 
 Ticket: *"Sale Resulted | Down payment did not save or reflect in Contract Details … when i add down
