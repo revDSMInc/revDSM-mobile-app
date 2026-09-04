@@ -2,10 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>LSApplicationQueriesSchemes</key>
-	<array>
-		<string>comgooglemaps</string>
-	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
@@ -30,6 +26,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>GMSApiKey</key>
 	<string>AIzaSyBT3b_a8aWTuI0l9wqjhiT7lSgV_36pkUg</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>comgooglemaps</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
@@ -104,6 +104,13 @@
 		<string>PublicSans-Medium.ttf</string>
 		<string>PublicSans-ExtraLight.ttf</string>
 		<string>PublicSans-Light.ttf</string>
+		<string>PublicSans-Regular_italic.ttf</string>
+		<string>PublicSans-Bold_italic.ttf</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+		<string>fetch</string>
 	</array>
 	<!--
 	  Lets a push wake the app while it is backgrounded or killed, which is what the

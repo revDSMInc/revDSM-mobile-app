@@ -2608,6 +2608,123 @@ wanted on pre only.
 tsc: error set identical to HEAD. `PhotoMatchStep.tsx` is byte-identical to its HEAD eslint baseline
 (31 warnings, 0 errors); the iOS bundle builds (HTTP 200).
 
+### Public Sans is now the app-wide default, so Android's device font can't win
+
+Ticket: *"some of the fonts on android are the android default font, not public sans … make sure all
+fonts are connected and are public sans … make sure public sans will show even though we change the
+font from over android device setting."*
+
+**The fonts were never missing.** All nine upright faces are bundled and registered on both platforms
+(`src/assets/fonts` + `react-native.config.js`; `UIAppFonts`; `android/app/src/main/assets/fonts`). The
+gap is that a `<Text>` only gets Public Sans when something **names a face** — the NativeWind `font-*`
+classes do (`tailwind.config.js` maps every one of them to a `PublicSans-*` file, ~1,450 sites) and the
+**~850 inline `style={{ fontWeight: '700' }}` sites do not**. With no `fontFamily` each platform falls
+back to its own system font: on Android that is **whatever the user picked in the device font setting**.
+
+**Pure `src/utils/default-font.ts`** (`resolveFontPatch`) decides the face; it is applied from the
+`ScaledText` / `ScaledTextInput` wrappers in **`index.js`** — the same wrappers that do tablet font
+scaling, and which already patch the `react-native` exports, so text inside third-party components
+(navigation headers, chat, pickers) is covered too rather than 201 files being edited.
+
+⚠️ **The util is INERT without that `index.js` wiring**, and it has already been lost once: `a96b3ac`
+committed `default-font.ts` alone, leaving nothing that imports it — which reads on device exactly like
+the original bug. If unclassed text is following the device font again, check `index.js` FIRST.
+
+#### ⚠️ Naming a face is NOT enough on Android — the WEIGHT has to go with it
+
+`ReactFontManager.createAssetTypeface` resolves a family + weight by looking for the FILE
+`fonts/<family><variant>.ttf`. So `PublicSans-Regular` + `fontWeight: '700'` looks for
+**`PublicSans-Regular_bold.ttf`**, misses, and falls through to
+`Typeface.create("PublicSans-Regular", BOLD)` — an unknown family — so Android returns the **system
+font, synthetically bolded**. Silent, and indistinguishable from the missing-font bug.
+
+Every patch is therefore a PAIR — the face **plus `fontWeight: 'normal'`**:
+
+| | why the pair works |
+|---|---|
+| Android | `TypefaceStyle.nearestStyle` stays NORMAL (or ITALIC), so the exact `.ttf` is loaded |
+| iOS | `RCTFontUtils` reads the name, recovers its real family, then `fontWeight = (fontWeight != 0.0) ?: RCTGetFontWeight(font)` — and `normal` **IS** `UIFontWeightRegular`, which is literally `0.0`, so the named face's own weight wins |
+
+⚠️ This is the exact pair `tailwind.config.js` has always emitted (every `fontWeight` value there is
+remapped to `'normal'`) — so it is not a new rendering path, just one applied to the styles that had
+none. Do not "tidy" those `'normal'`s away in either place.
+
+#### What it deliberately leaves alone
+
+- ⚠️ **Any font that is not ours** — `Ionicons`, `MaterialCommunityIcons`, … Every icon in the app is a
+  `<Text>` with an icon `fontFamily`; rewriting those to Public Sans would replace every icon with a
+  missing glyph. Tested.
+- ⚠️ **`fontWeight: 'normal'` / `400` beside a face that is already ours.** That value is usually not an
+  author's opinion — Tailwind emits it mechanically next to every `font-*` family class — so honouring
+  it would turn **every `font-bold` in the app back into a regular face**. A heavier explicit weight
+  DOES win, because that is a real instruction and it is also the Android trap above
+  (`font-sans` + `fontWeight: '700'`), where iOS already resolves Public Sans Bold and Android does not.
+
+⚠️ **iOS changes too, and that is the point.** Unstyled text there was San Francisco; it is now Public
+Sans, so the two platforms finally agree and match the design system. Scope it to Android with a
+`Platform.OS` test in `index.js` if that is ever unwanted — but then the platforms diverge again, which
+was the complaint one ticket earlier.
+
+⚠️ **Not covered, by nature:** `Animated.Text` (one site, `CustomCameraModal`'s zoom label — RN's
+`Animated` namespace wraps the internal Text module, not the patched export), and anything the OS draws
+itself (`Alert`, native date pickers, WebView/PDF content).
+
+⚠️ **Font SIZE is untouched.** The device's text-size setting still scales the app (`allowFontScaling`
+stays on) — that is accessibility, and this ticket is about the typeface.
+
+#### …and the follow-up: the last Text still following the device font was ITALIC
+
+Ticket, with an Android screenshot whose system font was a script face: *"this text should be change if
+we change the font from the android settings"* — pointing at `Leads/index.tsx`'s
+`className="text-[10px] italic"` caption (*All Self Gen Leads will be archived end of day unless
+deleted*), rendering in that script font while everything around it was Public Sans.
+
+Italic was the one case the first pass skipped, because no italic face was bundled. **Fixed by shipping
+the missing faces** rather than by dropping the slant: `PublicSans-Regular_italic.ttf` and
+`PublicSans-Bold_italic.ttf`, taken from the official OFL source (`uswds/public-sans`) and verified to
+carry the same `Public Sans` family name (and the italic bit, at weights 400/700) as the nine upright
+faces — which is what lets iOS find them, since it matches on family + the italic trait, never on the
+file name.
+
+⚠️ **Dropping `italic` was NOT an option**, and this is worth knowing before anyone "simplifies" it:
+`LeadCenter/DraggableText.tsx` lets the rep CHOOSE Italic / Bold Italic on an annotation, and
+`agreement/blocks/SignatureSectionBlock.tsx` uses italic as the stand-in for web's cursive signature
+font. Forcing those upright would have broken two features to fix a caption.
+
+⚠️ **An italic style may name ONLY those two families**, and the file NAMES are load-bearing. Android
+looks for `fonts/<family>_italic.ttf`, so the files are named after the family the resolver asks for —
+not after the fonts' own `PublicSans-Italic` / `PublicSans-BoldItalic` PostScript names. Adding
+`PublicSans-SemiBold` to `ITALIC_FACE` selection without shipping `PublicSans-SemiBold_italic.ttf`
+sends that text **straight back to the device font**, silently. A heavier italic therefore renders Bold
+Italic rather than Black Italic.
+
+⚠️ And it is the `fontWeight: 'normal'` half of the pair that keeps `nearestStyle` at **`ITALIC`** rather
+than `BOLD_ITALIC` — without it Android would look for `PublicSans-Bold_bold_italic.ttf` and miss.
+
+⚠️ Linked by hand rather than by re-running `react-native-asset`: two `UIAppFonts` entries plus the four
+`project.pbxproj` entries each font needs (`PBXBuildFile`, `PBXFileReference`, the group's children, and
+the Resources phase), modelled on the existing `PublicSans-Light.ttf` rows. Both files pass
+`plutil -lint`. **iOS needs a rebuild for the new resources to reach the bundle.**
+
+⚠️ **`ios/revDSM_Sales/Info.plist` and `project.pbxproj` are CRLF** — editing them in text mode rewrote
+every line to LF and turned a 10-line change into a 262-line one. Use `newline=''`. (Same trap already
+recorded here for `dynamic-deal-diff.ts` and `EditCustomerModal.tsx`.)
+
+Verified with 14 tests over the real resolver: both repros (an inline weight with no family; the italic
+caption), a style with no font information at all, every one of the nine weights mapping to a face that
+is actually bundled and always paired with `'normal'`, italic resolving to one of exactly the two
+shipped `_italic` families across all nine weights, a bold italic surviving the Tailwind pair, icon
+fonts untouched upright AND italic, the named-face + heavier-weight re-derive, patches returned as the
+SAME frozen object per face (so style diffing sees no change), odd weights (450/1000/50) snapping to a
+real file, and junk reading as "no opinion". tsc adds nothing (48 before and after — the four above the
+old 44 are the parallel offline branch's own test files); `index.js`, `default-font.ts` and the test are
+eslint-clean; the Android release bundle builds (exit 0).
+
+⚠️ Needs a device check (this repo cannot render-test): set a custom system font on Android and confirm
+the app ignores it, italics included; and watch the tight inputs — Public Sans has different
+ascent/descent than SF, so the Leads search field (whose descender clipping was tuned in an earlier
+ticket) is where a metric shift would show first.
+
 ### Pre-Install references drop the rep's ANNOTATED copies
 
 Ticket: *"inside the installer when user open the lead and go to the step pre install photos, at that
@@ -2731,6 +2848,82 @@ tsc 107 (baseline unchanged); zero eslint errors, and the two edited components 
 
 ⚠️ Needs a device check — this repo cannot render-test, and the whole ticket is layout: the section
 headings, one block per combination, and the `Extras` block reading as a block rather than a heading.
+
+#### …and the number is the CARD's, not the section's
+
+Follow-up, with a screenshot of a LeafFilter card reading **Combination #1** three times over three
+different gutter widths: *"the same combination number is displayed on every combination — make it auto
+increment according to the receiving combination, if 4 received then show #1, #2, #3, #4. These should
+be for every case of combinations."*
+
+⚠️ **`combo.index` RESTARTS AT 1 IN EVERY SECTION, and a subcategory is routinely authored as several
+one-combination sections** — LeafFilter arrives as four, one per gutter width (this file already records
+that, under the addendum-review ticket). So trusting the payload's own index was guaranteed to print
+`#1` once per section. New **`renumberScopeCombinations`** assigns the number by position across the
+whole card once its sections are built, and `toCombination` no longer reads `index` at all.
+
+That is also what the sales card does — Soffit: *Vinyl Soffit* #1, *Porch Ceiling SqFT* #2, *Nailer
+Build Out* #3 — so the two surfaces now agree on what "Combination #2" refers to.
+
+⚠️ **An empty combination is dropped BEFORE numbering**, so a card whose first combination held nothing
+still starts at #1 rather than #2. Numbers name what is on screen; a gap invites the installer to look
+for a run that was never sold.
+
+⚠️ **`flattenScopeSections` counts the CARD too** (`countCombinations`), not the section it is walking.
+Left per-section, four one-combination sections would each have read as a lone *unnumbered* run while
+the cards above them numbered 1–4.
+
+Verified with 4 more tests (25 total): the repro — asserted first against the payload, whose three
+sections really do all carry `index: 1`, so the old rule could only ever have produced `[1, 1, 1]` —
+each number still belonging to the width it was entered against; a stated index that repeats AND one
+that skips (`7`) both ignored across two sections; an empty combination not consuming a number; and the
+flat form numbering off the same count.
+
+#### …and an Extras colour is folded into the quantity it belongs to
+
+Follow-up, with a screenshot of the Extras block: *"make sure when we receive the Ground Spout value
+then append with the colour also, like in the image"* — `Ground Spout ⟷ 3 · Black`,
+`Replace Corner Miter ⟷ 3 · Cream`, while `Wedges` / `Straps` / `Modify Height` stay bare.
+
+**The colour is a SEPARATE field with its own id**, immediately following the quantity it belongs to.
+Settled from `payload for testing extras.txt` (`section_1781685061809__extras`), which stores exactly
+that alternation:
+
+```
+field_1781873407628_9hhi0__textvalue-3      2            ← Ground Spout
+field_1781873462203_n44h8__color            "Black"      ← its colour
+field_1781873537058_tk016__textvalue-uuu1l  2
+field_1781873540360_ny9fm__color-gem7v      "Forest Green"
+```
+
+⚠️ **The pairing is POSITIONAL, and it has to be**: the colour carries nothing linking it back — no
+`dcField`, no parent id, a different field id from its quantity. The authoring convention is the only
+link there is, and `utils/dynamic-job-builder/engine/locked-color-defaults.ts` leans on the same one on
+the sales side, for the same absence.
+
+⚠️ **A colour folds ONLY into a QUANTITY** — `isQuantityValue`, a bare number and nothing else. That
+single guard is what makes the rule safe, and it is deliberately strict:
+
+| the field before the swatch | folds? | why |
+|---|---|---|
+| `Ground Spout: 3` | ✅ | a count, and the swatch is its colour |
+| `Gutter Partial?: Yes` | ❌ | a SELECTION — folding it reads as though "Yes" was measured in Musket Brown |
+| `Size: 1 x 4`, `Footage: 111'`, `6"` | ❌ | contains a number; is not one |
+| `Measurements` (a grid) | ❌ | expands to several rows; never a fold target |
+| another colour (`Track Color` → `Wire Color`) | ❌ | falls out of the same test — a colour's value is not a number |
+
+⚠️ **A swatch authored with NO label arrives as its schema KEY** (`color`, `color_gem7v`,
+`color-uq368`) — the portal's own fallback — so a standalone one is displayed as **`Color`**
+(`BARE_COLOR_KEY`). An authored label is kept verbatim, so `LeafFilter Color` and `Track Color` are
+untouched. A folded colour shows no label at all, being part of its quantity's value.
+
+`buildFieldRows` runs the pass over BOTH a section's loose fields and a combination's, so a folded
+colour rides into the combination headline too (`5 · Clay`) where the quantity was unlabelled.
+
+Verified with 8 more tests (33 total): the screenshot's own row set, the selection case left alone, a
+colour never folding into a colour, `1 x 4` / `111'` refused, a grid refused, folding inside a
+combination and into its headline, a colour with no quantity before it, and an empty colour skipped
+rather than folded as a blank.
 
 ### The Investment Center never saw the down payment entered on the DROP screen
 
@@ -4772,6 +4965,157 @@ session hook clean.
 Dynamic Agreement**, sign, then watch the next `PUT …/outcome/{calcId}` and confirm
 `jobBuilder.dynamicJobState.agreements` is present alongside `scheduleTime`.
 
+### The Summary tab logs the scheduler OPENING, and every document add / remove
+
+Ticket: *"you have to add logs while we are trying to open Schedule Appointment"* (with the
+payload verbatim), plus *"three more logs — while update the agreement i mean remove it and press
+the update button… while we add the document (order sheet)… and while we remove the document"*.
+
+Four rows, all `module_type: 'job_builder'`, all from
+`widgets/components/dynamic-job-builder/agreement/SummaryFinalizeCards.tsx` (the card suite
+`DynamicJobBuilderScreen` renders through `VerticalSummaryTab` — the screen itself holds none of
+these handlers).
+
+| when | `action_type` | `meta.action` |
+|---|---|---|
+| the scheduler is OPENED | `click` | `appointment_scheduled` |
+| an Update REMOVES a filed agreement | `delete` | `agreement_removed` |
+| an Update ADDS order-sheet pages | `add` | `order_sheet_uploaded` |
+| an Update REMOVES an order sheet | `delete` | `order_sheet_removed` |
+
+**Only ONE of the four is new machinery; the other three are one path.** The scan sheet's Update
+is a single button for two different events — the rep may add pages, cross filed ones out, or both
+— and `DocumentScannerModal.onSave` hands back **only the survivors**, so a removal has to be
+recovered by diffing against what the card held before it opened.
+
+- **`logSchedulerOpened` is DISTINCT from the `change` row `saveAppointment` already files.** It
+  reports the appointment **as it stands when the rep opens the sheet**, so the portal can tell an
+  open that changed nothing from one that did. Fired from **both** entry points — the pencil on a
+  scheduled card and the `Schedule Appointment` button on an unscheduled one.
+  ⚠️ `date`/`timeWindow` go out as **`null`, not omitted**, on the unscheduled path: an absent key
+  reads as "not reported", and here it is genuinely "not yet set".
+- **The removal log is fired BEFORE the delete-only early return**, so a removal is recorded whether
+  or not the same Update also added something. The scanner has already awaited its `DELETE`s by the
+  time it calls back, so the row reports what happened rather than what was attempted.
+- **The agreement upload log was already there; the order sheet's was NOT.** Adding an agreement
+  left a trace and adding an order sheet left none. Both now go through one `logDocumentAudit`, so
+  the two categories can never file differently-shaped rows for the same act.
+
+⚠️ **`documentCount` counts the pages the rep ADDED, while `documents` (the S3 refs) come from the
+SERVER rows** — and the split is the point, not fussiness. `uploadNewFiles` resolves to the
+category's **whole server list**, so counting it would report "3 uploaded" for one new page (the
+trap the down-payment-receipt log records). But a locally-scanned page has **no `filePath`** — that
+is generated server-side — so the refs have to come from the rows that landed, picked as the ones
+the card did not already hold. `documentNames` sits beside them because a scanned page has a name
+long before it has a path, and `toDocumentRefs` drops a path-less row.
+
+**Rules live in the pure `src/utils/document-audit.ts`** — `documentAuditDescriptor`,
+`pickUnknownDocuments`, `buildDocumentAuditMeta` — for the reason `utils/uploaded-document-refs.ts`
+and `utils/addendum-drafts.ts` exist: the card pulls in React Native and is untestable under jest
+here, and a removal attributed to the wrong category, or a diff reporting a document nobody
+touched, leaves **no trace on the device**.
+
+- ⚠️ **`pickUnknownDocuments` takes the caller's `identityOf`, it does not re-derive one.** The card
+  already reconciles these documents across the scanner round-trip with its own `docIdentity`
+  (`serverId ?? _id ?? filePath ?? id ?? url ?? uri ?? name`); a second, subtly different notion of
+  "the same document" would report a removal on a document that is still on the card.
+- ⚠️ **A row with no resolvable identity is treated as KNOWN** — neither removed nor added. That is
+  the conservative direction on both sides: the scanner cannot have deleted what it could not
+  identify either, and inventing an event is worse than missing one.
+- **One primitive, both directions**: removals are `pickUnknownDocuments(priorList, survivorIds)`
+  and additions `pickUnknownDocuments(serverRows, priorIds)`. Naming them separately would have
+  meant two copies of the one rule that matters.
+- **`documentAuditDescriptor` is the WHOLE vocabulary** (4 rows). An unknown category yields `null`
+  and nothing is logged, rather than a row whose `action` the portal cannot route.
+- `agreement_uploaded` keeps the exact `fieldLabel: 'Agreement Uploaded'` it already shipped (web
+  parity — `document-summary-cards.js` labels the uploaded path that way and only the GENERATED
+  path plain `Agreement`), and `order_sheet_uploaded` matches the LEGACY job builder's own
+  `logOrderSheetUploaded`, so both builders file the same action for the same act.
+
+#### ⚠️ `appointment_scheduled` fires on **Yes**, not on "Generate Dynamic Agreement"
+
+Ticket: *"one log is calling in the wrong button — it should be call while we click the yes button
+instead of calling Generate Dynamic Agreement."*
+
+The `change` row was filed by `saveAppointment`, and **the create flow never calls `onConfirm`** —
+it calls `onGenerate` / `onUpload`, i.e. the two buttons on the *"Job Booked!"* card. So the row
+was only filed once the rep chose what to do with the booking, and a rep who booked the job and
+then closed the modal filed nothing at all. The booking happens one screen earlier, at
+**"Does this time work for the customer?" ▸ Yes**.
+
+- **New optional `onBooked` on `AppointmentSchedulerModal`**, fired from `handleAcceptSlot` (Yes)
+  AND `handleConfirmTBDStep` (the TBD path reaches the same card). Audit only — the appointment is
+  still persisted by `onGenerate` / `onUpload` / `onConfirm` exactly as before, so nothing about
+  when it is SAVED changed. Optional, so `SummarySection` and `EditContractDetailsModal` are
+  untouched.
+- **The log moved OUT of `saveAppointment`** into a named `logAppointmentScheduled`, called from
+  the booked callback and from `handleScheduleConfirm`. `handleScheduleAndGenerate` /
+  `handleScheduleAndUpload` no longer log, so one booking is still exactly one row.
+- ⚠️ **The booked row is suppressed in the EDIT flow** (`if (isEditingAppt) return`). Re-scheduling
+  a booked job commits at **Save Changes**, and with `requireScheduleAmendment` on it commits only
+  once the customer has **SIGNED** the amendment — logging at "Yes" would record a reschedule the
+  customer can still refuse. `handleScheduleConfirm` is that path's commit point and keeps the row.
+- ⚠️ **New `bookedAppointmentData(tbd)` takes `tbd` as an ARGUMENT, never reading `isTBD`.** Both
+  accept handlers set that state in the same tick, so reading it would see the previous value and
+  a TBD booking would log as a dated one. It also de-duplicates the appointment-shape expression
+  the two success-card buttons already repeated.
+
+tsc 48 (baseline unchanged); `SummaryFinalizeCards.tsx` (36 problems) and
+`AppointmentSchedulerModal.tsx` (78) are each byte-identical to their HEAD eslint baselines.
+⚠️ Both files are CRLF — `newline=''` on both ends.
+
+#### …and the three controls that OPEN a document sheet
+
+Follow-up: *"add click log for agreement and ordersheet as well just like we add for Scheduled
+Appointment — when we click generate a log with click action type will call; when we click add
+document from agreement same log will call, you can change in mata like if we are generating or
+adding; same like in order sheet."*
+
+Three more `action_type: 'click'` rows, one per control on the two document cards:
+
+| control | `meta.action` | `meta.source` |
+|---|---|---|
+| Agreements ▸ **Generate** | `agreement_generated` | `generate` |
+| Agreements ▸ **Add Document** | `agreement_uploaded` | `add_document` |
+| Order Sheets ▸ **Add Document** | `order_sheet_uploaded` | `add_document` |
+| either card's **pencil** | `<category>_uploaded` | `edit_documents` |
+
+⚠️ **The click carries the SAME `meta.action` as the act it leads to**, told apart only by
+`action_type: 'click'` — exactly how the scheduler's open row relates to the `change` row its
+confirm files. So the portal reads "they opened the agreement sheet" and "they filed an agreement"
+as one story rather than two vocabularies, and `source` says which control started it. The Generate
+row therefore reuses the exact `agreement_generated` / `fieldLabel: 'Agreement'` that
+`DynamicAgreementDialog` files when the document actually exists (web parity: only the GENERATED
+path is plain `Agreement`).
+
+⚠️ **The PENCIL is logged too, though the ticket named three controls.** It is the *same*
+`setScannerCategory(cat)` call — **Add Document simply becomes a pencil once the card holds a
+document** — so logging only the empty-state button would make the row stop firing the moment
+there is anything to edit. `source` keeps the two apart.
+
+⚠️ **`orderSheet` has no `generated` descriptor, on purpose**, so `buildDocumentOpenMeta` returns
+`null` there and nothing is logged: there is no order sheet generator, and aliasing it onto the
+upload row would report a document as produced by a button that does not exist.
+
+⚠️ **The open row deliberately carries NO `documentCount`/`documents`.** Nothing has been chosen at
+click time, and a `documentCount: 0` beside an action named `..._uploaded` reads as an upload that
+filed nothing.
+
+Verified with 5 further tests (20 in the suite): the Generate row matching the dialog's own payload
+verbatim, both Add Document rows, the pencil sharing the action but not the `source`, no count keys
+on an open row, and the order-sheet generate returning `null`.
+
+Verified with 15 tests driving the real helpers and the card's own `docIdentity` verbatim: the
+ticket repro (the crossed-out agreement reported, and only it), one of several removed, nothing
+removed, a survivor whose re-signed url changed still matching on `serverId`, an identity-less row
+inventing nothing, junk input as a no-op; the addition diff against a whole server list; and the
+meta — a removal carrying `filePath`/`bucketName`, the add counting **the pages added and not the
+server total** while still resolving its refs, a multi-page scan, a path-less row keeping its name,
+an unknown category as `null`, and the two categories never crossing. tsc 47 (baseline unchanged);
+`document-audit.ts` and its test are eslint-clean and `SummaryFinalizeCards.tsx` is byte-identical
+to its HEAD baseline (36 problems: 1 error / 35 warnings). ⚠️ That file is **CRLF** — `newline=''`
+on both ends.
+
 ### Edit Customer Details now logs opened / per-field change / saved
 
 Ticket: *"you have to add logs while we are opening customer details from pencil like web / also you
@@ -6377,6 +6721,48 @@ passes that rect as `anchorRect`:
 
 `HorizontalDraggableTabs` gained `onShowPackageInfo` and reads `calc.isFullPackage`. **The classic deal
 center never sets that flag**, so its tabs are untouched.
+
+#### …and the STORED title carries the box too
+
+Follow-up: *"i want you to add this emoji with the payload of calculatore title when full package
+includes"*, with a devtools capture of `PUT /lfcalculators/{id}` reading
+`title: "G+VMax+Versa+S+FWrap+FBoard+FAluminum"` while the tab above it showed the package badge.
+
+Everything above is a RENDERING swap — the surfaces replace the derived name with the icon, and the
+name itself never changed. The portal has no such rendering and only ever sees the string, so a
+package was indistinguishable there from a long product list. **New `FULL_PACKAGE_TITLE_PREFIX`
+(`'📦 '`)**, applied in `computeDerivedTitles`.
+
+- **Named at the SOURCE, so nothing can drift.** `resolveSafeTitle` (the PUT payload) and `retitle`
+  (the in-memory `tab.title`, which the `calculator viewed` log sends as `calculatorTitle`) both read
+  that one function — the same reasoning as the customer-name ticket above, where naming the calculator
+  at the source fixed the portal without touching either log.
+- **The derived name survives behind the prefix** (`📦 G+VMax+S+FWrap+FBoard`), rather than being
+  replaced by the badge's `+FBoard` extras. The mobile badge can afford to drop the letters because the
+  ⓘ lists what a package includes; a bare `+FBoard` in the portal would name only the leftovers.
+- ⚠️ **Applied LAST, after the `(SM)`/`(LG)` and duplicate-price passes.** Prefixing the BASE name
+  would put the emoji inside the grouping key that disambiguation runs on. Tested: two identical
+  packages at different prices still read `(SM)` / `(LG)`, and at the same price still read `⚠️ … ⚠️`.
+- ⚠️ **Idempotent by construction** (`startsWith` guard). The hydrate path reads the server's
+  already-prefixed title back in as `storedTitle`, and `retitle` recomputes over it on every mutation.
+- ⚠️ **A MANUAL rename is left alone** — the rep chose that name. Unreachable today (the dynamic tab
+  menu offers only Duplicate/Delete), so it is a guard rather than a live case.
+
+⚠️ **No double box on any surface**, because every one of them replaces the name outright when
+`isFullPackage`: `HorizontalDraggableTabs` renders `icon + packageExtras` and `FullPackageTitle` renders
+`icon + extras`, neither printing `title`. The two places that DO print the raw title are the Job
+Tracker "Add This Job" modal (`JobTrackerButton title={activeTab?.title}`) and the delete-confirm
+sheet — both now show the box, which is correct but is the visible reach of this change beyond the
+payload.
+
+⚠️ **Existing rows are not migrated.** A package saved before this reads without the box until its next
+save; the prefix is added by the ordinary retitle pass, not by a backfill.
+
+Verified with 9 tests (`__tests__/screens/DynamicDealCenter/full-package-title.test.ts`) driving the real
+`computeDerivedTitles`: the ticket repro, extras kept in the stored name, a non-package untouched, an
+empty calculator keeping its placeholder, the size-suffix and duplicate-price passes both surviving,
+idempotence asserted as exactly ONE 📦 after a re-derive, a manual rename untouched, and no schemas → no
+prefix. tsc adds nothing; `tab-naming.ts` and the test are eslint-clean.
 
 Verified with 12 tests (`__tests__/screens/DynamicDealCenter/full-package-tab.test.ts`) over a
 gutter-roofline schema: the four-part package, `Versa` in place of `VMax`, each of the four missing in
