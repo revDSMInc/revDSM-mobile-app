@@ -55,6 +55,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 
+// Web's outcome dropdown stores 'Sale' / 'Demo'; mobile stores them lower-cased.
+// Only the LOG is normalised — the stored result is untouched.
+const capitalizeResult = (v: any) => {
+  const s = String(v ?? '').trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s;
+};
+
 interface DynamicJobBuilderScreenProps {
   navigation?: NativeStackNavigationProp<any>;
   initialConfig?: any;
@@ -488,15 +495,30 @@ function DynamicJobBuilderInner({
   const isDemo = Boolean(resultType) && !isSale;
 
   // --- Activity logging (web parity: use-dynamic-job-builder-activity-log) -----
-  const configId = initialConfig?.configId || initialConfig?._id || null;
+  // Web (`dynamic-job-builder-modal.js`): `configId: config?.id || null`.
+  // ⚠️ `configId`/`_id` NEVER resolve here — `normalizeLightweight`
+  // (useDynamicCalculatorSchemas) moves the id onto `id` and DELETES `_id`, so
+  // the old pair sent `null` on every log. The sibling call site at the submit
+  // payload already read `.id`; only the logging one had drifted.
+  const configId = (initialConfig as any)?.id || null;
   const loggedAutoFieldTabsRef = useRef<Set<string>>(new Set());
   const activityLog = useDynamicJobBuilderActivityLog({
     enabled: Boolean(leadId),
     leadId,
-    jobId: leadId,
+    // Web passes the HUMAN lead/job number here (`currentLead?.leadId ||
+    // currentLead?.jobNumber || …`), which is what lands in `meta.jobBuilderId`.
+    // Mobile passed the MONGO id, so every log carried `jobBuilderId === leadId`
+    // — the same value twice and no job number at all. A lead with no job number
+    // stores the literal 'N/A', which is what web's own logs show.
+    jobId: (lead as any)?.leadId || (lead as any)?.jobNumber || leadId,
     calculatorId: (calculatorResultData as any)?.calculatorId,
     calculatorType: 'dynamic',
-    result: (calculatorResultData as any)?.resultType || (calculatorResultData as any)?.result,
+    // Web's `formData.result` is the outcome dropdown's own value — 'Sale' /
+    // 'Demo'. Mobile stores `resultType` lower-cased, so the portal saw two
+    // spellings of one outcome across the platforms.
+    result: capitalizeResult(
+      (calculatorResultData as any)?.resultType || (calculatorResultData as any)?.result
+    ),
     dealCenterData,
     configId,
     verticals: verticalList,
@@ -757,6 +779,24 @@ function DynamicJobBuilderInner({
     return res;
   }, [tabs, currentVerticalLockedTabIds, selectedVerticalId]);
 
+  // The step number the ACTIVITY LOG reports, in web's index space.
+  //
+  // ⚠️ Web indexes into `tabs = activeVertical?.tabs` — the vertical's FULL tab
+  // list — while mobile's `currentTabIndex` indexes `nonSummaryTabs`, which is
+  // filtered to the UNLOCKED tabs. So on a build whose earlier tabs were locked,
+  // mobile reported Soffit as step 1 where web reported step 3, and a step number
+  // that moves as tabs unlock is not a stable identifier for the portal. The
+  // comment on `currentStepIndex` below already records these two index spaces as
+  // a trap; the logging calls were reading the wrong one.
+  const logStepNumberOf = useCallback(
+    (tab: any) => {
+      const all = selectedVertical?.tabs || [];
+      const idx = all.findIndex((t: any) => t.id === tab?.id);
+      return Math.max(1, idx + 1);
+    },
+    [selectedVertical]
+  );
+
   const allNonSummaryTabs = useMemo(
     () => (selectedVertical?.tabs || []).filter((t: any) => !t.isSummary),
     [selectedVertical]
@@ -821,7 +861,7 @@ function DynamicJobBuilderInner({
     activityLog.handleTabActivated({
       verticalId: selectedVerticalId,
       tab: currentTab,
-      stepNumber: currentTabIndex + 1,
+      stepNumber: logStepNumberOf(currentTab),
       isTabLogged: (k: string) => loggedAutoFieldTabsRef.current.has(k),
       isFirstTabAfterOpen: isFirst,
       tabState: jobState?.[selectedVerticalId]?.[currentTab.id] || {},
@@ -1061,14 +1101,15 @@ function DynamicJobBuilderInner({
       activityLog.logNavigate({
         fromTab: currentTab,
         toTab,
-        fromStep: currentTabIndex + 1,
-        toStep: nextIdx + 1,
-        direction: 'forward',
+        fromStep: logStepNumberOf(currentTab),
+        toStep: logStepNumberOf(toTab),
+        // Web's own values (`dynamic-job-builder.js`): 'next' / 'back'.
+        direction: 'next',
         verticalId: selectedVerticalId,
       });
       setSelectedTabId(toTab.id);
     }
-  }, [currentTabIndex, nonSummaryTabs, summaryTab, canProceed, currentTab, selectedVerticalId, activityLog]);
+  }, [currentTabIndex, nonSummaryTabs, summaryTab, canProceed, currentTab, selectedVerticalId, activityLog, logStepNumberOf]);
 
   const handleBack = useCallback(() => {
     const prevIdx = currentTabIndex - 1;
@@ -1077,14 +1118,14 @@ function DynamicJobBuilderInner({
       activityLog.logNavigate({
         fromTab: currentTab,
         toTab,
-        fromStep: currentTabIndex + 1,
-        toStep: prevIdx + 1,
-        direction: 'backward',
+        fromStep: logStepNumberOf(currentTab),
+        toStep: logStepNumberOf(toTab),
+        direction: 'back',
         verticalId: selectedVerticalId,
       });
       setSelectedTabId(toTab.id);
     }
-  }, [currentTabIndex, nonSummaryTabs, currentTab, selectedVerticalId, activityLog]);
+  }, [currentTabIndex, nonSummaryTabs, currentTab, selectedVerticalId, activityLog, logStepNumberOf]);
 
   const handleComplete = useCallback(async () => {
     if (!canComplete) return;
