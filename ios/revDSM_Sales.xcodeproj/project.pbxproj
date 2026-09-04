@@ -18,10 +18,12 @@
 		526A0DF22FE94DB6001CFA8C /* RNHapticFeedback.m in Sources */ = {isa = PBXBuildFile; fileRef = 526A0DF12FE94DB6001CFA8C /* RNHapticFeedback.m */; };
 		52CA88BD2FD6D3890054DEBF /* UITextView+DoneButton.m in Sources */ = {isa = PBXBuildFile; fileRef = 52CA88BB2FD6D3890054DEBF /* UITextView+DoneButton.m */; };
 		52CA88BE2FD6D3890054DEBF /* UITextField+DoneButton.m in Sources */ = {isa = PBXBuildFile; fileRef = 52CA88BA2FD6D3890054DEBF /* UITextField+DoneButton.m */; };
+		57A649A7CA7C46AD81AF785A /* PublicSans-Regular_italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 9F093EBB22864D18ADA195E7 /* PublicSans-Regular_italic.ttf */; };
 		60B4407C44E5461B87E537B7 /* PublicSans-Light.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C9322F957A5D4516A981DD92 /* PublicSans-Light.ttf */; };
 		68A572B955B942D0AE0E05E4 /* PublicSans-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D39F2F44B2AB4F439F52EF18 /* PublicSans-Medium.ttf */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		A33CF0C92B194E8C9D0B656A /* PublicSans-Bold_italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E7585BAC33F1498A82374350 /* PublicSans-Bold_italic.ttf */; };
 		A880F33BBAFB4738BAB65278 /* PublicSans-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F2E53E38106F4CEBA944ECB6 /* PublicSans-Regular.ttf */; };
 		EF1205E203034516940C9C94 /* PublicSans-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F63B2A24E9C24B5F80296C68 /* PublicSans-Bold.ttf */; };
 /* End PBXBuildFile section */
@@ -40,13 +42,16 @@
 		52CA88BB2FD6D3890054DEBF /* UITextView+DoneButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "UITextView+DoneButton.m"; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = revDSM_Sales/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = revDSM_Sales/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		9F093EBB22864D18ADA195E7 /* PublicSans-Regular_italic.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Regular_italic.ttf"; path = "../src/assets/fonts/PublicSans-Regular_italic.ttf"; sourceTree = "<group>"; };
 		B2186A1F8F004CDDE1C82990 /* libPods-revDSM_Sales.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-revDSM_Sales.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		C65CBFE100C84FCDB5CF833C /* PublicSans-ExtraLight.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-ExtraLight.ttf"; path = "../src/assets/fonts/PublicSans-ExtraLight.ttf"; sourceTree = "<group>"; };
 		C9322F957A5D4516A981DD92 /* PublicSans-Light.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Light.ttf"; path = "../src/assets/fonts/PublicSans-Light.ttf"; sourceTree = "<group>"; };
 		CDCD8CF8478240E48C7F7804 /* PublicSans-ExtraBold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-ExtraBold.ttf"; path = "../src/assets/fonts/PublicSans-ExtraBold.ttf"; sourceTree = "<group>"; };
 		D39F2F44B2AB4F439F52EF18 /* PublicSans-Medium.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Medium.ttf"; path = "../src/assets/fonts/PublicSans-Medium.ttf"; sourceTree = "<group>"; };
 		D9E6C47B1E8C4364AC5361A0 /* PublicSans-Thin.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Thin.ttf"; path = "../src/assets/fonts/PublicSans-Thin.ttf"; sourceTree = "<group>"; };
+		DBBF2F80304A9ADB0028F1BE /* revDSM_Sales.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = revDSM_Sales.entitlements; path = revDSM_Sales/revDSM_Sales.entitlements; sourceTree = "<group>"; };
 		E3328362933A32E7A2A36C1E /* Pods-revDSM_Sales.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-revDSM_Sales.release.xcconfig"; path = "Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales.release.xcconfig"; sourceTree = "<group>"; };
+		E7585BAC33F1498A82374350 /* PublicSans-Bold_italic.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Bold_italic.ttf"; path = "../src/assets/fonts/PublicSans-Bold_italic.ttf"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F2E53E38106F4CEBA944ECB6 /* PublicSans-Regular.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Regular.ttf"; path = "../src/assets/fonts/PublicSans-Regular.ttf"; sourceTree = "<group>"; };
 		F63B2A24E9C24B5F80296C68 /* PublicSans-Bold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Bold.ttf"; path = "../src/assets/fonts/PublicSans-Bold.ttf"; sourceTree = "<group>"; };
@@ -67,6 +72,7 @@
 		13B07FAE1A68108700A75B9A /* revDSM_Sales */ = {
 			isa = PBXGroup;
 			children = (
+				DBBF2F80304A9ADB0028F1BE /* revDSM_Sales.entitlements */,
 				526A0DF02FE94DB6001CFA8C /* RNHapticFeedback.h */,
 				526A0DF12FE94DB6001CFA8C /* RNHapticFeedback.m */,
 				52CA88BC2FD6D3890054DEBF /* RNKeyboardToolbar */,
@@ -139,6 +145,8 @@
 				D39F2F44B2AB4F439F52EF18 /* PublicSans-Medium.ttf */,
 				C65CBFE100C84FCDB5CF833C /* PublicSans-ExtraLight.ttf */,
 				C9322F957A5D4516A981DD92 /* PublicSans-Light.ttf */,
+				E7585BAC33F1498A82374350 /* PublicSans-Bold_italic.ttf */,
+				9F093EBB22864D18ADA195E7 /* PublicSans-Regular_italic.ttf */,
 			);
 			name = Resources;
 			sourceTree = "<group>";
@@ -224,6 +232,8 @@
 				68A572B955B942D0AE0E05E4 /* PublicSans-Medium.ttf in Resources */,
 				0C09F4F0F8D24E72966F4D3B /* PublicSans-ExtraLight.ttf in Resources */,
 				60B4407C44E5461B87E537B7 /* PublicSans-Light.ttf in Resources */,
+				A33CF0C92B194E8C9D0B656A /* PublicSans-Bold_italic.ttf in Resources */,
+				57A649A7CA7C46AD81AF785A /* PublicSans-Regular_italic.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -254,9 +264,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -293,9 +307,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -325,6 +343,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = revDSM_Sales/revDSM_Sales.entitlements;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = A7KTX97372;
 				ENABLE_BITCODE = NO;
@@ -360,6 +379,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = revDSM_Sales/revDSM_Sales.entitlements;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = A7KTX97372;
 				INFOPLIST_FILE = revDSM_Sales/Info.plist;
