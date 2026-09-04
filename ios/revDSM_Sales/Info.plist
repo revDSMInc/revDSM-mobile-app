@@ -105,6 +105,16 @@
 		<string>PublicSans-ExtraLight.ttf</string>
 		<string>PublicSans-Light.ttf</string>
 	</array>
+	<!--
+	  Lets a push wake the app while it is backgrounded or killed, which is what the
+	  FCM background handler in index.js needs in order to run at all. A message
+	  carrying only a `notification` block still draws its banner without this; one
+	  carrying `data` is silently dropped.
+	-->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>
