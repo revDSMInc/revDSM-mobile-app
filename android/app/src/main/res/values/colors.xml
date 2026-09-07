@@ -1,0 +1,6 @@
+<resources>
+    <!-- Tint applied to the small icon on a backgrounded FCM notification.
+         revDSM brand green — the same value the app uses for focused inputs
+         and primary actions. -->
+    <color name="notification_accent">#4CBB17</color>
+</resources>

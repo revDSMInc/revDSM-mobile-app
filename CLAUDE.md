@@ -4965,6 +4965,96 @@ session hook clean.
 Dynamic Agreement**, sign, then watch the next `PUT …/outcome/{calcId}` and confirm
 `jobBuilder.dynamicJobState.agreements` is present alongside `scheduleTime`.
 
+### Job-builder logs diffed against WEB, payload key by payload key
+
+Ticket: *"we have to compare mobile logs with web and have to generate the same log in mobile just
+like web"*, with two portal lifecycle-timeline exports of the SAME config, same vertical, same tabs —
+`jobBuilderWeb.txt` / `jobBuilderLogsMobile.txt` (repo root).
+
+**The vocabulary was already right.** Both sides emit exactly `step_viewed` / `step_navigation` /
+`field_changed` under `module_type: 'job_builder'`, and the three `metadata` KEY SETS are identical —
+no key is missing on either side. Every divergence is in a VALUE:
+
+| key | web | mobile (before) | cause |
+|---|---|---|---|
+| `configId` | `6a71a118…` | **`null`** | read `configId`/`_id`; the normalizer stores `id` |
+| `stepNumber` / `fromStep` / `toStep` | `3` / `4` | **`1` / `2`** | indexed the UNLOCKED tabs |
+| `direction` | `next` / `back` | `forward` / `backward` | different words |
+| `result` | `Sale` | `sale` | mobile stores it lower-cased |
+| `jobBuilderId` | `N/A` | **the mongo lead id** | passed `jobId: leadId` |
+| a swatch's `fieldLabel` | `Wrap Color` | `Color` | hardcoded on `isColor` |
+
+⚠️ **`calculatorType` (`Unknown` on web vs `dynamic` on mobile) is NOT a divergence and was left
+alone.** Both platforms use the identical fallback chain
+(`jobBuilderData?.calculatorType || sessionMeta?.calculatorType || 'dynamic'`); web's capture simply
+carried a stored `'Unknown'`. Copying the string would have made mobile report less than it knows.
+
+#### `configId` was silently `null` on EVERY log
+
+`normalizeLightweight` (`useDynamicCalculatorSchemas`) moves the id onto **`id` and DELETES `_id`**,
+so `initialConfig?.configId || initialConfig?._id` could never resolve. Web passes `config?.id`.
+⚠️ The submit-payload call site in the same file already read `.id` — only the logging one had drifted,
+which is why nothing else looked broken.
+
+#### The step number came from the wrong index space, and the file already warned about it
+
+Web numbers against **`tabs = activeVertical?.tabs`** — the vertical's FULL tab list. Mobile used
+`currentTabIndex + 1`, an index into `nonSummaryTabs`, which is `availableTabs` filtered, i.e. the
+**UNLOCKED** tabs only. On a build whose earlier tabs were locked, Soffit therefore logged as step 1
+where web logged step 3.
+
+⚠️ **A step number that moves as tabs unlock is not a stable identifier for the portal** — the same tab
+reports a different number on two visits of one session. `currentStepIndex`'s own comment in
+`DynamicJobBuilderScreen` already records the two index spaces as a trap ("mixing them misaligns
+whenever a vertical has locked tabs"); the three logging calls were reading the wrong one. New
+`logStepNumberOf(tab)` is web's expression verbatim (`Math.max(1, tabs.findIndex(id) + 1)`) and feeds
+`stepNumber`, `fromStep` and `toStep` so the three can never disagree.
+
+#### `jobBuilderId` was the lead's mongo id, twice
+
+Web's `jobId` is the **human lead/job number** (`currentLead?.leadId || currentLead?.jobNumber || …`),
+and a lead with none stores the literal `'N/A'` — which is what its capture shows. Mobile passed
+`jobId: leadId`, so `jobBuilderId` and `leadId` were the same mongo id on every row and the job number
+appeared nowhere. Now `lead?.leadId || lead?.jobNumber || leadId`.
+
+#### The colour-label rule was a one-liner where web has a whole pass
+
+Mobile: `const fieldLabel = isColor ? 'Color' : field?.label || …` — so a swatch's **own authored
+label was discarded**. `Wrap Color` and every other named swatch logged as a bare `Color`, and two
+different colours in one section were indistinguishable on the timeline.
+
+Ported web's `buildSchemaFieldLabel` colour pass in full, plus the four helpers it needs —
+`COLOR_FIELD_TYPES` / `NON_OWNER_FIELD_TYPES`, `isColorFieldType`, `isGenericColorLabel`,
+`findColorOwnerLabel` / **`resolveColorFieldOwnerLabel`**, and **`resolveComboSectionLabel`**:
+
+- **A swatch with a real label keeps it** (`Wrap Color`), and `Color` is appended only when the base
+  does not already end in it (`/colou?rs?$/i`) — so it never reads `Wrap Color Color`.
+- **A GENERIC label (`Color` / `Colour` / `Custom Color` / `Colors`) carries no identity**, so it falls
+  back to `ownerLabel` — the nearest PRECEDING input in the section's field tree, which is the same
+  positional convention `utils/dynamic-job-builder/engine/locked-color-defaults.ts` relies on. That is
+  what turns an unlabelled Extras swatch into `Ground Spout Color`.
+- ⚠️ **Another colour picker can never be the owner** (`NON_OWNER_FIELD_TYPES`), or two adjacent
+  swatches would name each other.
+- **`resolveComboSectionLabel` gives an unlabelled combination section a stable ordinal**
+  (`Section 2`), so LeafFilter's four one-combination sections stop collapsing into four identical
+  `LeafFilter Combo #1` rows that the portal's viewer then de-dupes into one.
+- ⚠️ **An unlabelled swatch whose KEY is not a colour word logs as `color_gem7v Color`.** Web does
+  exactly the same (its `rawFieldLabel` is `label || key || id`), and it is asserted in the tests as
+  parity rather than "fixed" — diverging here would put two different labels on one field again,
+  which is the whole complaint.
+
+Verified with 13 tests driving the real helpers over the captured Fascia tab: the repro
+(`Fascia Wrap Combo #1 - Wrap Color`) **with the pre-fix expression asserted to yield `Color`**, a
+generic label resolving to its owner, no doubled word, a non-colour field untouched, the owner walk
+(preceding-not-following, never another swatch, descending into a stack, unknown id → `''`), the raw-key
+parity case, and the ordinal fallback for two unlabelled sections. tsc 48 (baseline unchanged); the
+util and the test are eslint-clean and `DynamicJobBuilderScreen.tsx` is at its HEAD baseline
+(49 problems: 2 pre-existing errors / 47 warnings). ⚠️ Both files are CRLF.
+
+⚠️ **Not changed: `DynamicDealEditScreen` still sends `direction: 'forward' | 'back'`.** That is the
+`my_deal` module's own log family, not job_builder, and it was outside this comparison — check it
+against web's `use-deal-edit-activity-log.js` before assuming it matches.
+
 ### The Summary tab logs the scheduler OPENING, and every document add / remove
 
 Ticket: *"you have to add logs while we are trying to open Schedule Appointment"* (with the
