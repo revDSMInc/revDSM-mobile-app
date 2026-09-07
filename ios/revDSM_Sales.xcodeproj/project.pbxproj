@@ -19,13 +19,13 @@
 		52CA88BE2FD6D3890054DEBF /* UITextField+DoneButton.m in Sources */ = {isa = PBXBuildFile; fileRef = 52CA88BA2FD6D3890054DEBF /* UITextField+DoneButton.m */; };
 		57A649A7CA7C46AD81AF785A /* PublicSans-Regular_italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 9F093EBB22864D18ADA195E7 /* PublicSans-Regular_italic.ttf */; };
 		60B4407C44E5461B87E537B7 /* PublicSans-Light.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C9322F957A5D4516A981DD92 /* PublicSans-Light.ttf */; };
-		68A535F92FF7BF2267D2C07F /* libPods-revDSM_Sales.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BA8C0FB6217344EACC21A6B3 /* libPods-revDSM_Sales.a */; };
 		68A572B955B942D0AE0E05E4 /* PublicSans-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D39F2F44B2AB4F439F52EF18 /* PublicSans-Medium.ttf */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
 		A1B2C3D002000000000000E2 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D001000000000000E1 /* GoogleService-Info.plist */; };
 		A33CF0C92B194E8C9D0B656A /* PublicSans-Bold_italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E7585BAC33F1498A82374350 /* PublicSans-Bold_italic.ttf */; };
 		A880F33BBAFB4738BAB65278 /* PublicSans-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F2E53E38106F4CEBA944ECB6 /* PublicSans-Regular.ttf */; };
+		BA25B496BBA11EE54492F478 /* libPods-revDSM_Sales.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D2FCED0DAF301DB3F3BA8EF /* libPods-revDSM_Sales.a */; };
 		EF1205E203034516940C9C94 /* PublicSans-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F63B2A24E9C24B5F80296C68 /* PublicSans-Bold.ttf */; };
 /* End PBXBuildFile section */
 
@@ -41,20 +41,20 @@
 		52CA88BA2FD6D3890054DEBF /* UITextField+DoneButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "UITextField+DoneButton.m"; sourceTree = "<group>"; };
 		52CA88BB2FD6D3890054DEBF /* UITextView+DoneButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "UITextView+DoneButton.m"; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = revDSM_Sales/AppDelegate.swift; sourceTree = "<group>"; };
+		7D2FCED0DAF301DB3F3BA8EF /* libPods-revDSM_Sales.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-revDSM_Sales.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = revDSM_Sales/LaunchScreen.storyboard; sourceTree = "<group>"; };
-		85FC794850A972D386BABB12 /* Pods-revDSM_Sales.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-revDSM_Sales.release.xcconfig"; path = "Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales.release.xcconfig"; sourceTree = "<group>"; };
 		9F093EBB22864D18ADA195E7 /* PublicSans-Regular_italic.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Regular_italic.ttf"; path = "../src/assets/fonts/PublicSans-Regular_italic.ttf"; sourceTree = "<group>"; };
 		A1B2C3D001000000000000E1 /* GoogleService-Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = "GoogleService-Info.plist"; path = "revDSM_Sales/GoogleService-Info.plist"; sourceTree = "<group>"; };
 		A1B2C3D003000000000000E3 /* revDSM_Sales.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = revDSM_Sales.entitlements; path = revDSM_Sales/revDSM_Sales.entitlements; sourceTree = "<group>"; };
-		BA8C0FB6217344EACC21A6B3 /* libPods-revDSM_Sales.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-revDSM_Sales.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B46E46B339EA19BF6BF7CFE0 /* Pods-revDSM_Sales.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-revDSM_Sales.release.xcconfig"; path = "Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales.release.xcconfig"; sourceTree = "<group>"; };
 		C65CBFE100C84FCDB5CF833C /* PublicSans-ExtraLight.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-ExtraLight.ttf"; path = "../src/assets/fonts/PublicSans-ExtraLight.ttf"; sourceTree = "<group>"; };
 		C9322F957A5D4516A981DD92 /* PublicSans-Light.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Light.ttf"; path = "../src/assets/fonts/PublicSans-Light.ttf"; sourceTree = "<group>"; };
 		CDCD8CF8478240E48C7F7804 /* PublicSans-ExtraBold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-ExtraBold.ttf"; path = "../src/assets/fonts/PublicSans-ExtraBold.ttf"; sourceTree = "<group>"; };
 		D39F2F44B2AB4F439F52EF18 /* PublicSans-Medium.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Medium.ttf"; path = "../src/assets/fonts/PublicSans-Medium.ttf"; sourceTree = "<group>"; };
 		D9E6C47B1E8C4364AC5361A0 /* PublicSans-Thin.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Thin.ttf"; path = "../src/assets/fonts/PublicSans-Thin.ttf"; sourceTree = "<group>"; };
 		DBBF2F80304A9ADB0028F1BE /* revDSM_Sales.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = revDSM_Sales.entitlements; path = revDSM_Sales/revDSM_Sales.entitlements; sourceTree = "<group>"; };
-		E417FA2FF994F4766F7138BC /* Pods-revDSM_Sales.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-revDSM_Sales.debug.xcconfig"; path = "Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales.debug.xcconfig"; sourceTree = "<group>"; };
 		E7585BAC33F1498A82374350 /* PublicSans-Bold_italic.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Bold_italic.ttf"; path = "../src/assets/fonts/PublicSans-Bold_italic.ttf"; sourceTree = "<group>"; };
+		ED20E8746CC89B7256C0FBF2 /* Pods-revDSM_Sales.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-revDSM_Sales.debug.xcconfig"; path = "Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales.debug.xcconfig"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F2E53E38106F4CEBA944ECB6 /* PublicSans-Regular.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Regular.ttf"; path = "../src/assets/fonts/PublicSans-Regular.ttf"; sourceTree = "<group>"; };
 		F63B2A24E9C24B5F80296C68 /* PublicSans-Bold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Bold.ttf"; path = "../src/assets/fonts/PublicSans-Bold.ttf"; sourceTree = "<group>"; };
@@ -65,7 +65,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				68A535F92FF7BF2267D2C07F /* libPods-revDSM_Sales.a in Frameworks */,
+				BA25B496BBA11EE54492F478 /* libPods-revDSM_Sales.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -94,7 +94,7 @@
 			isa = PBXGroup;
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
-				BA8C0FB6217344EACC21A6B3 /* libPods-revDSM_Sales.a */,
+				7D2FCED0DAF301DB3F3BA8EF /* libPods-revDSM_Sales.a */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -159,8 +159,8 @@
 		BBD78D7AC51CEA395F1C20DB /* Pods */ = {
 			isa = PBXGroup;
 			children = (
-				E417FA2FF994F4766F7138BC /* Pods-revDSM_Sales.debug.xcconfig */,
-				85FC794850A972D386BABB12 /* Pods-revDSM_Sales.release.xcconfig */,
+				ED20E8746CC89B7256C0FBF2 /* Pods-revDSM_Sales.debug.xcconfig */,
+				B46E46B339EA19BF6BF7CFE0 /* Pods-revDSM_Sales.release.xcconfig */,
 			);
 			path = Pods;
 			sourceTree = "<group>";
@@ -172,13 +172,13 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "revDSM_Sales" */;
 			buildPhases = (
-				8A318D55F11FAA4319EB32AE /* [CP] Check Pods Manifest.lock */,
+				04D121A1C0A5C9F2AFAA92A3 /* [CP] Check Pods Manifest.lock */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
-				05F4997E5EA08463DEC9CFE2 /* [CP] Embed Pods Frameworks */,
-				92A3456C863316AC78E339FD /* [CP] Copy Pods Resources */,
+				6A8CCDB783A3DEB01D708E2C /* [CP] Embed Pods Frameworks */,
+				CEF679BD073723D36C866FEB /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
@@ -262,24 +262,7 @@
 			shellPath = /bin/sh;
 			shellScript = "set -e\n\nWITH_ENVIRONMENT=\"$REACT_NATIVE_PATH/scripts/xcode/with-environment.sh\"\nREACT_NATIVE_XCODE=\"$REACT_NATIVE_PATH/scripts/react-native-xcode.sh\"\n\n/bin/sh -c \"\\\"$WITH_ENVIRONMENT\\\" \\\"$REACT_NATIVE_XCODE\\\"\"\n";
 		};
-		05F4997E5EA08463DEC9CFE2 /* [CP] Embed Pods Frameworks */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-frameworks-${CONFIGURATION}-input-files.xcfilelist",
-			);
-			name = "[CP] Embed Pods Frameworks";
-			outputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-frameworks.sh\"\n";
-			showEnvVarsInLog = 0;
-		};
-		8A318D55F11FAA4319EB32AE /* [CP] Check Pods Manifest.lock */ = {
+		04D121A1C0A5C9F2AFAA92A3 /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -301,7 +284,24 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		92A3456C863316AC78E339FD /* [CP] Copy Pods Resources */ = {
+		6A8CCDB783A3DEB01D708E2C /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Embed Pods Frameworks";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		CEF679BD073723D36C866FEB /* [CP] Copy Pods Resources */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -337,7 +337,7 @@
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = E417FA2FF994F4766F7138BC /* Pods-revDSM_Sales.debug.xcconfig */;
+			baseConfigurationReference = ED20E8746CC89B7256C0FBF2 /* Pods-revDSM_Sales.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
@@ -373,7 +373,7 @@
 		};
 		13B07F951A680F5B00A75B9A /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 85FC794850A972D386BABB12 /* Pods-revDSM_Sales.release.xcconfig */;
+			baseConfigurationReference = B46E46B339EA19BF6BF7CFE0 /* Pods-revDSM_Sales.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
