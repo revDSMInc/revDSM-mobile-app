@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "919037723716",
+    "project_id": "revdsm-640e4",
+    "storage_bucket": "revdsm-640e4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:919037723716:android:08d2e4b59ab80b655e6811",
+        "android_client_info": {
+          "package_name": "com.revdsm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC1oFo_v_vj-a2JBqxpvsyccUDwTjvmjjA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

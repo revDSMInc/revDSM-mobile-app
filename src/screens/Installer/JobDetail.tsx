@@ -83,7 +83,7 @@ import {
   INSTALLER_RESULT_REASONS,
   RESULT_COLORS,
   RESULT_LABEL_KEY,
-  RESULT_STATUS_CODE,
+  RESULT_STATUS_REQUEST_TYPE,
   RESET_IN_PROGRESS_STATUS,
   PHOTO_SECTIONS,
 } from '../../constants/installer';
@@ -104,6 +104,7 @@ import type {
   StatusReasonImage,
   StatusReasonPayload,
   StatusRequestImage,
+  ProposedSchedulePayload,
 } from '../../config/types/installer';
 
 /**
@@ -1386,16 +1387,21 @@ export default function InstallerJobDetail() {
    * evidence upload does NOT block the submission: the installer needs to move on even
    * if the network drops their last shot.
    */
-  const handleSubmitResult = async (reason: string) => {
+  const handleSubmitResult = async (
+    reason: string,
+    proposedSchedule?: ProposedSchedulePayload
+  ) => {
     const result = resultType!;
-    const status = RESULT_STATUS_CODE[result as Exclude<InstallerResultType, 'Reset'>];
-    if (!status) return;
+    const requestType = RESULT_STATUS_REQUEST_TYPE[result];
+    if (!requestType) return;
     if (drainingUploads || submitResult.isPending || statusRequest.isPending) return;
 
-    // "Can't Do Work" no longer transitions the job. It files a status REQUEST that ops
-    // reviews (`POST installer/v1/{jobId}/status-requests`); the status moves only if
-    // they approve it. "Not Hit" is unchanged and still transitions directly below.
-    const isStatusRequest = result === "Can't Do Work";
+    const needsSchedule = result === 'Not Hit' || result === 'Reset';
+    if (needsSchedule && !proposedSchedule?.date) return;
+
+    // Can't Do Work, Not Hit, and in-progress Reset all file a request and leave
+    // the job inProgress until the office (and customer) act on it.
+    const isStatusRequest = true;
 
     // Drain uploads so every photo that has started uploading has its s3url. The flag
     // is what puts the sheet's button into its loading state for the duration — this
@@ -1457,32 +1463,18 @@ export default function InstallerJobDetail() {
           jobId: job._id,
           request: {
             reason,
+            requestType,
+            ...(needsSchedule && proposedSchedule ? { proposedSchedule } : {}),
             ...(requestImages.length > 0 ? { images: requestImages } : {}),
           },
         },
         {
-          // Worded as a request, not a result: the job has NOT been stood down yet, and
-          // telling the installer it was resulted would be a lie they act on.
           onSuccess: () =>
             finish('Request sent', `${reason} — the office will review it.`),
           onError: fail("Couldn't send request"),
         }
       );
-      return;
     }
-
-    const statusReason: StatusReasonPayload = {
-      reason,
-      ...(images.length > 0 ? { images } : {}),
-    };
-
-    submitResult.mutate(
-      { jobId: job._id, result, status, reason: statusReason },
-      {
-        onSuccess: () => finish('Job resulted', `${result} — ${reason}`),
-        onError: fail('Could not result job'),
-      }
-    );
   };
 
   /**
@@ -1556,13 +1548,9 @@ export default function InstallerJobDetail() {
   const handleOpenResult = (type: InstallerResultType) => {
     log.resultOpened(type);
 
-    // Reset has nothing to explain, so it takes a plain confirmation rather than the
-    // reason picker the other two results use.
-    if (type === 'Reset') {
-      // Deliberately NOT discarded here: Reset has no camera of its own, and
-      // `handleConfirmReset` documents that photos taken before the decision to reset
-      // travel with it as `statusReason.images`. Whatever it takes, `wipeJobData`
-      // clears straight afterwards.
+    // Completed-job Reset still reopens via PUT /:id/reset — no proposed date.
+    // In-progress Reset uses ResultJobModal (reason + new date) like Not Hit.
+    if (type === 'Reset' && isJobComplete) {
       setShowResetConfirm(true);
       return;
     }
@@ -2119,6 +2107,7 @@ export default function InstallerJobDetail() {
         uploadingCount={upload.uploadingCount}
         onPhotoCaptured={handleResultPhoto}
         onRemovePhoto={handleRemoveResultPhoto}
+        customerName={job.customerName || ''}
         onClose={() => setResultType(null)}
         onConfirm={handleSubmitResult}
       />

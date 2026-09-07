@@ -272,6 +272,16 @@ export const RESULT_STATUS_CODE: Record<
  */
 export const RESET_IN_PROGRESS_STATUS: JobStatus = 'reset';
 
+/** Status-request wire type for Result Job submissions that go through POST status-requests. */
+export const RESULT_STATUS_REQUEST_TYPE: Record<
+  InstallerResultType,
+  'CANT_DO_WORK' | 'NOT_HIT' | 'RESET'
+> = {
+  "Can't Do Work": 'CANT_DO_WORK',
+  'Not Hit': 'NOT_HIT',
+  Reset: 'RESET',
+};
+
 /**
  * Button label per result type.
  *

@@ -11,6 +11,7 @@ import { endStaleInstallerWorkSession } from '../utils/installer-work-session';
 import { endStaleLeadWorkSession } from '../utils/lead-work-session';
 import { setInitial } from '../redux/reducer/auth.reducer';
 import SocketManager from '../services/SocketManager';
+import PushNotificationService from '../services/PushNotificationService';
 import { startOfflineSyncTimer, stopOfflineSyncTimer } from '../services/api/offlineUploadManager';
 import {
   startConnectivityMonitor,
@@ -154,6 +155,15 @@ export function useAppInitialization() {
         // now — this is the cold-start equivalent of the flush after sign-in.
         flushPendingLogs(userData);
         dispatch(setInitial({ user: userData }));
+
+        // Bind the push token. Placed AFTER setSessionHeader + setInitial because
+        // the POST is authenticated and needs the user's own id.
+        //
+        // ⚠️ Runs on EVERY cold start, not only after login — the contract requires
+        // it. An FCM token can rotate at any time, and a rotated token that is never
+        // re-bound silently stops delivery: the server logs 'has no bound devices'
+        // and returns { devices: 0 }, and nothing surfaces to the client.
+        void PushNotificationService.bind(userData?._id || userData?.id);
 
         // An installer work session the last run never closed — the app was killed
         // rather than backgrounded, so no cleanup ran and the office is still showing
