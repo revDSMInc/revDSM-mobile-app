@@ -136,7 +136,9 @@ export function ResultJobModal({
   return (
     <>
     <Modal
-      visible={visible}
+      // Hide this sheet while the scheduler is up. RN will not show a second Modal
+      // on top of this one (same pattern as EditContractDetailsModal).
+      visible={visible && !schedulerOpen}
       transparent
       animationType="slide"
       onRequestClose={onClose}
@@ -416,7 +418,7 @@ export function ResultJobModal({
     </Modal>
 
       <AppointmentSchedulerModal
-        visible={schedulerOpen}
+        visible={visible && schedulerOpen}
         onClose={() => setSchedulerOpen(false)}
         customerName={customerName}
         isEdit
