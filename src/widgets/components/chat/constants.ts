@@ -14,6 +14,7 @@ export const STATUS_CONFIG: any = {
   demo: { label: 'Demo', color: '#EAB308', textColor: '#fff' },
   reset: { label: 'Reset', color: '#94A3B8', textColor: '#fff' },
   scheduled: { label: 'Scheduled', color: '#3B82F6', textColor: '#fff' },
+  rescheduled: { label: 'Rescheduled', color: '#3B82F6', textColor: '#fff' },
   inprogress: { label: 'In Progress', color: '#3B82F6', textColor: '#fff' },
   inProgress: { label: 'In Progress', color: '#3B82F6', textColor: '#fff' },
   completed: { label: 'Completed', color: '#10B981', textColor: '#fff' },
