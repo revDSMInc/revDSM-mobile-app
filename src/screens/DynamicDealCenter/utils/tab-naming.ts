@@ -289,6 +289,19 @@ export function getLiveSchemaBaseName(
 const FULL_PACKAGE_REQUIRED_KEYS = ['G', 'S', 'FWrap'];
 const FULL_PACKAGE_GUARD_KEYS = ['Versa', 'VMax', 'Guard', 'SpecGuard'];
 
+/**
+ * Marks a full package on the calculator's STORED title, so the portal can tell one
+ * from a plain multi-product job.
+ *
+ * The mobile surfaces swap the derived name for a package icon + `ⓘ`; the portal has
+ * no such rendering and only ever sees this string, so the badge has to travel WITH
+ * the name. It is applied in `computeDerivedTitles`, which is the single source both
+ * the `PUT /lfcalculators/{id}` payload (`resolveSafeTitle`) and the `calculator
+ * viewed` activity log read from — naming it at the source is what stops the saved
+ * calculator and its own log from reporting two different names for one job.
+ */
+export const FULL_PACKAGE_TITLE_PREFIX = '📦 +';
+
 /** The tooltip's bullet list. Lives here so it can never drift from the rule above. */
 export const FULL_PACKAGE_INCLUDES = ['Gutter', 'Soffit', 'FWrap', '(Versa OR VMax)'];
 
@@ -441,6 +454,22 @@ export function computeDerivedTitles(
         result[it.id] = it.base;
       }
     });
+  });
+
+  // A full package carries the box on its NAME as well as on its badge — see
+  // FULL_PACKAGE_TITLE_PREFIX. Applied LAST, after the (SM)/(LG) and duplicate-price
+  // disambiguation above, so the prefix decorates the finished title and can never
+  // become part of a grouping key.
+  //
+  // ⚠️ A MANUAL rename is left alone: the rep chose that name, and prefixing it would
+  // overwrite their wording. (Rename is not reachable in the dynamic deal center — its
+  // tab menu offers only Duplicate/Delete — so this is a guard, not a live case.)
+  tabs.forEach((t) => {
+    const title = result[t.id];
+    if (!title || t.manualTitle) return;
+    if (title.startsWith(FULL_PACKAGE_TITLE_PREFIX)) return;
+    if (!describeFullPackage(t.entries, schemas).isFullPackage) return;
+    result[t.id] = `${FULL_PACKAGE_TITLE_PREFIX}${title}`;
   });
 
   return result;

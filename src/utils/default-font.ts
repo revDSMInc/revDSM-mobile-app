@@ -97,6 +97,16 @@ const PATCH_BY_FACE: Readonly<Record<string, FontPatch>> = Object.freeze(
   }, {}),
 );
 
+/**
+ * The only two families an ITALIC style may name — the two `_italic` files that are
+ * bundled. Kept beside the patch table so the rule and the shipped assets stay in
+ * step: adding a name here without adding
+ * `android/app/src/main/assets/fonts/<name>_italic.ttf` (and the iOS `UIAppFonts`
+ * entry) silently returns that text to the device font.
+ */
+export const ITALIC_REGULAR_FACE = 'PublicSans-Regular';
+export const ITALIC_BOLD_FACE = 'PublicSans-Bold';
+
 interface FlatTextStyle {
   fontFamily?: unknown;
   fontWeight?: unknown;
@@ -112,10 +122,15 @@ interface FlatTextStyle {
  * `fontFamily` is `Ionicons` / `MaterialCommunityIcons` / … Rewriting those to
  * Public Sans would replace every icon in the app with a missing glyph.
  *
- * ⚠️ ITALIC is left alone. No italic face is bundled, so naming a family would ask
- * Android for `PublicSans-Regular_italic.ttf` (missing → the system font again) and
- * would leave iOS with an upright face, silently dropping the slant it renders
- * today. Eleven sites use it; they keep the system italic they already have.
+ * ⚠️ ITALIC resolves to one of the TWO italic faces, because only two are bundled:
+ * `PublicSans-Regular_italic.ttf` and `PublicSans-Bold_italic.ttf`. The `_italic`
+ * suffix is not decoration — it is the file name Android's `createAssetTypeface`
+ * looks for (`fonts/<family>_italic.ttf`), so those two names are the ONLY families
+ * an italic style may resolve to. Naming any other (`PublicSans-SemiBold` + italic,
+ * say) sends Android looking for a file that does not exist and drops it straight
+ * back onto the device font — silently. A heavier italic therefore renders as Bold
+ * Italic rather than, say, Black Italic; ship `PublicSans-Black_italic.ttf` and add
+ * it to `ITALIC_FACE_BY_WEIGHT` if that ever matters.
  *
  * ⚠️ When a Public Sans face is ALREADY named, an explicit `'normal'` / `400` does
  * NOT re-derive the face. That value is not usually an author's opinion: Tailwind
@@ -130,9 +145,19 @@ export function resolveFontPatch(style: FlatTextStyle | null | undefined): FontP
 
   // Some other font — an icon set, or a face this app does not ship. Hands off.
   if (family != null && family !== '' && !isPublicSansFace(family)) return null;
-  if (style?.fontStyle === 'italic') return null;
 
   const weight = normalizeFontWeight(style?.fontWeight);
+
+  if (style?.fontStyle === 'italic') {
+    // Only two italic files exist, so an italic style resolves to one of exactly two
+    // families. The face already on the style decides the weight when the style does
+    // not — `className="italic font-bold"` compiles to `PublicSans-Bold` plus the
+    // `'normal'` Tailwind always emits, and reading that 400 literally would render
+    // it Regular Italic.
+    const faceWeight = isPublicSansFace(family) ? weightOfFace(family as string) : null;
+    const effective = faceWeight !== null && (weight === null || weight === 400) ? faceWeight : weight;
+    return PATCH_BY_FACE[(effective ?? 400) >= 600 ? ITALIC_BOLD_FACE : ITALIC_REGULAR_FACE];
+  }
 
   if (isPublicSansFace(family)) {
     // Already ours, and nothing asks for a different weight.

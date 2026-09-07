@@ -27,6 +27,13 @@ interface AppointmentSchedulerModalProps {
   visible: boolean;
   onClose: () => void;
   onConfirm: (data: any) => void;
+  /**
+   * The rep CONFIRMED the time window (or the TBD reason) — the modal is showing
+   * 'Job Booked!'. Fired for the audit trail only: the appointment is still
+   * persisted by `onGenerate` / `onUpload` / `onConfirm`, which is what the rep
+   * picks NEXT on that card. Both the accept and TBD paths call it.
+   */
+  onBooked?: (data: any) => void;
   onGenerate?: (data: any) => void;
   onUpload?: (data: any) => void;
   customerName: string;
@@ -58,6 +65,7 @@ export const AppointmentSchedulerModal = ({
   visible,
   onClose,
   onConfirm,
+  onBooked,
   onGenerate,
   onUpload,
   customerName,
@@ -159,14 +167,31 @@ export const AppointmentSchedulerModal = ({
     }
   };
 
+  // The appointment as the 'Job Booked!' card states it. Shared so the booked
+  // callback and the two buttons on that card can never describe the same
+  // appointment differently.
+  //
+  // ⚠️ `tbd` is passed in, never read from `isTBD`: both callers set that state in
+  // the same tick, so reading it here would see the PREVIOUS value.
+  const bookedAppointmentData = (tbd: boolean) =>
+    tbd
+      ? { date: 'TBD', reason: tbdReason, customerName }
+      : {
+          date: format(selectedDate, 'M/d/yyyy'),
+          timeWindow: windows[timeSlotIdx].value,
+          customerName,
+        };
+
   const handleAcceptSlot = () => {
     setIsTBD(false);
     setView('success');
+    onBooked?.(bookedAppointmentData(false));
   };
 
   const handleConfirmTBDStep = () => {
     setIsTBD(true);
     setView('success');
+    onBooked?.(bookedAppointmentData(true));
   };
 
   const handleModalClose = () => {
@@ -647,11 +672,7 @@ export const AppointmentSchedulerModal = ({
                   <View style={{ width: '100%', gap: 12 }}>
                     <TouchableOpacity
                       onPress={() => {
-                        onGenerate?.(
-                          isTBD
-                            ? { date: 'TBD', reason: tbdReason, customerName }
-                            : { date: format(selectedDate, 'M/d/yyyy'), timeWindow: windows[timeSlotIdx].value, customerName }
-                        );
+                        onGenerate?.(bookedAppointmentData(isTBD));
                         handleModalClose();
                       }}
                       style={{
@@ -682,11 +703,7 @@ export const AppointmentSchedulerModal = ({
 
                     <TouchableOpacity
                       onPress={() => {
-                        onUpload?.(
-                          isTBD
-                            ? { date: 'TBD', reason: tbdReason, customerName }
-                            : { date: format(selectedDate, 'M/d/yyyy'), timeWindow: windows[timeSlotIdx].value, customerName }
-                        );
+                        onUpload?.(bookedAppointmentData(isTBD));
                         handleModalClose();
                       }}
                       style={{

@@ -4,6 +4,7 @@ import { AuthService, LoginData } from '../services/api/auth';
 import { login as loginAction } from '../redux/reducer/auth.reducer';
 import { setSessionHeader } from '../services/api';
 import SocketManager from '../services/SocketManager';
+import PushNotificationService from '../services/PushNotificationService';
 import { Platform } from 'react-native';
 import { commitAutofill } from '../utils/autofill';
 import { flushPendingLogs } from '../services/api/LoggerService';
@@ -107,6 +108,9 @@ export const useLoginMutation = () => {
         } else {
           dispatch(loginAction({ user: res.userData }));
         }
+        // Bind the push token. The session header is already set in mutationFn, so
+        // this POST is authenticated regardless of the dispatch delay above.
+        void PushNotificationService.bind(res.userData?._id || res.userData?.id);
       }
     },
     // Covers every way the sign-in can end badly — rejected credentials, an
@@ -177,6 +181,8 @@ export const useVerifyOtpMutation = () => {
       } else {
         dispatch(loginAction({ user: userData }));
       }
+      // Same bind as the password path — a 2FA sign-in is a sign-in.
+      void PushNotificationService.bind(userData?._id || userData?.id);
     },
     // A wrong or expired code, or a profile that wouldn't load after it verified.
     onError: (err: any, variables) => {
