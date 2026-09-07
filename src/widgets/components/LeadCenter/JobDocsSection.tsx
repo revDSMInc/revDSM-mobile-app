@@ -70,6 +70,7 @@ import { ManagePhotosModal } from './ManagePhotosModal';
 import { DynamicManagePhotosView } from '../lead-center/DynamicManagePhotosView';
 import { DynamicInspectionView } from '../lead-center/DynamicInspectionView';
 import { useInspectionSchema } from '../../../hooks/useInspectionSchema';
+import { useIsOnline } from '../../../hooks/useIsOnline';
 import {
   indexSchema,
   getCapturableSlots,
@@ -202,8 +203,29 @@ export const JobDocsSection = ({
   // photos captured statically are invisible to the dynamic manage view (they
   // fail its `expectedCats` filter), which is exactly the "count shows but no
   // images" bug. Fetched eagerly because the capture CTA also branches on it.
-  const { configuredProducts, productsLoading } = useInspectionSchema({ enabled: true });
+  const { configuredProducts, productsLoading, schemaResolved } = useInspectionSchema({ enabled: true });
   const isDynamicInspection = configuredProducts.length > 0;
+  const isOnline = useIsOnline();
+
+  // ⚠️ `configuredProducts.length === 0` answers TWO different questions and they must not be
+  // conflated — that conflation is exactly what produced the "+ UNSORTED" orphans.
+  //
+  //   schema resolved, zero products  → this company configured nothing. The legacy flow IS
+  //                                     the right answer. Carry on.
+  //   schema NOT resolved             → we never got to ask. Offline after a cold start, the
+  //                                     query cache is gone and there is nothing to fall back
+  //                                     on, so `isDynamicInspection` reads false and capture
+  //                                     drops to the LEGACY flow — which stores a photo's
+  //                                     category UNSCOPED (`"Home"`, not
+  //                                     `"Gutters/Roofline — HOME"`). Back online those photos
+  //                                     match no configured slot, land in "+ UNSORTED",
+  //                                     don't count towards the tab totals, and cannot be
+  //                                     re-filed. Silently writing the wrong format is worse
+  //                                     than declining, so decline.
+  //
+  // Only blocks when BOTH are true: unresolved AND offline. Online, an unresolved schema is a
+  // request still in flight or a server problem the rep can retry.
+  const inspectionSchemaUnavailable = !schemaResolved && !isOnline;
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -979,6 +1001,16 @@ export const JobDocsSection = ({
   };
 
   const handleStartTakingPhotos = () => {
+    // See `inspectionSchemaUnavailable`. Capturing here would file the photos through the
+    // legacy flow under unscoped categories, and the rep would only find out days later when
+    // they turned up as un-refilable "+ UNSORTED" orphans.
+    if (inspectionSchemaUnavailable) {
+      Alert.alert(
+        'Photo tagging needs to sync first',
+        'Your photo categories have not been downloaded to this device yet. Connect once and reopen this lead — after that, taking photos works offline.'
+      );
+      return;
+    }
     // With a configured inspection schema the whole capture flow lives in the
     // dynamic view (photo-first: shoot, then tag into a schema slot), so capture
     // and Manage Photos write/read the same product-scoped categories.
@@ -994,6 +1026,27 @@ export const JobDocsSection = ({
     setTaggingAsset(null);
     setShowTagModal(true);
   };
+
+  /**
+   * The LEGACY tag/capture flow's other door.
+   *
+   * `ManagePhotosModal` lets a rep shoot straight into an empty slot, which reaches the same
+   * unscoped-category write as the CTA — so it needs the same guard, or the block above is
+   * simply routed around. Passed to that modal in place of the raw `setShowTagModal`.
+   */
+  const openLegacyTagModal = useCallback(
+    (next: boolean) => {
+      if (next && inspectionSchemaUnavailable) {
+        Alert.alert(
+          'Photo tagging needs to sync first',
+          'Your photo categories have not been downloaded to this device yet. Connect once and reopen this lead — after that, taking photos works offline.'
+        );
+        return;
+      }
+      setShowTagModal(next);
+    },
+    [inspectionSchemaUnavailable]
+  );
 
   const getRequiredSlotsForActiveTab = useCallback(() => {
     const catIds = getCategoryIdsForTab(activeManageTab);
@@ -1967,7 +2020,7 @@ export const JobDocsSection = ({
         toggleSelectPhoto={toggleSelectPhoto}
         handleOpenPreviewTab={handleOpenPreviewTab}
         setMovingImage={setMovingImage}
-        setShowTagModal={setShowTagModal}
+        setShowTagModal={openLegacyTagModal}
         setShowManageModal={setShowManageModal}
         handleDelete={handleDelete}
         getSubcategoryLabel={getSubcategoryLabel}

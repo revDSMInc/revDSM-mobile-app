@@ -3,6 +3,7 @@ import RNFS from 'react-native-fs';
 import { storage } from '../../utils/storage';
 import { hasSession } from './index';
 import { LeadService } from './leads';
+import { isOnline, onReconnect, refreshConnectivity } from '../connectivity';
 
 export interface OfflineUploadFile {
   localPath: string;
@@ -30,23 +31,22 @@ const STORAGE_KEY = 'offline_image_uploads';
 const OFFLINE_DIR = `${RNFS.DocumentDirectoryPath}/offline_uploads`;
 let isSyncing = false;
 let syncInterval: any = null;
+let unsubscribeReconnect: (() => void) | null = null;
 
-// Lightweight connection check using fetch ping
+/**
+ * Connectivity check, now delegated to `services/connectivity`.
+ *
+ * ⚠️ This used to `fetch HEAD https://www.google.com` with a 4 s abort. Three problems, all of
+ * which the shared monitor fixes: it asked a THIRD PARTY whether our own API was reachable (a
+ * corporate network that blocks google but allows revDSM read as offline), it spent a request on
+ * every call, and it could only ever answer "right now" — it had no way to report the RECONNECT
+ * EDGE, which is the only event a sync scheduler actually needs.
+ *
+ * The signature is kept `Promise<boolean>` on purpose: four modals await it
+ * (Before/After/JobImageUpload/BeforeAfter) and none of them had to change.
+ */
 export async function checkOnlineStatus(): Promise<boolean> {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-    // Ping google to verify actual internet access
-    await fetch('https://www.google.com', {
-      method: 'HEAD',
-      signal: controller.signal,
-      headers: { 'Cache-Control': 'no-cache' },
-    });
-    clearTimeout(timeoutId);
-    return true;
-  } catch (error) {
-    return false;
-  }
+  return refreshConnectivity();
 }
 
 // Ensure offline uploads directory exists
@@ -159,9 +159,10 @@ export async function processUploadQueue(onItemProcessed?: (itemId: string, succ
   // waiting for the next sign-in costs nothing.
   if (!hasSession()) return;
 
-  const isOnline = await checkOnlineStatus();
-  if (!isOnline) {
-    console.log('[OfflineUpload] Check failed. Still offline, skipping sync.');
+  // Synchronous read — the monitor already knows, so this costs nothing. The drain is also
+  // triggered directly by the reconnect edge below, so the common case arrives here already online.
+  if (!isOnline()) {
+    console.log('[OfflineUpload] Offline, skipping sync.');
     return;
   }
 
@@ -266,13 +267,24 @@ async function cleanupItemFiles(item: OfflineUploadItem): Promise<void> {
 export function startOfflineSyncTimer(): void {
   if (syncInterval) return;
 
-  console.log('[OfflineUpload] Starting background offline sync timer (15s interval).');
+  console.log('[OfflineUpload] Starting offline sync (reconnect-driven + 60s safety net).');
   // Trigger an initial process run
   processUploadQueue();
 
+  // ⚠️ THE EDGE IS THE REAL TRIGGER. The queue exists because the rep was offline, so the moment
+  // that stops being true is exactly when it should drain — not up to 15 s later.
+  unsubscribeReconnect = onReconnect(() => {
+    console.log('[OfflineUpload] Connectivity returned — draining queue.');
+    processUploadQueue();
+  });
+
+  // The interval is now only a safety net, for the cases the edge cannot cover: an item enqueued
+  // while already online, a sign-in that happens after connectivity was restored (the drain
+  // early-returns on `hasSession`), or a transient upload failure. It was 15 s purely because it
+  // WAS the trigger; at 60 s it costs a quarter of the wakeups.
   syncInterval = setInterval(() => {
     processUploadQueue();
-  }, 15000);
+  }, 60000);
 }
 
 // Stop sync timer
@@ -280,8 +292,10 @@ export function stopOfflineSyncTimer(): void {
   if (syncInterval) {
     clearInterval(syncInterval);
     syncInterval = null;
-    console.log('[OfflineUpload] Stopped background offline sync timer.');
   }
+  unsubscribeReconnect?.();
+  unsubscribeReconnect = null;
+  console.log('[OfflineUpload] Stopped offline sync.');
 }
 
 // Get enqueued local images for a specific job & type

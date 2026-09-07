@@ -32,6 +32,14 @@ export interface MoveState {
   fromSlot: InspectionSlot;
   /** The manage-card key, so the spinner shows on the originating card. */
   key: string;
+  /**
+   * `fromCategory.label` is the photo's REAL stored category, not a schema label to be scoped.
+   *
+   * Set for "+ UNSORTED" orphans, whose stored category belongs to no configured product (a
+   * legacy `"Home"`, a renamed product, a pre-schema capture). Everything else leaves it unset
+   * and is scoped as before.
+   */
+  fromIsAbsoluteCategory?: boolean;
 }
 
 interface DynamicMovePhotoModalProps {
@@ -71,6 +79,8 @@ export function DynamicMovePhotoModal({
   // where the photo currently lives rather than always on tab 0.
   const initialTab = useMemo(() => {
     if (!moveState) return 0;
+    // An orphan lives in no configured tab, so there is no "where it currently is" to open on.
+    if (moveState.fromIsAbsoluteCategory) return 0;
     const idx = topTabs.findIndex((tab) => {
       const leafs = indexSchema([tab]).leafCategories;
       return leafs.some((c) => norm(c.label as string) === norm(moveState.fromCategory.label as string));
@@ -105,6 +115,9 @@ export function DynamicMovePhotoModal({
       toCategoryLabel: category.label as string,
       toSubcategory: slot.storageName as string,
       key: moveState.key,
+      ...(moveState.fromIsAbsoluteCategory
+        ? { fromCategoryAbsolute: moveState.fromCategory.label as string }
+        : null),
     });
     // Re-home done → let the host reopen the camera for the next shot (continuous
     // capture). The move itself is optimistic + queued, so this never blocks on upload.

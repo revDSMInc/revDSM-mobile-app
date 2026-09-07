@@ -77,6 +77,7 @@ import { useLeadQuery } from '../../hooks/useLeadQuery';
 import RNFS from 'react-native-fs';
 
 import { useLeadCenterData } from '../../hooks/useLeadCenterData';
+import { usePrecacheLeadPhotos } from '../../hooks/usePrecacheLeadPhotos';
 import { useLeadReports } from '../../hooks/useLeadReports';
 import { useLeadCenterModals } from '../../hooks/useLeadCenterModals';
 import { InspectionFormModal } from '../../widgets/modals/lead-center/InspectionFormModal';
@@ -144,6 +145,10 @@ export default function LeadCenterPage() {
     sectionImages,
     setSectionImages,
   } = useLeadCenterData(initialLead, user, { appointmentStarted, fromMyDeals });
+
+  // Pull this lead's photos onto the device while there is still signal. Every other warm in
+  // the app is lazy — it happens when the rep looks — which offline is exactly too late.
+  usePrecacheLeadPhotos(lead);
 
   // ── Contract Details pencil opens the 4-step deal-edit wizard ───────────────
   // Install Date → Job Build → Job Price → Review & Submit, replacing the inline

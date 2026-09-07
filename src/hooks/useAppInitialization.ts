@@ -12,6 +12,11 @@ import { endStaleLeadWorkSession } from '../utils/lead-work-session';
 import { setInitial } from '../redux/reducer/auth.reducer';
 import SocketManager from '../services/SocketManager';
 import { startOfflineSyncTimer, stopOfflineSyncTimer } from '../services/api/offlineUploadManager';
+import {
+  startConnectivityMonitor,
+  stopConnectivityMonitor,
+  refreshConnectivity,
+} from '../services/connectivity';
 import { FlashMessage } from '../config/message';
 import {
   NO_MOBILE_ACCESS_MESSAGE,
@@ -101,6 +106,36 @@ export function useAppInitialization() {
         // previous session, so the socket should be live before they navigate.
         SocketManager.connect(accessToken);
 
+        // ⚠️ Offline fast path — do NOT wait for `getMe()` to fail.
+        //
+        // The catch below already restores a persisted profile on a transport failure, but it
+        // only runs once the request gives up, and `axiosInstance.timeout` is **120 s**. On
+        // airplane mode the socket is refused immediately so that is quick; on the case the
+        // ticket actually names — spotty service, a wifi captive portal, a dead cell edge — the
+        // request HANGS, and the rep watches a splash screen for up to two minutes before the
+        // fallback they were always going to get. Asking first costs one native call.
+        //
+        // ⚠️ `refreshConnectivity()`, not `isOnline()`. The monitor is started immediately before
+        // `initialize()` and seeds itself from an ASYNC `NetInfo.fetch()`, so the cached value may
+        // still be the optimistic default at this point in the boot.
+        const online = await refreshConnectivity();
+        if (!online) {
+          const cachedUser = (store.getState() as any)?.auth?.user;
+          // Same gate as the catch: an offline launch may only restore a profile that was
+          // already entitled to one of the two mobile dashboards.
+          if (cachedUser && resolveMobileDashboard(cachedUser)) {
+            dispatch(setInitial({ user: cachedUser }));
+            FlashMessage.warning(
+              'Offline',
+              'Could not reach revDSM. Showing your last synced data.'
+            );
+            return;
+          }
+          // No usable cached profile — fall through and let the request fail properly rather
+          // than signing out here. A first launch after an update has an empty store, and the
+          // network may come back before the request gives up.
+        }
+
         const res = await AuthService.getMe();
         const userData = res.data?.data;
 
@@ -157,12 +192,19 @@ export function useAppInitialization() {
   }, [dispatch, store]);
 
   useEffect(() => {
+    // ⚠️ FIRST, before `initialize()`. The bootstrap's own offline fallback (the `catch` above)
+    // and React Query's `onlineManager` both read this monitor, so starting it after the first
+    // request would leave that request classified against a default rather than the truth.
+    startConnectivityMonitor();
+
     initialize();
 
-    // Start background sync timer for offline image uploads
+    // Start background sync for offline image uploads. Now reconnect-driven — see
+    // `offlineUploadManager.startOfflineSyncTimer`.
     startOfflineSyncTimer();
     return () => {
       stopOfflineSyncTimer();
+      stopConnectivityMonitor();
     };
   }, [initialize]);
 

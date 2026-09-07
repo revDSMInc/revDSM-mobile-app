@@ -21,6 +21,7 @@ import { store } from '../../redux/store';
 import { SettingsService } from '../../services/api/SettingsService';
 import { AuthService } from '../../services/api/auth';
 import { LeadService } from '../../services/api/leads';
+import { clearImageCache, getImageCacheUsage, type CacheUsage } from '../../utils/imageFileCache';
 import Clipboard from '@react-native-clipboard/clipboard';
 import RNFS from 'react-native-fs';
 import { ENV } from '../../config/env';
@@ -55,6 +56,44 @@ export default function ProfilePage() {
   const navigation = useNavigation<any>();
   const { isInstaller } = useUserRole();
   const [activeTab, setActiveTab] = useState<TabType>('profile');
+  // Offline photo storage — what the device is holding so a rep can see their leads with no
+  // signal, and a way to reclaim it. Without this the cache is invisible: it grows to its
+  // budget and the only lever a rep has is reinstalling the app.
+  const [offlineUsage, setOfflineUsage] = useState<CacheUsage | null>(null);
+  const [clearingCache, setClearingCache] = useState(false);
+
+  const loadOfflineUsage = useCallback(() => {
+    getImageCacheUsage()
+      .then(setOfflineUsage)
+      .catch(() => setOfflineUsage(null));
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'profile') loadOfflineUsage();
+  }, [activeTab, loadOfflineUsage]);
+
+  const handleClearOfflineData = useCallback(() => {
+    Alert.alert(
+      'Clear offline photos?',
+      'Photos will be downloaded again the next time you open a lead with a connection. Nothing is deleted from the server, and photos waiting to upload are not affected.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            setClearingCache(true);
+            try {
+              await clearImageCache();
+            } finally {
+              setClearingCache(false);
+              loadOfflineUsage();
+            }
+          },
+        },
+      ]
+    );
+  }, [loadOfflineUsage]);
 
   // This screen is shared by both dashboards, but the sales landing route is NOT
   // registered in the installer stack (`navigation/index.tsx`), so the hardcoded
@@ -813,6 +852,56 @@ export default function ProfilePage() {
                   ) : (
                     <Text className="text-grey-0 font-black  text-[11px] tracking-widest">
                       Update Profile
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* Offline photo storage. Sits under the profile form rather than behind its own
+                  tab: it is a rarely-touched maintenance control, not a feature. */}
+              <View
+                className="p-6 rounded-[32px] border mt-6"
+                style={{
+                  backgroundColor: isDark ? colors.surface : colors.card,
+                  borderColor: colors.border,
+                }}
+              >
+                <View className="flex-row items-center mb-1">
+                  <Icon name="cloud-download-outline" size={18} color={colors.textSecondary} />
+                  <Text
+                    className="font-black tracking-widest text-[11px] ml-2"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    OFFLINE DATA
+                  </Text>
+                </View>
+
+                <Text className="text-[15px] font-bold mt-2" style={{ color: colors.text }}>
+                  {offlineUsage ? offlineUsage.label : '—'}
+                </Text>
+                <Text className="text-[11px] font-bold mt-1" style={{ color: colors.textSecondary }}>
+                  {offlineUsage
+                    ? `${offlineUsage.files} photo${offlineUsage.files === 1 ? '' : 's'} saved on this device so your leads open without a connection.`
+                    : 'Checking what is saved on this device…'}
+                </Text>
+
+                <TouchableOpacity
+                  onPress={handleClearOfflineData}
+                  disabled={clearingCache || !offlineUsage?.files}
+                  className="py-3.5 rounded-xl items-center mt-4 border"
+                  style={{
+                    borderColor: colors.border,
+                    opacity: clearingCache || !offlineUsage?.files ? 0.5 : 1,
+                  }}
+                >
+                  {clearingCache ? (
+                    <ActivityIndicator color={colors.textSecondary} />
+                  ) : (
+                    <Text
+                      className="font-black text-[11px] tracking-widest"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      CLEAR OFFLINE PHOTOS
                     </Text>
                   )}
                 </TouchableOpacity>
