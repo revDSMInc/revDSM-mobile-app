@@ -34,6 +34,7 @@ import { LanguageProvider } from './src/i18n/LanguageProvider';
 import RootNavigator, { navigationRef } from './src/navigation';
 import { useAppInitialization } from './src/hooks/useAppInitialization';
 import { useSocketManager } from './src/hooks/useSocketManager';
+import { usePushNotifications } from './src/hooks/usePushNotifications';
 import { QueryClientProvider } from '@tanstack/react-query';
 import FlashMessage from 'react-native-flash-message';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -86,6 +87,12 @@ function AppContent() {
   }, [showSplash, splashMounted, splashOpacity]);
 
   const [currentRouteName, setCurrentRouteName] = useState<string | null>(null);
+
+  // Push notifications: foreground display, tap deep-links, cache refresh.
+  // Mounted once, at app level, so a notification is handled on every screen.
+  // The second argument is the chat the rep currently has open, used to suppress
+  // a banner for the thread they are already reading — wired in Module 3.
+  usePushNotifications(currentRouteName, null);
 
   const statusBarBg = isDark ? colors.background : '#0E2A1C';
 

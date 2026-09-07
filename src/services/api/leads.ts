@@ -130,6 +130,15 @@ export const LeadEndpoints = {
   // (`sales-portal`) which feeds the issued/self-gen leads panel.
   salesDeals: 'demo/v1/leads/sales',
   salesDealById: (id: string) => `demo/v1/leads/sales/${id}`,
+  /**
+   * A single lead by id, for opening one from a NOTIFICATION.
+   *
+   * ⚠️ Deliberately NOT `salesDealById` (`demo/v1/leads/sales/{id}`). A push
+   * carries only a lead id and the rep may be opening a lead that is not a sales
+   * deal at all — issued, cancelled, or one whose addendum was just signed. This
+   * is the route to use for any notification-driven navigation.
+   */
+  leadDetailsById: (id: string) => `lead/v1/details/${id}`,
   // Addendum drafts — the DYNAMIC deal-edit wizard submits here (NOT the
   // /job-builder POST). Mirrors web `submitJobBuilderDraft`/`sendDraftSubmitEmail`
   // + the DealDetailsView drafts list/summary.
@@ -404,6 +413,17 @@ export const LeadService = {
   // Single deal for the Deal Detail screen (web DealDetailsView load).
   getSalesDealById: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.salesDealById(leadId)),
+
+  /**
+   * Resolve a lead for NOTIFICATION deep-linking.
+   *
+   * ⚠️ Kept separate from `getSalesDealById` on purpose — that one has four other
+   * callers (Deal Detail, Pitch Book, Roofline Deck) which are all sales-deal
+   * surfaces and must keep their existing route. Repointing the shared method
+   * would change those three flows as a side effect of a notification fix.
+   */
+  getLeadDetailsById: (leadId: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.leadDetailsById(leadId)),
 
   // --- Dynamic deal-edit addendum draft (web parity) --------------------------
   // Final submit of the 4-step edit wizard. Creates a pending-signature addendum

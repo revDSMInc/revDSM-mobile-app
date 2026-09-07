@@ -16,6 +16,12 @@ prepare_react_native_project!
 #     password sk.<your-secret-download-token>
 $RNMapboxMapsImpl = 'mapbox'
 
+# @react-native-firebase — only consulted when USE_FRAMEWORKS is set. Firebase ships
+# static xcframeworks, and mixing them into dynamically linked pods is the documented
+# cause of "the Swift pod FirebaseCoreInternal depends upon FirebaseCore" at install
+# time. Harmless when frameworks are off, which is the default here.
+$RNFirebaseAsStaticFramework = true
+
 linkage = ENV['USE_FRAMEWORKS']
 if linkage != nil
   Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green

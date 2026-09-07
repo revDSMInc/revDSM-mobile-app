@@ -115,6 +115,11 @@ interface DynamicJobBuilderScreenProps {
   // Web `hideAllocationTrackers`: hide the pinned footage/allocation trackers.
   // Defaults to true in edit mode.
   hideAllocationTrackers?: boolean;
+  /**
+   * Open on the SUMMARY step instead of step 1. Set by the `agreement-signed`
+   * notification deep link, where the rep's next action is Complete Job.
+   */
+  openOnSummary?: boolean;
   appointmentId?: string;
   // --- Embedded (4-step deal-edit wizard, step "Job Build") -------------------
   // When true this renders as the wizard's inner build step (web `<DynamicJobBuilder
@@ -206,6 +211,7 @@ function DynamicJobBuilderInner({
   initialJobState: initialJobStateProp,
   portalUnrestrictedEdit: portalUnrestrictedEditProp,
   hideAllocationTrackers: hideAllocationTrackersProp,
+  openOnSummary = false,
   appointmentId,
   embedded = false,
   scheduleTimeOverride,
@@ -812,6 +818,38 @@ function DynamicJobBuilderInner({
     [availableTabs]
   );
 
+  /**
+   * Deep link from the `agreement-signed` notification: land on SUMMARY, not on
+   * step 1. The customer has signed, so the rep's next action is Complete Job —
+   * dropping them on Gutters means scrolling through every step to reach it.
+   *
+   * ⚠️ Waits for `availableTabs` to resolve. The tabs come from the config fetch,
+   * so on the first renders `summaryTab` is undefined and setting the id then
+   * would be overwritten by the default-tab effect.
+   *
+   * ⚠️ Deliberately bypasses `handleGoToTab`'s forward gate. That gate stops a rep
+   * SKIPPING incomplete work; here they are being sent to review a build that is
+   * already complete enough to have produced a signed agreement, and "Complete
+   * Job" runs its own validation regardless (the order-sheet requirement).
+   *
+   * Fires once — re-running would fight the rep the moment they pressed Back.
+   */
+  const openedOnSummaryRef = useRef(false);
+  /**
+   * ⚠️ Held across ONE commit so the fallback effect below cannot undo this.
+   * Both effects run in the same mount commit and both read the SAME pre-commit
+   * `selectedTabId` (still `''`), so the one defined later wins — which dropped
+   * the rep on step 1 with the deep link silently discarded.
+   */
+  const summaryPinnedRef = useRef(false);
+  useEffect(() => {
+    if (!openOnSummary || openedOnSummaryRef.current) return;
+    if (!summaryTab) return;
+    openedOnSummaryRef.current = true;
+    summaryPinnedRef.current = true;
+    setSelectedTabId(summaryTab.id);
+  }, [openOnSummary, summaryTab]);
+
   const currentTabIndex = useMemo(() => {
     if (!selectedTabId) return -1;
     if (selectedTabId === 'summary' || (summaryTab && selectedTabId === summaryTab.id)) {
@@ -832,6 +870,14 @@ function DynamicJobBuilderInner({
   // to step 1 — the job builder must open on the first tab, not the summary.
   const autoSummaryRef = useRef(false);
   useEffect(() => {
+    // Yield to the `openOnSummary` deep link for exactly as long as it takes to
+    // land. Cleared the moment the selection is observed to BE the summary, so a
+    // later vertical switch (which resets `selectedTabId` to '') still gets its
+    // fallback and the screen can never be left blank.
+    if (summaryPinnedRef.current) {
+      if (summaryTab && selectedTabId === summaryTab.id) summaryPinnedRef.current = false;
+      return;
+    }
     if (nonSummaryTabs.length > 0) {
       // Product tabs are available: open on the first one. Also correct a Summary
       // selection that was only a fallback picked before the tabs resolved (the

@@ -96,6 +96,23 @@ axiosInstance.interceptors.response.use(
             "Your session has expired or you've logged in on another device. Please log in again."
           );
 
+          // Drop the push token locally. The session is already gone here, so an
+          // authenticated DELETE is impossible — the backend prunes this token on
+          // its next send instead. Deleting it locally still matters: it forces a
+          // fresh token at the next sign-in, so a different rep on this handset
+          // cannot inherit the previous binding.
+          //
+          // ⚠️ Lazily required, NOT imported at the top. PushNotificationService
+          // reaches this module through services/api/notifications.ts, so a static
+          // import here would close a require cycle. Same pattern as the camera-roll
+          // require in useAppInitialization.
+          try {
+            const push = require('../PushNotificationService');
+            void push?.default?.clearLocalPushState?.();
+          } catch (pushErr) {
+            console.warn('[Push] local teardown on 401 failed:', pushErr);
+          }
+
           // Handle Logout Workflow
           await clearSession();
           queryClient.clear();

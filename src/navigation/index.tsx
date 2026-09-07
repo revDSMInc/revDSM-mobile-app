@@ -12,6 +12,7 @@ import AppointmentsPage from '../screens/Appointments/index';
 import LearningPage from '../screens/Learning/index';
 import ChatThreadsScreen from '../screens/ChatThreads/index';
 import ChatDetailScreen from '../screens/ChatDetail/index';
+import NotificationsScreen from '../screens/Notifications';
 import MapDetailPage from '../screens/MapDetail';
 import LeadCenterPage from '../screens/LeadCenter';
 import PitchbookScreen from '../screens/Pitchbook';
@@ -50,6 +51,7 @@ export type RootStackParamList = {
   JobTracker: undefined;
   MyLearning: undefined;
   ChatThreads: undefined;
+  Notifications: undefined;
   ChatDetail: {
     leadId?: string;
     chatId: string;
@@ -122,6 +124,16 @@ export type RootStackParamList = {
     calculatorResultData?: any;
     // Opt-in handoff from the Investment Center → open Result Lead (Sale).
     resultOptIn?: { calculatorId?: string; price?: number; paymentMethod?: string; downPayment?: number };
+    /**
+     * Open straight on the dynamic Job Builder (its Summary step), skipping the
+     * calculator and rollout steps. Set by the `agreement-signed` notification:
+     * the customer has signed, so the rep's next action is Complete Job.
+     *
+     * ⚠️ Honoured only once the calculators and config have loaded — the builder
+     * mounted early would render an empty summary. See the effect in
+     * `DynamicDealCenterScreen`.
+     */
+    openJobBuilder?: boolean;
   };
   MyDeals: undefined;
   // Deal Detail — opened from My Deals; hosts the contract summary + the Edit
@@ -225,6 +237,10 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                 <Stack.Screen name="MyLearning" component={LearningPage} />
                 <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
                 <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+                {/* Installers are chat participants, so they receive the four chat
+                    push types. Registering the screen here as well is what stops a
+                    tapped notification from throwing on an unknown route. */}
+                <Stack.Screen name="Notifications" component={NotificationsScreen} />
               </>
             ) : (
               <>
@@ -237,6 +253,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                 <Stack.Screen name="MyLearning" component={LearningPage} />
                 <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
                 <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+                <Stack.Screen name="Notifications" component={NotificationsScreen} />
                 <Stack.Screen name="MapDetail" component={MapDetailPage} />
                 <Stack.Screen
                   name="LeadCenter"
