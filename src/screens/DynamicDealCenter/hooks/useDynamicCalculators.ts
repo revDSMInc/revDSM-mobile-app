@@ -15,6 +15,12 @@ import {
 import { scopeSignature } from '../utils/scope-signature';
 import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logSectionCleared, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
 import { buildFieldLogLabel, findFieldStoryLabel } from '../utils/story-log-label';
+import { isOnline } from '../../../services/connectivity';
+import {
+  ensureOfflineWorkForLead,
+  saveOfflineDealCenter,
+} from '../../../services/offlineLeadStore';
+import { newWorkId, type OfflineCalculatorWork } from '../../../utils/offline-lead-work';
 
 /**
  * Persistence hook for the Dynamic Deal Center calculators — the schema-driven
@@ -140,6 +146,40 @@ const SAVE_DEBOUNCE_MS = 1500;
 const ZERO: CalculatorTotals = { cost: 0, par: 0, retail: 0 };
 
 const isBackendId = (id?: string) => !!id && /^[a-f0-9]{24}$/i.test(id);
+
+/**
+ * Rebuild a tab from the body stored on the device.
+ *
+ * ⚠️ The stored payload IS the body its `PUT /lfcalculators/{id}` would have sent, so this is the
+ * exact inverse of `buildPayload`. Keeping the two in step is what lets one record serve both the
+ * screen the rep is looking at and the upload that files it later.
+ */
+function tabFromOfflinePayload(
+  calc: OfflineCalculatorWork,
+  schemas: CalculatorSchema[]
+): CalcTab {
+  const p = (calc.payload || {}) as any;
+  const entries = mergeFullEntries(parseEntries(p.entries), schemas);
+  return {
+    id: calc.serverId || calc.clientId,
+    title: p.title || '1',
+    entries,
+    totals: p.totals || computeTotals(entries),
+    isRolloutConfirmed: p.isRolloutConfirmed,
+    price: p.price,
+    pricemarkup: p.pricemarkup,
+    priceScopeSig: p.priceScopeSig || '',
+    paymentMethod: p.paymentMethod || undefined,
+    dropPrice: p.dropPrice || [],
+    downPayment: p.downPayment,
+    discountPercentage: p.discountPercentage,
+    selectedRenders: p.selectedRenders || [],
+    oneYearMonthlyPlan: p.oneYearMonthlyPlan ?? null,
+    inHome: p.inHome ?? null,
+    // ⚠️ NOT `persisted`. Nothing has reached the server, and the flag gates the unmount PUT.
+    persisted: false,
+  };
+}
 
 function computeTotals(entries: Record<string, CalculatorEntry>): CalculatorTotals {
   return Object.values(entries).reduce(
@@ -404,6 +444,14 @@ export function useDynamicCalculators(
 
   // Always-current tabs snapshot so the debounced flush reads the LATEST state
   // (web reads `entriesRef.current`, not a stale closure value).
+  // ── Offline: the device record this Deal Center session writes into ────────
+  // `null` while online — every write below then takes its normal remote path.
+  const offlineWorkIdRef = useRef<string | null>(null);
+  const apptClientIdRef = useRef<string | null>(null);
+  const apptPayloadRef = useRef<Record<string, unknown> | null>(null);
+  const offlineTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistOfflineRef = useRef<((list?: CalcTab[]) => void) | null>(null);
+
   const tabsRef = useRef(tabs);
   useEffect(() => {
     tabsRef.current = tabs;
@@ -529,11 +577,50 @@ export function useDynamicCalculators(
     return changed ? next : list;
   }, []);
 
+  /**
+   * Write the whole Deal Center to the device.
+   *
+   * Stores each tab under exactly the body its PUT would have carried, so the uploader replays the
+   * session as ~one request per calculator rather than one per edit.
+   */
+  const persistOffline = useCallback((explicit?: CalcTab[]) => {
+    const workId = offlineWorkIdRef.current;
+    if (!workId) return;
+    // ⚠️ `tabsRef` is synced by an effect, so it still holds the PREVIOUS list during the render
+    // that seeds the tabs. The bootstrap therefore passes its list in rather than reading the ref.
+    const calculators: OfflineCalculatorWork[] = (explicit || tabsRef.current).map((t) => ({
+      clientId: t.id,
+      serverId: isBackendId(t.id) ? t.id : undefined,
+      payload: {
+        ...buildPayloadRef.current(t),
+        // ⚠️ Added back deliberately. `buildPayload` omits `dropPrice` because online it has its
+        // own writer (`saveDropsNow`) — offline there is no second writer, so leaving it out would
+        // silently drop every negotiation round the rep walked the customer through.
+        dropPrice: t.dropPrice || [],
+      },
+    }));
+    saveOfflineDealCenter(workId, {
+      appointment: apptPayloadRef.current || undefined,
+      appointmentClientId: apptClientIdRef.current || undefined,
+      calculators,
+    });
+  }, []);
+  persistOfflineRef.current = persistOffline;
+
   // ── Debounced save engine (ports web DealCenterContext.flushSave) ───────────
   const flushSaveRef = useRef<((tabId: string) => void) | null>(null);
 
   const scheduleSave = useCallback((tabId: string) => {
-    if (!isBackendId(tabId)) return; // local-only tabs are never saved remotely
+    // Offline, or a calculator with no server id yet: the state goes to the DEVICE on the same
+    // debounce and is uploaded later. One timer for the whole store, not one per tab — the record
+    // holds every calculator, so a per-tab timer would just rewrite the same blob N times.
+    if (!isBackendId(tabId) || !isOnline()) {
+      if (offlineWorkIdRef.current) {
+        if (offlineTimer.current) clearTimeout(offlineTimer.current);
+        offlineTimer.current = setTimeout(() => persistOfflineRef.current?.(), SAVE_DEBOUNCE_MS);
+      }
+      return;
+    }
     if (saveTimers.current[tabId]) clearTimeout(saveTimers.current[tabId]);
     saveTimers.current[tabId] = setTimeout(() => flushSaveRef.current?.(tabId), SAVE_DEBOUNCE_MS);
   }, []);
@@ -603,7 +690,14 @@ export function useDynamicCalculators(
    */
   const saveDropsNow = useCallback(
     async (tabId: string, drops: any[], attempt = 0) => {
-      if (!isBackendId(tabId)) return; // local-only tab: nothing to update yet
+      // Offline, or a calculator with no server id yet: drops are already on the tab, so write the
+      // whole record to the device. ⚠️ IMMEDIATELY, not on the debounce — a drop is a deliberate
+      // Secure/Decline, and `handleSetDrops` does not `markDirty`, so nothing else would ever
+      // persist it. `tabsRef` is updated synchronously by that handler, so this sees the new list.
+      if (!isBackendId(tabId) || !isOnline()) {
+        persistOfflineRef.current?.();
+        return;
+      }
       if (dropSaveInFlight.current[tabId]) {
         dropSavePending.current[tabId] = drops;
         return;
@@ -768,6 +862,55 @@ export function useDynamicCalculators(
     let cancelled = false;
     (async () => {
       setLoading(true);
+
+      // ── No signal: the DEVICE record is the Deal Center ──────────────────────
+      // Nothing here touches the network. `resolveAppointmentId` below is three requests deep and
+      // offline it can only time out, so the rep would watch a spinner for the length of all of
+      // them before landing in the local mode this reaches immediately.
+      if (!isOnline()) {
+        const work = ensureOfflineWorkForLead(lead);
+        if (work) {
+          offlineWorkIdRef.current = work.clientId;
+          const apptClientId = work.appointmentClientId || newWorkId('appt');
+          apptClientIdRef.current = apptClientId;
+          apptPayloadRef.current = {
+            title: customerTitleOf(lead),
+            address: lead?.fullAddress || lead?.address || '',
+            leadId: lead?.leadId,
+            selfGenLeadId: lead?._id || lead?.selfGenLeadId || lead?.id,
+          };
+          // An appointment already resolved online keeps its real id; otherwise the client one
+          // stands in until the upload creates it.
+          setAppointmentId(work.serverIds.appointmentId || apptClientId);
+
+          const stored = work.calculators || [];
+          const hydrated: CalcTab[] = stored.length
+            ? stored.map((c) => tabFromOfflinePayload(c, schemasRef.current))
+            : [
+                (() => {
+                  // Web parity: a new calculator is seeded with the FULL field list across every
+                  // vertical, so the eventual create sends the same entries array it would online.
+                  const seeded = mergeFullEntries({}, schemasRef.current);
+                  return {
+                    id: newWorkId('calc'),
+                    title: customerNameOf(lead) || '1',
+                    entries: seeded,
+                    totals: computeTotals(seeded),
+                  };
+                })(),
+              ];
+
+          if (cancelled) return;
+          setTabs(hydrated);
+          setActiveTabId(hydrated[0].id);
+          setLoading(false);
+          // Seed the record now, so the appointment payload and the first calculator exist even if
+          // the rep opens the Deal Center and backs straight out.
+          persistOfflineRef.current?.(hydrated);
+          return;
+        }
+      }
+
       const apptId = await resolveAppointmentId(lead);
       if (cancelled) return;
       setAppointmentId(apptId);
@@ -892,6 +1035,10 @@ export function useDynamicCalculators(
     const dirtyMap = dirty.current;
     return () => {
       Object.values(timers).forEach((t) => clearTimeout(t));
+      // The offline debounce may not have fired either — same reasoning as the PUT below, and it
+      // matters more here: there is no reconnect that would retry a write that never happened.
+      if (offlineTimer.current) clearTimeout(offlineTimer.current);
+      persistOfflineRef.current?.();
       // Fire a FINAL PUT for every dirty calculator with the latest state — even if a
       // save is in flight. On unmount there's no follow-up mechanism left, so skipping
       // an in-flight calc (as before) could drop a just-confirmed price when the rep

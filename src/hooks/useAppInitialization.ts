@@ -13,6 +13,7 @@ import { setInitial } from '../redux/reducer/auth.reducer';
 import SocketManager from '../services/SocketManager';
 import PushNotificationService from '../services/PushNotificationService';
 import { startOfflineSyncTimer, stopOfflineSyncTimer } from '../services/api/offlineUploadManager';
+import { startOfflineWorkSync } from '../services/offlineLeadStore';
 import {
   startConnectivityMonitor,
   stopConnectivityMonitor,
@@ -215,6 +216,10 @@ export function useAppInitialization() {
     // Start background sync for offline image uploads. Now reconnect-driven — see
     // `offlineUploadManager.startOfflineSyncTimer`.
     startOfflineSyncTimer();
+
+    // Replay leads created with no signal. Also reconnect-driven, and idempotent — calling it a
+    // second time is a no-op, so a remount cannot double-subscribe the drain.
+    startOfflineWorkSync();
     return () => {
       stopOfflineSyncTimer();
       stopConnectivityMonitor();

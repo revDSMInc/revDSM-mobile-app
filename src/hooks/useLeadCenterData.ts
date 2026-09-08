@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { isClientId } from '../utils/offline-lead-work';
+import { isOnline } from '../services/connectivity';
 import { AppState } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
@@ -99,6 +101,13 @@ export const useLeadCenterData = (
    */
   const refetch = useCallback(async () => {
     if (!user?._id || !lead?._id) return;
+    // ⚠️ A lead the rep created with no signal has no server record to hydrate FROM — its id is one
+    // this device minted, so the request is `…/sales-portal/work-1773…`, which 404s. The local
+    // record IS the truth until the uploader files it, so leave `lead` exactly as it was handed in.
+    // ⚠️ Tested on the ID ALONE, never on the lead object. This callback deliberately closes over
+    // `lead._id` and not `lead` (see the note on its dependency list) — reading another field here
+    // puts `lead` in the deps and re-runs the hydrate on every hydrate.
+    if (isClientId(lead._id) || !isOnline()) return;
     // Collapse the open-hydrate and the focus refresh into a single request when they
     // land together on mount, and stop a fast re-focus from stacking calls.
     if (hydrateInFlightRef.current === lead._id) return;

@@ -30,6 +30,10 @@ import { useWorkLeadMutation } from '../../hooks/useLeadMutation';
 import LeadCreateModal from '../../widgets/modals/LeadCreate';
 import ZoneCanvasserMap from '../../widgets/modals/ZoneCanvasserMap';
 import { LeadCard } from '../../widgets/components/LeadCard';
+import { PendingLeadsBanner } from '../../widgets/components/PendingLeadsBanner';
+import { offlineLeadsForTab, isOfflineLead } from '../../utils/offline-lead-work';
+import { getOfflineWork, subscribeOfflineWork } from '../../services/offlineLeadStore';
+import { isOnline } from '../../services/connectivity';
 import { Header } from '../../widgets/common/MainHeader';
 import { RootStackParamList } from '../../navigation';
 import type { Lead } from '../../config/types/lead';
@@ -146,7 +150,26 @@ export default function LeadsPage() {
   // The rest of the screen — search, count chip, list, refresh, archive/delete — is
   // written against these three, so the Rehash tab reuses all of it instead of getting
   // a parallel branch that can drift.
-  const sourceLeads = isRehash ? rehashLeads : leads;
+  // Leads the rep created with no signal. They exist only on this device until the uploader files
+  // them, so nothing on the server can return them and they have to be merged in here.
+  const [offlineWork, setOfflineWork] = useState(() => getOfflineWork());
+  useEffect(() => subscribeOfflineWork(() => setOfflineWork([...getOfflineWork()])), []);
+
+  const serverLeads = isRehash ? rehashLeads : leads;
+
+  const sourceLeads = useMemo(() => {
+    if (isRehash) return serverLeads;
+    // ⚠️ Only on the tab a NEW lead would land on. Showing it under Archived or Sold would say the
+    // lead has a history it does not have yet.
+    const onCurrentTab =
+      currentTab === 'issued' ? issuedSubTab === 'today' : selfGenSubTab === 'today';
+    if (!onCurrentTab) return serverLeads;
+
+    const pending = offlineLeadsForTab(offlineWork, currentTab === 'issued' ? 'lfLead' : 'selfGen');
+    if (!pending.length) return serverLeads;
+    // First: they carry no scheduled time, and it is the lead the rep just knocked.
+    return [...pending, ...(serverLeads || [])];
+  }, [isRehash, serverLeads, offlineWork, currentTab, issuedSubTab, selfGenSubTab]);
   const isListLoading = isRehash ? rehashLoading : loading;
   const refreshActive = useCallback(
     () => (isRehash ? refreshRehash() : refresh()),
@@ -358,6 +381,15 @@ export default function LeadsPage() {
     // opened from the leads list — so firing it on list-open was a mobile-only event
     // that showed up on lead entry. Removed for web parity.
 
+    // ⚠️ The start-appointment flow is a WRITE. Offline it can only time out, and the rep would
+    // watch a spinner for the length of that timeout before the catch below opens the screen
+    // anyway — so go straight there. A lead with no server record has no appointment to start.
+    if (isOfflineLead(item) || !isOnline()) {
+      setNavigatingLeadId(null);
+      navigation.navigate('LeadCenter', { lead: item });
+      return;
+    }
+
     try {
       const { lead: targetLead } = await executeStartAppointmentFlow({
         lead: item,
@@ -568,6 +600,9 @@ export default function LeadsPage() {
           keyExtractor={(item, index) =>
             String(item._id ?? (item as any).id ?? item.leadId ?? index)
           }
+          // Leads queued on the device sit ABOVE the server's list — that is where the rep looks
+          // for the one they just created, and the banner renders nothing when the queue is empty.
+          ListHeaderComponent={<PendingLeadsBanner colors={colors} isDark={isDark} />}
           windowSize={15}
           initialNumToRender={8}
           maxToRenderPerBatch={10}

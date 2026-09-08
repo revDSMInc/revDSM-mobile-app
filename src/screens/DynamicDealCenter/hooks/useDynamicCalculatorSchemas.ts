@@ -1,5 +1,9 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { OFFLINE_CACHE, cachedFetch } from '../../../utils/offline-query-cache';
+import { isOnline } from '../../../services/connectivity';
+import { useAuth } from '../../../hooks/useAuth';
+
 import api from '../../../services/api';
 import { ensureVerticalSummaryTabs, enrichConfigWithProductColors } from '../../../utils/dynamic-job-builder/engine/product-catalog-utils';
 import { migrateConfigTabFields } from '../../../utils/dynamic-job-builder/engine/combination-utils';
@@ -52,23 +56,36 @@ export function useDynamicCalculatorSchemas(
   options: UseDynamicCalculatorSchemasOptions = {}
 ): UseDynamicCalculatorSchemasResult {
   const { enabled = true } = options;
+  // The job builder's verticals and tabs are company setup, so they are cached: with no signal the
+  // builder would otherwise fall back to `createDefaultJobBuilderConfig()`, which is a different
+  // set of products from the one the rep just quoted.
+  const { user } = useAuth();
+  const userId = user?._id || user?.id;
 
   const { data, isLoading } = useQuery<JobBuilderConfig | null>({
     queryKey: ['jobBuilderProductsConfig'],
-    queryFn: async () => {
-      const res = await api.get<any>(JOB_BUILDER_PRODUCTS_URL);
-      const response = res.data as any;
-      if (response?.code !== 200) return null;
-      const normalized = normalizeLightweight(response.data);
-      if (!normalized) return null;
-      // Attach product colors (from Product Management) to each tab so swatch
-      // fields can list every color + resolve a product image (web parity —
-      // `api/job-builder-products.js` wraps the config in this before use).
-      const enriched = enrichConfigWithProductColors(normalized, normalized.products || []);
-      return ensureVerticalSummaryTabs(
-        migrateConfigTabFields(enriched)
-      ) as JobBuilderConfig;
-    },
+    queryFn: () =>
+      cachedFetch(
+        OFFLINE_CACHE.JOB_BUILDER_CONFIG,
+        async () => {
+          const res = await api.get<any>(JOB_BUILDER_PRODUCTS_URL);
+          const response = res.data as any;
+          if (response?.code !== 200) return null;
+          const normalized = normalizeLightweight(response.data);
+          if (!normalized) return null;
+          // Attach product colors (from Product Management) to each tab so swatch
+          // fields can list every color + resolve a product image (web parity —
+          // `api/job-builder-products.js` wraps the config in this before use).
+          const enriched = enrichConfigWithProductColors(normalized, normalized.products || []);
+          return ensureVerticalSummaryTabs(
+            migrateConfigTabFields(enriched)
+          ) as JobBuilderConfig;
+        },
+        // ⚠️ A config with no verticals is the "not configured yet" answer and must never be
+        // written over a good copy — offline that would silently swap the rep's real products for
+        // the bundled default set.
+        { online: isOnline(), userId, isEmpty: (d: any) => !d?.verticals?.length }
+      ),
     enabled,
     staleTime: 5 * 60 * 1000,
     retry: 1,

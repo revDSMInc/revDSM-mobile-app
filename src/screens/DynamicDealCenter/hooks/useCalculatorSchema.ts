@@ -1,5 +1,9 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { OFFLINE_CACHE, cachedFetch } from '../../../utils/offline-query-cache';
+import { isOnline } from '../../../services/connectivity';
+import { useAuth } from '../../../hooks/useAuth';
+
 import api from '../../../services/api';
 import type {
   CalculatorSchema,
@@ -99,15 +103,25 @@ export function useCalculatorSchema(
   options: UseCalculatorSchemaOptions = {}
 ): UseCalculatorSchemaResult {
   const { enabled = true } = options;
+  // Company setup, not the rep's data — cached so the Deal Center still has products, fields and
+  // prices with no signal. Scoped by rep, so a second login on the same device cannot read the
+  // first company's schema.
+  const { user } = useAuth();
+  const userId = user?._id || user?.id;
 
   // Company pricing config drives per-field tier derivation (par/cost from retail)
   // and static fees. Fetched alongside the schemas and baked into the field prices.
   const { data: pricingConfig, isLoading: pricingLoading } = useQuery<PricingConfig | null>({
     queryKey: ['dealCenterPricingConfig'],
-    queryFn: async () => {
-      const res = await api.get<any>(PRICING_CONFIG_URL);
-      return normalizeSalesPricingConfig(res.data?.data?.config ?? res.data?.config);
-    },
+    queryFn: () =>
+      cachedFetch(
+        OFFLINE_CACHE.DEAL_CENTER_PRICING,
+        async () => {
+          const res = await api.get<any>(PRICING_CONFIG_URL);
+          return normalizeSalesPricingConfig(res.data?.data?.config ?? res.data?.config);
+        },
+        { online: isOnline(), userId }
+      ),
     enabled,
     staleTime: 5 * 60 * 1000,
     retry: 1,
@@ -117,11 +131,16 @@ export function useCalculatorSchema(
   // memo below once the pricing config resolves, so blank tiers derive correctly.
   const { data: rawEntities, isLoading } = useQuery<any[]>({
     queryKey: ['dealCenterCalculatorSchemas'],
-    queryFn: async () => {
-      const res = await api.get<any>(DEAL_CENTER_SCHEMAS_URL);
-      const raw = (res.data as any)?.data || [];
-      return Array.isArray(raw) ? raw : [];
-    },
+    queryFn: () =>
+      cachedFetch(
+        OFFLINE_CACHE.DEAL_CENTER_SCHEMA,
+        async () => {
+          const res = await api.get<any>(DEAL_CENTER_SCHEMAS_URL);
+          const raw = (res.data as any)?.data || [];
+          return Array.isArray(raw) ? raw : [];
+        },
+        { online: isOnline(), userId }
+      ),
     enabled,
     staleTime: 5 * 60 * 1000,
     retry: 1,
