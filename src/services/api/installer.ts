@@ -321,10 +321,6 @@ export const normalizeInstallerJob = (raw: any): InstallerJob => {
     location: raw?.location,
     status,
     workflowState: raw?.workflowState,
-    // Server-composed; `?? null` rather than `|| undefined` so "the API said
-    // there is no label" and "the API did not answer" stay the same thing to
-    // the card, which draws a chip only for a non-empty string.
-    statusLabel: raw?.statusLabel ?? null,
     // `installerBypass` on the installer rows; `bypass` is the same object under the
     // name the sales endpoints use, accepted so a job fetched through either shape
     // reaches the gates. Left undefined when neither is present — the gates test the

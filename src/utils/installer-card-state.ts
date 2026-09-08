@@ -329,7 +329,15 @@ export const resolveJobCardState = (
   // An unrecognised or missing value falls back to `start` rather than to `resume`:
   // offering to *start* a job already underway is a harmless extra check-in, while
   // offering to *resume* one never begun would skip the start the crew expects.
-  const resolved = state ?? BY_WORKFLOW_STATE.start;
+  //
+  // Unrecognised is now a real case, not just a guard: a job carrying a Can't Do
+  // Work / Not Hit / Reset request has the PHRASE for that request in
+  // `workflowState` instead of a base state. So the fallback asks the job itself
+  // rather than assuming — a crew mid-visit must keep reading Resume, and the
+  // phrase must not silently walk them back to a check-in they already did.
+  const resolved =
+    state ??
+    (isJobInProgress(job) ? BY_WORKFLOW_STATE.resume : BY_WORKFLOW_STATE.start);
 
   /**
    * The WHEN gate guards the START of a visit and nothing else. A job already underway is
@@ -385,4 +393,35 @@ export const resolveJobCardState = (
   }
 
   return resolved;
+};
+
+/**
+ * Every value that is a STATE rather than a phrase.
+ *
+ * `BY_WORKFLOW_STATE` on its own is not that list: it maps the values that pick
+ * a card style, and `resulted` is not one of them — a resulted job is answered
+ * by the branch above the lookup and never reaches it. Testing membership there
+ * would therefore report `resulted` as a phrase and print it as a chip.
+ */
+const BASE_WORKFLOW_STATES = new Set([
+  ...Object.keys(BY_WORKFLOW_STATE),
+  'resulted',
+]);
+
+/**
+ * The phrase a job carrying a Can't Do Work / Not Hit / Reset request reads —
+ * "Pending Install Not Hit", "Rescheduled Reset", "Install Can't Do Work".
+ *
+ * `workflowState` holds either a base state or one of these; the server composes
+ * the phrase and it replaces the base state rather than sitting in a field of its
+ * own. So the test is simply "not one of the three we know" — which also means a
+ * phrase added server-side shows up with no mobile release, the same property
+ * `humanizeStatus` above was written for.
+ *
+ * Null when the job carries a base state or nothing, which is most jobs.
+ */
+export const installStatusPhrase = (job: InstallerJob): string | null => {
+  const value = String(job?.workflowState ?? '').trim();
+  if (!value) return null;
+  return BASE_WORKFLOW_STATES.has(value) ? null : value;
 };

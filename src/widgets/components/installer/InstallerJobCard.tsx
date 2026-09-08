@@ -5,7 +5,10 @@ import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import { format } from 'date-fns';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useTranslation } from '../../../i18n/LanguageProvider';
-import { resolveJobCardState } from '../../../utils/installer-card-state';
+import {
+  installStatusPhrase,
+  resolveJobCardState,
+} from '../../../utils/installer-card-state';
 import { MapSelectionModal } from '../../common/modal/MapSelectionModal';
 import type { InstallerJob } from '../../../config/types/installer';
 
@@ -100,11 +103,12 @@ export function InstallerJobCard({
    * Where a Can't Do Work / Not Hit / Reset request on this job has got to, in
    * the API's own words — "Pending Install Not Hit", "Rescheduled Reset".
    *
-   * Composed server-side rather than here: a job whose request is still in
-   * flight stays `inProgress`, so half of these phrases cannot be derived from
-   * anything the card holds. Null on every job with no request behind it.
+   * Read off `workflowState`, which carries the phrase in place of its base
+   * state on a job that has one. Composed server-side rather than here: a job
+   * whose request is still in flight stays `inProgress`, so half of these
+   * phrases cannot be derived from anything the card holds.
    */
-  const statusLabel = job.statusLabel || null;
+  const workflowPhrase = installStatusPhrase(job);
 
   /**
    * Tone is read off the wire status, never off the label text — the copy is the
@@ -115,7 +119,7 @@ export function InstallerJobCard({
    *   can't do work  → error:   the job is off
    *   rescheduled    → info:    the job is alive again, on a new day
    */
-  const statusLabelColor = (() => {
+  const workflowPhraseColor = (() => {
     const s = String(job.status ?? '');
     if (s === 'cantDoWork') return '#FF5630';
     if (s.startsWith('rescheduled')) return '#00B8D9';
@@ -176,17 +180,17 @@ export function InstallerJobCard({
               nothing useful beside the arrival window. A job with no request in
               its history has no label and no row, so nothing moves on the cards
               that make up most of the list. */}
-          {!!statusLabel && (
+          {!!workflowPhrase && (
             <View className="flex-row mb-4">
               <View
                 className="px-3 py-1.5 rounded-lg"
-                style={{ backgroundColor: statusLabelColor + '1F' }}
+                style={{ backgroundColor: workflowPhraseColor + '1F' }}
               >
                 <Text
                   className="text-[11px] font-black tracking-wide"
-                  style={{ color: statusLabelColor }}
+                  style={{ color: workflowPhraseColor }}
                 >
-                  {statusLabel.toUpperCase()}
+                  {workflowPhrase.toUpperCase()}
                 </Text>
               </View>
             </View>
