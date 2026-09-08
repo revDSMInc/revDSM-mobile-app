@@ -387,6 +387,17 @@ export interface InstallerJob {
   /** Position in the installer workflow, e.g. "start". */
   workflowState?: string;
   /**
+   * Where this job's Can't Do Work / Not Hit / Reset request has got to, in the
+   * words a crew reads — "Pending Install Not Hit", "Rescheduled Reset",
+   * "Install Can't Do Work".
+   *
+   * Composed server-side (`installJobStatusLabel`) because half of it cannot be
+   * derived here: a job with a request still in flight stays `inProgress`, so
+   * the pending wording lives in the requests collection, not on the job.
+   * Absent on every other job, which is most of them — no chip is drawn then.
+   */
+  statusLabel?: string | null;
+  /**
    * Manager overrides that switch off the check-in gates for this job. Absent on jobs
    * nobody has overridden, which is the normal case — see `utils/job-bypass.ts`, which
    * is the only thing that should read it.
