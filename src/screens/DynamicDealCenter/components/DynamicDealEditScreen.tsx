@@ -61,11 +61,14 @@ import {
   logDealJobCancelled,
   logDealPriceAutoAdjusted,
   logDealPriceFieldChanged,
-  logDealStepNavigation,
+  logDealReviewFieldChanged,
+  logDealStepViewed,
 } from '../../../utils/activity-log/my-deal-log';
 import {
   diffScreenValues,
   snapshotScreenValues,
+  type ScreenValueChange,
+  type ScreenValues,
 } from '../../../utils/activity-log/screen-value-diff';
 import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
 import { validateEmail } from '../../../utils/validation';
@@ -99,11 +102,80 @@ const STEP_LABELS = ['Install Date', 'Job Build', 'Job Price', 'Review & Submit'
 const fmtMoney = (n: any) => `$${Math.round(Number(n) || 0).toLocaleString()}`;
 
 /**
- * How long a Job Price edit settles before it is logged. Matches web
- * (): a contract price typed digit by digit is ONE decision,
- * and a row per keystroke would bury the figure the rep settled on.
+ * How long an edit settles before it is logged. Matches web
+ * (`FIELD_LOG_DEBOUNCE_MS`): a contract price - or a phone number - typed digit by
+ * digit is ONE decision, and a row per keystroke would bury the value the rep
+ * settled on, as well as filing every incomplete one on the deal.
  */
-const PRICE_LOG_DEBOUNCE_MS = 1000;
+const FIELD_LOG_DEBOUNCE_MS = 1000;
+
+/**
+ * Report what the rep changed on one wizard screen, once the edit settles.
+ *
+ * Shared by Job Price and Review & Submit rather than written twice: both are a
+ * baseline plus a debounce, and two copies of that would drift - one screen would
+ * quietly stop reporting, or start reporting its opening values as edits.
+ *
+ * WARNING The FIRST snapshot while a screen is active is the BASELINE and logs
+ * nothing: it is what the deal was saved with, not something the rep did. It is
+ * dropped when the screen is left, so coming back re-baselines against what is on
+ * screen then.
+ *
+ * Returns a `flush` with a STABLE identity, so callers can put it in a dependency
+ * array. Call it before navigating away or submitting - the timer is cleared on
+ * unmount, so an edit made in the last second would otherwise never be reported.
+ */
+function useScreenChangeLog(
+  active: boolean,
+  values: ScreenValues,
+  emit: ((change: ScreenValueChange) => void) | null
+) {
+  const snapshotRef = useRef<Record<string, string> | null>(null);
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
+  // Held in a ref so `flush` never changes identity when the emitter closes over
+  // fresh state.
+  const emitRef = useRef(emit);
+  emitRef.current = emit;
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flush = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    const prev = snapshotRef.current;
+    const current = valuesRef.current;
+    snapshotRef.current = snapshotScreenValues(current);
+    const send = emitRef.current;
+    if (!send) return;
+    diffScreenValues(prev, current).forEach(send);
+  }, []);
+
+  useEffect(() => {
+    if (!active) {
+      // Leaving the screen: flush anything still pending, then drop the baseline.
+      if (timerRef.current) flush();
+      snapshotRef.current = null;
+      return;
+    }
+    if (snapshotRef.current === null) {
+      snapshotRef.current = snapshotScreenValues(values);
+      return;
+    }
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(flush, FIELD_LOG_DEBOUNCE_MS);
+  }, [active, values, flush]);
+
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    },
+    []
+  );
+
+  return flush;
+}
 
 // The two install windows offered on the confirm-time step, in order (web parity:
 // `TIME_SLOTS`). "Doesn't Work" walks this list, then returns to the calendar.
@@ -617,10 +689,16 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     return {
       userId,
       leadId,
+      // The HUMAN lead id, matching the portal capture (which reads "N/A" on a
+      // self-gen lead) - NOT the mongo id, which `leadId` above already carries.
+      jobBuilderId: lead?.leadId || leadId,
       ...(editCalculatorId ? { calculatorId: editCalculatorId } : {}),
+      // On every row in the capture: which job-builder config the edit was made
+      // against, so a row can still be read after the config is edited.
+      configId: savedOutcome?.jobBuilder?.configId || (jobBuilderConfig as any)?.id || null,
       result: lead?.result || 'Sale',
     };
-  }, [user, leadId, editCalculatorId, lead?.result]);
+  }, [user, leadId, editCalculatorId, lead?.result, lead?.leadId, savedOutcome, jobBuilderConfig]);
 
   // The schedule as it stands, echoed on every decision row so the timeline reads
   // without having to join back to the deal.
@@ -633,22 +711,31 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   );
 
   // The four wizard steps, by the names the portal shows them under.
-  const stepName = useCallback((n: number) => STEP_LABELS[n] || `STEP_${n + 1}`, []);
+  // One view row per screen the rep lands on.
+  //
+  // WARNING Job Build is skipped: the embedded builder logs a `step_viewed` per TAB
+  // it opens, so a wizard-level row there would only add a duplicate parent entry
+  // above them (web skips it for the same reason).
+  //
+  // Ref-guarded rather than fired from a handler, so the screen the wizard OPENS on
+  // is reported too — that is the row that was missing, and no handler runs for it.
+  const lastLoggedStepRef = useRef(-1);
+  useEffect(() => {
+    if (!dealLogTarget || step === 1) return;
+    if (lastLoggedStepRef.current === step) return;
+    lastLoggedStepRef.current = step;
+    logDealStepViewed({ ...dealLogTarget, step });
+  }, [step, dealLogTarget]);
 
-  const logStepMove = useCallback(
-    (from: number, to: number, direction: 'forward' | 'back') => {
-      if (!dealLogTarget || from === to) return;
-      logDealStepNavigation({
-        ...dealLogTarget,
-        fromStep: from + 1,
-        fromStepName: stepName(from),
-        toStep: to + 1,
-        toStepName: stepName(to),
-        direction,
-      });
-    },
-    [dealLogTarget, stepName]
-  );
+  // The builder is mounted from the start so a job build survives stepping away,
+  // which also meant it logged its first tab view before the rep had seen it. Latched
+  // ON when they first reach Job Build and left on for the session, so bouncing
+  // between steps does not re-open it (web `buildStepVisited`).
+  const [buildStepVisited, setBuildStepVisited] = useState(false);
+  useEffect(() => {
+    if (step === 1) setBuildStepVisited(true);
+  }, [step]);
+
 
   // ── Job Price change tracking ───────────────────────────────────────────────
   // The five values a rep can move on step 2, in the shape the diff reads. The
@@ -695,58 +782,54 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [contractPrice, downPayment, balance, downPaymentMethodKey, balanceMethodKey, resolvePlanLabel, markupText]
   );
 
-  // WARNING The FIRST snapshot is the baseline and logs nothing - it is what the
-  // deal was saved with, not something the rep did. Without it, merely opening the
-  // step would report all five fields as changed. Cleared when the step is left so
-  // coming back re-baselines against what is on screen then.
-  const priceSnapshotRef = useRef<Record<string, string> | null>(null);
-  const priceValuesRef = useRef(priceScreenValues);
-  priceValuesRef.current = priceScreenValues;
-  const priceFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushPriceChanges = useScreenChangeLog(
+    step === 2,
+    priceScreenValues,
+    dealLogTarget
+      ? (change) =>
+          logDealPriceFieldChanged({
+            ...dealLogTarget,
+            fieldName: change.fieldName,
+            fieldLabel: change.fieldLabel,
+            oldValue: change.oldValue,
+            newValue: change.newValue,
+            extra: change.meta,
+          })
+      : null
+  );
 
-  const flushPriceChanges = useCallback(() => {
-    if (priceFlushRef.current) {
-      clearTimeout(priceFlushRef.current);
-      priceFlushRef.current = null;
-    }
-    const prev = priceSnapshotRef.current;
-    const values = priceValuesRef.current;
-    priceSnapshotRef.current = snapshotScreenValues(values);
-    if (!dealLogTarget) return;
-    diffScreenValues(prev, values).forEach((change) => {
-      logDealPriceFieldChanged({
-        ...dealLogTarget,
-        fieldName: change.fieldName,
-        fieldLabel: change.fieldLabel,
-        oldValue: change.oldValue,
-        newValue: change.newValue,
-        extra: change.meta,
-      });
-    });
-  }, [dealLogTarget]);
+  // ── Review & Submit change tracking ────────────────────────────────────────
+  // The three things the rep can still edit on the last step. Web tracks only the
+  // phone here; the note and the email are mobile's own - the note is shown to the
+  // customer ON the addendum, and the email decides where a copy is sent, so both
+  // are worth a row.
+  //
+  // WARNING The phone and email are the CUSTOMER'S contact details, and this puts
+  // them on the activity timeline. Web already logs the phone; the email was asked
+  // for so a rep can be shown where an addendum actually went.
+  const reviewScreenValues = useMemo(
+    () => ({
+      note: { label: 'Additional Notes', value: note },
+      customerPhone: { label: 'Send Addendum To', value: customerPhone },
+      customerEmail: { label: 'Email Address', value: customerEmail },
+    }),
+    [note, customerPhone, customerEmail]
+  );
 
-  useEffect(() => {
-    if (step !== 2) {
-      // Leaving the step: flush anything still pending, then drop the baseline.
-      if (priceFlushRef.current) flushPriceChanges();
-      priceSnapshotRef.current = null;
-      return;
-    }
-    if (priceSnapshotRef.current === null) {
-      priceSnapshotRef.current = snapshotScreenValues(priceScreenValues);
-      return;
-    }
-    // Debounced, like web: a price typed digit by digit is ONE decision.
-    if (priceFlushRef.current) clearTimeout(priceFlushRef.current);
-    priceFlushRef.current = setTimeout(flushPriceChanges, PRICE_LOG_DEBOUNCE_MS);
-  }, [step, priceScreenValues, flushPriceChanges]);
-
-  // A pending edit must not be lost when the rep closes the wizard.
-  useEffect(
-    () => () => {
-      if (priceFlushRef.current) clearTimeout(priceFlushRef.current);
-    },
-    []
+  const flushReviewChanges = useScreenChangeLog(
+    step === 3,
+    reviewScreenValues,
+    dealLogTarget
+      ? (change) =>
+          logDealReviewFieldChanged({
+            ...dealLogTarget,
+            fieldName: change.fieldName,
+            fieldLabel: change.fieldLabel,
+            oldValue: change.oldValue,
+            newValue: change.newValue,
+            extra: change.meta,
+          })
+      : null
   );
 
   // ── handlers ────────────────────────────────────────────────────────────────
@@ -775,9 +858,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   // confirmed is reported BEFORE the step it was entered on is left behind.
   const handleNextToReview = useCallback(() => {
     flushPriceChanges();
-    logStepMove(2, 3, 'forward');
     setStep(3);
-  }, [flushPriceChanges, logStepMove]);
+  }, [flushPriceChanges]);
 
   // "Modify Install Date" → the calendar. Logged so the timeline can tell a rep who
   // looked at the date from one who never opened the step.
@@ -936,6 +1018,10 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   const handleSubmit = useCallback(async () => {
     if (!leadId) return;
+    // A note or a phone typed and submitted straight away is still an edit: the
+    // debounce has not fired yet, and the screen is about to go. Flushed BEFORE the
+    // submit row so the timeline reads in the order it happened.
+    flushReviewChanges();
     setIsSubmitting(true);
     try {
       // Persisted state is document-free — the draft endpoint reads docs from the
@@ -1088,6 +1174,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       const logUserId = user?._id || user?.id;
       if (logUserId) {
         logDealAddendumSubmitted({
+          // The same target every other row on this wizard carries, so the submit
+          // lands in the Addendum Review group with them rather than on its own.
+          ...(dealLogTarget || {}),
           userId: logUserId,
           leadId,
           calculatorId: editCalculatorId || undefined,
@@ -1113,6 +1202,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       setIsSubmitting(false);
     }
   }, [
+    dealLogTarget,
+    flushReviewChanges,
     leadId,
     effectiveJobState,
     jobBuilderConfig,
@@ -1145,12 +1236,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     // Flushed before the step changes: an edit made and immediately walked back from
     // is still an edit, and the tracker drops its baseline on leaving the step.
     flushPriceChanges();
-    setStep((s) => {
-      const next = Math.max(0, s - 1);
-      logStepMove(s, next, 'back');
-      return next;
-    });
-  }, [flushPriceChanges, logStepMove]);
+    flushReviewChanges();
+    setStep((s) => Math.max(0, s - 1));
+  }, [flushPriceChanges, flushReviewChanges]);
 
   // Wait on the calculator schemas too (web parity): the Step-2 tiers price the
   // edited build THROUGH those schemas, so rendering before they load would show
@@ -1359,6 +1447,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             navigation={navigation}
             embedded
             mode="edit"
+            activityLoggingEnabled={buildStepVisited}
             initialConfig={jobBuilderConfig ?? undefined}
             // System A calculator schemas — the Job Builder Summary resolves each
             // card's header colour from the matching schema CATEGORY's colour (web
