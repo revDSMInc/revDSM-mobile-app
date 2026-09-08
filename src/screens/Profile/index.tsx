@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,10 @@ import { SettingsService } from '../../services/api/SettingsService';
 import { AuthService } from '../../services/api/auth';
 import { LeadService } from '../../services/api/leads';
 import { clearImageCache, getImageCacheUsage, type CacheUsage } from '../../utils/imageFileCache';
+import {
+  offlineMapManager,
+  type OfflinePackRecord,
+} from '../../services/offlineMapManager';
 import Clipboard from '@react-native-clipboard/clipboard';
 import RNFS from 'react-native-fs';
 import { ENV } from '../../config/env';
@@ -61,6 +65,93 @@ export default function ProfilePage() {
   // budget and the only lever a rep has is reinstalling the app.
   const [offlineUsage, setOfflineUsage] = useState<CacheUsage | null>(null);
   const [clearingCache, setClearingCache] = useState(false);
+
+  // ---------------------------------------------------------------------------
+  // Offline map packs
+  // ---------------------------------------------------------------------------
+  const [mapPacks, setMapPacks] = useState<OfflinePackRecord[]>([]);
+  const [downloadingMap, setDownloadingMap] = useState(false);
+  const [clearingMaps, setClearingMaps] = useState(false);
+
+  const loadMapPacks = useCallback(() => {
+    setMapPacks(offlineMapManager.getAllRecords());
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'profile') loadMapPacks();
+  }, [activeTab, loadMapPacks]);
+
+  // Subscribe to progress updates while the Profile is open so the UI refreshes.
+  const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (activeTab !== 'profile' || mapPacks.length === 0) return;
+
+    const unsub = offlineMapManager.onPackProgress(() => loadMapPacks());
+
+    // Also poll every 3 s in case a download finishes between events.
+    progressTimer.current = setInterval(loadMapPacks, 3_000);
+
+    return () => {
+      unsub();
+      if (progressTimer.current) {
+        clearInterval(progressTimer.current);
+        progressTimer.current = null;
+      }
+    };
+  }, [activeTab, mapPacks.length, loadMapPacks]);
+
+  const handleDeleteMapPack = useCallback(
+    (name: string) => {
+      Alert.alert(
+        'Delete offline map?',
+        'Tiles will be removed from this device. You can re-download them later with a connection.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              await offlineMapManager.deletePack(name);
+              loadMapPacks();
+            },
+          },
+        ],
+      );
+    },
+    [loadMapPacks],
+  );
+
+  const handleClearAllMaps = useCallback(() => {
+    if (mapPacks.length === 0) return;
+    Alert.alert(
+      'Delete all offline maps?',
+      `${mapPacks.length} pack${mapPacks.length === 1 ? '' : 's'} will be removed from this device.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All',
+          style: 'destructive',
+          onPress: async () => {
+            setClearingMaps(true);
+            try {
+              for (const p of mapPacks) {
+                await offlineMapManager.deletePack(p.name);
+              }
+            } finally {
+              setClearingMaps(false);
+              loadMapPacks();
+            }
+          },
+        },
+      ],
+    );
+  }, [mapPacks, loadMapPacks]);
+
+  const formatBytes = useCallback((bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }, []);
 
   const loadOfflineUsage = useCallback(() => {
     getImageCacheUsage()
@@ -905,6 +996,90 @@ export default function ProfilePage() {
                     </Text>
                   )}
                 </TouchableOpacity>
+              </View>
+
+              {/* Offline map packs */}
+              <View
+                className="p-6 rounded-[32px] border mt-6"
+                style={{
+                  backgroundColor: isDark ? colors.surface : colors.card,
+                  borderColor: colors.border,
+                }}
+              >
+                <View className="flex-row items-center mb-1">
+                  <Icon name="map-outline" size={18} color={colors.textSecondary} />
+                  <Text
+                    className="font-black tracking-widest text-[11px] ml-2"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    OFFLINE MAPS
+                  </Text>
+                </View>
+
+                <Text className="text-[11px] font-bold mt-2" style={{ color: colors.textSecondary }}>
+                  Map tiles are downloaded automatically around your leads when on Wi-Fi.
+                </Text>
+
+                {mapPacks.length > 0 ? (
+                  <>
+                    <View className="mt-3">
+                      {mapPacks.map((pack) => (
+                        <View
+                          key={pack.name}
+                          className="flex-row items-center justify-between py-2 border-b"
+                          style={{ borderColor: colors.border }}
+                        >
+                          <View className="flex-1 mr-3">
+                            <Text className="text-[13px] font-bold" style={{ color: colors.text }} numberOfLines={1}>
+                              {pack.name}
+                            </Text>
+                            <Text className="text-[11px] font-bold mt-0.5" style={{ color: colors.textSecondary }}>
+                              {formatBytes(pack.completedResourceSize)}
+                              {pack.status === 'active' ? ' · Downloading…' :
+                               pack.status === 'paused' ? ' · Paused' :
+                               pack.status === 'error' ? ' · Error' : ''}
+                            </Text>
+                          </View>
+                          <TouchableOpacity
+                            onPress={() => handleDeleteMapPack(pack.name)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <Icon name="trash-outline" size={16} color={colors.error?.main || '#EF4444'} />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+
+                    <Text className="text-[11px] font-bold mt-3" style={{ color: colors.textSecondary }}>
+                      Total: {formatBytes(offlineMapManager.totalDownloadedBytes())}
+                    </Text>
+
+                    <TouchableOpacity
+                      onPress={handleClearAllMaps}
+                      disabled={clearingMaps}
+                      className="py-3.5 rounded-xl items-center mt-4 border"
+                      style={{
+                        borderColor: colors.border,
+                        opacity: clearingMaps ? 0.5 : 1,
+                      }}
+                    >
+                      {clearingMaps ? (
+                        <ActivityIndicator color={colors.textSecondary} />
+                      ) : (
+                        <Text
+                          className="font-black text-[11px] tracking-widest"
+                          style={{ color: colors.textSecondary }}
+                        >
+                          CLEAR ALL MAPS
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <Text className="text-[13px] font-bold mt-3" style={{ color: colors.textSecondary }}>
+                    No offline maps downloaded yet.
+                  </Text>
+                )}
               </View>
             </View>
           ) : (

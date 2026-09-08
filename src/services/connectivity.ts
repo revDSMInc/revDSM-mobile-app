@@ -24,6 +24,7 @@ import {
 } from '../utils/connectivity-state';
 
 type ConnectivityListener = (online: boolean) => void;
+type WifiListener = (wifi: boolean) => void;
 
 /**
  * Optimistic until NetInfo reports. See `resolveOnline` — a cold start must not flash "offline"
@@ -37,6 +38,9 @@ let currentOnline = true;
  * is judged against a real duration instead of reading as "just reconnected".
  */
 let onlineSince: number | null = Date.now();
+/** Whether the device is currently on Wi-Fi (NetInfo type === 'wifi'). */
+let currentWifi = false;
+let lastNetInfoType: string = 'unknown';
 let monitorStarted = false;
 let unsubscribeNetInfo: (() => void) | null = null;
 let pendingTransition: ReturnType<typeof setTimeout> | null = null;
@@ -44,6 +48,8 @@ let pendingTransition: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<ConnectivityListener>();
 /** Fired only on the offline→online EDGE. This is what drives the sync drains. */
 const reconnectListeners = new Set<() => void>();
+/** Fired when the device transitions to Wi-Fi (for offline map auto-download). */
+const wifiReconnectListeners = new Set<() => void>();
 
 const clearPending = () => {
   if (pendingTransition) {
@@ -79,9 +85,14 @@ const commit = (nextOnline: boolean) => {
 
 const applySnapshot = (snapshot: ConnectivitySnapshot | null | undefined) => {
   const nextOnline = resolveOnline(snapshot);
+  const nextType = (snapshot as any)?.type ?? 'unknown';
+  const nextWifi = nextType === 'wifi';
+
+  // Detect Wi-Fi transition (non-wifi → wifi).
+  const cameOnWifi = nextWifi && !currentWifi;
 
   // Already heading there, or already there — nothing to schedule.
-  if (nextOnline === currentOnline) {
+  if (nextOnline === currentOnline && nextWifi === currentWifi) {
     clearPending();
     return;
   }
@@ -89,7 +100,20 @@ const applySnapshot = (snapshot: ConnectivitySnapshot | null | undefined) => {
   const delay = transitionDelayMs(nextOnline);
   if (delay === 0) {
     clearPending();
-    commit(nextOnline);
+    if (nextOnline !== currentOnline) {
+      commit(nextOnline);
+    }
+    // Wi-Fi state updates immediately (no debounce) — it's a transport hint,
+    // not a connectivity verdict that affects the session.
+    if (nextWifi !== currentWifi) {
+      currentWifi = nextWifi;
+      lastNetInfoType = nextType;
+      if (cameOnWifi) {
+        wifiReconnectListeners.forEach((l) => {
+          try { l(); } catch (e) { console.warn('[connectivity] wifi listener threw:', e); }
+        });
+      }
+    }
     return;
   }
 
@@ -99,6 +123,16 @@ const applySnapshot = (snapshot: ConnectivitySnapshot | null | undefined) => {
   pendingTransition = setTimeout(() => {
     pendingTransition = null;
     commit(nextOnline);
+    // Wi-Fi state updates alongside connectivity.
+    if (nextWifi !== currentWifi) {
+      currentWifi = nextWifi;
+      lastNetInfoType = nextType;
+      if (cameOnWifi) {
+        wifiReconnectListeners.forEach((l) => {
+          try { l(); } catch (e) { console.warn('[connectivity] wifi listener threw:', e); }
+        });
+      }
+    }
   }, delay);
 };
 
@@ -191,4 +225,37 @@ export const refreshConnectivity = async (): Promise<boolean> => {
     console.warn('[connectivity] refresh failed:', e);
     return currentOnline;
   }
+};
+
+// ─── Wi-Fi helpers ─────────────────────────────────────────────────────────────
+
+/** Synchronous read — is the device currently on Wi-Fi? */
+export const isOnWifi = (): boolean => currentWifi;
+
+/**
+ * Subscribe to Wi-Fi state changes. The listener fires with `true` when the
+ * device connects to Wi-Fi and `false` otherwise.
+ *
+ * Returns an unsubscribe function.
+ */
+export const subscribeWifiStatus = (listener: WifiListener): (() => void) => {
+  // Fire immediately with current state so the caller can skip an extra read.
+  try { listener(currentWifi); } catch (e) { console.warn('[connectivity] wifi subscriber threw:', e); }
+  const wrapped = () => { try { listener(currentWifi); } catch (e) { console.warn('[connectivity] wifi subscriber threw:', e); } };
+  wifiReconnectListeners.add(wrapped);
+  return () => { wifiReconnectListeners.delete(wrapped); };
+};
+
+/**
+ * Subscribe to the "just connected to Wi-Fi" edge — fires exactly once when
+ * the device transitions from non-wifi to wifi. Use this to trigger
+ * bulk background downloads (e.g. offline map packs).
+ *
+ * Returns an unsubscribe function.
+ */
+export const onWifiReconnect = (listener: () => void): (() => void) => {
+  wifiReconnectListeners.add(listener);
+  return () => {
+    wifiReconnectListeners.delete(listener);
+  };
 };

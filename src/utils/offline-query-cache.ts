@@ -27,6 +27,8 @@ import {
 export const OFFLINE_CACHE = {
   /** `GET /inspection-photo-schemas/sales-rep` — drives which photo flow the app runs. */
   INSPECTION_SCHEMA: 'inspection-schema',
+  /** Map leads + filter state snapshot so the map can render offline. */
+  MAP_LEADS: 'map-leads',
 } as const;
 
 /** Read a snapshot, or `null` when there is any reason not to trust it. */

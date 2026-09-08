@@ -17,7 +17,10 @@ import {
   startConnectivityMonitor,
   stopConnectivityMonitor,
   refreshConnectivity,
+  onWifiReconnect,
 } from '../services/connectivity';
+import { offlineMapManager } from '../services/offlineMapManager';
+import { readMapLeadsCache } from '../utils/offline-map-leads-cache';
 import { FlashMessage } from '../config/message';
 import {
   NO_MOBILE_ACCESS_MESSAGE,
@@ -219,6 +222,28 @@ export function useAppInitialization() {
   }, [initialize]);
 
 
+
+  // When Wi-Fi reconnects, resume any paused offline map packs and pull cached
+  // leads to trigger downloads for leads whose packs are incomplete.
+  useEffect(() => {
+    const unsubWifi = onWifiReconnect(async () => {
+      try {
+        await offlineMapManager.resumeAllPaused();
+        const userId = (store.getState() as any)?.auth?.user?.id
+          || (store.getState() as any)?.auth?.user?._id;
+        if (userId) {
+          const snapshot = readMapLeadsCache(userId);
+          if (snapshot?.leads?.length) {
+            const typed = snapshot.leads as Array<{ _id: string; location?: { coordinates: [number, number] } }>;
+            void offlineMapManager.syncLeads(typed);
+          }
+        }
+      } catch (e) {
+        // Non-fatal — next connectivity event will retry.
+      }
+    });
+    return unsubWifi;
+  }, [store]);
 
   return { initialize };
 }
