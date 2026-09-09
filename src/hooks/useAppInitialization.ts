@@ -14,6 +14,7 @@ import SocketManager from '../services/SocketManager';
 import PushNotificationService from '../services/PushNotificationService';
 import { startOfflineSyncTimer, stopOfflineSyncTimer } from '../services/api/offlineUploadManager';
 import { startOfflineWorkSync } from '../services/offlineLeadStore';
+import { startCalculatorSettingsSync } from '../services/offlineSettings';
 import {
   startConnectivityMonitor,
   stopConnectivityMonitor,
@@ -220,11 +221,18 @@ export function useAppInitialization() {
     // Replay leads created with no signal. Also reconnect-driven, and idempotent — calling it a
     // second time is a no-op, so a remount cannot double-subscribe the drain.
     startOfflineWorkSync();
+    // ⚠️ The local user is patched BEFORE the pending record clears. The other order drops the
+    // override while redux still holds the older server value, and the rep's toggle flips back.
+    startCalculatorSettingsSync((applied) => {
+      const current = (store.getState() as any)?.auth?.user;
+      if (current) dispatch(setInitial({ user: { ...current, ...applied } }));
+    });
     return () => {
       stopOfflineSyncTimer();
       stopConnectivityMonitor();
     };
-  }, [initialize]);
+    // `dispatch` and `store` are stable react-redux references, so naming them cannot re-run this.
+  }, [initialize, dispatch, store]);
 
 
 

@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../redux/store';
 import { logout as logoutAction, setInitial } from '../redux/reducer/auth.reducer';
@@ -15,12 +15,35 @@ import { endInstallerWorkSession } from '../utils/installer-work-session';
 // inside a try/catch. It must stay that way — a static native import anywhere in
 // this chain makes SIGN-IN depend on the push modules being present.
 import PushNotificationService from '../services/PushNotificationService';
+import { applyPendingSettingsToUser } from '../utils/offline-settings';
+import {
+  getPendingCalculatorSettings,
+  subscribePendingCalculatorSettings,
+} from '../services/offlineSettings';
 
 
 export const useAuth = () => {
   const dispatch = useDispatch();
-  const { user, isAuthenticated, loading, isInitialized } = useSelector(
+  const { user: storedUser, isAuthenticated, loading, isInitialized } = useSelector(
     (state: RootState) => state.auth
+  );
+
+  // ⚠️ A default the rep set with NO SIGNAL has not reached the server, so `getMe` still reports
+  // the old one. Every "Set as Default" toggle in the app derives its on/off state from this user
+  // record, so without this overlay the switch cannot move offline at all — it snaps back, and the
+  // rep taps it again. Applied here rather than per screen so no surface can forget it.
+  const [pendingSettings, setPendingSettings] = useState(getPendingCalculatorSettings);
+  useEffect(
+    () =>
+      subscribePendingCalculatorSettings(() =>
+        setPendingSettings(getPendingCalculatorSettings())
+      ),
+    []
+  );
+  // Returns the SAME reference when nothing is pending, so identity is stable in the normal case.
+  const user = useMemo(
+    () => applyPendingSettingsToUser(storedUser, pendingSettings),
+    [storedUser, pendingSettings]
   );
 
   /**
