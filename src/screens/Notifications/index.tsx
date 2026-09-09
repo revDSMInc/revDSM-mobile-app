@@ -24,10 +24,10 @@ import {
   buildNotificationSections,
   endHintFor,
   todayKey,
-  type NotificationCard,
   type NotificationItem,
 } from '../../utils/notification-groups';
 import { resolvePushRoute } from '../../utils/push-routing';
+import { isLeadResulted } from '../../utils/lead-result-status';
 import { LeadService } from '../../services/api/leads';
 import { resolveBuildIds } from '../../hooks/usePushNotifications';
 import { FlashMessage } from '../../config/message';
@@ -36,9 +36,10 @@ import { FlashMessage } from '../../config/message';
  * Notification Center — the history side of the push feature.
  *
  * The layout is the `notify-ui.txt` redesign: a paper ground, day sections, and
- * one bordered CARD per run of notifications about the same lead, with repeats
- * of one event collapsed behind a disclosure. All of that grouping is decided in
- * the pure `utils/notification-groups.ts`; this file only paints it.
+ * one bordered CARD PER NOTIFICATION. ⚠️ Nothing is grouped — an earlier pass
+ * merged adjacent notifications about the same lead into a shared card and hid
+ * repeats behind a disclosure, and that was reversed on request. Day bucketing
+ * is all `utils/notification-groups.ts` does now; this file only paints it.
  *
  * ⚠️ Tapping a row resolves its destination through the SAME `resolvePushRoute`
  * the push banner uses. That shared path is the whole reason the routing lives in
@@ -85,7 +86,6 @@ export default function NotificationsScreen() {
 
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [opening, setOpening] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   /**
    * ⚠️ Always fetched as `all`. The `:type` path segment accepts ONLY `all` or an
@@ -114,25 +114,13 @@ export default function NotificationsScreen() {
     [visible, hasMore]
   );
 
-  const toggleStack = useCallback((key: string) => {
-    setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
-  }, []);
-
   const handleOpen = useCallback(
     async (item: NotificationItem<NotificationRow>) => {
       if (opening) return;
       const row = item.row;
 
-      /**
-       * ⚠️ EVERY id behind the item, not just the visible one. A collapsed stack
-       * hides its older repeats, so marking only the head read would leave the
-       * bell counting notifications the rep has no way to reach.
-       */
-      if (item.isUnread) {
-        item.ids.forEach((id) => {
-          if (id) void markRead(id);
-        });
-      }
+      // One row per card, so one id to clear — nothing is hidden behind this one.
+      if (item.isUnread && row.id) void markRead(row.id);
 
       const route = resolvePushRoute(row.payload as any);
       if (!route) {
@@ -158,6 +146,28 @@ export default function NotificationsScreen() {
           const lead = body?.data?.lead || body?.data || body?.lead || body;
           if (!lead?._id && !lead?.id) {
             FlashMessage.error('Not found', 'That lead could not be loaded.');
+            return;
+          }
+
+          /**
+           * ⚠️ A RESULTED lead goes to its own screen, NOT the Job Builder.
+           *
+           * The branch below exists because signing the agreement is what
+           * UNBLOCKS submitting the job, so the rep's next action is normally
+           * "Complete Job". Once the lead is resulted that is no longer true —
+           * the deal is on the Lead Center, which is where the agreement, the
+           * contract details and the addendums all live — and dropping the rep
+           * into a builder for a job that is already done reads as though the
+           * app has lost the submission.
+           *
+           * ⚠️ Kept in step with the push tap in `hooks/usePushNotifications.ts`,
+           * which runs the same check against the same helper. A row and the
+           * banner that raised it must never land on different screens.
+           */
+          if (isLeadResulted(lead)) {
+            // No `tab`, so the screen opens on its own default — the lead's main
+            // view rather than a sub-tab chosen by a notification.
+            navigation.navigate('LeadCenter', { lead });
             return;
           }
 
@@ -225,96 +235,57 @@ export default function NotificationsScreen() {
   );
 
   const renderItem = useCallback(
-    ({ item: card }: { item: NotificationCard<NotificationRow> }) => (
-      <View style={styles.card}>
-        {card.items.map((item, index) => {
-          const meta = describeNotification(item.row.eventType, item.row.payload);
-          const isOpening = opening === item.key;
-          const isOpen = Boolean(expanded[item.key]);
+    ({ item }: { item: NotificationItem<NotificationRow> }) => {
+      const meta = describeNotification(item.row.eventType, item.row.payload);
+      const isOpening = opening === item.key;
 
-          return (
-            <TouchableOpacity
-              key={item.key}
-              onPress={() => handleOpen(item)}
-              activeOpacity={0.75}
-              style={[
-                styles.item,
-                index < card.items.length - 1 && styles.itemDivided,
-                item.isUnread && styles.itemUnread,
-              ]}
-            >
-              {item.isUnread && <View style={styles.rail} />}
+      // One notification, one card. The row is the card's only child, so it
+      // carries no divider — there is never a sibling beneath it.
+      return (
+        <TouchableOpacity
+          onPress={() => handleOpen(item)}
+          activeOpacity={0.75}
+          style={[styles.card, styles.item, item.isUnread && styles.itemUnread]}
+        >
+          {item.isUnread && <View style={styles.rail} />}
 
-              <View
-                style={[
-                  styles.bubble,
-                  { backgroundColor: meta.tint },
-                  !item.isUnread && styles.bubbleRead,
-                ]}
+          <View
+            style={[styles.bubble, { backgroundColor: meta.tint }, !item.isUnread && styles.bubbleRead]}
+          >
+            <Icon name={meta.icon} size={19} color={meta.color} />
+          </View>
+
+          <View style={styles.itemBody}>
+            <View style={styles.itemTop}>
+              <Text
+                numberOfLines={2}
+                style={[styles.itemTitle, !item.isUnread && styles.itemTitleRead]}
               >
-                <Icon name={meta.icon} size={19} color={meta.color} />
+                {item.title || meta.group}
+              </Text>
+              {isOpening ? (
+                <ActivityIndicator size="small" color={meta.color} style={styles.spinner} />
+              ) : (
+                !!item.time && <Text style={styles.itemTime}>{item.time}</Text>
+              )}
+            </View>
+
+            {!!item.message && (
+              <Text numberOfLines={3} style={styles.itemDesc}>
+                {item.message}
+              </Text>
+            )}
+
+            {!!item.tag && (
+              <View style={styles.tagWrap}>
+                <Text style={styles.tag}>{item.tag}</Text>
               </View>
-
-              <View style={styles.itemBody}>
-                <View style={styles.itemTop}>
-                  <Text
-                    numberOfLines={2}
-                    style={[styles.itemTitle, !item.isUnread && styles.itemTitleRead]}
-                  >
-                    {item.title || meta.group}
-                  </Text>
-                  {isOpening ? (
-                    <ActivityIndicator size="small" color={meta.color} style={styles.spinner} />
-                  ) : (
-                    !!item.time && <Text style={styles.itemTime}>{item.time}</Text>
-                  )}
-                </View>
-
-                {!!item.message && (
-                  <Text numberOfLines={3} style={styles.itemDesc}>
-                    {item.message}
-                  </Text>
-                )}
-
-                {!!item.tag && (
-                  <View style={styles.tagWrap}>
-                    <Text style={styles.tag}>{item.tag}</Text>
-                  </View>
-                )}
-
-                {!!item.moreLabel && (
-                  <TouchableOpacity
-                    // ⚠️ The disclosure must NOT open the notification, so it stops
-                    // the press here rather than letting it reach the row beneath.
-                    onPress={() => toggleStack(item.key)}
-                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                    accessibilityRole="button"
-                  >
-                    <Text style={styles.stackMore}>
-                      {isOpen ? item.lessLabel : item.moreLabel}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-
-                {isOpen && item.stack.length > 0 && (
-                  <View style={styles.subList}>
-                    {item.stack.map((sub, i) => (
-                      <View key={`${item.key}-sub-${i}`} style={styles.subRow}>
-                        <Text numberOfLines={1} style={styles.subLabel}>
-                          {sub.label}
-                        </Text>
-                        <Text style={styles.subTime}>{sub.time}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-              </View>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-    ),
-    [expanded, handleOpen, opening, toggleStack]
+            )}
+          </View>
+        </TouchableOpacity>
+      );
+    },
+    [handleOpen, opening]
   );
 
   const renderSectionHeader = useCallback(
@@ -413,7 +384,7 @@ export default function NotificationsScreen() {
       ) : (
         <SectionList
           sections={sections}
-          keyExtractor={(card) => card.key}
+          keyExtractor={(item) => item.key}
           renderItem={renderItem}
           renderSectionHeader={renderSectionHeader}
           // A sticky day heading over a card list reads as a second header; the
@@ -524,6 +495,7 @@ const styles = StyleSheet.create({
   dayRule: { flex: 1, height: 1, backgroundColor: C.line, marginLeft: 8 },
 
   card: {
+    flexDirection: 'row',
     marginHorizontal: 16,
     marginBottom: 10,
     backgroundColor: C.card,
@@ -536,8 +508,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
 
-  item: { flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 14 },
-  itemDivided: { borderBottomWidth: 1, borderBottomColor: C.line },
+  item: { paddingVertical: 14, paddingHorizontal: 14 },
   itemUnread: { backgroundColor: C.unreadWash },
   rail: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, backgroundColor: C.pine },
   bubble: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
@@ -564,12 +535,6 @@ const styles = StyleSheet.create({
     borderColor: C.line,
   },
   tag: { fontFamily: MONO, fontSize: 11.5, fontWeight: '700', color: C.inkSoft },
-
-  stackMore: { fontSize: 12.5, fontWeight: '700', color: C.pine, marginTop: 7 },
-  subList: { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.line },
-  subRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
-  subLabel: { flex: 1, fontSize: 12.5, color: C.inkSoft, marginRight: 8 },
-  subTime: { fontSize: 12.5, color: C.inkFaint },
 
   listEmpty: { flexGrow: 1 },
   centre: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 48, paddingHorizontal: 32 },

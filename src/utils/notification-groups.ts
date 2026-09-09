@@ -1,17 +1,23 @@
 /**
  * Notification Center presentation model — the pure layer.
  *
- * Turns the flat history list into what the redesign renders: day sections, one
- * CARD per run of adjacent notifications about the same thing, and within a card
- * one ITEM per event family with the older repeats collapsed behind a
- * "+N more update on this lead" / "Show breakdown" disclosure.
+ * Turns the flat history list into what the redesign renders: DAY SECTIONS, and
+ * within each one CARD PER NOTIFICATION.
+ *
+ * ⚠️ ONE ROW IN, ONE CARD OUT. Nothing is merged, collapsed or counted together.
+ * An earlier pass grouped adjacent notifications about the same lead into a
+ * shared card and folded repeats behind a "+N more update on this lead"
+ * disclosure; that was reversed on request — a rep wants to see each message,
+ * each issued lead and each reaction as its own notification. Read
+ * `buildNotificationSections` as a mapping, not a grouping, and do not
+ * reintroduce a bucketing pass here.
  *
  * Deliberately has NO react-native imports, for the reason
  * `utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist: the screen
  * pulls in React Native and is untestable under jest here, and every rule in this
- * file fails SILENTLY when it is wrong — a row filed under the wrong day, a
- * mongo id rendered as a lead tag, or two unrelated notifications merged into one
- * card all look like a rendering quirk rather than an error.
+ * file fails SILENTLY when it is wrong — a row filed under the wrong day, or a
+ * mongo id rendered as a lead tag, looks like a rendering quirk rather than an
+ * error.
  *
  * Contract: NOTIFICATIONS-MOBILE-API.md §5. Design: `notify-ui.txt`.
  */
@@ -26,28 +32,17 @@ export interface NotificationLike {
   payload: Record<string, any>;
 }
 
-/** One visible row. `ids` is every notification it stands for, newest first. */
+/** One notification, ready to paint. Exactly one history row stands behind it. */
 export interface NotificationItem<T extends NotificationLike = NotificationLike> {
   key: string;
-  /** The newest row — the one whose route a tap follows. */
+  /** The row itself — the one whose route a tap follows, and the one it marks read. */
   row: T;
-  ids: string[];
   title: string;
   message: string;
   /** Human lead label for the chip, or `''` when the payload names none. */
   tag: string;
   time: string;
   isUnread: boolean;
-  /** Collapsed repeats, newest first. Empty when there is nothing to disclose. */
-  stack: { label: string; time: string }[];
-  /** Disclosure copy, e.g. `+2 more updates on this lead` / `Show breakdown`. */
-  moreLabel: string;
-  lessLabel: string;
-}
-
-export interface NotificationCard<T extends NotificationLike = NotificationLike> {
-  key: string;
-  items: NotificationItem<T>[];
 }
 
 export interface NotificationSection<T extends NotificationLike = NotificationLike> {
@@ -56,7 +51,7 @@ export interface NotificationSection<T extends NotificationLike = NotificationLi
   label: string;
   /** The calendar date beside it, e.g. `Sep 7`. `''` once the label IS a date. */
   date: string;
-  data: NotificationCard<T>[];
+  data: NotificationItem<T>[];
 }
 
 const MONTHS = [
@@ -194,119 +189,34 @@ export function leadTagOf(payload: Record<string, any> | undefined | null): stri
   return '';
 }
 
-// ─── Grouping ────────────────────────────────────────────────────────────────
+// ─── Building ────────────────────────────────────────────────────────────────
 
-/** Events that name no lead and aggregate into a single "N new leads" row. */
-const ISSUED_EVENTS = new Set(['lead-issued']);
-const CHAT_EVENTS = new Set([
-  'chat-message',
-  'chat-reply',
-  'chat-file-upload',
-  'chat-tagged',
-]);
-
-/**
- * Which card a row belongs to — the design's "one card per thing".
- *
- * ⚠️ A row with no resolvable identity gets a key of its OWN id, so it can never
- * be merged into a neighbour. Merging two unrelated notifications into one card
- * tells the rep they concern the same lead, which is worse than an extra card.
- */
-function cardKeyOf(row: NotificationLike): string {
-  const type = str(row.eventType);
-  if (ISSUED_EVENTS.has(type)) return 'issued';
-
-  if (CHAT_EVENTS.has(type)) {
-    const chatId = str(row.payload?.chatId);
-    if (chatId) return `chat:${chatId}`;
-  }
-
-  const leadId = str(row.payload?.leadId);
-  if (leadId) return `lead:${leadId}`;
-
-  const tag = leadTagOf(row.payload);
-  if (tag) return `tag:${tag}`;
-
-  return `row:${row.id}`;
-}
-
-/**
- * Which repeats collapse together inside a card.
- *
- * ⚠️ `addendum-signed` is sent for a DECLINE as well as an accept, so the outcome
- * is part of the key — collapsing an approval and a refusal into one row would
- * hide the refusal behind the approval's title, which reads identically.
- */
-function stackKeyOf(row: NotificationLike): string {
-  const type = str(row.eventType);
-  if (type === 'addendum-signed') {
-    return `${type}|${str(row.payload?.outcome).toLowerCase()}`;
-  }
-  return type || 'other';
-}
-
-/** A batch's size. Absent means one — never zero, which would erase the row. */
-function issuedCount(row: NotificationLike): number {
-  const raw = row.payload?.count;
-  const n = typeof raw === 'number' ? raw : Number(str(raw));
-  return Number.isFinite(n) && n > 0 ? n : 1;
-}
-
-const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
-
-function buildItem<T extends NotificationLike>(rows: T[]): NotificationItem<T> {
-  const head = rows[0];
-  const rest = rows.slice(1);
-  const isIssued = ISSUED_EVENTS.has(str(head.eventType));
-
-  let title = head.title;
-  let message = head.message;
-  let moreLabel = '';
-
-  if (rest.length) {
-    if (isIssued) {
-      const total = rows.reduce((sum, r) => sum + issuedCount(r), 0);
-      title = `${total} new leads issued to you`;
-      message = `Added to your queue in ${rows.length} batches.`;
-      moreLabel = 'Show breakdown';
-    } else {
-      moreLabel = `+${rest.length} more ${plural(
-        rest.length,
-        'update',
-        'updates'
-      )} on this lead`;
-    }
-  }
-
+function buildItem<T extends NotificationLike>(row: T): NotificationItem<T> {
   return {
-    key: head.id || `${cardKeyOf(head)}:${stackKeyOf(head)}`,
-    row: head,
-    ids: rows.map((r) => r.id).filter(Boolean),
-    title: title || head.title,
-    message,
-    tag: leadTagOf(head.payload),
-    time: formatClockTime(head.createdAt),
-    // A card is unread if ANY row behind it is: the disclosure hides rows, and a
-    // hidden unread would otherwise leave the badge counting something the rep
-    // has no way to see.
-    isUnread: rows.some((r) => r.isUnread),
-    stack: rest.map((r) => ({
-      label: isIssued
-        ? `${issuedCount(r)} ${plural(issuedCount(r), 'lead', 'leads')} issued`
-        : r.title || str(r.eventType),
-      time: formatClockTime(r.createdAt),
-    })),
-    moreLabel,
-    lessLabel: isIssued ? 'Hide breakdown' : 'Show less',
+    // The history id, which is unique per notification and stable across a
+    // refetch — so an expanded/pressed row cannot swap identity under the rep.
+    key: row.id || `${row.eventType}|${row.createdAt}`,
+    row,
+    title: row.title,
+    message: row.message,
+    tag: leadTagOf(row.payload),
+    time: formatClockTime(row.createdAt),
+    isUnread: Boolean(row.isUnread),
   };
 }
 
 /**
- * The whole presentation model.
+ * The whole presentation model: day sections, each holding one item per row.
  *
- * Rows arrive newest-first and that order is preserved throughout — days, cards
- * within a day, and items within a card all keep it, so nothing on screen moves
- * relative to the list the API returned.
+ * Rows arrive newest-first and that order is preserved exactly — a section break
+ * is the ONLY thing this function introduces, so nothing on screen moves relative
+ * to the list the API returned.
+ *
+ * ⚠️ Rows are bucketed by day in ARRIVAL ORDER, not by sorting on the day key. A
+ * list that is not perfectly ordered therefore yields two sections with the same
+ * label rather than silently reordering the rep's notifications — the API returns
+ * them newest-first, and rearranging them here would hide a paging bug instead of
+ * showing it.
  */
 export function buildNotificationSections<T extends NotificationLike>(
   rows: T[],
@@ -315,50 +225,22 @@ export function buildNotificationSections<T extends NotificationLike>(
   const sections: NotificationSection<T>[] = [];
   if (!Array.isArray(rows) || rows.length === 0) return sections;
 
-  // 1. Day buckets, in arrival order.
-  const days: { key: string; rows: T[] }[] = [];
   for (const row of rows) {
     if (!row) continue;
     const key = dayKeyOf(row.createdAt) || 'undated';
-    const last = days[days.length - 1];
-    if (last && last.key === key) last.rows.push(row);
-    else days.push({ key, rows: [row] });
-  }
-
-  for (const day of days) {
-    // 2. Cards — RUNS of adjacent rows sharing a card key, not a global group-by.
-    //    Web's own list works this way and it is what keeps a card readable as
-    //    "this happened, then this" rather than pulling an hours-old row up next
-    //    to a fresh one.
-    const cards: { key: string; rows: T[] }[] = [];
-    for (const row of day.rows) {
-      const key = cardKeyOf(row);
-      const last = cards[cards.length - 1];
-      if (last && last.key === key) last.rows.push(row);
-      else cards.push({ key, rows: [row] });
+    const last = sections[sections.length - 1];
+    if (last && last.key === key) {
+      last.data.push(buildItem(row));
+      continue;
     }
-
-    const built: NotificationCard<T>[] = cards.map((card) => {
-      // 3. Items — repeats of one event family collapse into the newest.
-      const buckets: { key: string; rows: T[] }[] = [];
-      for (const row of card.rows) {
-        const key = stackKeyOf(row);
-        const found = buckets.find((b) => b.key === key);
-        if (found) found.rows.push(row);
-        else buckets.push({ key, rows: [row] });
-      }
-      return {
-        key: `${day.key}|${card.key}|${card.rows[0]?.id || ''}`,
-        items: buckets.map((b) => buildItem(b.rows)),
-      };
-    });
-
     const { label, date } =
-      day.key === 'undated'
-        ? { label: 'Earlier', date: '' }
-        : formatDayLabel(day.key, today);
-
-    sections.push({ key: day.key, label, date, data: built });
+      key === 'undated'
+        ? // A row the backend sent without a usable timestamp. Filed at the end of
+          // its own section rather than dropped: a notification the rep cannot see
+          // is worse than one whose time is unknown.
+          { label: 'Earlier', date: '' }
+        : formatDayLabel(key, today);
+    sections.push({ key, label, date, data: [buildItem(row)] });
   }
 
   return sections;

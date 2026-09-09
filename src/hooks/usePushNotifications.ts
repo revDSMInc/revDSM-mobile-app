@@ -11,6 +11,7 @@ import {
   invalidationKeysFor,
   type PushData,
 } from '../utils/push-routing';
+import { isLeadResulted } from '../utils/lead-result-status';
 
 /**
  * usePushNotifications — the React layer of the push stack.
@@ -300,6 +301,29 @@ async function openFromPush(data: PushData | undefined) {
     if (route.kind === 'jobBuilder') {
       const lead = await fetchLead(route.leadId);
       if (!lead) return;
+
+      /**
+       * ⚠️ A RESULTED lead goes to its own screen, NOT the Job Builder.
+       *
+       * The `isDynamic` branch below exists because signing the agreement is what
+       * UNBLOCKS submitting the job, so the rep's next action is normally
+       * "Complete Job". Once the lead is resulted that is no longer true — the
+       * deal is on the Lead Center, which is where the agreement, the contract
+       * details and the addendums all live — and dropping the rep into a builder
+       * for a job that is already done reads as though the app has lost the
+       * submission.
+       *
+       * ⚠️ Kept in step with the Notification Center row
+       * (`screens/Notifications/index.tsx`), which runs the same check against the
+       * same helper. A banner and the row it wrote must never land on different
+       * screens.
+       */
+      if (isLeadResulted(lead)) {
+        if (__DEV__) console.log('[Push] agreement-signed → lead already resulted → LeadCenter');
+        // No `tab`, so the screen opens on its own default.
+        navigationRef.navigate('LeadCenter', { lead });
+        return;
+      }
 
       /**
        * ⚠️ ONLY an EXPLICIT `isDynamic: "false"` diverts to the documents.

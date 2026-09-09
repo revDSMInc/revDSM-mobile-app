@@ -3146,11 +3146,11 @@ notifications about the same lead, and repeats collapsed behind a disclosure.
 |---|---|
 | paper ground `#F6F5F0`, white cards, `#E6E3DA` rules | a `C` token block in the screen, copied from the mock's `:root` |
 | `Today · Sep 7` / `Yesterday` / `2 days ago` headings | `SectionList` + `formatDayLabel` |
-| one card per lead, hairline between its rows | `buildNotificationSections` — see the grouping rules below |
+| ~~one card per lead, hairline between its rows~~ | **SUPERSEDED — one card per NOTIFICATION.** See the follow-up below |
 | 3px pine rail + wash on an unread row | `styles.rail` + `itemUnread`, clipped by the card's `overflow` |
 | 40px tinted bubble, four families | `describeNotification` now returns `{ icon, color, tint, family }` |
 | monospace lead chip (`41PCDLG` / `SelfGen`) | `leadTagOf` |
-| `+1 more update on this lead` / `Show breakdown` | the item's `stack` / `moreLabel` / `lessLabel` |
+| ~~`+1 more update on this lead` / `Show breakdown`~~ | **SUPERSEDED — removed.** See the follow-up below |
 | `Unread ⑷` count pill | `unreadCount` from the existing badge query |
 | `You're viewing the last 3 days` | `endHintFor` — **derived**, see below |
 
@@ -3160,7 +3160,13 @@ is untestable under jest here, and each of these fails **silently** — a row fi
 mongo id printed as a lead tag, or two unrelated notifications merged into one card all read as a
 styling quirk rather than an error.
 
-#### The grouping is three passes, and each guard is load-bearing
+#### ~~The grouping is three passes, and each guard is load-bearing~~ — ALL REMOVED
+
+> ⚠️ **SUPERSEDED in full by "…and then the grouping was reversed" below.** Everything in this
+> subsection — the card runs, the stacking, the `lead-issued` aggregation and every guard on them — was
+> deleted on request. It is left here only so a reader who finds `cardKeyOf` / `stackKeyOf` in the git
+> history knows what they did and why they are gone. **Do not reintroduce any of it.**
+
 
 1. **Day buckets**, then 2. **cards** — a RUN of *adjacent* rows sharing a card key, not a global
    group-by, so an hours-old row can never be pulled up beside a fresh one and read as though they
@@ -3251,6 +3257,183 @@ bundle builds.
 the card grouping on a lead with several notifications, the disclosure expanding, and that the chip shows
 a readable lead number rather than nothing. **If every chip is absent, the payload is naming no human
 lead id** — add the key the backend actually sends to `LEAD_TAG_KEYS`; do not relax the mongo-id guard.
+
+#### …and then the grouping was reversed: ONE CARD PER NOTIFICATION
+
+Follow-up on the same screen: *"currently you have implemented the group notification UI but i need a
+separate notification for each notification like grouping in message, issued lead etc — convert it from
+group to single."*
+
+Every merging pass is **gone**. `buildNotificationSections` is now a mapping, not a grouping: day
+sections, and inside each one **one card per history row**, in the order the API returned them.
+
+| removed | what it used to do |
+|---|---|
+| `NotificationCard` + `cardKeyOf` | merged adjacent rows about the same lead into a shared card |
+| `stackKeyOf` / `buildItem`'s stack | collapsed repeats of one event behind `+N more update on this lead` |
+| `issuedCount` / the `lead-issued` aggregate | summed two batches into `4 new leads issued to you` |
+| `stackNoun` / `plural` | the disclosure copy |
+| `NotificationItem.ids` / `.stack` / `.moreLabel` / `.lessLabel` | the disclosure's data |
+| `styles.itemDivided` / `stackMore` / `subList` / `subRow` | the in-card divider and the sub-rows |
+| the screen's `expanded` state + `toggleStack` | which stack was open |
+
+- **`NotificationSection.data` is now `NotificationItem[]`** — the card layer is gone entirely, so the
+  screen's `renderItem` paints one row and `styles.card` picked up the `flexDirection: 'row'` the item
+  used to carry. Each card is its own `TouchableOpacity`.
+- **Mark-read is back to one id.** The tap cleared every `ids` entry precisely because a stack could
+  hide unread rows; with nothing hidden, `row.id` is the whole of it.
+- **`item.key` is the history id**, which is unique per notification and stable across a refetch, so a
+  pressed row cannot swap identity under the rep.
+- ⚠️ **Rows are still bucketed by day in ARRIVAL ORDER, not sorted.** An out-of-order list therefore
+  renders two sections with the same label rather than silently rearranging the rep's notifications —
+  the API returns them newest-first, and resorting here would hide a paging bug instead of showing it.
+- ⚠️ **`CHAT_EVENTS` is no longer imported by the grouper** (nothing keys a card any more), so the note
+  on the export names the three behaviours that remain. The export stays — it is still the one list, and
+  the de-duplication it bought is what makes that true.
+
+⚠️ The **day sections, the paper ground, the bubbles, the lead chip, the unread rail and wash, the tabs
+and the derived end hint are all unchanged.** Only the merging was reversed; this is not a revert of the
+redesign.
+
+Verified with the same suite, rewritten (24 tests): the design's own nine rows emitting **exactly nine
+items** with `[7, 1, 1]` per day, the order preserved row for row, the two `41AK` signatures staying
+apart with their own times (`10:56` / `10:54`), both `lead-issued` batches keeping their own server
+title rather than aggregating, each row carrying its own unread state, item keys being the history ids,
+a timestamp-less row still filed under `Earlier`, and an out-of-order list rendering `Today / Yesterday
+/ Today` rather than resorting. tsc 44 (baseline unchanged); `notification-groups.ts` is eslint-clean
+and `Notifications/index.tsx` is at its HEAD warning count; the iOS bundle builds.
+
+### A resulted lead's `agreement-signed` notification opens the LEAD, not the Job Builder
+
+Ticket: *"when the lead is resulted and the user click on the signed agreement then do not move the user
+to the agreement screen — user should move to the lead main screen."*
+
+`agreement-signed` resolves to `{ kind: 'jobBuilder' }`, and the reasoning on that route is sound for
+the normal case: signing the agreement is what **unblocks** submitting the job, so the rep's next action
+is "Complete Job" and Job Docs is a detour. Once the lead is **resulted** that stops being true — the
+deal lives on the Lead Center, which is where the agreement, the contract details and the addendums all
+are — and dropping the rep into a builder for a job that is already done reads as though the app has
+lost the submission.
+
+**New pure `src/utils/lead-result-status.ts`** (`isLeadResulted` / `normalizeResultStatus`), for the
+reason `utils/push-routing.ts` is pure: the two callers are both untestable under jest here and they
+**must** answer identically.
+
+⚠️ **BOTH tap paths changed, and that is the point.** The check runs in
+`screens/Notifications/index.tsx` *and* in `hooks/usePushNotifications.ts`, against the same helper — a
+row and the banner that raised it landing on different screens is the exact failure the shared routing
+module exists to prevent. Changing one and not the other would be invisible until a rep noticed.
+
+⚠️ **An ALLOWLIST of resulted statuses, NOT the `NON_RESULTED_STATUSES` deny-list** that
+`widgets/components/LeadCard.tsx` and `screens/DealDetail` use (`['lfLead','selfGenerated','scheduled']`,
+web parity with `job-card.js`). The two are not interchangeable here: a deny-list reads a **missing or
+unknown** status as resulted, and since this rule now decides where a notification lands, that default
+would silently divert every status-less lead away from the Job Builder. The allowlist fails the other
+way — anything unrecognised keeps the behaviour the app already ships. Its values are
+`JobDocsSection.isResulted`'s, so the screen the rep is sent to agrees about why they are there.
+
+- **Placed FIRST in the branch**, above the `isDynamic === false` test and above `resolveBuildIds`, so a
+  resulted lead also skips the calculator round trip. Resulted therefore outranks an explicitly dynamic
+  push — the dynamic flag says the builder *exists*, not that it should be opened.
+- **Navigated with no `tab`**, so the Lead Center opens on its own default (`job_docs`) — the lead's
+  main view rather than a sub-tab chosen by a notification.
+- **Statuses are normalized** (lower-cased, non-alpha stripped), so `Demo No Sale` → `demonosale`.
+- ⚠️ Three other copies of the non-resulted rule exist (`LeadCard.tsx`, `DealDetail/index.tsx`,
+  `utils/lead-activity-log.ts`). They were **left alone** — pointing a shared list at big unrelated
+  screens is not something a notification ticket should carry — but they are the obvious next adopters.
+
+Verified with 12 tests (`__tests__/utils/lead-result-status.test.ts`): the captured lead's own
+`status: "sale"`, all ten resulted spellings including both `cancelled`/`canceled`, each of the four
+status keys, the three non-resulted statuses still reaching the builder, **a missing / empty /
+unrecognised / non-string status reading FALSE** (the allowlist's whole purpose, asserted directly),
+junk input as `false` rather than a throw, and the decision expression itself — asserted in the same
+ORDER both call sites run it: not-resulted → `DynamicDealCenter`, resulted → `LeadCenter`, resulted
+winning over `isDynamic: 'true'`, the legacy `isDynamic: 'false'` diversion untouched on a lead that is
+not resulted, and `addendum-signed` / `chat-message` / `lead-cancelled` all unaffected. tsc 44 (baseline
+unchanged); the new util is eslint-clean and both call sites are at their exact HEAD warning counts
+(1 and 4 pre-existing `no-void`); the iOS bundle builds.
+
+⚠️ Needs a device check: sign an agreement on a lead that is already resulted and confirm the banner and
+the Notification Center row both open the Lead Center, and that a NOT-yet-resulted lead still opens the
+Job Builder on its Summary step.
+
+### `chat-reaction` — the tenth event type, and the duplicate list it exposed
+
+Contract: **`CHAT-REACTION-NOTIFICATIONS.md`** (repo root, REVUIUX-97 QA item 5). A rep is not told when
+someone reacts to their message. Reactions already exist and already broadcast over the socket
+(`reaction-added`); what is missing is the push. §6 of that document says **the app must ship first, or
+at least together** — if the backend sends `chat-reaction` to a build that does not know it,
+`resolvePushRoute` returns `null` and every reaction is a banner whose tap does nothing and a list row
+reading *"There is nothing more to open for this one."*
+
+**This is the app half only. Nothing is sent yet**, and every edit below is INERT until the backend
+adds `NotificationEventTypes.ChatReaction` — which is exactly why it is safe to land now.
+
+| site | change |
+|---|---|
+| `PushEventType` (`utils/push-routing.ts`) | `'chat-reaction'` added to the union |
+| `CHAT_EVENTS` (same file) | the event added — **and the set EXPORTED**, see below |
+| `describeNotification` (`hooks/useNotifications.ts`) | `case 'chat-reaction'` → slate + `emoticon-happy-outline` |
+| `NOTIFICATION_TYPES` (`services/api/notifications.ts`) | added, so `NotificationHistoryType` stays honest |
+| `invalidationKeysFor` | **no case, deliberately** — now written down rather than assumed |
+| `usePushNotifications` | untouched: it is generic over `isRenderable` / `channelForEvent` |
+
+#### ⚠️ Membership of `CHAT_EVENTS` is the whole implementation — and there were TWO copies
+
+Adding the event to that one set gives it the destination (`resolvePushRoute`'s chat branch already
+reads `chatId` and treats an absent `leadId` as a channel), the Android channel (`channelForEvent` →
+`CHANNEL_MESSAGES`, so a rep who has muted chatter is not woken by a thumbs-up), and foreground
+suppression — which matters more here than for a message, since reacting is cheap and usually happens
+while both parties are looking at the thread.
+
+⚠️ **The Notification Center redesign had quietly made a SECOND copy of that list.**
+`utils/notification-groups.ts` declared its own `CHAT_EVENTS` for card keying, so the contract's
+one-line change would have covered three of the four behaviours and silently missed the fourth: a
+reaction would key on its `leadId` (or, on a channel, on its own row id) instead of `chat:<chatId>`,
+and would sit in a card of its OWN beside the thread it belongs to. The set was **exported from
+`push-routing` and imported** by the grouper. That import is now gone — the ungrouping follow-up above
+deleted the card keying entirely, so nothing keys a card any more — but **the export stays**: it is the
+one list, and keeping it that way is what stops the eleventh event type repeating this.
+
+#### The two places the contract's text had to be translated rather than copied
+
+⚠️ **`describeNotification`'s suggested `color: '#0B6A85'` is stale.** That is the OLD chat tint,
+written before the function moved to the redesign's four families; taking the hex literally would make
+the reaction the one chat row painted a fifth colour. It uses **slate** (`#3E5C78`), that colour's
+replacement, so a reaction still reads as chat. The document's actual instruction — *don't let it fall
+to `default` and show a grey bell in an "Other" group next to correctly grouped chat rows* — is what is
+honoured.
+
+⚠️ ~~**The disclosure label could no longer say "on this lead".**~~ **Moot** — the ungrouping follow-up
+above removed the disclosure, so a burst now renders as one row per reaction. §5's burst problem is
+therefore the BACKEND's to solve (its "notify once, then stay silent for N minutes" option), not
+something the list absorbs. Worth knowing if reps report a flooded Notification Center.
+
+#### Not done, and why
+
+- ⚠️ **Tapping does NOT scroll to the reacted message.** `messageId` is in the payload, but §3 files
+  this as an open question and says it needs an optional `messageId` on the `chat` `PushRoute` **and**
+  `ChatDetail` honouring it — the document's own words, *"a larger change than the rest of this
+  document, and worth deciding separately"*. The tap opens the thread, which is the contract's baseline.
+- **Every §5 decision is the backend's** — who is notified (proposal: the message author only, never
+  self-reactions), the burst rule, never notifying on `remove-reaction`, and whether a reaction writes
+  a history row at all. ⚠️ That last one has an app-side consequence: `isRenderable` currently ties
+  display and history together, so **banner-only would be the first exception to it** and is not
+  something the app can opt into per type today.
+
+Verified with 14 tests (`__tests__/utils/chat-reaction.test.ts`) driving the real functions over §2's
+payload verbatim: the lead reaction resolving to its thread, an **absent** `leadId` reading as a channel
+rather than a lead chat, a chat-less payload returning `null` instead of guessing, the messages channel,
+`isRenderable`, foreground suppression true for that exact thread and false for another chat or another
+screen, `invalidationKeysFor` returning the two notification keys and nothing lead-scoped, the reaction
+carding **with** its own thread (the regression above, asserted against the pre-fix list), a four-emoji
+burst rendering as four separate rows each keeping its own unread state, a reaction sitting beside a
+message from the same thread without merging into it, and a channel reaction rendering with no chip. tsc 44 (baseline unchanged); `push-routing.ts`,
+`notification-groups.ts`, `useNotifications.ts` and `notifications.ts` are eslint-clean; the iOS bundle
+builds.
+
+⚠️ Nothing can be checked on device until the backend sends the event. `npm run test-push -- --user=<id>
+--event=chat-reaction` (§6.4) is what fires a real payload without needing two accounts in a chat.
 
 ---
 
