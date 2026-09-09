@@ -2765,6 +2765,160 @@ Verified with 7 tests over the real builder, including the repro asserted agains
 in for a skipped slot, a clean slot unchanged, and empty input as a no-op. tsc error set unchanged; the
 util and its test are eslint-clean.
 
+### The install-request status moved onto the ACTION BUTTON, and greys the whole card
+
+Ticket: *"these status are shown on top on the installer side but we need to show these status on the
+button instead of shown on the top … you can display these status on the button where we currently
+show the location icon Resume Appointment"*, then five corrections — *"also pick the colour of the text
+for the button"*, *"the button should not be transparent type, the button's look should be same as the
+previous"*, *"lead card color, button and the text colour should be same according to the status text
+colors"*, *"use the same colour for the card that is used for the RESULTED lead — no need to use the
+yellow, blue and other colour"*, and finally, against a resulted card, *"the can't do work status is
+still displayed on the top instead of shown on the button"*.
+
+`InstallerJobCard` rendered `installStatusPhrase(job)` as its own chip row above the Lead ID and the
+button as `📍 Resume Appointment`. The phrase is now the button's LABEL, **the chip row is gone
+entirely**, and the card wears `JOB_CARD_COLORS.RESULTED` grey while it carries one.
+
+| | before | now (phrase present) |
+|---|---|---|
+| chip row above Lead ID | always, when a phrase exists | **never — removed** |
+| button | `📍 Resume Appointment` | `Pending Install Reset` — solid, white label, no pin |
+| button, RESULTED job | `Resulted - Cant Do Work!` | `Install Can't Do Work` — the phrase wins |
+| border / wash / arrival time / address pin / button | `state.color` (green resume, orange start) | **`#9e9e9e`** |
+
+⚠️ **The row was not free.** "Pending Install Can't Do Work" is nearly thirty characters, which is why
+the chip needed a row of its own rather than the arrival-window slot — so removing it takes a whole row
+off a card that already carries five, and the button gives the phrase the full width the chip was
+competing for.
+
+#### A RESULTED job is no exception — `workflowState` outranks the outcome label
+
+The chip first survived there, on the reasoning that a resulted button is spoken for by its outcome —
+and that is precisely the card the reporter came back on: an `INSTALL CAN'T DO WORK` chip sitting
+directly above a `Resulted - Cant Do Work!` button, the same sentence twice. Then, on the follow-up
+(*"get the button status from this object — `workflowState: "Install Can't Do Work"`"*), the phrase was
+made to win the BUTTON on those cards too.
+
+So `showPhraseOnAction` is **`!!workflowPhrase && !loading`** — no `!resulted` arm — and such a card
+reads `Install Can't Do Work` rather than `Resulted - Cant Do Work!`.
+
+⚠️ **The two labels are not interchangeable.** The phrase is composed SERVER-side from where the
+*request* has got to; `resultedActionLabel` is derived HERE from `job.status`. Dropping the
+`Resulted - ` prefix loses nothing, because the card already carries the **RESULTED** badge top-right.
+
+`resultedActionLabel` still answers every resulted job carrying no phrase, which is most of them —
+`installStatusPhrase` returns null for a `resulted` `workflowState`.
+
+⚠️ **The card's resulted TREATMENT is untouched by this.** Its `#F4F6F8` ground, `0.85` opacity and the
+RESULTED badge are all still keyed on `job.resulted`, not on the phrase — only the button's words
+change. And `accent` is the same grey either way, since `state.color` for a resulted job already IS
+`JOB_CARD_COLORS.RESULTED`.
+
+`showPhraseChip` and the whole `workflowPhraseColor` helper went with the chip; the top-right
+**RESULTED** badge is a different element and is untouched.
+
+#### The colour: one grey, not three tones
+
+`accent` is now `showPhraseOnAction ? JOB_CARD_COLORS.RESULTED : state.color`, and every consumer
+follows for free — border, the `+ '1A'` wash, the arrival time, the address pin, `actionBg`/`actionFg`.
+
+⚠️ **Four designs were sent back getting here. Do not re-derive them.**
+1. **Button on the card accent, white label** — the status read as an ordinary green Resume card.
+2. **Button as a tone WASH** (`tone + '33'` behind `tone`, i.e. the chip widened to the row) — rejected
+   as *"transparent type"*: it reads as a disabled or secondary control, and this button is neither,
+   since the tap still starts or resumes the visit.
+3. **The whole card in the phrase's tone** (amber pending / red `cantDoWork` / blue `rescheduled*`) —
+   rejected outright: a list where every card is a different hue is a list with no signal in it.
+4. **Keeping the chip for resulted jobs** — the duplicate above; the phrase now takes their button.
+
+What the final answer rests on is that these jobs all share the one fact that matters — **the office is
+holding them, so they are not the crew's ordinary work** — and `JOB_CARD_COLORS` already has the word
+for that.
+
+⚠️ **Grey the COLOUR, not the resulted TREATMENT.** The card keeps its ordinary `+ '1A'` wash and full
+opacity; the resulted card's `#F4F6F8` ground and `0.85` dim say *this visit is over*, which a
+pending-reset job flatly is not — its button still starts or resumes the job.
+
+⚠️ **`solidAction = !isPreview || showPhraseOnAction`.** A phrase button stays SOLID even on a preview
+card, so the wash is reserved for a genuine preview. The preview signal is not lost: such a card still
+resolves to `UPCOMING`, so it still drops the accent bar, and its tap still explains why it will not
+open.
+
+#### Smaller decisions
+
+⚠️ **The location pin is dropped with the label** (`showActionIcon`) — the pin belongs to an action that
+takes the installer somewhere, and a status report doesn't go anywhere. Same reasoning that dropped it
+from the resulted bar. The text's `ml-2` is therefore keyed on the spinner/pin **actually being there**
+(`loading || showActionIcon`) rather than on `resulted`, or a phrase button would inherit a margin that
+pushes its centred label off centre.
+
+⚠️ The phrase renders **verbatim, not `.toUpperCase()`** as the chip did: at the button's 16 px
+`font-medium` a thirty-character phrase in caps would hit `numberOfLines={1}` and truncate, and the
+button's own typography is what makes it read as a label rather than a badge.
+
+⚠️ **`loading` is the one state that keeps the phrase book** — the button is a spinner + "Starting Job…"
+for that instant.
+
+⚠️ **Nothing was changed in `utils/installer-card-state.ts`.** `installStatusPhrase` /
+`resolveJobCardState` are untouched — a phrase in `workflowState` still falls through
+`BY_WORKFLOW_STATE` to `isJobInProgress(job)`. Only `state.color` is overridden, so the accent bar still
+draws for the two live states and the tap still starts vs resumes exactly as before; the card just says
+it in grey.
+
+⚠️ `workflowPhrase` / `showPhraseOnAction` **moved UP** the file, above `accent`, which now derives from
+them. `actionBg` / `actionFg` stayed with `isPreview`.
+
+tsc 46 (baseline unchanged); `InstallerJobCard.tsx` is at its HEAD eslint baseline (4 warnings,
+0 errors). ⚠️ The file is **CRLF** — `newline=''` on both ends.
+
+⚠️ Needs a device check (this repo cannot render-test): no status chip anywhere, a phrase card fully
+grey including its border and arrival time with a solid grey button and a white label, a RESULTED job
+carrying a phrase reading `Install Can't Do Work` on its button while keeping its dimmed ground and its
+RESULTED badge, and a phrase card still opening the job on tap.
+
+### My Installs flashed a pull-to-refresh spinner every time the crew came back from a job
+
+Ticket: *"when i came back from the lead it shows me a loader on top some time, or some times shows me
+the white space — fix this UI glitch"*, with a screenshot of the green refresh spinner sitting above
+the first card and the list pushed down.
+
+`screens/Installer/index.tsx` bound the control straight to the query's own refetch flag:
+
+```tsx
+const { …, refreshing, refresh } = useInstallerJobs(period);   // refreshing = isRefetching
+…
+<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+```
+
+⚠️ **`isRefetching` is true for EVERY refetch, not just a pull** — and this screen refetches on every
+return by design (`useFocusEffect` → `refresh()`, because a job's status changes while the crew is
+inside it and `my-jobs` is the only thing that knows). So walking back from a job set
+`RefreshControl.refreshing` **programmatically**, which on iOS inserts the control at the top of the
+list and pushes the content down: the stray spinner AND the band of white space, both from the same
+line, for a gesture nobody made.
+
+Fixed with a **`pullRefreshing` state that only `handleRefresh` sets** — exactly the flag, and the
+reasoning, the Lead Center's own pull-to-refresh already documents. The focus refetch still runs; it
+just does so silently, which is what it was always meant to do.
+
+⚠️ `handleRefresh` became `async` and releases the flag in a **`finally`**: on a failed read the
+spinner would otherwise stick forever and the list would look frozen with no way to clear it.
+
+⚠️ `refreshing` is no longer destructured from `useInstallerJobs` — the hook still returns it, and it
+is a fine thing to read for a *quiet* indicator, just never for `RefreshControl.refreshing`.
+
+⚠️ **Not the cause, and not changed:** `loading` (`isLoading`) is false throughout, because
+`staleInstallerJobs` invalidates with `refetchType: 'none'` and TanStack keeps the cached rows — so
+there is no empty-list flash, and the full-screen spinner is reserved for a genuinely dataless key
+(which is what a Today ⇄ Tomorrow switch is).
+
+tsc 46 (baseline unchanged); `Installer/index.tsx` is at its HEAD eslint baseline (5 warnings,
+0 errors). ⚠️ The file is **CRLF** — `newline=''` on both ends.
+
+⚠️ Needs a device check (this repo cannot render-test): open a job, come back, and confirm the list
+paints in place with no spinner and no gap — while a real pull still spins and still re-reads.
+
 ### The sold scope renders as SECTIONS and COMBINATIONS, not one bullet list
 
 Ticket: *"inside the installer when we open the lead and go to the bottom we see the products section
