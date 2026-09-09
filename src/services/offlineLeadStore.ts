@@ -23,6 +23,13 @@ import { LeadService } from './api/leads';
 import { isOnline, onReconnect } from './connectivity';
 import { describeQueuedLead, isSuccessfulCreate, messageOfError } from '../utils/offline-lead-queue';
 import {
+  applyResolvedAddress,
+  coordsFromLeadPayload,
+  needsAddressResolution,
+  resolveSyncAddress,
+} from '../utils/offline-lead-location';
+import { reverseGeocode } from '../utils/places';
+import {
   applyStepDecision,
   adoptExistingWork,
   createOfflineWork,
@@ -290,6 +297,39 @@ const isAlreadySubmitted = async (work: OfflineLeadWork): Promise<boolean> => {
   return String(lead?.jobBuilder?.status || '').toLowerCase() === 'submitted';
 };
 
+/**
+ * Turn the coordinates captured at the door into a street address, now that there is a connection.
+ *
+ * This is the second half of "capture the fix now, resolve the address later": with no signal there
+ * is no reverse-geocoder to reach (iOS `CLGeocoder` and Android `Geocoder` both call a web service),
+ * so the lead is filed holding `31.46668, 74.29039` and the address is settled here instead.
+ *
+ * ⚠️ A REP-TYPED ADDRESS IS NEVER REPLACED. `resolveSyncAddress` owns that rule: a fix is accurate
+ * to +/-5-20 m and a reverse-geocode snaps it to the nearest address it knows, which on an ordinary
+ * street is regularly the NEIGHBOUR. What the rep read off the mailbox beats anything inferable
+ * from a scatter of metres.
+ *
+ * ⚠️ A failed geocode is NOT a failed upload. The lead files with its coordinates exactly as before
+ * — which is at least true and actionable — rather than being held back over a cosmetic field.
+ */
+const resolveQueuedLeadAddress = async (
+  payload: Record<string, any>
+): Promise<Record<string, any>> => {
+  const address = payload?.fullAddress;
+  const coords = coordsFromLeadPayload(payload);
+  if (!needsAddressResolution(address, coords)) return payload;
+
+  let reverseGeocoded: string | null = null;
+  try {
+    if (coords) reverseGeocoded = await reverseGeocode(coords);
+  } catch {
+    /* keep the coordinates */
+  }
+
+  const { address: resolved, source } = resolveSyncAddress({ address, coords, reverseGeocoded });
+  return source === 'reverse-geocoded' ? applyResolvedAddress(payload, resolved) : payload;
+};
+
 // ─── The steps ────────────────────────────────────────────────────────────────
 
 type StepResult = {
@@ -326,7 +366,9 @@ const runStep = async (
 
   switch (step) {
     case 'lead': {
-      const res = await LeadService.createLead(send(work.lead));
+      const res = await LeadService.createLead(
+        await resolveQueuedLeadAddress(send(work.lead) as Record<string, any>)
+      );
       // ⚠️ This endpoint answers some failures with a 200 carrying a message, so a resolved promise
       // is not proof the lead was filed.
       if (!isSuccessfulCreate(res?.data)) {

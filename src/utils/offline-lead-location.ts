@@ -103,6 +103,33 @@ const COORDS_PLACEHOLDER_RE = new RegExp(
 );
 
 /**
+ * The same value with the marker OPTIONAL.
+ *
+ * ⚠️ This exists because the two sides of the trip are spelled differently, which is easy to miss
+ * and cost a real bug: the address BOX shows `formatCoordsPlaceholder` (with the 📍), while what is
+ * FILED is `formatCoords` (without it — the marker is a device affordance and reads as corruption
+ * in a portal address column). So a lead uploaded from the queue carries a bare `31.46, 74.29`, and
+ * a prefix-only test reads that as an address the rep typed and refuses to resolve it — leaving the
+ * lead on the server showing coordinates forever.
+ */
+const COORDS_ONLY_RE = new RegExp(
+  `^(?:${COORDS_PLACEHOLDER_PREFIX.trim()}\\s*)?(-?\\d+(?:\\.\\d+)?)\\s*,\\s*(-?\\d+(?:\\.\\d+)?)$`,
+);
+
+/** True when the address is nothing but coordinates, however they are spelled. */
+export const isCoordsOnlyAddress = (address: string | null | undefined): boolean =>
+  typeof address === 'string' && COORDS_ONLY_RE.test(address.trim());
+
+/** The coordinates back out of either spelling. */
+export const parseCoordsAddress = (address: string | null | undefined): LeadCoords | null => {
+  if (typeof address !== 'string') return null;
+  const m = COORDS_ONLY_RE.exec(address.trim());
+  if (!m) return null;
+  const coords = { latitude: Number(m[1]), longitude: Number(m[2]) };
+  return isValidCoords(coords) ? coords : null;
+};
+
+/**
  * True while the address box still holds the placeholder — i.e. the rep has not typed a real
  * address over it. This is the test that decides whether a reverse-geocode may fill the field.
  *
@@ -166,7 +193,10 @@ export const resolveSyncAddress = ({
   const typed = typeof address === 'string' ? address.trim() : '';
 
   // A real address the rep entered outranks everything, including a geocode we just fetched.
-  if (typed && !isCoordsPlaceholder(typed)) return { address: typed, source: 'typed' };
+  // ⚠️ `isCoordsOnlyAddress`, not `isCoordsPlaceholder`: by upload time the value has already lost
+  // its 📍 (the marker is stripped before filing), and the strict test would read those
+  // coordinates as the rep's own typing and keep them forever.
+  if (typed && !isCoordsOnlyAddress(typed)) return { address: typed, source: 'typed' };
 
   const geocoded = typeof reverseGeocoded === 'string' ? reverseGeocoded.trim() : '';
   if (geocoded) return { address: geocoded, source: 'reverse-geocoded' };
@@ -189,6 +219,45 @@ export const needsAddressResolution = (
   coords?: LeadCoords | null,
 ): boolean => {
   const typed = typeof address === 'string' ? address.trim() : '';
-  if (typed && !isCoordsPlaceholder(typed)) return false;
-  return isValidCoords(coords) || !!parseCoordsPlaceholder(typed);
+  if (typed && !isCoordsOnlyAddress(typed)) return false;
+  return isValidCoords(coords) || !!parseCoordsAddress(typed);
+};
+
+
+// ─── Resolving a QUEUED lead's address at upload time ─────────────────────────
+
+/**
+ * The GPS fix out of a queued create payload.
+ *
+ * ⚠️ `location.coordinates` is GeoJSON, i.e. **[longitude, latitude]** — the opposite order to
+ * every `{ latitude, longitude }` in this file. Reading it the obvious way round puts a Lahore
+ * lead (31.46, 74.29) at 74.29, 31.46, which is a different country.
+ */
+export const coordsFromLeadPayload = (payload: any): LeadCoords | null => {
+  const pair = payload?.location?.coordinates;
+  if (Array.isArray(pair) && pair.length >= 2) {
+    const geo = { latitude: Number(pair[1]), longitude: Number(pair[0]) };
+    if (isValidCoords(geo)) return geo;
+  }
+  // The zone-canvasser branch writes them flat alongside `location`.
+  const flat = { latitude: Number(payload?.latitude), longitude: Number(payload?.longitude) };
+  if (isValidCoords(flat)) return flat;
+  // Last resort: the address itself is the coordinates.
+  return parseCoordsAddress(payload?.fullAddress) || parseCoordsAddress(payload?.customer?.address);
+};
+
+/**
+ * Write a resolved street address back onto a queued create payload.
+ *
+ * ⚠️ BOTH fields. The lead record reads `fullAddress` and the customer record reads
+ * `customer.address`; updating one leaves the Lead Center header and the Edit Customer form
+ * disagreeing about where the job is.
+ */
+export const applyResolvedAddress = <T extends Record<string, any>>(payload: T, address: string): T => {
+  if (!address) return payload;
+  return {
+    ...payload,
+    fullAddress: address,
+    ...(payload.customer ? { customer: { ...payload.customer, address } } : {}),
+  };
 };
