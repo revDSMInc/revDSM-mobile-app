@@ -3134,6 +3134,124 @@ baseline (56 problems: 1 pre-existing error / 55 warnings).
 
 ⚠️ Both files are CRLF — `newline=''` on both ends.
 
+### The Notification Center rebuilt to the `notify-ui.txt` design
+
+Ticket: *"this file contains the notification UI design … update the Notification UI according to this
+design"*, with `notify-ui.txt` (an HTML/CSS mock, in the repo root) and two screenshots of the finished
+list. The screen was a flat `FlatList` of hairline-separated rows on the app's plain white; it is now
+the mock's layout — a warm paper ground, **day sections**, one bordered **card** per run of
+notifications about the same lead, and repeats collapsed behind a disclosure.
+
+| the design | how it is built |
+|---|---|
+| paper ground `#F6F5F0`, white cards, `#E6E3DA` rules | a `C` token block in the screen, copied from the mock's `:root` |
+| `Today · Sep 7` / `Yesterday` / `2 days ago` headings | `SectionList` + `formatDayLabel` |
+| one card per lead, hairline between its rows | `buildNotificationSections` — see the grouping rules below |
+| 3px pine rail + wash on an unread row | `styles.rail` + `itemUnread`, clipped by the card's `overflow` |
+| 40px tinted bubble, four families | `describeNotification` now returns `{ icon, color, tint, family }` |
+| monospace lead chip (`41PCDLG` / `SelfGen`) | `leadTagOf` |
+| `+1 more update on this lead` / `Show breakdown` | the item's `stack` / `moreLabel` / `lessLabel` |
+| `Unread ⑷` count pill | `unreadCount` from the existing badge query |
+| `You're viewing the last 3 days` | `endHintFor` — **derived**, see below |
+
+**Every rule lives in the pure `src/utils/notification-groups.ts`**, for the reason
+`utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist: the screen pulls in React Native and
+is untestable under jest here, and each of these fails **silently** — a row filed under the wrong day, a
+mongo id printed as a lead tag, or two unrelated notifications merged into one card all read as a
+styling quirk rather than an error.
+
+#### The grouping is three passes, and each guard is load-bearing
+
+1. **Day buckets**, then 2. **cards** — a RUN of *adjacent* rows sharing a card key, not a global
+   group-by, so an hours-old row can never be pulled up beside a fresh one and read as though they
+   happened together — then 3. **items**, where repeats of one event family collapse into the newest and
+   the rest become the disclosure's sub-rows.
+
+- ⚠️ **A row with no resolvable identity keys on its OWN id**, so it can never merge into a neighbour.
+  Telling the rep two unrelated notifications concern the same lead is worse than an extra card.
+- ⚠️ **`addendum-signed` carries its `outcome` in the stack key.** The title reads "Addendum signed" for
+  a DECLINE too (the rule `push-routing.addendumOutcome` states), so collapsing the two would hide a
+  refusal behind an approval.
+- ⚠️ **A collapsed item is unread when ANY row behind it is.** The disclosure hides rows; a hidden
+  unread would leave the bell counting something the rep has no way to reach. For the same reason the
+  tap marks **every** `ids` entry read, not just the head.
+- **`lead-issued` AGGREGATES** rather than collapsing — consecutive batches sum to
+  `4 new leads issued to you` with `Show breakdown`, which is the design's own row. An absent `count`
+  counts as **one, never zero**, which would erase the row from its own total.
+
+#### Dates are parsed as TEXT, and the day heading and the clock share that parse
+
+⚠️ The repo's standing rule (`utils/job-change-summary.ts`) is that an offset ISO string shifts the
+calendar day either side of midnight. The stronger reason here is **consistency**: `dayKeyOf` and
+`formatClockTime` read the same `YYYY-MM-DDTHH:MM` prefix, so a row filed under "Yesterday" can never
+print a time from today. Change one and you must change the other.
+
+⚠️ **A future day is clamped to `Today`.** Reachable without any clock being wrong — `createdAt` can be
+UTC while the rep is behind it — and "Tomorrow" on a notification that has already arrived is the worse
+answer. `daysBetween` builds both sides through `Date.UTC` on the parsed components so neither can be
+shifted by the device timezone.
+
+#### `leadTagOf` reads a FIXED key list and REJECTS a mongo id
+
+The design's chips are `41PCDLG`, `41AK` and `SelfGen` — the lead's human number, or its `leadCode`
+when the number is `"N/A"` (which is exactly what a self-gen lead stores; see `response-one.txt`).
+
+⚠️ **The push payload's `leadId` is a mongo id while the lead RECORD's `leadId` is that human number.**
+Both are read from the same key, and the 24-hex guard is the whole reason that is safe: whichever the
+backend sends, the right one renders and the wrong one never does. Without it the chip would be filled
+on every row with a database key that looks deliberate. `'N/A'`, the other placeholders, and anything
+over 16 characters are rejected too, and an unrecognised payload yields `''` so the chip is simply
+absent — the discipline `readDocumentGroup` sets.
+
+#### Two deliberate divergences from the mock
+
+⚠️ **The heading is not a serif.** The mock loads Source Serif 4; this app bundles **Public Sans only**
+(and naming an unbundled family drops that text straight back onto the device font — the rule the
+app-wide font ticket records). The heading is carried by size and tighter tracking instead.
+
+⚠️ **The unread wash is a FLAT tint, not the mock's gradient.** `rgba(30,92,67,0.06) → transparent` needs
+a gradient library this repo does not ship, and pulling `react-native-svg` in behind every row to fake
+one is not worth it. `#F1F6F2` is that tint flattened over white; the 3px pine rail is what actually
+carries the signal.
+
+⚠️ **`You're viewing the last 3 days` is DERIVED from the oldest row loaded**, not hardcoded, and only
+shows once `hasMore` is false. The app has no retention window to quote, so a fixed number would be a
+claim nothing backs. A list that only reaches today reads *"You're viewing today's notifications"*.
+
+#### Smaller decisions
+
+- **The colour block is literals, not `useTheme()`.** The paper ground is not a colour the app's palette
+  has; reading `colors.background` would put the cards on plain white and lose the separation the whole
+  design rests on. The app is light-only today (`ThemeProvider` forces it) — give the block a dark twin
+  if that changes.
+- **`stickySectionHeadersEnabled={false}`** — a pinned day heading over a card list reads as a second
+  header, and the design pins only the screen header.
+- **`overflow: 'hidden'` on the card** clips the rail and the row wash to its corners. Safe only because
+  the card carries no shadow; iOS drops a shadow on a view that sets it (the inspection-photo card note
+  above).
+- **Mark all read stays MOUNTED at zero**, dimmed and disabled, rather than being swapped for a spacer —
+  the header no longer reflows the moment the last notification is read.
+- The tap handler, `resolvePushRoute` branch for branch, and the "always fetch `all`, filter unread
+  client-side" rule are **unchanged**; only the presentation moved.
+
+Verified with 29 tests (`__tests__/utils/notification-groups.test.ts`) driving the real helpers over the
+design's own list verbatim: the three day sections in order, the two `41AK` signature rows in ONE card
+with the repeated addendum collapsed behind `+1 more update on this lead`, the two batches aggregating to
+`4 new leads issued to you`, every chip the screenshots show, and a single notification's own title and
+message surviving untouched; plus the guards — a hidden unread still marking the item unread, an accepted
+and a declined addendum never merging, two different leads never merging, two identity-less rows never
+merging, a lead's later run staying its own card, an absent count reading as one, a timestamp-less row
+filed under `Earlier` rather than dropped, the mongo-id rejection in all three of its forms, the offset
+ISO asserted against what a naive `Date` parse would give, month/year day arithmetic, and empty/junk input
+as a no-op. tsc 44 (baseline unchanged); `notification-groups.ts` and `useNotifications.ts` are
+eslint-clean and `Notifications/index.tsx` drops 5 warnings → 1 (the pre-existing `no-void`); the iOS
+bundle builds.
+
+⚠️ Needs a device check — this repo cannot render-test and the whole ticket is layout: the day headings,
+the card grouping on a lead with several notifications, the disclosure expanding, and that the chip shows
+a readable lead number rather than nothing. **If every chip is absent, the payload is naming no human
+lead id** — add the key the backend actually sends to `LEAD_TAG_KEYS`; do not relax the mongo-id guard.
+
 ---
 
 ---
