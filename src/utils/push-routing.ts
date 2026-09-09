@@ -27,12 +27,20 @@
  * for the PUSH path only — see `services/api/notifications.ts`.
  */
 
-/** The nine rep-facing events. Not a union of everything the backend can send. */
+/** The ten rep-facing events. Not a union of everything the backend can send. */
 export type PushEventType =
   | 'chat-message'
   | 'chat-reply'
   | 'chat-file-upload'
   | 'chat-tagged'
+  /**
+   * Someone reacted to the rep's own message.
+   *
+   * Contract: CHAT-REACTION-NOTIFICATIONS.md. Safe to ship ahead of the backend —
+   * every rule it needs is inherited from `CHAT_EVENTS`, and until the event is
+   * actually sent nothing here fires.
+   */
+  | 'chat-reaction'
   | 'lead-issued'
   | 'appointment-issued'
   | 'addendum-signed'
@@ -101,11 +109,28 @@ export const pushNum = (v: unknown): number | undefined => {
   return Number.isFinite(n) ? n : undefined;
 };
 
-const CHAT_EVENTS = new Set<string>([
+/**
+ * The chat family, and the ONLY list of it in the app.
+ *
+ * ⚠️ Exported deliberately. Membership decides three behaviours at once — the
+ * destination (`resolvePushRoute`), the Android channel (`channelForEvent`) and
+ * foreground suppression (`shouldSuppressForeground`) — and a second copy of the
+ * list is how a new chat event ends up with some of them and not the others. That
+ * is not hypothetical: adding `chat-reaction` found exactly one such copy, in
+ * `utils/notification-groups.ts`, which keyed the Notification Center's cards off
+ * its own stale duplicate. (That grouping has since been removed, so the module no
+ * longer imports this — but the export stays, so the eleventh event type does not
+ * repeat it.)
+ */
+export const CHAT_EVENTS: ReadonlySet<string> = new Set<string>([
   'chat-message',
   'chat-reply',
   'chat-file-upload',
   'chat-tagged',
+  // A reaction IS a chat event: it opens the thread the message is in, and it
+  // belongs on the messages channel so a rep who has muted chatter is not woken
+  // by a thumbs-up. Both of those come free from being in this set.
+  'chat-reaction',
 ]);
 
 /**
@@ -272,6 +297,11 @@ export function invalidationKeysFor(data: PushData | undefined | null): unknown[
     keys.push(['notification-history']);
   }
 
+  // ⚠️ `chat-reaction` deliberately has NO case here, and neither does any other
+  // chat event: a reaction changes no lead-scoped query, and the thread itself is
+  // already updated in place by the `reaction-added` socket broadcast. The two
+  // keys above are the whole of what it needs. Written down because "no case" and
+  // "case forgotten" look identical in a switch.
   switch (type) {
     case 'addendum-signed':
       if (leadId) {

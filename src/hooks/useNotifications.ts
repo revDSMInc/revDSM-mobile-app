@@ -264,6 +264,18 @@ export function describeNotification(
       return of('slate', 'message-outline', 'Messages');
     case 'chat-tagged':
       return of('slate', 'at', 'Messages');
+    /**
+     * CHAT-REACTION-NOTIFICATIONS.md §4. Without a case this falls to `default`
+     * and shows a grey bell in an "Other" group, sitting next to correctly
+     * grouped chat rows on the same screen.
+     *
+     * ⚠️ The contract suggests `color: '#0B6A85'` — that is the OLD chat tint,
+     * written before this function moved to the redesign's four families. SLATE
+     * is that colour's replacement, so the reaction still reads as chat; taking
+     * the hex literally would make it the one chat row painted a fifth colour.
+     */
+    case 'chat-reaction':
+      return of('slate', 'emoticon-happy-outline', 'Messages');
     case 'lead-issued':
       return of('pine', 'account-plus-outline', 'Leads');
     case 'appointment-issued':

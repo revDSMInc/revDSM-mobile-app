@@ -43,6 +43,12 @@ export const NOTIFICATION_TYPES = [
   'chat-reply',
   'chat-file-upload',
   'chat-tagged',
+  // CHAT-REACTION-NOTIFICATIONS.md. ⚠️ This list is what `:type` accepts, so it
+  // must track the backend's `NotificationEventTypes` — a value the server does
+  // not know yet returns 400 "Notification type not found". Nothing requests a
+  // single type today (the screen always fetches `all`), so adding it early is
+  // inert; it exists so `NotificationHistoryType` stays honest.
+  'chat-reaction',
   'lead-issued',
   'appointment-issued',
   'addendum-signed',
