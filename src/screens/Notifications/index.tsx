@@ -1,26 +1,32 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
-  FlatList,
+  SectionList,
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
   StyleSheet,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
-import { useTheme } from '../../theme/ThemeProvider';
 import {
   useNotificationHistory,
   useMarkNotificationsRead,
   useUnreadNotificationCount,
   useUnreadFilter,
   describeNotification,
-  formatNotificationTime,
   type NotificationRow,
 } from '../../hooks/useNotifications';
+import {
+  buildNotificationSections,
+  endHintFor,
+  todayKey,
+  type NotificationCard,
+  type NotificationItem,
+} from '../../utils/notification-groups';
 import { resolvePushRoute } from '../../utils/push-routing';
 import { LeadService } from '../../services/api/leads';
 import { resolveBuildIds } from '../../hooks/usePushNotifications';
@@ -29,6 +35,11 @@ import { FlashMessage } from '../../config/message';
 /**
  * Notification Center — the history side of the push feature.
  *
+ * The layout is the `notify-ui.txt` redesign: a paper ground, day sections, and
+ * one bordered CARD per run of notifications about the same lead, with repeats
+ * of one event collapsed behind a disclosure. All of that grouping is decided in
+ * the pure `utils/notification-groups.ts`; this file only paints it.
+ *
  * ⚠️ Tapping a row resolves its destination through the SAME `resolvePushRoute`
  * the push banner uses. That shared path is the whole reason the routing lives in
  * a pure module: a row and the banner that raised it can never disagree about
@@ -36,13 +47,45 @@ import { FlashMessage } from '../../config/message';
  *
  * Contract: NOTIFICATIONS-MOBILE-API.md §5.
  */
+
+/**
+ * The redesign's palette, verbatim from `notify-ui.txt`'s `:root`.
+ *
+ * ⚠️ Written as literals rather than pulled from `useTheme()`. This screen is a
+ * standalone surface with its own warm "paper" ground (`#F6F5F0`), which is not a
+ * colour the app's palette has — reading `colors.background` here would put the
+ * cards on plain white and lose the whole separation the design rests on. The app
+ * is light-only today (`ThemeProvider` forces it), so there is no dark variant to
+ * miss; give this block a dark twin if that ever changes.
+ */
+const C = {
+  ink: '#152018',
+  inkSoft: '#4B594E',
+  inkFaint: '#8B968D',
+  paper: '#F6F5F0',
+  card: '#FFFFFF',
+  line: '#E6E3DA',
+  pine: '#1E5C43',
+  pineTint: '#E7F0EA',
+  /**
+   * The unread wash. The design paints a left-to-right gradient
+   * (`rgba(30,92,67,0.06)` → transparent); this repo ships no gradient library
+   * and pulling `react-native-svg` in behind every row to fake one is not worth
+   * it, so this is that tint flattened over white. The 3px pine rail beside it is
+   * what actually carries the "unread" signal.
+   */
+  unreadWash: '#F1F6F2',
+};
+
+const MONO = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
+
 export default function NotificationsScreen() {
-  const { colors } = useTheme();
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
 
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [opening, setOpening] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   /**
    * ⚠️ Always fetched as `all`. The `:type` path segment accepts ONLY `all` or an
@@ -57,11 +100,39 @@ export default function NotificationsScreen() {
 
   const visible = useUnreadFilter(rows, unreadOnly);
 
-  const handleOpen = useCallback(
-    async (row: NotificationRow) => {
-      if (opening) return;
+  /**
+   * `today` is read once per render pass rather than inside the grouper, so every
+   * day heading on one screen is measured against the same instant — a list that
+   * re-groups across midnight cannot end up with two "Today" sections.
+   */
+  const sections = useMemo(
+    () => buildNotificationSections(visible, todayKey()),
+    [visible]
+  );
+  const endHint = useMemo(
+    () => (hasMore ? '' : endHintFor(visible, todayKey())),
+    [visible, hasMore]
+  );
 
-      if (row.isUnread && row.id) void markRead(row.id);
+  const toggleStack = useCallback((key: string) => {
+    setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+
+  const handleOpen = useCallback(
+    async (item: NotificationItem<NotificationRow>) => {
+      if (opening) return;
+      const row = item.row;
+
+      /**
+       * ⚠️ EVERY id behind the item, not just the visible one. A collapsed stack
+       * hides its older repeats, so marking only the head read would leave the
+       * bell counting notifications the rep has no way to reach.
+       */
+      if (item.isUnread) {
+        item.ids.forEach((id) => {
+          if (id) void markRead(id);
+        });
+      }
 
       const route = resolvePushRoute(row.payload as any);
       if (!route) {
@@ -72,7 +143,7 @@ export default function NotificationsScreen() {
       }
 
       try {
-        setOpening(row.id);
+        setOpening(item.key);
 
         if (route.kind === 'leadList') {
           navigation.navigate('Leads');
@@ -154,56 +225,110 @@ export default function NotificationsScreen() {
   );
 
   const renderItem = useCallback(
-    ({ item }: { item: NotificationRow }) => {
-      const meta = describeNotification(item.eventType, item.payload);
-      const isOpening = opening === item.id;
+    ({ item: card }: { item: NotificationCard<NotificationRow> }) => (
+      <View style={styles.card}>
+        {card.items.map((item, index) => {
+          const meta = describeNotification(item.row.eventType, item.row.payload);
+          const isOpening = opening === item.key;
+          const isOpen = Boolean(expanded[item.key]);
 
-      return (
-        <TouchableOpacity
-          onPress={() => handleOpen(item)}
-          activeOpacity={0.7}
-          style={[
-            styles.row,
-            {
-              backgroundColor: item.isUnread ? '#F3F9EF' : colors.surface,
-              borderBottomColor: colors.border,
-            },
-          ]}
-        >
-          <View style={[styles.iconCircle, { backgroundColor: `${meta.color}1A` }]}>
-            <Icon name={meta.icon} size={20} color={meta.color} />
-          </View>
-
-          <View style={styles.body}>
-            <Text
-              numberOfLines={2}
+          return (
+            <TouchableOpacity
+              key={item.key}
+              onPress={() => handleOpen(item)}
+              activeOpacity={0.75}
               style={[
-                styles.title,
-                { color: colors.text, fontWeight: item.isUnread ? '700' : '600' },
+                styles.item,
+                index < card.items.length - 1 && styles.itemDivided,
+                item.isUnread && styles.itemUnread,
               ]}
             >
-              {item.title || meta.group}
-            </Text>
-            {!!item.message && (
-              <Text numberOfLines={3} style={[styles.message, { color: colors.textSecondary }]}>
-                {item.message}
-              </Text>
-            )}
-            <Text style={[styles.time, { color: colors.textSecondary }]}>
-              {formatNotificationTime(item.createdAt)}
-            </Text>
-          </View>
+              {item.isUnread && <View style={styles.rail} />}
 
-          {isOpening ? (
-            <ActivityIndicator size="small" color={meta.color} style={styles.trailing} />
-          ) : (
-            item.isUnread && <View style={[styles.dot, { backgroundColor: '#D32F2F' }]} />
-          )}
-        </TouchableOpacity>
-      );
-    },
-    [colors, handleOpen, opening]
+              <View
+                style={[
+                  styles.bubble,
+                  { backgroundColor: meta.tint },
+                  !item.isUnread && styles.bubbleRead,
+                ]}
+              >
+                <Icon name={meta.icon} size={19} color={meta.color} />
+              </View>
+
+              <View style={styles.itemBody}>
+                <View style={styles.itemTop}>
+                  <Text
+                    numberOfLines={2}
+                    style={[styles.itemTitle, !item.isUnread && styles.itemTitleRead]}
+                  >
+                    {item.title || meta.group}
+                  </Text>
+                  {isOpening ? (
+                    <ActivityIndicator size="small" color={meta.color} style={styles.spinner} />
+                  ) : (
+                    !!item.time && <Text style={styles.itemTime}>{item.time}</Text>
+                  )}
+                </View>
+
+                {!!item.message && (
+                  <Text numberOfLines={3} style={styles.itemDesc}>
+                    {item.message}
+                  </Text>
+                )}
+
+                {!!item.tag && (
+                  <View style={styles.tagWrap}>
+                    <Text style={styles.tag}>{item.tag}</Text>
+                  </View>
+                )}
+
+                {!!item.moreLabel && (
+                  <TouchableOpacity
+                    // ⚠️ The disclosure must NOT open the notification, so it stops
+                    // the press here rather than letting it reach the row beneath.
+                    onPress={() => toggleStack(item.key)}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.stackMore}>
+                      {isOpen ? item.lessLabel : item.moreLabel}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {isOpen && item.stack.length > 0 && (
+                  <View style={styles.subList}>
+                    {item.stack.map((sub, i) => (
+                      <View key={`${item.key}-sub-${i}`} style={styles.subRow}>
+                        <Text numberOfLines={1} style={styles.subLabel}>
+                          {sub.label}
+                        </Text>
+                        <Text style={styles.subTime}>{sub.time}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    ),
+    [expanded, handleOpen, opening, toggleStack]
   );
+
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: { label: string; date: string } }) => (
+      <View style={styles.dayRow}>
+        <Text style={styles.dayLabel}>{section.label}</Text>
+        {!!section.date && <Text style={styles.dayDate}>{section.date}</Text>}
+        <View style={styles.dayRule} />
+      </View>
+    ),
+    []
+  );
+
+  const isEmpty = sections.length === 0;
 
   return (
     /**
@@ -220,122 +345,103 @@ export default function NotificationsScreen() {
      * Do not "simplify" this back to SafeAreaView without checking on a device
      * that the title clears the status bar.
      */
-    <View style={[styles.root, { backgroundColor: colors.background }]}>
-      {/* Header */}
-      <View
-        style={[
-          styles.header,
-          {
-            borderBottomColor: colors.border,
-            backgroundColor: colors.surface,
-            paddingTop: insets.top + 8,
-          },
-        ]}
-      >
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Icon name="chevron-left" size={28} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Notifications</Text>
-        {unreadCount > 0 ? (
+    <View style={styles.root}>
+      {/* Header — sits on the paper ground, so it carries no rule of its own;
+          the tab strip below it is what separates the header from the list. */}
+      <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
+        <View style={styles.headerRow}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Icon name="chevron-left" size={22} color={C.ink} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Notifications</Text>
           <TouchableOpacity
             onPress={() => markAllRead()}
-            style={styles.markAllBtn}
+            // Kept mounted at zero so the header does not reflow the moment the
+            // last notification is read.
+            disabled={unreadCount === 0}
+            style={[styles.markAllBtn, unreadCount === 0 && styles.markAllDisabled]}
             accessibilityRole="button"
           >
             <Text style={styles.markAllText}>Mark all read</Text>
           </TouchableOpacity>
-        ) : (
-          // Keeps the title optically centred against the back chevron whether or
-          // not the action is present.
-          <View style={styles.markAllPlaceholder} />
-        )}
-      </View>
+        </View>
 
-      {/* All / Unread */}
-      <View
-        style={[
-          styles.tabs,
-          { borderBottomColor: colors.border, backgroundColor: colors.surface },
-        ]}
-      >
-        {[
-          { key: false, label: 'All' },
-          { key: true, label: unreadCount > 0 ? `Unread (${unreadCount})` : 'Unread' },
-        ].map((tab) => {
-          const active = unreadOnly === tab.key;
-          return (
-            <TouchableOpacity
-              key={String(tab.key)}
-              onPress={() => setUnreadOnly(tab.key)}
-              style={[styles.tab, active && styles.tabActive]}
-            >
-              <Text
-                style={[
-                  styles.tabText,
-                  { color: active ? '#3A8F14' : colors.textSecondary },
-                  active && styles.tabTextActive,
-                ]}
+        <View style={styles.tabs}>
+          {[
+            { key: false, label: 'All' },
+            { key: true, label: 'Unread' },
+          ].map((tab) => {
+            const active = unreadOnly === tab.key;
+            return (
+              <TouchableOpacity
+                key={String(tab.key)}
+                onPress={() => setUnreadOnly(tab.key)}
+                style={[styles.tab, active && styles.tabActive]}
               >
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
+                <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab.label}</Text>
+                {tab.key === true && unreadCount > 0 && (
+                  <View style={[styles.tabCount, active && styles.tabCountActive]}>
+                    <Text style={[styles.tabCountText, active && styles.tabCountTextActive]}>
+                      {unreadCount}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
 
       {isLoading && rows.length === 0 ? (
         <View style={styles.centre}>
-          <ActivityIndicator size="large" color="#4CBB17" />
+          <ActivityIndicator size="large" color={C.pine} />
         </View>
       ) : isError && rows.length === 0 ? (
         <View style={styles.centre}>
-          <Icon name="wifi-off" size={44} color={colors.textSecondary} />
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>
-            Couldn&rsquo;t load notifications
-          </Text>
+          <Icon name="wifi-off" size={44} color={C.inkFaint} />
+          <Text style={styles.emptyTitle}>Couldn&rsquo;t load notifications</Text>
           <TouchableOpacity onPress={refresh} style={styles.retryBtn}>
             <Text style={styles.retryText}>Try Again</Text>
           </TouchableOpacity>
         </View>
       ) : (
-        <FlatList
-          data={visible}
-          keyExtractor={(item, index) => item.id || `row-${index}`}
+        <SectionList
+          sections={sections}
+          keyExtractor={(card) => card.key}
           renderItem={renderItem}
-          // flexGrow lets the empty state centre in the available space instead of
-          // sitting just under the tabs; paddingBottom keeps the last row clear of
-          // the gesture bar.
+          renderSectionHeader={renderSectionHeader}
+          // A sticky day heading over a card list reads as a second header; the
+          // design pins only the screen header.
+          stickySectionHeadersEnabled={false}
           contentContainerStyle={
-            visible.length === 0
-              ? styles.listEmpty
-              : { paddingBottom: insets.bottom + 24 }
+            isEmpty ? styles.listEmpty : { paddingBottom: insets.bottom + 24 }
           }
           onEndReached={() => {
-            // Pagination off an empty list is never meaningful, and FlatList fires
+            // Pagination off an empty list is never meaningful, and the list fires
             // onEndReached on mount whenever the content is shorter than the viewport.
-            if (visible.length > 0) loadMore();
+            if (!isEmpty) loadMore();
           }}
           onEndReachedThreshold={0.4}
           refreshControl={
             <RefreshControl
               refreshing={isFetching && rows.length > 0}
               onRefresh={refresh}
-              tintColor="#4CBB17"
+              tintColor={C.pine}
             />
           }
           ListEmptyComponent={
             <View style={styles.centre}>
-              <Icon name="bell-off-outline" size={44} color={colors.textSecondary} />
-              <Text style={[styles.emptyTitle, { color: colors.text }]}>
+              <Icon name="bell-off-outline" size={44} color={C.inkFaint} />
+              <Text style={styles.emptyTitle}>
                 {unreadOnly ? 'Nothing unread' : 'No notifications yet'}
               </Text>
-              <Text style={[styles.emptyBody, { color: colors.textSecondary }]}>
+              <Text style={styles.emptyBody}>
                 {unreadOnly
                   ? 'You are all caught up.'
                   : 'Messages, leads and signed documents will appear here.'}
@@ -343,10 +449,12 @@ export default function NotificationsScreen() {
             </View>
           }
           ListFooterComponent={
-            hasMore && visible.length > 0 ? (
+            hasMore && !isEmpty ? (
               <View style={styles.footer}>
-                <ActivityIndicator size="small" color="#4CBB17" />
+                <ActivityIndicator size="small" color={C.pine} />
               </View>
+            ) : endHint ? (
+              <Text style={styles.endHint}>{endHint}</Text>
             ) : null
           }
         />
@@ -356,69 +464,119 @@ export default function NotificationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  /**
-   * The three header elements are given explicit separation: the chevron sits in
-   * its own tinted circle, the title is offset from it, and "Mark all read" is a
-   * pill rather than bare text. Run together as plain siblings they read as one
-   * merged strip — the title looked like a label on the back button and the
-   * action looked like part of the title.
-   */
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingBottom: 12,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-  },
+  root: { flex: 1, backgroundColor: C.paper },
+
+  header: { backgroundColor: C.paper, paddingHorizontal: 16 },
+  headerRow: { flexDirection: 'row', alignItems: 'center' },
   backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(15, 23, 20, 0.05)',
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: C.line,
   },
   headerTitle: {
     flex: 1,
-    fontSize: 19,
+    // The design sets a serif here; this app bundles Public Sans only, so the
+    // heading is carried by size and tighter tracking instead of a second family.
+    fontSize: 25,
     fontWeight: '700',
-    letterSpacing: -0.3,
+    letterSpacing: -0.4,
+    color: C.ink,
     marginLeft: 12,
     marginRight: 8,
   },
-  markAllBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 16,
-    backgroundColor: '#EAF5E3',
-    borderWidth: 1,
-    borderColor: '#CFE7C0',
+  markAllBtn: { paddingVertical: 8, paddingHorizontal: 2 },
+  markAllDisabled: { opacity: 0.35 },
+  markAllText: { color: C.pine, fontSize: 14, fontWeight: '700' },
+
+  tabs: { flexDirection: 'row', marginTop: 16, borderBottomWidth: 1, borderBottomColor: C.line },
+  tab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingBottom: 11,
+    marginRight: 22,
+    borderBottomWidth: 2.5,
+    borderBottomColor: 'transparent',
   },
-  markAllPlaceholder: { width: 4 },
-  markAllText: { color: '#3A8F14', fontSize: 12.5, fontWeight: '700' },
+  tabActive: { borderBottomColor: C.pine },
+  tabText: { fontSize: 15, fontWeight: '700', color: C.inkFaint },
+  tabTextActive: { color: C.ink },
+  tabCount: {
+    marginLeft: 6,
+    minWidth: 20,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 999,
+    backgroundColor: C.pineTint,
+    alignItems: 'center',
+  },
+  tabCountActive: { backgroundColor: C.pine },
+  tabCountText: { fontSize: 12, fontWeight: '700', color: C.pine },
+  tabCountTextActive: { color: '#FFFFFF' },
 
-  tabs: { flexDirection: 'row', borderBottomWidth: 1, paddingHorizontal: 12 },
-  tab: { paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 2, borderBottomColor: 'transparent' },
-  tabActive: { borderBottomColor: '#4CBB17' },
-  tabText: { fontSize: 14, fontWeight: '600' },
-  tabTextActive: { fontWeight: '700' },
+  dayRow: { flexDirection: 'row', alignItems: 'center', paddingTop: 18, paddingBottom: 9, paddingHorizontal: 22 },
+  dayLabel: { fontSize: 13, fontWeight: '800', color: C.ink },
+  dayDate: { fontSize: 12, fontWeight: '600', color: C.inkFaint, marginLeft: 8 },
+  dayRule: { flex: 1, height: 1, backgroundColor: C.line, marginLeft: 8 },
 
-  row: { flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 1, alignItems: 'flex-start' },
-  iconCircle: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  body: { flex: 1 },
-  title: { fontSize: 14.5, marginBottom: 2 },
-  message: { fontSize: 13, lineHeight: 18, marginBottom: 4 },
-  time: { fontSize: 11.5 },
-  trailing: { marginLeft: 8, marginTop: 4 },
-  dot: { width: 8, height: 8, borderRadius: 4, marginLeft: 8, marginTop: 6 },
+  card: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: C.line,
+    borderRadius: 14,
+    // Clips the unread rail and the row wash to the card's corners. Safe here
+    // because the card carries no shadow — iOS drops a shadow on a view that
+    // sets overflow:hidden (see the inspection-photo card in CLAUDE.md).
+    overflow: 'hidden',
+  },
 
-  root: { flex: 1 },
+  item: { flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 14 },
+  itemDivided: { borderBottomWidth: 1, borderBottomColor: C.line },
+  itemUnread: { backgroundColor: C.unreadWash },
+  rail: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, backgroundColor: C.pine },
+  bubble: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  bubbleRead: { opacity: 0.72 },
+
+  itemBody: { flex: 1, minWidth: 0 },
+  itemTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  itemTitle: { flex: 1, fontSize: 15, fontWeight: '700', lineHeight: 20, color: C.ink, marginRight: 8 },
+  itemTitleRead: { color: C.inkSoft },
+  itemTime: { fontSize: 12, fontWeight: '600', color: C.inkFaint, paddingTop: 2 },
+  spinner: { marginTop: 2 },
+  itemDesc: { fontSize: 13.5, lineHeight: 19, color: C.inkSoft, marginTop: 2 },
+
+  // A wrapping View rather than a styled Text, so the chip hugs its content
+  // instead of stretching to the row.
+  tagWrap: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: C.paper,
+    borderWidth: 1,
+    borderColor: C.line,
+  },
+  tag: { fontFamily: MONO, fontSize: 11.5, fontWeight: '700', color: C.inkSoft },
+
+  stackMore: { fontSize: 12.5, fontWeight: '700', color: C.pine, marginTop: 7 },
+  subList: { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.line },
+  subRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
+  subLabel: { flex: 1, fontSize: 12.5, color: C.inkSoft, marginRight: 8 },
+  subTime: { fontSize: 12.5, color: C.inkFaint },
+
   listEmpty: { flexGrow: 1 },
-
   centre: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 48, paddingHorizontal: 32 },
-  emptyTitle: { fontSize: 16, fontWeight: '700', marginTop: 14, marginBottom: 6, textAlign: 'center' },
-  emptyBody: { fontSize: 13.5, textAlign: 'center', lineHeight: 19 },
-  retryBtn: { marginTop: 16, backgroundColor: '#4CBB17', paddingHorizontal: 22, paddingVertical: 10, borderRadius: 8 },
+  emptyTitle: { fontSize: 16, fontWeight: '700', marginTop: 14, marginBottom: 6, textAlign: 'center', color: C.ink },
+  emptyBody: { fontSize: 13.5, textAlign: 'center', lineHeight: 19, color: C.inkSoft },
+  retryBtn: { marginTop: 16, backgroundColor: C.pine, paddingHorizontal: 22, paddingVertical: 10, borderRadius: 8 },
   retryText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   footer: { paddingVertical: 18 },
+  endHint: { textAlign: 'center', color: C.inkFaint, fontSize: 12.5, paddingTop: 20, paddingBottom: 8, paddingHorizontal: 20 },
 });

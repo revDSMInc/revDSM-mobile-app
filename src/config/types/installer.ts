@@ -384,7 +384,18 @@ export interface InstallerJob {
   /** True once the job has been resulted (can't-do-work / reset / not-hit / complete). */
   resulted?: boolean;
   status?: JobStatus | string;
-  /** Position in the installer workflow, e.g. "start". */
+  /**
+   * Position in the installer workflow — `start`, `resume`, `resulted`, or, on a
+   * job carrying a Can't Do Work / Not Hit / Reset request, the phrase that says
+   * where that request stands: "Pending Install Not Hit", "Rescheduled Reset",
+   * "Install Can't Do Work".
+   *
+   * The phrase REPLACES the base state — it is one field, not two. Composed
+   * server-side, because the pending half of it is a fact about the requests
+   * collection that no client can derive. Read it for display only: what the
+   * action button does is decided from `status` (see `installer-card-state`),
+   * precisely so a phrase here cannot change what a tap does.
+   */
   workflowState?: string;
   /**
    * Manager overrides that switch off the check-in gates for this job. Absent on jobs

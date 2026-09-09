@@ -2765,6 +2765,160 @@ Verified with 7 tests over the real builder, including the repro asserted agains
 in for a skipped slot, a clean slot unchanged, and empty input as a no-op. tsc error set unchanged; the
 util and its test are eslint-clean.
 
+### The install-request status moved onto the ACTION BUTTON, and greys the whole card
+
+Ticket: *"these status are shown on top on the installer side but we need to show these status on the
+button instead of shown on the top … you can display these status on the button where we currently
+show the location icon Resume Appointment"*, then five corrections — *"also pick the colour of the text
+for the button"*, *"the button should not be transparent type, the button's look should be same as the
+previous"*, *"lead card color, button and the text colour should be same according to the status text
+colors"*, *"use the same colour for the card that is used for the RESULTED lead — no need to use the
+yellow, blue and other colour"*, and finally, against a resulted card, *"the can't do work status is
+still displayed on the top instead of shown on the button"*.
+
+`InstallerJobCard` rendered `installStatusPhrase(job)` as its own chip row above the Lead ID and the
+button as `📍 Resume Appointment`. The phrase is now the button's LABEL, **the chip row is gone
+entirely**, and the card wears `JOB_CARD_COLORS.RESULTED` grey while it carries one.
+
+| | before | now (phrase present) |
+|---|---|---|
+| chip row above Lead ID | always, when a phrase exists | **never — removed** |
+| button | `📍 Resume Appointment` | `Pending Install Reset` — solid, white label, no pin |
+| button, RESULTED job | `Resulted - Cant Do Work!` | `Install Can't Do Work` — the phrase wins |
+| border / wash / arrival time / address pin / button | `state.color` (green resume, orange start) | **`#9e9e9e`** |
+
+⚠️ **The row was not free.** "Pending Install Can't Do Work" is nearly thirty characters, which is why
+the chip needed a row of its own rather than the arrival-window slot — so removing it takes a whole row
+off a card that already carries five, and the button gives the phrase the full width the chip was
+competing for.
+
+#### A RESULTED job is no exception — `workflowState` outranks the outcome label
+
+The chip first survived there, on the reasoning that a resulted button is spoken for by its outcome —
+and that is precisely the card the reporter came back on: an `INSTALL CAN'T DO WORK` chip sitting
+directly above a `Resulted - Cant Do Work!` button, the same sentence twice. Then, on the follow-up
+(*"get the button status from this object — `workflowState: "Install Can't Do Work"`"*), the phrase was
+made to win the BUTTON on those cards too.
+
+So `showPhraseOnAction` is **`!!workflowPhrase && !loading`** — no `!resulted` arm — and such a card
+reads `Install Can't Do Work` rather than `Resulted - Cant Do Work!`.
+
+⚠️ **The two labels are not interchangeable.** The phrase is composed SERVER-side from where the
+*request* has got to; `resultedActionLabel` is derived HERE from `job.status`. Dropping the
+`Resulted - ` prefix loses nothing, because the card already carries the **RESULTED** badge top-right.
+
+`resultedActionLabel` still answers every resulted job carrying no phrase, which is most of them —
+`installStatusPhrase` returns null for a `resulted` `workflowState`.
+
+⚠️ **The card's resulted TREATMENT is untouched by this.** Its `#F4F6F8` ground, `0.85` opacity and the
+RESULTED badge are all still keyed on `job.resulted`, not on the phrase — only the button's words
+change. And `accent` is the same grey either way, since `state.color` for a resulted job already IS
+`JOB_CARD_COLORS.RESULTED`.
+
+`showPhraseChip` and the whole `workflowPhraseColor` helper went with the chip; the top-right
+**RESULTED** badge is a different element and is untouched.
+
+#### The colour: one grey, not three tones
+
+`accent` is now `showPhraseOnAction ? JOB_CARD_COLORS.RESULTED : state.color`, and every consumer
+follows for free — border, the `+ '1A'` wash, the arrival time, the address pin, `actionBg`/`actionFg`.
+
+⚠️ **Four designs were sent back getting here. Do not re-derive them.**
+1. **Button on the card accent, white label** — the status read as an ordinary green Resume card.
+2. **Button as a tone WASH** (`tone + '33'` behind `tone`, i.e. the chip widened to the row) — rejected
+   as *"transparent type"*: it reads as a disabled or secondary control, and this button is neither,
+   since the tap still starts or resumes the visit.
+3. **The whole card in the phrase's tone** (amber pending / red `cantDoWork` / blue `rescheduled*`) —
+   rejected outright: a list where every card is a different hue is a list with no signal in it.
+4. **Keeping the chip for resulted jobs** — the duplicate above; the phrase now takes their button.
+
+What the final answer rests on is that these jobs all share the one fact that matters — **the office is
+holding them, so they are not the crew's ordinary work** — and `JOB_CARD_COLORS` already has the word
+for that.
+
+⚠️ **Grey the COLOUR, not the resulted TREATMENT.** The card keeps its ordinary `+ '1A'` wash and full
+opacity; the resulted card's `#F4F6F8` ground and `0.85` dim say *this visit is over*, which a
+pending-reset job flatly is not — its button still starts or resumes the job.
+
+⚠️ **`solidAction = !isPreview || showPhraseOnAction`.** A phrase button stays SOLID even on a preview
+card, so the wash is reserved for a genuine preview. The preview signal is not lost: such a card still
+resolves to `UPCOMING`, so it still drops the accent bar, and its tap still explains why it will not
+open.
+
+#### Smaller decisions
+
+⚠️ **The location pin is dropped with the label** (`showActionIcon`) — the pin belongs to an action that
+takes the installer somewhere, and a status report doesn't go anywhere. Same reasoning that dropped it
+from the resulted bar. The text's `ml-2` is therefore keyed on the spinner/pin **actually being there**
+(`loading || showActionIcon`) rather than on `resulted`, or a phrase button would inherit a margin that
+pushes its centred label off centre.
+
+⚠️ The phrase renders **verbatim, not `.toUpperCase()`** as the chip did: at the button's 16 px
+`font-medium` a thirty-character phrase in caps would hit `numberOfLines={1}` and truncate, and the
+button's own typography is what makes it read as a label rather than a badge.
+
+⚠️ **`loading` is the one state that keeps the phrase book** — the button is a spinner + "Starting Job…"
+for that instant.
+
+⚠️ **Nothing was changed in `utils/installer-card-state.ts`.** `installStatusPhrase` /
+`resolveJobCardState` are untouched — a phrase in `workflowState` still falls through
+`BY_WORKFLOW_STATE` to `isJobInProgress(job)`. Only `state.color` is overridden, so the accent bar still
+draws for the two live states and the tap still starts vs resumes exactly as before; the card just says
+it in grey.
+
+⚠️ `workflowPhrase` / `showPhraseOnAction` **moved UP** the file, above `accent`, which now derives from
+them. `actionBg` / `actionFg` stayed with `isPreview`.
+
+tsc 46 (baseline unchanged); `InstallerJobCard.tsx` is at its HEAD eslint baseline (4 warnings,
+0 errors). ⚠️ The file is **CRLF** — `newline=''` on both ends.
+
+⚠️ Needs a device check (this repo cannot render-test): no status chip anywhere, a phrase card fully
+grey including its border and arrival time with a solid grey button and a white label, a RESULTED job
+carrying a phrase reading `Install Can't Do Work` on its button while keeping its dimmed ground and its
+RESULTED badge, and a phrase card still opening the job on tap.
+
+### My Installs flashed a pull-to-refresh spinner every time the crew came back from a job
+
+Ticket: *"when i came back from the lead it shows me a loader on top some time, or some times shows me
+the white space — fix this UI glitch"*, with a screenshot of the green refresh spinner sitting above
+the first card and the list pushed down.
+
+`screens/Installer/index.tsx` bound the control straight to the query's own refetch flag:
+
+```tsx
+const { …, refreshing, refresh } = useInstallerJobs(period);   // refreshing = isRefetching
+…
+<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+```
+
+⚠️ **`isRefetching` is true for EVERY refetch, not just a pull** — and this screen refetches on every
+return by design (`useFocusEffect` → `refresh()`, because a job's status changes while the crew is
+inside it and `my-jobs` is the only thing that knows). So walking back from a job set
+`RefreshControl.refreshing` **programmatically**, which on iOS inserts the control at the top of the
+list and pushes the content down: the stray spinner AND the band of white space, both from the same
+line, for a gesture nobody made.
+
+Fixed with a **`pullRefreshing` state that only `handleRefresh` sets** — exactly the flag, and the
+reasoning, the Lead Center's own pull-to-refresh already documents. The focus refetch still runs; it
+just does so silently, which is what it was always meant to do.
+
+⚠️ `handleRefresh` became `async` and releases the flag in a **`finally`**: on a failed read the
+spinner would otherwise stick forever and the list would look frozen with no way to clear it.
+
+⚠️ `refreshing` is no longer destructured from `useInstallerJobs` — the hook still returns it, and it
+is a fine thing to read for a *quiet* indicator, just never for `RefreshControl.refreshing`.
+
+⚠️ **Not the cause, and not changed:** `loading` (`isLoading`) is false throughout, because
+`staleInstallerJobs` invalidates with `refetchType: 'none'` and TanStack keeps the cached rows — so
+there is no empty-list flash, and the full-screen spinner is reserved for a genuinely dataless key
+(which is what a Today ⇄ Tomorrow switch is).
+
+tsc 46 (baseline unchanged); `Installer/index.tsx` is at its HEAD eslint baseline (5 warnings,
+0 errors). ⚠️ The file is **CRLF** — `newline=''` on both ends.
+
+⚠️ Needs a device check (this repo cannot render-test): open a job, come back, and confirm the list
+paints in place with no spinner and no gap — while a real pull still spins and still re-reads.
+
 ### The sold scope renders as SECTIONS and COMBINATIONS, not one bullet list
 
 Ticket: *"inside the installer when we open the lead and go to the bottom we see the products section
@@ -2979,6 +3133,124 @@ unchanged); `drop-prices.ts` and the new test are eslint-clean and `InvestmentPa
 baseline (56 problems: 1 pre-existing error / 55 warnings).
 
 ⚠️ Both files are CRLF — `newline=''` on both ends.
+
+### The Notification Center rebuilt to the `notify-ui.txt` design
+
+Ticket: *"this file contains the notification UI design … update the Notification UI according to this
+design"*, with `notify-ui.txt` (an HTML/CSS mock, in the repo root) and two screenshots of the finished
+list. The screen was a flat `FlatList` of hairline-separated rows on the app's plain white; it is now
+the mock's layout — a warm paper ground, **day sections**, one bordered **card** per run of
+notifications about the same lead, and repeats collapsed behind a disclosure.
+
+| the design | how it is built |
+|---|---|
+| paper ground `#F6F5F0`, white cards, `#E6E3DA` rules | a `C` token block in the screen, copied from the mock's `:root` |
+| `Today · Sep 7` / `Yesterday` / `2 days ago` headings | `SectionList` + `formatDayLabel` |
+| one card per lead, hairline between its rows | `buildNotificationSections` — see the grouping rules below |
+| 3px pine rail + wash on an unread row | `styles.rail` + `itemUnread`, clipped by the card's `overflow` |
+| 40px tinted bubble, four families | `describeNotification` now returns `{ icon, color, tint, family }` |
+| monospace lead chip (`41PCDLG` / `SelfGen`) | `leadTagOf` |
+| `+1 more update on this lead` / `Show breakdown` | the item's `stack` / `moreLabel` / `lessLabel` |
+| `Unread ⑷` count pill | `unreadCount` from the existing badge query |
+| `You're viewing the last 3 days` | `endHintFor` — **derived**, see below |
+
+**Every rule lives in the pure `src/utils/notification-groups.ts`**, for the reason
+`utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist: the screen pulls in React Native and
+is untestable under jest here, and each of these fails **silently** — a row filed under the wrong day, a
+mongo id printed as a lead tag, or two unrelated notifications merged into one card all read as a
+styling quirk rather than an error.
+
+#### The grouping is three passes, and each guard is load-bearing
+
+1. **Day buckets**, then 2. **cards** — a RUN of *adjacent* rows sharing a card key, not a global
+   group-by, so an hours-old row can never be pulled up beside a fresh one and read as though they
+   happened together — then 3. **items**, where repeats of one event family collapse into the newest and
+   the rest become the disclosure's sub-rows.
+
+- ⚠️ **A row with no resolvable identity keys on its OWN id**, so it can never merge into a neighbour.
+  Telling the rep two unrelated notifications concern the same lead is worse than an extra card.
+- ⚠️ **`addendum-signed` carries its `outcome` in the stack key.** The title reads "Addendum signed" for
+  a DECLINE too (the rule `push-routing.addendumOutcome` states), so collapsing the two would hide a
+  refusal behind an approval.
+- ⚠️ **A collapsed item is unread when ANY row behind it is.** The disclosure hides rows; a hidden
+  unread would leave the bell counting something the rep has no way to reach. For the same reason the
+  tap marks **every** `ids` entry read, not just the head.
+- **`lead-issued` AGGREGATES** rather than collapsing — consecutive batches sum to
+  `4 new leads issued to you` with `Show breakdown`, which is the design's own row. An absent `count`
+  counts as **one, never zero**, which would erase the row from its own total.
+
+#### Dates are parsed as TEXT, and the day heading and the clock share that parse
+
+⚠️ The repo's standing rule (`utils/job-change-summary.ts`) is that an offset ISO string shifts the
+calendar day either side of midnight. The stronger reason here is **consistency**: `dayKeyOf` and
+`formatClockTime` read the same `YYYY-MM-DDTHH:MM` prefix, so a row filed under "Yesterday" can never
+print a time from today. Change one and you must change the other.
+
+⚠️ **A future day is clamped to `Today`.** Reachable without any clock being wrong — `createdAt` can be
+UTC while the rep is behind it — and "Tomorrow" on a notification that has already arrived is the worse
+answer. `daysBetween` builds both sides through `Date.UTC` on the parsed components so neither can be
+shifted by the device timezone.
+
+#### `leadTagOf` reads a FIXED key list and REJECTS a mongo id
+
+The design's chips are `41PCDLG`, `41AK` and `SelfGen` — the lead's human number, or its `leadCode`
+when the number is `"N/A"` (which is exactly what a self-gen lead stores; see `response-one.txt`).
+
+⚠️ **The push payload's `leadId` is a mongo id while the lead RECORD's `leadId` is that human number.**
+Both are read from the same key, and the 24-hex guard is the whole reason that is safe: whichever the
+backend sends, the right one renders and the wrong one never does. Without it the chip would be filled
+on every row with a database key that looks deliberate. `'N/A'`, the other placeholders, and anything
+over 16 characters are rejected too, and an unrecognised payload yields `''` so the chip is simply
+absent — the discipline `readDocumentGroup` sets.
+
+#### Two deliberate divergences from the mock
+
+⚠️ **The heading is not a serif.** The mock loads Source Serif 4; this app bundles **Public Sans only**
+(and naming an unbundled family drops that text straight back onto the device font — the rule the
+app-wide font ticket records). The heading is carried by size and tighter tracking instead.
+
+⚠️ **The unread wash is a FLAT tint, not the mock's gradient.** `rgba(30,92,67,0.06) → transparent` needs
+a gradient library this repo does not ship, and pulling `react-native-svg` in behind every row to fake
+one is not worth it. `#F1F6F2` is that tint flattened over white; the 3px pine rail is what actually
+carries the signal.
+
+⚠️ **`You're viewing the last 3 days` is DERIVED from the oldest row loaded**, not hardcoded, and only
+shows once `hasMore` is false. The app has no retention window to quote, so a fixed number would be a
+claim nothing backs. A list that only reaches today reads *"You're viewing today's notifications"*.
+
+#### Smaller decisions
+
+- **The colour block is literals, not `useTheme()`.** The paper ground is not a colour the app's palette
+  has; reading `colors.background` would put the cards on plain white and lose the separation the whole
+  design rests on. The app is light-only today (`ThemeProvider` forces it) — give the block a dark twin
+  if that changes.
+- **`stickySectionHeadersEnabled={false}`** — a pinned day heading over a card list reads as a second
+  header, and the design pins only the screen header.
+- **`overflow: 'hidden'` on the card** clips the rail and the row wash to its corners. Safe only because
+  the card carries no shadow; iOS drops a shadow on a view that sets it (the inspection-photo card note
+  above).
+- **Mark all read stays MOUNTED at zero**, dimmed and disabled, rather than being swapped for a spacer —
+  the header no longer reflows the moment the last notification is read.
+- The tap handler, `resolvePushRoute` branch for branch, and the "always fetch `all`, filter unread
+  client-side" rule are **unchanged**; only the presentation moved.
+
+Verified with 29 tests (`__tests__/utils/notification-groups.test.ts`) driving the real helpers over the
+design's own list verbatim: the three day sections in order, the two `41AK` signature rows in ONE card
+with the repeated addendum collapsed behind `+1 more update on this lead`, the two batches aggregating to
+`4 new leads issued to you`, every chip the screenshots show, and a single notification's own title and
+message surviving untouched; plus the guards — a hidden unread still marking the item unread, an accepted
+and a declined addendum never merging, two different leads never merging, two identity-less rows never
+merging, a lead's later run staying its own card, an absent count reading as one, a timestamp-less row
+filed under `Earlier` rather than dropped, the mongo-id rejection in all three of its forms, the offset
+ISO asserted against what a naive `Date` parse would give, month/year day arithmetic, and empty/junk input
+as a no-op. tsc 44 (baseline unchanged); `notification-groups.ts` and `useNotifications.ts` are
+eslint-clean and `Notifications/index.tsx` drops 5 warnings → 1 (the pre-existing `no-void`); the iOS
+bundle builds.
+
+⚠️ Needs a device check — this repo cannot render-test and the whole ticket is layout: the day headings,
+the card grouping on a lead with several notifications, the disclosure expanding, and that the chip shows
+a readable lead number rather than nothing. **If every chip is absent, the payload is naming no human
+lead id** — add the key the backend actually sends to `LEAD_TAG_KEYS`; do not relax the mongo-id guard.
 
 ---
 

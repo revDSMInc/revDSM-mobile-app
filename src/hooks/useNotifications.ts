@@ -213,47 +213,67 @@ export function useMarkNotificationsRead() {
 // ─── Presentation helpers ────────────────────────────────────────────────────
 
 /**
- * Icon and tint per event family — the same three groupings as the Android
- * notification channels, so a row in the list reads as the banner that raised it.
+ * Icon, ink and bubble tint per event family — the four families the redesign
+ * paints (`notify-ui.txt`): PINE for leads, AMBER for signatures, RUST for a
+ * cancellation or a refusal, SLATE for chat. The same three groupings as the
+ * Android notification channels, so a row in the list reads as the banner that
+ * raised it.
  *
  * ⚠️ Takes the payload as well as the type because `addendum-signed` covers a
  * DECLINE too, and its title reads "Addendum signed" either way. Branching on
  * `data.outcome` is the only way to tell them apart — the rule the contract
  * states, applied here so a refusal does not wear the same badge as an approval.
  */
+export const NOTIFICATION_TINTS = {
+  pine: { color: '#1E5C43', tint: '#E7F0EA' },
+  amber: { color: '#B4762C', tint: '#FBF0E1' },
+  rust: { color: '#B0443A', tint: '#FBEAE8' },
+  slate: { color: '#3E5C78', tint: '#E9EFF5' },
+} as const;
+
+export type NotificationFamily = keyof typeof NOTIFICATION_TINTS;
+
 export function describeNotification(
   eventType: string,
   payload?: Record<string, any>
 ): {
   icon: string;
   color: string;
+  tint: string;
+  family: NotificationFamily;
   group: string;
 } {
+  const of = (
+    family: NotificationFamily,
+    icon: string,
+    group: string
+  ) => ({ icon, group, family, ...NOTIFICATION_TINTS[family] });
+
   if (eventType === 'addendum-signed') {
     const outcome = addendumOutcome(payload as any);
     if (outcome === 'declined') {
-      return { icon: 'file-document-remove-outline', color: '#A81F1B', group: 'Signatures' };
+      return of('rust', 'file-document-remove-outline', 'Signatures');
     }
-    return { icon: 'file-document-edit-outline', color: '#9A5B08', group: 'Signatures' };
+    return of('amber', 'pencil-outline', 'Signatures');
   }
 
   switch (eventType) {
     case 'chat-message':
     case 'chat-reply':
     case 'chat-file-upload':
-      return { icon: 'chat-outline', color: '#0B6A85', group: 'Messages' };
+      return of('slate', 'message-outline', 'Messages');
     case 'chat-tagged':
-      return { icon: 'at', color: '#0B6A85', group: 'Messages' };
+      return of('slate', 'at', 'Messages');
     case 'lead-issued':
-      return { icon: 'account-plus-outline', color: '#4CBB17', group: 'Leads' };
+      return of('pine', 'account-plus-outline', 'Leads');
     case 'appointment-issued':
-      return { icon: 'calendar-clock', color: '#4CBB17', group: 'Leads' };
+      return of('pine', 'calendar-clock', 'Leads');
     case 'lead-cancelled':
-      return { icon: 'close-octagon-outline', color: '#A81F1B', group: 'Leads' };
+      return of('rust', 'close-circle-outline', 'Leads');
     case 'agreement-signed':
-      return { icon: 'file-sign', color: '#9A5B08', group: 'Signatures' };
+      return of('amber', 'pencil-outline', 'Signatures');
     default:
-      return { icon: 'bell-outline', color: '#6E7A71', group: 'Other' };
+      return of('slate', 'bell-outline', 'Other');
   }
 }
 

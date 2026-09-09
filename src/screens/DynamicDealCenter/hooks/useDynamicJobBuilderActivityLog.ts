@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
+import { DEAL_EDIT_META, MY_DEAL_MODULE } from '../../../utils/activity-log/my-deal-log';
 import {
   buildDynamicTabLogKey,
   getDynamicAutoFieldEntriesForTab,
@@ -30,7 +31,7 @@ interface UseDynamicJobBuilderActivityLogArgs {
   verticals?: any[];
   /**
    * Deal-EDIT (My Deals addendum) mode. When true the wizard's events log under
-   * `module_type: 'my_deal'` (web `use-deal-edit-activity-log.js`) with an
+   * `MY_DEAL_MODULE` (web `use-deal-edit-activity-log.js`) with an
    * `isDealEdit`/`editSource` stamp, and the events web's deal-edit hook deliberately
    * omits — `job_builder_opened`, `auto-populated`, `job_builder_completed` — are
    * suppressed (the wrapper `DynamicDealEditScreen` fires `addendum_submitted` instead).
@@ -64,15 +65,18 @@ export function useDynamicJobBuilderActivityLog({
 }: UseDynamicJobBuilderActivityLogArgs) {
   const { user } = useAuth();
 
-  // Deal-edit (My Deals) events log under `my_deal` with the web DEAL_EDIT_META stamp;
-  // the regular build logs under `job_builder`. Memoized so the derived values stay
-  // stable across renders (they feed the callbacks' dependency arrays below).
+  // Deal-edit (My Deals) events log under `MY_DEAL_MODULE` with the DEAL_EDIT_META
+  // stamp; the regular build logs under `job_builder`. Memoized so the derived values
+  // stay stable across renders (they feed the callbacks' dependency arrays below).
+  //
+  // WARNING Both are IMPORTED, never re-typed here. This hook and the wizard wrapper
+  // (`utils/activity-log/my-deal-log.ts`) log the two halves of one edit, so a literal
+  // in either place would let them drift apart and split that edit across two
+  // timelines — which is exactly what a second spelling of the module name would do.
   const { moduleType, dealEditStamp } = useMemo(
     () => ({
-      moduleType: isDealEdit ? 'my_deal' : 'job_builder',
-      dealEditStamp: isDealEdit
-        ? { isDealEdit: true, editSource: 'deal_addendum', isDynamic: true }
-        : {},
+      moduleType: isDealEdit ? MY_DEAL_MODULE : 'job_builder',
+      dealEditStamp: isDealEdit ? { ...DEAL_EDIT_META } : {},
     }),
     [isDealEdit]
   );
@@ -171,6 +175,11 @@ export function useDynamicJobBuilderActivityLog({
   const logNavigate = useCallback(
     ({ fromTab, toTab, fromStep, toStep, direction, verticalId }: any) => {
       if (!enabled || !user?._id || !leadId || !toTab) return;
+      // WARNING Suppressed in the deal-edit wizard, and ONLY there. A row per tab
+      // move was reported as noise on the My Deals timeline, and the portal capture
+      // holds no `navigate` rows for that module at all - `step_viewed` already
+      // marks each tab the rep opens. The regular job_builder build still logs it.
+      if (isDealEdit) return;
 
       const vertical = resolveVerticalFromConfig(verticals, verticalId);
       const toTabMeta = buildTabLogContextMeta({ tab: toTab, vertical, verticalId, configId });
@@ -195,7 +204,7 @@ export function useDynamicJobBuilderActivityLog({
         },
       });
     },
-    [enabled, user?._id, leadId, jobId, calculatorId, configId, verticals, moduleType, dealEditStamp]
+    [enabled, user?._id, leadId, jobId, calculatorId, configId, verticals, moduleType, dealEditStamp, isDealEdit]
   );
 
   const logAutoPopulatedForTab = useCallback(
