@@ -5,7 +5,10 @@ import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import { format } from 'date-fns';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useTranslation } from '../../../i18n/LanguageProvider';
-import { resolveJobCardState } from '../../../utils/installer-card-state';
+import {
+  installStatusPhrase,
+  resolveJobCardState,
+} from '../../../utils/installer-card-state';
 import { MapSelectionModal } from '../../common/modal/MapSelectionModal';
 import type { InstallerJob } from '../../../config/types/installer';
 
@@ -96,6 +99,33 @@ export function InstallerJobCard({
   const date = job.leadDate ? new Date(job.leadDate) : null;
   const dateLabel = date && !isNaN(date.getTime()) ? format(date, 'MM/dd/yyyy') : 'N/A';
 
+  /**
+   * Where a Can't Do Work / Not Hit / Reset request on this job has got to, in
+   * the API's own words — "Pending Install Not Hit", "Rescheduled Reset".
+   *
+   * Read off `workflowState`, which carries the phrase in place of its base
+   * state on a job that has one. Composed server-side rather than here: a job
+   * whose request is still in flight stays `inProgress`, so half of these
+   * phrases cannot be derived from anything the card holds.
+   */
+  const workflowPhrase = installStatusPhrase(job);
+
+  /**
+   * Tone is read off the wire status, never off the label text — the copy is the
+   * office's to reword, and a colour keyed to the words would silently go grey
+   * the first time it changed.
+   *
+   *   still pending  → warning: the job is not the crew's to close yet
+   *   can't do work  → error:   the job is off
+   *   rescheduled    → info:    the job is alive again, on a new day
+   */
+  const workflowPhraseColor = (() => {
+    const s = String(job.status ?? '');
+    if (s === 'cantDoWork') return '#FF5630';
+    if (s.startsWith('rescheduled')) return '#00B8D9';
+    return '#FFAB00';
+  })();
+
   const [showMapModal, setShowMapModal] = useState(false);
 
   return (
@@ -142,6 +172,29 @@ export function InstallerJobCard({
               </View>
             )}
           </View>
+
+          {/* Status request state.
+
+              Its own row rather than the chip slot above: "Pending Install
+              Can't Do Work" is nearly thirty characters and would truncate to
+              nothing useful beside the arrival window. A job with no request in
+              its history has no label and no row, so nothing moves on the cards
+              that make up most of the list. */}
+          {!!workflowPhrase && (
+            <View className="flex-row mb-4">
+              <View
+                className="px-3 py-1.5 rounded-lg"
+                style={{ backgroundColor: workflowPhraseColor + '1F' }}
+              >
+                <Text
+                  className="text-[11px] font-black tracking-wide"
+                  style={{ color: workflowPhraseColor }}
+                >
+                  {workflowPhrase.toUpperCase()}
+                </Text>
+              </View>
+            </View>
+          )}
 
           {/* Customer + date */}
           <View className="mb-4">

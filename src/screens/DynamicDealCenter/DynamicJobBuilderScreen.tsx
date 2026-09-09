@@ -129,6 +129,17 @@ interface DynamicJobBuilderScreenProps {
   // button becomes "Next · Price" (`onEditComplete`), and Back from the first tab
   // calls `onEditBack` (→ the wizard's Install Date step).
   embedded?: boolean;
+  /**
+   * Whether this screen may write activity logs. Default true.
+   *
+   * WARNING The deal-edit wizard keeps this screen MOUNTED across all four of its
+   * steps so a job build survives navigating away, which means its first
+   * `step_viewed` would otherwise fire the moment the wizard opens — the rep is on
+   * Install Date and the timeline says "Gutter". The wizard passes false until the
+   * rep first reaches the Job Build step, then leaves it true for the session (web
+   * `buildStepVisited`).
+   */
+  activityLoggingEnabled?: boolean;
   // The wizard's Install Date step owns the reschedule. This screen stays MOUNTED
   // across steps (it is only hidden), so `initialJobState` is read once and a date
   // picked afterwards would never reach the Summary tab's Scheduled Appointment
@@ -214,6 +225,7 @@ function DynamicJobBuilderInner({
   openOnSummary = false,
   appointmentId,
   embedded = false,
+  activityLoggingEnabled = true,
   scheduleTimeOverride,
   // `rawDocsOverride` (savedOutcome.jobBuilderDocuments) is intentionally NOT consumed:
   // it is not pruned when a rep deletes a document, so it would resurrect removed
@@ -509,7 +521,12 @@ function DynamicJobBuilderInner({
   const configId = (initialConfig as any)?.id || null;
   const loggedAutoFieldTabsRef = useRef<Set<string>>(new Set());
   const activityLog = useDynamicJobBuilderActivityLog({
-    enabled: Boolean(leadId),
+    // WARNING In the deal-edit wizard this screen is MOUNTED from the start (so a
+    // rep's edits survive stepping away), which made it log a tab view the moment
+    // the wizard opened — the first row of an edit read "Gutter" while the rep was
+    // looking at Install Date. The wrapper holds it off until the rep actually
+    // reaches the Job Build step (web `buildStepVisited`).
+    enabled: Boolean(leadId) && activityLoggingEnabled,
     leadId,
     // Web passes the HUMAN lead/job number here (`currentLead?.leadId ||
     // currentLead?.jobNumber || …`), which is what lands in `meta.jobBuilderId`.
@@ -529,7 +546,7 @@ function DynamicJobBuilderInner({
     configId,
     verticals: verticalList,
     // Edit mode is reached only from My Deals (Deal Detail → Edit), so its wizard
-    // events log under `module_type: 'my_deal'` (web deal-edit parity), not job_builder.
+    // events log under `MY_DEAL_MODULE` (web deal-edit parity), not job_builder.
     isDealEdit: isEdit,
     markAutoFieldsLoggedTab: (tabKey: string) => {
       loggedAutoFieldTabsRef.current.add(tabKey);
