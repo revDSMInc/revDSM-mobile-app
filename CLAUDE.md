@@ -3435,6 +3435,56 @@ builds.
 ⚠️ Nothing can be checked on device until the backend sends the event. `npm run test-push -- --user=<id>
 --event=chat-reaction` (§6.4) is what fires a real payload without needing two accounts in a chat.
 
+### `lead-issued` opens the Leads LIST, never one lead's screen
+
+Ticket: *"when a lead is assigned and user click on the lead it will navigate the user to the lead
+screen instead of the lead listing screen — fix this issue: when assign lead is clicked from the
+notification it will move to the listing screen, not detail screen."*
+
+One line in `resolvePushRoute`:
+
+```ts
+const issued = str(data?.issuedLeadId);
+return issued ? { kind: 'lead', leadId: issued } : { kind: 'leadList' };   // ← the bug
+```
+
+`lead-issued` has **three shapes** and only the first can name a lead at all — single issue carries
+`issuedLeadId`, while bulk issue and route dispatch carry `count` only. So the deep link fired on
+exactly one of them, and **the same notification landed in two different places depending on how the
+office happened to issue the work.** A rep told *"4 new leads issued to you"* got the list; a rep told
+*"1 new lead issued to you"* got that lead's detail screen, with no sense of what else had come in.
+
+Being issued work is a **queue** event, so the queue is the destination. The branch is now
+unconditional `{ kind: 'leadList' }`.
+
+⚠️ **`issuedLeadId` is no longer read here — do not "restore" the deep link for the single-lead case.**
+That asymmetry IS the bug. (`utils/notification-groups.ts` still reads the key for the row's lead
+chip, which is a LABEL, not a destination — and its mongo-id guard drops it anyway.)
+
+⚠️ **Fixed in the shared pure router, so BOTH taps changed together** — the push banner
+(`usePushNotifications`) and the Notification Center row (`screens/Notifications`) already had a
+`leadList` branch navigating to `'Leads'`, so neither screen needed an edit. That is the whole reason
+the routing lives in one module; had this been patched at a call site, the other surface would still
+be opening the detail screen.
+
+⚠️ **The other lead events are UNCHANGED and should be.** `lead-cancelled`, `appointment-issued` and
+`addendum-signed` each name one specific lead the rep is being sent to read, so they still resolve to
+`{ kind: 'lead' }`. Asserted, so a future sweep over this switch cannot flatten them by accident.
+
+`channelForEvent` (`CHANNEL_LEADS`) and `invalidationKeysFor` are untouched.
+
+Verified with 5 tests (`__tests__/utils/lead-issued-routing.test.ts`) over the three payload shapes:
+the repro — a single issue carrying `issuedLeadId` resolving to `leadList` where the old rule returned
+`{ kind: 'lead' }` — all three shapes resolving **identically to each other**, a `leadId` ignored if one
+is ever added to the payload, the channel and invalidation keys unchanged, and the three other lead
+events still opening their own lead. tsc 44 (baseline unchanged); `push-routing.ts` is eslint-clean and
+`usePushNotifications.ts` is at its HEAD warning count; the iOS bundle builds.
+
+⚠️ Noted, NOT touched: three `__tests__/screens/DynamicDealCenter/` suites (`auto-adjust-cost-floor`,
+`funding-settled-on-return`, `refund-hold-and-reminders`) fail to RUN here — they import
+`screens/DynamicDealCenter/utils/funding`, which does not exist on this branch. They are stale local
+files from another branch's checkout; `__tests__/` is gitignored, so nothing keeps them in step.
+
 ---
 
 ---
