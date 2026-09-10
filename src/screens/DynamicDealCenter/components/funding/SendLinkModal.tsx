@@ -64,17 +64,26 @@ import {
  */
 
 /**
- * `react-native-qrcode-svg` is pure JS over `react-native-svg`, but it is a fresh
- * dependency — a missed `yarn install` would otherwise white-screen the whole
- * Result Lead sheet on a step the rep can't skip. Degrade to text/email instead.
+ * ⚠️ **A STATIC import, and it must stay one. Do NOT put this back behind a
+ * `try/catch`.**
+ *
+ * It used to be an optional `require(...)` that fell back to `QRCode = null` and an
+ * amber *"QR display is unavailable in this build"* note. That reads like a deliberate
+ * build flag, so nobody ever realised a dependency was missing — and the QR broke,
+ * got fixed on one machine, and came back for everyone else, repeatedly.
+ *
+ * The cause was never the code: `react-native-qrcode-svg` was hand-added to
+ * `package.json` in `c558fa0` and, because **`yarn.lock` is gitignored**
+ * (`.gitignore:80`, untracked for the whole history), there is no shared lockfile to
+ * carry it — so it only ever reached a machine whose owner happened to re-run
+ * `yarn install`. The silent fallback is what let that ship instead of being noticed.
+ *
+ * Static, an absent module is a **Metro resolution error at build time** — loud,
+ * immediate, and fixed by `yarn install`. It can no longer reach a rep at a kitchen
+ * table. The package is pure JS over `react-native-svg` (already a hard dependency
+ * here), so there is nothing to pod-install or link.
  */
-let QRCode: any = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
-  QRCode = require('react-native-qrcode-svg').default;
-} catch {
-  QRCode = null;
-}
+import QRCode from 'react-native-qrcode-svg';
 
 type Stage = 'choose' | 'text' | 'email' | 'done';
 
@@ -306,31 +315,24 @@ export function SendLinkModal({
                 </View>
               ) : (
                 <>
-                  {QRCode ? (
-                    <>
-                      <View style={{ padding: 10, borderRadius: 12, borderWidth: 1, borderColor: FUND.BORDER, backgroundColor: '#fff' }}>
-                        <QRCode value={link} size={170} backgroundColor="#fff" color={FUND.TEXT} />
-                      </View>
-                      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT, marginTop: 10, textAlign: 'center' }}>
-                        Have them scan this with their phone
-                      </Text>
-                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignSelf: 'stretch' }}>
-                        {/* Sends nothing — it RECORDS that the homeowner scanned it. */}
-                        <ModalButton
-                          label="They scanned it"
-                          alt
-                          busy={isSending}
-                          onPress={() => deliver('qr', undefined, 'QR scanned at the table')}
-                        />
-                      </View>
-                    </>
-                  ) : (
-                    <View style={{ alignSelf: 'stretch', backgroundColor: FUND.AMBER_BG, borderRadius: 11, padding: 12, marginBottom: 4 }}>
-                      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.AMBER_TEXT, lineHeight: 17 }}>
-                        QR display is unavailable in this build. Send the link by text or email instead.
-                      </Text>
-                    </View>
-                  )}
+                  {/* ⚠️ Unconditional. There is no "QR unavailable" state any more — see
+                      the import note at the top of the file. If `link` resolved, the
+                      code renders. */}
+                  <View style={{ padding: 10, borderRadius: 12, borderWidth: 1, borderColor: FUND.BORDER, backgroundColor: '#fff' }}>
+                    <QRCode value={link} size={170} backgroundColor="#fff" color={FUND.TEXT} />
+                  </View>
+                  <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT, marginTop: 10, textAlign: 'center' }}>
+                    Have them scan this with their phone
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignSelf: 'stretch' }}>
+                    {/* Sends nothing — it RECORDS that the homeowner scanned it. */}
+                    <ModalButton
+                      label="They scanned it"
+                      alt
+                      busy={isSending}
+                      onPress={() => deliver('qr', undefined, 'QR scanned at the table')}
+                    />
+                  </View>
 
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14, marginBottom: 10, alignSelf: 'stretch' }}>
                     <View style={{ flex: 1, height: 1, backgroundColor: FUND.BORDER }} />

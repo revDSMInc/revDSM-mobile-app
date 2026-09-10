@@ -10,8 +10,9 @@ import {
   refundApprovalNote,
   refundApprovalStates,
   refundStateTone,
+  waitingLabel,
 } from '../../utils/funding';
-import type { FundingRefund } from '../../../../services/api/FundingService';
+import type { FundingApprovalReminder, FundingRefund } from '../../../../services/api/FundingService';
 
 /**
  * The refund's approval status — the bar the rep reads to answer "where has my
@@ -66,13 +67,23 @@ interface RailProps {
    */
   amount: number;
   refund?: FundingRefund | null;
+  /**
+   * The reminder window, straight off the approval row (REVDSM-1160). Omitted where
+   * there is nothing to chase, so the block renders nothing rather than guessing.
+   */
+  reminder?: FundingApprovalReminder | null;
+  /** Who is being waited on — the "on Sam Patel" half of the waiting line. */
+  approverName?: string;
+  /** Omit and the wait is still REPORTED, just not actionable — the right degradation. */
+  onRemind?: () => void;
+  reminding?: boolean;
 }
 
 /**
  * The status block without card chrome, for dropping into a refund card that already
  * exists. `RefundApprovalCard` is the same thing with its own border.
  */
-export function RefundStatusRail({ amount, refund }: RailProps) {
+export function RefundStatusRail({ amount, refund, reminder, approverName, onRemind, reminding }: RailProps) {
   const chip = chipColors(refund);
   const states = refundApprovalStates(refund);
   const steps: RailStep[] = REFUND_APPROVAL_STEPS.map((label, i) => ({ label, state: states[i] || 'next' }));
@@ -109,12 +120,112 @@ export function RefundStatusRail({ amount, refund }: RailProps) {
           Sent for approval at ${Math.round(sent).toLocaleString()}
         </Text>
       )}
+
+      <RefundReminderBlock
+        refund={refund}
+        reminder={reminder}
+        approverName={approverName}
+        onRemind={onRemind}
+        reminding={reminding}
+      />
+    </View>
+  );
+}
+
+/**
+ * "Waiting 3 days on Sam Patel" + **Remind approver** (REVDSM-1160).
+ *
+ * ⚠️ **Only while the request is `pendingApproval`.** The server's `canRemind` already
+ * refuses a decided request — there is nobody left to chase — but rendering its
+ * `blockedReason` under an APPROVED refund would put "This request is already
+ * approved" on a card whose rail says exactly that one line above.
+ *
+ * ⚠️ **`canRemind` and `blockedReason` are the SERVER's, and are never recomputed
+ * here.** The window is two backend constants (48 h, then one reminder a day) and 48
+ * is the backend's own assumption pending Lance's confirmation — serving it is
+ * precisely what lets it change with no app release. A device that did its own
+ * arithmetic would offer a button the endpoint then refuses.
+ *
+ * A row carrying no `reminder` at all renders nothing: a deployment predating this
+ * feature must not show a button whose endpoint 404s.
+ */
+function RefundReminderBlock({
+  refund,
+  reminder,
+  approverName,
+  onRemind,
+  reminding,
+}: {
+  refund?: FundingRefund | null;
+  reminder?: FundingApprovalReminder | null;
+  approverName?: string;
+  onRemind?: () => void;
+  reminding?: boolean;
+}) {
+  if (!reminder || refund?.state !== 'pendingApproval') return null;
+
+  const waiting = waitingLabel(reminder, approverName);
+  const canRemind = reminder.canRemind === true && !!onRemind;
+
+  return (
+    <View style={{ marginTop: 12, borderTopWidth: 1, borderTopColor: ROSE.LINE, paddingTop: 10 }}>
+      {/* Why a rep would chase, above the control that does it. */}
+      {!!waiting && (
+        <Text style={{ fontSize: FS.TINY, fontFamily: PS.bold, color: ROSE.TEXT, marginBottom: 8 }}>
+          {waiting}
+        </Text>
+      )}
+
+      {canRemind ? (
+        <TouchableOpacity
+          /**
+           * ⚠️ Called through an arrow, NEVER passed straight in. `onPress` hands its
+           * handler a `GestureResponderEvent`, and the hook's `remind(note?)` takes an
+           * optional first argument — so `onPress={onRemind}` would post the touch
+           * event to the API as the reminder's `note`. The prop type `() => void`
+           * hides that from tsc.
+           */
+          onPress={() => onRemind?.()}
+          disabled={reminding}
+          activeOpacity={0.8}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            minHeight: 40,
+            borderRadius: 10,
+            borderWidth: 1.5,
+            borderColor: ROSE.BORDER,
+            backgroundColor: '#FFFFFF',
+            paddingHorizontal: 12,
+            opacity: reminding ? 0.6 : 1,
+          }}
+        >
+          {reminding ? (
+            <ActivityIndicator size="small" color={ROSE.STRONG} />
+          ) : (
+            <Ionicons name="notifications-outline" size={15} color={ROSE.STRONG} />
+          )}
+          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: ROSE.STRONG }}>
+            {reminding ? 'Sending…' : 'Remind approver'}
+          </Text>
+        </TouchableOpacity>
+      ) : (
+        // ⚠️ The server's own wording, verbatim — it names the window ("You can send a
+        // reminder once this has been waiting 2 days."), which no client-side string can.
+        !!reminder.blockedReason && (
+          <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, lineHeight: 15, color: ROSE.TEXT }}>
+            {reminder.blockedReason}
+          </Text>
+        )
+      )}
     </View>
   );
 }
 
 /** The same block with its own card, for a screen that has no refund card already. */
-export function RefundApprovalCard({ amount, refund }: RailProps) {
+export function RefundApprovalCard({ amount, refund, reminder, approverName, onRemind, reminding }: RailProps) {
   const sent = Number(refund?.amount) || 0;
   const shown = sent > 0 ? sent : amount;
   return (
@@ -125,7 +236,14 @@ export function RefundApprovalCard({ amount, refund }: RailProps) {
           −${Math.round(shown).toLocaleString()}
         </Text>
       </View>
-      <RefundStatusRail amount={shown} refund={refund} />
+      <RefundStatusRail
+        amount={shown}
+        refund={refund}
+        reminder={reminder}
+        approverName={approverName}
+        onRemind={onRemind}
+        reminding={reminding}
+      />
     </View>
   );
 }

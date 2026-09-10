@@ -22,6 +22,8 @@ import {
   newPaymentId,
   toWholeDollars,
   type FundingApplicationClosed,
+  type ApprovalRecord,
+  type FundingApprovalReminder,
   type FundingArchivedPlan,
   type FundingChannel,
   type FundingRefund,
@@ -367,6 +369,36 @@ export function isSettledRow(row: PaymentRow): boolean {
  * can only fail is worse than not offering it; the rep's route out is to reassign the
  * money on the funding screen, not to make the row disappear.
  */
+/**
+ * Why this line's payment method cannot be changed — shown when the rep taps a locked
+ * one (the padlock alone says *that* it is shut, never *why*).
+ *
+ * ⚠️ **Each reason names what actually happened**, because the rep's next move differs:
+ * a declined line needs another method for the balance, whereas a collected cheque
+ * needs a refund if the money really has to move. A single generic "this is locked"
+ * would send them looking for a control that does not exist.
+ *
+ * ⚠️ Precedence matches `lenderState`: a lender's VERDICT outranks the money having
+ * moved, so `{ decision: 'declined', charged: true }` reads as declined. Returns `''`
+ * for an unlocked row, so the caller can gate on it.
+ */
+export function lockedMethodNote(row: PaymentRow): string {
+  if (!isSettledRow(row)) return '';
+  if (row.decision === 'declined') {
+    return 'The lender declined this line, so its payment method is locked. Add another payment method for the balance.';
+  }
+  if (row.decision) {
+    return 'The lender has already answered this line, so its payment method is locked.';
+  }
+  if (row.charged) {
+    return 'This card has already been charged. Changing the method would reset the payment, so it is locked — a refund is the only way money goes back.';
+  }
+  if (row.collected) {
+    return 'This payment has already been collected. Changing the method would reset it, so it is locked — a refund is the only way money goes back.';
+  }
+  return 'This payment has already started, so its method is locked.';
+}
+
 export function isRemovableRow(row: PaymentRow): boolean {
   return !isSettledRow(row) && !row.linkSent;
 }
@@ -1448,7 +1480,39 @@ export function applyDecisionsToRows(
 
   let next = rows.map((row) => {
     const p = payments.find((x) => x.pid === row.pid);
-    if (!p || !p.decision) return row;
+    // A row that is not on the server yet (one the rep just added) has nothing to
+    // mirror and no decision to fold.
+    if (!p) return row;
+
+    /**
+     * ⚠️ **The settlement flags are mirrored onto EVERY row, decided or not — this is
+     * what LOCKS a line whose money has already moved.**
+     *
+     * A collected cheque or a charged card carries `collected` / `charged` and **never
+     * a `decision`** (only a lender issues one), so the old `if (!p || !p.decision)
+     * return row;` handed back the row exactly as it sat in state — built at Confirm,
+     * *before* the money was taken. `isSettledRow` then read `collected: false`, and
+     * the pricing panel offered a live method dropdown and a ✕ on a cheque the rep had
+     * already taken from the customer.
+     *
+     * Neither would have failed loudly: Remove 409s and `report` refetches and flashes
+     * *"Funding updated"*, which reads as success; and a SWAP **resets that row's
+     * steps, link and decision server-side**, silently throwing away a completed
+     * collection.
+     *
+     * ⚠️ `archived` is deliberately NOT mirrored. `swapRowMethod` keeps a
+     * SESSION-LOCAL shelf of plans swapped away before any save, and the server knows
+     * nothing about those — copying its own `archived` over would wipe the rep's shelf
+     * and with it the only way back to a plan they just replaced.
+     */
+    const settled = {
+      linkSent: p.linkSent,
+      activated: p.activated,
+      charged: p.charged,
+      collected: p.collected,
+    };
+
+    if (!p.decision) return { ...row, ...settled };
 
     if (p.decision === 'declined') {
       banners.push({
@@ -1458,7 +1522,7 @@ export function applyDecisionsToRows(
       });
       // `auto` is cleared too: a declined row is a fixed $0, not the remainder
       // absorber — leaving it auto would have it silently re-inflate to the gap.
-      return { ...row, amount: '0', auto: false, decision: 'declined' as Decision };
+      return { ...row, ...settled, amount: '0', auto: false, decision: 'declined' as Decision };
     }
 
     const approved = p.approvedAmt ?? p.amount;
@@ -1470,7 +1534,7 @@ export function applyDecisionsToRows(
         text: `${shortMethod(p.method)} approved $${approved.toLocaleString()} of the $${requested.toLocaleString()} requested. Assign the remaining $${(requested - approved).toLocaleString()} to another payment method below.`,
       });
     }
-    return { ...row, amount: String(approved), auto: false, decision: p.decision };
+    return { ...row, ...settled, amount: String(approved), auto: false, decision: p.decision };
   });
 
   // Somewhere has to be able to absorb the gap. If every row in the group that
@@ -1632,7 +1696,19 @@ export function refundDueFor(newContract: number, payments: FundingPayment[]): n
   const collected = collectedTotal(payments);
   if (!(collected > 0)) return 0;
   const price = Number(newContract) || 0;
-  return Math.max(0, Math.round(collected - price));
+  /**
+   * ⚠️ **Refunds already raised are netted off**, or reopening a deal that was
+   * re-priced and refunded computes the SAME gap a second time and asks the rep for a
+   * duplicate refund of money already on its way back.
+   *
+   * Derived from `refundableAmount` rather than summed directly, so the one rule about
+   * which refunds count lives in one place: a `declined` or `cancelled` request
+   * returned nothing and must NOT eat the allowance (a rep refused once must still be
+   * able to raise it again), and each row is clamped at what it actually collected.
+   */
+  const stillRefundable = (payments || []).reduce((n, p) => n + refundableAmount(p), 0);
+  const spokenFor = collected - stillRefundable;
+  return Math.max(0, Math.round(collected - price - spokenFor));
 }
 
 /** Does this re-price need an approver? Exactly when money has to go back. */
@@ -1865,4 +1941,148 @@ export function normalizeApproverFeed(body: any): {
     isConfigured: b.isConfigured === true || approvers.length > 0,
     allowSelfApproval: b.allowSelfApproval === true,
   };
+}
+
+/**
+ * ── WHO RELEASES THE ADDENDUM (REVDSM-1159) ───────────────────────────────────
+ *
+ * `send-now`           the addendum carries no refund — text/email the customer now.
+ * `hold-for-approval`  raise the refund and send NOTHING; the APPROVER releases it.
+ * `abort`              a refund is owed but cannot be raised — send nothing at all.
+ */
+export type AddendumRelease = 'send-now' | 'hold-for-approval' | 'abort';
+
+/**
+ * Whether this submit may reach the customer, and the single most important rule on
+ * the deal-edit screen.
+ *
+ * ⚠️ **A refund addendum must not be released before the refund is approved.** The
+ * refund machine is `pendingApproval → pendingCustomer → customerSigned → …`, and
+ * `pendingApproval → customerSigned` is **not a legal move** — the server's guard is a
+ * bare `return`, so a customer who signs while the refund still awaits approval has
+ * their signature SILENTLY DROPPED for the refund. The approver then approves, the
+ * refund advances to `pendingCustomer`, and it waits forever for a signature that
+ * already happened and cannot be asked for again. The addendum reads `accepted`, the
+ * money never moves, and nothing anywhere says why.
+ *
+ * ⚠️ **`abort` rather than "send it anyway".** Releasing an addendum whose refund
+ * could not be raised puts the price CUT in front of the customer to sign while the
+ * company quietly keeps the money that cut gives back — the one outcome on this screen
+ * that must never be possible. Nothing has left the building at this point, so
+ * stopping is free.
+ *
+ * ⚠️ It aborts on an unsatisfied GATE too, not only a missing `draftId`. The Submit
+ * button is already disabled while `refundGate` is non-empty, so that arm should be
+ * unreachable — but "unreachable" is not a guarantee to hang this particular
+ * consequence on.
+ */
+export function addendumReleasePlan(o: {
+  /** The rep saw the warning and answered YES — a refund is really owed. */
+  refundAcknowledged: boolean;
+  /** A collected row was resolved to refund FROM. */
+  hasSourceRow: boolean;
+  /** `refundBlockers` came back empty. */
+  gateClear: boolean;
+  /**
+   * ⚠️ The ONLY join between the refund and the paperwork the customer signs. It can
+   * only be set when the refund is created — there is no endpoint to attach a draft
+   * afterwards — so a refund raised without one reaches `pendingCustomer` and waits
+   * there forever.
+   */
+  draftId?: string | null;
+}): AddendumRelease {
+  if (!o.refundAcknowledged) return 'send-now';
+  const draftId = o.draftId ? String(o.draftId).trim() : '';
+  if (o.hasSourceRow && o.gateClear && draftId) return 'hold-for-approval';
+  return 'abort';
+}
+
+// ── chasing a silent approver (REVDSM-1160) ────────────────────────────────────
+
+/**
+ * The approval rows for one lead — `GET /lead/v1/:leadId/approvals`.
+ *
+ * ⚠️ **TWO segments, always.** `LeadController` owns `GET /lead/v1/:id`, so a bare
+ * `/lead/v1/approvals` is ambiguous with a lead whose id is that word and which wins
+ * depends on controller registration order. Never add a single-segment route.
+ */
+export function normalizeApprovalRows(body: any): ApprovalRecord[] {
+  // Same three-depth unwrap as `normalizeApproverFeed` — the envelope varies by
+  // deployment and guessing one depth is how a populated list reads as empty.
+  const b = body?.data?.data ?? body?.data ?? body ?? {};
+  const rows = Array.isArray(b) ? b : Array.isArray(b.approvals) ? b.approvals : Array.isArray(b.rows) ? b.rows : [];
+  return (rows as any[]).filter((r) => r && typeof r === 'object') as ApprovalRecord[];
+}
+
+/** An approval row's own id, under either spelling. */
+export function approvalIdOf(approval?: ApprovalRecord | null): string {
+  const id = approval?.id ?? approval?._id;
+  return id ? String(id).trim() : '';
+}
+
+/**
+ * The approval request that belongs to THIS refund.
+ *
+ * ⚠️ Matched on the refund's own `approvalId` first, then on `refund.rid` — a lead can
+ * carry several approvals (a refund raised, declined, and raised again), so "the
+ * lead's approval" is never a valid lookup. Ids compare as STRINGS for the reason the
+ * resulted-calculator lock does: one side arrives off the funding record and the other
+ * off the approvals list, and those are not guaranteed to be the same type.
+ */
+export function pickRefundApproval(
+  rows: ApprovalRecord[] | null | undefined,
+  refund?: FundingRefund | null
+): ApprovalRecord | null {
+  if (!refund) return null;
+  const list = Array.isArray(rows) ? rows : [];
+  const wantApproval = refund.approvalId ? String(refund.approvalId).trim() : '';
+  if (wantApproval) {
+    const byId = list.find((r) => approvalIdOf(r) === wantApproval);
+    if (byId) return byId;
+  }
+  const wantRid = refund.rid ? String(refund.rid).trim() : '';
+  if (wantRid) {
+    const byRid = list.find((r) => r?.refund?.rid && String(r.refund.rid).trim() === wantRid);
+    if (byRid) return byRid;
+  }
+  return null;
+}
+
+/**
+ * The reminder window as the SERVER computed it.
+ *
+ * ⚠️ **Never derive any of this on the device.** The window is two backend constants
+ * (48 h before a first reminder, then one a day) and it is served rather than
+ * hardcoded precisely so a change needs no app release — a client that recomputed
+ * would disagree with the endpoint that actually refuses.
+ *
+ * A row that carries no `reminder` block yields `null`, and the caller renders
+ * nothing rather than guessing: a deployment that predates this feature must not show
+ * a button whose endpoint 404s.
+ */
+export function reminderOf(approval?: ApprovalRecord | null): FundingApprovalReminder | null {
+  const r = approval?.reminder;
+  if (!r || typeof r !== 'object') return null;
+  return { ...r, canRemind: r.canRemind === true };
+}
+
+/** Who is being waited on, for the "Waiting 3 days on Sam Patel" line. */
+export function approverNameOf(approval?: ApprovalRecord | null): string {
+  const a = approval?.assignedTo;
+  if (a && typeof a === 'object' && a.name) return String(a.name).trim();
+  return '';
+}
+
+/**
+ * "Waiting 3 days on Sam Patel" — why a rep would chase, above the button that does.
+ *
+ * ⚠️ Under a day reads "Waiting today" rather than "Waiting 0 days", which would look
+ * like a bug on a request raised this morning.
+ */
+export function waitingLabel(reminder?: FundingApprovalReminder | null, approverName?: string): string {
+  if (!reminder) return '';
+  const days = Number(reminder.waitingDays) || 0;
+  const who = (approverName || '').trim();
+  const span = days >= 1 ? `${days} day${days === 1 ? '' : 's'}` : 'today';
+  return who ? `Waiting ${span} on ${who}` : `Waiting ${span}`;
 }

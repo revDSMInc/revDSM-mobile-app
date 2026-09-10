@@ -5,7 +5,7 @@ import { FS, FUND, PS } from './funding-theme';
 import { PaymentFundingCard } from './PaymentFundingCard';
 import { RefundApprovalCard } from './RefundApprovalStatus';
 import { describePayment, groupTotal, type AttemptLogEntry, type FundingPayment, type PayMode } from '../../utils/funding';
-import type { FundingRefund } from '../../../../services/api/FundingService';
+import type { FundingApprovalReminder, FundingRefund } from '../../../../services/api/FundingService';
 
 /**
  * The **Funding** screen — the second half of the Result Lead sheet.
@@ -57,6 +57,19 @@ interface Props {
    * addendum flow that can owe a refund, so only that mount passes it.
    */
   refunds?: { payment: FundingPayment; refund: FundingRefund }[];
+  /**
+   * The reminder window for ONE refund (REVDSM-1160), resolved by the host.
+   *
+   * ⚠️ A resolver rather than four flat props, because a job can carry more than one
+   * refund and only the one whose approval was actually read may show the button —
+   * flat props would put the first refund's window on every card.
+   */
+  reminderFor?: (refund: FundingRefund) => {
+    reminder?: FundingApprovalReminder | null;
+    approverName?: string;
+    onRemind?: () => void;
+    reminding?: boolean;
+  } | null;
   onSyncAll: () => void;
   onSyncOne: (pid: string) => void;
   onSendLink: (pid: string) => void;
@@ -128,6 +141,7 @@ export function FundingView({
   busyPid,
   paymentsSetupError,
   refunds,
+  reminderFor,
   onSyncAll,
   onSyncOne,
   onSendLink,
@@ -198,7 +212,12 @@ export function FundingView({
           a rep reading the cards first would reconcile a collected total that the
           refund has already been taken off. */}
       {(refunds || []).map(({ payment, refund }) => (
-        <RefundApprovalCard key={refund.rid || `${payment.pid}-refund`} amount={refund.amount} refund={refund} />
+        <RefundApprovalCard
+          key={refund.rid || `${payment.pid}-refund`}
+          amount={refund.amount}
+          refund={refund}
+          {...(reminderFor?.(refund) || {})}
+        />
       ))}
 
       {bankDeclined && (

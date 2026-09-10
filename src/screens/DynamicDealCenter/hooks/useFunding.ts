@@ -32,10 +32,6 @@ import {
   type FundingLogBase,
   type FundingLogPayment,
   type FundingSource,
-  logRefundRequested,
-  logRefundDecided,
-  logRefundReassigned,
-  logRefundResent,
 } from '../../../utils/activity-log/funding-log';
 import { isReissue } from '../utils/funding';
 import { LeadService } from '../../../services/api/leads';
@@ -595,6 +591,27 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
    *
    * ⚠️ Nothing needs re-fetching afterwards: like every funding endpoint this returns
    * the WHOLE record and `run` applies it.
+   *
+   * ⚠️ **NO ACTIVITY LOG IS FIRED HERE, AND NONE MAY BE ADDED — the SERVER writes the
+   * refund rows now** (`TAYYAB-REFUND-ACTIVITY-LOGS.md`). Every action in this file
+   * logs beside its call, so this one reads like an oversight; it is not. The backend
+   * files one row per refund transition as a side effect of the endpoints below, still
+   * under `module_type: 'funding'`, and re-adding a client emitter files a SECOND row
+   * per step — of which the client's is the wrong one of the pair:
+   *
+   *   1. the amount. `paymentMeta(payment)` writes `amount: p.amount` — the PAYMENT
+   *      row's amount — and the portal renders `money(m.amount)`, so a $472 refund out
+   *      of a $1,392 down payment rendered as *"Refund requested — $1,392"*.
+   *   2. `rid`. The portal's supersede key is `refund-state-${rid || 'unknown'}`, and
+   *      the client never had a `rid` to send (the server mints it in this response),
+   *      so two refunds on one job collapsed onto one key and struck each other out.
+   *
+   * It had to move server-side regardless: money actually leaving is a Stripe webhook
+   * and the customer's signature is the no-auth consent link — neither has a client.
+   *
+   * ⚠️ What this file MUST keep doing is passing `actorId`. `cfg()` sends it as the
+   * `userId` header, and it is now the ONLY thing telling the backend which rep to
+   * attribute its rows to; without it every refund step is filed as "RevDSM" (system).
    */
   const requestRefund = useCallback(
     async (
@@ -609,30 +626,14 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         draftId?: string;
       }
     ): Promise<FundingActionResult> => {
-      // ⚠️ Snapshot BEFORE the call — the response mutates the row, so a log built
-      // afterwards would describe the post-state. Same rule as `chargeCard`.
-      const payment = paymentFor(pid);
       const res = await run(
         'Request refund',
         () => FundingService.requestRefund(leadId!, pid, body, companyId, actorId),
         { pid }
       );
-      logRefundRequested({
-        ...logBase,
-        payment,
-        amount: body.amount,
-        method: body.method,
-        reason: body.reason,
-        approverId: body.assignedToUserId,
-        draftId: body.draftId,
-        ok: res.ok,
-        // Its own action, because it is the one refusal nobody at the table can clear.
-        approversMissing: res.error?.kind === 'approversMissing',
-        error: res.error?.message,
-      });
       return res;
     },
-    [run, leadId, companyId, actorId, logBase, paymentFor]
+    [run, leadId, companyId, actorId]
   );
 
   /**
@@ -649,9 +650,8 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
     async (
       approvalId: string,
       decision: 'approved' | 'declined',
-      opts?: { note?: string; pid?: string; amount?: number }
+      opts?: { note?: string }
     ): Promise<FundingActionResult> => {
-      const payment = opts?.pid ? paymentFor(opts.pid) : undefined;
       try {
         const res = await ApprovalService.decide(
           approvalId,
@@ -661,15 +661,6 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         );
         const body: any = res?.data?.data ?? res?.data;
         if (body?.funding) apply(body.funding);
-        logRefundDecided({
-          ...logBase,
-          payment,
-          approvalId,
-          decision,
-          amount: opts?.amount,
-          note: opts?.note,
-          ok: true,
-        });
         FlashMessage.success(
           decision === 'approved' ? 'Refund approved' : 'Refund declined',
           decision === 'approved'
@@ -682,47 +673,50 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         // ⚠️ A 403 here carries the server's own wording — wrong role, or the company
         // does not allow approving your own request. It is the only thing that says WHY.
         FlashMessage.error('Could not record the decision', error.message);
-        logRefundDecided({ ...logBase, payment, approvalId, decision, amount: opts?.amount, ok: false, error: error.message });
         return { ok: false, error };
       }
     },
-    [companyId, actorId, logBase, paymentFor, apply]
+    [companyId, actorId, apply]
   );
 
-  /** Send a pending request to a different approver. ⚠️ `pending`-only — 409 otherwise. */
+  /**
+   * Send a pending request to a different approver. ⚠️ `pending`-only — 409 otherwise.
+   *
+   * ⚠️ Reassign and resend are the one REAL gap in the server-side move: they are
+   * written to `ApprovalRequest.history[]` but produce no timeline row from either
+   * side. Do not close it by re-adding a client emitter — ask the backend, which is
+   * where the other thirteen refund actions are written. (Neither is wired to any UI
+   * today, so nothing is currently losing a row.)
+   */
   const reassignApproval = useCallback(
-    async (approvalId: string, toUserId: string, opts?: { note?: string; fromUserId?: string }): Promise<FundingActionResult> => {
+    async (approvalId: string, toUserId: string, opts?: { note?: string }): Promise<FundingActionResult> => {
       try {
         await ApprovalService.reassign(approvalId, toUserId, opts?.note, companyId, actorId);
-        logRefundReassigned({ ...logBase, approvalId, fromUserId: opts?.fromUserId, toUserId, ok: true });
         FlashMessage.success('Sent on', 'The request is now with the new approver.');
         return { ok: true };
       } catch (err: any) {
         const error = classifyFundingError(err);
         FlashMessage.error('Could not reassign', error.message);
-        logRefundReassigned({ ...logBase, approvalId, fromUserId: opts?.fromUserId, toUserId, ok: false, error: error.message });
         return { ok: false, error };
       }
     },
-    [companyId, actorId, logBase]
+    [companyId, actorId]
   );
 
   /** Nudge the same approver. ⚠️ `pending`-only — 409 otherwise. */
   const resendApproval = useCallback(
-    async (approvalId: string, toUserId?: string): Promise<FundingActionResult> => {
+    async (approvalId: string): Promise<FundingActionResult> => {
       try {
         await ApprovalService.resend(approvalId, companyId, actorId);
-        logRefundResent({ ...logBase, approvalId, toUserId, ok: true });
         FlashMessage.success('Reminder sent', 'The approver has been nudged again.');
         return { ok: true };
       } catch (err: any) {
         const error = classifyFundingError(err);
         FlashMessage.error('Could not resend', error.message);
-        logRefundResent({ ...logBase, approvalId, toUserId, ok: false, error: error.message });
         return { ok: false, error };
       }
     },
-    [companyId, actorId, logBase]
+    [companyId, actorId]
   );
 
   /** Ask the processor/lender what happened. The main way card and loan rows advance. */

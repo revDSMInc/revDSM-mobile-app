@@ -2112,6 +2112,124 @@ produce the figure the screen passes in. tsc 75 (baseline unchanged); eslint 0 e
 confirm the red refund block appears on Job Price, Confirm becomes live, and Review shows the
 method/reason/approver form.
 
+### The Job Price step INFORMS about the refund; Review runs it
+
+Ticket, against the step-3 refund card: *"this process already available on the summary
+page, remove this process from here and just add a scenario through user getting the info
+about the refund with their price and navigate to the further process on this screen its
+not required."*
+
+The card carried the whole approval process twice. On **Job Price** it drew the
+`NOT RAISED YET` chip, the four-dot rail (Refund Raised → Approved → Customer Signs →
+Refunded), the *"Submitting the addendum sends this to the approver you choose"* note and
+the **Send for approval to** picker — and **Review** carried all of it again beside "Send
+Addendum To". Two copies of one process on one wizard read as two different things to do.
+
+| step | now |
+|---|---|
+| **Job Price** | the FACTS only — `REFUND DUE TO CUSTOMER −$342`, what was collected, the new price, and one line naming the taps that follow |
+| **Review** | the whole process — rail, method, reason, approver, and the reminder button |
+
+⚠️ **This SUPERSEDES the earlier decision** recorded above ("The picker is offered where
+the price dropped, not two steps later"). That reasoning was sound — *"carry on for two
+more steps and you will be asked who signs this off"* is how a request goes out
+**unassigned**, and an unassigned request appears in **nobody's** `/approvals/mine`. It is
+answered a different way now, not ignored.
+
+#### ⚠️ What makes the removal safe, and the one thing that would un-make it
+
+The approver is still **required at Submit**: `refundBlockers` pushes
+*"Choose who approves this refund"* into `refundGate`, which feeds **`submitBlocked`** on
+Review — where the picker still is. So a refund can no more go out unassigned than before.
+
+⚠️ **`refundGate` does NOT gate this step's `confirmGate`** — that is only
+`contractPriceError` plus `confirmBlockers` — which is precisely why dropping the picker
+here strands nobody. **If `refundGate` is ever added to `confirmGate`, the picker has to
+come back to this step in the same change**, or Confirm becomes a dead end blocked by
+"Choose who approves this refund" with no control on the screen to clear it — the same
+shape of trap as the Auto Adjust floor below.
+
+⚠️ **The reminder button went with the rail**, so chasing a silent approver is now
+reachable from **Review and the Funding sub-screen only**. That is where a rep goes to
+check on a request anyway, but it is one fewer place than before.
+
+The replacement line names the actual taps in order — *"Tap **Confirm**, then **Next ·
+Review** — you choose an approver and send the refund there."* It is no longer gated on an
+approver having been picked, because on this step there is now nothing to pick with.
+
+tsc 44 (baseline unchanged); `DynamicDealEditScreen.tsx` 170 → **168** warnings, 0 errors
+(two inline styles left with the removed block). 6 suites / 124 tests pass and the iOS
+bundle builds.
+
+⚠️ Needs a device check: drop the price below what was collected, answer **Yes**, and
+confirm the Job Price card shows only the amount, the explanation and the next-steps line
+— then that Review still offers the approver, the rail and (once raised) the reminder.
+
+### ✅ Auto Adjust produced a price the same screen REFUSED
+
+Ticket, from My Deals with a refund on screen: *"what is this if the refund is available
+and when we apply for refund than this error is occur"*, then the decisive half —
+***"this is due when we click on auto adjust."***
+
+The screenshot: **Auto Adjust** set the Contract Price to **$6,301** against a rebuilt
+**COST $6,632**, so the field went red with *"Cannot be below the cost of $6,632."*, the
+footer listed it under *"Before you can confirm:"*, and **Confirm** was dead — on a
+figure the rep had not typed and could not read. A **REFUND DUE TO CUSTOMER −$199** card
+sat directly beneath it, so the screen was simultaneously telling them money was owed
+back and refusing to let them send it.
+
+#### It is not arithmetic — the markup being preserved was ITSELF below cost
+
+`handleAutoAdjust` scales the deal's ORIGINAL price by the tier its badge is based on
+(`adjusted = next[baseKey] × (original / previous[baseKey])`), so the New card reproduces
+the markup the Previous card showed. That is correct and is not what changed.
+
+⚠️ **The badge in the report reads `COST −5%`** — the job had already been SOLD below
+what it costs to build. Reproducing −5% against the new cost is therefore faithful and
+invalid at once, and `handleAutoAdjust` never consulted the floor its own screen
+validates against.
+
+It surfaces on a **refund** because that is exactly when the rep is deliberately pricing
+down and the floor is the last thing between them and Confirm.
+
+**New pure `clampToCostFloor(price, cost)`** in `utils/dynamic-deal-pricing.ts` →
+`{ price, clamped }`, and Auto Adjust runs its result through it.
+
+⚠️ **CLAMP — never relax the floor for a refund.** Waiving it would sell the job below
+what it costs to build, which is the one thing that rule exists to stop. The floor is a
+business rule; Auto Adjust is a convenience, so the convenience yields. The refund simply
+becomes smaller, or stops being one — which on this deal is the honest answer, since
+$6,632 of build was never covered by the $6,500 collected.
+
+⚠️ **A zero floor is a NO-OP, never a drag to zero.** `PAR $0` in that same screenshot is
+a **config fact, not a bug**: the tier floor is `if (price < 200 && checkRetail > 0)`, so
+a tier whose schema fields carry no price stays at 0 rather than being floored to $200.
+Do not "fix" PAR — and do not let an unpriced tier become a price.
+
+**The clamp is announced** (`FlashMessage.info`, "Adjusted to the cost floor"). The rep
+asked for a markup and got a different one; landing silently on a number that does not
+match the badge being preserved reads as the button having miscalculated.
+
+Verified with 12 tests (`__tests__/screens/DynamicDealCenter/auto-adjust-cost-floor.test.ts`):
+the reported figures with **$6,301 asserted to be exactly what the gate refuses**, the
+clamp lifting it and the gate then passing, and the invariant swept across markups from
+−40% to +200% plus a rebuilt cost that rises and one that falls — *Auto Adjust can never
+produce a price `contractPriceError` rejects*. Plus the guards: a healthy markup
+untouched, a price sitting exactly ON the floor left alone (the gate is `<`, not `<=`), a
+zero/NaN/absent floor as a no-op, junk not reaching the screen as `NaN`, and a genuine
+refund above the floor still refunding its full $200. tsc 44 (baseline unchanged);
+`dynamic-deal-pricing.ts` at its HEAD baseline (2 warnings, 0 errors) and
+`DynamicDealEditScreen.tsx` at its exact 170. 6 suites / 124 tests pass; the iOS bundle
+builds.
+
+⚠️ **`dynamic-deal-pricing.ts` is CRLF** — this edit hit that trap (the inserted block
+went in as LF, leaving the file mixed) and was normalised back. The diff is 24 insertions
+/ 0 deletions; check `file <path>` before and after, and use `newline=''` on both ends.
+
+⚠️ Needs a device check: on a deal whose badge reads a NEGATIVE markup, press **Auto
+Adjust** and confirm the price lands on the cost, the info flash explains why, the red
+error is gone and **Confirm** is live.
+
 ### My Deals asks its questions in ONE dialog now — `ConfirmDialog`
 
 Ticket: *"in the my deal set these dialogue according to the app already used dialogue theme."*
@@ -2218,6 +2336,11 @@ caption under the group rather than a second lock that could disagree with the f
 
 #### Logging — `module_type` stays `funding`
 
+> ⛔ **SUPERSEDED — these four emitters are DELETED; the BACKEND writes every refund row
+> now.** See "The refund activity logs moved SERVER-side" below. The paragraphs that
+> follow describe what the client used to send and are kept only so the two bugs the
+> move fixed are on the record. **Do not re-add a client emitter.**
+
 Four emitters in `funding-log.ts` (10 actions). ⚠️ **The flow is never the module.**
 These fire from My Deals, so `fire()` composes them as `my_deals_funding_refund_requested`
 with `meta.fundingSource: "my_deals"` — the same mechanism every other funding event on
@@ -2230,7 +2353,320 @@ for a job, refunds included. A refund is money moving, so it belongs there and n
 folding it into the generic failure would hide a company-wide configuration problem
 inside a list of validation errors.
 
+### The refund activity logs moved SERVER-side — four emitters DELETED
+
+Reference: **`TAYYAB-REFUND-ACTIVITY-LOGS.md`** (repo root), from the backend dev. A
+**deletion** ticket: the server now writes every refund row itself, so the app's four
+emitters were filing a SECOND row per step — and the client's was the wrong one of each
+pair.
+
+Refund steps had never appeared in the portal's Forever Record because **nothing wrote
+them**: a dev-database scan found 1,352,904 activity logs, 501 of them `funding`, and
+**not one refund row**, beside five real refunds carrying nineteen events. The portal has
+had labels for all thirteen refund actions since the refund work shipped; only the writer
+was missing.
+
+⚠️ **It had to go to the backend rather than to either app**, because two of the steps
+have no client behind them at all: **money actually leaving** is a Stripe webhook
+(`refund.updated`) — no browser, no user — and **the customer signing the addendum**
+happens on the no-auth consent link. One server-side writer covers the portal, the rep
+app, the webhook and the customer link.
+
+| deleted from `src/utils/activity-log/funding-log.ts` | its call sites |
+|---|---|
+| `logRefundRequested` | `useFunding.requestRefund` |
+| `logRefundDecided` | `useFunding.decideApproval` (×2 — ok + failure) |
+| `logRefundReassigned` | `useFunding.reassignApproval` (×2) |
+| `logRefundResent` | `useFunding.resendApproval` (×2) |
+
+The `── refunds & approvals (REVDSM-1159 / 1160) ──` section header and its block comment
+went with them. **Everything else in `funding-log.ts` is untouched** — only the refund
+half. `paymentMeta` / `FundingLogPayment` stay; ten other emitters still use them.
+
+#### ⚠️ The two bugs that make re-adding a client emitter a REGRESSION
+
+1. **The amount was the PAYMENT's, not the refund's.** `logRefundRequested` spread
+   `paymentMeta(o.payment)` **before** setting `refundAmount`, and `paymentMeta` writes
+   `amount: p.amount` — the payment row's. The portal's label renders `money(m.amount)`,
+   so a **$472** refund against a **$1,392** down payment rendered as *"Refund requested
+   — $1,392"* (confirmed on live data). The server-written row reads $472.
+2. **`rid` was never written.** The portal's supersede key is
+   `refund-state-${m.rid || 'unknown'}`, so every refund row on a lead collapsed onto the
+   single key `refund-state-unknown` — two refunds on one job struck each other through
+   and the older rendered as superseded. ⚠️ The client **could not** have fixed this: the
+   server mints `rid` in the very response the log fires beside.
+
+#### Nothing was added — no endpoint, header or body changed
+
+The rows are a side effect of the endpoints the app already calls, still under
+`module_type: 'funding'` (so an existing `funding` filter picks refunds up for free; the
+portal groups them under a **"Refunds"** heading inside the Funding step):
+
+| the app calls | the server files |
+|---|---|
+| `POST …/funding/:pid/refund` | `funding_refund_requested` |
+| `POST …/approvals/:id/decide` | `funding_refund_approved` / `_declined`, then `_sent_to_customer` on approval |
+| `PATCH …/funding/:pid/refund/:rid` | `funding_refund_fields_edited` |
+| `POST …/refund/:rid/issue` | `funding_refund_issuing`, then `funding_refunded` / `_failed` |
+| `POST …/refund/:rid/cancel` | `funding_refund_cancelled` |
+| `POST …/refund/:rid/check-step` | `funding_refund_check_cut` / `_mailed` / `_received` |
+| customer signs the addendum | `funding_refund_customer_signed` |
+| Stripe settles or refuses | `funding_refunded` / `funding_refund_failed` |
+
+⚠️ **Only the first two are reachable from this app**, and only the first is wired to UI.
+`decideApproval` / `reassignApproval` / `resendApproval` have **no callers** (the
+approvals inbox is deliberately not built — §4.8 is portal-only), and `issue` is
+**Command Center only** and deliberately absent from `FundingService`.
+
+#### ⚠️ `actorId` is now the ONLY thing attributing a refund row to the rep
+
+`cfg()` sends it as the `userId` header, and with the client no longer logging, the
+server's row is the only record there is. Absent it the API attributes the action to
+*"RevDSM" (system)*. Verified end to end: `DynamicDealEditScreen` passes
+`userId: user?._id || user?.id` into `useFunding`'s `logCtx`, `actorId = logCtx?.userId`,
+and it reaches both `FundingService.requestRefund` and `ApprovalService.decide`.
+
+#### Four parameters became no-ops and were removed with the logs
+
+They existed ONLY to build a log payload and were never sent to any endpoint, so leaving
+them would be a trap — a future caller passing a user id that goes nowhere:
+`resendApproval(approvalId, ~~toUserId~~)` (a hard eslint error once dead),
+`reassignApproval(…, opts.~~fromUserId~~)`, and `decideApproval(…, opts.~~pid~~,
+~~amount~~)`. All three functions are unwired, so removing them breaks nothing;
+`opts.note` is genuinely used by both and stays.
+
+#### What this LOSES, and it is worth knowing
+
+- ⚠️ **Failure rows are gone.** `funding_refund_blocked` (the no-approvers refusal),
+  `funding_refund_request_failed` and `funding_refund_decide_failed` were client-only —
+  the server writes a row for a transition that HAPPENED, so a request it rejected files
+  nothing. The rep still sees the flash; the portal no longer sees the attempt. The
+  backend doc does not mention them, so **flag it to the backend dev** if the portal
+  wants a refused refund on the timeline — the no-approvers case especially, since it is
+  the one refusal nobody at the table can clear and it signals a company-wide
+  misconfiguration.
+- ⚠️ **Reassign and resend have no server equivalent yet** (the doc says so): they are
+  written to `ApprovalRequest.history[]` but produce no timeline row from either side.
+  A deliberate, small loss — and currently a nil one, since neither is wired to UI.
+
+Nothing about the refund FLOW changed: draft submitted first, `draftId` read off the
+response and passed to `requestRefund` (a refund without it sits at `pendingCustomer`
+forever), a failed request warns rather than unwinding the filed addendum, and
+`RefundStatusRail` still reads the server's refund rather than re-deriving it.
+
+tsc 44 (baseline unchanged); `funding-log.ts` and `useFunding.ts` are both eslint-clean
+(0 problems, as at HEAD), 3 suites / 50 tests pass and the iOS bundle builds. Both files
+are LF. ⚠️ No test covers this — the deletion was verified by reference sweep
+(`grep logRefund` → none) and tsc/lint.
+
+> ⚠️ **`__tests__/` is GITIGNORED** (`.gitignore:66`). That is why the many suites this
+> file documents are absent from a fresh checkout: they were never committed, not lost to
+> a branch. Tests written here run locally and verify the change in the session that
+> wrote them, but **no suite survives a clone** and none of them runs in CI. Do not go
+> hunting for them, and do not assume a documented suite still guards its rule.
+
+⚠️ Needs the smoke test from the doc: raise a refund from the rep app, approve it, sign
+the addendum, issue it — then the lead's Forever Record → **Funding** → a **Refunds**
+group listing each step **once**, with the REFUND's own amount on every row (not the
+payment's), and two refunds on one job no longer striking each other through.
+
+### ✅ APPROVAL now RELEASES the addendum — it no longer reaches the customer first
+
+Reference: **`TAYYAB-REFUND-HOLD-AND-REMINDERS.md`** (repo root), the backend dev's
+follow-up to `SALES-APP-REFUND-APPROVALS.md`. Backend and portal are both shipped; this
+is the app half. ⚠️ The doc's §0 is right that the refund UI was already built — the
+warning modal, `refundDueFor`, `refundBlockers`, the approver picker and lock, the
+`draftId` join and `RefundStatusRail` are all unchanged. What changed is the ORDER.
+
+#### ⚠️ The bug: a signature that is silently DROPPED, and a refund stuck forever
+
+`handleSubmit` filed the draft, then called `sendDraftSubmitEmail`
+(`PATCH …/job-builder-draft/:id/submit`) **unconditionally** — which flips the draft to
+`pending`, posts the chat card and texts/emails the review link — and only then raised
+the refund. So the customer had the addendum before anyone had approved the money going
+back.
+
+That is not cosmetic. The refund machine is
+`pendingApproval → pendingCustomer → customerSigned → issuing → refunded`, and
+**`pendingApproval → customerSigned` is not a legal move**. The server's
+`refundMovesForDecision` guard is `if (validateTransition(refund, state)) return;` — a
+**bare return, no log, no error**. So a customer who signs while the refund is still
+awaiting approval has their signature **dropped for the refund**; the approver then
+approves, which moves it to `pendingCustomer`; and it waits forever for a signature that
+already happened and **cannot be asked for again**. The addendum reads `accepted`, the
+money never moves, and nothing anywhere says why.
+
+**The fix is an inversion: raise the refund FIRST and let APPROVAL release the
+addendum.** The backend already does its half — `ApprovalHandler.applyToRefund` calls
+`releaseAddendumForApprovedRefund(draftId)` the instant a refund reaches
+`pendingCustomer`, which refuses unless the draft is still `status: 'draft'` (so it can
+never double-send) and then does exactly what `/submit` does.
+
+⚠️ **Declining releases NOTHING, deliberately** — a dead refund must not put an addendum
+promising money in front of the customer. The rep files a fresh one.
+
+#### The rule is pure: `addendumReleasePlan` in `utils/funding.ts`
+
+`'send-now' | 'hold-for-approval' | 'abort'`, for the reason the rest of that file is
+pure — `DynamicDealEditScreen.tsx` cannot be loaded under jest, and this is the single
+most consequential expression on the screen.
+
+| | |
+|---|---|
+| no refund acknowledged | **`send-now`** — unchanged, and the regression that matters most |
+| refund + source row + clear gate + `draftId` | **`hold-for-approval`** |
+| anything else | **`abort`** |
+
+⚠️ **`abort` means the submit `return`s, and a failed `requestRefund` aborts too.** The
+old code warned and carried on, which made sense only while the addendum had *already*
+gone out. It has not gone out any more, so stopping is free — and sending anyway would
+put the price **cut** in front of the customer to sign **while the company quietly keeps
+the money that cut gives back**. That is the one outcome on this screen that must not be
+possible. The rep stays on the wizard; the filed draft is inert (`draft`, uncounted,
+never sent) and a retry simply files another.
+
+⚠️ **It aborts on an unsatisfied GATE too**, not only a missing `draftId`. Submit is
+already disabled while `refundGate` is non-empty, so that arm should be unreachable —
+but "unreachable" is not a guarantee to hang this particular consequence on. Tested
+across every combination: once a refund is acknowledged, `send-now` is unreachable.
+
+⚠️ **The success copy had to change.** *"The customer has been notified to sign"* is a
+LIE for a held addendum — nobody has been notified, and will not be until the refund is
+approved. It now reads **"Sent for approval" / "The customer will be asked to sign once
+the refund is approved."**
+
+⚠️ **Nothing counts a held addendum as pending, and nothing had to change for that.**
+`isPendingDraft` matches `'pending'` only, and a held draft is `'draft'` — so the lead
+correctly does not show as awaiting a signature nobody has been asked for. (Do not
+"fix" that by widening the predicate.)
+
+⚠️ **Known gap, same on the portal, flagged not fixed:** between submit and approval a
+held addendum appears in **no** banner on the lead (they filter `status: 'pending'`) — it
+is visible only in the portal's Approvals queue. And if the approver DECLINES, the draft
+stays `draft` forever with nothing surfacing it. Both are safe (nothing reaches the
+customer), but a "waiting on approval" chip on the lead would be an improvement.
+
+#### `refundDueFor` now nets off refunds already raised
+
+Ported from the portal's `refund-model.js`, which the two files are meant to stay
+byte-diffable with. Reopen a lead that was re-priced and already refunded and the old
+expression computed **the same gap a second time**, so the rep could be asked for a
+duplicate refund of money already on its way back.
+
+Derived from `refundableAmount` rather than summed directly, so the one rule about which
+refunds count lives in one place: ⚠️ a **`declined` or `cancelled`** request returned
+nothing and must NOT eat the allowance — a rep refused once must still be able to raise
+it again.
+
+### The rep can chase a silent approver — `POST …/approvals/:id/remind`
+
+⚠️ Before this there was **no approver notification of any kind** — not chat, not push,
+not email. A refund request landed in the Approvals queue and the only way anyone learned
+of it was opening that screen. And the existing `POST …/resend` **only appended a history
+row**: nothing left the building, so "remind the approver" would have been a button that
+did nothing, twice. `ApprovalService.resend` is now marked LEGACY and is wired to nothing.
+
+**The delivery mechanism is the LEAD CHAT** — the server posts a card and **adds the
+approver as a participant on that thread**, since a message in a thread they are not on
+tells them nothing. Lance asked for the internal chat specifically: *"that way it's all
+associated to forever record."*
+
+#### ⚠️ The window is SERVER-computed and must never be derived on the device
+
+`REMINDER_MIN_AGE_HOURS` (48) and `REMINDER_COOLDOWN_HOURS` (24) are backend constants,
+and **48 is the backend dev's assumption, not Lance's word** — he said "a few days".
+Serving the window rather than hardcoding it is precisely so a change needs **no app
+release**, and a client that recomputed would disagree with the endpoint that actually
+refuses. So `FundingApprovalReminder` (`canRemind` / `waitingDays` / `blockedReason` /
+`nextRemindAt`) is rendered straight off the row.
+
+⚠️ The clock runs from `createdAt`, **not** `updatedAt` — a reassignment or an edit
+touches the document without the approver having done anything, so resetting on that
+would let a stalled request hide behind its own bookkeeping.
+
+#### It rides on the APPROVAL row, which the funding record cannot give you
+
+`payment.refunds[]` carries the refund's `state` and its `approvalId`; the reminder
+window lives on the approval. So new **`useRefundApproval`** reads
+`GET /lead/v1/:leadId/approvals` — the LEAD-scoped list, since the rep sees their own
+deal and never the company queue — and **`pickRefundApproval`** matches by the refund's
+own `approvalId`, falling back to `refund.rid`.
+
+⚠️ **"The lead's approval" is never a valid lookup.** A lead can carry several (a refund
+raised, declined, and raised again), which is also why `FundingView` takes a
+**`reminderFor(refund)` resolver** rather than four flat props — flat ones would put the
+first refund's window on every card.
+
+⚠️ Ids compare as **STRINGS**, for the reason the resulted-calculator lock does: one side
+arrives off the funding record and the other off the approvals list.
+
+⚠️ A row carrying **no `reminder` block renders nothing** — a deployment predating this
+feature must not show a button whose endpoint 404s. `canRemind` is matched strictly
+against `true` for the same reason.
+
+⚠️ The block renders **only while the refund is `pendingApproval`.** The server's
+`canRemind` already refuses a decided request, but rendering its `blockedReason` under an
+approved refund would print *"This request is already approved"* on a card whose rail
+says exactly that one line above.
+
+#### Three 409s now, not two
+
+⚠️ `classifyFundingError` gained **`remindTooSoon`** beside `setupRequired` and
+`approversMissing`, decided from the url via the pure `isRemindEndpointUrl`. A 409 on
+`…/remind` means *too soon* — nothing about the record is stale, so the documented
+"refresh and retry" behaviour LOOPS — and `shouldRefetchAfter` returns false for it.
+
+⚠️ **The `reminder` object is carried through on the 409 as well as the 200**, which is
+the whole point: a refused reminder still has to tell the rep when they may try again.
+The hook adopts it either way, so the button flips to the server's own wording
+(*"You already sent a reminder today."*) instead of staying live and failing again. It is
+surfaced as a **warning**, not an error — nothing is broken and there is nothing to fix,
+only to wait.
+
+⚠️ **`onPress={() => onRemind?.()}`, never `onPress={onRemind}`.** `TouchableOpacity`
+hands its handler a `GestureResponderEvent` and `remind(note?)` takes an optional first
+argument, so passing it straight in **posts the touch event to the API as the reminder's
+`note`** — and the prop type `() => void` hides that from tsc. This was written and
+caught before shipping; do not "simplify" it back.
+
+⚠️ **`issueRefund` is still NOT added** — Command Center only, exactly as the comment in
+`FundingService.ts` says. Nothing has changed there.
+
+Verified with 39 tests (`__tests__/screens/DynamicDealCenter/refund-hold-and-reminders.test.ts`)
+driving the real helpers: the netting repro **asserted against the pre-fix expression**,
+declined and cancelled refunds not eating the allowance, partial and completed refunds,
+per-row netting, and an untouched deal unchanged; every `addendumReleasePlan` branch plus
+the exhaustive guard that `send-now` is unreachable once a refund is acknowledged; the
+approvals envelope at five depths and junk as `[]`; `pickRefundApproval` by id, by rid
+fallback, across several approvals, as strings, and `null` rather than the first row;
+`reminderOf`'s strict `canRemind` and its null-on-no-window; `waitingLabel`'s
+plural/singular/"today"/no-name forms; and the 409 — classified `remindTooSoon`, not
+refetched, the window carried through at both depths, **the other two 409s asserted
+unchanged**, a refused submit still `stale` with its blockers, and a non-409 not
+re-labelled. tsc 44 (baseline unchanged); `FundingService.ts`, `utils/funding.ts`,
+`useRefundApproval.ts` and the test are eslint-clean, `DynamicDealEditScreen.tsx` is at
+its exact HEAD baseline (170 warnings, 0 errors), `FundingView.tsx` unchanged at 28 and
+`RefundApprovalStatus.tsx` 17 → 21 — all four added being `react-native/no-inline-styles`,
+the only rule that file carries. 4 suites / 89 tests pass and the iOS bundle builds.
+
+⚠️ Needs the device check from the doc's §4, none of which can be driven here: drop the
+price below what was collected, fill method/reason/approver and Submit — **the customer
+must receive NOTHING** (no SMS, no email, no chat card) and the toast must read *Sent for
+approval*; approve it in the portal and only THEN does the SMS and the chat card land;
+decline it instead and the customer is never contacted, ever; and — the regression that
+matters most — **an addendum with no refund must still go out immediately**. Then the
+reminder: hidden with the server's reason on a fresh request, enabled once the request has
+been waiting (backdate `createdAt` in Mongo), a card in the lead chat with the approver
+added as a participant, and a second press showing the 409 verbatim.
+
+⚠️ **Approval Configuration is a hard prerequisite** — Portal → Product Management →
+Approval Configuration → Refund → tick approver role(s) → Save. Without it EVERY refund
+request 409s (`approversMissing`) and it looks like the app is broken.
+
 #### Two 409s now, not one
+
+> ⚠️ **SUPERSEDED — there are THREE now.** `remindTooSoon` joined them; see "Three 409s
+> now, not two" above. The paragraph below is still correct about the other two.
 
 ⚠️ `classifyFundingError` gained **`approversMissing`** beside `setupRequired`. A 409 on
 `…/refund` means the company has nobody configured to approve — the record is perfectly
@@ -2534,6 +2970,73 @@ files carry. 742 tests pass.
 confirm the sheet is in Public Sans (compare against the Lead Center, which already is), that
 nothing reads *thinner* than before — which is what a failed family lookup looks like — and
 that no label now truncates at the smaller size.
+
+### ✅ ROOT CAUSE: the payment-link QR — `yarn.lock` is GITIGNORED
+
+Ticket: *"fix the payment Link QR code is not generated… it occurs multiple time and we
+fix this multiple time now fix this issue permanently."* The send sheet showed an amber
+**"QR display is unavailable in this build. Send the link by text or email instead."**
+
+⚠️ **The code was never the bug, which is why fixing the code never held.**
+`react-native-qrcode-svg` was hand-added to `package.json` in `c558fa0` and
+**has never once been in `yarn.lock` in the repo's entire history** — because
+**`yarn.lock` is gitignored** (`.gitignore:80`) and has never been tracked at all.
+
+So there is **no shared lockfile**. A dependency one developer adds only reaches another
+machine if its owner happens to re-run `yarn install`, and nothing signals that they
+should. Each past "fix" was somebody installing it locally — which worked for them, could
+not be committed, and left it broken for everyone else and for every clean checkout.
+
+#### The silent fallback is what let it SHIP
+
+```ts
+let QRCode: any = null;
+try { QRCode = require('react-native-qrcode-svg').default; } catch { QRCode = null; }
+```
+
+⚠️ That degrades a **missing dependency** into copy that reads like a **deliberate build
+flag** — *"unavailable in this build"* — so nobody ever concluded "something is not
+installed". It is now a **static `import`**, and it must stay one:
+
+| | a missing module then | a missing module now |
+|---|---|---|
+| where it surfaces | a rep's phone, at the kitchen table | Metro, at build time |
+| what it says | "unavailable in this build" | `Unable to resolve module react-native-qrcode-svg` |
+| who can fix it | nobody, in the field | the dev, with `yarn install` |
+
+The amber fallback branch is **deleted** — there is no "QR unavailable" state any more.
+If the link resolved, the code renders.
+
+⚠️ **Do NOT put the `try/catch` back.** Its stated reason (*"a missed `yarn install`
+would white-screen the Result Lead sheet"*) is wrong about the failure mode: an
+unresolved static import fails the **bundle build**, so it never reaches a device. Trading
+a loud build error for a silent field failure is what caused four rounds of this.
+
+The package is **pure JS** over `react-native-svg` (already a hard dependency, peer range
+`>=14.0.0` against this repo's `^15.15.4`), so there is **nothing to pod-install or
+link** — only `Example/` carries ios/android folders, not the package itself.
+
+Verified: `yarn add react-native-qrcode-svg@^6.3.21` resolves 6.3.24, the module's default
+export loads under jest (the exact thing that was `null`), tsc 44 (baseline unchanged),
+eslint 56 problems / **0 errors** (all `react-native/no-inline-styles`, the only rule the
+file carries), and the iOS bundle builds **with the QR error-correction tables present
+inside it** — which is the proof that it ships rather than merely compiling.
+
+#### ⚠️ The systemic half is NOT fixed, and it will bite again on the next dependency
+
+`yarn.lock` being gitignored means **every** dependency is unpinned across the team: two
+developers running `yarn install` a week apart can get different versions of anything in
+the tree, and a newly added package reaches nobody reproducibly. For an APP repo (as
+opposed to a library) committing the lockfile is the standard answer, and it is the only
+thing that makes `yarn install` deterministic.
+
+That was left alone deliberately — un-ignoring it adds a large tracked file and touches
+everyone's next merge, which is a team decision rather than a side effect of a QR ticket.
+**Raise it.** Until then, the rule for this repo is: after any pull that changes
+`package.json`, run `yarn install` — nothing else will tell you.
+
+⚠️ Needs a device check: open a payment link's send sheet and confirm the QR renders (a
+rebuild is required — the JS bundle changed, though no pods did).
 
 ### A corrected number CANCELS the old link — re-issue, not resend (REVDSM-1155)
 
@@ -3339,6 +3842,134 @@ Edit payments**, and confirm that row shows a green **Charged** chip with no Swa
 Remove — while an untouched line beside it keeps both.
 
 
+### ✅ A confirmed payment method stayed EDITABLE after "Edit payments"
+
+Ticket, with two screenshots: the funding screen showing a **$1,000 Check · Collected**
+down payment, and the pricing panel behind **Edit payments** still offering that row a
+live method dropdown and a ✕. *"make sure when the payment is confirmed once from the
+funding screen than user not allow to edit the payment method… if user select the
+payment method cheque and collected from the person and again try to change the payment
+method than do not allow the user."*
+
+⚠️ **The rule already shipped and was correct** — see "A PAID payment line can no longer
+be removed or swapped" above. `isSettledRow` / `isRemovableRow` were right,
+`PaymentRowsGroup` read them right, and `hydrateRowsFromRecord` mirrored the flags on a
+fresh mount. **The flags simply never reached the row on the way BACK.**
+
+#### The one path back dropped them
+
+`applyDecisionsToRows` — the single path from the funding screen to the pricing panel,
+called by `ResultJobModal`'s **Edit payments** and `DynamicDealEditScreen`'s header
+arrow — opened with:
+
+```ts
+const p = payments.find((x) => x.pid === row.pid);
+if (!p || !p.decision) return row;   // ← the stale row, verbatim
+```
+
+A collected cheque or a charged card carries `collected` / `charged` and **never a
+`decision`** — only a lender issues one. So the row handed back was the one built at
+**Confirm**, before the money moved: `row.collected` was `undefined`, `isSettledRow`
+read false, and the panel offered a dropdown and a ✕ on money already taken from the
+customer.
+
+⚠️ **Neither failure would have been loud.** Remove `409`s, `classifyFundingError` files
+that as `stale`, and `report` refetches and flashes *"Funding updated"* — which reads as
+success. **Swap is worse**: changing `method` **resets that row's steps, link and
+decision server-side**, silently discarding a completed collection.
+
+The fix mirrors the settlement flags (`linkSent` / `activated` / `charged` / `collected`)
+onto **every** row that has a server counterpart, decided or not — the same set
+`hydrateRowsFromRecord` already mirrors, and for the same reason.
+
+⚠️ **`archived` is deliberately NOT mirrored.** `swapRowMethod` keeps a SESSION-LOCAL
+shelf of plans swapped away before any save; the server knows nothing about them, so
+copying its own `archived` over would wipe the rep's shelf and with it the only way back
+to a plan they had just replaced. Tested.
+
+#### …and the second half: a locked row was still drawing a CHEVRON
+
+`disabled={locked}` already made the control inert, but the glyph beside it read
+`chevron-down` — a dropdown that merely refuses to open, which is exactly what the
+report describes. It is now a **`lock-closed`**.
+
+⚠️ **This is the `panel` layout's problem specifically.** `const chip = plain &&
+showsChip(row)`, so on the **Result Lead sheet every row takes the dropdown branch**,
+settled or not. In `plain` (My Deals) a settled row already draws the chip —
+*Collected* / *Charged* — and never reaches that line, which is why the bug only ever
+showed on one of the two surfaces.
+
+⚠️ **A link merely SENT is still NOT settled, and that is deliberate.** No money has
+moved, so the method may still be corrected; `isRemovableRow` blocks the ✕ (mirroring
+the server, which refuses deleting a row with a sent link) while the dropdown stays
+live. Only `decision || charged || collected` locks the method.
+
+Verified with 16 tests (`__tests__/screens/DynamicDealCenter/funding-settled-on-return.test.ts`)
+driving the real `applyDecisionsToRows`: the repro for a collected cheque and a charged
+card, each **asserted against the pre-fix early return** so the regression cannot come
+back silently; `linkSent` mirrored while staying unsettled but unremovable; an activated
+loan; and the regression guards — an untouched row still fully editable, a row with no
+server counterpart returned by reference, a declined decision still zeroing and
+bannering, a short approval still reporting what was granted, the local swap shelf
+surviving, and rows matched by `pid` rather than position. tsc 44 (baseline unchanged);
+`utils/funding.ts` eslint-clean and `PaymentRowsGroup.tsx` 57 → 60 warnings, all three
+added being `react-native/no-inline-styles` — the only rule that file carries. 5 suites /
+112 tests pass and the iOS bundle builds. (7 of those cover `lockedMethodNote`: each
+reason's wording, the declined row told what to do next, an approved verdict NOT
+mentioning refunds, the verdict-outranks-money precedence, `''` on an unlocked row and on
+a merely-sent link, and a sweep asserting **no settled row is left silent**.)
+
+#### …and tapping the padlock now says WHY
+
+Follow-up: *"show a message on the locked payment for the user understanding if user
+click on the locked payment method."*
+
+⚠️ **`disabled={locked}` is GONE from the method control, deliberately.** A disabled
+`TouchableOpacity` swallows the press in silence, so a rep who had collected a cheque and
+tapped its method got no response and no reason — which is the whole complaint. The
+control stays pressable so the press can **explain itself**; `openLockedNote` never opens
+the catalogue.
+
+**New pure `lockedMethodNote(row)`** in `utils/funding.ts` carries the wording, so both
+surfaces say the same thing. ⚠️ **Each reason names what actually happened**, because the
+rep's next move differs: a **declined** line needs another method for the balance, while a
+**collected** cheque needs a refund if the money really has to move. A single generic
+"this is locked" would send them hunting for a control that does not exist. Precedence
+matches `lenderState` — a lender's VERDICT outranks the money having moved — and it
+returns `''` for an unlocked row so the note can be gated on it.
+
+⚠️ **The note is IN FLOW, not a `FlashMessage`, and that is not a style choice.** The
+Result Lead sheet is a native `<Modal>` and the app's only `<FlashMessage />` is mounted
+at the App root (`App.tsx`), so a banner raised from inside it renders **behind** the
+sheet. That is exactly why four other native modals in this repo
+(`DealCenter/OutcomeModal`, `LeadCreate`, `RoofWaiverModal`, `ConsentFormModal`) each
+mount their **own** `<RNFlashMessage ref={flashRef} position="top"
+canRegisterAsDefault={false} />` and call it through the ref. An in-flow note has no
+z-order to get wrong and lands under the control that was tapped.
+
+> ⚠️ **Pre-existing and NOT fixed here: `ResultJobModal` raises global flashes it almost
+> certainly cannot show.** `PaymentRowsGroup`'s below-minimum plan warning
+> (`FlashMessage.warning('Payment plan', …)`), the sheet's own
+> `FlashMessage.error('Not ready to confirm', …)` and every `useFunding.report` banner
+> raised while the sheet is open all go to the ROOT instance, i.e. behind the modal.
+> Fixing it means mounting a local instance and routing those calls through its ref —
+> a real change with its own blast radius, so it is flagged rather than ridden along on.
+
+⚠️ **In the `plain` (My Deals) layout the CHIP takes the tap**, because Swap is hidden
+once the row is locked — without that, a settled line there has no method control at all
+to press. It is `disabled` while unlocked, so an ordinary chip row behaves exactly as the
+plain `View` it replaced.
+
+**One note at a time** (`lockedNoteId`): two open at once on a three-line split would push
+the Confirm gate off the screen. Tapping the same row again dismisses it; tapping another
+moves it.
+
+⚠️ Needs a device check (this repo cannot render-test): collect a cheque on the funding
+screen, tap **Edit payments**, and confirm that row shows a padlock instead of a chevron,
+does not open on tap, has no ✕, and its amount is read-only — while an untouched line
+beside it keeps all three. Then tap the padlock and confirm the amber note appears under
+that row naming the reason, and that a second tap dismisses it.
+
 ### Swap now ARCHIVES the plan it replaces, and Restore is symmetric
 
 Ticket: *"when we update or swap any method then the UI should behave like this"*, against
@@ -3469,6 +4100,13 @@ above, its refund below), so two copies would be two answers to "what does a fin
 like" on one screen. `RailStep` gained optional `sub` / `caption`, which is all the payment rail
 needed to keep its approved-amount line and its owner caption. The Android `borderStyle: 'dashed'`
 caveat moved with the code and still applies.
+
+#### ~~The picker is offered where the price dropped, not two steps later~~
+
+> ⛔ **SUPERSEDED — the rail and the picker were REMOVED from the Job Price step on
+> request.** See "The Job Price step INFORMS about the refund; Review runs it" below.
+> The reasoning kept here is still why the approver must be required *somewhere* before
+> Submit — it just is not required to be on this step.
 
 #### The picker is offered where the price dropped, not two steps later
 

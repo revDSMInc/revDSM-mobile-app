@@ -9,6 +9,7 @@ import {
   effectiveRowAmount,
   isRemovableRow,
   isSettledRow,
+  lockedMethodNote,
   lenderState,
   showsChip,
   type LenderTone,
@@ -138,6 +139,16 @@ export function PaymentRowsGroup({
   footer,
 }: Props) {
   const [openRowId, setOpenRowId] = useState<string | null>(null);
+  /**
+   * Which locked row is currently explaining itself. One at a time — two notes open at
+   * once on a three-line split would push the Confirm gate off the screen.
+   */
+  const [lockedNoteId, setLockedNoteId] = useState<string | null>(null);
+  /** Tapping the same locked row again dismisses it; tapping another moves the note. */
+  const openLockedNote = (pid: string) => {
+    setOpenRowId(null);
+    setLockedNoteId((cur) => (cur === pid ? null : pid));
+  };
   const plain = layout === 'plain';
 
   /** The provider-grouped / flat option list, shared by the select and by Swap. */
@@ -277,7 +288,17 @@ export function PaymentRowsGroup({
 
     // ── method ───────────────────────────────────────────────────────────────
     const methodCell = chip ? (
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderWidth: 1.5, borderColor: tone.border, backgroundColor: tone.bg, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 11 }}>
+      /**
+       * ⚠️ The CHIP takes the tap once the row is locked, because **Swap is hidden
+       * then** — so without this a settled line in the `plain` layout has no method
+       * control at all to press, and no way to ask why. `disabled` while unlocked, so
+       * an ordinary chip row behaves exactly as the plain `View` it replaced.
+       */
+      <TouchableOpacity
+        activeOpacity={locked ? 0.8 : 1}
+        disabled={!locked}
+        onPress={() => openLockedNote(row.pid)}
+        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderWidth: 1.5, borderColor: tone.border, backgroundColor: tone.bg, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 11 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9, flex: 1, minWidth: 0 }}>
           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tone.dot }} />
           <View style={{ flex: 1, minWidth: 0 }}>
@@ -290,7 +311,8 @@ export function PaymentRowsGroup({
           </View>
         </View>
         {/* Swap is how a method is changed on a row that reports a lender position —
-            it opens the same catalogue the dropdown does. */}
+            it opens the same catalogue the dropdown does. ⚠️ Absent once the row is
+            locked, which is why the chip itself takes the tap and explains why. */}
         {!locked && (
           <TouchableOpacity
             onPress={() => setOpenRowId(isOpen ? null : row.pid)}
@@ -300,12 +322,18 @@ export function PaymentRowsGroup({
             <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: '#374151' }}>{isOpen ? 'Close' : 'Swap'}</Text>
           </TouchableOpacity>
         )}
-      </View>
+      </TouchableOpacity>
     ) : (
       <TouchableOpacity
-        activeOpacity={locked ? 1 : 0.8}
-        disabled={locked}
-        onPress={() => setOpenRowId(isOpen ? null : row.pid)}
+        activeOpacity={0.8}
+        /**
+         * ⚠️ **Deliberately NOT `disabled` any more.** A disabled control swallows the
+         * tap silently, so a rep who had collected a cheque and tried to change its
+         * method got no response at all and no reason — which is what was reported.
+         * It stays pressable so the press can EXPLAIN itself; `openLockedNote` never
+         * opens the catalogue.
+         */
+        onPress={() => (locked ? openLockedNote(row.pid) : setOpenRowId(isOpen ? null : row.pid))}
         style={
           plain
             ? { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4, minWidth: 0 }
@@ -317,6 +345,19 @@ export function PaymentRowsGroup({
         </Text>
         {locked && row.decision && !plain ? (
           <StatusPill decision={row.decision} />
+        ) : locked ? (
+          /**
+           * ⚠️ A LOCK, never a chevron. `disabled={locked}` already makes the control
+           * inert, but a chevron-down on a dead control reads as a dropdown that is
+           * simply refusing to open — which is exactly what a rep reported after
+           * collecting a cheque and trying to change its method.
+           *
+           * This is the `panel` layout's problem specifically: `chip` is
+           * `plain && showsChip(row)`, so on the Result Lead sheet EVERY row takes the
+           * dropdown branch, settled or not. In `plain` a settled row already draws the
+           * chip ("Collected" / "Charged") and never reaches here.
+           */
+          <Ionicons name="lock-closed" size={13} color={FUND.MUTED} />
         ) : (
           <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={15} color={FUND.MUTED} />
         )}
@@ -359,6 +400,39 @@ export function PaymentRowsGroup({
       </View>
     );
 
+    /**
+     * Why this line is shut, shown where the rep tapped.
+     *
+     * ⚠️ **In flow, not a FlashMessage.** The Result Lead sheet is a native `<Modal>`
+     * and the app's only `<FlashMessage />` is mounted at the App root (`App.tsx`), so
+     * a banner raised from in here renders BEHIND the sheet — which is why every other
+     * native modal in this repo mounts its own `<RNFlashMessage>` instance. An in-flow
+     * note has no z-order to get wrong, and it lands under the control that was tapped
+     * rather than at the top of the screen.
+     */
+    const lockedNote = lockedNoteId === row.pid && locked && (
+      <View
+        style={{
+          flexDirection: 'row',
+          gap: 7,
+          alignItems: 'flex-start',
+          marginTop: 6,
+          marginBottom: 8,
+          borderRadius: 10,
+          borderWidth: 1.5,
+          borderColor: FUND.AMBER,
+          backgroundColor: FUND.AMBER_BG,
+          paddingHorizontal: 11,
+          paddingVertical: 9,
+        }}
+      >
+        <Ionicons name="lock-closed" size={13} color="#92400E" style={{ marginTop: 1 }} />
+        <Text style={{ flex: 1, fontSize: FS.SMALL, fontFamily: PS.semibold, lineHeight: 16, color: '#92400E' }}>
+          {lockedMethodNote(row)}
+        </Text>
+      </View>
+    );
+
     // ── the line ─────────────────────────────────────────────────────────────
     if (plain) {
       return (
@@ -389,6 +463,7 @@ export function PaymentRowsGroup({
               </TouchableOpacity>
             )}
           </View>
+          {lockedNote}
           {isOpen && !locked && renderOptions(row, amount)}
           {archivedBlock}
         </View>
@@ -416,6 +491,7 @@ export function PaymentRowsGroup({
         {/* Options render IN FLOW below the row, matching the sheet's other
             selects — an absolutely-positioned menu inside a ScrollView is
             clipped by the sibling rows on Android. */}
+        {lockedNote}
         {isOpen && !locked && renderOptions(row, amount)}
         {archivedBlock}
       </View>

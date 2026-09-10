@@ -126,6 +126,30 @@ export interface FundingRefund {
 
 export type ApprovalState = 'pending' | 'approved' | 'declined' | 'cancelled';
 
+/**
+ * Whether the rep may chase this approver yet, and why not (REVDSM-1160).
+ *
+ * ⚠️ **SERVER-COMPUTED — never derive any of this on the device.** The window is
+ * two backend constants (48 h before a first reminder, then one a day) and Lance has
+ * not confirmed the 48; serving it rather than hardcoding it is precisely so a change
+ * needs no app release. A client that recomputed would disagree with the endpoint
+ * that actually refuses.
+ *
+ * Rides on every approval row from `/approvals/list`, `/approvals/mine` and
+ * `GET /lead/v1/:leadId/approvals`, and on BOTH the 200 and the 409 from `…/remind`.
+ */
+export interface FundingApprovalReminder {
+  canRemind: boolean;
+  /** How long the approver has been sitting on it — the reason a rep would chase. */
+  waitingHours?: number;
+  waitingDays?: number;
+  remindersSent?: number;
+  lastRemindedAt?: string | null;
+  nextRemindAt?: string | null;
+  /** Server-worded, and shown verbatim in place of the button. */
+  blockedReason?: string | null;
+}
+
 /** One approval request. `approved` and `declined` are terminal. */
 export interface ApprovalRecord {
   _id?: string;
@@ -145,6 +169,12 @@ export interface ApprovalRecord {
   decidedAt?: string | null;
   refund?: { rid?: string; amount?: number; method?: string; reason?: string } | null;
   createdAt?: string | null;
+  /**
+   * ⚠️ The clock runs from `createdAt`, **not** `updatedAt` — a reassignment or an
+   * edit touches the document without the approver having done anything, so resetting
+   * on that would let a stalled request hide behind its own bookkeeping.
+   */
+  reminder?: FundingApprovalReminder | null;
 }
 
 /** `GET /lead/v1/approvals/approvers?type=refund`. */
@@ -487,6 +517,16 @@ export type FundingErrorKind =
    * as a generic failure or a retry.
    */
   | 'approversMissing'
+  /**
+   * 409 on `…/approvals/:id/remind` — the reminder cooldown has not elapsed.
+   *
+   * ⚠️ The THIRD 409 a refresh cannot fix, and the one most easily mistaken for a
+   * stale record: nothing is behind, the request is simply too young or was already
+   * reminded today. The body carries the server's own `message` AND a full `reminder`
+   * object, so the rep can be told exactly when they may try again — surface both
+   * rather than swallowing it into a generic "Funding updated".
+   */
+  | 'remindTooSoon'
   /** 402 — the processor declined the card. Nothing was collected. */
   | 'cardDeclined'
   /** 404 — the lead or the payment was not found. */
@@ -504,6 +544,11 @@ export interface FundingError {
   httpStatus?: number;
   /** Only on a blocked `submit` (409). Pre-formatted; render verbatim. */
   blockers?: string[];
+  /**
+   * Only on `…/remind`. Present on the **409** as well as the 200, which is the
+   * whole point — a refused reminder still has to tell the rep when they may retry.
+   */
+  reminder?: FundingApprovalReminder;
 }
 
 const KIND_BY_STATUS: Record<number, FundingErrorKind> = {
@@ -545,6 +590,19 @@ export function isRefundRequestUrl(url?: string | null): boolean {
 }
 
 /**
+ * Is this the reminder path (`…/approvals/:id/remind`)?
+ *
+ * Read off the failed request for the same reason the two above are: a 409 here means
+ * "too soon", and left as a generic `stale` it would refetch and report a refusal as
+ * an informational "Funding updated".
+ */
+export function isRemindEndpointUrl(url?: string | null): boolean {
+  if (!url) return false;
+  const path = String(url).split('?')[0].split('#')[0].replace(/\/+$/, '');
+  return /\/remind$/.test(path);
+}
+
+/**
  * Normalize any funding rejection into `{ kind, message, blockers }`.
  *
  * `opts.linkEndpoint` forces the link-endpoint reading for a caller that knows it
@@ -553,7 +611,7 @@ export function isRefundRequestUrl(url?: string | null): boolean {
  */
 export function classifyFundingError(
   err: any,
-  opts?: { linkEndpoint?: boolean; refundRequest?: boolean }
+  opts?: { linkEndpoint?: boolean; refundRequest?: boolean; remind?: boolean }
 ): FundingError {
   const httpStatus: number | undefined = err?.httpStatus ?? err?.response?.status;
   const body = err?.response?.data ?? err;
@@ -561,19 +619,27 @@ export function classifyFundingError(
   const url = err?.config?.url ?? err?.response?.config?.url;
   const onLink = opts?.linkEndpoint ?? isLinkEndpointUrl(url);
   const onRefund = opts?.refundRequest ?? isRefundRequestUrl(url);
+  const onRemind = opts?.remind ?? isRemindEndpointUrl(url);
 
   let kind: FundingErrorKind = (httpStatus && KIND_BY_STATUS[httpStatus]) || 'unknown';
-  // ⚠️ The TWO 409s a refresh cannot fix. Both must be decided here rather than at
+  // ⚠️ The THREE 409s a refresh cannot fix. All must be decided here rather than at
   // the call sites, or the generic `stale` handling refetches and reports them as an
   // informational "Funding updated" — which reads as success.
   if (kind === 'stale' && onLink) kind = 'setupRequired';
   else if (kind === 'stale' && onRefund) kind = 'approversMissing';
+  else if (kind === 'stale' && onRemind) kind = 'remindTooSoon';
+
+  // ⚠️ The reminder window rides ON the 409 body, not only on the 200 — it is what
+  // tells the rep WHEN they may try again, so it is carried through rather than
+  // dropped with the rest of the response.
+  const reminder = body?.reminder ?? body?.data?.reminder;
 
   return {
     kind,
     message: body?.message || err?.message || 'Something went wrong',
     httpStatus,
     ...(Array.isArray(blockers) ? { blockers } : {}),
+    ...(reminder && typeof reminder === 'object' ? { reminder: reminder as FundingApprovalReminder } : {}),
   };
 }
 
@@ -583,9 +649,10 @@ export function classifyFundingError(
  * `stale` (409) always does. `notFound` on a PAYMENT does too — the row was
  * removed or re-keyed elsewhere — so both should trigger a re-`GET`.
  *
- * ⚠️ `setupRequired` and `approversMissing` deliberately do NOT: the record is
- * perfectly current in both cases — one company has an unusable Stripe account, the
- * other has nobody configured to approve — and re-reading returns the same answer.
+ * ⚠️ `setupRequired`, `approversMissing` and `remindTooSoon` deliberately do NOT: the
+ * record is perfectly current in all three — one company has an unusable Stripe
+ * account, another has nobody configured to approve, and the third simply reminded
+ * the approver too recently — and re-reading returns the same answer.
  */
 export function shouldRefetchAfter(error: FundingError): boolean {
   return error.kind === 'stale' || error.kind === 'notFound';
@@ -635,6 +702,7 @@ export const ApprovalEndpoints = {
   decide: (id: string) => `/lead/v1/approvals/${encodeURIComponent(id)}/decide`,
   reassign: (id: string) => `/lead/v1/approvals/${encodeURIComponent(id)}/reassign`,
   resend: (id: string) => `/lead/v1/approvals/${encodeURIComponent(id)}/resend`,
+  remind: (id: string) => `/lead/v1/approvals/${encodeURIComponent(id)}/remind`,
 } as const;
 
 /**
@@ -992,9 +1060,36 @@ export const ApprovalService = {
       cfg(companyId, userId)
     ),
 
-  /** Nudge the same approver. ⚠️ `pending`-only — 409 otherwise. */
+  /**
+   * ⚠️ **LEGACY — writes an `ApprovalRequest.history[]` row and sends NOTHING.**
+   * Use `remind` below, which actually reaches the approver. Kept only because the
+   * route still exists; it is not wired to any UI.
+   */
   resend: (approvalId: string, companyId?: string, userId?: string): Promise<AxiosResponse<any>> =>
     api.post(ApprovalEndpoints.resend(approvalId), {}, cfg(companyId, userId)),
+
+  /**
+   * Nudge a silent approver (REVDSM-1160).
+   *
+   * ⚠️ Deliberately NOT gated on approver permission — the whole point is the REP
+   * chasing somebody else's silence, so a rep who cannot approve can still remind.
+   *
+   * ⚠️ A **409 is not an error to swallow**: it means "too soon", and its `message`
+   * and `reminder.nextRemindAt` are exactly what the rep needs to see.
+   * `classifyFundingError` files it as `remindTooSoon` and carries the `reminder`
+   * object through, so the call site can render the window rather than a retry.
+   *
+   * ⚠️ The delivery mechanism is the LEAD CHAT — the server posts a card and **adds
+   * the approver as a participant on that thread**, since a message in a thread they
+   * are not on tells them nothing. Nothing is sent by push or email.
+   */
+  remind: (
+    approvalId: string,
+    note?: string,
+    companyId?: string,
+    userId?: string
+  ): Promise<AxiosResponse<any>> =>
+    api.post(ApprovalEndpoints.remind(approvalId), note ? { note } : {}, cfg(companyId, userId)),
 };
 
 /**
