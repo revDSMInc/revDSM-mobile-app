@@ -280,7 +280,8 @@ async function openFromPush(data: PushData | undefined) {
 
   try {
     if (route.kind === 'leadList') {
-      // Bulk issue and route dispatch name no single lead — see push-routing.
+      // EVERY `lead-issued` shape lands here, including a single issue that names
+      // its lead: being issued work is a queue event. See push-routing.
       navigationRef.navigate('Leads');
       return;
     }

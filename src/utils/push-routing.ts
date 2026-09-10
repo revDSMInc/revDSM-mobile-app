@@ -177,16 +177,27 @@ export function resolvePushRoute(data: PushData | undefined | null): PushRoute {
 
   switch (type) {
     /**
-     * ⚠️ NEVER carries a `leadId`. Three shapes:
-     *   - single issue   → `issuedLeadId`, deep-linkable
+     * ⚠️ ALWAYS the Leads LIST — never a lead's own screen, even when the payload
+     * names one.
+     *
+     * The event has three shapes, and only the first can identify a lead at all:
+     *   - single issue   → `issuedLeadId`
      *   - bulk issue     → `count` only
      *   - route dispatch → `count` only, ONE push per rep rather than per route
-     * The last two name no lead, so the list is the only honest destination.
+     *
+     * That single-issue arm used to deep-link to `{ kind: 'lead' }`, so the SAME
+     * notification landed in two different places depending on how the office
+     * happened to issue the work — and a rep who was told "you have new leads"
+     * arrived on one lead's detail screen with no sense of what else came in.
+     * Being issued leads is a QUEUE event; the queue is the destination.
+     *
+     * ⚠️ `issuedLeadId` is deliberately no longer read here. Do not "restore" the
+     * deep link for the single-lead case: it is exactly the inconsistency this
+     * removes. (The Notification Center still reads the key for its lead chip,
+     * which is a label, not a destination.)
      */
-    case 'lead-issued': {
-      const issued = str(data?.issuedLeadId);
-      return issued ? { kind: 'lead', leadId: issued } : { kind: 'leadList' };
-    }
+    case 'lead-issued':
+      return { kind: 'leadList' };
 
     case 'appointment-issued':
     case 'lead-cancelled':
