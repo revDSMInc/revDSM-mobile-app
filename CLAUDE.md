@@ -2112,6 +2112,149 @@ produce the figure the screen passes in. tsc 75 (baseline unchanged); eslint 0 e
 confirm the red refund block appears on Job Price, Confirm becomes live, and Review shows the
 method/reason/approver form.
 
+### `GET /lead/v1/:leadId/approvals` on the Lead Center — and who the rep may chase
+
+Ticket: *"IMPLEMENT THIS END point to get all the remaining approvals and also make sure
+add to remind the manager to release their payment that is within the refund flow… add
+this flow on the page of lead details."* The doc's own §2.4 asks for the same placement:
+*"The rep does not have an Approvals queue — that is Command Center only. So it belongs
+on the deal itself."*
+
+⚠️ **A refund the rep raised was invisible to them the moment they left the wizard.**
+Nothing on the Lead Center said a request existed, who had it, or how long it had sat.
+
+**New `src/hooks/useLeadApprovals.ts`** owns the read. It lives in the shared hooks folder
+rather than beside the deal-edit screen because two screens now use it — the wizard's
+refund rail and the Lead Center card — and they share **ONE query key**, so the two can
+never show a different answer for one lead and a reminder sent from either refreshes both.
+`useRefundApproval` is now a thin selector over it.
+
+**New `widgets/components/LeadCenter/LeadApprovalsCard.tsx`**, rendered in `JobDocsSection`
+beside `AddendumsCard` — both are the deal's paperwork, and a refund's approval is raised
+BY an addendum. It returns **null** with nothing outstanding, exactly as `AddendumsCard`
+does.
+
+⚠️ **Gated on `isLeadResulted(lead)`**, so an ordinary scheduled or self-gen lead makes no
+extra request. An approval only exists against a refund, and a refund only against a deal
+that has collected money and been re-priced — so an unresulted lead cannot have one and
+asking would be a round trip whose answer is always empty. **This screen is watched
+closely for request count** (opening a Deal was cut by three not long ago); keep it that way.
+
+#### ⚠️ The manager-release half is a STATUS, and there is no endpoint to nudge it
+
+The ticket asks to *"remind the manager to release their payment"*. **That reminder does
+not exist on the backend and was not invented here.**
+
+| stage | what the rep gets |
+|---|---|
+| `pendingApproval` | **Remind approver** — `POST /lead/v1/approvals/:id/remind`, the real route |
+| `pendingCustomer` | informational — waiting on the signature |
+| `customerSigned` / `issuing` | **AWAITING RELEASE** — a status, with no button |
+
+⚠️ Issuing is **Command Center only** (*"Only managers who have access to command center
+can issue a refund"*), the app deliberately ships no `issueRefund`, and `/remind` chases a
+**pending approver** — a decided request answers `canRemind: false` ("This request is
+already approved."). So a "remind the manager" button could only ever 409, and offering a
+control that can only fail is worse than offering none — the same rule `isRemovableRow`
+follows.
+
+⚠️ **The button is driven ENTIRELY by the server's `canRemind`, never by a state test in
+the app.** That is the doc's instruction (*"Do not compute the window client-side"*) and it
+is also what makes the gap self-closing: **the day the backend allows a nudge at a later
+stage, this button lights up with no app release.** To get the manager reminder the backend
+needs either `/remind` extended past approval, or a new route — worth asking for, since it
+is the stage reps chase most.
+
+⚠️ **The release row needs the FUNDING record, not the approvals list** — `ApprovalRecord.refund`
+carries `{ rid, amount, method, reason }` and **no state**, so `/approvals` alone cannot say
+whether an approved refund has been released. The card takes `payments` as an OPTIONAL prop
+and simply omits that row without it, rather than guessing.
+
+Three pure helpers in `utils/funding.ts`: **`outstandingApprovals`** (⚠️ drops decided rows
+— nobody to chase — but **KEEPS an unrecognised state**, since hiding a live approval is the
+worse mistake), **`describeApproval`** (⚠️ reads the amount off `approval.refund`, the figure
+the approver was actually sent, never the deal's current price — which would name a number
+nobody has been asked to approve), and **`refundWaitingOn`**.
+
+⚠️ `sendingId` is keyed by APPROVAL ID so only the row being reminded spins — the same
+lesson as the addendum PDF spinner, which shipped keyed on the draft and lit up two cards.
+
+#### ⚠️ The LIVE response corrected three assumptions — all of which failed silently
+
+A captured `GET /lead/v1/:leadId/approvals` (2026-09-10) is now in the suite verbatim, and
+it disproved three things the first pass took for granted. **Read the shape before
+trusting `ApprovalRecord`** — the type had described a row nobody sends:
+
+```jsonc
+{ "_id": "…ebcb", "type": "refund",
+  "subject": { "kind": "fundingRefund", "paymentId": "p-ivuno4m9", "refundId": "…ebca" },
+  "state": "pending", "assignedToUserId": "6984…156", "decision": null,
+  "reminder": { "canRemind": false, "waitingDays": 0,
+                "blockedReason": "You can send a reminder once this has been waiting 2 days." } }
+```
+
+1. ⚠️ **The refund is REFERENCED, not embedded.** There is no `refund: { amount }` — only
+   `subject.refundId` — so `describeApproval` rendered a bare **"Refund"** with no figure,
+   and **`pickRefundApproval`'s rid fallback matched NOTHING**. That second one is the
+   costly half: on the deal-edit wizard a refund whose `approvalId` was not stored
+   resolved to no approval at all, so the reminder button simply never appeared. Both now
+   read `subject.refundId`, and the amount is joined through the funding record
+   (`refundForApproval`).
+2. ⚠️ **The assignee is an ID with no name and no `assignedTo` object**, so
+   `approverNameOf` returned `''` and the card announced *"Not assigned to anybody yet"*
+   **on a request that was assigned** — worse than saying nothing. There are now THREE
+   states (`With <name>` / `Sent for approval` / `Not assigned`), `isApprovalAssigned`
+   decides between the last two, and the name is resolved by passing the
+   `/approvals/approvers` feed in as a lookup, since names live nowhere on this row.
+3. **`reminder` matched the documented shape exactly** — the one assumption that held.
+
+⚠️ **The card therefore makes up to THREE reads, and they are CHAINED, not parallel:**
+approvals first; the funding record and the approver names only once a lead is known to
+HAVE an approval. A resulted lead with none costs one request; an ordinary lead costs
+none.
+
+Verified with 21 more tests (60 in the suite): the live payload parsed, its window read
+through untouched, the assignee known-but-nameless and then named from the feed, the
+amount joined through `subject.refundId` (and `describeApproval` asserted to give a bare
+`Refund` without it), `pickRefundApproval` matching on `subject.refundId` with the
+approvalId path and an embedded-refund deployment both still working, and every decided
+state dropped case-insensitively
+while an unrecognised one is kept, live rows picked out of a mixed list in order, junk as a
+no-op; the approval described from the approver's own figure with thousands formatting and
+the amount dropped when absent; and `refundWaitingOn` naming the approver, then the customer,
+then a **manager and Command Center** for both signed states, and `''` for the four nobody is
+waiting on. tsc 44 (baseline unchanged); `useLeadApprovals.ts`, `useRefundApproval.ts` and
+`utils/funding.ts` are eslint-clean, `LeadApprovalsCard.tsx` carries only
+`react-native/no-inline-styles` (18) and **`JobDocsSection.tsx` is at its exact HEAD baseline**
+(39 problems: 10 errors / 29 warnings). 6 suites / 145 tests pass and the iOS bundle builds.
+
+⚠️ **`JobDocsSection.tsx` is CRLF** — an LF-based match silently finds nothing there (it did
+here, and the guard caught it). Use `newline=''` and build the match with `\r\n`; the diff
+should be 21 insertions / 0 deletions.
+
+#### Placement: ABOVE the contract card
+
+⚠️ On request, the card sits **above `ContractDetailsCard`**, not below `AddendumsCard`.
+A refund waiting on somebody is the most time-sensitive block on the screen — the only
+one naming a person the rep may have to chase — and under the contract card's Agreement /
+Order Sheets / Down Payment Receipt sections it sat below the fold on most deals, which is
+exactly where a rep does not look for something they are waiting on. Order is now
+recipient card → **approvals** → contract → addendums.
+
+⚠️ Needs a device check: open a resulted lead carrying a pending refund approval and confirm
+the card sits ABOVE the contract card, lists the request with who has it and how long it has
+waited; that **Remind approver** appears ONLY once the server says so and shows its
+`blockedReason` verbatim otherwise; and that an ordinary lead shows no card and makes no
+`/approvals` request at all.
+
+⚠️ **There is deliberately NO client-side bypass of the reminder window.** One was added
+for testing and **removed on request** — the flow is to be exercised on a real ageing
+request instead. It could not have tested much anyway: `POST …/approvals/:id/remind` runs
+its own check and answers **409** while the window stands, so a forced button exercises
+the refusal path and never a delivered reminder. **To test the success path, backdate the
+request's `createdAt` in Mongo** (the doc's own §4 step 11) — that is the only thing that
+makes the server agree.
+
 ### The Job Price step INFORMS about the refund; Review runs it
 
 Ticket, against the step-3 refund card: *"this process already available on the summary

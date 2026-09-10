@@ -2042,7 +2042,18 @@ export function pickRefundApproval(
   }
   const wantRid = refund.rid ? String(refund.rid).trim() : '';
   if (wantRid) {
-    const byRid = list.find((r) => r?.refund?.rid && String(r.refund.rid).trim() === wantRid);
+    /**
+     * ⚠️ **`subject.refundId` is where the live shape puts it** — the row carries a
+     * REFERENCE (`subject: { kind, paymentId, refundId }`), not an embedded refund.
+     * Matching only `refund.rid` found nothing on a real response, so a refund whose
+     * `approvalId` was not stored resolved to no approval at all and the reminder
+     * button never appeared. `refund.rid` is kept for a deployment that embeds it.
+     */
+    const byRid = list.find((r) => {
+      const subjectRid = r?.subject?.refundId ? String(r.subject.refundId).trim() : '';
+      const embeddedRid = r?.refund?.rid ? String(r.refund.rid).trim() : '';
+      return subjectRid === wantRid || embeddedRid === wantRid;
+    });
     if (byRid) return byRid;
   }
   return null;
@@ -2066,11 +2077,117 @@ export function reminderOf(approval?: ApprovalRecord | null): FundingApprovalRem
   return { ...r, canRemind: r.canRemind === true };
 }
 
-/** Who is being waited on, for the "Waiting 3 days on Sam Patel" line. */
-export function approverNameOf(approval?: ApprovalRecord | null): string {
-  const a = approval?.assignedTo;
-  if (a && typeof a === 'object' && a.name) return String(a.name).trim();
-  return '';
+/**
+ * Approvals still waiting on somebody — the only rows worth putting on a card.
+ *
+ * ⚠️ A decided request (`approved` / `declined` / `cancelled`) is dropped: there is
+ * nobody left to chase, and the server refuses a reminder on one. Rows carrying no
+ * state at all are KEPT rather than guessed at — an unrecognised state is far more
+ * likely to be a new pending-ish one than a finished one, and hiding a live approval
+ * is the worse mistake.
+ */
+export function outstandingApprovals(rows: ApprovalRecord[] | null | undefined): ApprovalRecord[] {
+  const done = new Set(['approved', 'declined', 'cancelled', 'canceled']);
+  return (Array.isArray(rows) ? rows : []).filter((r) => !done.has(String(r?.state || '').toLowerCase()));
+}
+
+/**
+ * What this approval is about, in one line — `Refund · $342`.
+ *
+ * ⚠️ Reads the amount off `approval.refund`, which is the figure the APPROVER was
+ * actually sent. Re-deriving it from the deal's current price would report a number
+ * nobody has been asked to approve if the rep has re-priced since.
+ */
+export function describeApproval(
+  approval?: ApprovalRecord | null,
+  payments?: FundingPayment[] | null
+): string {
+  const kind = String(approval?.type || '').toLowerCase() === 'refund' ? 'Refund' : 'Approval';
+  // ⚠️ The live row embeds no amount, so it is joined through `subject.refundId`. The
+  // embedded shape is still read first for a deployment that sends one.
+  const amount = Number(approval?.refund?.amount) || Number(refundForApproval(approval, payments)?.amount) || 0;
+  return amount > 0 ? `${kind} · $${Math.round(amount).toLocaleString()}` : kind;
+}
+
+/**
+ * Who has to act next on a refund, once the approver has said yes.
+ *
+ * ⚠️ **A rep cannot release the money and must not be shown a control that implies they
+ * can.** Issuing is Command Center only — *"Only managers who have access to command
+ * center can issue a refund"* — so past approval this is a STATUS, not an action.
+ * Returns `''` for a state the rep is not waiting on anybody for.
+ */
+export function refundWaitingOn(state?: FundingRefundState | null): string {
+  switch (state) {
+    case 'pendingApproval':
+      return 'Waiting on the approver';
+    case 'pendingCustomer':
+      return 'Waiting on the customer to sign';
+    case 'customerSigned':
+    case 'issuing':
+      // The one the rep most often asks about: signed, approved, and the money still
+      // has not moved — because a manager has to release it.
+      return 'Waiting on a manager to release the money in Command Center';
+    default:
+      return '';
+  }
+}
+
+/** The user id this request is sitting with, or `''` when nobody has it. */
+export function assignedApproverId(approval?: ApprovalRecord | null): string {
+  const id = approval?.assignedToUserId ?? (approval?.assignedTo as any)?.id;
+  return id ? String(id).trim() : '';
+}
+
+/** Has this request been routed to somebody at all? */
+export function isApprovalAssigned(approval?: ApprovalRecord | null): boolean {
+  return !!assignedApproverId(approval) || !!(approval?.assignedTo as any)?.name;
+}
+
+/**
+ * Who is being waited on, for the "Waiting 3 days on Sam Patel" line.
+ *
+ * ⚠️ **The live response carries `assignedToUserId` and NO `assignedTo` object**, so
+ * reading only the object returned `''` — and the card then reported an assigned request
+ * as *"Not assigned to anybody yet"*, which is worse than saying nothing. Hence
+ * `byUserId`: the caller resolves the id against the approver feed
+ * (`/approvals/approvers`), which is the only place names live. Without a lookup this
+ * returns `''` and the caller must fall back to `isApprovalAssigned` rather than to
+ * "nobody".
+ */
+export function approverNameOf(
+  approval?: ApprovalRecord | null,
+  byUserId?: Record<string, string> | null
+): string {
+  const embedded = (approval?.assignedTo as any)?.name;
+  if (embedded) return String(embedded).trim();
+  const id = assignedApproverId(approval);
+  const looked = id && byUserId ? byUserId[id] : '';
+  return looked ? String(looked).trim() : '';
+}
+
+/**
+ * The funding refund this approval is about, joined through `subject.refundId`.
+ *
+ * ⚠️ The approval row carries **no amount** — only a reference — so the figure and the
+ * refund's state both have to come from the funding record. Returns `null` when the
+ * caller has no payments to join against, and the caller shows the row without an
+ * amount rather than inventing one.
+ */
+export function refundForApproval(
+  approval?: ApprovalRecord | null,
+  payments?: FundingPayment[] | null
+): FundingRefund | null {
+  const rid = approval?.subject?.refundId
+    ? String(approval.subject.refundId).trim()
+    : approval?.refund?.rid
+      ? String(approval.refund.rid).trim()
+      : '';
+  if (!rid) return null;
+  for (const p of payments || []) {
+    for (const r of p?.refunds || []) if (r?.rid && String(r.rid).trim() === rid) return r;
+  }
+  return null;
 }
 
 /**

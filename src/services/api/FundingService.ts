@@ -157,8 +157,15 @@ export interface ApprovalRecord {
   leadId?: string;
   state: ApprovalState;
   type?: 'refund' | string;
-  requestedBy?: { id?: string; name?: string } | string | null;
+  requestedBy?: { userId?: string; id?: string; name?: string; role?: string } | string | null;
+  /**
+   * ⚠️ **The assignee is an ID, and the live response carries NO `assignedTo` object.**
+   * Reading only the object made the Lead Center card report an assigned request as
+   * *"Not assigned to anybody yet"* — see `approverNameOf`, which needs a name lookup
+   * against `/approvals/approvers` because names live nowhere on this row.
+   */
   assignedToUserId?: string | null;
+  /** ⚠️ Absent on the live shape — kept for a deployment that embeds it. */
   assignedTo?: { id?: string; name?: string } | null;
   /**
    * ⚠️ **Frozen at request time.** Editing the company config never invalidates a
@@ -167,8 +174,19 @@ export interface ApprovalRecord {
   eligibleRoles?: { id: string; name: string }[];
   note?: string | null;
   decidedAt?: string | null;
+  /**
+   * ⚠️ **What the row actually carries — verified against a live response.** The refund
+   * is REFERENCED, not embedded: there is no amount here, so anything that wants one
+   * has to join `subject.refundId` against the funding record (`refundForApproval`).
+   */
+  subject?: { kind?: string; paymentId?: string; refundId?: string } | null;
+  eligibleRoleIds?: string[];
+  decision?: { outcome?: string; at?: string; by?: any; note?: string } | null;
+  history?: { action?: string; at?: string; by?: any; toUserId?: string | null; note?: string | null }[];
+  /** ⚠️ Not present on the live shape — kept for a deployment that embeds it. */
   refund?: { rid?: string; amount?: number; method?: string; reason?: string } | null;
   createdAt?: string | null;
+  updatedAt?: string | null;
   /**
    * ⚠️ The clock runs from `createdAt`, **not** `updatedAt` — a reassignment or an
    * edit touches the document without the approver having done anything, so resetting

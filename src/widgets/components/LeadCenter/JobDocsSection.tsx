@@ -57,6 +57,8 @@ const getNativeModules = () => {
 // Subcomponents
 import { ContractDetailsCard } from './ContractDetailsCard';
 import { AddendumsCard } from './AddendumsCard';
+import { LeadApprovalsCard } from './LeadApprovalsCard';
+import { isLeadResulted } from '../../../utils/lead-result-status';
 import { AddendumRecipientCard } from './AddendumRecipientCard';
 import {
   DocumentRef,
@@ -1583,6 +1585,30 @@ export const JobDocsSection = ({
         isDark={isDark}
         colors={colors}
         onRecipientChanged={onDraftsChanged}
+      />
+
+      {/* Outstanding approvals — `GET /lead/v1/:leadId/approvals`.
+
+          ⚠️ **ABOVE the contract card, not below the addendums**, on request. A refund
+          waiting on somebody is the most time-sensitive thing on this screen — it is the
+          only block reporting a person the rep may have to chase — and under the contract
+          card's Agreement / Order Sheets / Down Payment Receipt sections it sat below the
+          fold on most deals, which is exactly where a rep does not look for something
+          they are waiting on.
+
+          ⚠️ Gated on a RESULTED lead so an ordinary scheduled or self-gen lead makes no
+          extra request. An approval only ever exists against a refund, and a refund only
+          against a deal that has collected money and been re-priced — so an unresulted
+          lead cannot have one, and asking would be a round trip whose answer is always
+          empty. This screen is watched closely for request count (opening a Deal was cut
+          by three not long ago); keep it that way.
+
+          Renders null with nothing outstanding, so even a resulted lead shows nothing
+          until it has an approval. */}
+      <LeadApprovalsCard
+        leadId={lead?._id}
+        companyId={lead?.companyId}
+        enabled={isLeadResulted(lead)}
       />
 
       {/* Result Card Details */}
