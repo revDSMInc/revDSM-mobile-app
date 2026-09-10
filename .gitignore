@@ -68,7 +68,8 @@ __tests__/
 *.test.tsx
 *.spec.ts
 *.spec.tsx
-
+*.txt
+*.md
 # ─── Yarn Berry (not used, but safe to include) ───────────────────────────────
 .yarn/*
 !.yarn/patches

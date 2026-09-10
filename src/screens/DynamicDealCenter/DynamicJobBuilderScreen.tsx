@@ -55,6 +55,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 
+// Web's outcome dropdown stores 'Sale' / 'Demo'; mobile stores them lower-cased.
+// Only the LOG is normalised — the stored result is untouched.
+const capitalizeResult = (v: any) => {
+  const s = String(v ?? '').trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s;
+};
+
 interface DynamicJobBuilderScreenProps {
   navigation?: NativeStackNavigationProp<any>;
   initialConfig?: any;
@@ -108,6 +115,11 @@ interface DynamicJobBuilderScreenProps {
   // Web `hideAllocationTrackers`: hide the pinned footage/allocation trackers.
   // Defaults to true in edit mode.
   hideAllocationTrackers?: boolean;
+  /**
+   * Open on the SUMMARY step instead of step 1. Set by the `agreement-signed`
+   * notification deep link, where the rep's next action is Complete Job.
+   */
+  openOnSummary?: boolean;
   appointmentId?: string;
   // --- Embedded (4-step deal-edit wizard, step "Job Build") -------------------
   // When true this renders as the wizard's inner build step (web `<DynamicJobBuilder
@@ -117,6 +129,17 @@ interface DynamicJobBuilderScreenProps {
   // button becomes "Next · Price" (`onEditComplete`), and Back from the first tab
   // calls `onEditBack` (→ the wizard's Install Date step).
   embedded?: boolean;
+  /**
+   * Whether this screen may write activity logs. Default true.
+   *
+   * WARNING The deal-edit wizard keeps this screen MOUNTED across all four of its
+   * steps so a job build survives navigating away, which means its first
+   * `step_viewed` would otherwise fire the moment the wizard opens — the rep is on
+   * Install Date and the timeline says "Gutter". The wizard passes false until the
+   * rep first reaches the Job Build step, then leaves it true for the session (web
+   * `buildStepVisited`).
+   */
+  activityLoggingEnabled?: boolean;
   // The wizard's Install Date step owns the reschedule. This screen stays MOUNTED
   // across steps (it is only hidden), so `initialJobState` is read once and a date
   // picked afterwards would never reach the Summary tab's Scheduled Appointment
@@ -199,8 +222,10 @@ function DynamicJobBuilderInner({
   initialJobState: initialJobStateProp,
   portalUnrestrictedEdit: portalUnrestrictedEditProp,
   hideAllocationTrackers: hideAllocationTrackersProp,
+  openOnSummary = false,
   appointmentId,
   embedded = false,
+  activityLoggingEnabled = true,
   scheduleTimeOverride,
   // `rawDocsOverride` (savedOutcome.jobBuilderDocuments) is intentionally NOT consumed:
   // it is not pruned when a rep deletes a document, so it would resurrect removed
@@ -488,20 +513,40 @@ function DynamicJobBuilderInner({
   const isDemo = Boolean(resultType) && !isSale;
 
   // --- Activity logging (web parity: use-dynamic-job-builder-activity-log) -----
-  const configId = initialConfig?.configId || initialConfig?._id || null;
+  // Web (`dynamic-job-builder-modal.js`): `configId: config?.id || null`.
+  // ⚠️ `configId`/`_id` NEVER resolve here — `normalizeLightweight`
+  // (useDynamicCalculatorSchemas) moves the id onto `id` and DELETES `_id`, so
+  // the old pair sent `null` on every log. The sibling call site at the submit
+  // payload already read `.id`; only the logging one had drifted.
+  const configId = (initialConfig as any)?.id || null;
   const loggedAutoFieldTabsRef = useRef<Set<string>>(new Set());
   const activityLog = useDynamicJobBuilderActivityLog({
-    enabled: Boolean(leadId),
+    // WARNING In the deal-edit wizard this screen is MOUNTED from the start (so a
+    // rep's edits survive stepping away), which made it log a tab view the moment
+    // the wizard opened — the first row of an edit read "Gutter" while the rep was
+    // looking at Install Date. The wrapper holds it off until the rep actually
+    // reaches the Job Build step (web `buildStepVisited`).
+    enabled: Boolean(leadId) && activityLoggingEnabled,
     leadId,
-    jobId: leadId,
+    // Web passes the HUMAN lead/job number here (`currentLead?.leadId ||
+    // currentLead?.jobNumber || …`), which is what lands in `meta.jobBuilderId`.
+    // Mobile passed the MONGO id, so every log carried `jobBuilderId === leadId`
+    // — the same value twice and no job number at all. A lead with no job number
+    // stores the literal 'N/A', which is what web's own logs show.
+    jobId: (lead as any)?.leadId || (lead as any)?.jobNumber || leadId,
     calculatorId: (calculatorResultData as any)?.calculatorId,
     calculatorType: 'dynamic',
-    result: (calculatorResultData as any)?.resultType || (calculatorResultData as any)?.result,
+    // Web's `formData.result` is the outcome dropdown's own value — 'Sale' /
+    // 'Demo'. Mobile stores `resultType` lower-cased, so the portal saw two
+    // spellings of one outcome across the platforms.
+    result: capitalizeResult(
+      (calculatorResultData as any)?.resultType || (calculatorResultData as any)?.result
+    ),
     dealCenterData,
     configId,
     verticals: verticalList,
     // Edit mode is reached only from My Deals (Deal Detail → Edit), so its wizard
-    // events log under `module_type: 'my_deal'` (web deal-edit parity), not job_builder.
+    // events log under `MY_DEAL_MODULE` (web deal-edit parity), not job_builder.
     isDealEdit: isEdit,
     markAutoFieldsLoggedTab: (tabKey: string) => {
       loggedAutoFieldTabsRef.current.add(tabKey);
@@ -757,6 +802,24 @@ function DynamicJobBuilderInner({
     return res;
   }, [tabs, currentVerticalLockedTabIds, selectedVerticalId]);
 
+  // The step number the ACTIVITY LOG reports, in web's index space.
+  //
+  // ⚠️ Web indexes into `tabs = activeVertical?.tabs` — the vertical's FULL tab
+  // list — while mobile's `currentTabIndex` indexes `nonSummaryTabs`, which is
+  // filtered to the UNLOCKED tabs. So on a build whose earlier tabs were locked,
+  // mobile reported Soffit as step 1 where web reported step 3, and a step number
+  // that moves as tabs unlock is not a stable identifier for the portal. The
+  // comment on `currentStepIndex` below already records these two index spaces as
+  // a trap; the logging calls were reading the wrong one.
+  const logStepNumberOf = useCallback(
+    (tab: any) => {
+      const all = selectedVertical?.tabs || [];
+      const idx = all.findIndex((t: any) => t.id === tab?.id);
+      return Math.max(1, idx + 1);
+    },
+    [selectedVertical]
+  );
+
   const allNonSummaryTabs = useMemo(
     () => (selectedVertical?.tabs || []).filter((t: any) => !t.isSummary),
     [selectedVertical]
@@ -771,6 +834,38 @@ function DynamicJobBuilderInner({
     () => availableTabs.find((t: any) => t.isSummary),
     [availableTabs]
   );
+
+  /**
+   * Deep link from the `agreement-signed` notification: land on SUMMARY, not on
+   * step 1. The customer has signed, so the rep's next action is Complete Job —
+   * dropping them on Gutters means scrolling through every step to reach it.
+   *
+   * ⚠️ Waits for `availableTabs` to resolve. The tabs come from the config fetch,
+   * so on the first renders `summaryTab` is undefined and setting the id then
+   * would be overwritten by the default-tab effect.
+   *
+   * ⚠️ Deliberately bypasses `handleGoToTab`'s forward gate. That gate stops a rep
+   * SKIPPING incomplete work; here they are being sent to review a build that is
+   * already complete enough to have produced a signed agreement, and "Complete
+   * Job" runs its own validation regardless (the order-sheet requirement).
+   *
+   * Fires once — re-running would fight the rep the moment they pressed Back.
+   */
+  const openedOnSummaryRef = useRef(false);
+  /**
+   * ⚠️ Held across ONE commit so the fallback effect below cannot undo this.
+   * Both effects run in the same mount commit and both read the SAME pre-commit
+   * `selectedTabId` (still `''`), so the one defined later wins — which dropped
+   * the rep on step 1 with the deep link silently discarded.
+   */
+  const summaryPinnedRef = useRef(false);
+  useEffect(() => {
+    if (!openOnSummary || openedOnSummaryRef.current) return;
+    if (!summaryTab) return;
+    openedOnSummaryRef.current = true;
+    summaryPinnedRef.current = true;
+    setSelectedTabId(summaryTab.id);
+  }, [openOnSummary, summaryTab]);
 
   const currentTabIndex = useMemo(() => {
     if (!selectedTabId) return -1;
@@ -792,6 +887,14 @@ function DynamicJobBuilderInner({
   // to step 1 — the job builder must open on the first tab, not the summary.
   const autoSummaryRef = useRef(false);
   useEffect(() => {
+    // Yield to the `openOnSummary` deep link for exactly as long as it takes to
+    // land. Cleared the moment the selection is observed to BE the summary, so a
+    // later vertical switch (which resets `selectedTabId` to '') still gets its
+    // fallback and the screen can never be left blank.
+    if (summaryPinnedRef.current) {
+      if (summaryTab && selectedTabId === summaryTab.id) summaryPinnedRef.current = false;
+      return;
+    }
     if (nonSummaryTabs.length > 0) {
       // Product tabs are available: open on the first one. Also correct a Summary
       // selection that was only a fallback picked before the tabs resolved (the
@@ -821,7 +924,7 @@ function DynamicJobBuilderInner({
     activityLog.handleTabActivated({
       verticalId: selectedVerticalId,
       tab: currentTab,
-      stepNumber: currentTabIndex + 1,
+      stepNumber: logStepNumberOf(currentTab),
       isTabLogged: (k: string) => loggedAutoFieldTabsRef.current.has(k),
       isFirstTabAfterOpen: isFirst,
       tabState: jobState?.[selectedVerticalId]?.[currentTab.id] || {},
@@ -1061,14 +1164,15 @@ function DynamicJobBuilderInner({
       activityLog.logNavigate({
         fromTab: currentTab,
         toTab,
-        fromStep: currentTabIndex + 1,
-        toStep: nextIdx + 1,
-        direction: 'forward',
+        fromStep: logStepNumberOf(currentTab),
+        toStep: logStepNumberOf(toTab),
+        // Web's own values (`dynamic-job-builder.js`): 'next' / 'back'.
+        direction: 'next',
         verticalId: selectedVerticalId,
       });
       setSelectedTabId(toTab.id);
     }
-  }, [currentTabIndex, nonSummaryTabs, summaryTab, canProceed, currentTab, selectedVerticalId, activityLog]);
+  }, [currentTabIndex, nonSummaryTabs, summaryTab, canProceed, currentTab, selectedVerticalId, activityLog, logStepNumberOf]);
 
   const handleBack = useCallback(() => {
     const prevIdx = currentTabIndex - 1;
@@ -1077,14 +1181,14 @@ function DynamicJobBuilderInner({
       activityLog.logNavigate({
         fromTab: currentTab,
         toTab,
-        fromStep: currentTabIndex + 1,
-        toStep: prevIdx + 1,
-        direction: 'backward',
+        fromStep: logStepNumberOf(currentTab),
+        toStep: logStepNumberOf(toTab),
+        direction: 'back',
         verticalId: selectedVerticalId,
       });
       setSelectedTabId(toTab.id);
     }
-  }, [currentTabIndex, nonSummaryTabs, currentTab, selectedVerticalId, activityLog]);
+  }, [currentTabIndex, nonSummaryTabs, currentTab, selectedVerticalId, activityLog, logStepNumberOf]);
 
   const handleComplete = useCallback(async () => {
     if (!canComplete) return;

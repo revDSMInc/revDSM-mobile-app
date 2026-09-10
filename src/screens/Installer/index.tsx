@@ -86,8 +86,25 @@ export default function InstallerDashboard() {
   const userId = user?._id || user?.id;
   const [period, setPeriod] = useState<JobPeriod>('all');
   const [startingId, setStartingId] = useState<string | null>(null);
-  const { jobs, summaryCounts, loading, isError, refreshing, refresh } =
-    useInstallerJobs(period);
+  const { jobs, summaryCounts, loading, isError, refresh } = useInstallerJobs(period);
+
+  /**
+   * Drives the pull-to-refresh spinner, and it is deliberately NOT the query's own
+   * `isRefetching`.
+   *
+   * ⚠️ That flag is true for EVERY refetch, including the `useFocusEffect` one below —
+   * so binding it here made `RefreshControl` animate itself whenever the installer merely
+   * came back from a job. Setting `refreshing` programmatically on iOS inserts the
+   * control at the top and pushes the list down, which is the stray spinner and the band
+   * of white space reported against this screen: a refresh animation for a gesture nobody
+   * made, on a screen the crew had just navigated back to.
+   *
+   * Only `handleRefresh` — the actual pull — sets this. The focus refetch still runs; it
+   * just does so silently, which is what it was always meant to do.
+   *
+   * (Same reasoning, same fix as the Lead Center's own `pullRefreshing`.)
+   */
+  const [pullRefreshing, setPullRefreshing] = useState(false);
   const updateStatus = useUpdateJobStatus();
   const log = useInstallerActivityLog();
 
@@ -192,9 +209,16 @@ export default function InstallerDashboard() {
     setPeriod(next);
   };
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     log.jobsRefreshed(period);
-    refresh();
+    setPullRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      // `finally`, so a failed read releases the control too — otherwise the spinner
+      // sticks forever and the list looks frozen with no way to clear it.
+      setPullRefreshing(false);
+    }
   };
 
   /**
@@ -585,7 +609,7 @@ export default function InstallerDashboard() {
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 100 }}
           refreshControl={
             <RefreshControl
-              refreshing={refreshing}
+              refreshing={pullRefreshing}
               onRefresh={handleRefresh}
               tintColor={colors.primary.main}
               colors={[colors.primary.main]}

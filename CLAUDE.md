@@ -2095,2073 +2095,8 @@ re-opens the dialog. Without it the disabled Confirm is a puzzle — the guard r
 question is not asked twice on its own.
 
 ⚠️ **`String.replace` ate three dollar signs during this fix**, and it is worth knowing: a
-`$` in the REPLACEMENT string is an escaped literal `# revDSM Sales — Mobile (React Native) — Repo Guide
-
-> **What this repo is:** the React Native field-sales app for **revDSM Sales**, a door-to-door
-> roofing/gutter sales CRM. It is the mobile counterpart of the web app
-> (`mhalt-revDSM-sales-frontend`), which is the older and more complete reference implementation.
-> Both apps share one backend.
->
-> This document is a working guide to the mobile codebase: stack, conventions, feature map, and the
-> known in-progress areas. Status reflects the repo as of **2026-07-02**.
-
----
-
-## 1. Stack & conventions
-
-| Concern | Choice |
-|---|---|
-| Framework | **React Native 0.84**, React 19 (`App.tsx`, `index.js`) |
-| Language | TypeScript (`tsconfig.json`) |
-| Navigation | `@react-navigation/native-stack` — single stack in `src/navigation/index.tsx` |
-| Styling | **NativeWind 4** (Tailwind, `tailwind.config.js`, `global.css`) + inline styles + `react-native-svg` |
-| Server state | **TanStack Query** (`@tanstack/react-query`) — `src/services/api/queryClient.ts` |
-| Client state | **Redux Toolkit + redux-persist** — `src/redux/store.ts` (persists **auth only**) |
-| Local storage | **MMKV** (`react-native-mmkv`) via `src/utils/storage.ts` + AsyncStorage |
-| Realtime | `socket.io-client` singleton — `src/services/SocketManager.ts` |
-| Maps | `react-native-maps` (+ directions) for lead/job maps; `@rnmapbox/maps` + `supercluster` for Zone Canvasser |
-| Camera/media | `react-native-vision-camera`, `react-native-image-picker`, `react-native-pdf`, `react-native-nitro-sound` (voice) |
-| HTTP | axios wrapper — `src/services/api/index.ts` |
-
-### Directory layout
-- `src/screens/` — one folder per navigable screen (registered in `src/navigation/index.tsx`).
-- `src/widgets/` — reusable UI: `common/` (header, inputs, buttons), `components/` (feature widget suites), `modals/`.
-- `src/services/` — `SocketManager.ts` + `api/` (typed service classes: `LeadService`, `JobService`, `ChatService`, `auth`, etc.).
-- `src/hooks/` — feature logic hooks (large: `useDealCalculator`, `useCalculatorSummary`, `useZoneCanvasser`, `useLeadCenterData`, chat hooks).
-- `src/utils/` — business logic: `calculator/`, `dynamic-job-builder/` (schema engine), `activity-log/`, `validation/`, storage/upload/geo helpers.
-- `src/redux/` — `store.ts` + `reducer/auth.reducer.ts` (only auth is in Redux).
-- `src/config/env.ts` — environment config (⚠️ see gotcha below).
-- `src/constants/`, `src/context/`, `src/theme/` (`ThemeProvider`), `src/types/`.
-
-### Conventions
-- Server data → TanStack Query hooks; do **not** put it in Redux (Redux is auth-only).
-- Navigation params are typed in `RootStackParamList` (`src/navigation/index.tsx`) — update it when adding a screen or param.
-- Cross-screen callbacks (e.g. RevRender `onGenerate`, JobBuilder `onGoBack`) are passed as **nav params**.
-- Analytics: `logEvent(...)` from `src/services/api/LoggerService.ts` is used app-wide.
-- The header is context-driven (`HeaderContext` / `MainHeader`) and only shown for the main authenticated screens.
-
----
-
-## 2. Authentication
-
-- **Custom JWT bearer token** (not Amplify/Auth0). Login → `/company/login`; profile → `/company`.
-- State: `src/redux/reducer/auth.reducer.ts` + hook `src/hooks/useAuth.ts`.
-- Token: MMKV `Storage['accessToken']` (`src/utils/storage.ts`), attached by the axios request interceptor (`src/services/api/index.ts`).
-- Bootstrap: `src/hooks/useAppInitialization.ts` (restores token, reconnects socket, `getMe`, requests camera permission).
-- Login/2FA mutations: `src/hooks/useAuthMutation.ts` (`useLoginMutation`, `useVerifyOtpMutation`). `deviceId = mobile-<os>-<email>`, `trustDevice`, lat/long captured.
-- 401 → global logout + "Session Expired" flash (`src/services/api/index.ts`).
-- Screens: `src/screens/auth/{login,forgot-password,email-otp,reset-password,authenticator-otp}.tsx`.
-- **Known gap:** 2FA backup-code entry is a `// TODO` in both OTP screens.
-
----
-
-## 3. Backend / environment
-
-- Base URL is **hardcoded** in `src/config/env.ts` → `https://demo-api.revdsm.com/` (the **demo** environment).
-  Also holds Google Maps, Mapbox, Apify and Weather keys, and derived S3 bucket/base URL.
-- **Gotcha:** env is not build-driven (unlike web's `VITE_API_URL`). Make `env.ts` environment-aware before release.
-
----
-
-## 4. Feature map (mobile)
-
-Legend: ✅ full · 🟡 partial/in-progress · ⛔ stub. "Web ref" points into `mhalt-revDSM-sales-frontend/`.
-
-| Feature | Status | Mobile entry | Web ref |
-|---|---|---|---|
-| Auth (login, forgot/reset, 2FA/OTP) | ✅ (backup codes TODO) | `src/screens/auth/*`, `src/hooks/useAuthMutation.ts` | `src/sections/auth/jwt/`, `src/api/two-factor-auth.js` |
-| Leads (landing list) | ✅ | `src/screens/Leads/index.tsx` | `src/api/leads.js` (surfaced via map/job) |
-| Lead Center (operational hub) | ✅ | `src/screens/LeadCenter/index.tsx`, `src/widgets/components/LeadCenter/*`, `src/widgets/modals/lead-center/*` | `src/sections/job/view/job-capture-images-view.js` |
-| Map view | ✅ | `src/screens/MapDetail/index.tsx`, `src/widgets/modals/MapFiltersModal.tsx` | `src/sections/map/` |
-| Zone Canvasser | ✅ | `src/hooks/useZoneCanvasser.ts`, `src/widgets/components/ZoneCanvasser/*` | `src/sections/map/zone-canvasser/` |
-| Deal Center (quoting calculator) | ✅ | `src/screens/DealCenter/index.tsx`, `src/hooks/useDealCalculator.ts`, `src/widgets/components/dealcenter/*` | `src/sections/deal-center/` |
-| **Dynamic Deal Center / Job Builder** | 🟡 **in progress (see §5)** | `src/screens/DynamicDealCenter/*`, `src/utils/dynamic-job-builder/*` | `src/components/dynamic-job-builder/`, `src/sections/deal-center/` |
-| Job Builder | ✅ | `src/screens/JobBuilder/index.tsx`, `src/widgets/components/job-builder/*` | `src/sections/job/components/job-builder-*` |
-| Job Tracker | ✅ | `src/screens/JobTracker/index.tsx` | `src/sections/job-tracker/` |
-| RevRender (before/after) | ✅ | `src/screens/RevRender/index.tsx` | `src/pages/dashboard/rev-render/` |
-| Image Annotation | ✅ | `src/screens/ImageAnnotation/index.tsx` (WebView canvas) | `src/components/image-annotation/` |
-| Pitch Book (+ dynamic portal-authored books) | ✅ | `src/screens/Pitchbook/index.tsx`, `src/hooks/usePitchBooks.ts`, `src/utils/pitch-book.ts` | `src/sections/pitch-book/` (static only — web has no pitch-book API client) |
-| Roofline Deck | ✅ | `src/screens/RooflineDeck/index.tsx` | `src/sections/roofline-deck/` |
-| Chat (leads + team channels) | ✅ | `src/screens/{ChatThreads,ChatDetail}/*`, `src/widgets/components/chat/*` | `src/components/chat-module/`, `team-channels/` |
-| Voice notes | ✅ | `src/hooks/useVoiceNote.ts`, `VoiceNotePlayer.tsx` | `src/components/voice-recorder/` |
-| Document Scanner | ✅ | `src/widgets/modals/job-builder/DocumentScannerModal.tsx` | `src/components/document-scanner/` |
-| Signatures / agreements | ✅ | `src/widgets/modals/job-builder/AgreementSignatureModal.tsx` | `src/sections/job/components/agreement-generator/` |
-| Consent / roof waiver | ✅ | `src/widgets/modals/lead-center/{ConsentForm,RoofWaiver}.tsx`, `src/hooks/useRoofWaiver.ts` | `src/api/{consent,consent-form}.js` |
-| Offline image upload queue | ✅ (mobile strength) | `src/services/api/offlineUploadManager.ts`, `src/utils/uploadQueue.ts` | `src/utils/background-report-service.js` (partial analog) |
-| Referral | ✅ | `src/widgets/modals/ReferralModal.tsx` | `src/api/referral.js` |
-| Profile / settings (+2FA mgmt) | ✅ | `src/screens/Profile/index.tsx` | `src/sections/account/`, `src/api/profile.js` |
-| Appointments / scheduler | 🟡 in-flow only, no standalone screen | `src/widgets/modals/job-builder/AppointmentSchedulerModal.tsx` | `src/sections/calculator-appointment/` |
-| Deal details / drafts | 🟡 outcome modals only, no drafts browser | `src/widgets/modals/DealCenter/OutcomeModal.tsx` | `src/sections/deal/`, `src/pages/deal-drafts.js` |
-| My Deals (deal list → detail) | ✅ detail **reuses Lead Center** (see below) | `src/screens/MyDeals/index.tsx` → `LeadCenter` w/ `fromMyDeals` | `src/sections/deal/view/deal-details-view.js` |
-| My Learning (LMS) | ⛔ 34-line stub | `src/screens/Learning/index.tsx` | external LMS redirect |
-| User management (other users) | ⛔ not implemented (own profile only) | — | `src/sections/user/` |
-
-### My Deals detail IS the Lead Center screen (ticket: "My deals should match resulted lead page")
-
-Tapping a deal in **My Deals** no longer opens a separate deal screen — it opens the **same
-Lead Center screen a sold lead opens**, so the two entry points are pixel-identical (lead info
-block, **Job docs / Map / Tools**, the green `SALE - LEAD RESULTED` `ContractDetailsCard` with
-its price rows + Agreement / Order Sheets / Down Payment Receipt sections and **Add Document**,
-and **Msg Ops/IM**). Only the *edit* behaviour differs, and no result buttons are involved.
-
-- **Entry point**: `MyDeals.openDeal` navigates to **`LeadCenter` with `{ lead, fromMyDeals: true }`**
-  (was `DealDetail`). `fromMyDeals?: boolean` was added to the `LeadCenter` params in
-  `RootStackParamList` (`src/navigation/index.tsx`).
-- **The pencil opens the 4-step deal-edit wizard.** `JobDocsSection` has an optional
-  **`onEditContract?: () => void`** prop that overrides `ContractDetailsCard`'s `setShowEditModal`;
-  `LeadCenter` passes `onEditContract={isDynamicDeal ? handleEditDeal : undefined}`, and
-  `handleEditDeal` navigates to `DynamicDealCenter` with
-  `{ lead, mode:'edit', calculatorResultData: { calculatorId, appointmentId } }` (multi-shape id
-  resolution, ported from the old `DealDetail.onEdit`). See "The Contract Details pencil opens the
-  deal-edit wizard on BOTH entry points" below — it is **no longer gated on `fromMyDeals`**.
-- **Header title is entry-aware**: `{fromMyDeals ? 'Deal' : 'Lead Center'}` (`LeadCenter/index.tsx`).
-- **My Deals shows the global `MainHeader`** (added to the `showHeader` list in
-  `navigation/index.tsx`) so its frame matches the screen it navigates into. Because the
-  navigator's outer `SafeAreaView` already applies the **top** inset when the header shows,
-  `MyDeals`' own `SafeAreaView` was switched to **`edges={['bottom','left','right']}`** — matching
-  Lead Center. Leaving it on the default (all edges) double-pads the title bar.
-- **`src/screens/DealDetail/` is now UNREACHABLE** (nothing navigates to it) but is still
-  registered in the stack. Its **Addendums list** (tap an approved addendum → signed PDF via
-  `getDraftAmendmentPdf`, plus the `DraftComparison` diff) has **no equivalent on the Lead Center
-  screen**. ✅ **BOTH halves of that gap are now CLOSED** — the pending-signature status in
-  "The Deal screen's pending-signature status" below, and the addendums LIST itself in the
-  follow-up right after it. The only piece still missing is `DealDetail`'s `DraftComparison`
-  drill-in: on the Lead Center a PENDING addendum warns rather than opening its changes.
-
-### The Deal screen's pending-signature status — ONE amber header, back to green on approval
-
-Ticket: *"after submitting status should be show like this, in mobile this thing is missing"* (a web
-screenshot of an amber **PENDING ADDENDUM - AWAITING CUSTOMER SIGNATURE** bar; mobile showed nothing
-after submitting an addendum), then the design correction: *"a bit change in the design of the status,
-it should be like above, and once the user approved it will come back to the same green"*.
-
-**Final design (the rep's answer to a direct question, not an inference): the Contract Details card
-header IS the deal's single pending indicator.** Amber
-`SALE - PENDING CUSTOMER SIGNATURE` / *Awaiting Amendment Approval: • Contract Pricing* while a
-signature is outstanding, flipping to the green `✓ <STATUS> - LEAD RESULTED` the moment the customer
-approves. No second bar.
-
-#### What actually drives it
-
-`ContractDetailsCard`'s `showPendingDraft` now has **two** sources, either of which shows amber:
-
-| # | source | written by |
-|---|---|---|
-| 1 | `leadDraft` — `GET lead/v1/{id}/draft`, **plus its `showStatus` gate** | ONLY an **EditContractDetails** save (`upsertLeadDraft` has exactly one caller) |
-| 2 | `hasPendingAddendum` — a pending row in `GET lead/v1/{id}/job-builder-drafts` | the **My Deals deal-edit wizard** (addendums) |
-
-Source 2 is new and is the whole bug: **the wizard never writes a `leadDraft`**, so before this the
-header stayed GREEN after submitting an addendum while the addendums list directly below it read
-`Pending` — two elements on one screen disagreeing about the same deal.
-
-⚠️ **The addendum arm must NOT inherit the `showStatus` gate.** That flag belongs to the
-contract-edit draft shape; a job-builder draft does not carry it, so requiring it would make the whole
-branch permanently dead and silently restore the bug. Tested.
-
-#### `DealBanners` is now the CANCELLED bar only — a deliberate divergence from web
-
-`src/widgets/components/LeadCenter/DealBanners.tsx` began as a faithful port of web
-`src/sections/deal/components/deal-banners.js` (rendered from `job-capture-images-view.js` gated on
-`isDeal`; `lead-center-tabs.js` places it *"under the tab bar and above every tab"*, which is why mobile
-renders it after the **Job docs / Map / Tools** row and OUTSIDE the tab switch, gated on `fromMyDeals`).
-
-⚠️ **Web's pending-addendum bar is deliberately NOT rendered.** Web shows two independent indicators for
-one fact — that bar AND the card's own amber header — and on a phone the two sat within half a screen of
-each other saying the same thing. Do not "restore parity" here; it was removed on request.
-
-The **JOB CANCELLED** bar stays: nothing else on the screen reports it, and a cancelled deal would
-otherwise still show a green *LEAD RESULTED* header.
-
-#### Draft status predicates live in `src/utils/addendum-drafts.ts`
-
-`isDraftApproved` / `isPendingDraft` / `countPendingDrafts` / `hasPendingDraft` — pure and RN-free, for
-the reason `utils/inspection-photos.ts` and `utils/job-change-summary.ts` exist: all three consumers
-(`AddendumsCard`, `DealBanners`, `JobDocsSection`) pull in React Native and are untestable under jest
-here. Keeping the rules in one file is also what stops "pending" meaning two different things on two
-surfaces of the same screen.
-
-- **One fetch, shared.** `LeadCenter` holds the single `useQuery` and passes `drafts` down; nothing
-  re-fetches. Mirrors web's shared `useJobBuilderDrafts`.
-- **The focus effect invalidates it.** Submitting an addendum CREATES the draft and the rep returns here
-  straight from the wizard — without the invalidate the header would only turn amber after leaving and
-  re-opening the deal. (Web solves the same problem with that hook's `refetch`.)
-- **A failed fetch returns `[]`, not an error state** (web: *"Addendums are supplementary; a failure must
-  not affect the page"*), so it degrades to a green header rather than breaking the Deal screen.
-
-Verified against the exact `showPendingDraft` expression: a pending addendum turning the header amber
-**with no `leadDraft` at all**, approval (`accepted`/`signed`) returning it to green, a declined
-addendum reading green, one-approved-plus-one-pending staying amber, the `showStatus` gate still
-suppressing the EditContractDetails arm (and still honouring the stringy `'true'`), the addendum arm
-NOT inheriting that gate, both-pending, and null/undefined input as green. tsc 44 (baseline unchanged);
-`utils/addendum-drafts.ts` is eslint-clean, and `LeadCenter/index.tsx` + `JobDocsSection.tsx` together
-are byte-identical to their HEAD baseline (79 problems: 26 errors / 53 warnings, all pre-existing).
-
-#### …and the Addendums list, in web's exact slot
-
-Follow-up, same screen: *"you also have to show this like web in the deal center"* — a web screenshot
-of an **Addendum (1)** card holding a `Pending` chip, `Addendum #1`, its date and a chevron, plus the
-toast *"The addendum PDF is available once the customer approves it"* from tapping that pending row.
-
-**New `src/widgets/components/LeadCenter/AddendumsCard.tsx`** — a port of web
-`src/sections/deal/components/addendums-card.js`. Title `Addendum{s} (N)`; each row is
-`StatusChip · Addendum #N · MM/dd/yyyy` with a right-hand **`file-pdf-box`** when approved and a
-**`chevron-right`** otherwise. Returns `null` with no addendums.
-
-**Placement is web's, not "at the end".** Web threads it as `docsExtras` into `job-docs-tab.js`, which
-renders it between the **contract card** and the **`N/M slots • N photos`** progress row — exactly
-where the screenshot shows it, above `Start Taking Photos`. Mobile renders it in the same slot inside
-`JobDocsSection`, so it is INSIDE the Job docs tab, not a sibling of it.
-
-⚠️ **The drafts query is no longer gated on `fromMyDeals`** (it was, one ticket ago, when the banners
-were the only consumer). Web's own note at the call site: *"The addendums list renders on both routes;
-it is null when the lead has none, so it costs the Lead Center nothing when there are no addendums."*
-**Only the BANNERS stay deal-only.** One `useQuery` in `LeadCenter` feeds both, mirroring web's shared
-`useJobBuilderDrafts` — `drafts` is passed down to `JobDocsSection` rather than re-fetched, so the two
-surfaces can never disagree and there is still exactly one request.
-
-**Tap behaviour is web's, including the dead end.** Approved → `getDraftAmendmentPdf` → the app's PDF
-viewer via the existing `onOpenPdf`. Anything else → the warning flash in the screenshot. Two pure
-exports carry the decisions so the guards are testable — `isDraftApproved` and
-**`resolveAddendumTap(draft, pdfLoadingDraftId)` → `'ignore' | 'not-approved' | 'open-pdf'`**:
-
-- ⚠️ **The in-flight guard OUTRANKS the approval check**, deliberately. `/amendment-pdf` **generates**
-  the document on demand, so a second tap is a second Puppeteer run, a second S3 upload and two
-  `amendment` documents for one addendum. Reversing the order would let a pending row toast mid-build.
-- While one is building, that row reads **"Preparing PDF…"** with a spinner and a green border and
-  **the other rows dim to 0.6** — web's behaviour, so the others read as unavailable rather than
-  silently swallowing a tap. The first open of an addendum approved before this feature existed
-  genuinely builds the PDF and takes a few seconds, which is why the row says so instead of just spinning.
-
-⚠️ **Mobile deliberately does NOT open the change comparison for a pending addendum here**, though it
-could: the unreachable `screens/DealDetail` did that, and `widgets/components/chat/JobChangeDetailsModal`
-already implements it (before/after + the approved→PDF hand-off, with the 409 fallback). Web's toast is a
-dead end and was ported as-is because the ticket asked for web's behaviour; wiring that modal to the
-`'not-approved'` branch is a one-line change if reps want to read a pending addendum from the deal.
-
-Verified: `isDraftApproved` across all three approved spellings (case-insensitive) and rejecting
-pending/declined/missing; the chip's four known labels plus an unknown status shown verbatim and the
-`Draft` fallback, each with both colours; and every `resolveAddendumTap` branch — approved→PDF,
-pending/declined→warn, **a second tap ignored even on an approved row**, a mid-build pending tap ignored
-(guard ordering), and an id-less draft inert. tsc 44 (baseline unchanged); both new files are eslint
-error-free and `JobDocsSection.tsx` is byte-identical to its HEAD baseline (10 errors / 29 warnings).
-
-
-### Result Lead ▸ Reset was missing "Not Home", and a reset lead showed no contract card at all
-
-Ticket: *"Result lead - reset - add 'Not Home' like web; and after reset 'No contract details
-available' card should also be show like this."* Two unrelated one-liners on the same flow.
-
-**1. The reason list.** `REASONS_MAP.reset` in `widgets/modals/lead-center/ResultLeadModal.tsx` held
-`['No Time', 'Leaving']`; web `job-capture-images-sections/result-lead-drawer.js` has
-**`['Not Home', 'No Time', 'Leaving']`** — and `Not Home` is FIRST, being the commonest reset reason, so
-reps were filing a door nobody answered as `No Time`. The other two lists (`noDemo`, `notHit`) were
-already verbatim matches; only this one had drifted.
-
-**2. The empty contract card.** Web `sections/job/components/contract-details.js` splits TWO cases that
-mobile collapsed into a single `return null`:
-
-```js
-if (!isResulted) return;                 // scheduled / self-gen — no outcome yet
-if (!hasDetails) return <EmptyCard/>;    // resulted, but not a sale/demo
-```
-
-`ContractDetailsCard` guarded on `if (!isResulted || !hasContract) return null`, so after a **Reset**
-(or No Demo / Not Hit / Cancelled) the card vanished entirely and left a silent gap where it had been.
-It now renders web's placeholder — a centred `file-document-remove-outline` at 48px over
-**"No contract details available"**.
-
-⚠️ **The two flags were already correct and needed no change** — `isResulted` (`JobDocsSection`) accepts
-`reset`/`nothome`/`nothit`/`nodemo`/`cancelled`/`rescheduled` alongside sale/demo, while `hasContract` is
-`sale`/`demo`/`demonosale` only. So `isResulted && !hasContract` was already exactly web's `!hasDetails`
-branch; the card simply never rendered it. Don't "fix" this by widening `hasContract` — that would put a
-$0 contract card on every reset lead.
-
-⚠️ The empty state deliberately carries **no Add Document action** (web's doesn't either): a lead with no
-contract has nothing to attach documents to, and the Job Docs tab's own photo/Manage Photos actions below
-it are unaffected.
-
-### The first calculator IS the customer — stored title, tab label and activity logs
-
-Ticket: *"by default if we open deal center first tab name should be first name and last name like
-web"*, then the correction: *"while we are opening calculator first time with new lead
-`calculatorTitle` is going one, it should be the user name like we set in the tab… i also notice while
-new calculator is going to create title name is also going to same, which should be the user name.
-**remember first calculator should always be a customer name.** it's working fine on web app."*
-The `calculator viewed` log read `"calculatorTitle": "1"` while the tab below it read **test mon**.
-
-> ⚠️ **This SUPERSEDES the first pass at this ticket, which was display-only and rested on a wrong
-> reading of web. Two claims made there were false:**
->
-> 1. *"web **never POSTs** a calculator — the backend creates the appointment's first one already
->    titled with the customer."* It does POST it. `job-capture-images-view.js` (the **Dynamic Deal
->    Center** tool handler mobile's bootstrap mirrors) sends `{ title: customerTitle, price: 0 }` on
->    **both** arms — appointment-exists-but-has-no-calculator, and appointment-just-created. The
->    original `grep` missed it because web calls the `addLfCalculator` **api helper**, never the
->    literal `lfcalculators` path.
-> 2. *"⚠️ DISPLAY ONLY — do not write this into `title`… naming the calculator would put every
->    untouched calculator into the rollout as a priceable line."* Only the **first** calculator is
->    named; web's `+` button (`tab-action-utils.addTab`) still uses `String(length + 1)`. So exactly
->    one empty calculator is ever visible in the rollout — which is **web's own behaviour**, since
->    `ViewAllCalculators.visibleCalculators` runs the same `/^\d+$/` filter over the same data.
-
-**The title is now stored, not painted on.** Three pieces, each a straight port:
-
-| | web | mobile (now) |
-|---|---|---|
-| first calculator's title | `customerTitle` = `` `${firstName} ${lastName}`.trim() `` | `customerNameOf(lead) \|\| '1'` |
-| `+` / duplicate | `String(length + 1)` | unchanged — `String(tabs.length + 1)` |
-| empty-calculator name | `… \|\| calc.title \|\| String(calc._id)` | `… \|\| storedTitle \|\| String(i + 1)` |
-
-- **`useDynamicCalculators`' bootstrap create** passes the customer's name instead of `'1'`. New
-  **`customerNameOf(lead)`** is web's `customerTitle` verbatim — first + last, trimmed, **no
-  fallback**; the existing `customerTitleOf` (which falls back to `'Lead'`) is now a wrapper around
-  it and stays on the APPOINTMENT title only. ⚠️ Keep them apart: `'Lead'` is a fine appointment
-  name and would be read as a *calculator's* name. An unnamed lead therefore keeps `'1'` — a blank
-  tab beats a wrong one, and `/^\d+$/` still hides it from the rollout.
-- **`computeDerivedTitles` (`utils/tab-naming.ts`) gained a `storedTitle` fallback**, and this is the
-  half without which the create change does nothing: the old code went straight to `String(i + 1)`
-  when no values were entered, so the **first `retitle` pass renamed `test mon` back to `1`** in
-  memory and the tab rendered blank again. Web's chain is
-  `getLiveSchemaBaseName(...) || getSchemaCalculatorBaseName(...) || calc.title || String(calc._id)`;
-  mobile now matches it. All three call sites (`retitle`, `resolveSafeTitle`,
-  `saveDisplacedSiblings`) pass `storedTitle: t.title`.
-- **Both activity logs follow for free.** `calculator viewed` sends `calculatorTitle: active.title`
-  and the bootstrap `calculator created` sends `created.title`, so naming the calculator at the
-  source fixes the portal without touching either log — which is exactly how web gets it
-  (`DealCenterContext` logs `details.title`; `job-capture-images-view` logs `response?.data?.title`).
-
-**Entered values still win.** `G+LF` / `(SM)` / the ⚠️ duplicate-price warning / the 📦 package badge
-all derive from entries and outrank the stored name, so the customer's name only ever shows while the
-calculator is empty. A manual rename still outranks everything.
-
-⚠️ **`CalculatorView.tabCalcs`' `customerTabName` fallback is KEPT, and is now purely LEGACY.** A
-first calculator created from here on is stored under the customer's name, so its title is not numeric
-and that branch is never reached. Every lead whose calculator was created *before* this fix is still
-stored as `"1"`, and without the fallback those deal centers reopen on the unlabelled pill they always
-had. It is still tab-0-only, for the original reason: several empty calculators all reading the same
-customer name would be worse than blank.
-
-Verified by driving the real `computeDerivedTitles`: the ticket repro (empty first calculator → the
-customer's name, where the pre-fix path gives `1`), an unnamed lead and a whitespace-only title still
-falling back to the placeholder, entered values deriving `G` over the stored name, a manual rename
-outranking both, a second/third empty tab staying numeric — asserted through the rollout's own
-`/^\d+$/` filter so only the first is visible — and the `(SM)`/`(LG)` and `⚠️ G ⚠️` collision paths
-unchanged. tsc 44 (baseline unchanged); all three touched files byte-identical to their HEAD eslint
-baselines (`tab-naming.ts` and `useDynamicCalculators.ts` clean, `CalculatorView.tsx` 118 problems /
-3 errors / 115 warnings).
-
-### "Send Addendum To" now blocks Submit on an incomplete phone number
-
-Ticket: *"add the validation for number, don't allow me submit addendum if phone number is below then
-10 numbers, like we set before."* The Review step's phone field took any length, so a rep could submit
-an addendum whose SMS had nowhere to land — the draft then sits `pending` forever, because the customer
-is never asked to sign.
-
-`customerPhoneError` follows the same shape as this screen's existing `contractPriceError` /
-`downPaymentError`: red border, message under the field, and the **Submit Addendum** button disabled.
-
-⚠️ **TEN digits here, not the ELEVEN Add New Lead and Edit Customer count.** Those two format through
-`formatUSPhoneNumber`, which emits its own `+1 ` prefix, so a complete value strips to 11. This field
-renders a **static `+1` label** beside the input and holds the LOCAL part only
-(`formatLocalUSPhone`, `maxLength={12}` = 10 digits + 2 dashes) — counting 11 here would reject every
-valid number.
-
-⚠️ **The phone gates SUBMIT only, never `Next · Review` on step 2.** The field lives on step 3, so
-gating Next would leave the rep on a screen with a dead button and nothing on it explaining why.
-
-**Empty and incomplete are separate messages** — *"Phone number is required to send the addendum."*
-vs *"Enter a complete 10-digit phone number."* — matching the Edit Customer treatment. An empty field
-is a real case: the seed comes from `lead.customerDetails.phone`, so blank means the lead carries no
-number at all, and the submit payload's fallback to that same field is blank too.
-
-Verified with 9 tests driving the real `formatLocalUSPhone` / `toE164USPhone`: every partial length 1–9
-blocked and ten accepted; the 10-vs-11 distinction asserted directly; all five stored shapes (raw,
-E.164, `1`-prefixed, parens, dashed) seeding to a passing value; a phone-less lead reading *required*
-rather than *incomplete*; a genuinely short stored number caught instead of silently sent; and the
-passing value converting to `+1XXXXXXXXXX` for the provider. tsc 44 (baseline unchanged); eslint
-0 errors, 137 warnings vs a HEAD baseline of 136 — the one added is `react-native/no-inline-styles` on
-the new error `Text`, the rule this file already carries 136 of.
-
-⚠️ Noted while testing: `formatLocalUSPhone` keeps the **LAST** ten digits when handed more (documented
-behaviour — it is what makes `+1…` / `1…` / already-formatted input normalise). So over-long input
-yields a *different* ten digits rather than a truncation of the first ten. `maxLength={12}` keeps it
-unreachable by typing; do not "fix" the formatter to slice from the front, or every E.164 seed breaks.
-
-### Addendum Review diffs a locationGrid CELL BY CELL, not by its total
-
-Ticket: *"I also notice this when i change in 3rd story — see I added 33, it's showing the summed-up
-value in Addendum Review. It should be like what I changed. Example: `Lighting · Location · 3rd Story`
-and behind it `33`."* The rep added **33** to Left Side / 3rd Story and the review read
-**`Lighting · Location  110 → 143`**.
-
-Both numbers were true and the row was still useless — **an addendum is read as "the original agreement
-PLUS what we added here and MINUS what we removed"**, so restating two totals leaves the customer to
-subtract, and (the reporter's original soffit complaint) invites reading a survivor's total as an
-addition. The review has to name what the rep touched.
-
-Cause is one line of `displayValue` in `dynamic-deal-diff.ts`: an object-valued field returned
-`gridTotal(v)`, so a whole 6×3 grid collapsed to a single number before the diff ever ran.
-
-**`readValues` now expands a grid into ONE ENTRY PER CELL**, keyed
-`` `${fieldId}${CELL_SEP}${rowKey}${CELL_SEP}${colKey}` ``, and the existing diff machinery compares
-cells with no further change. A row reads
-**`Lighting · Location · Left Side · 3rd Story   — → 33`**.
-
-- ⚠️ **`CELL_SEP` is U+0002 and must be written as the ESCAPE SEQUENCE** (``), never a raw
-  control byte — same rule as `SCOPE_SEP`: a literal one makes grep treat this file as binary.
-- **The ROW is kept as well as the column**, though the ticket's example named only "3rd Story":
-  without it, `Left Side / 3rd` and `Front / 3rd` are the same label on one screen.
-- **Blank and zero cells are dropped** (`Number(cell) > 0`). Without it every grid emits ~18 rows of
-  `0` and buries the one that changed; with it, clearing a cell correctly reads `22 → —`.
-- **`gridCellLabels` resolves the names through `resolveLocationGridConfig`** — the same resolver the
-  grid widget itself uses — so an authored custom grid and the `singleStory` variant both name their
-  cells as the rep saw them. An unknown key falls back to the raw coordinate rather than being dropped.
-- **`formatChangeFieldLabel` gained a trailing `cellLabel` segment**, after the combination chip:
-  `<section> · Combination #2 · <field> · <row> · <col>`.
-- **`describeCombo` names cells too**, so a removed combination is described by the measurements it
-  actually held rather than by a total.
-
-⚠️ **The group-meta lookup had to split cell keys as well.** It resolves a section's label by finding
-any labelled field among its combinations; a combination whose only labelled field is a GRID would
-otherwise resolve nothing and the ENTIRE group — every add/remove row in it — would be dropped as
-noise. Tested directly.
-
-Per-cell keys also **sharpen combination matching** for free: `comboSignature` / `overlapScore` now
-compare individual cells instead of one collapsed number, so two combinations that happen to share a
-grand total are no longer indistinguishable to the pairing pass.
-
-⚠️ The reporter re-sent the earlier *"removed the 85' black soffit, kept the 200' white"* description as
-context. That behaviour was fixed previously (see the combination-identity section) and is **asserted
-again here as a regression guard** — the removal emits exactly one `removed` row and none of the
-survivor's values appear as edits.
-
-Verified with 11 tests over a Lighting tab (tab-level grid) and a Soffit combination section: the
-ticket repro naming the cell, an explicit assertion that **no `110 → 143` total row is emitted**, an
-edited cell, a cleared cell, two grid rows staying separate, an untouched grid → `[]`, blank/zero cells
-never reported, a grid nested INSIDE a combination, a removed grid-only combination still reported, and
-the two soffit regression guards. tsc 44 (baseline unchanged); eslint identical to HEAD (2 pre-existing
-errors).
-
-⚠️ **`dynamic-deal-diff.ts` is a CRLF file.** A script that reads/writes it in text mode rewrites all
-466 lines to LF and buries the change in a whole-file diff — that happened here and had to be converted
-back. Use `newline=''` on both ends. (Same trap as `EditCustomerModal.tsx`; check `file <path>` before
-and after.)
-
-### ✅ ROOT CAUSE: the Addendum Review's "original" and the live build were ONE object graph
-
-Ticket: *"actually it's 48 but showing 4"*, then, decisively: *"i checked in iphone 14 pro max, still
-same issue — it only set it 48 when i save something in this component, even it's empty line or space."*
-
-**`hydrateJobStateForPersistence` SHARES object references with the state it is given** — a field's
-value object is carried across, not cloned — and `useDynamicJobBuilderSession` seeds its `useState`
-with that exact object (`if (initialJobState) return initialJobState`). So `initialState` (the diff's
-ORIGINAL) and the rep's live build were the same object graph, and **any in-place write anywhere in the
-~4k-line engine rewrote the "previous value" the review prints.** A `locationGrid` losing one column
-that way turns a saved total of **48 into 4** — the reported number, exactly.
-
-Proven, not inferred: driving the real `deserializeDynamicJobStateFromStorage` →
-`hydrateJobStateForPersistence` over a LeafFilter-shaped config asserts
-**`hydrated…grid === saved…grid`** (identity, not equality), and a single in-place `delete` of one
-column then drops the ORIGINAL's total from 48 to 4.
-
-**Fix — the builder gets a DEEP COPY** (`builderInitialState`, a JSON round-trip memoized on
-`initialState`); `initialJobState={builderInitialState}` replaces `initialJobState={initialState}`.
-`initialState` stays pristine for the diff.
-
-- **A JSON round-trip is the right clone**: this state is exactly what gets PUT to the API, so it is
-  plain JSON by construction — no Dates, functions or cycles.
-- **Memoized on `initialState`**, so identity changes at the same cadence as before. Safe because the
-  session's re-apply is keyed by **`draftToken` = (leadId, calcId)**, never by this object's identity —
-  a fresh copy therefore cannot clobber the rep's edits.
-- **It protects the query cache too.** `savedDynamicJobState` returns the sub-object of `lead` /
-  `savedOutcome` verbatim, so before this the engine's writes were also reaching into the cached lead
-  record. Tested.
-
-⚠️ **Not a display bug.** `buildChangeGroups` is submitted as **`buildChangeSummary`**, so the
-corrupted original was written onto the addendum **the customer signs**.
-
-> ⚠️ **Two earlier diagnoses of this same ticket were WRONG. Both are retired; do not revisit them.**
-> 1. *"iOS clips the trailing glyph of strike-through text."* `from` is not free text — for a
->    `locationGrid` it is `displayValue()` → the grid **TOTAL**, so `"4"` was a wrong SUM and no width
->    or font styling could ever move it. (The width framing was impossible anyway: the column measures
->    ~246pt on an iPhone SE against ~12pt for `"48"`, and the row below rendered a *longer* struck
->    value, `$2,000`, perfectly in the same screenshot.)
-> 2. *"the calculator query is still in flight, so the original is half-hydrated."* Real, and the
->    `isCalculatorLoading` hold added for it is **kept** — the original genuinely does move while
->    `dealCenterData` is empty, and a diff computed then must not be rendered OR submitted. But it was
->    not this bug: the symptom survived on an iPhone 14 Pro Max and persisted indefinitely until a
->    Fast Refresh, which is mutation, not a race.
->
-> The tell that settled it: **only a Fast Refresh of THIS file fixed it, permanently and on any
-> device.** Fast Refresh discards `useMemo` caches, so a recompute from the pristine saved state gave
-> 48 while the cached (mutated) object gave 4. A pure memo cannot return two answers for one input —
-> so its OUTPUT was being written to.
-
-⚠️ **The engine treats state as shared-mutable in places.** Any future screen that both seeds the
-builder AND diffs against the same state must hand the builder a copy. `DynamicDealCenterScreen`
-(create path) is unaffected — it has no original to diff against.
-
-Verified with 7 tests: the reference sharing itself, the 48→4 corruption through it, the clone being a
-distinct graph, the same write no longer touching the original, the clone being value-identical (so the
-builder opens on the same build), the saved lead record protected, and `null` in → `null` out. tsc 44
-(baseline unchanged); eslint 0 errors, 136 warnings vs a HEAD baseline of 133 — the three added are
-`react-native/no-inline-styles` on the loading block from the previous pass, the same rule the file
-already carries 133 of.
-
-### Edit Customer accepted a phone number shorter than 10 digits
-
-Ticket: *"add the validation for phone number, currently i am able to save the number less then 10
-digit which is wrong, it should be same like we are doing in the add new lead."*
-
-`EditCustomerModal` checked only `!phone.trim()` — **present**, never **complete** — so `443-87` saved.
-Add New Lead (`widgets/modals/LeadCreate`) already had the rule; it is now here verbatim.
-
-**The rule counts ELEVEN digits, not ten.** Both fields format through
-`formatUSPhoneNumber`, which always emits the `+1 (XXX) XXX-XXXX` prefix, so a complete number strips
-to 11 digits — the ten local ones plus the country code. Writing `!== 10` here would reject every
-valid number.
-
-⚠️ **The SEED had to be formatted for the check to be safe**, and this is the half that is easy to
-miss. `phone` was seeded raw from `lead.customerDetails.phone`, which may be stored as bare digits or
-E.164 (`4438784937` / `+14438784937`) — 10 digits either way. Adding the length check alone would then
-have made an **untouched, perfectly valid record unsaveable**: open the modal, fix the address, and
-Save would refuse over a phone the rep never touched. `useState(formatUSPhoneNumber(...))` normalizes
-every stored shape to the one the field itself produces. (Same reasoning as the deal-edit "Send
-Addendum To" field, which formats its seed for the same reason.)
-
-⚠️ Consequence worth knowing: the submit payload now always carries the FORMATTED string. It already
-did whenever the rep touched the field (the `onChangeText` formats), so this only makes the untouched
-case consistent rather than introducing a new shape.
-
-**Empty and incomplete stay separate messages**, which is a small improvement on Add New Lead rather
-than a copy of it: `formatUSPhoneNumber` leaves `'+1 '` behind once the rep types and then clears the
-digits, and `.trim()` alone reads that as filled in. The required check is therefore
-`!phone.trim() || phoneDigits.length <= 1`, so a cleared field says *"Phone Number is required"* where
-Add New Lead would say *"complete 10-digit"*.
-
-Co-buyer phones were already validated at exactly **10** digits — correct and unchanged: they use
-`formatCoBuyerPhone`, which emits the local digits with **no** country code, and the field renders a
-static `+1` beside the input.
-
-Verified with 9 tests driving the real `formatUSPhoneNumber`: every partial length 1–9 rejected and ten
-accepted, the same verdicts as Add New Lead's own expression on each; all six stored shapes (raw,
-E.164, `1`-prefixed, parens, dashed, already-formatted) seeding to one accepted value; the raw seed
-proven to FAIL without the formatter; a genuinely short stored number still caught; empty vs the
-`'+1 '` residue both reading as *required*; and over-typing truncated by the formatter (with
-`maxLength={17}` backing it). tsc 44 (baseline unchanged); the file is byte-identical to its HEAD
-eslint baseline (4 warnings, 0 errors).
-
-⚠️ **This file is CRLF.** Editing it with a script that reads and writes in text mode rewrites all 776
-lines to LF and buries the change in a whole-file diff — that happened once here and had to be undone.
-Use `newline=''` on both the read and the write (or an editor that preserves endings).
-
-### Investment Center spotlight: blurred backdrop, smaller card type, no strike-through
-
-Ticket, three unrelated items against the enlarged (spotlight) program cards:
-*"1- Make these circled fonts smaller so they fit more comfortably in the space. 2- Remove this line in
-the middle of the one year program. 3- Whenever the card is opened in the large view it shouldn't be
-visible in the background — you can make it blury like we already using in deal center."*
-
-**1. Type is sized for the ZOOMED card, not the in-place one.** `SpotlightOverlay` renders the *same*
-`ProgramCard` at roughly **2× scale** (`finalScale`), so type that merely fits in place reads as
-edge-to-edge enlarged — which is what the ticket's screenshot shows for **IN-HOME PRE ORDER** and
-**✓ Job Builder Submitted**. Both were flush against their container with **no horizontal padding at
-all**, so the fix is padding as much as point size: the header title goes `13 → 11` with
-`paddingHorizontal: 14` on the bar, and the opt-in button's label `10 → 9` (submitted) / `12 → 11`
-with `paddingHorizontal: 4 → 12`, its check glyph `12 → 11`.
-
-**2. The line was the crossed-off STRIKE, not the divider.** `ProgramCard`'s crossed-off overlay drew
-`position:'absolute', top:'50%', height:2, #94A3B8` across the card — and at 50% it lands squarely on
-the **Grand Total**, the one number that has to stay readable. Enlarged it stops reading as a strike
-and reads as a rule. Removed; the state is still unmistakable from the clip layer's `opacity: 0.45`
-plus the `#F1F5F9` body.
-
-⚠️ **Do not confuse it with the divider above Grand Total** (`height: 1, #E2E8F0, marginVertical: 8`),
-which is **web parity** — `program-card.js` renders a dotted `<Divider sx={{ mb: 1.25 }} />` in exactly
-that slot. That one stays. Web has no `crossedOff` concept at all (the prop is absent from its
-`propTypes`), so the strike line was mobile's own invention and nothing had to be diverged from.
-
-**3. The backdrop now blurs.** The overlay dimmed with a flat `rgba(15,23,42,0.72)` scrim, which left
-the page legible — and the card's **own in-place copy sits directly behind the enlarged one**, showing
-the same figures at half the size, which is what the screenshot circles. It now carries a
-`BlurView` + a lighter `0.55` scrim, both **inside the existing `AnimatedPressable`** so they fade with
-`backdropStyle` and tap-to-collapse still reaches it.
-
-- **`MODAL_BLUR_AMOUNT` is imported from `DynamicDealCenter/components/modal-chrome`** — the deal
-  center constant the ticket points at. Not a new cross-screen dependency: `OptInConfirmModal`, in
-  this same folder, already imports it (it is a pure constants module, no components).
-- ⚠️ **`blurType` is `"dark"` in BOTH themes**, unlike the deal center's `isDark ? 'dark' : 'light'`
-  modals. This overlay is a dark scrim by design because the program cards are white and have to stand
-  against it; a light frost would sink the card into the background. `reducedTransparencyFallbackColor`
-  is a near-opaque dark for the same reason — with Reduce Transparency on there is no blur, so the
-  fallback has to hide the page by itself.
-
-tsc 44 (baseline unchanged); `SpotlightOverlay.tsx` is byte-identical to its HEAD eslint baseline
-(9 warnings, 0 errors) and `ProgramCard.tsx` drops from 45 to 44 warnings — the one removed is the
-deleted strike-line's own inline style.
-
-### Lead Center scanner: a filed document can't be deleted, and no longer renders blank
-
-Ticket: *"don't allow user to delete the previously uploaded (once he will select the multiple doc then
-those will show and can be removeable before uploading it like web) document from the lead center like
-in the web."* Contract Details ▸ any **Add Document** opened `DocumentScannerModal` with the filed
-document carrying a red ✕, so a rep could delete an executed agreement or a filed receipt from the
-Lead Center.
-
-**`JobDocsSection` now passes `allowRemoveExisting={false}`** — the prop added for the My Deals
-agreement case, applied here to **all three** categories. A page scanned in THIS session keeps its ✕
-(`item.isNew !== false`), so a misscan is never stuck; only what is already on the server is protected.
-The info banner swaps to *"Documents already on file can't be removed here."*
-
-⚠️ **Web is stricter than this, and the difference is worth knowing before anyone "completes" the
-parity.** Web's dialog opens **EMPTY** — `contract-details.js` passes
-`initialDocuments={lead?.jobBuilderData?.agreements || []}` and there IS no `jobBuilderData` on a lead
-(0 occurrences in the sales-portal capture; the field is `jobBuilderDocuments`), so `docsToUse` is
-`[]` and a filed document is never shown at all. That looks like a web typo rather than a decision, and
-matching it on mobile would mean sending ONLY the new pages — which rests on the backend APPENDING
-rather than replacing. Mobile still shows the filed documents and still re-sends them, so nothing can
-be lost. Hiding them is a separate change and needs that append behaviour confirmed first.
-
-#### …and that is why the blank tile had to be fixed in the same pass
-
-The filed document rendered as a **featureless grey card** — the earlier "Scan-document sheet: blank
-PDF tile" ticket fixed this for the My Deals surface but NOT for the Lead Center, and with the ✕ gone
-the tile would have had literally nothing on it. Two independent bugs in the modal's `isPdfFile`, both
-of which made a filed PDF fall through to `<Image>`, which cannot decode one:
-
-1. **A display name short-circuited the url check.** The rule was
-   `String(f?.name || f?.uri || f?.url || '')` — `||`, so only the FIRST truthy candidate is tested.
-   `JobDocsSection`'s `mapWith` **overwrites** `name` with a constant (`'Agreement'` /
-   `'Order Sheet'` / `'Down Payment Receipt'`), none of which has an extension, so the chain stopped
-   there and never reached the url. Every candidate is now tested.
-2. **The extension was read off the raw url.** Document urls are **pre-signed S3 links**, so the
-   string ends in `…&X-Amz-Signature=…` and `.endsWith('.pdf')` is false on every one of them. The
-   path is now split on `?`/`#` first.
-
-Moved to the pure **`src/utils/document-file.ts`** to be testable: the modal imports
-`react-native-document-scanner-plugin`, which resolves a **native TurboModule at import time**, so the
-component cannot be loaded under jest at all (verified — it throws in `TurboModuleRegistry.getEnforcing`).
-
-⚠️ **`fileSrc` was deliberately NOT moved with it.** `SummaryFinalizeCards`' copy prefers `secureUrl`
-over `uri`; the scanner's must prefer `uri`, because a locally-scanned page has only that and
-`docIdentity` reads it — re-resolving could change a document's identity across the scanner
-round-trip, which is the pruned-on-Update bug that ticket already fixed once.
-
-⚠️ **`screens/DynamicDealCenter/utils/document-payloads.ts` has its OWN `isPdfFile` carrying BOTH bugs**
-and was left alone. It sits on the SUBMIT path — it decides whether to run `convertJpegToPdf` on a
-contract document — so it should be changed with its own evidence, not as a ride-along.
-
-Verified with 16 tests over the exact row `mapWith` produces: the repro asserted **false under the old
-rule and true under the new one**, each bug isolated on its own, all three Lead Center document names,
-`contentType`/`mimeType`/`fileData.contentType`/`filePath`/`secureUrl`/`displayUrl`, a local `file://`
-scan, and the negatives that matter — a scanned **jpeg** page, a signed jpeg url, an image
-`contentType`, and `.pdf` appearing in a FOLDER name — plus junk input as `false` rather than a throw.
-The `canRemove` expression is covered too: filed → no ✕, scanned-this-session → ✕, and the two callers
-that pass no prop unchanged. tsc 44 (baseline unchanged); `DocumentScannerModal.tsx` (9 problems) and
-`JobDocsSection.tsx` (39 problems) are byte-identical to their HEAD eslint baselines, and the new util
-is clean.
-
-### Down Payment Receipt upload is logged — with the `filePath` / `bucketName` web omits
-
-Ticket: *"add the log with the above payload while we are adding the down payment from the lead center…
-one additional thing you have to add there is bucket name and file path of the document which we are
-going to upload so we can show it on portal side. i also shared how it's calling in web, in web file
-path and bucket name is missing we have to add it on mobile side."*
-
-Lead Center ▸ Contract Details ▸ **Down Payment Receipt(s) ▸ Add Document** emitted **no activity log
-at all** on mobile. Web `sections/job/components/contract-details.js` ›
-`handleDownPaymentReceiptUpload` logs one, so the portal timeline had the event for a web upload and
-nothing for a mobile one. The payload is now web's verbatim —
-`action_type: 'upload'` / `module_type: 'job_builder'` /
-`meta: { leadId, action: 'upload_down_payment_receipts', downPaymentReceipt: N }` — **plus the two
-fields web does not send**, which are the point of the ticket: without them the portal has an event
-saying a receipt was uploaded and no way to open the receipt.
-
-**`filePath` / `bucketName` are generated SERVER-side**, so the device cannot know them at submit time
-(`job-builder-docs/{company}/{lead}/downPaymentReceipts/{ts}-{n}-document.pdf`, bucket
-`np-revdsm-staging`) — they can only be read back off the stored row. Two sources, in order, and
-**neither costs an extra request**:
-
-1. **The `POST lead/v1/{id}/job-builder` response.** Free and immediate. It is **not known** to return
-   the filed rows (web ignores this response too), so a miss is an expected outcome here, not an error.
-2. **The lead refetch this handler already performs.** On a miss the request is parked on
-   `pendingReceiptLogRef` and settled by an effect keyed on `lead.jobBuilderDocuments` — the same
-   change the document list re-resolves from. The handler's existing delayed refetches (1 s / 3 s)
-   cover backend replication lag for free.
-
-⚠️ **`downloadOutcomeDocuments` is NOT a third source.** It reads **LeadOutcomeDocument**, while this
-upload's `/job-builder` POST writes **JobBuilderDocument** — a different collection, and the one
-`lead.jobBuilderDocuments` exposes. Reading it back would be a multi-MB base64 round trip that does not
-contain the row anyway.
-
-**Rules live in the pure `src/utils/uploaded-document-refs.ts`** — `readDocumentGroup`,
-`collectDocumentIds`, `pickNewDocuments`, `toDocumentRefs` — for the reason `utils/addendum-drafts.ts`
-and `utils/inspection-photos.ts` exist: `JobDocsSection.tsx` pulls in React Native and is untestable
-under jest here.
-
-- **The two sources are interchangeable because the diff is by `_id`, not by count.** The response may
-  return the whole group or only the new rows; either way the unknown ids are this upload's. That is
-  what lets one helper serve both paths.
-- **`readDocumentGroup` walks a FIXED list of roots** (`source`, `.data`, `.data.data`, and the
-  `lead`/`outcome` wrappers) × a fixed list of bags (`jobBuilderDocuments`, `leadOutcomeDocuments`,
-  `documents`). An unrecognised shape yields `[]` and the caller falls back — it never guesses a path.
-- **A row with no `filePath` is dropped** (`toDocumentRefs`): an empty path in the log reads as a
-  document that cannot be opened.
-
-⚠️ **`meta.documents` is a LIST, and that is not optional.** One scan files **several** receipts — each
-page becomes its own PDF — so a single `filePath` cannot describe the upload. It first shipped with a
-singular `meta.filePath` / `meta.bucketName` alongside the list, and the reporter asked for them back
-out: they only ever repeated `documents[0]`, and a reader that stops at them silently misses every other
-page of a multi-page receipt. **The array is the only place the paths live.**
-
-⚠️ **`downPaymentReceipt` counts the pages the rep ADDED this session** (`newPages.length`), not
-`filePayloads.length`. Mobile re-sends the already-filed receipts alongside the new ones (that is how
-this endpoint appends), so the payload length is the *total on the lead* and would report "3 uploaded"
-for one new receipt.
-
-⚠️ **AGREEMENTS AND ORDER SHEETS ARE STILL NOT LOGGED** on mobile, though web logs both
-(`upload_agreements` / `upload_order_sheets`) from the same card. `handleSaveScannedDocument` serves all
-three categories, so the branch is one `scannerCategory` test away — it was left out because the ticket
-asked for the down payment only.
-
-Verified with 19 tests over the document rows from the sales-portal capture verbatim: the group read off
-a lead record and off four response shapes (`data.data.jobBuilderDocuments`, a `lead` wrapper, an
-outcome-shaped `leadOutcomeDocuments`, and a bare group array), groups never crossing, junk shapes as a
-no-op; the diff with the response holding the whole group, holding only the new row, on a first upload
-with nothing known, and not-yet-landed (which is what parks the log), plus an id-less row kept and `id`
-honoured beside `_id`; the ref narrowing, a `filePath`-less row dropped, a missing bucket defaulting to
-`''`, and multi-page order preserved; and the assembled `meta` matching the ticket's payload exactly. ✅ Confirmed on device.
-tsc 44 (baseline unchanged); `JobDocsSection.tsx` is byte-identical to its HEAD eslint baseline
-(39 problems: 10 errors / 29 warnings) and the new util is clean.
-
-### Deal-edit wizard Step 0 now matches web (intro → calendar → confirm time → success)
-
-`DynamicDealEditScreen.tsx` (the 4-step wizard the Deal pencil opens) previously dropped the rep
-**straight onto the calendar** with a compact "Current" pill. It now mirrors web
-`dynamic-deal-edit-modal.js` step 0, whose `dateStep` has **four** sub-views instead of two:
-
-- **`intro`** (new landing view) — a centred white card: **"Edit Job Build"** / "Install Date", a
-  grey bordered **Current Install Date** block (date `M/d/yy` stacked over its time window, or
-  `TBD`), then full-width stacked actions **Modify Install Date** (green) / **No Change — Skip**
-  (outlined) / **Cancel Job** (red filled). Web's `showCalendar === false` state.
-- **`calendar`** — **"‹ Back"** (green) + centred **"Select Install Date"** title, the existing
-  `InstallDateCalendar` in its own bordered box, a **"Sundays unavailable"** caption, then
-  **TBD** (outlined) + **Use \<Mmm d, yy\>** (green, disabled → "Select a Date" until a day is
-  picked). **Tapping a day now only SELECTS it** (web `handleDatePick`); the confirm-time card
-  opens on **Use \<date\>** (`handleUseSelectedDate`) — previously a tap jumped straight to it.
-- **`time`** — **"Confirm Time Window"** (`ProposedTimeCard`, rebuilt to match web's `showProposal`
-  card): the long date (`EEEE, MMMM d, yyyy`), a **green-outlined block** naming the offered window
-  — `MORNING` / `AFTERNOON` over the big green time range over "Arrival window" — then
-  **"Work for the customer?"** and **Doesn't Work** (outlined) / **Confirm** (green). The old
-  design (a "Proposed Install Date" eyebrow, a small pill, Yes/No, and a "← Back to calendar"
-  link) is gone; web has no back link, so the prop and `handleBackToCalendar` were removed.
-- **`success`** — the confirmation card (web `showSuccess`), reached from **both** TBD and
-  Confirm: a 72px circular badge (**blue `#00B8D9` + `?`** for TBD, **green + check** otherwise),
-  the title **"Install Date Set to TBD"** / **"Install Date Updated"**, then either
-  "Will be scheduled at a later time" or the committed long date + time window, and a full-width
-  green **"Done — Next →"** (`handleFinishInstallDate`) that advances to Job Build and resets
-  `dateStep` to `intro`. NOTE: `handleAcceptProposedTime` and `handleSelectTbd` no longer call
-  `setStep(1)` themselves — they land on this card, and **only "Done — Next →" advances the step**.
-
-**One window is offered at a time, and declining both returns to the calendar.**
-`INSTALL_WINDOWS` is the 2-slot list (web `TIME_SLOTS`) and its `period` values are now
-**`Morning` / `Afternoon`** (were `AM` / `PM`), rendered uppercase. `handleProposeNextSlot`
-(web `handleProposalNo`) advances to the second window, then on the next decline resets the slot
-index and sends the rep back to **`calendar`**. It previously **rolled forward to the next
-non-Sunday day**, silently moving the date the rep had picked. `proposedDate` is deliberately
-kept on that return, so the calendar reopens with the date still selected.
-
-Also: `handleSelectTbd` (new) sets `scheduleDate='TBD'` and clears the window. `proposedDate`
-doubles as web's `selectedDate` (the calendar highlights `proposedDate || parsedScheduleDate`) and
-is deliberately **kept** through Confirm so the success card can echo the committed date —
-`handleFinishInstallDate` clears it. Styling moved into a **`StyleSheet`** at the bottom of the
-file (`styles.dateCard`, `currentInstallBox`, `primaryBtn`, `calendarHeader`, `useDateBtn`,
-`windowBox`, `successIcon`, …) — the first non-inline styles in this file.
-
-The whole of step 0 is now a 1:1 port of web's step 0; nothing is intentionally left out.
-
-### Deal-edit Review step names rows after the SECTION, not the tab
-
-Ticket: *"My deals - review screen - I added porch ceiling soffit not regular soffit like it's
-saying."* The wizard's step-4 review listed **`Soffit · Location / Footage / Type / Color`** for a
-rep who had actually filled in the **Porch Ceiling SqFT** section. A **tab groups several sections
-that reuse the same field ids** — the Soffit tab holds both *Vinyl Soffit* and *Porch Ceiling SqFT*,
-each with `location`/`footage`/`type`/`color` — so labelling by tab tells the rep they changed the
-wrong product.
-
-`src/screens/DynamicDealCenter/utils/dynamic-deal-diff.ts` was an **incomplete port** of web
-`src/sections/deal/components/dynamic-deal-diff.js`; three pieces were missing and are now in:
-
-- **`sectionLabel` is captured.** `buildFieldLabelMap`'s `collect()` gained `sectionLabel` +
-  `parentLabel` params, and the section loop now passes `s.label` —
-  `collect(s.fields, s.id, t.label, v.label, s.label || '')`. It was previously dropped entirely, so
-  the label map had no way to name the section.
-- **New `formatChangeFieldLabel(meta)`** (web parity) replaces the inline
-  `meta.tab ? \`${meta.tab} · ${meta.label}\` : meta.label` in `computeDynamicBuildChanges`. Prefix is
-  **`meta.sectionLabel || meta.tab`** — section wins, tab is the fallback for tab-level fields (which
-  have no section, e.g. `Lighting · Watts`).
-- **New `resolveFieldLabel(field, parentLabel)` + `COLOR_FIELD_TYPES`.** A field with no label
-  inherits its container's (`isContainerFieldType` → `stack`/`accordion`, imported from
-  `utils/dynamic-job-builder/constants/field-types`), else falls back to **`'Color'`** for
-  `swatch`/`colorSelection`/`customColor` — which are authored unlabelled because the swatch *is* the
-  label. Previously such a field fell through to its raw **`f.id`**.
-- **`SCOPE_SEP` fixed to `'\u0000'` (NUL)** (was a plain space `' '`). Scope keys are
-  `` `${scopeId}${SCOPE_SEP}${fieldId}` ``, so with a space `"a b" + "c"` and `"a" + "b c"` collide;
-  NUL can never occur in an authored id. ⚠️ Write it as the **escape sequence**, never a raw NUL byte
-  — a literal `\0` in the source makes grep treat the file as binary.
-
-Verified against the config shape in the ticket: section-not-tab naming, sibling sections with
-shared field ids staying separate, unlabelled swatch → `Color`, and the tab-level fallback still
-reading `Lighting · Watts`. Confirmed failing on the pre-fix code and passing after.
-
-### Deal-edit Review: a REMOVED combination read as an edit of the surviving one
-
-Ticket: *"My deals - addendums - combinations issues. I removed 85' of black hidden vent soffit from
-the job. But I kept the original 200' white hidden vent soffit… Makes it seem like I removed the 85
-feet black soffit and added an ADDITIONAL 200ft white soffit… I believe this issue is bc of
-combinations. This needs to be resolved correctly for ALL combinations."* The review listed
-`Soffit · Type PARTIAL → FULL`, `Soffit · Vinyl Soffit Footage 85 → 200`,
-`Soffit · Color Musket Brown → White` — i.e. the removal was invisible and the untouched survivor's
-values were reported as edits *to the deleted combination*. On an addendum ("original agreement plus
-what we added minus what we removed") that reads as **200′ + 200′ of white soffit**.
-
-⚠️ **Web has the identical bug** — `src/sections/deal/components/dynamic-deal-diff.js` is byte-for-byte
-the same algorithm. This is the first deliberate **divergence** in this file, not a port; do not
-"re-sync" it to web.
-
-Cause is one line of `flattenStateValues` in
-`src/screens/DynamicDealCenter/utils/dynamic-deal-diff.ts`: every combination of a section was
-ingested under the **same** `qualify(sectionId, fieldId)` keys, so *"later writes override earlier"* —
-a section collapsed to whichever combination happened to be **last**. With combos
-`[white 200, black 85]` the original flattened to black/85/PARTIAL/Musket Brown; after the delete it
-flattened to white/200/FULL. Hence the three phantom rows. **Positional diffing cannot work here**:
-`handleRemoveCombo` (`DynamicTabRenderer.tsx`) both shifts the array *and* renumbers
-`_combinationNumber` to `comboIndexOffset + idx + 1`, so **combinations carry no stable id at all**.
-
-Rewritten to diff combinations by **identity**:
-
-- **`collectStateSnapshot(jobState)`** replaces the flat-only walk, returning
-  `{ flat, groups }` — `flat` holds single-valued state (section fields, combination-section
-  `sectionState`, tab fields) and `groups` keeps each section's combinations as a **LIST**, keyed
-  `` `${verticalKey}\0${tabId}\0${scopeId}` `` so groups never cross tabs. Legacy tab-level
-  `combinations` are scoped by tab id, same as before.
-- **`matchCombinations(orig, next)`** — three passes:
-  1. **Exact-signature pairs claim each other FIRST.** This is the pass that fixes the ticket: the
-     untouched survivor locks onto its own original, so it can never be paired with the deleted one.
-  2. **Greedy best-overlap** (`overlapScore` = number of fields two combos agree on, ties broken by
-     index distance) for the rest, so a genuinely *edited* combination still reads as a field change
-     rather than a remove + an add.
-  3. **One left on each side ⇒ pair them** regardless of overlap — otherwise rewriting every field of
-     a section's only combination would report it as removed AND added.
-- **Leftovers become their own rows**: `Combination Removed` (`kind: 'removed'`) / `Combination Added`
-  (`kind: 'added'`), whose value is `describeCombo` — the combination named by its **contents**
-  (`Location Rear · Vinyl Soffit Footage 85 · Type PARTIAL · Color Musket Brown`). Deliberately **not**
-  numbered: `#N` is unstable across a removal (the deleted combo and the renumbered survivor can both
-  be `#1`), so content is the only honest identifier.
-- **`formatChangeFieldLabel(meta, comboLabel)`** now takes an optional middle segment, inserted **only
-  when the section holds more than one combination** (`Soffit · Combination #2 · Vinyl Soffit Footage`).
-  A single-combination section keeps the exact `<section> · <field>` label from the previous ticket —
-  that regression guard is tested.
-- **Empty combinations are dropped from both snapshots.** `ensureTabStateShape` seeds one blank default
-  combo into any section that saved none, so without this the mount would emit a phantom
-  `Combination Added` row and flip `buildChanged` true on a build the rep never touched.
-- **`BuildChange` gained `kind?: 'change' | 'added' | 'removed'`** and `ReviewRow`
-  (`DynamicDealEditScreen.tsx`) renders it: eyebrow `REMOVED` (red) / `ADDED` / `NEW`, a removal's value
-  column stays neutral grey (not green — nothing new was entered), and an **added** row hides the
-  struck-through `from` entirely, since striking an em dash reads as "something was there before".
-
-`flattenStateValues` is **kept exported but is now explicitly documented as LOSSY** for combination
-sections and is no longer used by the diff. It has no other consumer — if you reach for it, that is
-the trap this ticket was about.
-
-⚠️ `SCOPE_SEP` must still be written as the escape sequence `'\u0000'`. Writing the file with a raw NUL
-byte (and the `comboSignature` join with a raw `\u0001`) makes grep treat the source as binary — that
-happened once during this fix and had to be undone.
-
-Verified against a two-combination Soffit config with a sibling `Porch Ceiling SqFT` section sharing
-its field ids: the ticket repro (removal → exactly one `removed` row, and **none** of the three phantom
-rows), edit-one-of-two, single-combo label regression, addition, remove-plus-edit together, sibling
-sections staying separate, untouched build → `[]`, the blank-default-combo guard, and a fully rewritten
-single combination still reading as field edits. The four combination cases **fail on the pre-fix code
-and pass after**; the five regression guards pass on both. Applies to every combination section in the
-config, so Gutters / gutter guards / soffit / porch ceiling / fascia wrap / fascia boards are all covered
-by the same path.
-
-### Investment Center tile unlocks instantly after "Jobs Built — Back to Tools"
-
-Ticket: *"Investment center should be ready to go immediately after clicking 'jobs built - take me to
-tools' button… when i confirm rollouts and go back to tools it take time to enable the Investment
-Center button, can you enable it instantly, i think it's because we are calling api here, what if you
-add a small loader right end of the investment center card?"* Correct diagnosis — the tile sat on
-**"Please Fully Build ALL jobs first"** for the length of a round trip the rep had no reason to wait on.
-
-`ToolsSection` (`widgets/components/LeadCenter/OperationalSections.tsx`) gates the tile on
-`useLeadCalculatorStatus().allConfirmed`, whose `queryFn` does **two sequential GETs** — resolve the
-appointment (`/appointments`), then read its calculators (`/appointments/{id}/lfcalculators`) — and
-`useFocusEffect` refetches it on arrival. Until that resolves the hook serves the **stale cached**
-value, which is `allConfirmed: false` because it was cached *before* the rep confirmed. So the tile
-stayed locked, and tapping it warned "build and confirm all rollouts first" — about rollouts that had
-just been confirmed.
-
-**The app already knows the answer**, so the fix is to stop asking. In `hooks/useLeadCalculatorStatus.ts`:
-
-- **New `markLeadRolloutsConfirmed(queryClient, lead)`** writes
-  `{ hasCalculator: true, allConfirmed: true, count: max(prev,1) }` straight into the cache.
-  `DynamicDealCenterScreen`'s `onRolloutsConfirmedDone` calls it before navigating — that button only
-  renders once **every** rollout is confirmed, which is exactly the tile's gate, so the optimistic
-  write can't claim more than is true.
-- **It updates by key PREFIX** (`['lead-calc-status', <leadId>]` via `setQueriesData`), not the full
-  key. `LeadCenter` re-fetches its lead through `useLeadCenterData`, so the `appointmentId` /
-  `leadDate` segments of the key can differ from the copy the deal center was handed — **only the lead
-  id is dependable**. An exact-key write would silently miss.
-- **New bounded `LOCAL_CONFIRM_GRACE_MS` (60 s) override.** The confirmation is persisted by the deal
-  center's **debounced** save engine (`handleConfirmRollouts` only calls `markDirty`), so a GET can
-  legitimately still report `isRolloutConfirmed: false`. Without the override the tile would unlock and
-  then **RE-LOCK** on the first server read — visibly worse than the delay being removed. Every exit of
-  the `queryFn` — **including the two error paths** — goes through `applyLocalConfirmation`, so a
-  transient appointment-resolution failure can't re-lock the tile either. The override **self-clears**
-  the moment the server agrees (or the window elapses), so a genuinely unconfirmed lead can never stay
-  unlocked, and a later real un-confirm still re-locks.
-
-For the loader, `ToolCard` already had `isLoading` — but it swaps the ICON for a spinner, dims the card
-to 0.6 and **disables the press**, which is wrong for a background refresh the rep isn't blocked on.
-Added a light **`busy`** prop instead: the small right-side `ActivityIndicator` only, card at full
-opacity and still tappable, with the lock glyph suppressed while it spins. `ToolsSection` passes
-`busy={isCalcStatusFetching && !allConfirmed}` — **only while still locked**, since a spinner on a tile
-the rep can already open is noise. The subtitle reads **"Checking job status…"** during that window, and
-tapping then shows an `info` flash rather than the "you haven't built the jobs" warning, which mid-check
-would be a guess — and usually a wrong one, this being precisely the post-confirm window.
-
-Net: the tile is live on the first paint after "Jobs Built — Back to Tools"; the refetch still runs and
-reconciles in the background.
-
-⚠️ `markLeadRolloutsConfirmed` is the ONLY sanctioned way to unlock the tile early. Widening the grace
-window, or making it sticky without the self-clear, would let an unconfirmed lead present a quote.
-
-Verified against a real `QueryClient`: the cached status flips to unlocked, prefix matching survives a
-drifted `appointmentId`/`leadDate`, a **different** lead is untouched, a lead with **no id** is a no-op
-(rather than unlocking everything), and a lead with nothing cached still ends up reporting a calculator.
-⚠️ The React-rendering half could not be exercised — `@testing-library/react-native`'s `render` returns
-an object with **no queries** in this repo (the `__mocks__/test-renderer.js` React 19 shim), so
-component-level tests of `ToolsSection` are not currently possible.
-
-### Deal-edit Review step shows payment-method changes
-
-Ticket: *"My deals - review screen - I changed payment plan - not showing changes."* The step-4
-review listed build / Install Date / Contract Price / Down Payment but had **no row for either
-payment method**, so switching the balance plan (e.g. `4091` → `2511`) reviewed as though nothing
-had happened. Web shows **Down Pmt Method** and **Balance Method** rows.
-
-The change flags already existed on mobile — but were **inlined inside `hasAnyChange`**, so a
-payment-plan edit *enabled Submit* while rendering no row: the rep saw an empty review for an
-addendum that really was being submitted. In `DynamicDealEditScreen.tsx`:
-
-- **Flags extracted and named** (web parity): `downPaymentChanged`, `downPaymentMethodChanged`,
-  `balanceMethodChanged`. `hasAnyChange` now composes those named flags instead of re-deriving them,
-  so the button and the list can never disagree again.
-- **New `resolvePlanLabel(stored, fallbackKey)`** (web `resolvePlanLabel`) — runs `coerceToPlanKey`
-  then maps the key to its catalog label, so a row reads
-  `2511 (6 Months 0% Interest No Payments…) (Bank Fee: 4%)` rather than a bare id. Falls back to the
-  raw key when the catalog has no entry, and to **`—`** when nothing is set. Note an *unrecognized*
-  stored method fuzzy-resolves via `resolveTierPaymentMethod` (amex / visa-mc-dscvr, else **check**),
-  so it renders a real label — same as web.
-- **Two `ReviewRow`s added**: `Down Pmt Method` and `Balance Method`, each gated on its flag.
-- ⚠️ ~~Mobile keeps its `!!key &&` guard on both method flags.~~ **Superseded** — the pickers no
-  longer open blank, so the guard is gone. See "Deal-edit payment methods now seed from the sale".
-- **`ReviewRow`'s value column now shrinks and wraps** (`flexShrink: 1`, `maxWidth: '55%'`,
-  `textAlign: 'right'`). Plan labels are long sentences and RN defaults a `View` to `flexShrink: 0`,
-  which would have pushed the value off-screen — web wraps it the same way.
-
-Verified: label resolution (incl. legacy saves that stored the label instead of the key, and the
-fuzzy fallback), the ticket's `4091 → 2511` switch, unchanged/blank-picker non-changes, and that
-every flag feeding `hasAnyChange` has a row able to render it.
-
-### Deal-edit Job Summary: per-card colours + combination dividers
-
-Ticket: *"My deals - job summary - LeafFilter - make it more distinct between combinations, add
-horizontal line between like web; also the card colors are purple, it should also be like web."*
-Two unrelated causes.
-
-**1. Every card was purple — a missing prop, not a styling bug.** Each summary card's header colour
-comes from the matching **calculator-schema CATEGORY** (`resolveTabAccentColor` →
-`findTabCategoryColorFromSchemas`), which needs the **System A** schemas. Those are NOT on
-`initialConfig` (that is the System B job-builder config), so they arrive via the separate
-**`calculatorSchemas`** prop. `DynamicDealCenterScreen` (new-deal path) passes it as
-`calculatorSchemas={verticals}`; **`DynamicDealEditScreen` passed nothing**, so `schemas` was `[]`,
-the category branch returned null, and every tab fell through to the single `vertical.color`.
-Fixed by passing `calculatorSchemas={configuredSchemas}` — literally the same array (in
-`DynamicDealCenterScreen`, `verticals = configuredSchemas`).
-
-> Confirmed by calling the real `resolveTabAccentColor` for three tabs of one vertical:
-> `schemas: []` → `['#8b5cf6','#8b5cf6','#8b5cf6']` (**`#8b5cf6` is exactly the reported purple**);
-> with schemas → `['#00B8D9','#22c55e','#4CBB17']`. So any *other* screen that embeds
-> `DynamicJobBuilderScreen` must pass `calculatorSchemas` or its summary will go monochrome too.
-
-**2. Combinations ran together — the dividers existed but were invisible.** Web draws them at two
-weights via `alpha(theme.palette.divider, …)`: **0.4** (a visible rule) between combinations and
-between combination groups, **0.12** (a hairline) between field rows in a simple section. Mobile
-used `border-slate-100` / `border-slate-50` for all of them — near-white on a white card. Now in
-`VerticalSummaryTab.tsx` as two named constants, **`DIVIDER_STRONG = '#CBD5E1'`** (≈ 0.4) and
-**`DIVIDER_HAIRLINE = '#F1F5F9'`** (≈ 0.12), applied as explicit `borderTopWidth`/`borderBottomWidth`
-styles rather than NativeWind classes. Also **added the between-group rule** mobile never had (web
-`groupIndex < section.combinationSections.length - 1`) — that is the line above
-**"Downspout & Accessories"** in the web screenshot.
-
-**Divider spacing lives in `style`, not NativeWind margin classes**, and is deliberately **asymmetric**:
-`CombinationSummaryItem` uses `paddingBottom: 16` / `marginBottom: 22`, and the group rule
-`marginTop: 16` / `marginBottom: 6` (the latter stacking on the parent's `space-y-4`).
-
-Web's own 16/16 (`Divider sx={{ mt: 2 }}` + `Stack spacing={2}`) does NOT translate 1:1 here, which
-is why this was re-tuned twice — first 12/8, then an even 16/16, and QA still reported the rule
-"touching the Combination text". Two optical reasons: above the rule the last field row contributes
-its own row spacing, so 16px reads as ~24px; below it the next **"Combination #N" chip is a tight
-pill** (`py-0.5`) whose text sits flush against its top edge, so an equal 16px reads as touching.
-22px below balances them. Keep the spacing in `style` — the View already carries a `style` prop for
-the border, and mixing margin classes with it made it ambiguous which applied.
-
-### Deal-edit "Send Addendum To" phone is dash-formatted, always +1
-
-Ticket: *"My deals - phone number show the dashes, like this: 443-878-4937, always use +1 as we are
-using app in usa."* The field took raw keystrokes, so a rep saw `0948320498`.
-
-Two new helpers in **`src/utils/phone-util.ts`** (that file's existing `formatUSPhoneNumber` emits
-`+1 (XXX) XXX-XXXX` — parens, and its OWN `+1` — so it is wrong for a field that renders a static
-`+1` beside the input):
-- **`formatLocalUSPhone(text)`** → the local 10 digits as `XXX-XXX-XXXX`, no country code.
-- **`toE164USPhone(text)`** → `+1XXXXXXXXXX` for the API.
-
-Both take the **LAST 10 digits** when given more, rather than stripping a leading `1`. That handles
-`+1…` / `1…` / already-formatted input, and never mangles a partially-typed number mid-entry.
-
-In `DynamicDealEditScreen.tsx`: the input formats on change (`maxLength={12}` = 10 digits + 2
-dashes, placeholder `443-878-4937`), and the **seed** from `lead.customerDetails.phone` is formatted
-too — it may be stored raw or E.164.
-
-⚠️ **The submit payload stays E.164.** The old code passed the value through untouched whenever it
-merely *started with* `+`, so a display string like `+1 443-878-4937` would have reached the SMS
-provider with spaces and dashes once the field became formatted; and a stored `14438784937` became
-`+114438784937`. `toE164USPhone` fixes both.
-
-Verified: progressive typing (`4` → `443-8` → `443-878-4937`), every stored shape (raw / E.164 /
-`1`-prefixed / parens / already-dashed) normalizing to the same display and the same `+14438784937`
-payload, idempotence, and the 10-digit cap.
-
-### Deal-edit wizard: keyboard covered the Notes / Phone / Price inputs
-
-Ticket: *"My deals - final page - not letting me see 'notes' or 'phone number', keypad in way."*
-`DynamicDealEditScreen`'s three step `ScrollView`s had only `keyboardShouldPersistTaps` — no keyboard
-avoidance at all — so on the Review & Submit step the keyboard sat over **Additional Notes** and
-**Send Addendum To ▸ Phone Number**, which are the last things on the page.
-
-Steps 2 (Job Price) and 3 (Review & Submit) now use **`KeyboardAwareScrollView` from
-`react-native-keyboard-controller`** with `bottomOffset={24}`, plus `paddingBottom: 48` so the last
-field clears the sticky Back / Submit footer. Step 0 has no text inputs and was left alone.
-
-⚠️ **`automaticallyAdjustKeyboardInsets` is NOT enough — it is iOS-only.** That was the first fix
-here and it left Android broken: the phone field still sat behind the keypad. The manifest does set
-`android:windowSoftInputMode="adjustResize"`, but that no longer shrinks the window once
-`KeyboardProvider` (mounted in `App.tsx`) puts the app edge-to-edge — so nothing moved the field.
-`KeyboardAwareScrollView` scrolls the **focused input** above the keyboard on **both** platforms and
-needs no per-platform branching. It requires `KeyboardProvider`, which is already app-wide.
-
-This is the **first use of `KeyboardAwareScrollView` in the repo** — prefer it over
-`automaticallyAdjustKeyboardInsets` for any *scrolling* form with fields near the bottom.
-`VerticalSummaryTab` / `DynamicTabRenderer` / `InvestmentPanel` still use the iOS-only prop and have
-the same latent Android gap if a field there ever sits low enough.
-
-⚠️ Still **do NOT** reach for a padding `KeyboardAvoidingView`: it only shrinks the ScrollView to the
-space above the keyboard, leaving a low field below the fold and still hidden — the very bug the
-comment in `DynamicJobBuilderScreen.tsx` (~line 1412) records having removed. (`RolloutView` /
-`CalculatorView` / `ResultJobModal` do use one, but they wrap a non-scrolling root, so the trade-off
-differs.)
-
-### Deal-edit summary listed every document twice
-
-Ticket: *"My deals - summary page - why is it showing two order sheets and two agreements? I haven't
-added any more."* The Deal screen showed 2 agreements + 1 order sheet; **Edit ▸ Summary showed 4 + 2**
-— an exact doubling.
-
-There were **two separate causes** — one on the Deal screen, one in the edit wizard. Fix both.
-
-#### (a) Deal screen — `JobDocsSection` merged the lead record with two outcome reads
-
-⚠️ Corrects an earlier claim in this doc that no legacy outcome call fires here — **it does.** A
-device network trace shows `GET /lead/v1/{leadId}/outcome` (no calculator id) on opening the Deal.
-
-Web renders Contract Details documents from **`lead.jobBuilderDocuments` alone** — the record it
-already holds from the sales-portal list (`contract-details.js`:
-`lead?.jobBuilderDocuments?.agreements`) — and makes **no outcome call on this screen**. Mobile
-always merged **two more** sources on top: `getLeadOutcome(leadId)` and
-`getLeadOutcomeByCalculator(leadId, calcId)`, both read for `leadOutcomeDocuments`.
-
-That is what listed one agreement twice. The same signed agreement exists as a **JobBuilderDocument**
-AND as a **LeadOutcomeDocument** — different collections, so the copies share neither `_id` nor
-`filePath`, and their byte sizes differ slightly (68 KB vs 66 KB in the ticket) so the `type:size`
-content key misses too. **Neither dedupe key can join them**, so both rendered.
-
-The two outcome reads are now a **FALLBACK, not a merge** — they run only when the lead carries no
-documents of its own. That restores web parity and drops two requests per open, while preserving the
-case they were added for: a signed/generated agreement is filed ONLY as a LeadOutcomeDocument, and
-for that flow the backend returns `jobBuilderDocuments` empty, so without the fallback it would not
-appear at all.
-
-#### (a2) The mount-time outcome prefetch in `useLeadCenterData` is gone too
-
-`useLeadCenterData` also fired `GET /lead/v1/{leadId}/outcome` on mount for every resulted lead —
-visible in the trace even after (a) — purely to prefill `jobState` / `calculatorData` /
-`outcomeForm`. **Nothing renders from those**: the screen's documents and contract figures come from
-the lead record itself. Web makes no outcome request on this screen at all.
-
-Their only consumers are the two Job Builder launch paths in `LeadCenter/index.tsx` — the
-`openJobBuilder` auto-open effect and `handleShowJobBuilder` — and **both already issue their own
-`getLeadOutcome` at the moment of launch**. They previously took only `jobBuilder` from that
-response and still read `LFCalculator` / the outcome form from the stale prefetch; they now derive
-**all three** from their own response (`outcome?.LFCalculator || calculatorData`), so the Job Builder
-gets *fresher* data than before.
-
-The effect is now just `setIsOutcomeLoading(false)` (the flag still gates the auto-open effect, it is
-simply never true), and `outcomeForm` / `calculatorData` became frozen module-level empty objects —
-stable identities, read only as fallbacks, never written.
-
-Net: opening a Deal makes **three fewer requests** than before this ticket (two from (a), one here).
-
-#### (b) Edit wizard — `SummaryFinalizeCards` merged the server list with the draft copy
-
-`SummaryFinalizeCards.tsx` renders the union of **two display sources**:
-the server-resolved list and the draft copy on `jobState.agreements` / `.orderSheets`. Normally they
-dedupe, because `commitUploaded` writes the **server rows** (carrying `serverId`) into both. But an
-agreement filed by the **sign/scan flow** is stored on the draft as a bare local file —
-`{ name, uri: 'file:///…', isSystemGenerated: true }` with **no `serverId`/`filePath`**. `docIdentity`
-therefore keys the draft copy on its `file://` uri and the server copy on `serverId`, the keys never
-collide, and `dedupeDocs` keeps both.
-
-Fix: **in edit mode the server read is authoritative** — new `mergeDocSources(server, draft)` returns
-the server list outright when `editMode && server.length`, and otherwise falls back to the previous
-dedupe-union. Rationale:
-- The deal is already submitted, so every document is on the server, and `downloadOutcomeDocuments`
-  (lead-scoped) is the only source that **reflects deletions** — see [[dynamic-jb-edit-mode-docs-source]].
-  So the endpoint choice is deliberate and must NOT be "fixed" by switching to the calc-scoped read.
-- A document added *during* the edit session is safe: `commitUploaded` replaces **both** sources with
-  the server read-back, so it is already in `resolvedDocuments`.
-- The `.length` guard keeps the draft as a fallback, so an edit can never render zero documents.
-
-⚠️ **Name is NOT usable as a dedupe fallback key.** Two genuinely different agreements both display as
-`"Agreement"` (the ticket's own screenshot shows 68 KB and 66 KB rows), so matching on name would
-silently HIDE a real document.
-
-Note `__tests__/screens/DynamicDealCenter/summary-documents.test.tsx` covers this area but is one of
-the two suites that cannot run under jest (no global `react-native-blob-util` mock), so this change
-was verified by tracing the two sources' identities rather than by a test run.
-
-#### (c) The backend files a SECOND agreement row on submit
-
-Follow-up on the same symptom: with (a) and (b) fixed, the Edit ▸ Summary Agreements card still showed
-**two** PDFs. A device network trace of `GET .../download` ("Lead outcome documents downloaded
-successfully") shows the server genuinely returns two agreement rows for one signed agreement:
-
-| | `_id` | `name` | `filePath` | size |
-|---|---|---|---|---|
-| real | `…b4748` | `Agreement_OFN-A_1786106851569.pdf` | `…/agreements/1786106851569-Agreement_OFN-A_….pdf` | 69395 |
-| duplicate | `…b4c0c` | **`""`** | `…/agreements/1786106886943-**0-document.pdf**` | 69395 |
-
-Identical `fileData.size` AND identical `base64Data`, but a **distinct `_id` and `filePath`** — so
-`docIdentity` keys them apart, `dedupeDocs` cannot merge them, and neither is `isSystemGenerated` so
-`collapseSignedAgreement` passes both through. **This is a real duplicate on the server**, written at
-submit time.
-
-> ✅ **ROOT CAUSE FOUND AND FIXED (2026-08-12) — the client DID create it.** The last sentence above
-> ("nothing on the client created it") was wrong. The duplicate is written by the **lead-scoped outcome
-> mirror in `handleComplete`**, which re-attached the base64 documents at submit. The two timestamps in
-> the table are 35 s apart — `…851569` is the sign endpoint filing the real row, `…886943` is the
-> submit re-send — and the empty `name` is `buildDocumentPayloads` sending `name: ''`. The old comment
-> at that call site asserted "the backend upserts by file, so re-sending … does not duplicate", and
-> this table is the proof it does not. See "the lead-scoped outcome mirror no longer re-uploads
-> documents" below. **The `dropUnnamedAgreements` display filter is kept** as a safety net for deals
-> already carrying a duplicate, but new submits should no longer produce one.
-
-⚠️ **The filter MUST run on the RAW server rows, not in the display component.** The first attempt at
-this put it in `SummaryFinalizeCards` and it silently did nothing: **every** loader defaults the name —
-`d.name || (group === 'agreement' ? 'Agreement' : 'Order Sheet')` — so by the time a row reaches the
-card the empty name, the only thing distinguishing the duplicate, is already gone. The card was
-labelling the duplicate `"Agreement"` and the filter saw a named row. Two loaders do this:
-`resolveOutcomeDocRows` (`utils/outcome-documents.ts:107`, create path) and the inline `toDisplay` in
-`DynamicJobBuilderScreen.tsx` (`editDocsData`, the edit path in the ticket).
-
-Two exports in **`utils/outcome-documents.ts`**, applied before either mapper:
-- **`dropUnnamedAgreements(rows)`** — a pure agreement array; used by the edit-mode `editDocsData` query.
-- **`dropUnnamedAgreementRows(rows)`** — the same rule over a MIXED row list, keyed off each row's
-  `documentType`/`_group`; used inside `resolveOutcomeDocRows`, which receives agreements and order
-  sheets together.
-
-⚠️ **Explicitly a DISPLAY-LEVEL WORKAROUND**, requested as one (*"for now … only show that agreement
-who has the name"*). The duplicate row still exists on the server — the real fix is to stop writing it
-on submit. This does NOT contradict the warning above: that says name is unusable as a *dedupe key*
-(two real agreements can share a name); this only tests whether a name **exists**.
-
-⚠️ **AGREEMENTS ONLY.** Order sheets are legitimately filed with an empty name by the same endpoint —
-the very payload that exposed this has `orderSheets[0].name === ""` — so applying it there would hide
-the only order sheet on the deal.
-
-Safety valve, since a blank name is not by itself proof of a duplicate: if filtering leaves **nothing**,
-the unfiltered list is returned, so a deal whose agreements are all unnamed still renders them instead
-of an empty card. (Locally scanned/draft documents never reach these helpers — they live on
-`jobState.agreements` and are merged in the component, downstream of this.)
-
-⚠️ **The Deal screen (`JobDocsSection`) is NOT covered** and will still list both. Its `mapWith`
-**overwrites** `name` with a constant (`'Agreement'` / `'Order Sheet'` / …) before display, so the
-server name is gone by then — the filter would have to run on the raw docs, pre-map. Separate change.
-
-Verified against the three rows from the trace verbatim (both agreements + the unnamed order sheet):
-the duplicate dropped and the real agreement kept; **the unnamed order sheet kept** in the mixed-list
-form; all-unnamed falling back to the full list; a single named agreement and two genuinely different
-named agreements untouched; the legacy `_group` tag honoured alongside `documentType`; original order
-preserved; empty/undefined input a no-op.
-
-### Deal-edit price didn't move when a combination's footage changed
-
-Ticket: *"My deals - I changed footages which means price should change but nothing changed — left
-side 333ft and in the third step price is not going to update."* Step 2 (Job Price) showed **New Job
-Build identical to Previous** plus *"No priced quantity change detected from the build"*, i.e.
-`computeEditedTiers` returned `delta = 0`.
-
-Nothing is wrong in `dynamic-deal-pricing.ts` itself — it is a faithful port. The break is **upstream,
-in the job-builder engine it calls**. Money never lives on the builder: a combination's footage
-reaches the calculator schema through an **allocation** (`buildCalculatorDetails` →
-`buildAllocationQtyMap` → `collectAllocationFields` → `resolveAllocationMetrics().allocated` →
-`collectAllocationDcRefs`). Mobile's engine predates web commits **`9293ad28`** and **`99eb8d8a`**
-("Improved allocation tracking to be config-driven … and to validate nested allocations in
-stacks/accordions"), so three pieces of that chain were missing. Ported now:
-
-- **`allocation-utils.ts` › `collectAllocationFields` only scanned the TOP level** of `tab.fields` and
-  `section.fields`. An allocation authored **inside a `stack`/`accordion` container** was invisible →
-  `buildAllocationQtyMap` returned `{}` → the footage never reached the schema → `delta` 0. New
-  `collectAllocationFieldsDeep` recurses on any `field.fields`, matching web. **This is the fix for
-  the ticket**; it also un-breaks tab-completeness checks, which call the same function.
-- **`combination-utils.ts` › `computeGroupUsed`** took only the **FIRST** locationGrid
-  (`rowFields.find`) and read it **only** as `combo[gridField.id]` — a grid stored under the field's
-  `key`, or the legacy `combo.grid` slot, resolved `undefined` → 0 used. Now sums **every** grid field
-  with `combo[gf.id] ?? combo[gf.key] ?? combo.grid`, and the no-grid branch sums **every `number`
-  field** instead of the hardcoded `['sqft','sq','count']` key heuristic. (Grids win over sibling
-  numbers so add-ons like miters/end-caps aren't double-counted against the allocation.)
-- **`allocation-utils.ts` › `getTabLevelUsed`** got the same generalization for legacy tab-level
-  combinations.
-- **`dependency-engine.ts` › `resolveAllocationAvail` is now metrics-first.** Modern allocations put
-  the budget in `metrics[{ role:'budget' }].valueSource`; only legacy ones use `field.dcField` /
-  `field.avail`. Reading the legacy shape first made a metrics-based card look like a **zero-budget /
-  excluded** card.
-
-Two more divergences fixed in the same pass:
-
-- **`dynamic-deal-pricing.ts` › `buildBuilderQtyIndex` triple-counted allocation quantities.**
-  `buildAllocationQtyMap` **already emits both the raw ref and `normName(ref)`** as separate keys, and
-  the overlay then re-added `normName(ref)` for each of them — so `byDcField[normalized]` ended up at
-  3× the real quantity. Web adds each entry once; mobile now does too.
-- **`dependency-engine.ts` › `truthy`/`falsy` operators used bare `Boolean(raw)`**, so a quantity of
-  `0` — or the string `"0"` a text input produces — read as TRUE. New `isTruthyValue` (web parity)
-  treats numeric-zero as falsy and leaves non-numeric strings truthy. ⚠️ This is the one change with
-  reach beyond the ticket: it applies to **every** `truthy`/`falsy` dependency rule (tab locks, field
-  visibility, allocation contributor `when` gates), which is exactly why the divergence mattered — a
-  zero-valued contributor could match on mobile and not on web.
-
-Verified by driving the REAL `computeEditedTiers` over a LeafFilter-shaped config (combination section
-+ locationGrid + option-bound allocation), footage 300 → 333: **fails on the pre-fix code** for the
-nested-allocation and grid-stored-under-key cases, passes after, and an untouched build still reports
-`changed: false` with `next === previous`. tsc error count unchanged (83, all pre-existing), lint
-unchanged, suite 926 passing.
-
-✅ **Confirmed on device**: after these fixes a GUTTERS edit re-prices to **COST $3,848 / PAR $5,502 /
-RETAIL $8,195** — identical to web to the dollar on the same deal ("QS test"). The bridge works.
-
-> ✅ **CLOSED 2026-08-13 — see "a `0` in `dealCenterData` SHADOWED the overlay" below.** Everything from
-> here to that section is the trail of a hunt that kept landing on the wrong layer; the correlations it
-> records (Versa vs Micro Mesh, combination age, appointment-id shape) are all **coincidences** and are
-> retired there. Read the fix first, then this only if you need the history.
-
-⚠️ **One case is still open — and it is NOT "LeafFilter-only".** Originally filed that way (the failing
-repro's GUTTERS tab read "No data entered", so LeafFilter was the only quantity in play). A payload
-comparison across four deals on the SAME config (`sales-portal` response, 2026-08-11) reframes it:
-
-| deal | LeafFilter combinations in the submitted build | footage edit re-prices? |
-|---|---|---|
-| `6a7aaf30…` "recipet lead" | **4** | ✅ yes |
-| `6a7b1a12…` "current lead" | 0 | ❌ no |
-| `6a7b0ad5…` "tomorrow lead" | 0 | ❌ no |
-| `6a7af6a8…` "fu lead" | 0 | ❌ no |
-
-Everything else is identical — same `configId`/`configSnapshotId` (`6a71a118…`), same vertical key,
-same six tab ids, same `resultedProducts`, all `isDynamic`, all `submitted`. **4/4 correlation with one
-structural fact: whether the combination ROW already existed.**
-
-⚠️ And it is **not** about the saved footage: all four of recipet's combos store `__grid: null`, so it
-sold with no footage either. The combos merely EXIST (each carrying a size/type, e.g. `6"` / `Versa`).
-
-⚠️ **The "combination age" hypothesis above was WRONG — superseded by an on-device A/B.** Two builds
-were made identical except for one field:
-
-| | recipet | current lead |
-|---|---|---|
-| Gutter opening / footage | 6" + 7", 444ft | 6" + 7", 444ft |
-| **LeafFilter profile** | **`Versa`** | **`Micro Mesh`** |
-| New tiers | COST $6,488 / PAR $12,763 / RETAIL $19,636 | $200 / $200 / $200 (unchanged) |
-
-**The price tracks the PROFILE VALUE, not the combination's age** — which also re-explains the earlier
-table: every one of recipet's saved combos carried `Versa` / `Versa Max`. `Versa` prices; `Micro Mesh`
-does not.
-
-Since the LeafFilter allocation's `optionBinding` / contributor `when` rules live in the CONFIG, and
-both apps evaluate them with byte-identical code (`comboMatchesOptionBinding` does an exact
-`optionValues.includes(...)` — **neither platform trims**, so an authored trailing space like the
-`"Micro Mesh "` seen in the saved payload would break BOTH), the likely conclusion is that the config
-wires `Versa`/`Versa Max` to priced calculator fields and `Micro Mesh` to none. **Prediction to test:
-web will also fail to re-price a Micro Mesh build.** The earlier "web works fine" comparison was
-almost certainly run on a Versa deal.
-
-**Ruled out by direct test against the real `resolveAllocationMetrics`:** the option-binding gate. A
-combination whose bound option is blank (which is how a freshly-added one starts) still consumes its
-full footage — `comboMatchesOptionBinding` does not zero it. Do not re-investigate that path.
-
-Also noted, ranked second: the three failing deals have `jobBuilder.appointmentId === lead._id` while
-recipet has a distinct appointment id — but 20 of the 32 deals in that payload share the same shape, so
-it looks like a normal self-gen convention rather than the defect.
-
-Still needed to close it: the job-builder config (`GET /company/v1/job-builder-products`) to read the
-LeafFilter allocation's `optionBinding` / `metrics[].valueSource` / `dcField` refs, plus the calculators
-for one working and one failing deal (`GET /appointments/{id}/lfcalculators`).
-
-#### Full web↔mobile diff of the pricing chain (2026-08-11)
-
-Driven by *"same functionality is working fine in web… can you fix this issue"*. Every function in the
-chain was compared against `mhalt-revDSM-sales-frontend/src/sections/deal/components/dynamic-deal-pricing.js`
-and found **at parity** — do not re-diff these:
-
-- `computeEditedTiers` — all three paths, same order, same `previous`/`delta`/`clamp` (mobile adds only
-  the `originalContractPrice` RETAIL fallback, which cannot affect `delta`).
-- `buildCalculatorDetails`, `extractQuantitiesByFieldId`, `buildFieldCalcKeyMap`,
-  `collectAllocationDcRefs`, `buildAllocationQtyMap`, `buildBuilderQtyIndex` — line-for-line equivalent.
-- `tierFor`'s schema walk vs web `calculateResultUtil`'s `isSchemaBased` branch — byte-identical
-  (`details[field.name] ?? details[field.id]`, `resolveFieldTierPrice`, `applyFeesToTier`, $200 floor).
-- Config normalization: both run `enrichConfigWithProductColors` → `migrateConfigTabFields` →
-  `ensureVerticalSummaryTabs` over the same endpoint.
-- `collectAllocationFields` already delegates to the deep (container-recursing) collector.
-- Edited state propagation: both stream the embedded builder's state out via `onStateChange` →
-  `setEditedJobState`, and both price `editedJobState || initialState`.
-
-**The one real divergence found is in an INPUT, not the math: `dealCenterData`.** Web
-`buildDealCenterSessionData` merges four sources and its `ingestCalculatorObject` walks the calculator's
-top-level scalar columns, writing each one under **every alias of the schema field it matches**
-(canonical id ⇄ legacy `field.name`). Mobile's `buildDealCenterData` step 3 copied `resultData` keys
-**verbatim, with no alias hop**. A calculator stores a quantity under one spelling while the config's
-`dcField` may reference the other, so the reference resolves to nothing — a `dealCenter` allocation
-metric reads a budget of 0 and the build's footage is mapped onto a ref the schema prices at 0. Silent:
-the tiers simply don't move. Ported in `utils/build-deal-center-data.ts` (objects skipped, aliases last —
-matching web's merge precedence, where `fromCalculatorDirect` wins).
-
-⚠️ Genuine port gap and strictly additive (it only adds alias keys for scalar values that match a schema
-field), but **NOT the cause of the LeafFilter case** — see below.
-
-#### ✅ ROOT CAUSE (found 2026-08-11): the edit wizard priced against `configuredSchemas`
-
-Settled by an on-screen diagnostic rather than more code-reading. `computeEditedTiers` now returns a
-`debug` block and `DynamicDealEditScreen` renders it on the Job Price step while `DEAL_PRICING_DEBUG`
-is on. On the failing deal it read:
-
-```
-path=schema  schemas=1  cfg=Y  flat=2  keyHits=2  alloc=4  diff=25  priceable=0
-```
-
-Every link worked — the right branch was taken, allocations mapped 4 refs, and **25 calculator keys
-moved** between the original and edited build — and then **not one of them was a key the schema could
-price**. `schemas=1` is the tell.
-
-`DynamicDealEditScreen` passed **`configuredSchemas`** (only entities that already have fields) where
-web's `dynamic-deal-edit-modal.js` passes the UNFILTERED **`schemas`** — it never references
-`configuredSchemas` at all (`grep -c` → 0). `tierFor` prices a quantity by matching it to a schema
-field's `id`/`name`, so every schema dropped by that filter takes all of its fields with it. The
-build resolved perfectly and then had nothing to price against.
-
-⚠️ **This is why only ONE deal ever worked.** "recipet lead" sold LeafFilter, so its quantities landed
-on fields belonging to the single surviving schema; every other deal's edits landed on fields the
-filter had removed. The Versa/Micro Mesh and combination-already-exists correlations recorded above
-were both **coincidences of that same fact** — they are not causes. Do not re-investigate them.
-
-Fixed in `DynamicDealEditScreen.tsx`: `schemas` now feeds **both** `computeEditedTiers` and
-`buildDealCenterData` (web passes the unfiltered list to `buildDealCenterSessionData` too — the
-field-option ALIASES are derived from it, so a dropped schema loses every alias it owns as well).
-`calculatorSchemas={configuredSchemas}` on the embedded builder is deliberately left alone: it drives
-tab accent colours only, and `schemas` ⊇ `configuredSchemas` there so it makes no difference.
-
-⚠️ `useCalculatorSchema` returns BOTH lists. `configuredSchemas` is for **gating UI** ("has the manager
-configured the deal center?"). Anything that PRICES must take `schemas`.
-
-#### ⚠️ The LeafFilter tab is priced ONLY by grid column sums (config fact, 2026-08-12)
-
-Follow-up: *"when i am changing in leaffilter tab in my deals flow, in the 3rd step cost PAR and
-Retail is not updated… changes are showing in the summary part, but when i go to next step nothing
-changed."* Settled by reading the **actual config** (`GET /company/v1/job-builder-products`, saved as
-`leaffilter-config.txt`) rather than more code. **Read this before touching the pricing chain again.**
-
-**Two corrections to earlier entries in this file — both were mine, and both sent me down dead ends.**
-
-1. **The `configuredSchemas` → `schemas` "ROOT CAUSE" below did NOT fix this.** The strip still reads
-   `schemas=1`, because the endpoint only ever returned one schema — the filter was never dropping
-   anything. The change is still correct (web passes the unfiltered list) and is kept, but it was
-   **not the cause**, and the section below overstates it.
-2. **`diff=25` was the diagnostic LYING.** `describeBridge`'s filter was
-   `Number(next[k]) !== Number(prev[k])`, and `Number('Micro Mesh')` / `Number('Versa')` are both
-   `NaN` — `NaN !== NaN` is **true**, so every TEXT field counted as a changed quantity. "25 calculator
-   keys moved" was mostly profile/colour strings. Fixed: the filter now requires at least one side to
-   be numeric. ⚠️ Never compare via `Number()` to detect a change on a map that also holds strings.
-
-**How LeafFilter is actually wired** (all 10 allocations on that tab):
-
-| | Gutters tab | **LeafFilter tab** |
-|---|---|---|
-| `dcField` on the allocation | `new_number_input`, `6_gutter_ds_e`, `7_gutter_ds_e` | **none — all 10** |
-| `optionBinding` | — | **`null` — all 10** |
-| `used` contributor | — | `columnSum` of ONE story column of ONE section's `locationGrid` |
-| `avail` (budget) | dealCenter ref | dealCenter ref (the calculator's own story×width quantity) |
-
-So a LeafFilter allocation's only calculator ref is its **budget** metric, and
-`buildAllocationQtyMap` maps the rep's **allocated** total onto it. Net effect: **the only build edit
-that can move a LeafFilter price is a change to a grid column sum.**
-
-Consequences, all verified against the config:
-
-- **"LeafFilter Profile" cannot affect price.** It is a **free-text field**
-  (`field_1782365732617_cgzrz`, `type: 'text'`, key `textValue_atgx2`), and every allocation has
-  `optionBinding: null`. Typing `Micro Mesh` / `Versa` / `Versa Max` into it changes no priced
-  quantity by design. ⚠️ This finally explains — and **retires** — the "Versa prices, Micro Mesh
-  doesn't" correlation recorded further up: profile never priced on *either* platform.
-- **Adding a combination with no footage changes nothing.** `used` is a column sum; a combination
-  whose grid is blank contributes 0. In the reported screenshot only Combination #1 carries footage
-  (`3rd Story · Left Side: 444ft`); #2/#3/#4 hold profiles only. Nothing to re-price.
-- **Versa Max has its OWN section** (`section_1782386890583`, grid key `grid_acoaz_rsb8y_n70le`,
-  aggregate `gridTotal`). Versa Max footage must be entered **there**, not by typing "Versa Max" into
-  the profile text field of the 6" section.
-- Each width lives in its own section — 6″ → `section_1782365542087` (grid key `grid`), 7″ →
-  `section_1782373723139` (`grid_acoaz`), 4&5″ → `section_1782373742457` (`grid_acoaz_rsb8y`) — and
-  the three story columns (`1st`/`2nd`/`3rd`) of one grid feed three different allocations.
-
-**The engine was re-diffed against web during this pass and is at parity — do not re-diff:**
-`collectAllocationDcRefs` (byte-identical), `buildAllocationQtyMap`, `allocation-value-resolver.ts`
-(only TS annotations differ) and `location-grid-utils.ts` (ditto).
-
-**New decisive diagnostic: `allocMoved`.** `describeBridge` now also builds the allocation qty map for
-the **original** state and reports which refs differ. The on-screen strip (`EditedTiersResult.debug`,
-rendered on the Job Price step) leads with it:
-
-```
-schemas=1 schemaKeys=N alloc=6 allocMoved=0 numDiff=0 priceable=0
-MOVED none — no allocation total changed
-```
-
-⚠️ **Read `allocMoved` FIRST.** `MOVED none` means the build changed nothing the config maps to a
-priced quantity — an unchanged tier is then **CORRECT**, not a bug, and no amount of engine work will
-change it. Only `allocMoved` non-empty **with** `priceable=0` is a real bridge failure (refs moved but
-aren't schema field ids/names).
-
-✅ **Both are now OFF** (2026-08-12, before push): the amber strip was removed from
-`DynamicDealEditScreen` and **`DEAL_PRICING_DEBUG` is back to `false`**. The instrumentation itself
-(`describeBridge`, `allocMoved`, `EditedTiersResult.debug`) is retained behind the flag — flip it to
-`true` to diagnose, and read `allocMoved` first.
-
-#### ✅ ROOT CAUSE, FOUND AND FIXED (ticket 339, 2026-08-13): a `0` in `dealCenterData` SHADOWED the overlay
-
-Settled by an A/B the reporter set up: *"while i create the lead from web the above flow works fine in
-the mobile, but when i create lead from mobile the above not works."* Two `sales-portal` captures of the
-SAME company, config (`6a71a118…`) and product — **TEST LEAD** `6a7d6aad…` (job created on web) and
-**testt lead** `6a7d70c6…` (created on mobile). Editing the web-created one in mobile re-prices; the
-mobile-created one shows `PREVIOUS === NEW` and *"No priced quantity change detected from the build"*
-while the step-2 Job Build summary shows the footage the rep just entered.
-
-**⚠️ This RETIRES three earlier conclusions in this file. All three were mine and all three were wrong:**
-
-1. **"`MOVED none` ⇒ an unchanged tier is CORRECT, not a bug"** (the box directly above) — **false**, and
-   it is the sentence that closed the investigation prematurely. `allocMoved` reads the allocation qty
-   map, which is the layer *before* the schema lookup. The refs DID move; they were shadowed one layer
-   later. Read `allocMoved` **and** `priceable`, and treat `allocMoved` non-empty as "keep going".
-2. **"The LeafFilter tab is priced ONLY by grid column sums"** — still true as a config fact, and it is
-   what makes this tab the one that exposes the bug: its allocations have **no `dcField`**, so their only
-   calculator ref is the budget metric's, reached exclusively through the overlay this bug broke. A tab
-   with direct `dcField`s (Gutters) is priced by the *other* overlay, which already propagated aliases —
-   which is exactly why the Gutters edit re-priced to the dollar and LeafFilter never did.
-3. **"the edit wizard priced against `configuredSchemas`"** — a real port gap, correctly fixed, but not
-   this cause. It is already marked superseded above; this is the actual answer.
-
-**Mechanism.** `tierFor` resolves a schema field's quantity as
-`details[field.name] ?? details[field.id]`, and **`??` does NOT fall through on `0`**. Three facts meet:
-
-- A schema field's `id` is portal-generated (`field_1782973860922_36_i4ii`) and its `name` is a separate
-  authored string, so the two keys are distinct. `normalizeField` spreads the field through verbatim.
-- A **mobile** calculator seeds EVERY schema field at `inputValue: 0` (`build-all-entries.ts` — web
-  parity, deliberate), and `buildDealCenterData` writes each entry under **both** the id and the legacy
-  `name` (`collectKeysForEntry`). So `dealCenterData` holds `{ [id]: 0, [name]: 0 }` for every field.
-- `buildCalculatorDetails`' **allocation** overlay wrote `base[ref] = qty` and **only that key**, while the
-  field-map overlay ten lines above it already fanned out to every alias.
-
-Net: the LeafFilter footage reached `base` under the **id**, `tierFor` read the **name** and got the
-calculator's `0`, and the delta was exactly zero. It bites only when the calculator carries an entry for
-that field — which is precisely the web-created vs mobile-created split the reporter isolated.
-
-Fixed in `buildCalculatorDetails` (`utils/dynamic-deal-pricing.ts`): the allocation overlay now runs each
-ref through `collectDealCenterKeysForFieldId` and writes every alias, matching the overlay above it.
-`collectDealCenterKeysForFieldId` also gained a **`legacyKey` fallback** to its `find`, so an allocation
-that references a field by its legacy `name` updates the canonical id too — the same shadowing, mirrored.
-The canonical `key`/`fieldId` match is still attempted first, so existing resolution is byte-identical.
-
-⚠️ **`tierFor` was deliberately NOT touched.** Making it prefer the non-zero alias would diverge from web
-`calculateResultUtil` on the hottest path in pricing. Keeping the two aliases *in agreement* is the
-narrow fix; the lookup stays a faithful port.
-
-⚠️ **Deliberate divergence — do NOT "re-sync" this to web.** `dynamic-deal-pricing.js:234` is
-byte-for-byte the old mobile code and carries the identical latent bug. It is dormant there only while
-web's calculators don't seed the shadowing alias; **web will hit this the moment they do.**
-
-**Ruled out by direct test — do not re-investigate:**
-- **The saved build is NOT the difference.** The mobile-created lead stores
-  `comboGroups[…].combinations: []` for all four LeafFilter sections where the web-created one stores one
-  combination each — a real divergence, from mobile's deliberately stronger `comboHasEnteredData`
-  (`dynamic-job-state-storage.ts`), which drops a combo carrying only LOCKED/`defaultValue` values. Those
-  web combos hold exactly that (`6"`, `Versa`, `grid: null`), so **mobile is the more correct of the two.**
-  Driving the real `deserializeDynamicJobStateFromStorage` → `hydrateJobStateForPersistence` over both
-  captures gives **identical** hydrated states (`ensureTabStateShape` re-seeds the pruned combo), and a
-  555ft edit moves the **same 16 refs with the same delta** on both. The `[]` is harmless.
-- The `locationGrid` is **not** locked and is absent from `defaultItem`, so footage always survives the
-  prune. The prune has never eaten a measurement.
-- `jobBuilder.appointmentId === lead._id` on mobile-created leads (from
-  `fallbackAppointmentId: appointmentId || leadId` in `DynamicJobBuilderScreen`) — real, cosmetically
-  wrong, and **not** this bug: the wizard fetches the calculator by id (`getCalculator`), never via the
-  appointment. Worth its own ticket; it is not a pricing input.
-
-Verified by driving the REAL `computeEditedTiers` over the reporter's own config + both captured builds:
-the ticket repro (zero-seeded `dealCenterData` → **fails before the fix, passes after**), a web-shaped
-empty calculator still pricing, a **non-zero** prior calculator value being replaced rather than summed,
-the mirrored legacy-name allocation, and an untouched build still reporting `changed: false` with
-`next === previous` (no false positives). tsc 44 (baseline unchanged); eslint on the file identical to
-HEAD (0 errors, 2 pre-existing warnings).
-
-#### Also ported en route: web `ticket-1063` (2026-08-11)
-
-A side-by-side on the SAME deal (`6a7b1a12…`, Micro Mesh, 444 ft) settled it — **web $6,483 / $12,757 /
-$19,626, mobile $200 flat** — so it is a mobile bug, not the config. The web repo had been re-pulled and
-carried a commit from that same day (`51c8a246 ticket-1063`) touching five engine files, none of it
-ported. All of it is now in:
-
-- **`toggle-utils.ts` — THE fix.** `filterVisibleToggleOptions`'s second parameter changed from
-  `dealCenterData` to the **full rule context**. An `optionVisibility` rule is an ordinary rule group:
-  with only `{dealCenterData, state}` it cannot resolve a field by KEY, reach another section, or read
-  an allocation metric, so every such reference evaluated `undefined` → read as "rule not met" → **the
-  option was silently hidden**. That is why LeafFilter's `Micro Mesh` never priced on mobile while
-  `Versa` (ungated) did. New `getVisibleFieldOptions` + `getBaseFieldOptions` (which reads
-  `optionShowFields` KEYS for dropdowns, since `field.options` is stale for those);
-  `filterVisibleToggleOptions` is kept as an alias so the name reads the same at call sites.
-- **`dependency-engine.ts`** — `buildRuleEvaluationContext` **exported** (option rules must share it);
-  `isDefaultColorActive` now honours `useDefaultValue` as the dropdown twin of `useDefaultColor`; new
-  `resolveEffectiveDefaultValue`; `validateDependencies` covers `dropdown` optionVisibility.
-- **`combination-utils.ts`** — `buildDefaultItemFromFields` seeds a `dropdown` defaultValue (was `text`
-  only). Deliberately condition-blind: it cannot import the dependency engine.
-- **`dynamic-job-state-storage.ts`** — `hydrateFieldValue` applies `resolveConditionalDefault` **before**
-  falling back to `buildDefaultItemFromFields`, so a conditional default is never persisted past its own
-  condition. (This is the half that explains the **LeafFilter Color reading White on web vs Clay on
-  mobile** for the same saved state.)
-- **`tab-validation.ts`** — `isFieldValueComplete` handles `dropdown`, passes `depCtx` (not
-  `dealCenterData`), and treats a disabled dropdown / one carrying an active default as answered so Next
-  is never disabled with nothing on screen to fix.
-
-⚠️ **`DynamicTabRenderer.tsx`'s three call sites now pass `depCtx`** (already built at ~line 359). Any new
-caller of `filterVisibleToggleOptions` / `getVisibleFieldOptions` MUST pass that same context — passing
-`dealCenterData` still type-checks and still "works" for same-section rules, which is exactly what made
-this bug invisible for so long.
-
-Verified with the real engine: a cross-section-gated option is **hidden under the old stripped context and
-kept under the full one** (fails before the port, passes after), a genuinely-unmet rule still hides it,
-`applyConditions: false` / no-optionVisibility untouched, `optionShowFields` keys used for dropdowns,
-dropdown defaults seeded, `useDefaultValue` honoured (incl. explicit `false`), and `defaultWhen` respected
-both ways. tsc 44 (baseline unchanged); eslint per-file identical to HEAD (dependency-engine 2,
-storage 3, renderer 12, others 0).
-
-Ruled out while chasing it (all verified parity, don't re-investigate): the whole engine —
-`allocation-utils`, `combination-utils`, `allocation-value-resolver`, `allocation-config-utils`,
-`dependency-engine`, `deal-center-field-utils`, `location-grid-utils`, `toggle-utils`,
-`combination-summary-utils`; the price normalizer (`bakeFieldPrice` DOES strip thousands separators,
-same as web `toPriceNumber`); `tierFor`'s schema walk (identical to web `calculateResultUtil`); the
-embedded builder does **not** auto-save in edit mode (`performAutoSave` early-returns on `embedded`),
-so the baseline can't absorb the edit; `jobState` is keyed by config ids via `updateTabState`, so no
-storage-key drift; and the builder is seeded from the same `initialState` the diff compares against.
-
-**`DEAL_PRICING_DEBUG` in `dynamic-deal-pricing.ts` is temporarily `true`** and a `describeBridge()`
-helper logs `[dealEditPricing:bridge]` with the counts that isolate the broken link — `flatNext` (did
-the edited state arrive), `keyMapHits` (do config field ids line up with the state's section-qualified
-keys), `allocRefs` (did any allocation map a quantity), `overlayDiff` (did the calculator keys move)
-and `overlayDiffPriceable` (are those keys ones the schema can price). ⚠️ **Set the flag back to
-`false` before release** — it logs on every keystroke in the wizard.
-
-### Deal-edit Job Price step had NO validation (price below cost, down payment above price)
-
-Ticket: *"it will not allow me to go next, like web, until i filled the right contract price."* Web
-shows a red-bordered Contract Price with **"Cannot be below the cost of $3,848."** and a **disabled
-Next · Review**; mobile showed the same `COST -94%` badge but no error and an enabled button, so a rep
-could advance and submit an addendum priced 94 % below cost.
-
-Mobile had **no price validation at all**. Ported web's three values verbatim into
-`DynamicDealEditScreen.tsx`:
-
-- `costFloor = tierResult.next.cost` — the REBUILT cost, so the floor tracks the edited build.
-- `contractPriceError` — `Cannot be below the cost of ${fmtMoney(costFloor)}.`
-- `downPaymentError` — `Cannot exceed the contract price of ${fmtMoney(contractPrice)}.` (a down
-  payment over the price yields a negative balance).
-- `hasPriceError` gates **both** footer buttons: `Next · Review` on step 2 and `Submit Addendum` on
-  step 3 — web disables both, so an error can't be walked past in either direction.
-
-Each input turns red (`#DC2626`) and renders its message underneath; the Contract Price row drops its
-bottom margin to 4 when erroring so the message sits tight under the field, as on web.
-
-⚠️ **Still not ported: web's `rebuildEntriesFromSchema`** (commit `3be3929e`, REVDSM-1075). That
-rewrites the stored `LFCalculator` `entries`/`totals` from the schema when an addendum changes the
-build, so the accepted scope matches the scoreboard. It affects the **submit payload**, not the tiers
-the rep is shown, so it is a separate ticket.
-
-### Scan-document sheet: blank PDF tile + the agreement was deletable from it
-
-Ticket: *"don't allow user to delete agreement from here creating job builder; also show some preview
-here like we are showing outside — empty card is not showing well."* Job Builder ▸ Summary ▸
-**Agreements** pencil opens `DocumentScannerModal` ("Scan Agreement"), where the filed agreement
-rendered as a **blank grey tile with a red ✕**.
-
-Both problems are in **`src/widgets/modals/job-builder/DocumentScannerModal.tsx`**:
-
-- **The tile was blank because the modal threw the file away.** Its `visible` effect projected each
-  `initialFiles` entry down to `{ uri, serverId, isNew, name }`. A server document's source lives on
-  **`secureUrl`/`url`, not `uri`**, so `<Image source={{ uri: undefined }}>` had nothing to draw —
-  and even with a URL a signed agreement is a **PDF**, which `Image` cannot decode. It now **spreads
-  the whole file** (`{ ...f, serverId: f.serverId || f._id, isNew: false }`) and renders the same
-  placeholder the summary card uses — `file-pdf-box` icon + the document name — whenever
-  `isPdfFile(item) || !fileSrc(item)`. `isPdfFile`/`fileSrc` are local copies of the
-  `SummaryFinalizeCards` helpers, so the two surfaces agree on what is a PDF.
-  - ⚠️ Keeping the whole object also fixes a **latent identity bug**: the narrow projection dropped
-    `filePath`, and `SummaryFinalizeCards.handleScannerSave` prunes by `docIdentity`
-    (`serverId ?? _id ?? filePath ?? id ?? url ?? uri ?? name`). A document identified only by
-    `filePath` therefore failed to match itself on the way back out and was **pruned from the card on
-    Update** even though the rep removed nothing.
-  - The `uri` field is deliberately **not** overwritten with the resolved source — `docIdentity` reads
-    `uri`, so rewriting it could change a document's identity. Display resolution happens at render.
-- **New `allowRemoveExisting?: boolean` prop (default `true`).** When false the ✕ is hidden for
-  documents that arrived via `initialFiles` (`isNew === false`); **pages scanned in this session keep
-  theirs**, so a misscan is never stuck. The info banner swaps to "Documents already on file can't be
-  removed here." Defaulting to `true` leaves the other two callers — `LeadCenter/JobDocsSection` and
-  the legacy `job-builder/SummarySection` — unchanged.
-
-`SummaryFinalizeCards` passes
-**`allowRemoveExisting={scannerCategory === 'agreement' ? !editMode : true}`**, so the ✕ is hidden for
-exactly one case: an **already-filed agreement in the MY DEALS edit flow** (`DynamicDealEditScreen`).
-
-⚠️ **The flow this applies to was INVERTED on 2026-08-11 — read this before "restoring" it.** The
-original ticket above was written against the Job Builder create flow, so the rule shipped as
-`? editMode :` (hidden while creating). QA then corrected the requirement:
-
-> *"I mistakenly made changes in the Job Builder based on my previous request. Please revert those
-> changes… The only change required is to remove the delete/cross option from Agreements in the My
-> Deals section."*
-
-The reasoning behind the corrected direction is the stronger one: a **My Deals** deal is already
-**submitted**, so its agreement is the *executed contract* — an addendum adds to it and must never
-delete it. In the **Job Builder** create flow nothing is filed yet and the rep may still be correcting
-the document, so delete stays. Hence `!editMode`. The current truth table:
-
-| | create (Job Builder) | edit (My Deals) |
-|---|---|---|
-| **Order Sheets** — filed or new | ✕ shown | ✕ shown |
-| **Agreements** — already filed | ✕ shown | **hidden** |
-| **Agreements** — scanned this session | ✕ shown | ✕ shown |
-
-⚠️ Write it as that **explicit branch on the category**, not as the equivalent
-`!editMode || scannerCategory !== 'agreement'`. The two are logically identical, but QA reported the ✕
-missing from ORDER SHEETS against the boolean form, and the flat expression makes it easy to believe —
-and easy to break for real when the agreement rule is next edited.
-
-⚠️ In the My Deals edit flow this leaves **no delete path for an existing agreement** — the card
-header's pencil is the only entry point into the scanner. That is deliberate and is the ticket's intent.
-
-⚠️ **`editMode` is the create/edit discriminator for this whole component** (it also drives
-`agreementRequired`, `showOrderSheetCard` and `mergeDocSources`). Gating on the scanner category alone
-was an early attempt here and was wrong — it stripped delete from **both** flows.
-
-The other two callers get the PDF-preview fix for free — they had the same blank-tile bug. They filter
-`p.isNew === true` before uploading, so the richer existing-file objects pass straight through.
-
-### Deal-edit payment methods now seed from the sale
-
-Ticket: *"My deals - payment method from sale isn't showing; in web it's showing."* Job Price (step 2)
-opened with **Down Pmt Method** and **Balance Method** both reading "Select payment method", even
-though the deal was sold with one (the outcome carries `balancePaymentMethod: "check"`).
-
-This was **deliberate on mobile and wrong** — it is the divergence recorded in the section above. The
-seed effect explicitly blanked both (`setDownPaymentMethod('')`), reasoning that the rep should
-re-pick and that the submit payload falls back to `lead.paymentMethod` anyway. The payload was indeed
-fine; the *display* simply never showed the deal's own method. Now a 1:1 port of web
-`dynamic-deal-edit-modal.js`, in `DynamicDealEditScreen.tsx`:
-
-- **Seed both from the lead**: `setDownPaymentMethod(lead?.paymentMethod || '')`,
-  `setBalanceMethod(lead?.balancePaymentMethod || '')`.
-- **`balanceMethodKey = coerceToPlanKey(balanceMethod, 'check')`** — the balance ALWAYS resolves,
-  because every sold deal has a balance to collect (web uses the same `'check'` fallback). The down
-  payment keeps its blank-allowed form (`downPaymentMethod ? coerce(…, '') : ''`) — a deal with no
-  money down legitimately has no method.
-- **The `!!key &&` guards are removed** from both change flags; each now compares against the same
-  baseline it was seeded from, with the matching fallback:
-  `coerceToPlanKey(lead?.paymentMethod, '') !== downPaymentMethodKey` and
-  `coerceToPlanKey(lead?.balancePaymentMethod, 'check') !== balanceMethodKey`. The guards only existed
-  to stop a blank picker reading as a change; seeding makes them obsolete, and keeping them would have
-  **masked a real edit back to the deal's original method**.
-- ~~**New `downPaymentSelectOptions`** (web parity), splicing a seeded financing plan into the Down
-  Pmt options.~~ **Superseded and removed** — see "Down Pmt Method must never offer a financing plan"
-  below. The Balance picker still uses the full `paymentOptions` catalog.
-
-⚠️ **Side effect on the displayed tiers, and it is the correct one.** `computeEditedTiers` receives
-`paymentMethod: resolveTierPaymentMethod(balanceMethodKey)`. That key used to be `''` → `'check'` →
-0 % bank fee for every deal. A deal whose balance method is **AMEX or MC/VISA/DSCVR** now grosses its
-COST/PAR/RETAIL up by that plan's fee, exactly as web does — so those deals' tiers will read higher
-than before this change.
-
-The submit payload is unchanged (`downPaymentMethodKey || lead?.paymentMethod || ''`) — it already
-matched web.
-
-### Down Pmt Method must never offer a financing plan
-
-Ticket: *"in Down Pmt Method you als showed balance method fix it please."* Job Price (step 2) opened
-with **Down Pmt Method** reading `2521 (12 Months…)` — the same financing plan as **Balance Method** —
-on a deal with **$0 down**.
-
-This was a **self-inflicted regression from the seeding ticket above.** `pricing.outcomeDownPaymentMethods`
-is correctly filtered to cash/card (`p.type === 'cash' || 'card'` in `useDealPricing`), so the picker's
-own list was fine — the financing plan was there because **`downPaymentSelectOptions` spliced it in**.
-
-`lead.paymentMethod` IS the down-payment field (see the submit payload), but a sold deal frequently has
-the **rollout's** plan written into it, so it holds a financing key. Seeding from it then surfaced that
-key, and the splice existed precisely to make such a key selectable — offering "12 months financing" as
-a way to pay a *down payment*, which it is not: financing is how the **balance** is carried.
-
-⚠️ **Deliberate divergence from web** (`dynamic-deal-edit-modal.js` is byte-identical here and has the
-same flaw — it coerces against the FULL catalog and splices the result). Do not "re-sync" this.
-
-- **New `toDownPaymentKey(stored)`** — coerces, then returns the key **only if it is in
-  `downPaymentOptions`**, else `''`. `downPaymentSelectOptions` is deleted; the picker is back to plain
-  `downPaymentOptions`, so nothing outside the basics can be shown or chosen.
-- **The change-flag baseline uses the SAME helper**
-  (`toDownPaymentKey(lead?.paymentMethod) !== downPaymentMethodKey`). Filtering only the seed would
-  compare `'2521'` against `''` and make every affected deal open already "changed", rendering a
-  phantom Review row and enabling Submit — the exact failure the removed `!!key &&` guards used to mask.
-- **The submit payload is untouched**: `downPaymentMethodKey || lead?.paymentMethod || ''` still falls
-  back to the stored value, so blanking the *display* never wipes what the deal had. The rep picking a
-  real method overrides it as before.
-
-Traced through every stored shape: a financing key → blank picker + no phantom change; `check` and a
-legacy label (`AMEX (5.00% Fee)`) → seeded normally; empty → blank; rep picks a method → change flag
-true and the Review row renders; unrecognized text → the `resolveTierPaymentMethod` fuzzy fallback still
-lands on a basic. Lowe's leads scope `downPaymentOptions` to Lowe's methods, so a non-Lowe's key blanks —
-correct, since that method is not offered for the lead, and the payload fallback preserves it.
-
-### Funding: multiple payment methods are LIVE, and a 409 on the link endpoints is terminal
-
-Two backend specs, both at the repo root and both written against the **web** app —
-`FUNDING-MULTI-PAYMENT-FRONTEND-CHANGES.md` and `FUNDING-CHARGES-ENABLED-GATE-CLIENT-CHANGES.md`.
-Mobile's funding module was already ahead of web's "Stage 0" (it has rendered N rows per group since
-it was written), so this pass is the parts mobile was actually missing.
-
-**`MULTI_METHOD_ENABLED` is now `true`** (`screens/DynamicDealCenter/utils/funding.ts`). It gates the
-"Add payment method" button **and** the per-row ✕ together — with Add off, a removed row is
-unrecoverable inside the session. Flipping it on is what makes the rest of this section necessary:
-until now two rows of the same amount and method were impossible.
-
-#### The `charges_enabled` gate — the one 409 that must NOT be retried
-
-`POST …/link` and `…/link-sent` now answer **409** when the company's Stripe account is connected but
-`charges_enabled: false`. It used to surface as `503 "No payment provider is configured yet"`, which
-sent whoever was debugging to check environment variables that were already correct.
-
-⚠️ **The documented 409 rule ("re-`GET` the record and re-render, often succeeds after a refresh")
-LOOPS here.** Nothing about the record is stale; someone with portal access has to finish setup in
-Stripe. So `classifyFundingError` gained a distinct **`setupRequired`** kind, decided from the failed
-request's url via the pure exported **`isLinkEndpointUrl`** — read off `err.config.url` rather than
-passed in by each caller, so no future call site can forget it and quietly restore the loop.
-`shouldRefetchAfter` returns **false** for it, and `useFunding.report` neither refetches nor invites a
-retry; it stores the server's message on **`paymentsSetupError`**.
-
-- ⚠️ **One banner, never one per row.** The condition is company-wide, so a job with three card rows
-  would otherwise meet the same message three times. `FundingView` renders it once at the top,
-  `fundingBlockers(payments, price, { setupBlocked })` adds ONE checklist line, and every card's send
-  button is *withdrawn* (`linkBlocked`) rather than left live to fail — a rep shown only an error
-  retries until they call support.
-- `SendLinkModal` gained `blockedReason`, because the FIRST failure happens inside that sheet. It must
-  not fall through to the generic *"Close this and try again"*.
-- The gate self-clears on any successful `fetchLink` / `markLinkSent` and on `load` — the server trusts
-  a `true` for ten minutes but **re-asks Stripe on every `false`**, precisely so an account that
-  finishes onboarding is never blocked forever (no `account.updated` webhook exists).
-- ⚠️ Every OTHER 409 is still `stale`, **including a refused submit** — that one carries `blockers` and
-  its url is `…/submit`. Tested.
-
-#### The client blocker mirror had drifted from the server's rules
-
-`fundingBlockers` mirrors the server so the rep works a list instead of tapping a button that says no.
-Two gaps, both newly reachable:
-
-- **No over-allocation line.** It had the under-coverage case but not its mirror, so the rep saw a
-  satisfied gate and then a 409. Now `$1,000 more than the contract price is allocated` — **the
-  server's exact wording**, because the server's list *replaces* this one on a refused submit and a
-  divergence there is worse than having no mirror at all.
-- **No row disambiguation.** New **`describePayment(p, payments)`** → `$500 Check (1 of 2)`, matching
-  the server, numbered positionally so the Nth sentence names the Nth card. `PaymentFundingCard` shows
-  only the ordinal (the amount and method already have their own places on the card).
-
-#### Abandoned applications (`applicationClosed`)
-
-The backend gained `abandoned` / `canceled` / `expired` / `error`, and ⚠️ **it RESETS the row to
-unsent**. Nothing read it, so the rep saw *"link not sent yet"* for a link they watched the homeowner
-open — which reads as an app bug. Now `isApplicationClosed` / `applicationClosedNote`, an amber card +
-"Send a **new** link", and in `stateOf` the Link Sent step draws **`warn`** rather than `now`.
-⚠️ In `fundingBlockers` the closed arm must **outrank** the "link not sent yet" arm, or the lie returns.
-The flag is deliberately ignored once `linkSent` or a `decision` lands — a stale "they abandoned it"
-over a working application is worse than none.
-
-#### Stage 1 — the allocation arrays are persisted
-
-New **`paymentAllocations(rows, price, plans)`** → `{ downPayments, balancePayments }`, threaded through
-`ResultJobModal.onConfirm` → `leadData` on the `/job-builder` POST, the outcome mirror, and
-`buildCalculatorOutcomePayload` (a **whitelist** — a field not named there is silently dropped).
-
-- ⚠️ **Additive, never a replacement.** The four scalars stay written as a derived mirror (section
-  totals + the first funded row's key) because ~20 consumers read those names and the customer-facing
-  agreement/amendment renderers would degrade *silently* rather than error. An un-upgraded reader sees a
-  **lossy** view — one method named for a job that used three — not a wrong one.
-- ⚠️ **`method` is a plan KEY here**, matching the scalar it mirrors — NOT the catalogue LABEL
-  `toUpsertRows` sends to the funding API, which is the field the funding server derives `type` from.
-  Do not conflate them.
-- ⚠️ **Never join methods into `"Check + AMEX"`.** `resolveTierPaymentMethod`
-  (`utils/dynamic-deal-pricing.ts:51`) **substring-sniffs** that value to pick the fee that grosses up
-  the whole contract, so a joined string containing `amex` would silently reprice a signed deal.
-- Sent as `undefined` (not `[]`) on a demo: the backend's `default: undefined` is what distinguishes
-  "predates multi-method" from "no rows".
-- ⚠️ **Rehydration still comes from the FUNDING record** (`hydrateRowsFromRecord`), not these arrays —
-  they carry no `pid`, which is the server's merge key.
-
-#### Also fixed: a named row with no amount vanished
-
-`toUpsertRows` drops a row with a method but no money (the server rejects a zero amount with 422), so a
-line the rep added and named silently never reached the deal while the auto row re-absorbed its money.
-`confirmBlockers` now names it. The **auto** row and a **decided** row are exempt — $0 there is the
-correct end state, not a gap.
-
-#### ⛔ NOT done, and deliberately: Stage 2 (per-row gross-up)
-
-Spec §Stage 2 is **blocked on a RevDSM decision** ("per-row gross-up" vs "one primary row") and the doc
-is explicit: *do not guess it — a wrong answer here misprices jobs silently*. It also lives in
-`dynamic-deal-pricing.ts`, not the funding module. The landmine is **not armed on mobile** today only
-because the scalar mirror is one key and is never joined — see the warning above.
-
-Also not done (out of scope here): Stage 3's read-only consumers, which keep working off the scalars.
-
-Verified with 40 tests (`__tests__/screens/DynamicDealCenter/funding-multi-payment.test.ts`): both link
-paths recognised and `/linkage` rejected, the gate classified on both and never refetched, every other
-409 still stale incl. a refused submit's blockers, url read off `response.config` too; duplicate naming
-across identical/different/positional rows and a row absent from its list; all four closed reasons plus
-an unrecognised one, the flag going history on resend or decision, the blocker precedence and the amber
-step with regression guards; over- and under-allocation and exact coverage, the one-line setup gate;
-`groupTotal` counting the APPROVED amount; the blank named row incl. the auto/decided exemptions; and
-`paymentAllocations` storing keys not labels, filing `up` as a down payment, dropping empty rows,
-keeping a retired plan on its stored label, and reconciling with the scalar mirror. tsc 44 (baseline
-unchanged); the original 75-test funding suite still passes; eslint 0 errors across all touched files.
-
-### Funding activity logging — a `funding` module, and every click in it
-
-The funding module fired **no activity logs at all**, so the one surface where money
-actually moves left nothing on the Forever Record. New **`src/utils/activity-log/funding-log.ts`**
-(18 events) plus **`FUNDING_MODULE = 'funding'`** in `constants/activity-log.constants.ts`.
-
-Its own module rather than folding into `calculator` / `job_builder` because this is the only
-place in the app where `POST …/charge` moves real money and where a third party (a processor,
-a lender) decides the outcome — a portal filter on `funding` should read as the money trail for
-a job and nothing else. Modelled on `investment-center-log.ts`, which is the closest precedent
-(a mobile-first module with no web counterpart).
-
-| where | events |
-|---|---|
-| pricing panel | `funding_structure_changed`, `funding_payment_row_added`, `funding_payment_row_removed`, `funding_payment_method_selected`, `funding_payments_saved` |
-| the hand-off | `funding_opened`, `funding_edit_payments` |
-| link | `funding_link_requested` / `_blocked` / `_failed`, `funding_link_sent` / `_send_failed`, `funding_link_copied` |
-| advancing | `funding_payment_synced`, `funding_sync_all`, `funding_check_collected`, `funding_card_on_file`, `funding_card_charged` / `_declined`, `funding_loan_activated` |
-| finishing | `funding_result_changed`, `funding_submitted` / `funding_submit_blocked` |
-
-#### The endpoint-driven half lives in `useFunding`, not at the call sites
-
-Every funding endpoint already funnels through that hook, so a new action cannot ship unlogged —
-but the deciding reason is that **the outcome only exists there**. `sync`'s 200 `message` is what
-the lender actually said (`Lender approved part of the request`), and a `402` on a charge is the
-difference between *"the card was charged"* and *"the card was declined and nothing moved"*; a
-call site sees neither. `useFunding` gained an optional third arg, `logCtx`
-(`{ userId, calculatorId, calculatorTitle }`), and `ResultJobModal` a `calculatorId` prop —
-display never uses it, it is what links the money back to the quote it came from.
-
-⚠️ **`paymentFor(pid)` snapshots the row BEFORE the call.** Every one of these endpoints returns a
-MUTATED record, so reading afterwards would describe a charged card as "charged" in the very event
-that says it was charged — and on a failure the row may not come back at all.
-
-#### Four rules that are not stylistic
-
-- ⚠️ **The hosted-page URL is never logged, and no function in `funding-log.ts` accepts one.** It is
-  a bearer credential scoped to one payment — anyone holding it can complete that payment. The
-  channel and destination are logged instead (the server already stores them as `sentChannel` /
-  `sentTo`). **`funding_link_copied` therefore takes no argument**: what matters is that the
-  credential left the app, which no other event covers. Asserted by a test that scans the payload
-  for anything url-shaped.
-- ⚠️ **Failures are their own actions, not a flag.** A timeline showing only `funding_card_charged`
-  hides a run of declines, and a `402` leaves the row un-charged so the retry is a genuine second
-  attempt. Same for the link: `_blocked` (the `charges_enabled` gate — nobody at the table can fix
-  it) is deliberately distinct from `_failed`.
-- ⚠️ **A refused submit carries the server's `blockers` verbatim.** "The rep could not submit" is
-  only useful with what stopped them, and that list is already itemised and ordered.
-- ⚠️ **There is no event for a simulated lender outcome, and there must not be** — see the removal
-  below. A decision reaches this module only through `funding_payment_synced` (what the lender
-  actually said) or `recordDecision` (a real verdict reported out of band).
-
-#### ⛔ REMOVED: the Scenario Simulator and `POST …/{pid}/mock-provider`
-
-Removed on request. The dashed panel at the foot of the Funding screen stood in for a homeowner or
-a lender that does not exist in development, so a tap on it wrote an **invented approval or decline
-onto a real funding record** — and those rows then sat in `attemptHistory` beside genuine ones with
-nothing distinguishing them.
-
-Gone: `components/funding/ScenarioSimulator.tsx` (deleted), `FundingEndpoints.mockProvider` +
-`FundingService.mockProvider`, `useFunding`'s `mockProvider` / `mockDisabled`, `FundingView`'s
-`onSimulate` / `mockDisabled` props, and `MOCK_PARTIAL_RATE` in `utils/funding.ts`.
-
-⚠️ **`recordDecision` STAYS.** It looks similar and is not: `POST …/{pid}/decision` records a
-lender's *real* verdict reported to the rep out of band, which is a documented production path.
-Only the invented one is gone.
-
-⚠️ A test asserts the route is **absent** (`FundingEndpoints` has no `mockProvider`, and no endpoint
-builds a path containing `mock`) rather than merely deleting the old assertion — re-adding it should
-fail in CI, not ship. If a simulator is ever wanted again it belongs behind a build flag, not in the
-service every rep's device carries.
-
-#### The flow the funding was reached through rides on `meta.action`
-
-Follow-up: *"we just append the module type with the meta action because we need to make
-a difference in the log … either the user open the funding module from rehash, sale or my
-deals flow … make sure the main action type should remain the funding, but inside meta we
-need to update the action for each module."*
-
-The funding screen is identical in all three flows, so the rows were indistinguishable.
-Every action is now composed as **`<flow>_<baseAction>`** — `rehash_funding_card_charged`,
-`sale_funding_opened`, `my_deals_funding_submitted` — with `meta.fundingSource` carried
-alongside.
-
-⚠️ **`module_type` stays `funding` for all three.** The flow is never the module, so one
-portal filter still returns the whole money trail for a job. That was the explicit ask.
-
-- **`FUNDING_SOURCES`** (`constants/activity-log.constants.ts`) is the vocabulary;
-  **`resolveFundingSource({ lead, mode })`** is the single answer — `mode === 'edit'` →
-  `my_deals`, else `lead.isRehashed === true` → `rehash`, else `sale`.
-- ⚠️ **The FLOW out-ranks the lead's history**: `mode: 'edit'` is tested FIRST, so a
-  rehashed lead opened from My Deals files under `my_deals`. The two cannot collide today
-  (the deal-edit wizard has no funding step), so this is a documented decision, not an
-  observed case — and `isRehashed` is matched strictly against `true`, since a truthy
-  string off an API record must not reclassify a plain sale.
-- ⚠️ **The prefix is applied in exactly ONE place — `fire()`** — which rewrites the bare
-  `action` each emitter passed in. That is why every emitter routes through a single call:
-  a newly added event cannot ship unprefixed. A test drives all 18 emitters and asserts it.
-- ⚠️ **An unknown source leaves the action BARE rather than defaulting to `sale`.** A mount
-  site that forgets then shows up in the data as "origin unknown" instead of being silently
-  filed under a flow it never came from. `composeFundingAction` is also idempotent, so a
-  double call can't yield `rehash_rehash_funding_opened`.
-- The base name keeps its `funding_` segment, so an existing portal filter on `*funding_*`
-  matches prefixed and bare rows alike. **`baseFundingAction()`** strips it back off so the
-  portal labels from the 29 base names and badges from `fundingSource` — 29 cases, not 87.
-- `DynamicDealCenterScreen` resolves it once and passes `fundingSource` to both
-  `ResultJobModal` mounts; the sheet threads it into `useFunding`'s `logCtx` and its own
-  `fundingLog`. ⚠️ Deliberately a plain `const`, not a `useMemo`: it is a STRING, so there
-  is no identity to stabilise, and every hook in that component sits after the edit-mode
-  early return — a needless hook there costs a `rules-of-hooks` error.
-
-Verified with 25 tests (`__tests__/utils/funding-log-source.test.ts`): the resolver's three
-answers plus the precedence and the strict `isRehashed` check; compose/strip round-trips,
-idempotence and the bare-on-unknown rule; and an end-to-end sweep firing **all 18 emitters
-in each of the three flows** — every action prefixed, every `module_type` still `funding`,
-`fundingSource` mirrored, actions still distinct, verbs untouched, and the no-source
-regression guard. Failure variants (`_card_declined`, `_link_blocked`, `_submit_blocked`)
-carry the prefix too with the rest of the meta unchanged.
-
-#### …and the `lead_result_field_entry` rows carry it too
-
-Follow-up: *"when i input any value for down payment or financing and also when i changed my
-payment methods from the rehash screen than in the logs there is no option that will guide us
-that this change is from rehash module, sale module or my deals module … other logs are
-define clearly but these logs not clear."*
-
-Correct, and they are **not funding-module rows at all** — which is why the flow prefix missed
-them. The down-payment and payment-method rows the rep sees come from
-**`useOutcomeLogging`** under `module_type: 'lead_result_field_entry'`. (Entering a down
-payment fires one because it flips `primaryDownMethod` from `''` to a real key, which the
-form diff sees as a `downPaymentMethod` change.)
-
-That hook now takes an optional **`source`** and stamps each row the same way — the flow
-composed onto `meta.action` plus `meta.fundingSource`, reusing `composeFundingAction` so the
-two modules can never drift apart.
-
-- ⚠️ **All six `logEvent` sites route through ONE local `stamp()`**, for the reason `fire()`
-  exists in `funding-log.ts`: six per-site edits are six chances to forget, and a row that
-  silently loses its origin is the bug being fixed.
-- ⚠️ **It is opt-in, and it has to be.** `useOutcomeLogging` has **three** callers — the
-  dynamic `ResultJobModal`, the classic `DealCenter/OutcomeModal` and
-  `lead-center/ResultLeadModal` — and the WEB app emits the same strings into the same
-  module. With no `source`, `stamp` returns the meta untouched, so the other two callers and
-  web parity are byte-identical. Only the Dynamic Deal Center's sheet passes one.
-- ⚠️ **`'lead field changed'` keeps its space-separated web-parity spelling.** The prefix is
-  composed in FRONT of it (`rehash_lead field changed`) rather than replacing it, so a portal
-  matching with `includes(...)` keeps working. `module_type` is likewise untouched — same
-  principle as leaving `funding` alone.
-- **Two base actions are new**: `lead_result_field_auto_populated` and
-  `lead_result_field_entered`. Those rows carried NO `meta.action` before, and one is added
-  only when a flow is known, so nothing changes for a caller that passes none.
-- ⚠️ On this module an un-prefixed row therefore means *"a different screen emitted it"*, not
-  *"a sale"* — a distinction worth keeping in mind on the portal.
-
-**Amount-as-typed is still not logged here.** `downPayment` is deliberately absent from the
-dynamic sheet's `outcomeForm`, so site `lead_result_field_entered` never fires from it: the
-amounts are already on `<flow>_funding_payments_saved`, which carries the COMPLETE breakdown
-at Confirm. Adding a debounced per-edit row would duplicate that and reintroduce the
-per-keystroke noise the funding vocabulary avoids.
-
-Verified with 4 more tests in `funding-log-source.test.ts` (29 total): each outcome action
-composed for each flow, the web-parity substring surviving the prefix, every one stripping
-back through `baseFundingAction`, and all four left EXACTLY as they were when no flow is
-passed. tsc 44 (baseline unchanged); `useOutcomeLogging.ts` and `ResultJobModal.tsx` are both
-eslint-error-free, the latter still at its HEAD count of 65 problems.
-
-#### What is deliberately not an event
-
-**Amounts as they are typed** — that would be a row per keystroke. The method pick and the Confirm
-save are the two events that describe the split, and `funding_payments_saved` carries the COMPLETE
-breakdown (the same list the server treats as authoritative), so the deal is reconstructable from
-that one row. A **refused** structure switch is not logged either: nothing changed, and recording it
-would put a structure change in the timeline that never happened. A method **re-picked to the same
-value** is not a change (same rule as `InvestmentPanel.selectPaymentChoice`).
-
-⚠️ `logFundingRowAdded` / `logFundingRowRemoved` fire **outside** the `setRows` updater. React may
-invoke an updater more than once, which would double-log; the removed row is also read before the
-update, since afterwards the event is the only record that money was ever assigned there.
-
-Verified with 35 tests (`__tests__/utils/funding-log.test.ts`, `LoggerService` mocked): the module
-and actor on every row, a `userId`-less call as a no-op, absent identity fields omitted rather than
-blank; each event's verb and action string; both failure variants of the link, the charge and the
-save; a QR send carrying no destination; a 502 logged as a failure rather than a delivery; the
-approved figure beside the ask on activation, `approvedAmt` omitted when absent but a genuine `0`
-kept; blockers verbatim; and two vocabulary guards — every verb one already in use across the app,
-and all 18 actions distinct and `funding_`-namespaced. tsc 44 (baseline unchanged); `funding-log.ts`,
-its test and `activity-log.constants.ts` are eslint-clean, `ResultJobModal.tsx` is at its exact HEAD
-count (65 problems, 0 errors) and `DynamicDealCenterScreen.tsx` at its HEAD 21 pre-existing errors.
-
-, so a patch script writing
-``` `${money(total)}` ``` silently produces ``` `${money(total)}` ``` — the money
+`$$` in the REPLACEMENT string is an escaped literal `$`, so a patch script writing
+``` `$${money(total)}` ``` silently produces ``` `${money(total)}` ``` — the money
 formatted with no currency symbol. Tests caught it (`"Payments add up to 900"`). **Use a
 function replacer** (`s.replace(from, () => to)`) in any script that writes a template
 literal containing `$`.
@@ -5966,6 +3901,48 @@ passes that rect as `anchorRect`:
 `HorizontalDraggableTabs` gained `onShowPackageInfo` and reads `calc.isFullPackage`. **The classic deal
 center never sets that flag**, so its tabs are untouched.
 
+#### …and the STORED title carries the box too
+
+Follow-up: *"i want you to add this emoji with the payload of calculatore title when full package
+includes"*, with a devtools capture of `PUT /lfcalculators/{id}` reading
+`title: "G+VMax+Versa+S+FWrap+FBoard+FAluminum"` while the tab above it showed the package badge.
+
+Everything above is a RENDERING swap — the surfaces replace the derived name with the icon, and the
+name itself never changed. The portal has no such rendering and only ever sees the string, so a
+package was indistinguishable there from a long product list. **New `FULL_PACKAGE_TITLE_PREFIX`
+(`'📦 +'`)**, applied in `computeDerivedTitles`.
+
+- **Named at the SOURCE, so nothing can drift.** `resolveSafeTitle` (the PUT payload) and `retitle`
+  (the in-memory `tab.title`, which the `calculator viewed` log sends as `calculatorTitle`) both read
+  that one function — the same reasoning as the customer-name ticket above, where naming the calculator
+  at the source fixed the portal without touching either log.
+- **The derived name survives behind the prefix** (`📦 +G+VMax+S+FWrap+FBoard`), rather than being
+  replaced by the badge's `+FBoard` extras. The mobile badge can afford to drop the letters because the
+  ⓘ lists what a package includes; a bare `+FBoard` in the portal would name only the leftovers.
+- ⚠️ **Applied LAST, after the `(SM)`/`(LG)` and duplicate-price passes.** Prefixing the BASE name
+  would put the emoji inside the grouping key that disambiguation runs on. Tested: two identical
+  packages at different prices still read `(SM)` / `(LG)`, and at the same price still read `⚠️ … ⚠️`.
+- ⚠️ **Idempotent by construction** (`startsWith` guard). The hydrate path reads the server's
+  already-prefixed title back in as `storedTitle`, and `retitle` recomputes over it on every mutation.
+- ⚠️ **A MANUAL rename is left alone** — the rep chose that name. Unreachable today (the dynamic tab
+  menu offers only Duplicate/Delete), so it is a guard rather than a live case.
+
+⚠️ **No double box on any surface**, because every one of them replaces the name outright when
+`isFullPackage`: `HorizontalDraggableTabs` renders `icon + packageExtras` and `FullPackageTitle` renders
+`icon + extras`, neither printing `title`. The two places that DO print the raw title are the Job
+Tracker "Add This Job" modal (`JobTrackerButton title={activeTab?.title}`) and the delete-confirm
+sheet — both now show the box, which is correct but is the visible reach of this change beyond the
+payload.
+
+⚠️ **Existing rows are not migrated.** A package saved before this reads without the box until its next
+save; the prefix is added by the ordinary retitle pass, not by a backfill.
+
+Verified with 9 tests (`__tests__/screens/DynamicDealCenter/full-package-title.test.ts`) driving the real
+`computeDerivedTitles`: the ticket repro, extras kept in the stored name, a non-package untouched, an
+empty calculator keeping its placeholder, the size-suffix and duplicate-price passes both surviving,
+idempotence asserted as exactly ONE 📦 after a re-derive, a manual rename untouched, and no schemas → no
+prefix. tsc adds nothing; `tab-naming.ts` and the test are eslint-clean.
+
 Verified with 12 tests (`__tests__/screens/DynamicDealCenter/full-package-tab.test.ts`) over a
 gutter-roofline schema: the four-part package, `Versa` in place of `VMax`, each of the four missing in
 turn, the field-by-field runtime transition, clearing a value, an add-on not counting as the guard,
@@ -6654,6 +4631,123 @@ wanted on pre only.
 tsc: error set identical to HEAD. `PhotoMatchStep.tsx` is byte-identical to its HEAD eslint baseline
 (31 warnings, 0 errors); the iOS bundle builds (HTTP 200).
 
+### Public Sans is now the app-wide default, so Android's device font can't win
+
+Ticket: *"some of the fonts on android are the android default font, not public sans … make sure all
+fonts are connected and are public sans … make sure public sans will show even though we change the
+font from over android device setting."*
+
+**The fonts were never missing.** All nine upright faces are bundled and registered on both platforms
+(`src/assets/fonts` + `react-native.config.js`; `UIAppFonts`; `android/app/src/main/assets/fonts`). The
+gap is that a `<Text>` only gets Public Sans when something **names a face** — the NativeWind `font-*`
+classes do (`tailwind.config.js` maps every one of them to a `PublicSans-*` file, ~1,450 sites) and the
+**~850 inline `style={{ fontWeight: '700' }}` sites do not**. With no `fontFamily` each platform falls
+back to its own system font: on Android that is **whatever the user picked in the device font setting**.
+
+**Pure `src/utils/default-font.ts`** (`resolveFontPatch`) decides the face; it is applied from the
+`ScaledText` / `ScaledTextInput` wrappers in **`index.js`** — the same wrappers that do tablet font
+scaling, and which already patch the `react-native` exports, so text inside third-party components
+(navigation headers, chat, pickers) is covered too rather than 201 files being edited.
+
+⚠️ **The util is INERT without that `index.js` wiring**, and it has already been lost once: `a96b3ac`
+committed `default-font.ts` alone, leaving nothing that imports it — which reads on device exactly like
+the original bug. If unclassed text is following the device font again, check `index.js` FIRST.
+
+#### ⚠️ Naming a face is NOT enough on Android — the WEIGHT has to go with it
+
+`ReactFontManager.createAssetTypeface` resolves a family + weight by looking for the FILE
+`fonts/<family><variant>.ttf`. So `PublicSans-Regular` + `fontWeight: '700'` looks for
+**`PublicSans-Regular_bold.ttf`**, misses, and falls through to
+`Typeface.create("PublicSans-Regular", BOLD)` — an unknown family — so Android returns the **system
+font, synthetically bolded**. Silent, and indistinguishable from the missing-font bug.
+
+Every patch is therefore a PAIR — the face **plus `fontWeight: 'normal'`**:
+
+| | why the pair works |
+|---|---|
+| Android | `TypefaceStyle.nearestStyle` stays NORMAL (or ITALIC), so the exact `.ttf` is loaded |
+| iOS | `RCTFontUtils` reads the name, recovers its real family, then `fontWeight = (fontWeight != 0.0) ?: RCTGetFontWeight(font)` — and `normal` **IS** `UIFontWeightRegular`, which is literally `0.0`, so the named face's own weight wins |
+
+⚠️ This is the exact pair `tailwind.config.js` has always emitted (every `fontWeight` value there is
+remapped to `'normal'`) — so it is not a new rendering path, just one applied to the styles that had
+none. Do not "tidy" those `'normal'`s away in either place.
+
+#### What it deliberately leaves alone
+
+- ⚠️ **Any font that is not ours** — `Ionicons`, `MaterialCommunityIcons`, … Every icon in the app is a
+  `<Text>` with an icon `fontFamily`; rewriting those to Public Sans would replace every icon with a
+  missing glyph. Tested.
+- ⚠️ **`fontWeight: 'normal'` / `400` beside a face that is already ours.** That value is usually not an
+  author's opinion — Tailwind emits it mechanically next to every `font-*` family class — so honouring
+  it would turn **every `font-bold` in the app back into a regular face**. A heavier explicit weight
+  DOES win, because that is a real instruction and it is also the Android trap above
+  (`font-sans` + `fontWeight: '700'`), where iOS already resolves Public Sans Bold and Android does not.
+
+⚠️ **iOS changes too, and that is the point.** Unstyled text there was San Francisco; it is now Public
+Sans, so the two platforms finally agree and match the design system. Scope it to Android with a
+`Platform.OS` test in `index.js` if that is ever unwanted — but then the platforms diverge again, which
+was the complaint one ticket earlier.
+
+⚠️ **Not covered, by nature:** `Animated.Text` (one site, `CustomCameraModal`'s zoom label — RN's
+`Animated` namespace wraps the internal Text module, not the patched export), and anything the OS draws
+itself (`Alert`, native date pickers, WebView/PDF content).
+
+⚠️ **Font SIZE is untouched.** The device's text-size setting still scales the app (`allowFontScaling`
+stays on) — that is accessibility, and this ticket is about the typeface.
+
+#### …and the follow-up: the last Text still following the device font was ITALIC
+
+Ticket, with an Android screenshot whose system font was a script face: *"this text should be change if
+we change the font from the android settings"* — pointing at `Leads/index.tsx`'s
+`className="text-[10px] italic"` caption (*All Self Gen Leads will be archived end of day unless
+deleted*), rendering in that script font while everything around it was Public Sans.
+
+Italic was the one case the first pass skipped, because no italic face was bundled. **Fixed by shipping
+the missing faces** rather than by dropping the slant: `PublicSans-Regular_italic.ttf` and
+`PublicSans-Bold_italic.ttf`, taken from the official OFL source (`uswds/public-sans`) and verified to
+carry the same `Public Sans` family name (and the italic bit, at weights 400/700) as the nine upright
+faces — which is what lets iOS find them, since it matches on family + the italic trait, never on the
+file name.
+
+⚠️ **Dropping `italic` was NOT an option**, and this is worth knowing before anyone "simplifies" it:
+`LeadCenter/DraggableText.tsx` lets the rep CHOOSE Italic / Bold Italic on an annotation, and
+`agreement/blocks/SignatureSectionBlock.tsx` uses italic as the stand-in for web's cursive signature
+font. Forcing those upright would have broken two features to fix a caption.
+
+⚠️ **An italic style may name ONLY those two families**, and the file NAMES are load-bearing. Android
+looks for `fonts/<family>_italic.ttf`, so the files are named after the family the resolver asks for —
+not after the fonts' own `PublicSans-Italic` / `PublicSans-BoldItalic` PostScript names. Adding
+`PublicSans-SemiBold` to `ITALIC_FACE` selection without shipping `PublicSans-SemiBold_italic.ttf`
+sends that text **straight back to the device font**, silently. A heavier italic therefore renders Bold
+Italic rather than Black Italic.
+
+⚠️ And it is the `fontWeight: 'normal'` half of the pair that keeps `nearestStyle` at **`ITALIC`** rather
+than `BOLD_ITALIC` — without it Android would look for `PublicSans-Bold_bold_italic.ttf` and miss.
+
+⚠️ Linked by hand rather than by re-running `react-native-asset`: two `UIAppFonts` entries plus the four
+`project.pbxproj` entries each font needs (`PBXBuildFile`, `PBXFileReference`, the group's children, and
+the Resources phase), modelled on the existing `PublicSans-Light.ttf` rows. Both files pass
+`plutil -lint`. **iOS needs a rebuild for the new resources to reach the bundle.**
+
+⚠️ **`ios/revDSM_Sales/Info.plist` and `project.pbxproj` are CRLF** — editing them in text mode rewrote
+every line to LF and turned a 10-line change into a 262-line one. Use `newline=''`. (Same trap already
+recorded here for `dynamic-deal-diff.ts` and `EditCustomerModal.tsx`.)
+
+Verified with 14 tests over the real resolver: both repros (an inline weight with no family; the italic
+caption), a style with no font information at all, every one of the nine weights mapping to a face that
+is actually bundled and always paired with `'normal'`, italic resolving to one of exactly the two
+shipped `_italic` families across all nine weights, a bold italic surviving the Tailwind pair, icon
+fonts untouched upright AND italic, the named-face + heavier-weight re-derive, patches returned as the
+SAME frozen object per face (so style diffing sees no change), odd weights (450/1000/50) snapping to a
+real file, and junk reading as "no opinion". tsc adds nothing (48 before and after — the four above the
+old 44 are the parallel offline branch's own test files); `index.js`, `default-font.ts` and the test are
+eslint-clean; the Android release bundle builds (exit 0).
+
+⚠️ Needs a device check (this repo cannot render-test): set a custom system font on Android and confirm
+the app ignores it, italics included; and watch the tight inputs — Public Sans has different
+ascent/descent than SF, so the Leads search field (whose descender clipping was tuned in an earlier
+ticket) is where a metric shift would show first.
+
 ### Pre-Install references drop the rep's ANNOTATED copies
 
 Ticket: *"inside the installer when user open the lead and go to the step pre install photos, at that
@@ -6693,6 +4787,160 @@ Verified with 7 tests over the real builder, including the repro asserted agains
 `Annotated Damage Notes` negative, a slot holding only an annotated copy, an annotated copy not standing
 in for a skipped slot, a clean slot unchanged, and empty input as a no-op. tsc error set unchanged; the
 util and its test are eslint-clean.
+
+### The install-request status moved onto the ACTION BUTTON, and greys the whole card
+
+Ticket: *"these status are shown on top on the installer side but we need to show these status on the
+button instead of shown on the top … you can display these status on the button where we currently
+show the location icon Resume Appointment"*, then five corrections — *"also pick the colour of the text
+for the button"*, *"the button should not be transparent type, the button's look should be same as the
+previous"*, *"lead card color, button and the text colour should be same according to the status text
+colors"*, *"use the same colour for the card that is used for the RESULTED lead — no need to use the
+yellow, blue and other colour"*, and finally, against a resulted card, *"the can't do work status is
+still displayed on the top instead of shown on the button"*.
+
+`InstallerJobCard` rendered `installStatusPhrase(job)` as its own chip row above the Lead ID and the
+button as `📍 Resume Appointment`. The phrase is now the button's LABEL, **the chip row is gone
+entirely**, and the card wears `JOB_CARD_COLORS.RESULTED` grey while it carries one.
+
+| | before | now (phrase present) |
+|---|---|---|
+| chip row above Lead ID | always, when a phrase exists | **never — removed** |
+| button | `📍 Resume Appointment` | `Pending Install Reset` — solid, white label, no pin |
+| button, RESULTED job | `Resulted - Cant Do Work!` | `Install Can't Do Work` — the phrase wins |
+| border / wash / arrival time / address pin / button | `state.color` (green resume, orange start) | **`#9e9e9e`** |
+
+⚠️ **The row was not free.** "Pending Install Can't Do Work" is nearly thirty characters, which is why
+the chip needed a row of its own rather than the arrival-window slot — so removing it takes a whole row
+off a card that already carries five, and the button gives the phrase the full width the chip was
+competing for.
+
+#### A RESULTED job is no exception — `workflowState` outranks the outcome label
+
+The chip first survived there, on the reasoning that a resulted button is spoken for by its outcome —
+and that is precisely the card the reporter came back on: an `INSTALL CAN'T DO WORK` chip sitting
+directly above a `Resulted - Cant Do Work!` button, the same sentence twice. Then, on the follow-up
+(*"get the button status from this object — `workflowState: "Install Can't Do Work"`"*), the phrase was
+made to win the BUTTON on those cards too.
+
+So `showPhraseOnAction` is **`!!workflowPhrase && !loading`** — no `!resulted` arm — and such a card
+reads `Install Can't Do Work` rather than `Resulted - Cant Do Work!`.
+
+⚠️ **The two labels are not interchangeable.** The phrase is composed SERVER-side from where the
+*request* has got to; `resultedActionLabel` is derived HERE from `job.status`. Dropping the
+`Resulted - ` prefix loses nothing, because the card already carries the **RESULTED** badge top-right.
+
+`resultedActionLabel` still answers every resulted job carrying no phrase, which is most of them —
+`installStatusPhrase` returns null for a `resulted` `workflowState`.
+
+⚠️ **The card's resulted TREATMENT is untouched by this.** Its `#F4F6F8` ground, `0.85` opacity and the
+RESULTED badge are all still keyed on `job.resulted`, not on the phrase — only the button's words
+change. And `accent` is the same grey either way, since `state.color` for a resulted job already IS
+`JOB_CARD_COLORS.RESULTED`.
+
+`showPhraseChip` and the whole `workflowPhraseColor` helper went with the chip; the top-right
+**RESULTED** badge is a different element and is untouched.
+
+#### The colour: one grey, not three tones
+
+`accent` is now `showPhraseOnAction ? JOB_CARD_COLORS.RESULTED : state.color`, and every consumer
+follows for free — border, the `+ '1A'` wash, the arrival time, the address pin, `actionBg`/`actionFg`.
+
+⚠️ **Four designs were sent back getting here. Do not re-derive them.**
+1. **Button on the card accent, white label** — the status read as an ordinary green Resume card.
+2. **Button as a tone WASH** (`tone + '33'` behind `tone`, i.e. the chip widened to the row) — rejected
+   as *"transparent type"*: it reads as a disabled or secondary control, and this button is neither,
+   since the tap still starts or resumes the visit.
+3. **The whole card in the phrase's tone** (amber pending / red `cantDoWork` / blue `rescheduled*`) —
+   rejected outright: a list where every card is a different hue is a list with no signal in it.
+4. **Keeping the chip for resulted jobs** — the duplicate above; the phrase now takes their button.
+
+What the final answer rests on is that these jobs all share the one fact that matters — **the office is
+holding them, so they are not the crew's ordinary work** — and `JOB_CARD_COLORS` already has the word
+for that.
+
+⚠️ **Grey the COLOUR, not the resulted TREATMENT.** The card keeps its ordinary `+ '1A'` wash and full
+opacity; the resulted card's `#F4F6F8` ground and `0.85` dim say *this visit is over*, which a
+pending-reset job flatly is not — its button still starts or resumes the job.
+
+⚠️ **`solidAction = !isPreview || showPhraseOnAction`.** A phrase button stays SOLID even on a preview
+card, so the wash is reserved for a genuine preview. The preview signal is not lost: such a card still
+resolves to `UPCOMING`, so it still drops the accent bar, and its tap still explains why it will not
+open.
+
+#### Smaller decisions
+
+⚠️ **The location pin is dropped with the label** (`showActionIcon`) — the pin belongs to an action that
+takes the installer somewhere, and a status report doesn't go anywhere. Same reasoning that dropped it
+from the resulted bar. The text's `ml-2` is therefore keyed on the spinner/pin **actually being there**
+(`loading || showActionIcon`) rather than on `resulted`, or a phrase button would inherit a margin that
+pushes its centred label off centre.
+
+⚠️ The phrase renders **verbatim, not `.toUpperCase()`** as the chip did: at the button's 16 px
+`font-medium` a thirty-character phrase in caps would hit `numberOfLines={1}` and truncate, and the
+button's own typography is what makes it read as a label rather than a badge.
+
+⚠️ **`loading` is the one state that keeps the phrase book** — the button is a spinner + "Starting Job…"
+for that instant.
+
+⚠️ **Nothing was changed in `utils/installer-card-state.ts`.** `installStatusPhrase` /
+`resolveJobCardState` are untouched — a phrase in `workflowState` still falls through
+`BY_WORKFLOW_STATE` to `isJobInProgress(job)`. Only `state.color` is overridden, so the accent bar still
+draws for the two live states and the tap still starts vs resumes exactly as before; the card just says
+it in grey.
+
+⚠️ `workflowPhrase` / `showPhraseOnAction` **moved UP** the file, above `accent`, which now derives from
+them. `actionBg` / `actionFg` stayed with `isPreview`.
+
+tsc 46 (baseline unchanged); `InstallerJobCard.tsx` is at its HEAD eslint baseline (4 warnings,
+0 errors). ⚠️ The file is **CRLF** — `newline=''` on both ends.
+
+⚠️ Needs a device check (this repo cannot render-test): no status chip anywhere, a phrase card fully
+grey including its border and arrival time with a solid grey button and a white label, a RESULTED job
+carrying a phrase reading `Install Can't Do Work` on its button while keeping its dimmed ground and its
+RESULTED badge, and a phrase card still opening the job on tap.
+
+### My Installs flashed a pull-to-refresh spinner every time the crew came back from a job
+
+Ticket: *"when i came back from the lead it shows me a loader on top some time, or some times shows me
+the white space — fix this UI glitch"*, with a screenshot of the green refresh spinner sitting above
+the first card and the list pushed down.
+
+`screens/Installer/index.tsx` bound the control straight to the query's own refetch flag:
+
+```tsx
+const { …, refreshing, refresh } = useInstallerJobs(period);   // refreshing = isRefetching
+…
+<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+```
+
+⚠️ **`isRefetching` is true for EVERY refetch, not just a pull** — and this screen refetches on every
+return by design (`useFocusEffect` → `refresh()`, because a job's status changes while the crew is
+inside it and `my-jobs` is the only thing that knows). So walking back from a job set
+`RefreshControl.refreshing` **programmatically**, which on iOS inserts the control at the top of the
+list and pushes the content down: the stray spinner AND the band of white space, both from the same
+line, for a gesture nobody made.
+
+Fixed with a **`pullRefreshing` state that only `handleRefresh` sets** — exactly the flag, and the
+reasoning, the Lead Center's own pull-to-refresh already documents. The focus refetch still runs; it
+just does so silently, which is what it was always meant to do.
+
+⚠️ `handleRefresh` became `async` and releases the flag in a **`finally`**: on a failed read the
+spinner would otherwise stick forever and the list would look frozen with no way to clear it.
+
+⚠️ `refreshing` is no longer destructured from `useInstallerJobs` — the hook still returns it, and it
+is a fine thing to read for a *quiet* indicator, just never for `RefreshControl.refreshing`.
+
+⚠️ **Not the cause, and not changed:** `loading` (`isLoading`) is false throughout, because
+`staleInstallerJobs` invalidates with `refetchType: 'none'` and TanStack keeps the cached rows — so
+there is no empty-list flash, and the full-screen spinner is reserved for a genuinely dataless key
+(which is what a Today ⇄ Tomorrow switch is).
+
+tsc 46 (baseline unchanged); `Installer/index.tsx` is at its HEAD eslint baseline (5 warnings,
+0 errors). ⚠️ The file is **CRLF** — `newline=''` on both ends.
+
+⚠️ Needs a device check (this repo cannot render-test): open a job, come back, and confirm the list
+paints in place with no spinner and no gap — while a real pull still spins and still re-reads.
 
 ### The sold scope renders as SECTIONS and COMBINATIONS, not one bullet list
 
@@ -6778,6 +5026,82 @@ tsc 107 (baseline unchanged); zero eslint errors, and the two edited components 
 ⚠️ Needs a device check — this repo cannot render-test, and the whole ticket is layout: the section
 headings, one block per combination, and the `Extras` block reading as a block rather than a heading.
 
+#### …and the number is the CARD's, not the section's
+
+Follow-up, with a screenshot of a LeafFilter card reading **Combination #1** three times over three
+different gutter widths: *"the same combination number is displayed on every combination — make it auto
+increment according to the receiving combination, if 4 received then show #1, #2, #3, #4. These should
+be for every case of combinations."*
+
+⚠️ **`combo.index` RESTARTS AT 1 IN EVERY SECTION, and a subcategory is routinely authored as several
+one-combination sections** — LeafFilter arrives as four, one per gutter width (this file already records
+that, under the addendum-review ticket). So trusting the payload's own index was guaranteed to print
+`#1` once per section. New **`renumberScopeCombinations`** assigns the number by position across the
+whole card once its sections are built, and `toCombination` no longer reads `index` at all.
+
+That is also what the sales card does — Soffit: *Vinyl Soffit* #1, *Porch Ceiling SqFT* #2, *Nailer
+Build Out* #3 — so the two surfaces now agree on what "Combination #2" refers to.
+
+⚠️ **An empty combination is dropped BEFORE numbering**, so a card whose first combination held nothing
+still starts at #1 rather than #2. Numbers name what is on screen; a gap invites the installer to look
+for a run that was never sold.
+
+⚠️ **`flattenScopeSections` counts the CARD too** (`countCombinations`), not the section it is walking.
+Left per-section, four one-combination sections would each have read as a lone *unnumbered* run while
+the cards above them numbered 1–4.
+
+Verified with 4 more tests (25 total): the repro — asserted first against the payload, whose three
+sections really do all carry `index: 1`, so the old rule could only ever have produced `[1, 1, 1]` —
+each number still belonging to the width it was entered against; a stated index that repeats AND one
+that skips (`7`) both ignored across two sections; an empty combination not consuming a number; and the
+flat form numbering off the same count.
+
+#### …and an Extras colour is folded into the quantity it belongs to
+
+Follow-up, with a screenshot of the Extras block: *"make sure when we receive the Ground Spout value
+then append with the colour also, like in the image"* — `Ground Spout ⟷ 3 · Black`,
+`Replace Corner Miter ⟷ 3 · Cream`, while `Wedges` / `Straps` / `Modify Height` stay bare.
+
+**The colour is a SEPARATE field with its own id**, immediately following the quantity it belongs to.
+Settled from `payload for testing extras.txt` (`section_1781685061809__extras`), which stores exactly
+that alternation:
+
+```
+field_1781873407628_9hhi0__textvalue-3      2            ← Ground Spout
+field_1781873462203_n44h8__color            "Black"      ← its colour
+field_1781873537058_tk016__textvalue-uuu1l  2
+field_1781873540360_ny9fm__color-gem7v      "Forest Green"
+```
+
+⚠️ **The pairing is POSITIONAL, and it has to be**: the colour carries nothing linking it back — no
+`dcField`, no parent id, a different field id from its quantity. The authoring convention is the only
+link there is, and `utils/dynamic-job-builder/engine/locked-color-defaults.ts` leans on the same one on
+the sales side, for the same absence.
+
+⚠️ **A colour folds ONLY into a QUANTITY** — `isQuantityValue`, a bare number and nothing else. That
+single guard is what makes the rule safe, and it is deliberately strict:
+
+| the field before the swatch | folds? | why |
+|---|---|---|
+| `Ground Spout: 3` | ✅ | a count, and the swatch is its colour |
+| `Gutter Partial?: Yes` | ❌ | a SELECTION — folding it reads as though "Yes" was measured in Musket Brown |
+| `Size: 1 x 4`, `Footage: 111'`, `6"` | ❌ | contains a number; is not one |
+| `Measurements` (a grid) | ❌ | expands to several rows; never a fold target |
+| another colour (`Track Color` → `Wire Color`) | ❌ | falls out of the same test — a colour's value is not a number |
+
+⚠️ **A swatch authored with NO label arrives as its schema KEY** (`color`, `color_gem7v`,
+`color-uq368`) — the portal's own fallback — so a standalone one is displayed as **`Color`**
+(`BARE_COLOR_KEY`). An authored label is kept verbatim, so `LeafFilter Color` and `Track Color` are
+untouched. A folded colour shows no label at all, being part of its quantity's value.
+
+`buildFieldRows` runs the pass over BOTH a section's loose fields and a combination's, so a folded
+colour rides into the combination headline too (`5 · Clay`) where the quantity was unlabelled.
+
+Verified with 8 more tests (33 total): the screenshot's own row set, the selection case left alone, a
+colour never folding into a colour, `1 x 4` / `111'` refused, a grid refused, folding inside a
+combination and into its headline, a colour with no quantity before it, and an empty colour skipped
+rather than folded as a blank.
+
 ### The Investment Center never saw the down payment entered on the DROP screen
 
 Ticket: *"Sale Resulted | Down payment did not save or reflect in Contract Details … when i add down
@@ -6832,6 +5156,307 @@ unchanged); `drop-prices.ts` and the new test are eslint-clean and `InvestmentPa
 baseline (56 problems: 1 pre-existing error / 55 warnings).
 
 ⚠️ Both files are CRLF — `newline=''` on both ends.
+
+### The Notification Center rebuilt to the `notify-ui.txt` design
+
+Ticket: *"this file contains the notification UI design … update the Notification UI according to this
+design"*, with `notify-ui.txt` (an HTML/CSS mock, in the repo root) and two screenshots of the finished
+list. The screen was a flat `FlatList` of hairline-separated rows on the app's plain white; it is now
+the mock's layout — a warm paper ground, **day sections**, one bordered **card** per run of
+notifications about the same lead, and repeats collapsed behind a disclosure.
+
+| the design | how it is built |
+|---|---|
+| paper ground `#F6F5F0`, white cards, `#E6E3DA` rules | a `C` token block in the screen, copied from the mock's `:root` |
+| `Today · Sep 7` / `Yesterday` / `2 days ago` headings | `SectionList` + `formatDayLabel` |
+| ~~one card per lead, hairline between its rows~~ | **SUPERSEDED — one card per NOTIFICATION.** See the follow-up below |
+| 3px pine rail + wash on an unread row | `styles.rail` + `itemUnread`, clipped by the card's `overflow` |
+| 40px tinted bubble, four families | `describeNotification` now returns `{ icon, color, tint, family }` |
+| monospace lead chip (`41PCDLG` / `SelfGen`) | `leadTagOf` |
+| ~~`+1 more update on this lead` / `Show breakdown`~~ | **SUPERSEDED — removed.** See the follow-up below |
+| `Unread ⑷` count pill | `unreadCount` from the existing badge query |
+| `You're viewing the last 3 days` | `endHintFor` — **derived**, see below |
+
+**Every rule lives in the pure `src/utils/notification-groups.ts`**, for the reason
+`utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist: the screen pulls in React Native and
+is untestable under jest here, and each of these fails **silently** — a row filed under the wrong day, a
+mongo id printed as a lead tag, or two unrelated notifications merged into one card all read as a
+styling quirk rather than an error.
+
+#### ~~The grouping is three passes, and each guard is load-bearing~~ — ALL REMOVED
+
+> ⚠️ **SUPERSEDED in full by "…and then the grouping was reversed" below.** Everything in this
+> subsection — the card runs, the stacking, the `lead-issued` aggregation and every guard on them — was
+> deleted on request. It is left here only so a reader who finds `cardKeyOf` / `stackKeyOf` in the git
+> history knows what they did and why they are gone. **Do not reintroduce any of it.**
+
+
+1. **Day buckets**, then 2. **cards** — a RUN of *adjacent* rows sharing a card key, not a global
+   group-by, so an hours-old row can never be pulled up beside a fresh one and read as though they
+   happened together — then 3. **items**, where repeats of one event family collapse into the newest and
+   the rest become the disclosure's sub-rows.
+
+- ⚠️ **A row with no resolvable identity keys on its OWN id**, so it can never merge into a neighbour.
+  Telling the rep two unrelated notifications concern the same lead is worse than an extra card.
+- ⚠️ **`addendum-signed` carries its `outcome` in the stack key.** The title reads "Addendum signed" for
+  a DECLINE too (the rule `push-routing.addendumOutcome` states), so collapsing the two would hide a
+  refusal behind an approval.
+- ⚠️ **A collapsed item is unread when ANY row behind it is.** The disclosure hides rows; a hidden
+  unread would leave the bell counting something the rep has no way to reach. For the same reason the
+  tap marks **every** `ids` entry read, not just the head.
+- **`lead-issued` AGGREGATES** rather than collapsing — consecutive batches sum to
+  `4 new leads issued to you` with `Show breakdown`, which is the design's own row. An absent `count`
+  counts as **one, never zero**, which would erase the row from its own total.
+
+#### Dates are parsed as TEXT, and the day heading and the clock share that parse
+
+⚠️ The repo's standing rule (`utils/job-change-summary.ts`) is that an offset ISO string shifts the
+calendar day either side of midnight. The stronger reason here is **consistency**: `dayKeyOf` and
+`formatClockTime` read the same `YYYY-MM-DDTHH:MM` prefix, so a row filed under "Yesterday" can never
+print a time from today. Change one and you must change the other.
+
+⚠️ **A future day is clamped to `Today`.** Reachable without any clock being wrong — `createdAt` can be
+UTC while the rep is behind it — and "Tomorrow" on a notification that has already arrived is the worse
+answer. `daysBetween` builds both sides through `Date.UTC` on the parsed components so neither can be
+shifted by the device timezone.
+
+#### `leadTagOf` reads a FIXED key list and REJECTS a mongo id
+
+The design's chips are `41PCDLG`, `41AK` and `SelfGen` — the lead's human number, or its `leadCode`
+when the number is `"N/A"` (which is exactly what a self-gen lead stores; see `response-one.txt`).
+
+⚠️ **The push payload's `leadId` is a mongo id while the lead RECORD's `leadId` is that human number.**
+Both are read from the same key, and the 24-hex guard is the whole reason that is safe: whichever the
+backend sends, the right one renders and the wrong one never does. Without it the chip would be filled
+on every row with a database key that looks deliberate. `'N/A'`, the other placeholders, and anything
+over 16 characters are rejected too, and an unrecognised payload yields `''` so the chip is simply
+absent — the discipline `readDocumentGroup` sets.
+
+#### Two deliberate divergences from the mock
+
+⚠️ **The heading is not a serif.** The mock loads Source Serif 4; this app bundles **Public Sans only**
+(and naming an unbundled family drops that text straight back onto the device font — the rule the
+app-wide font ticket records). The heading is carried by size and tighter tracking instead.
+
+⚠️ **The unread wash is a FLAT tint, not the mock's gradient.** `rgba(30,92,67,0.06) → transparent` needs
+a gradient library this repo does not ship, and pulling `react-native-svg` in behind every row to fake
+one is not worth it. `#F1F6F2` is that tint flattened over white; the 3px pine rail is what actually
+carries the signal.
+
+⚠️ **`You're viewing the last 3 days` is DERIVED from the oldest row loaded**, not hardcoded, and only
+shows once `hasMore` is false. The app has no retention window to quote, so a fixed number would be a
+claim nothing backs. A list that only reaches today reads *"You're viewing today's notifications"*.
+
+#### Smaller decisions
+
+- **The colour block is literals, not `useTheme()`.** The paper ground is not a colour the app's palette
+  has; reading `colors.background` would put the cards on plain white and lose the separation the whole
+  design rests on. The app is light-only today (`ThemeProvider` forces it) — give the block a dark twin
+  if that changes.
+- **`stickySectionHeadersEnabled={false}`** — a pinned day heading over a card list reads as a second
+  header, and the design pins only the screen header.
+- **`overflow: 'hidden'` on the card** clips the rail and the row wash to its corners. Safe only because
+  the card carries no shadow; iOS drops a shadow on a view that sets it (the inspection-photo card note
+  above).
+- **Mark all read stays MOUNTED at zero**, dimmed and disabled, rather than being swapped for a spacer —
+  the header no longer reflows the moment the last notification is read.
+- The tap handler, `resolvePushRoute` branch for branch, and the "always fetch `all`, filter unread
+  client-side" rule are **unchanged**; only the presentation moved.
+
+Verified with 29 tests (`__tests__/utils/notification-groups.test.ts`) driving the real helpers over the
+design's own list verbatim: the three day sections in order, the two `41AK` signature rows in ONE card
+with the repeated addendum collapsed behind `+1 more update on this lead`, the two batches aggregating to
+`4 new leads issued to you`, every chip the screenshots show, and a single notification's own title and
+message surviving untouched; plus the guards — a hidden unread still marking the item unread, an accepted
+and a declined addendum never merging, two different leads never merging, two identity-less rows never
+merging, a lead's later run staying its own card, an absent count reading as one, a timestamp-less row
+filed under `Earlier` rather than dropped, the mongo-id rejection in all three of its forms, the offset
+ISO asserted against what a naive `Date` parse would give, month/year day arithmetic, and empty/junk input
+as a no-op. tsc 44 (baseline unchanged); `notification-groups.ts` and `useNotifications.ts` are
+eslint-clean and `Notifications/index.tsx` drops 5 warnings → 1 (the pre-existing `no-void`); the iOS
+bundle builds.
+
+⚠️ Needs a device check — this repo cannot render-test and the whole ticket is layout: the day headings,
+the card grouping on a lead with several notifications, the disclosure expanding, and that the chip shows
+a readable lead number rather than nothing. **If every chip is absent, the payload is naming no human
+lead id** — add the key the backend actually sends to `LEAD_TAG_KEYS`; do not relax the mongo-id guard.
+
+#### …and then the grouping was reversed: ONE CARD PER NOTIFICATION
+
+Follow-up on the same screen: *"currently you have implemented the group notification UI but i need a
+separate notification for each notification like grouping in message, issued lead etc — convert it from
+group to single."*
+
+Every merging pass is **gone**. `buildNotificationSections` is now a mapping, not a grouping: day
+sections, and inside each one **one card per history row**, in the order the API returned them.
+
+| removed | what it used to do |
+|---|---|
+| `NotificationCard` + `cardKeyOf` | merged adjacent rows about the same lead into a shared card |
+| `stackKeyOf` / `buildItem`'s stack | collapsed repeats of one event behind `+N more update on this lead` |
+| `issuedCount` / the `lead-issued` aggregate | summed two batches into `4 new leads issued to you` |
+| `stackNoun` / `plural` | the disclosure copy |
+| `NotificationItem.ids` / `.stack` / `.moreLabel` / `.lessLabel` | the disclosure's data |
+| `styles.itemDivided` / `stackMore` / `subList` / `subRow` | the in-card divider and the sub-rows |
+| the screen's `expanded` state + `toggleStack` | which stack was open |
+
+- **`NotificationSection.data` is now `NotificationItem[]`** — the card layer is gone entirely, so the
+  screen's `renderItem` paints one row and `styles.card` picked up the `flexDirection: 'row'` the item
+  used to carry. Each card is its own `TouchableOpacity`.
+- **Mark-read is back to one id.** The tap cleared every `ids` entry precisely because a stack could
+  hide unread rows; with nothing hidden, `row.id` is the whole of it.
+- **`item.key` is the history id**, which is unique per notification and stable across a refetch, so a
+  pressed row cannot swap identity under the rep.
+- ⚠️ **Rows are still bucketed by day in ARRIVAL ORDER, not sorted.** An out-of-order list therefore
+  renders two sections with the same label rather than silently rearranging the rep's notifications —
+  the API returns them newest-first, and resorting here would hide a paging bug instead of showing it.
+- ⚠️ **`CHAT_EVENTS` is no longer imported by the grouper** (nothing keys a card any more), so the note
+  on the export names the three behaviours that remain. The export stays — it is still the one list, and
+  the de-duplication it bought is what makes that true.
+
+⚠️ The **day sections, the paper ground, the bubbles, the lead chip, the unread rail and wash, the tabs
+and the derived end hint are all unchanged.** Only the merging was reversed; this is not a revert of the
+redesign.
+
+Verified with the same suite, rewritten (24 tests): the design's own nine rows emitting **exactly nine
+items** with `[7, 1, 1]` per day, the order preserved row for row, the two `41AK` signatures staying
+apart with their own times (`10:56` / `10:54`), both `lead-issued` batches keeping their own server
+title rather than aggregating, each row carrying its own unread state, item keys being the history ids,
+a timestamp-less row still filed under `Earlier`, and an out-of-order list rendering `Today / Yesterday
+/ Today` rather than resorting. tsc 44 (baseline unchanged); `notification-groups.ts` is eslint-clean
+and `Notifications/index.tsx` is at its HEAD warning count; the iOS bundle builds.
+
+### A resulted lead's `agreement-signed` notification opens the LEAD, not the Job Builder
+
+Ticket: *"when the lead is resulted and the user click on the signed agreement then do not move the user
+to the agreement screen — user should move to the lead main screen."*
+
+`agreement-signed` resolves to `{ kind: 'jobBuilder' }`, and the reasoning on that route is sound for
+the normal case: signing the agreement is what **unblocks** submitting the job, so the rep's next action
+is "Complete Job" and Job Docs is a detour. Once the lead is **resulted** that stops being true — the
+deal lives on the Lead Center, which is where the agreement, the contract details and the addendums all
+are — and dropping the rep into a builder for a job that is already done reads as though the app has
+lost the submission.
+
+**New pure `src/utils/lead-result-status.ts`** (`isLeadResulted` / `normalizeResultStatus`), for the
+reason `utils/push-routing.ts` is pure: the two callers are both untestable under jest here and they
+**must** answer identically.
+
+⚠️ **BOTH tap paths changed, and that is the point.** The check runs in
+`screens/Notifications/index.tsx` *and* in `hooks/usePushNotifications.ts`, against the same helper — a
+row and the banner that raised it landing on different screens is the exact failure the shared routing
+module exists to prevent. Changing one and not the other would be invisible until a rep noticed.
+
+⚠️ **An ALLOWLIST of resulted statuses, NOT the `NON_RESULTED_STATUSES` deny-list** that
+`widgets/components/LeadCard.tsx` and `screens/DealDetail` use (`['lfLead','selfGenerated','scheduled']`,
+web parity with `job-card.js`). The two are not interchangeable here: a deny-list reads a **missing or
+unknown** status as resulted, and since this rule now decides where a notification lands, that default
+would silently divert every status-less lead away from the Job Builder. The allowlist fails the other
+way — anything unrecognised keeps the behaviour the app already ships. Its values are
+`JobDocsSection.isResulted`'s, so the screen the rep is sent to agrees about why they are there.
+
+- **Placed FIRST in the branch**, above the `isDynamic === false` test and above `resolveBuildIds`, so a
+  resulted lead also skips the calculator round trip. Resulted therefore outranks an explicitly dynamic
+  push — the dynamic flag says the builder *exists*, not that it should be opened.
+- **Navigated with no `tab`**, so the Lead Center opens on its own default (`job_docs`) — the lead's
+  main view rather than a sub-tab chosen by a notification.
+- **Statuses are normalized** (lower-cased, non-alpha stripped), so `Demo No Sale` → `demonosale`.
+- ⚠️ Three other copies of the non-resulted rule exist (`LeadCard.tsx`, `DealDetail/index.tsx`,
+  `utils/lead-activity-log.ts`). They were **left alone** — pointing a shared list at big unrelated
+  screens is not something a notification ticket should carry — but they are the obvious next adopters.
+
+Verified with 12 tests (`__tests__/utils/lead-result-status.test.ts`): the captured lead's own
+`status: "sale"`, all ten resulted spellings including both `cancelled`/`canceled`, each of the four
+status keys, the three non-resulted statuses still reaching the builder, **a missing / empty /
+unrecognised / non-string status reading FALSE** (the allowlist's whole purpose, asserted directly),
+junk input as `false` rather than a throw, and the decision expression itself — asserted in the same
+ORDER both call sites run it: not-resulted → `DynamicDealCenter`, resulted → `LeadCenter`, resulted
+winning over `isDynamic: 'true'`, the legacy `isDynamic: 'false'` diversion untouched on a lead that is
+not resulted, and `addendum-signed` / `chat-message` / `lead-cancelled` all unaffected. tsc 44 (baseline
+unchanged); the new util is eslint-clean and both call sites are at their exact HEAD warning counts
+(1 and 4 pre-existing `no-void`); the iOS bundle builds.
+
+⚠️ Needs a device check: sign an agreement on a lead that is already resulted and confirm the banner and
+the Notification Center row both open the Lead Center, and that a NOT-yet-resulted lead still opens the
+Job Builder on its Summary step.
+
+### `chat-reaction` — the tenth event type, and the duplicate list it exposed
+
+Contract: **`CHAT-REACTION-NOTIFICATIONS.md`** (repo root, REVUIUX-97 QA item 5). A rep is not told when
+someone reacts to their message. Reactions already exist and already broadcast over the socket
+(`reaction-added`); what is missing is the push. §6 of that document says **the app must ship first, or
+at least together** — if the backend sends `chat-reaction` to a build that does not know it,
+`resolvePushRoute` returns `null` and every reaction is a banner whose tap does nothing and a list row
+reading *"There is nothing more to open for this one."*
+
+**This is the app half only. Nothing is sent yet**, and every edit below is INERT until the backend
+adds `NotificationEventTypes.ChatReaction` — which is exactly why it is safe to land now.
+
+| site | change |
+|---|---|
+| `PushEventType` (`utils/push-routing.ts`) | `'chat-reaction'` added to the union |
+| `CHAT_EVENTS` (same file) | the event added — **and the set EXPORTED**, see below |
+| `describeNotification` (`hooks/useNotifications.ts`) | `case 'chat-reaction'` → slate + `emoticon-happy-outline` |
+| `NOTIFICATION_TYPES` (`services/api/notifications.ts`) | added, so `NotificationHistoryType` stays honest |
+| `invalidationKeysFor` | **no case, deliberately** — now written down rather than assumed |
+| `usePushNotifications` | untouched: it is generic over `isRenderable` / `channelForEvent` |
+
+#### ⚠️ Membership of `CHAT_EVENTS` is the whole implementation — and there were TWO copies
+
+Adding the event to that one set gives it the destination (`resolvePushRoute`'s chat branch already
+reads `chatId` and treats an absent `leadId` as a channel), the Android channel (`channelForEvent` →
+`CHANNEL_MESSAGES`, so a rep who has muted chatter is not woken by a thumbs-up), and foreground
+suppression — which matters more here than for a message, since reacting is cheap and usually happens
+while both parties are looking at the thread.
+
+⚠️ **The Notification Center redesign had quietly made a SECOND copy of that list.**
+`utils/notification-groups.ts` declared its own `CHAT_EVENTS` for card keying, so the contract's
+one-line change would have covered three of the four behaviours and silently missed the fourth: a
+reaction would key on its `leadId` (or, on a channel, on its own row id) instead of `chat:<chatId>`,
+and would sit in a card of its OWN beside the thread it belongs to. The set was **exported from
+`push-routing` and imported** by the grouper. That import is now gone — the ungrouping follow-up above
+deleted the card keying entirely, so nothing keys a card any more — but **the export stays**: it is the
+one list, and keeping it that way is what stops the eleventh event type repeating this.
+
+#### The two places the contract's text had to be translated rather than copied
+
+⚠️ **`describeNotification`'s suggested `color: '#0B6A85'` is stale.** That is the OLD chat tint,
+written before the function moved to the redesign's four families; taking the hex literally would make
+the reaction the one chat row painted a fifth colour. It uses **slate** (`#3E5C78`), that colour's
+replacement, so a reaction still reads as chat. The document's actual instruction — *don't let it fall
+to `default` and show a grey bell in an "Other" group next to correctly grouped chat rows* — is what is
+honoured.
+
+⚠️ ~~**The disclosure label could no longer say "on this lead".**~~ **Moot** — the ungrouping follow-up
+above removed the disclosure, so a burst now renders as one row per reaction. §5's burst problem is
+therefore the BACKEND's to solve (its "notify once, then stay silent for N minutes" option), not
+something the list absorbs. Worth knowing if reps report a flooded Notification Center.
+
+#### Not done, and why
+
+- ⚠️ **Tapping does NOT scroll to the reacted message.** `messageId` is in the payload, but §3 files
+  this as an open question and says it needs an optional `messageId` on the `chat` `PushRoute` **and**
+  `ChatDetail` honouring it — the document's own words, *"a larger change than the rest of this
+  document, and worth deciding separately"*. The tap opens the thread, which is the contract's baseline.
+- **Every §5 decision is the backend's** — who is notified (proposal: the message author only, never
+  self-reactions), the burst rule, never notifying on `remove-reaction`, and whether a reaction writes
+  a history row at all. ⚠️ That last one has an app-side consequence: `isRenderable` currently ties
+  display and history together, so **banner-only would be the first exception to it** and is not
+  something the app can opt into per type today.
+
+Verified with 14 tests (`__tests__/utils/chat-reaction.test.ts`) driving the real functions over §2's
+payload verbatim: the lead reaction resolving to its thread, an **absent** `leadId` reading as a channel
+rather than a lead chat, a chat-less payload returning `null` instead of guessing, the messages channel,
+`isRenderable`, foreground suppression true for that exact thread and false for another chat or another
+screen, `invalidationKeysFor` returning the two notification keys and nothing lead-scoped, the reaction
+carding **with** its own thread (the regression above, asserted against the pre-fix list), a four-emoji
+burst rendering as four separate rows each keeping its own unread state, a reaction sitting beside a
+message from the same thread without merging into it, and a channel reaction rendering with no chip. tsc 44 (baseline unchanged); `push-routing.ts`,
+`notification-groups.ts`, `useNotifications.ts` and `notifications.ts` are eslint-clean; the iOS bundle
+builds.
+
+⚠️ Nothing can be checked on device until the backend sends the event. `npm run test-push -- --user=<id>
+--event=chat-reaction` (§6.4) is what fires a real payload without needing two accounts in a chat.
 
 ---
 
@@ -8817,6 +7442,247 @@ session hook clean.
 ⚠️ Still wants a device check. Repro: create a lead, reach Summary, **Schedule Appointment → Generate
 Dynamic Agreement**, sign, then watch the next `PUT …/outcome/{calcId}` and confirm
 `jobBuilder.dynamicJobState.agreements` is present alongside `scheduleTime`.
+
+### Job-builder logs diffed against WEB, payload key by payload key
+
+Ticket: *"we have to compare mobile logs with web and have to generate the same log in mobile just
+like web"*, with two portal lifecycle-timeline exports of the SAME config, same vertical, same tabs —
+`jobBuilderWeb.txt` / `jobBuilderLogsMobile.txt` (repo root).
+
+**The vocabulary was already right.** Both sides emit exactly `step_viewed` / `step_navigation` /
+`field_changed` under `module_type: 'job_builder'`, and the three `metadata` KEY SETS are identical —
+no key is missing on either side. Every divergence is in a VALUE:
+
+| key | web | mobile (before) | cause |
+|---|---|---|---|
+| `configId` | `6a71a118…` | **`null`** | read `configId`/`_id`; the normalizer stores `id` |
+| `stepNumber` / `fromStep` / `toStep` | `3` / `4` | **`1` / `2`** | indexed the UNLOCKED tabs |
+| `direction` | `next` / `back` | `forward` / `backward` | different words |
+| `result` | `Sale` | `sale` | mobile stores it lower-cased |
+| `jobBuilderId` | `N/A` | **the mongo lead id** | passed `jobId: leadId` |
+| a swatch's `fieldLabel` | `Wrap Color` | `Color` | hardcoded on `isColor` |
+
+⚠️ **`calculatorType` (`Unknown` on web vs `dynamic` on mobile) is NOT a divergence and was left
+alone.** Both platforms use the identical fallback chain
+(`jobBuilderData?.calculatorType || sessionMeta?.calculatorType || 'dynamic'`); web's capture simply
+carried a stored `'Unknown'`. Copying the string would have made mobile report less than it knows.
+
+#### `configId` was silently `null` on EVERY log
+
+`normalizeLightweight` (`useDynamicCalculatorSchemas`) moves the id onto **`id` and DELETES `_id`**,
+so `initialConfig?.configId || initialConfig?._id` could never resolve. Web passes `config?.id`.
+⚠️ The submit-payload call site in the same file already read `.id` — only the logging one had drifted,
+which is why nothing else looked broken.
+
+#### The step number came from the wrong index space, and the file already warned about it
+
+Web numbers against **`tabs = activeVertical?.tabs`** — the vertical's FULL tab list. Mobile used
+`currentTabIndex + 1`, an index into `nonSummaryTabs`, which is `availableTabs` filtered, i.e. the
+**UNLOCKED** tabs only. On a build whose earlier tabs were locked, Soffit therefore logged as step 1
+where web logged step 3.
+
+⚠️ **A step number that moves as tabs unlock is not a stable identifier for the portal** — the same tab
+reports a different number on two visits of one session. `currentStepIndex`'s own comment in
+`DynamicJobBuilderScreen` already records the two index spaces as a trap ("mixing them misaligns
+whenever a vertical has locked tabs"); the three logging calls were reading the wrong one. New
+`logStepNumberOf(tab)` is web's expression verbatim (`Math.max(1, tabs.findIndex(id) + 1)`) and feeds
+`stepNumber`, `fromStep` and `toStep` so the three can never disagree.
+
+#### `jobBuilderId` was the lead's mongo id, twice
+
+Web's `jobId` is the **human lead/job number** (`currentLead?.leadId || currentLead?.jobNumber || …`),
+and a lead with none stores the literal `'N/A'` — which is what its capture shows. Mobile passed
+`jobId: leadId`, so `jobBuilderId` and `leadId` were the same mongo id on every row and the job number
+appeared nowhere. Now `lead?.leadId || lead?.jobNumber || leadId`.
+
+#### The colour-label rule was a one-liner where web has a whole pass
+
+Mobile: `const fieldLabel = isColor ? 'Color' : field?.label || …` — so a swatch's **own authored
+label was discarded**. `Wrap Color` and every other named swatch logged as a bare `Color`, and two
+different colours in one section were indistinguishable on the timeline.
+
+Ported web's `buildSchemaFieldLabel` colour pass in full, plus the four helpers it needs —
+`COLOR_FIELD_TYPES` / `NON_OWNER_FIELD_TYPES`, `isColorFieldType`, `isGenericColorLabel`,
+`findColorOwnerLabel` / **`resolveColorFieldOwnerLabel`**, and **`resolveComboSectionLabel`**:
+
+- **A swatch with a real label keeps it** (`Wrap Color`), and `Color` is appended only when the base
+  does not already end in it (`/colou?rs?$/i`) — so it never reads `Wrap Color Color`.
+- **A GENERIC label (`Color` / `Colour` / `Custom Color` / `Colors`) carries no identity**, so it falls
+  back to `ownerLabel` — the nearest PRECEDING input in the section's field tree, which is the same
+  positional convention `utils/dynamic-job-builder/engine/locked-color-defaults.ts` relies on. That is
+  what turns an unlabelled Extras swatch into `Ground Spout Color`.
+- ⚠️ **Another colour picker can never be the owner** (`NON_OWNER_FIELD_TYPES`), or two adjacent
+  swatches would name each other.
+- **`resolveComboSectionLabel` gives an unlabelled combination section a stable ordinal**
+  (`Section 2`), so LeafFilter's four one-combination sections stop collapsing into four identical
+  `LeafFilter Combo #1` rows that the portal's viewer then de-dupes into one.
+- ⚠️ **An unlabelled swatch whose KEY is not a colour word logs as `color_gem7v Color`.** Web does
+  exactly the same (its `rawFieldLabel` is `label || key || id`), and it is asserted in the tests as
+  parity rather than "fixed" — diverging here would put two different labels on one field again,
+  which is the whole complaint.
+
+Verified with 13 tests driving the real helpers over the captured Fascia tab: the repro
+(`Fascia Wrap Combo #1 - Wrap Color`) **with the pre-fix expression asserted to yield `Color`**, a
+generic label resolving to its owner, no doubled word, a non-colour field untouched, the owner walk
+(preceding-not-following, never another swatch, descending into a stack, unknown id → `''`), the raw-key
+parity case, and the ordinal fallback for two unlabelled sections. tsc 48 (baseline unchanged); the
+util and the test are eslint-clean and `DynamicJobBuilderScreen.tsx` is at its HEAD baseline
+(49 problems: 2 pre-existing errors / 47 warnings). ⚠️ Both files are CRLF.
+
+⚠️ **Not changed: `DynamicDealEditScreen` still sends `direction: 'forward' | 'back'`.** That is the
+`my_deal` module's own log family, not job_builder, and it was outside this comparison — check it
+against web's `use-deal-edit-activity-log.js` before assuming it matches.
+
+### The Summary tab logs the scheduler OPENING, and every document add / remove
+
+Ticket: *"you have to add logs while we are trying to open Schedule Appointment"* (with the
+payload verbatim), plus *"three more logs — while update the agreement i mean remove it and press
+the update button… while we add the document (order sheet)… and while we remove the document"*.
+
+Four rows, all `module_type: 'job_builder'`, all from
+`widgets/components/dynamic-job-builder/agreement/SummaryFinalizeCards.tsx` (the card suite
+`DynamicJobBuilderScreen` renders through `VerticalSummaryTab` — the screen itself holds none of
+these handlers).
+
+| when | `action_type` | `meta.action` |
+|---|---|---|
+| the scheduler is OPENED | `click` | `appointment_scheduled` |
+| an Update REMOVES a filed agreement | `delete` | `agreement_removed` |
+| an Update ADDS order-sheet pages | `add` | `order_sheet_uploaded` |
+| an Update REMOVES an order sheet | `delete` | `order_sheet_removed` |
+
+**Only ONE of the four is new machinery; the other three are one path.** The scan sheet's Update
+is a single button for two different events — the rep may add pages, cross filed ones out, or both
+— and `DocumentScannerModal.onSave` hands back **only the survivors**, so a removal has to be
+recovered by diffing against what the card held before it opened.
+
+- **`logSchedulerOpened` is DISTINCT from the `change` row `saveAppointment` already files.** It
+  reports the appointment **as it stands when the rep opens the sheet**, so the portal can tell an
+  open that changed nothing from one that did. Fired from **both** entry points — the pencil on a
+  scheduled card and the `Schedule Appointment` button on an unscheduled one.
+  ⚠️ `date`/`timeWindow` go out as **`null`, not omitted**, on the unscheduled path: an absent key
+  reads as "not reported", and here it is genuinely "not yet set".
+- **The removal log is fired BEFORE the delete-only early return**, so a removal is recorded whether
+  or not the same Update also added something. The scanner has already awaited its `DELETE`s by the
+  time it calls back, so the row reports what happened rather than what was attempted.
+- **The agreement upload log was already there; the order sheet's was NOT.** Adding an agreement
+  left a trace and adding an order sheet left none. Both now go through one `logDocumentAudit`, so
+  the two categories can never file differently-shaped rows for the same act.
+
+⚠️ **`documentCount` counts the pages the rep ADDED, while `documents` (the S3 refs) come from the
+SERVER rows** — and the split is the point, not fussiness. `uploadNewFiles` resolves to the
+category's **whole server list**, so counting it would report "3 uploaded" for one new page (the
+trap the down-payment-receipt log records). But a locally-scanned page has **no `filePath`** — that
+is generated server-side — so the refs have to come from the rows that landed, picked as the ones
+the card did not already hold. `documentNames` sits beside them because a scanned page has a name
+long before it has a path, and `toDocumentRefs` drops a path-less row.
+
+**Rules live in the pure `src/utils/document-audit.ts`** — `documentAuditDescriptor`,
+`pickUnknownDocuments`, `buildDocumentAuditMeta` — for the reason `utils/uploaded-document-refs.ts`
+and `utils/addendum-drafts.ts` exist: the card pulls in React Native and is untestable under jest
+here, and a removal attributed to the wrong category, or a diff reporting a document nobody
+touched, leaves **no trace on the device**.
+
+- ⚠️ **`pickUnknownDocuments` takes the caller's `identityOf`, it does not re-derive one.** The card
+  already reconciles these documents across the scanner round-trip with its own `docIdentity`
+  (`serverId ?? _id ?? filePath ?? id ?? url ?? uri ?? name`); a second, subtly different notion of
+  "the same document" would report a removal on a document that is still on the card.
+- ⚠️ **A row with no resolvable identity is treated as KNOWN** — neither removed nor added. That is
+  the conservative direction on both sides: the scanner cannot have deleted what it could not
+  identify either, and inventing an event is worse than missing one.
+- **One primitive, both directions**: removals are `pickUnknownDocuments(priorList, survivorIds)`
+  and additions `pickUnknownDocuments(serverRows, priorIds)`. Naming them separately would have
+  meant two copies of the one rule that matters.
+- **`documentAuditDescriptor` is the WHOLE vocabulary** (4 rows). An unknown category yields `null`
+  and nothing is logged, rather than a row whose `action` the portal cannot route.
+- `agreement_uploaded` keeps the exact `fieldLabel: 'Agreement Uploaded'` it already shipped (web
+  parity — `document-summary-cards.js` labels the uploaded path that way and only the GENERATED
+  path plain `Agreement`), and `order_sheet_uploaded` matches the LEGACY job builder's own
+  `logOrderSheetUploaded`, so both builders file the same action for the same act.
+
+#### ⚠️ `appointment_scheduled` fires on **Yes**, not on "Generate Dynamic Agreement"
+
+Ticket: *"one log is calling in the wrong button — it should be call while we click the yes button
+instead of calling Generate Dynamic Agreement."*
+
+The `change` row was filed by `saveAppointment`, and **the create flow never calls `onConfirm`** —
+it calls `onGenerate` / `onUpload`, i.e. the two buttons on the *"Job Booked!"* card. So the row
+was only filed once the rep chose what to do with the booking, and a rep who booked the job and
+then closed the modal filed nothing at all. The booking happens one screen earlier, at
+**"Does this time work for the customer?" ▸ Yes**.
+
+- **New optional `onBooked` on `AppointmentSchedulerModal`**, fired from `handleAcceptSlot` (Yes)
+  AND `handleConfirmTBDStep` (the TBD path reaches the same card). Audit only — the appointment is
+  still persisted by `onGenerate` / `onUpload` / `onConfirm` exactly as before, so nothing about
+  when it is SAVED changed. Optional, so `SummarySection` and `EditContractDetailsModal` are
+  untouched.
+- **The log moved OUT of `saveAppointment`** into a named `logAppointmentScheduled`, called from
+  the booked callback and from `handleScheduleConfirm`. `handleScheduleAndGenerate` /
+  `handleScheduleAndUpload` no longer log, so one booking is still exactly one row.
+- ⚠️ **The booked row is suppressed in the EDIT flow** (`if (isEditingAppt) return`). Re-scheduling
+  a booked job commits at **Save Changes**, and with `requireScheduleAmendment` on it commits only
+  once the customer has **SIGNED** the amendment — logging at "Yes" would record a reschedule the
+  customer can still refuse. `handleScheduleConfirm` is that path's commit point and keeps the row.
+- ⚠️ **New `bookedAppointmentData(tbd)` takes `tbd` as an ARGUMENT, never reading `isTBD`.** Both
+  accept handlers set that state in the same tick, so reading it would see the previous value and
+  a TBD booking would log as a dated one. It also de-duplicates the appointment-shape expression
+  the two success-card buttons already repeated.
+
+tsc 48 (baseline unchanged); `SummaryFinalizeCards.tsx` (36 problems) and
+`AppointmentSchedulerModal.tsx` (78) are each byte-identical to their HEAD eslint baselines.
+⚠️ Both files are CRLF — `newline=''` on both ends.
+
+#### …and the three controls that OPEN a document sheet
+
+Follow-up: *"add click log for agreement and ordersheet as well just like we add for Scheduled
+Appointment — when we click generate a log with click action type will call; when we click add
+document from agreement same log will call, you can change in mata like if we are generating or
+adding; same like in order sheet."*
+
+Three more `action_type: 'click'` rows, one per control on the two document cards:
+
+| control | `meta.action` | `meta.source` |
+|---|---|---|
+| Agreements ▸ **Generate** | `agreement_generated` | `generate` |
+| Agreements ▸ **Add Document** | `agreement_uploaded` | `add_document` |
+| Order Sheets ▸ **Add Document** | `order_sheet_uploaded` | `add_document` |
+| either card's **pencil** | `<category>_uploaded` | `edit_documents` |
+
+⚠️ **The click carries the SAME `meta.action` as the act it leads to**, told apart only by
+`action_type: 'click'` — exactly how the scheduler's open row relates to the `change` row its
+confirm files. So the portal reads "they opened the agreement sheet" and "they filed an agreement"
+as one story rather than two vocabularies, and `source` says which control started it. The Generate
+row therefore reuses the exact `agreement_generated` / `fieldLabel: 'Agreement'` that
+`DynamicAgreementDialog` files when the document actually exists (web parity: only the GENERATED
+path is plain `Agreement`).
+
+⚠️ **The PENCIL is logged too, though the ticket named three controls.** It is the *same*
+`setScannerCategory(cat)` call — **Add Document simply becomes a pencil once the card holds a
+document** — so logging only the empty-state button would make the row stop firing the moment
+there is anything to edit. `source` keeps the two apart.
+
+⚠️ **`orderSheet` has no `generated` descriptor, on purpose**, so `buildDocumentOpenMeta` returns
+`null` there and nothing is logged: there is no order sheet generator, and aliasing it onto the
+upload row would report a document as produced by a button that does not exist.
+
+⚠️ **The open row deliberately carries NO `documentCount`/`documents`.** Nothing has been chosen at
+click time, and a `documentCount: 0` beside an action named `..._uploaded` reads as an upload that
+filed nothing.
+
+Verified with 5 further tests (20 in the suite): the Generate row matching the dialog's own payload
+verbatim, both Add Document rows, the pencil sharing the action but not the `source`, no count keys
+on an open row, and the order-sheet generate returning `null`.
+
+Verified with 15 tests driving the real helpers and the card's own `docIdentity` verbatim: the
+ticket repro (the crossed-out agreement reported, and only it), one of several removed, nothing
+removed, a survivor whose re-signed url changed still matching on `serverId`, an identity-less row
+inventing nothing, junk input as a no-op; the addition diff against a whole server list; and the
+meta — a removal carrying `filePath`/`bucketName`, the add counting **the pages added and not the
+server total** while still resolving its refs, a multi-page scan, a path-less row keeping its name,
+an unknown category as `null`, and the two categories never crossing. tsc 47 (baseline unchanged);
+`document-audit.ts` and its test are eslint-clean and `SummaryFinalizeCards.tsx` is byte-identical
+to its HEAD baseline (36 problems: 1 error / 35 warnings). ⚠️ That file is **CRLF** — `newline=''`
+on both ends.
 
 ### Edit Customer Details now logs opened / per-field change / saved
 

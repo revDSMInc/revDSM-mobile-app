@@ -107,7 +107,13 @@ export const fieldRows = (field: any): ScopeFieldRow[] => {
   if (!value) return [];
 
   const rawLabel = text(field?.label);
-  const label = !rawLabel || AUTO_LABEL.test(rawLabel) ? '' : rawLabel;
+  // A swatch authored with no label falls back to its schema KEY (`color`,
+  // `color_gem7v`), which is not something to print at an installer.
+  const label = !rawLabel || AUTO_LABEL.test(rawLabel)
+    ? ''
+    : BARE_COLOR_KEY.test(rawLabel)
+    ? 'Color'
+    : rawLabel;
 
   const isMeasurement =
     rawLabel.toLowerCase() === 'measurements' ||
@@ -116,25 +122,83 @@ export const fieldRows = (field: any): ScopeFieldRow[] => {
   return isMeasurement ? measurementRows(value, label) : [{ label, value }];
 };
 
+/**
+ * A field whose label reads as a colour — `color`, `color_gem7v`, "LeafFilter Color".
+ *
+ * The portal falls back to the schema field's KEY when a swatch is authored with no
+ * label, and a swatch's key is `color…` by convention, so both spellings arrive here.
+ */
+const COLOR_LABEL = /colou?r/i;
+
+/** The bare colour KEY, i.e. an unlabelled swatch — displayed as "Color". */
+const BARE_COLOR_KEY = /^colou?r([-_][a-z0-9]+)*$/i;
+
+/**
+ * Is this value a plain quantity?
+ *
+ * ⚠️ This is the whole guard on the pairing below, so it is deliberately strict: a bare
+ * number and nothing else. `Yes`, `1 x 4`, `6"`, `White 80` and `Left Side: 5` are all
+ * NOT quantities, which is what keeps a standalone swatch — the one that follows a
+ * selection rather than a count — reading as its own row.
+ */
+const isQuantityValue = (value: string): boolean =>
+  value !== '' && Number.isFinite(Number(value));
+
+/**
+ * A section's fields -> its rows, with each colour folded into the quantity it belongs to
+ * (`Ground Spout · 3 · Black`).
+ *
+ * ⚠️ **The pairing is POSITIONAL, and it has to be**: the colour is its own field with its
+ * own id, and it carries nothing linking it back — no `dcField`, no parent id. The
+ * authoring convention is a quantity immediately followed by its swatch, which is exactly
+ * what the Extras section stores (`…__textvalue-uuu1l: 2`, `…__color-gem7v: "Forest
+ * Green"`, alternating). `utils/dynamic-job-builder/engine/locked-color-defaults.ts`
+ * relies on the same convention on the sales side, for the same absence of a link.
+ *
+ * ⚠️ **A colour only folds into a QUANTITY.** A swatch that follows a SELECTION is a
+ * product choice in its own right — the gutter combination's `color: White 80` sits after
+ * `Gutter Partial?: Yes` — and folding that one in would read as though the selection had
+ * been measured. A colour therefore also never folds into another colour, which falls out
+ * of the same test: a merged or standalone colour's value is not a number.
+ */
+export const buildFieldRows = (fields: any[]): ScopeFieldRow[] => {
+  const out: ScopeFieldRow[] = [];
+
+  (Array.isArray(fields) ? fields : []).forEach((field: any) => {
+    const rows = fieldRows(field);
+    // A measurement expands to several rows and is never a colour — nothing to fold.
+    if (rows.length !== 1) {
+      out.push(...rows);
+      return;
+    }
+
+    const [row] = rows;
+    const previous = out[out.length - 1];
+
+    if (COLOR_LABEL.test(text(field?.label)) && previous && isQuantityValue(previous.value)) {
+      out[out.length - 1] = { ...previous, value: `${previous.value} · ${row.value}` };
+      return;
+    }
+
+    out.push(row);
+  });
+
+  return out;
+};
+
 const toCombination = (combo: any, index: number): ScopeCombination | null => {
   const rows: ScopeFieldRow[] = [];
   const headline: string[] = [];
 
-  (Array.isArray(combo?.fields) ? combo.fields : []).forEach((field: any) => {
-    fieldRows(field).forEach((row) => {
-      if (row.label) rows.push(row);
-      else headline.push(row.value);
-    });
+  buildFieldRows(combo?.fields).forEach((row) => {
+    if (row.label) rows.push(row);
+    else headline.push(row.value);
   });
 
   if (rows.length === 0 && headline.length === 0) return null;
 
-  const stated = Number(combo?.index);
-  return {
-    number: Number.isFinite(stated) && stated > 0 ? stated : index + 1,
-    headline: headline.join(' · '),
-    rows,
-  };
+  // Numbered by `renumberScopeCombinations` once the whole card is built — see there.
+  return { number: index + 1, headline: headline.join(' · '), rows };
 };
 
 const toSection = (section: any): ScopeSection | null => {
@@ -142,7 +206,7 @@ const toSection = (section: any): ScopeSection | null => {
     .map(toCombination)
     .filter((c: ScopeCombination | null): c is ScopeCombination => !!c);
 
-  const rows = (Array.isArray(section?.fields) ? section.fields : []).flatMap(fieldRows);
+  const rows = buildFieldRows(section?.fields);
 
   if (combinations.length === 0 && rows.length === 0) return null;
 
@@ -155,6 +219,28 @@ const toSection = (section: any): ScopeSection | null => {
   };
 };
 
+/**
+ * Combinations are numbered ACROSS THE WHOLE CARD, in the order they arrive.
+ *
+ * ⚠️ The payload's own `combo.index` restarts at 1 in every section, and a subcategory is
+ * routinely authored as several one-combination sections — LeafFilter arrives as four —
+ * so trusting it printed "Combination #1" three times on one card, over three different
+ * gutter widths. Position within the card is the only number that reads as an ordinal to
+ * the installer, and it is what the sales card shows (Soffit: Vinyl Soffit #1, Porch
+ * Ceiling #2, Nailer Build Out #3).
+ */
+export const renumberScopeCombinations = (sections: ScopeSection[]): ScopeSection[] => {
+  let n = 0;
+  return sections.map((section) => ({
+    ...section,
+    combinations: section.combinations.map((combo) => ({ ...combo, number: ++n })),
+  }));
+};
+
+/** Every combination on the card, however its sections are split. */
+const countCombinations = (sections: ScopeSection[]): number =>
+  sections.reduce((total, section) => total + section.combinations.length, 0);
+
 /** A row as one line of text — the flat `lines` form, and the bullet the cards draw. */
 export const rowText = (row: ScopeFieldRow): string =>
   row.label ? `${row.label}: ${row.value}` : row.value;
@@ -162,8 +248,10 @@ export const rowText = (row: ScopeFieldRow): string =>
 /** Every section flattened to one string per entered value. */
 export const flattenScopeSections = (sections: ScopeSection[]): string[] => {
   const lines: string[] = [];
+  // Counted across the card, like the numbering itself — otherwise four one-combination
+  // sections would each read as a lone unnumbered run.
+  const multi = countCombinations(sections) > 1;
   sections.forEach((section) => {
-    const multi = section.combinations.length > 1;
     section.combinations.forEach((combo) => {
       const parts = [
         ...(combo.headline ? [combo.headline] : []),
@@ -208,9 +296,11 @@ export const normalizeProductDetails = (raw: any): SoldProduct[] | undefined => 
     }
 
     subs.forEach((sub) => {
-      const sections = (Array.isArray(sub?.sections) ? sub.sections : [])
-        .map(toSection)
-        .filter((s: ScopeSection | null): s is ScopeSection => !!s);
+      const sections = renumberScopeCombinations(
+        (Array.isArray(sub?.sections) ? sub.sections : [])
+          .map(toSection)
+          .filter((s: ScopeSection | null): s is ScopeSection => !!s)
+      );
 
       out.push({
         id: text(sub?.id) || `${text(product?.id)}__${text(sub?.label)}`,

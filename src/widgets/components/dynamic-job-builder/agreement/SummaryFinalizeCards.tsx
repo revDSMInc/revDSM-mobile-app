@@ -20,6 +20,13 @@ import { AgreementRemoteSignModal } from '../../../modals/job-builder/AgreementR
 import { LeadService } from '../../../../services/api/leads';
 import { logEvent } from '../../../../services/api/LoggerService';
 import { logAgreementSigned } from '../../../../utils/activity-log/job-builder-logs';
+import {
+  buildDocumentAuditMeta,
+  buildDocumentOpenMeta,
+  documentAuditDescriptor,
+  DocumentOpenSource,
+  pickUnknownDocuments,
+} from '../../../../utils/document-audit';
 import { useAuth } from '../../../../hooks/useAuth';
 import { convertJpegToPdfAsync } from '../../../../utils/jpeg-to-pdf-native';
 import { PdfPreviewModal } from '../../../modals/PdfPreviewModal';
@@ -261,35 +268,84 @@ export function SummaryFinalizeCards({
   );
 
   // --- appointment -------------------------------------------------------
+  // The rep OPENED the scheduler — `action_type: 'click'`, distinct from the
+  // `change` row `saveAppointment` files when they confirm one. It carries the
+  // appointment as it stands at that moment, so the portal can tell an open that
+  // changed nothing from one that did.
+  //
+  // Fired from BOTH entry points — the pencil on a scheduled card and the
+  // 'Schedule Appointment' button on an unscheduled one. Nothing is set on the
+  // second, so `date`/`timeWindow` go out as null rather than being omitted: an
+  // absent key reads as 'not reported', and here it is genuinely 'not yet set'.
+  const logSchedulerOpened = () => {
+    if (!user?._id) return;
+    logEvent('click', {
+      user_id: user._id,
+      created_by: user._id,
+      module_type: 'job_builder',
+      meta: {
+        draft: true,
+        leadId,
+        date: scheduleTime?.date || null,
+        timeWindow: scheduleTime?.timeWindow || null,
+        isTBD: scheduleTime?.date === 'TBD',
+        tbdReason: scheduleTime?.reason || null,
+        customerName: scheduleTime?.customerName || customerName,
+        action: 'appointment_scheduled',
+      },
+    });
+  };
+
+  // appointment_scheduled (web parity: schedule-appointment-summary-card handleConfirm).
+  const logAppointmentScheduled = (data: any) => {
+    if (!user?._id) return;
+    logEvent('change', {
+      user_id: user._id,
+      created_by: user._id,
+      module_type: 'job_builder',
+      meta: {
+        draft: true,
+        leadId,
+        date: data?.date,
+        timeWindow: data?.timeWindow || null,
+        isTBD: data?.date === 'TBD',
+        tbdReason: data?.reason || null,
+        customerName: data?.customerName || customerName,
+        action: 'appointment_scheduled',
+      },
+    });
+  };
+
   // The scheduler's NEW-appointment flow (isEdit=false) never calls onConfirm — it
   // calls onGenerate ("Generate Dynamic Agreement") or onUpload ("Add Presigned
   // Agreement"). Both must (a) persist scheduleTime and (b) proceed to the next
   // step, exactly like the normal JB. onConfirm is only used by the EDIT flow.
   const saveAppointment = (data: any) => {
     onUpdateRootState?.('scheduleTime', { ...data, customerName: data.customerName || customerName });
-    // appointment_scheduled (web parity: schedule-appointment-summary-card handleConfirm).
-    if (user?._id) {
-      logEvent('change', {
-        user_id: user._id,
-        created_by: user._id,
-        module_type: 'job_builder',
-        meta: {
-          draft: true,
-          leadId,
-          date: data?.date,
-          timeWindow: data?.timeWindow || null,
-          isTBD: data?.date === 'TBD',
-          tbdReason: data?.reason || null,
-          customerName: data?.customerName || customerName,
-          action: 'appointment_scheduled',
-        },
-      });
-    }
     setSchedulerVisible(false);
     setIsEditingAppt(false);
   };
 
-  const handleScheduleConfirm = (data: any) => saveAppointment(data);
+  // The rep answered YES to the offered window (or confirmed a TBD reason) and the
+  // modal is showing 'Job Booked!'. THAT is when the appointment is booked, so the
+  // row is filed here — not on 'Generate Dynamic Agreement' / 'Add Presigned
+  // Agreement', which are what the rep does with the booking afterwards. Those two
+  // still persist it (the create flow never calls onConfirm), they just no longer
+  // log it, so one booking is one row either way.
+  //
+  // ⚠️ NOT in the EDIT flow. Re-scheduling a booked job commits at 'Save Changes',
+  // and when `requireScheduleAmendment` is on it commits only once the customer has
+  // SIGNED the amendment — logging at 'Yes' would record a reschedule the customer
+  // can still refuse. `handleScheduleConfirm` covers that path.
+  const handleAppointmentBooked = (data: any) => {
+    if (isEditingAppt) return;
+    logAppointmentScheduled(data);
+  };
+
+  const handleScheduleConfirm = (data: any) => {
+    logAppointmentScheduled(data);
+    saveAppointment(data);
+  };
 
   const handleScheduleAndGenerate = (data: any) => {
     saveAppointment(data);
@@ -411,6 +467,58 @@ export function SummaryFinalizeCards({
     }
   };
 
+  // The rep pressed one of the card's controls — Generate, Add Document, or the
+  // pencil that REPLACES Add Document once the card holds something. Same relation
+  // to the act it leads to as `logSchedulerOpened` has to `saveAppointment`: the
+  // same `meta.action`, told apart by `action_type: 'click'`, so an open that led
+  // nowhere is legible beside the one that filed a document.
+  //
+  // ⚠️ The PENCIL is logged as well as the two buttons the ticket named. It is the
+  // same `setScannerCategory(cat)` call — Add Document simply becomes a pencil once
+  // a document exists — so logging only the empty-state button would make the row
+  // stop firing the moment the card has anything on it. `source` keeps the three
+  // apart.
+  const logDocumentSheetOpened = (
+    cat: DocCategory,
+    kind: 'uploaded' | 'generated',
+    source: DocumentOpenSource
+  ) => {
+    if (!user?._id || !leadId) return;
+    const meta = buildDocumentOpenMeta(cat, kind, leadId, source);
+    if (!meta) return;
+    logEvent('click', {
+      user_id: user._id,
+      created_by: user._id,
+      module_type: 'job_builder',
+      meta,
+    });
+  };
+
+  // One document event — an Update that ADDED pages, or one that REMOVED filed
+  // ones. Both categories go through here so an agreement and an order sheet can
+  // never end up filing differently-shaped rows for the same act, and so the
+  // action/label pairing lives in one place (`utils/document-audit.ts`) rather
+  // than being spelled out at each call site.
+  const logDocumentAudit = (
+    cat: DocCategory,
+    kind: 'uploaded' | 'removed',
+    docs: any[],
+    refRows?: any[]
+  ) => {
+    if (!user?._id || !leadId || !docs.length) return;
+    const descriptor = documentAuditDescriptor(cat, kind);
+    const meta = buildDocumentAuditMeta(cat, kind, leadId, docs, refRows);
+    if (!descriptor || !meta) return;
+    // `module_type: 'job_builder'` so the portal's Forever Record renders it (it
+    // only routes document rows from job_builder logs).
+    logEvent(descriptor.eventType, {
+      user_id: user._id,
+      created_by: user._id,
+      module_type: 'job_builder',
+      meta,
+    });
+  };
+
   const handleScannerSave = async (cat: DocCategory, images: any[]) => {
     const key = cat === 'agreement' ? 'agreements' : 'orderSheets';
     // Reflect REMOVALS immediately, in BOTH display sources. The scanner already
@@ -427,6 +535,15 @@ export function SummaryFinalizeCards({
     const remainingDraft = toFlatFiles(cat === 'agreement' ? agreements : orderSheets).filter(keep);
     onUpdateRootState?.(key, remainingDraft.length ? [{ files: remainingDraft }] : []);
 
+    // Audit log: pages the rep crossed out before pressing Update. `priorFiles` is
+    // the very list handed to the scanner as `initialFiles`, so the diff is against
+    // exactly what was on screen — and it is logged BEFORE the delete-only early
+    // return below, so a removal is recorded whether or not the same Update also
+    // added something. The scanner has already fired the DELETEs by the time it
+    // calls back, so this reports what happened, not what was attempted.
+    const priorFiles = cat === 'agreement' ? agreementFiles : orderSheetFiles;
+    logDocumentAudit(cat, 'removed', pickUnknownDocuments(priorFiles, surviving, docIdentity));
+
     const newFiles = (images || []).filter((f) => f?.isNew !== false);
     if (!newFiles.length) {
       // Delete-only Update: no upload to piggyback the refresh on, so drop the cached
@@ -441,27 +558,22 @@ export function SummaryFinalizeCards({
     const displayDocs = await uploadNewFiles(cat, newFiles);
     if (displayDocs) {
       commitUploaded(cat, displayDocs);
-      // Audit log: a scanned/presigned agreement was uploaded (web parity — the
-      // generated path is logged in DynamicAgreementDialog as agreement_generated).
-      if (cat === 'agreement' && user?._id) {
-        // `module_type: 'job_builder'` so the portal's Forever Record renders it (it
-        // only routes agreement rows from job_builder logs — matches the regular JB's
-        // `logAgreementUploaded`).
-        logEvent('add', {
-          user_id: user._id,
-          created_by: user._id,
-          module_type: 'job_builder',
-          meta: {
-            draft: true,
-            leadId,
-            fieldName: 'agreement',
-            // Web parity (document-summary-cards.js): the UPLOADED path labels the
-            // field 'Agreement Uploaded'; only the GENERATED path uses 'Agreement'.
-            fieldLabel: 'Agreement Uploaded',
-            action: 'agreement_uploaded',
-          },
-        });
-      }
+      // Audit log: pages were scanned / presigned in (web parity — the GENERATED
+      // agreement path is logged separately, in DynamicAgreementDialog, as
+      // agreement_generated). Order sheets were not logged here at all before, so
+      // adding one left no trace while adding an agreement did.
+      //
+      // The count and names come from `newFiles` — what the rep actually added —
+      // while the S3 refs come from the rows `displayDocs` did not already hold:
+      // that list is the category's WHOLE server list, so counting it would report
+      // the total on the lead rather than this upload.
+      const knownIds = new Set(priorFiles.map(docIdentity).filter(Boolean));
+      logDocumentAudit(
+        cat,
+        'uploaded',
+        newFiles,
+        pickUnknownDocuments(displayDocs, knownIds, docIdentity)
+      );
     }
     setScannerCategory(null);
   };
@@ -705,7 +817,11 @@ export function SummaryFinalizeCards({
           </View>
           {!isEmpty && (
             <TouchableOpacity
-              onPress={() => !isUploading && setScannerCategory(cat)}
+              onPress={() => {
+                if (isUploading) return;
+                logDocumentSheetOpened(cat, 'uploaded', 'edit_documents');
+                setScannerCategory(cat);
+              }}
               disabled={isUploading}
               hitSlop={10}
               style={isUploading ? { opacity: 0.4 } : undefined}
@@ -765,7 +881,11 @@ export function SummaryFinalizeCards({
                 {isAgreement && (
                   <>
                     <TouchableOpacity
-                      onPress={() => isAppointmentSet && setAgreementDialogVisible(true)}
+                      onPress={() => {
+                        if (!isAppointmentSet) return;
+                        logDocumentSheetOpened(cat, 'generated', 'generate');
+                        setAgreementDialogVisible(true);
+                      }}
                       disabled={!isAppointmentSet}
                       style={[styles.outlineActionBtn, !isAppointmentSet && { opacity: 0.4 }]}
                     >
@@ -780,7 +900,10 @@ export function SummaryFinalizeCards({
                   </>
                 )}
                 <TouchableOpacity
-                  onPress={() => setScannerCategory(cat)}
+                  onPress={() => {
+                    logDocumentSheetOpened(cat, 'uploaded', 'add_document');
+                    setScannerCategory(cat);
+                  }}
                   style={styles.outlineActionBtn}
                 >
                   <Icon name="plus" size={18} color="#0F172A" />
@@ -845,6 +968,7 @@ export function SummaryFinalizeCards({
               <Text style={styles.sectionHeaderText}>Scheduled Appointment</Text>
               <TouchableOpacity
                 onPress={() => {
+                  logSchedulerOpened();
                   setIsEditingAppt(true);
                   setSchedulerVisible(true);
                 }}
@@ -890,6 +1014,7 @@ export function SummaryFinalizeCards({
             </Text>
             <TouchableOpacity
               onPress={() => {
+                logSchedulerOpened();
                 setIsEditingAppt(false);
                 setSchedulerVisible(true);
               }}
@@ -919,6 +1044,7 @@ export function SummaryFinalizeCards({
           setIsEditingAppt(false);
         }}
         onConfirm={handleScheduleConfirm}
+        onBooked={handleAppointmentBooked}
         onGenerate={handleScheduleAndGenerate}
         onUpload={handleScheduleAndUpload}
         customerName={customerName}

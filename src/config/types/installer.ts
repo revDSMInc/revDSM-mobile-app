@@ -314,7 +314,7 @@ export interface JobPacket {
  * `notHit`. `"Reset"` has no code here: reset is its own endpoint
  * (`PUT installer/v1/{jobId}/reset`).
  */
-export type JobWorkflowStatus = 'scheduled' | 'inProgress' | 'completed' | 'onHold';
+export type JobWorkflowStatus = 'scheduled' | 'rescheduled' | 'inProgress' | 'completed' | 'onHold';
 
 /** Result actions, as the API spells them. */
 export type JobResultStatus = 'cantDoWork' | 'notHit';
@@ -384,7 +384,18 @@ export interface InstallerJob {
   /** True once the job has been resulted (can't-do-work / reset / not-hit / complete). */
   resulted?: boolean;
   status?: JobStatus | string;
-  /** Position in the installer workflow, e.g. "start". */
+  /**
+   * Position in the installer workflow — `start`, `resume`, `resulted`, or, on a
+   * job carrying a Can't Do Work / Not Hit / Reset request, the phrase that says
+   * where that request stands: "Pending Install Not Hit", "Rescheduled Reset",
+   * "Install Can't Do Work".
+   *
+   * The phrase REPLACES the base state — it is one field, not two. Composed
+   * server-side, because the pending half of it is a fact about the requests
+   * collection that no client can derive. Read it for display only: what the
+   * action button does is decided from `status` (see `installer-card-state`),
+   * precisely so a phrase here cannot change what a tap does.
+   */
   workflowState?: string;
   /**
    * Manager overrides that switch off the check-in gates for this job. Absent on jobs
@@ -518,16 +529,27 @@ export interface StatusRequestImage {
   coordinates?: GeoCoordinates | null;
 }
 
+export type StatusRequestType = 'CANT_DO_WORK' | 'NOT_HIT' | 'RESET';
+
+export interface ProposedSchedulePayload {
+  date: string;
+  timeWindow?: string | null;
+  /** Required when date is TBD. */
+  reason?: string | null;
+}
+
 /**
- * Body of `POST installer/v1/{jobId}/status-requests` — the "Can't Do Work" flow.
+ * Body of `POST installer/v1/{jobId}/status-requests`.
  *
- * NOT a `statusReason`, and deliberately not routed through `setJobStatus`: this
- * files a REQUEST for the job to be stood down, it does not transition the job
- * itself. The status only moves once ops acts on the request.
+ * Can't Do Work: `{ reason, images[] }` — job status stays inProgress.
+ * Not Hit / in-progress Reset: also send `requestType` + `proposedSchedule`.
+ * The job stays inProgress until the customer accepts, same as Can't Do Work.
  */
 export interface StatusRequestPayload {
   reason: string;
   images?: StatusRequestImage[];
+  requestType?: StatusRequestType;
+  proposedSchedule?: ProposedSchedulePayload;
 }
 
 export interface InstallerResultSubmission {

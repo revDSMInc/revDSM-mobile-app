@@ -497,17 +497,16 @@ export const InstallerService = {
   },
 
   /**
-   * Files a status request — "Can't Do Work".
+   * Files a status request — Can't Do Work, Not Hit, or in-progress Reset.
    *
-   * `POST installer/v1/{jobId}/status-requests` with `{ reason, images[] }`.
+   * `POST installer/v1/{jobId}/status-requests`
+   * - Can't Do Work: `{ reason, images[] }` — job stays inProgress.
+   * - Not Hit / Reset: `{ requestType, reason, images[], proposedSchedule }` —
+   *   same as Can't Do Work: job stays inProgress until the customer accepts.
    *
-   * ⚠️ This REPLACED the `PUT …/update/{jobId}` + `{ status: 'cantDoWork' }` transition
-   * that used to back this button. Do not send both: the request is the record ops
-   * reviews, and setting the status here as well would stand the job down before
-   * anyone had looked at it. "Not Hit" is unaffected and still uses `setJobStatus`.
+   * Completed-job Reset is still `PUT …/{id}/reset` via `resetJob`.
    *
-   * Returns nothing — the response shape is not part of the contract, same as
-   * `resetJob`. The caller reports success from the absence of a throw.
+   * Returns nothing — the response shape is not part of the client contract.
    */
   createStatusRequest: async (
     jobId: string,

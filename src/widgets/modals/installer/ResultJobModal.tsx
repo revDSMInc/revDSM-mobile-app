@@ -16,7 +16,8 @@ import { InstallerCamera } from '../../components/installer/InstallerCamera';
 import { ConfirmActionModal } from './ConfirmActionModal';
 import { usePhotoDeleteConfirm } from '../../../hooks/usePhotoDeleteConfirm';
 import { INSTALLER_RESULT_REASONS } from '../../../constants/installer';
-import type { CapturedPhoto, InstallerResultType } from '../../../config/types/installer';
+import type { CapturedPhoto, InstallerResultType, ProposedSchedulePayload } from '../../../config/types/installer';
+import { AppointmentSchedulerModal } from '../job-builder/AppointmentSchedulerModal';
 import { EDGE_TO_EDGE_MODAL, footerBottomPadding } from '../../../utils/installer-insets';
 
 interface Props {
@@ -40,8 +41,12 @@ interface Props {
   onPhotoCaptured?: (reason: string, photo: CapturedPhoto) => void;
   /** Resolves once the photo is gone from the server too; the ✕ spinner waits on it. */
   onRemovePhoto?: (photo: CapturedPhoto) => void | Promise<void>;
+  /**
+   * Customer name for the sales-style appointment scheduler (Not Hit / Reset).
+   */
+  customerName?: string;
   onClose: () => void;
-  onConfirm: (reason: string) => void;
+  onConfirm: (reason: string, proposedSchedule?: ProposedSchedulePayload) => void;
 }
 
 /**
@@ -67,6 +72,7 @@ export function ResultJobModal({
   submitting,
   photos = [],
   uploadingCount = 0,
+  customerName = '',
   onPhotoCaptured,
   onRemovePhoto,
   onClose,
@@ -76,6 +82,10 @@ export function ResultJobModal({
   const insets = useSafeAreaInsets();
   const [reason, setReason] = useState<string | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [schedulerOpen, setSchedulerOpen] = useState(false);
+  const [proposedSchedule, setProposedSchedule] = useState<ProposedSchedulePayload | null>(
+    null
+  );
 
   // Reasons are per-result-type, so a stale pick must not survive a type change.
   // Photos are deliberately NOT cleared here: switching reason after shooting is
@@ -84,6 +94,8 @@ export function ResultJobModal({
   useEffect(() => {
     setReason(null);
     setCameraOpen(false);
+    setSchedulerOpen(false);
+    setProposedSchedule(null);
   }, [result, visible]);
 
   const del = usePhotoDeleteConfirm<{ photo: CapturedPhoto; index: number }>(
@@ -99,7 +111,8 @@ export function ResultJobModal({
   /** Can't Do Work must be evidenced; Not Hit need not be. */
   const photosRequired = result === "Can't Do Work" && !!onPhotoCaptured;
   const needsPhoto = photosRequired && photos.length === 0;
-  const canSubmit = !!reason && !needsPhoto && !submitting;
+  const needsSchedule = result === 'Not Hit' || result === 'Reset';
+  const canSubmit = !!reason && !needsPhoto && (!needsSchedule || !!proposedSchedule) && !submitting;
 
   const isUploading = uploadingCount > 0;
   const photoWord = `photo${uploadingCount === 1 ? '' : 's'}`;
@@ -121,8 +134,11 @@ export function ResultJobModal({
   }
 
   return (
+    <>
     <Modal
-      visible={visible}
+      // Hide this sheet while the scheduler is up. RN will not show a second Modal
+      // on top of this one (same pattern as EditContractDetailsModal).
+      visible={visible && !schedulerOpen}
       transparent
       animationType="slide"
       onRequestClose={onClose}
@@ -308,11 +324,53 @@ export function ResultJobModal({
                 )}
               </View>
             )}
+
+            {needsSchedule && (
+              <View className="mb-4">
+                <Text className="text-sm font-semibold mb-2" style={{ color: colors.text }}>
+                  New install date & time
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setSchedulerOpen(true)}
+                  className="w-full px-4 py-3.5 rounded-xl border flex-row items-center justify-between"
+                  style={{
+                    borderColor: proposedSchedule ? colors.primary.main : colors.border,
+                    backgroundColor: isDark ? '#FFFFFF08' : '#F4F6F8',
+                  }}
+                >
+                  <Text
+                    className="text-base flex-1"
+                    style={{
+                      color: proposedSchedule ? colors.text : colors.textSecondary,
+                    }}
+                  >
+                    {proposedSchedule
+                      ? proposedSchedule.date === 'TBD'
+                        ? `TBD${proposedSchedule.reason ? ` — ${proposedSchedule.reason}` : ''}`
+                        : `${proposedSchedule.date}${
+                            proposedSchedule.timeWindow
+                              ? ` · ${proposedSchedule.timeWindow}`
+                              : ''
+                          }`
+                      : 'Select date and time (or TBD)'}
+                  </Text>
+                  <Icon
+                    name={proposedSchedule ? 'checkmark-circle' : 'calendar-outline'}
+                    size={20}
+                    color={proposedSchedule ? colors.primary.main : colors.textSecondary}
+                  />
+                </TouchableOpacity>
+              </View>
+            )}
           </ScrollView>
 
           <TouchableOpacity
             disabled={!canSubmit}
-            onPress={() => canSubmit && reason && onConfirm(reason)}
+            onPress={() =>
+              canSubmit &&
+              reason &&
+              onConfirm(reason, proposedSchedule || undefined)
+            }
             className="h-12 rounded-xl items-center justify-center mt-2"
             style={{
               backgroundColor: canSubmit ? colors.primary.main : colors.textSecondary + '40',
@@ -347,8 +405,36 @@ export function ResultJobModal({
               Add at least one photo to submit this result
             </Text>
           )}
+          {needsSchedule && !proposedSchedule && (
+            <Text
+              className="text-center text-[11px] font-bold mt-1.5"
+              style={{ color: colors.error.main }}
+            >
+              Select a new install date and time, or TBD
+            </Text>
+          )}
         </View>
       </View>
+    </Modal>
+
+      <AppointmentSchedulerModal
+        visible={visible && schedulerOpen}
+        onClose={() => setSchedulerOpen(false)}
+        customerName={customerName}
+        isEdit
+        initialDate={proposedSchedule?.date}
+        initialTimeWindow={proposedSchedule?.timeWindow || undefined}
+        onConfirm={(data) => {
+          setProposedSchedule(
+            data?.date === 'TBD'
+              ? { date: 'TBD', timeWindow: null, reason: data?.reason || null }
+              : {
+                  date: String(data?.date || ''),
+                  timeWindow: data?.timeWindow || null,
+                }
+          );
+        }}
+      />
 
       <ConfirmActionModal
         visible={del.visible}
@@ -362,6 +448,6 @@ export function ResultJobModal({
         onCancel={del.cancel}
         onConfirm={del.confirm}
       />
-    </Modal>
+    </>
   );
 }

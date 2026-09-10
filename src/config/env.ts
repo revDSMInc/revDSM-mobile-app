@@ -10,7 +10,6 @@ const API_URL = 'https://api.np.revdsm.com/';
 // const API_URL = 'https://dev-api.revdsm.com/';
 // const API_URL = 'http://192.168.30.160:4009/'; // local dev server
 
-// 
 /** Only the bare production host is production; every other host is np/staging. */
 const isProductionApi = (url: string): boolean =>
   /^https?:\/\/api\.revdsm\.com\/?$/i.test(url.trim());
