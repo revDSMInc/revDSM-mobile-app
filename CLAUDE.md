@@ -7261,6 +7261,59 @@ Still pending (deferred — advanced features):
   `src/widgets/components/job-builder/SummarySection.tsx` (~1,993), `src/screens/JobBuilder/index.tsx` (~1,730).
 - Web is the **source of truth** for feature behavior; when unsure how a flow should work, check the web ref path in §4.
 
+### The map's filter / list icons were missing until you tapped another header icon
+
+Ticket: *"when i open the lead details and then open the map, this is the first view of the map
+screen — but when i click on the notification icon or message icon then the map's other icons are
+displayed. Fix this: display the icons when we open the map screen, no need to click on any icon."*
+
+`HeaderContext` (`widgets/common/MainHeader.tsx`) handed the raw `useState` setter out as
+`setHeaderActions`, so every call **REPLACED** the whole actions object:
+
+```ts
+const [headerActions, setHeaderActions] = useState<{…}>({});   // ← handed out as-is
+```
+
+Two screens write to it, each registering its keys on focus and nulling them on blur:
+
+| screen | focus | blur |
+|---|---|---|
+| `LeadCenter` | `{ onNavigate }` | `{ onNavigate: null }` |
+| `MapDetail` | `{ onFilterPress, onListPress, filterCount }` | all three nulled |
+
+⚠️ **The two effects belong to DIFFERENT screens, and React Navigation does not promise which runs
+first.** Leaving Lead Center for the map, Lead Center's blur cleanup landing *after* Map Detail's focus
+setup replaced the object with `{ onNavigate: null }` — taking `onFilterPress` and `onListPress` with
+it. The header gates both icons on those handlers being truthy (`activeOnFilterPress && …`), so the map
+opened with neither.
+
+That also explains the "click an icon and they appear": the bell and the chat icon **navigate away and
+back**, which re-focuses `MapDetail` and re-runs its setup — this time with no competing cleanup. And
+it explains why it was intermittent: the ordering is not deterministic.
+
+**Fix — `setHeaderActions` MERGES.** A `useCallback` wrapper does
+`setHeaderActionsState((prev) => ({ ...prev, ...actions }))`, so each screen's cleanup touches only the
+keys it owns and no screen can clear another's. An explicit `null` still clears, so nothing about the
+blur contract changes, and both interleavings now end in the same state — verified in each direction,
+including the return trip (Lead Center must NOT inherit the map's icons, and doesn't, because
+`MapDetail`'s cleanup nulls them whichever side it runs on).
+
+⚠️ **The wrapper must stay referentially STABLE** (`useCallback` with no deps). Both consumers list
+`setHeaderActions` in a `useFocusEffect` dependency array, so a fresh identity per render would re-run
+those effects on every render of the navigator. It is also added to the `contextValue` memo's deps for
+the same reason it is safe to: it never changes.
+
+⚠️ Only `LeadCenter` and `MapDetail` write to this context today (`grep setHeaderActions(`). A third
+screen gets the merge semantics for free, but it MUST null its own keys on blur — under a merge, keys
+it never clears now outlive it.
+
+tsc 73 (baseline unchanged — all pre-existing, none in `src/navigation`); `navigation/index.tsx` is at
+its HEAD eslint baseline (3 warnings, 0 errors). ⚠️ The file is **CRLF** — `newline=''` on both ends.
+
+⚠️ Needs a device check (this repo cannot render-test): Lead Center ▸ map should paint the funnel and
+list icons on the FIRST frame, the filter badge should carry its applied count, and going back to Lead
+Center should drop both icons again.
+
 ### Hold-to-peek previews warm through a shared local-file cache
 
 Ticket: *"Render hold-preview takes 2–3s blank"* — first reported on the RevRender rollout slots,
