@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View, ActivityIndicator } from 'react-native';
 import { useAuth } from '../hooks/useAuth';
@@ -165,17 +165,49 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
   const { isInstaller, isSales } = useUserRole();
   const { colors, isDark } = useTheme();
 
-  const [headerActions, setHeaderActions] = useState<{
+  const [headerActions, setHeaderActionsState] = useState<{
     onFilterPress?: (() => void) | null;
     onListPress?: (() => void) | null;
     onNavigate?: ((route: any) => void) | null;
     filterCount?: number | null;
   }>({});
 
+  /**
+   * MERGES, and that is the whole point — it used to hand the raw `useState` setter out,
+   * which REPLACED the object.
+   *
+   * Every screen registers its own keys on focus and nulls them on blur, but the two
+   * effects belong to DIFFERENT screens and React Navigation does not promise which runs
+   * first. Leaving Lead Center for the map, a whole-object replace meant Lead Center's
+   * blur cleanup (`{ onNavigate: null }`) landing after Map Detail's focus setup wiped
+   * `onFilterPress` / `onListPress` with it — so the map opened with no filter or list
+   * icon in the header, and only got them back once something re-focused the screen
+   * (tapping the bell or the chat icon navigates away and back, which is exactly the
+   * "click an icon and they appear" in the report). The ordering is not deterministic,
+   * which is why it was intermittent.
+   *
+   * Merging makes each screen's cleanup touch only the keys it owns, so no screen can
+   * clear another's. An explicit `null` still clears, so nothing about the blur contract
+   * changes.
+   *
+   * ⚠️ It must stay referentially STABLE (`useCallback` with no deps): both consumers
+   * list it in a `useFocusEffect` dependency array, so a new identity per render would
+   * re-run those effects on every render of this navigator.
+   */
+  const setHeaderActions = useCallback(
+    (actions: {
+      onFilterPress?: (() => void) | null;
+      onListPress?: (() => void) | null;
+      onNavigate?: ((route: any) => void) | null;
+      filterCount?: number | null;
+    }) => setHeaderActionsState((prev) => ({ ...prev, ...actions })),
+    []
+  );
+
   const contextValue = React.useMemo(() => ({
     ...headerActions,
     setHeaderActions,
-  }), [headerActions]);
+  }), [headerActions, setHeaderActions]);
 
 
   const showHeader = isAuthenticated && currentRouteName && [
