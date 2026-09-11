@@ -7267,48 +7267,73 @@ Ticket: *"when i open the lead details and then open the map, this is the first 
 screen — but when i click on the notification icon or message icon then the map's other icons are
 displayed. Fix this: display the icons when we open the map screen, no need to click on any icon."*
 
-`HeaderContext` (`widgets/common/MainHeader.tsx`) handed the raw `useState` setter out as
-`setHeaderActions`, so every call **REPLACED** the whole actions object:
+The header's filter + list icons are gated on handlers a screen publishes into `HeaderContext`
+(`widgets/common/MainHeader.tsx`), and `MapDetail` published them from a **single `useFocusEffect`** —
+a one-shot handshake fired the instant the screen focused. Anything that emptied the shared store after
+that moment left the screen with no way to notice, and the icons stayed gone until the rep tapped the
+bell or the chat icon, which **navigates away and back** and re-fires the handshake.
 
-```ts
-const [headerActions, setHeaderActions] = useState<{…}>({});   // ← handed out as-is
-```
+Two changes, and the ticket needed BOTH — the first alone shipped (`12e5d10`) and did not fix it.
 
-Two screens write to it, each registering its keys on focus and nulling them on blur:
+#### 1. `setHeaderActions` MERGES instead of replacing
 
-| screen | focus | blur |
+`RootNavigator` handed the raw `useState` setter out, so every call replaced the whole object. Two
+screens write to it:
+
+| screen | on focus | on blur |
 |---|---|---|
 | `LeadCenter` | `{ onNavigate }` | `{ onNavigate: null }` |
 | `MapDetail` | `{ onFilterPress, onListPress, filterCount }` | all three nulled |
 
-⚠️ **The two effects belong to DIFFERENT screens, and React Navigation does not promise which runs
-first.** Leaving Lead Center for the map, Lead Center's blur cleanup landing *after* Map Detail's focus
-setup replaced the object with `{ onNavigate: null }` — taking `onFilterPress` and `onListPress` with
-it. The header gates both icons on those handlers being truthy (`activeOnFilterPress && …`), so the map
-opened with neither.
+⚠️ **The two effects belong to DIFFERENT screens and React Navigation does not promise which runs
+first.** Leaving Lead Center for the map, a replace meant Lead Center's blur cleanup landing after Map
+Detail's focus setup wiped `onFilterPress` / `onListPress` with it.
 
-That also explains the "click an icon and they appear": the bell and the chat icon **navigate away and
-back**, which re-focuses `MapDetail` and re-runs its setup — this time with no competing cleanup. And
-it explains why it was intermittent: the ordering is not deterministic.
+A `useCallback` wrapper now does `setHeaderActionsState((prev) => ({ ...prev, ...actions }))`, so each
+screen's cleanup touches only the keys it owns and no screen can clear another's. An explicit `null`
+still clears, so the blur contract is unchanged. ⚠️ It must stay referentially **stable** (`useCallback`
+with no deps) — consumers list it in effect dependency arrays.
 
-**Fix — `setHeaderActions` MERGES.** A `useCallback` wrapper does
-`setHeaderActionsState((prev) => ({ ...prev, ...actions }))`, so each screen's cleanup touches only the
-keys it owns and no screen can clear another's. An explicit `null` still clears, so nothing about the
-blur contract changes, and both interleavings now end in the same state — verified in each direction,
-including the return trip (Lead Center must NOT inherit the map's icons, and doesn't, because
-`MapDetail`'s cleanup nulls them whichever side it runs on).
+#### 2. …and `MapDetail`'s claim is SELF-HEALING, which is the half that actually fixed it
 
-⚠️ **The wrapper must stay referentially STABLE** (`useCallback` with no deps). Both consumers list
-`setHeaderActions` in a `useFocusEffect` dependency array, so a fresh identity per render would re-run
-those effects on every render of the navigator. It is also added to the `contextValue` memo's deps for
-the same reason it is safe to: it never changes.
+Merging makes the two writers' keys disjoint, so the race above can no longer explain a missing icon —
+and the icons were still missing. The remaining hole is that the store is **shared mutable state owned
+by a component that can re-mount** (a navigator remount, or a Fast Refresh of `navigation/index.tsx`,
+resets it to `{}`), while `useFocusEffect` re-runs **only on a focus transition**. A screen that is
+already focused when the store is emptied never re-registers.
+
+So the registration moved to `useIsFocused()` + `useEffect`, with a **`headerHasMapActions` boolean** in
+its dependency list:
+
+```ts
+const headerHasMapActions = !!headerCtx.onFilterPress;
+useEffect(() => {
+  if (!isFocused) return;
+  setHeaderActions({ onFilterPress: …, onListPress: …, filterCount: activeFilterCount });
+}, [isFocused, headerHasMapActions, activeFilterCount, setHeaderActions]);
+```
+
+The moment the header reports it is NOT holding them, this re-claims — whatever emptied it, and
+whenever.
+
+⚠️ **A BOOLEAN, never the handler itself.** The handlers are new closures every render, so depending on
+their identity would re-register forever. As a boolean it flips at most once per claim, so the effect
+settles in exactly one extra pass.
+
+⚠️ **Release is its OWN effect, keyed on `isFocused` alone.** Folding it into the claim would null the
+actions every time the applied-filter count changed — a visible flicker of the two icons while the rep
+is using the very filter modal that changes it. On blur the release nulls them, which flips
+`headerHasMapActions` false and re-runs the claim, whose `if (!isFocused) return` is what stops it
+re-claiming a screen the rep has left.
 
 ⚠️ Only `LeadCenter` and `MapDetail` write to this context today (`grep setHeaderActions(`). A third
-screen gets the merge semantics for free, but it MUST null its own keys on blur — under a merge, keys
-it never clears now outlive it.
+screen gets the merge semantics for free, but MUST null its own keys on blur — under a merge, keys it
+never clears now outlive it.
 
-tsc 73 (baseline unchanged — all pre-existing, none in `src/navigation`); `navigation/index.tsx` is at
-its HEAD eslint baseline (3 warnings, 0 errors). ⚠️ The file is **CRLF** — `newline=''` on both ends.
+tsc 73 (baseline unchanged — all pre-existing, none in the touched files); `navigation/index.tsx` is at
+its HEAD eslint baseline (3 warnings) and `MapDetail/index.tsx` drops one error (the `useFocusEffect`
+`exhaustive-deps` warning went with the hook) to 10 errors / 9 warnings, all pre-existing. ⚠️ Both files
+are **CRLF** — `newline=''` on both ends.
 
 ⚠️ Needs a device check (this repo cannot render-test): Lead Center ▸ map should paint the funnel and
 list icons on the FIRST frame, the filter badge should carry its applied count, and going back to Lead
