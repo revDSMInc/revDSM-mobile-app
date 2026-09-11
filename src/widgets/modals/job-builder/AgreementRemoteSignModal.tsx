@@ -17,6 +17,12 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { LeadService } from '../../../services/api/leads';
+import { isOnline } from '../../../services/connectivity';
+import {
+  ensureOfflineWorkForLead,
+  queueOfflineRemoteSignature,
+} from '../../../services/offlineLeadStore';
+import { isClientId } from '../../../utils/offline-lead-work';
 import { useAuth } from '../../../hooks/useAuth';
 import {
   canSendToSigners,
@@ -85,8 +91,14 @@ interface AgreementRemoteSignModalProps {
   visible: boolean;
   onClose: () => void;
   leadId: string;
-  agreementId: string;
-  payload: any;
+  /**
+   * ⚠️ OPTIONAL, and both are unused — see the destructure below. They stay declared for caller
+   * symmetry with `AgreementSignatureModal`, and they are optional because the offline agreement
+   * screen opens this sheet before any agreement exists: there is no id to give it, and the send
+   * request does not carry one.
+   */
+  agreementId?: string;
+  payload?: any;
   signatureFields?: any;
   pdfDimensions?: any;
   /** The lead's customerDetails — provides the primary buyer + `coBuyers[]`. */
@@ -341,6 +353,32 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
           email: s.email.trim(),
         })),
       };
+      // ── No signal: take the contacts now, send the link when there is one ─────
+      //
+      // This request carries no agreement id — the server renders and sends the document from the
+      // lead itself — so it is one of the few writes in this flow that can simply be queued.
+      //
+      // ⚠️ The rep is told plainly that nothing has been sent YET. The alternative, a cheerful
+      // "Sent", would have them tell the customer at the door to watch for a text that is still
+      // sitting on the phone in their pocket.
+      if (!isOnline() || isClientId(leadId)) {
+        const work = ensureOfflineWorkForLead({ _id: leadId });
+        if (!work) throw new Error('no lead to attach the signing request to');
+        queueOfflineRemoteSignature(work.clientId, body);
+        setSending(false);
+        setDialog({
+          tone: 'success',
+          title: 'Saved on your device',
+          message:
+            "You're offline, so the signing link hasn't gone out yet — it'll send automatically when you're back online.",
+          onConfirm: () => {
+            if (onSent) onSent(undefined);
+            else onClose();
+          },
+        });
+        return;
+      }
+
       const res = await LeadService.sendAgreementRemote(leadId, body);
       const data = res?.data?.data ?? res?.data;
       const next = normalizeAgreement(res);

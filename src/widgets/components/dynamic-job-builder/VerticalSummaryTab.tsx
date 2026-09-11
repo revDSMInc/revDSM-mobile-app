@@ -2,6 +2,9 @@ import React, { useMemo } from 'react';
 import { View, Text, ScrollView, Platform } from 'react-native';
 import { buildVerticalSummarySections } from '../../../utils/dynamic-job-builder/engine/vertical-summary-utils';
 import { SummaryFinalizeCards } from './agreement/SummaryFinalizeCards';
+import { useGetAgreementConfig } from '../../../screens/DynamicDealCenter/hooks/useAgreementConfig';
+import { useGetDescriptionSchema } from '../../../screens/DynamicDealCenter/hooks/useDescriptionSchema';
+import { useCompanyLogoBase64 } from '../../../hooks/useCompanyLogoBase64';
 
 interface VerticalSummaryTabProps {
   vertical?: any;
@@ -238,6 +241,25 @@ export function VerticalSummaryTab({
   // present); preview/config renders pass none of these and skip the section.
   const showFinalize = Boolean(onUpdateRootState);
   const productKey = vertical?.productId || vertical?.id;
+
+  // Warm everything the offline agreement is rendered from, HERE rather than in the dialog.
+  //
+  // ⚠️ The dialog fetches them only once it is open, which is the one moment they cannot be
+  // fetched: the rep is at the door, the customer is waiting, and the reason the agreement is
+  // being generated on the device is that there is no connection. Reaching the Summary tab always
+  // precedes tapping Generate, so this is the last point at which asking is still useful — and
+  // when there IS signal it refreshes the copy the next offline agreement will be built from.
+  //
+  // Both are cached per rep (`OFFLINE_CACHE.AGREEMENT_CONFIG` / `DESCRIPTION_SCHEMA`), so a single
+  // earlier online session is enough to stock them; this only keeps them current.
+  useGetAgreementConfig(showFinalize);
+  useGetDescriptionSchema(showFinalize ? productKey : undefined);
+  // The logo is the third, and it is the one that could NEVER stock itself: the only code that
+  // reads it is the device-side generator, which only mounts when there is no connection. So the
+  // request it makes there always fails and the contract goes out with a blank header. Warmed
+  // here it is bytes on disk before the rep leaves signal. Costs nothing after the first success
+  // (a recent copy is served without a request).
+  useCompanyLogoBase64(showFinalize);
 
   return (
     <ScrollView

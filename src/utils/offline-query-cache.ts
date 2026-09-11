@@ -45,6 +45,29 @@ export const OFFLINE_CACHE = {
   PAYMENT_PLANS: 'payment-plans',
   /** `GET /company/v1/discount-config/sales` — pre-order tiers and the Sr+Vet percentage. */
   DISCOUNT_CONFIG: 'discount-config',
+
+  // ── The agreement ───────────────────────────────────────────────────────────
+  // These two are what make an agreement generatable at a door with no signal. The layout, the
+  // company's header and terms, and the Description-of-Work rules are all company setup — so the
+  // device can render the SAME document the server would, from data it already holds, instead of
+  // asking for a PDF it cannot be given.
+  //
+  // ⚠️ Without them there is no offline agreement AT ALL, and the failure is quiet: the rep taps
+  // Generate and gets an error. That is why the Job Builder warms them on mount while there is
+  // still signal, rather than waiting for the moment they are needed.
+  /** `GET /sales-rep/v1/agreement-config` — header, styles and the ordered content blocks. */
+  AGREEMENT_CONFIG: 'agreement-config',
+  /** `GET /sales-rep/v1/description-schema/:id` — per product; the Description of Work rules. */
+  DESCRIPTION_SCHEMA: 'description-schema',
+  /**
+   * The company logo, already base64.
+   *
+   * ⚠️ Cached as BYTES, unlike everything else here, and deliberately: resolving it costs a
+   * presigned-url call plus a download, and the presigned url expires — so caching the url would
+   * cache something that stops working. Without it an agreement signed at a door is missing the
+   * company's mark, which is a visibly different contract from the one signed with signal.
+   */
+  COMPANY_LOGO: 'company-logo',
 } as const;
 
 /** Read a snapshot, or `null` when there is any reason not to trust it. */

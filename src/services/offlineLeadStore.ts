@@ -18,8 +18,11 @@
  * been committed and only the server can say. That is what buys idempotency with no backend change.
  */
 
+import RNFS from 'react-native-fs';
 import { storage } from '../utils/storage';
 import { LeadService } from './api/leads';
+import { fetchOutcomeDocumentRows } from '../screens/DynamicDealCenter/utils/outcome-documents';
+import { buildDocumentPayloads } from '../screens/DynamicDealCenter/utils/document-payloads';
 import { isOnline, onReconnect } from './connectivity';
 import { describeQueuedLead, isSuccessfulCreate, messageOfError } from '../utils/offline-lead-queue';
 import {
@@ -37,12 +40,17 @@ import {
   decideAfterStepError,
   findUnresolvedClientIds,
   markStepDone,
+  newWorkId,
   nextUploadStep,
   readCreatedId,
   readExistingAppointmentId,
   resolveClientIds,
+  documentRootKey,
+  offlineDocumentName,
   uploadableWork,
   type OfflineCalculatorWork,
+  type OfflineDocumentCategory,
+  type OfflineJobDocument,
   type OfflineLeadWork,
   type StepDecision,
   type UploadStep,
@@ -211,6 +219,145 @@ export const saveOfflineDealCenter = (
     calculators: data.calculators,
   }));
 
+/**
+ * The Job Builder's draft autosave, with no signal.
+ *
+ * Same body the online `PUT lead/v1/{leadId}/outcome/{calcId}` would carry, stored rather than
+ * sent. It is a full-state write, so the last one before the network returns is the one that goes —
+ * the rep's edits coalesce for free instead of queueing one request per keystroke.
+ *
+ * ⚠️ Documents are NOT read out of this body. They travel as `work.documents` so each is filed
+ * exactly once; leaving them here as well would file every one of them again on every draft write.
+ */
+export const saveOfflineJobBuilderDraft = (
+  workClientId: string,
+  outcome: Record<string, unknown>,
+  outcomeCalculatorClientId?: string
+): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) => ({
+    ...w,
+    outcome: stripDocumentKeys(outcome),
+    outcomeCalculatorClientId: outcomeCalculatorClientId ?? w.outcomeCalculatorClientId,
+  }));
+
+/**
+ * Queue a document captured at the door — a device-signed agreement, or a scanned order sheet.
+ *
+ * Returns the stored record so the caller can put the SAME name and body into `jobState`, which is
+ * what lets the Summary tab show the document immediately instead of an empty card.
+ */
+export const addOfflineJobDocument = async (
+  workClientId: string,
+  category: OfflineDocumentCategory,
+  doc: { uri: string; contentType: string; extension?: string; name?: string }
+): Promise<OfflineJobDocument | null> => {
+  // ⚠️ Always our own name, never the scanner's. The guarded replay matches on it, and two pages
+  // scanned at one door both arrive called "document".
+  const name = doc.name || offlineDocumentName(category, doc.extension || 'pdf');
+  const uri = await persistOfflineDocumentFile(doc.uri, name);
+  const entry: OfflineJobDocument = {
+    clientId: newWorkId('doc'),
+    category,
+    name,
+    uri,
+    contentType: doc.contentType,
+  };
+  const saved = patchOfflineWork(workClientId, (w) => ({
+    ...w,
+    documents: [...(w.documents || []), entry],
+  }));
+  return saved ? entry : null;
+};
+
+/**
+ * Put the document somewhere it will still be when the network returns.
+ *
+ * ⚠️ A capture arrives either as a `data:` URI held in memory or as a path in the CACHES directory,
+ * and neither survives what this queue has to survive: the app can be killed, and iOS empties
+ * caches under storage pressure. A queued document that evaporates is a signed contract the rep
+ * believes was filed. So it is copied into the documents directory, under its own queue name.
+ */
+const persistOfflineDocumentFile = async (source: string, name: string): Promise<string> => {
+  const dir = `${RNFS.DocumentDirectoryPath}/offline-job-documents`;
+  await RNFS.mkdir(dir);
+  const dest = `${dir}/${name}`;
+
+  if (/^data:/i.test(source)) {
+    await RNFS.writeFile(dest, source.slice(source.indexOf(',') + 1), 'base64');
+    return `file://${dest}`;
+  }
+  const from = source.startsWith('file://') ? source.replace('file://', '') : source;
+  await RNFS.copyFile(from, dest);
+  return `file://${dest}`;
+};
+
+/** Delete a queued document's file once the server has it, or once the rep drops it. */
+const discardOfflineDocumentFile = (uri?: string): void => {
+  if (!uri) return;
+  RNFS.unlink(uri.replace('file://', '')).catch(() => {
+    // Already gone, or never written. Nothing to report — the row is what matters.
+  });
+};
+
+/**
+ * The rep took the customer's number so they can sign on their own phone, with no signal.
+ *
+ * ⚠️ Stored, not appended — one lead has ONE outstanding signing session, and the server refuses a
+ * second with a 409. If the rep corrects a mistyped number before the upload runs, the correction
+ * must replace the request rather than queue beside it.
+ */
+export const queueOfflineRemoteSignature = (
+  workClientId: string,
+  payload: Record<string, unknown>
+): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) => ({ ...w, remoteSignature: payload }));
+
+/** Drop a queued document the rep removed before it was ever filed. */
+export const removeOfflineJobDocument = (workClientId: string, docClientId: string): void => {
+  const doomed = findOfflineWork(workClientId)?.documents?.find(
+    (d) => d.clientId === docClientId && !d.uploadedAt
+  );
+  patchOfflineWork(workClientId, (w) => ({
+    ...w,
+    documents: (w.documents || []).filter((d) => d.clientId !== docClientId || !!d.uploadedAt),
+  }));
+  discardOfflineDocumentFile(doomed?.uri);
+};
+
+/**
+ * The rep finished the job with no signal.
+ *
+ * ⚠️ This is the ONLY thing that arms the `submit` step, and it must stay that way: a lead whose
+ * job was built but not completed has to upload its draft and then stop, exactly as a rep who walks
+ * away mid-build expects.
+ */
+export const completeOfflineJobBuilder = (
+  workClientId: string,
+  submit: Record<string, unknown>,
+  outcome?: Record<string, unknown>
+): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) => ({
+    ...w,
+    outcome: outcome ? stripDocumentKeys(outcome) : w.outcome,
+    submit: stripDocumentKeys(submit),
+    status: 'draft',
+  }));
+
+/**
+ * Remove the document bodies from a stored payload.
+ *
+ * ⚠️ The reason is the duplicate this repo has already shipped once: the submit re-sent base64 for
+ * documents the sign endpoint had already filed, and the backend APPENDED them (CLAUDE.md, "the
+ * backend files a SECOND agreement row on submit"). Offline that risk is worse, because a stored
+ * payload is re-sent whenever an upload resumes. The documents step owns filing; nothing else does.
+ */
+const DOCUMENT_BODY_KEYS = ['agreements', 'orderSheets', 'paperWork', 'downPaymentReceipt'];
+
+const stripDocumentKeys = (payload: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(
+    Object.entries(payload || {}).filter(([k]) => !DOCUMENT_BODY_KEYS.includes(k))
+  );
+
 export const removeOfflineWork = (clientId: string): void => {
   load();
   store = store.filter((w) => w.clientId !== clientId);
@@ -286,6 +433,130 @@ const findUnclaimedCalculators = async (work: OfflineLeadWork): Promise<string[]
   return (Array.isArray(rows) ? rows : [])
     .map(idOf)
     .filter((id) => id && !claimed.has(id));
+};
+
+/**
+ * WHICH calculator the outcome and its documents hang off.
+ *
+ * ⚠️ Shared by both steps deliberately. That id is in the URL, and a documents PUT addressed to a
+ * different calculator than the draft files the agreement where nothing looks for it.
+ */
+const resolveOutcomeCalculatorId = (work: OfflineLeadWork): string | undefined => {
+  const clientId = work.outcomeCalculatorClientId || work.calculators[0]?.clientId;
+  if (!clientId) return undefined;
+  return (
+    work.serverIds.calculators[clientId] ||
+    work.calculators.find((c) => c.clientId === clientId)?.serverId
+  );
+};
+
+/**
+ * The names of the documents this calculator already holds — the guarded replay's evidence.
+ *
+ * A read failure returns an EMPTY set, not a throw: an empty set means "file it", which risks a
+ * duplicate. That is the right way round only because it is paired with `offlineDocumentName` —
+ * see `stepReplaySafety`. Never widen this to match on anything but the stored name.
+ */
+const listFiledDocumentNames = async (leadId: string, calcId: string): Promise<Set<string>> => {
+  try {
+    const rows = await fetchOutcomeDocumentRows(leadId, calcId);
+    const all = [...(rows?.agreements || []), ...(rows?.orderSheets || [])];
+    return new Set(all.map((r: any) => String(r?.name || '')).filter(Boolean));
+  } catch {
+    return new Set<string>();
+  }
+};
+
+/**
+ * The body that files ONE document, shaped exactly like the online `handleUploadDocs` PUT.
+ *
+ */
+const buildDocumentOutcomePayload = async (
+  work: OfflineLeadWork,
+  calcId: string,
+  doc: OfflineJobDocument
+): Promise<Record<string, unknown>> => {
+  // Read the bytes HERE, at send — see `OfflineJobDocument.uri` for why they are not in the record.
+  // The same builder the online submit uses, so a JPEG the device rendered becomes a PDF by the
+  // identical path rather than a second conversion written for offline.
+  const isAgreement = doc.category === 'agreement';
+  const built = await buildDocumentPayloads({
+    agreements: isAgreement ? [{ name: doc.name, uri: doc.uri, contentType: doc.contentType }] : [],
+    orderSheets: isAgreement ? [] : [{ name: doc.name, uri: doc.uri, contentType: doc.contentType }],
+    leadId: work.serverIds.leadId,
+    // ⚠️ `true` unconditionally. `isSale: false` re-files agreements AS order sheets, which is the
+    // right rule at submit and the wrong one here: this call is only ever filing the one document
+    // the rep captured, under the card they captured it on.
+    isSale: true,
+    includeSystemGenerated: true,
+  });
+  const bodies = isAgreement ? built.agreements : built.orderSheets;
+  if (!bodies.length) throw new Error(`could not read the queued document ${doc.name}`);
+
+  return {
+    // ⚠️ The stored draft rides along, because this endpoint writes the WHOLE outcome: a body
+    // holding only the document would blank the build the rep just made. The Sale default covers
+    // the one case where there is no draft yet — a document captured before the first 2 s autosave
+    // tick — and matches what the online `handleUploadDocs` hardcodes for the same reason.
+    result: 'Sale',
+    status: 'Sale',
+    ...(work.outcome || {}),
+    selectedCalculatorId: calcId,
+    [documentRootKey(doc.category)]: bodies.map((b) => ({ ...b, name: doc.name })),
+  };
+};
+
+/**
+ * The submit's own copy of the documents, read off disk at send.
+ *
+ * ⚠️ This is NOT a duplicate of the documents step. That step writes LeadOutcomeDocument rows (what
+ * Contract Details renders); this writes JobBuilderDocument rows (what the submitted job record
+ * carries), and the ONLINE submit sends both too. Dropping it here would leave an offline job
+ * looking different from an online one on the portal.
+ *
+ * A document that cannot be read is skipped rather than failing the submit: the job itself is the
+ * thing that must land, and the outcome rows already hold the contract.
+ */
+const buildQueuedSubmitDocuments = async (
+  work: OfflineLeadWork,
+  payload: Record<string, any>
+): Promise<{ agreements: unknown[]; orderSheets: unknown[] }> => {
+  const pending = work.documents || [];
+  if (!pending.length) return { agreements: [], orderSheets: [] };
+  try {
+    return await buildDocumentPayloads({
+      agreements: pending
+        .filter((d) => d.category === 'agreement')
+        .map((d) => ({ name: d.name, uri: d.uri, contentType: d.contentType })),
+      orderSheets: pending
+        .filter((d) => d.category === 'orderSheet')
+        .map((d) => ({ name: d.name, uri: d.uri, contentType: d.contentType })),
+      leadId: work.serverIds.leadId,
+      // A non-Sale files agreements AS order sheets — web's rule, and it belongs here because this
+      // IS the submit. Read from the payload the screen built rather than re-derived.
+      isSale: String(payload?.leadData?.result || '').toLowerCase() === 'sale',
+      includeSystemGenerated: true,
+    });
+  } catch (e) {
+    console.warn('[offlineLeadStore] could not attach documents to the submit:', e);
+    return { agreements: [], orderSheets: [] };
+  }
+};
+
+/** Record that ONE document is now on the server, immediately and durably. */
+const markDocumentUploaded = (workClientId: string, docClientId: string): void => {
+  const current = findOfflineWork(workClientId);
+  if (!current) return;
+  const filed = current.documents?.find((d) => d.clientId === docClientId);
+  putOfflineWork({
+    ...current,
+    documents: (current.documents || []).map((d) =>
+      d.clientId === docClientId ? { ...d, uploadedAt: new Date().toISOString() } : d
+    ),
+  });
+  // ⚠️ Only AFTER the row is written. Losing the file before the record says it is filed would
+  // leave a document the uploader still means to send and can no longer read.
+  discardOfflineDocumentFile(filed?.uri);
 };
 
 /** Did the job-builder submit already land? */
@@ -446,26 +717,61 @@ const runStep = async (
 
     case 'outcome': {
       if (!leadId) throw new Error('no lead id for the outcome');
-      const calcClientId = work.outcomeCalculatorClientId || work.calculators[0]?.clientId;
-      const calcId = calcClientId
-        ? work.serverIds.calculators[calcClientId] ||
-          work.calculators.find((c) => c.clientId === calcClientId)?.serverId
-        : undefined;
+      const calcId = resolveOutcomeCalculatorId(work);
       if (!calcId) throw new Error('no calculator id for the outcome');
       await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, send(work.outcome));
       return {};
     }
 
-    case 'agreement': {
-      if (!leadId) throw new Error('no lead id for the agreement');
-      await uploadAgreement(leadId, send(work.agreement) as Record<string, unknown>);
+    case 'documents': {
+      if (!leadId) throw new Error('no lead id for the documents');
+      const calcId = resolveOutcomeCalculatorId(work);
+      if (!calcId) throw new Error('no calculator id for the documents');
+
+      // ⚠️ ONE PUT PER DOCUMENT, and each is marked the instant it lands.
+      //
+      // This endpoint APPENDS the bodies it is given, so a batch that fails halfway would re-file
+      // everything before the failure on the next run. Filing them one at a time makes the record
+      // on disk an accurate account of what the server holds at every moment in between.
+      const filed = guarded ? await listFiledDocumentNames(leadId, calcId) : new Set<string>();
+
+      for (const doc of work.documents || []) {
+        if (doc.uploadedAt) continue;
+        if (!filed.has(doc.name)) {
+          await LeadService.updateLeadOutcomeByCalculator(
+            leadId,
+            calcId,
+            send(await buildDocumentOutcomePayload(work, calcId, doc))
+          );
+        }
+        markDocumentUploaded(work.clientId, doc.clientId);
+      }
+      return {};
+    }
+
+    case 'remoteSignature': {
+      if (!leadId) throw new Error('no lead id for the remote signature');
+      try {
+        await LeadService.sendAgreementRemote(leadId, send(work.remoteSignature));
+      } catch (err) {
+        // ⚠️ A 409 is the server saying an agreement is ALREADY out for this lead, which is the
+        // outcome we wanted. Reading it as a failure would park the lead and, on a retry the rep
+        // forced, send the customer a second signing link for the same contract.
+        if (!readIs409(err)) throw err;
+      }
       return {};
     }
 
     case 'submit': {
       if (!leadId) throw new Error('no lead id for the submit');
       if (guarded && (await isAlreadySubmitted(work))) return {};
-      await LeadService.submitJobBuilder(leadId, send(work.submit));
+      // The documents ride along at the TOP LEVEL, exactly as the online submit sends them — this
+      // is the JobBuilderDocument collection, a different one from the rows the documents step
+      // files. They are read off disk HERE and not before: the stored payload holds no base64, so
+      // the record stays small enough to rewrite on every draft save.
+      const payload = send(work.submit) as Record<string, any>;
+      const docs = await buildQueuedSubmitDocuments(work, payload);
+      await LeadService.submitJobBuilder(leadId, { ...payload, ...docs });
       return {};
     }
 
@@ -474,25 +780,20 @@ const runStep = async (
   }
 };
 
-/**
- * Send an agreement that was signed at the door.
- *
- * ⚠️ Placeholder until the offline agreement decision lands. The online flow POSTs multipart to
- * `pdf-reports/v1/agreement/{leadId}/sign` and the SERVER renders the PDF; whether the device does
- * that rendering instead changes only what goes in this FormData, not the step around it.
- */
-const uploadAgreement = async (leadId: string, agreement: Record<string, unknown>): Promise<void> => {
-  const form = new FormData();
-  Object.entries(agreement).forEach(([k, v]) => {
-    if (v === undefined || v === null) return;
-    form.append(k, typeof v === 'string' ? v : (JSON.stringify(v) as any));
-  });
-  await LeadService.signAgreement(leadId, form);
-};
-
 // ─── The upload loop ──────────────────────────────────────────────────────────
 
 /** Walk one record's remaining steps until it finishes, stalls, or the connection goes. */
+/**
+ * Re-read the record before writing to it.
+ *
+ * ⚠️ This is not defensive tidiness — without it the documents step is unsafe. `runStep` marks
+ * each document filed AS IT LANDS, straight to the store; the loop below is holding a copy taken
+ * before any of that. Writing that copy back would erase the marks, and a step that failed on its
+ * SECOND document would then re-file the first — the duplicate signed agreement this whole design
+ * exists to avoid. Any step that writes to the record mid-run depends on this.
+ */
+const latest = (work: OfflineLeadWork): OfflineLeadWork => findOfflineWork(work.clientId) || work;
+
 const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
   let work = putOfflineWork({ ...start, status: 'uploading' });
   let guarded = false;
@@ -510,21 +811,21 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
 
     try {
       const ids = await runStep(work, step, guarded);
-      work = putOfflineWork(markStepDone(work, step, ids));
+      work = putOfflineWork(markStepDone(latest(work), step, ids));
       guarded = false;
     } catch (err) {
       const decision: StepDecision = decideAfterStepError(err, work, step);
       if (decision === 'done') {
-        work = putOfflineWork(markStepDone(work, step));
+        work = putOfflineWork(markStepDone(latest(work), step));
         continue;
       }
       if (decision === 'retry-guarded' && !guarded) {
         // Look before writing again, on this same pass — the connection is up right now.
         guarded = true;
-        work = putOfflineWork({ ...work, status: 'uploading', lastError: messageOfError(err) });
+        work = putOfflineWork({ ...latest(work), status: 'uploading', lastError: messageOfError(err) });
         continue;
       }
-      putOfflineWork(applyStepDecision(work, decision, messageOfError(err)));
+      putOfflineWork(applyStepDecision(latest(work), decision, messageOfError(err)));
       return;
     }
   }

@@ -18,6 +18,14 @@ import { ProgressTracker } from '../../widgets/components/dynamic-job-builder/Pr
 import { VerticalTabBar } from '../../widgets/components/dynamic-job-builder/VerticalTabBar';
 import { FlashMessage } from '../../config/message';
 import { LeadService } from '../../services/api/leads';
+import { isOnline } from '../../services/connectivity';
+import {
+  addOfflineJobDocument,
+  completeOfflineJobBuilder,
+  ensureOfflineWorkForLead,
+  saveOfflineJobBuilderDraft,
+} from '../../services/offlineLeadStore';
+import { isClientId } from '../../utils/offline-lead-work';
 import { useDynamicJobBuilderActivityLog } from './hooks/useDynamicJobBuilderActivityLog';
 import { buildCalculatorOutcomePayload } from './utils/build-outcome-payload';
 import {
@@ -488,6 +496,43 @@ function DynamicJobBuilderInner({
   const jobStateRef = useRef(jobState);
   jobStateRef.current = jobState;
 
+  // ── Working the job with no signal ──────────────────────────────────────────
+  //
+  // Every write this screen makes is one of three requests, and all three are addressed by ids the
+  // server issues. So "offline" here is not a flag on each call — it is a decision about WHERE the
+  // rep's work is written, and the local record (`services/offlineLeadStore`) is the same one the
+  // Deal Center already filled in for this lead. The uploader replays it in dependency order.
+  //
+  // ⚠️ A CLIENT ID is as disqualifying as no connection. A lead created at a door has an id this
+  // device minted, so `PUT lead/v1/lead-1773…/outcome/calc-1773…` is a request that 404s — it must
+  // never be attempted, however good the signal is.
+  const worksOffline = useCallback(
+    () => !isOnline() || isClientId(leadId) || isClientId(calcId),
+    [leadId, calcId]
+  );
+
+  /** The local record for this lead, created on demand. `null` only when there is no lead at all. */
+  const offlineWorkId = useCallback((): string | null => {
+    const work = ensureOfflineWorkForLead(lead || { _id: leadId });
+    return work?.clientId || null;
+  }, [lead, leadId]);
+
+  // Make the lead record READABLE with no signal.
+  //
+  // The agreement is built from the customer's name, address and phone, and the only place the
+  // dialog reads them is `useLeadQuery` — a GET. Offline that answers nothing, so the agreement
+  // would be rendered for "Valued Customer" at a blank address: a wrong document rather than a
+  // missing one, and the customer signs it.
+  //
+  // ⚠️ Seeded only when the cache is EMPTY, so a fetched record is never overwritten by the
+  // (sparser) navigation snapshot. For a lead created at a door there is no server record to
+  // fetch at all, and this is the only copy that will ever exist.
+  useEffect(() => {
+    if (!leadId || !lead) return;
+    if (queryClient.getQueryData(['lead', leadId]) !== undefined) return;
+    queryClient.setQueryData(['lead', leadId], lead);
+  }, [leadId, lead]);
+
   // Hydrate previously-saved (server) documents into the display state once the
   // outcome + secure URLs resolve — so a reopened job shows its agreement/order
   // sheet. commitUploaded appends freshly-uploaded ones on top of these.
@@ -680,26 +725,38 @@ function DynamicJobBuilderInner({
         });
       } else {
         const rd = (calculatorResultData || {}) as any;
-        // Resolve the REAL calculator document so this PUT carries `LFCalculator`,
-        // matching web. Cached, so the debounce does not re-read it.
-        const { doc: autoSaveLfDoc } = await resolveLfCalculatorDoc(calcId, rd);
-        await LeadService.updateLeadOutcomeByCalculator(
-          leadId,
+        const offline = worksOffline();
+        // ⚠️ NOT read while offline. This resolver GETs the calculator, and offline it would fail
+        // on every one of these 2 s ticks. The result-modal copy is the fallback it already
+        // documents, and the uploader re-resolves the real document at send.
+        const { doc: autoSaveLfDoc } = offline
+          ? { doc: null as any }
+          : await resolveLfCalculatorDoc(calcId, rd);
+        const outcomePayload = buildCalculatorOutcomePayload({
+          rd: autoSaveLfDoc ? { ...rd, LFCalculator: autoSaveLfDoc } : rd,
           calcId,
-          buildCalculatorOutcomePayload({
-            rd: autoSaveLfDoc ? { ...rd, LFCalculator: autoSaveLfDoc } : rd,
-            calcId,
-            fallbackAppointmentId: appointmentId || leadId,
-            jobBuilder: {
-              dynamicJobState,
-              configId,
-              configSnapshotId: configId || 'dynamic',
-              calculatorType: 'dynamic',
-              autoFieldsLogged,
-              status: 'draft',
-            },
-          }),
-        );
+          fallbackAppointmentId: appointmentId || leadId,
+          jobBuilder: {
+            dynamicJobState,
+            configId,
+            configSnapshotId: configId || 'dynamic',
+            calculatorType: 'dynamic',
+            autoFieldsLogged,
+            status: 'draft',
+          },
+        });
+
+        if (offline) {
+          // The whole draft, stored rather than sent. A full-state write, so successive ticks
+          // simply overwrite — the rep's edits coalesce and one PUT goes when the signal returns,
+          // instead of a queue holding one request per keystroke.
+          const workId = offlineWorkId();
+          if (workId) {
+            saveOfflineJobBuilderDraft(workId, outcomePayload, calcId || undefined);
+          }
+        } else {
+          await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, outcomePayload);
+        }
       }
     } catch (error) {
       console.warn('[DynamicJobBuilder] Auto-save failed:', error);
@@ -714,7 +771,7 @@ function DynamicJobBuilderInner({
         void performAutoSaveRef.current();
       }
     }
-  }, [leadId, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded, resolveLfCalculatorDoc]);
+  }, [leadId, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded, resolveLfCalculatorDoc, worksOffline, offlineWorkId]);
 
   // Keep the latest saver in a ref so the unmount flush calls the current closure.
   const performAutoSaveRef = useRef(performAutoSave);
@@ -1345,15 +1402,24 @@ function DynamicJobBuilderInner({
       // collection — the LeadOutcomeDocument rows were already created eagerly by
       // handleUploadDocs / the sign endpoint, which is why the outcome mirror below
       // still sends FIELDS ONLY.
-      const documentPayloads = await buildDocumentPayloads({
-        agreements: jobState?.agreements,
-        orderSheets: jobState?.orderSheets,
-        leadId,
-        isSale,
-        // Web parity: submit the signed agreement too (read from its local file://
-        // copy) so the lead-scoped outcome write below populates jobBuilderDocuments.
-        includeSystemGenerated: true,
-      });
+      //
+      // ⚠️ Offline this is SKIPPED, and the documents are re-attached by the uploader instead.
+      // Building them here would read every signed agreement off disk and hold megabytes of base64
+      // in a payload that is about to be written to MMKV — where it would then be re-serialized on
+      // every subsequent write to this record. The queued documents already name their files; the
+      // submit step reads them at the moment it sends, which is the only moment they are needed.
+      const submitOffline = worksOffline();
+      const documentPayloads = submitOffline
+        ? { agreements: [], orderSheets: [] }
+        : await buildDocumentPayloads({
+            agreements: jobState?.agreements,
+            orderSheets: jobState?.orderSheets,
+            leadId,
+            isSale,
+            // Web parity: submit the signed agreement too (read from its local file://
+            // copy) so the lead-scoped outcome write below populates jobBuilderDocuments.
+            includeSystemGenerated: true,
+          });
 
       // POST /lead/v1/{leadId}/job-builder REQUIRES top-level `leadData` AND
       // `jobState` (web TabbedCalculator payload). The previous
@@ -1371,11 +1437,19 @@ function DynamicJobBuilderInner({
       // fallback still produces the complete shape.
       // Same resolver the auto-save uses, FORCED — the submit must read the calculator
       // fresh rather than trust a doc cached earlier in the session.
-      const { doc: lfCalculatorDoc, fromServer: lfFromServer } = await resolveLfCalculatorDoc(
-        submitCalculatorId,
-        rd,
-        { force: true }
-      );
+      // Offline this cannot be read; the in-memory tab is the documented fallback and the uploader
+      // resolves the server copy when the submit actually goes.
+      const { doc: lfCalculatorDoc, fromServer: lfFromServer } = submitOffline
+        ? {
+            doc: buildCalculatorDocument(null, rd?.LFCalculator, {
+              calculatorId: submitCalculatorId,
+              appointmentId: rd?.selectedAppointmentId || rd?.appointmentId || appointmentId || null,
+              leadId,
+              enteredBy: (authUser as any)?._id || (authUser as any)?.id || null,
+            }),
+            fromServer: false,
+          }
+        : await resolveLfCalculatorDoc(submitCalculatorId, rd, { force: true });
 
       // `leadData` is assembled to the backend's documented key set (see
       // `utils/job-submit-payload.ts`) rather than spread from the result modal's
@@ -1434,7 +1508,7 @@ function DynamicJobBuilderInner({
           )
       );
 
-      if (leadId) {
+      if (leadId && !submitOffline) {
         await LeadService.submitJobBuilder(leadId, payload);
       }
 
@@ -1501,9 +1575,26 @@ function DynamicJobBuilderInner({
             `[COMPLETE JOB — OUTCOME MIRROR PAYLOAD] PUT /lead/v1/${leadId}/outcome\n` +
               JSON.stringify(outcomePayload, null, 2)
           );
-          // Calculator-scoped PUT /lead/v1/{leadId}/outcome/{calcId}. The bare
-          // lead-scoped variant this used to call is DEPRECATED and 404s on device.
-          await LeadService.updateLeadOutcomeByCalculator(leadId, outcomeCalcId, outcomePayload);
+          if (submitOffline) {
+            // ── Completed with no signal ──────────────────────────────────────
+            //
+            // Both writes are stored TOGETHER, in one record, because they are two halves of one
+            // act: the outcome carries the fields Contract Details renders, the submit is what
+            // marks the job built. Storing only one would upload a job whose result is missing, or
+            // a result for a job that never submitted.
+            //
+            // ⚠️ Storing the submit is also what ARMS the submit step. Until this line runs, an
+            // upload of this lead files the draft and stops — which is exactly right for a rep who
+            // built the job and walked away without completing it.
+            const workId = offlineWorkId();
+            if (workId) {
+              completeOfflineJobBuilder(workId, payload as any, outcomePayload);
+            }
+          } else {
+            // Calculator-scoped PUT /lead/v1/{leadId}/outcome/{calcId}. The bare
+            // lead-scoped variant this used to call is DEPRECATED and 404s on device.
+            await LeadService.updateLeadOutcomeByCalculator(leadId, outcomeCalcId, outcomePayload);
+          }
         } catch (e) {
           console.warn('[DynamicJobBuilder] outcome mirror save failed:', e);
         }
@@ -1518,7 +1609,13 @@ function DynamicJobBuilderInner({
       // job-tracker failure must never surface as a failed build or block
       // navigation - it is caught and logged, exactly as the legacy JobBuilder
       // screen does.
-      if (isSale && leadId) {
+      //
+      // ⚠️ Skipped offline, and deliberately NOT queued. The Job Tracker row is derived entirely
+      // from the submitted job, so the honest place to create it is after the job lands — queueing
+      // a second write of the same facts only invents a way for the two to disagree. It is worth
+      // knowing that this means an offline sale reaches the Job Tracker when it uploads, not at
+      // the door.
+      if (isSale && leadId && !submitOffline) {
         try {
           const scheduleTime: any = (jobState as any)?.scheduleTime || {};
           const isTBD = !scheduleTime.date || scheduleTime.date === 'TBD';
@@ -1592,12 +1689,22 @@ function DynamicJobBuilderInner({
       // so awaiting it delayed "Complete Job" for no user-visible benefit. Web makes
       // no equivalent call here at all. The request is not cancelled by navigating:
       // nothing aborts it and the JS context outlives this screen.
-      if (leadId) {
+      // Offline these would fail immediately and there is nothing to retry them with — they are
+      // portal display flags, not the rep's work, and the submit that follows re-establishes the
+      // same facts.
+      if (leadId && !submitOffline) {
         LeadService.updateLeadTimelineProgress(leadId, {
           salesProcess: 'completed',
           leadResulted: 'completed',
           jobBuild: 'complete',
         }).catch((e) => console.warn('[DynamicJobBuilder] timeline progress complete failed:', e));
+      }
+
+      if (submitOffline) {
+        FlashMessage.success(
+          'Job completed',
+          "Saved on your device — it'll upload when you're back online."
+        );
       }
 
       if (onJobComplete) {
@@ -1613,7 +1720,7 @@ function DynamicJobBuilderInner({
     } finally {
       setIsSaving(false);
     }
-  }, [jobState, initialConfig, calculatorResultData, leadId, calcId, dealCenterData, isSale, onJobComplete, canComplete, activityLog, isEdit, appointmentId, authUser, resolveLfCalculatorDoc, allCalculators, lead]);
+  }, [jobState, initialConfig, calculatorResultData, leadId, calcId, dealCenterData, isSale, onJobComplete, canComplete, activityLog, isEdit, appointmentId, authUser, resolveLfCalculatorDoc, allCalculators, lead, worksOffline, offlineWorkId]);
 
   // Persist a generated/scanned agreement or order-sheet. Web parity
   // (TabbedCalculator outcomePayload): the base64 PDFs go at the TOP LEVEL of the
@@ -1626,6 +1733,45 @@ function DynamicJobBuilderInner({
   const handleUploadDocs = useCallback(
     async (cat: 'agreement' | 'orderSheet', payloads: any[]) => {
       if (!leadId || !payloads?.length) return null;
+
+      // ── No signal: queue the document, keep the rep's copy ────────────────────
+      //
+      // ⚠️ The return value is what the summary card renders, so it must NEVER be `null` here.
+      // Null is this function's "the upload failed" answer and the caller falls back to the draft
+      // copy; offline nothing failed, and a card that greyed out would tell the rep to scan the
+      // order sheet again. The rows handed back are the local files, which is genuinely what the
+      // device holds until the uploader files them.
+      if (worksOffline()) {
+        const workId = offlineWorkId();
+        if (!workId) return null;
+        const queued = [];
+        for (const p of payloads) {
+          const doc = await addOfflineJobDocument(workId, cat, {
+            uri: p.uri || p.file,
+            contentType: p.contentType || 'application/pdf',
+            extension: cat === 'agreement' ? 'pdf' : 'pdf',
+          });
+          if (doc) {
+            // ⚠️ Built key by key, NOT spread from `p`. The payload `p` carries the document's
+            // whole base64 body, and this row is written into `jobState` — which the draft save
+            // then serializes into MMKV, on every 2 s tick, for the rest of the job. Spreading it
+            // would put megabytes of the signed contract into a record we rewrite constantly.
+            // The file is on disk; the row only needs to point at it.
+            queued.push({
+              name: doc.name,
+              uri: doc.uri,
+              contentType: doc.contentType,
+              documentType: cat,
+              // ⚠️ No `serverId`/`filePath` — there is none yet, and inventing one would let a
+              // later delete address a row the server has never heard of.
+              isNew: false,
+              pendingUpload: true,
+            });
+          }
+        }
+        return queued;
+      }
+
       try {
         const rootKey = cat === 'agreement' ? 'agreements' : 'orderSheets';
         // The NEW base64 payloads go at the TOP LEVEL of this PUT — that is what
@@ -1690,7 +1836,7 @@ function DynamicJobBuilderInner({
         return null;
       }
     },
-    [leadId, calcId, jobState, initialConfig, dealCenterData, calculatorResultData]
+    [leadId, calcId, jobState, initialConfig, dealCenterData, calculatorResultData, worksOffline, offlineWorkId]
   );
 
   // Re-read the lead's stored documents WITHOUT uploading anything. Used after the
@@ -1702,11 +1848,14 @@ function DynamicJobBuilderInner({
   const handleRefreshDocs = useCallback(
     async (cat: 'agreement' | 'orderSheet') => {
       if (!leadId || !calcId) return null;
+      // Nothing to re-read with no signal, and `null` is this function's own "keep what you have" —
+      // the caller falls back to the draft copy, which offline is the only true account anyway.
+      if (worksOffline()) return null;
       const rows = await fetchOutcomeDocumentRows(leadId, calcId);
       const resolved = await resolveOutcomeDocRows(rows);
       return resolved[cat === 'agreement' ? 'agreements' : 'orderSheets'] || [];
     },
-    [leadId, calcId]
+    [leadId, calcId, worksOffline]
   );
 
   const isLastStep = currentTabIndex === nonSummaryTabs.length;

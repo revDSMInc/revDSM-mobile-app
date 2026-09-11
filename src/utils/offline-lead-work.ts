@@ -69,8 +69,26 @@ export type UploadStep =
   | 'calculatorState'
   /** `PUT lead/v1/{leadId}/outcome/{calcId}` — the result + the job-builder draft. */
   | 'outcome'
-  /** `POST pdf-reports/v1/agreement/{leadId}/sign` — only when the customer signed offline. */
-  | 'agreement'
+  /**
+   * The signed agreement and any order sheets captured at the door, filed one at a time through
+   * `PUT lead/v1/{leadId}/outcome/{calcId}`.
+   *
+   * ⚠️ This is NOT `pdf-reports/.../sign`, and that is the whole offline agreement design. The
+   * sign endpoint renders the PDF on the server, so it cannot run at the door; offline the device
+   * renders the agreement from the cached company config, the customer signs on the same screen,
+   * and the finished document is filed exactly like a SCANNED one. So an agreement signed offline
+   * takes a path the app already has, and no new endpoint is needed.
+   */
+  | 'documents'
+  /**
+   * `POST pdf-reports/v1/agreement/{leadId}/send-remote` — the rep chose to have the customer
+   * sign on their own phone instead of at the door.
+   *
+   * ⚠️ Queueable only because this request carries NO agreement id: it names the lead and the
+   * signers, and the server renders and sends the document itself. So the rep can take the
+   * customer's number with no signal and the link goes out the moment there is one.
+   */
+  | 'remoteSignature'
   /** `POST lead/v1/{leadId}/job-builder` — the submit. Only when the rep finished the job. */
   | 'submit';
 
@@ -84,7 +102,8 @@ export const UPLOAD_STEPS: readonly UploadStep[] = [
   'calculator',
   'calculatorState',
   'outcome',
-  'agreement',
+  'documents',
+  'remoteSignature',
   'submit',
 ] as const;
 
@@ -115,12 +134,22 @@ export const stepReplaySafety = (step: UploadStep): ReplaySafety => {
       return 'idempotent';
     case 'lead':
       return 'unique-key';
-    case 'agreement':
-      // ⚠️ Deliberately NOT guarded, though a documents read exists. This repo has already shipped
-      // a duplicate signed agreement once (CLAUDE.md, "the backend files a SECOND agreement row on
-      // submit"), and the artefact is the contract the customer signed. A second copy of that is
-      // worse than asking the rep, so an unknown outcome is never resolved by a guess.
-      return 'manual';
+    case 'remoteSignature':
+      // The server answers 409 when an agreement is already out for this lead, which IS the
+      // evidence a replay needs — see the step, which reads that as "already sent".
+      return 'guarded';
+    case 'documents':
+      // ⚠️ Guarded, and the guard is only sound because we NAME the document.
+      //
+      // This PUT APPENDS — that is exactly how this repo shipped a duplicate signed agreement once
+      // (CLAUDE.md, "the backend files a SECOND agreement row on submit"), and the artefact here is
+      // the contract the customer signed. So a replay may never be a guess: `findFiledDocument`
+      // looks for the document's own name, which `offlineDocumentName` stamps with a timestamp
+      // precisely so it cannot collide with another. Match found -> already filed, do not re-send.
+      //
+      // Each document is also marked uploaded the instant ITS OWN put returns, so an interrupted
+      // run resumes at the first unfiled one rather than re-filing the ones that landed.
+      return 'guarded';
     default:
       return 'guarded';
   }
@@ -155,6 +184,54 @@ export interface OfflineCalculatorWork {
   payload: Record<string, unknown>;
 }
 
+/** Which card on the Summary tab a document belongs to — and which key it is filed under. */
+export type OfflineDocumentCategory = 'agreement' | 'orderSheet';
+
+/** The root key this category occupies in the outcome PUT. */
+export const documentRootKey = (category: OfflineDocumentCategory): 'agreements' | 'orderSheets' =>
+  category === 'agreement' ? 'agreements' : 'orderSheets';
+
+/**
+ * One document captured with no signal — a device-rendered signed agreement, or a scanned order
+ * sheet — waiting to be filed.
+ */
+export interface OfflineJobDocument {
+  clientId: string;
+  category: OfflineDocumentCategory;
+  /**
+   * ⚠️ Load-bearing, not cosmetic. This is what the guarded replay matches on to decide whether an
+   * interrupted upload already filed this document, so it must be unique — see `offlineDocumentName`.
+   */
+  name: string;
+  /**
+   * A `file://` path on disk — NOT the document's bytes.
+   *
+   * ⚠️ This record lives in MMKV, and MMKV rewrites the whole store on every write. A signed
+   * agreement is megabytes; holding its base64 here would mean re-serializing those megabytes on
+   * every keystroke the Job Builder autosaves. The bytes stay on disk and are read once, at send.
+   */
+  uri: string;
+  contentType: string;
+  /** Set the instant the server confirms THIS document. A filed document is never re-sent. */
+  uploadedAt?: string;
+}
+
+/**
+ * Name a document so a replay can recognise it.
+ *
+ * The timestamp is the point: two order sheets scanned at one door are otherwise both
+ * "Order Sheet", and a guarded retry that matched on that name would treat the second as already
+ * filed and silently drop it.
+ */
+export const offlineDocumentName = (
+  category: OfflineDocumentCategory,
+  extension: string,
+  now: number = Date.now()
+): string =>
+  `${category === 'agreement' ? 'Agreement' : 'OrderSheet'}_offline_${now}_${Math.random()
+    .toString(36)
+    .slice(2, 8)}.${extension}`;
+
 export interface OfflineLeadWork {
   /** Stable handle for this unit of work. Never regenerated — a retry must be recognisable. */
   clientId: string;
@@ -178,8 +255,10 @@ export interface OfflineLeadWork {
   outcome?: Record<string, unknown>;
   /** WHICH calculator the outcome hangs off — that id is in the URL, so it must be resolvable. */
   outcomeCalculatorClientId?: string;
-  /** Captured at the door: the signature and the field values it was given against. */
-  agreement?: Record<string, unknown>;
+  /** Signed agreements and order sheets captured at the door, each filed once. */
+  documents?: OfflineJobDocument[];
+  /** `{ signers }` for a remote signing session the rep set up with no signal. */
+  remoteSignature?: Record<string, unknown>;
   /** The `POST .../job-builder` body. Present only once the rep completed the job. */
   submit?: Record<string, unknown>;
   /** Steps already applied to the server. The resume pointer. */
@@ -278,8 +357,10 @@ export const isStepApplicable = (work: OfflineLeadWork, step: UploadStep): boole
       return work.calculators.length > 0;
     case 'outcome':
       return !!work.outcome;
-    case 'agreement':
-      return !!work.agreement;
+    case 'documents':
+      return !!work.documents?.some((d) => !d.uploadedAt);
+    case 'remoteSignature':
+      return !!work.remoteSignature;
     case 'submit':
       return !!work.submit;
     default:
