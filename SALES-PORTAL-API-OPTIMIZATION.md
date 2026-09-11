@@ -26,8 +26,8 @@ This document describes the sales-portal list optimization: **slim list for map 
 
 | Call | Who uses it | Response |
 |------|-------------|----------|
-| `GET /demo/v1/leads/sales-portal?repId=…` (no `view`) | Portal, NP, legacy | Full `leads[]` + real `summaryCounts` |
-| `GET /demo/v1/leads/sales-portal?repId=…&view=summary` | Sales map job list | Slim `leads[]` + `summaryCounts: null` |
+| `GET /demo/v1/leads/sales-portal?repId=…` (no `view`) | NP, Installer Jobs, legacy | Full `leads[]` + real `summaryCounts` |
+| `GET /demo/v1/leads/sales-portal?repId=…&view=summary` | Sales map job list, Portal Command Center map | Slim `leads[]` + `summaryCounts: null` |
 | `GET /demo/v1/leads/sales-portal/:id` | Open one lead (capture, pitch book, etc.) | `{ lead }` — one full object |
 
 ---
@@ -140,8 +140,16 @@ Same filters as full list; response is smaller per lead.
         "fullAddress": "...",
         "location": { "type": "Point", "coordinates": [lng, lat] },
         "repLastLocation": { "latitude": 31.46, "longitude": 74.29, "updatedAt": "..." },
+        "assignedRep": "William John",
+        "assignedRepDetails": { "_id": "…", "firstName": "William", "lastName": "John" },
         "workflowState": "resume",
         "workStartedBy": null,
+        "note": "",
+        "originalContractPrice": "0", "downPayment": "0", "balance": "0",
+        "paymentMethod": "", "balancePaymentMethod": "",
+        "oneLeg": "No", "reason": "", "lastPriceQuoted": "", "isRehashed": false,
+        "installerDispatchStatus": null,
+        "leadSaleDetails": null,
         "bypass": { "gpsBypass": false, "earlyStart": false },
         "hasSalesPhotos": false,
         "salesPhotos": [],
@@ -225,6 +233,15 @@ GET https://api.np.revdsm.com/demo/v1/leads/sales-portal/6a82980f0cdbb5207aed884
   - `view=summary` → early return with slim leads (skips ~15 join collections)
   - `getDemoLeadForSalesPortalById` → full hydrate for one lead by Mongo `_id`
   - Private helpers: `buildSalesPortalSummaryLeads`, `sortSalesPortalLeadsForRep`
+  - `buildSalesPortalSummaryLeads` attaches a name-only `assignedRepDetails` — map pins
+    label themselves with the rep's first name and last initial. The full rep object
+    (office/region, `lastLogin`, `revDSMLogin`) stays on the by-id detail read.
+  - The slim `select()` also carries the lead's own note and contract/outcome scalars
+    (`note`, `oneLeg`, `reason`, `lastPriceQuoted`, `originalContractPrice`, `downPayment`,
+    `paymentMethod`, `balancePaymentMethod`, `balance`, `isRehashed`,
+    `installerDispatchStatus`) — same document, no extra query — plus one batched
+    `SalesDetails` lookup for `leadSaleDetails`, which the contract card falls back to on
+    older records. Three collections in total, against ~15 on the full path.
 
 ---
 
@@ -245,7 +262,23 @@ GET https://api.np.revdsm.com/demo/v1/leads/sales-portal/6a82980f0cdbb5207aed884
 
 ### Portal frontend
 
-**No changes.** Portal still calls `/demo/v1/leads/sales-portal` without `view=summary` and receives the full list with real `summaryCounts`.
+The Command Center lead map takes the slim list — and **no** per-lead detail read. Its
+lead details modal already loads the heavy parts (timeline, job builder + documents,
+photos, calculators, reports, installer assignment) from its own socket rooms, each of
+which is seeded with current state on join. What it reads off the lead record itself —
+the note and the contract/outcome fields — travels with the slim row instead.
+
+| File | Change |
+|------|--------|
+| `src/api/leads.js` | `useGetLeads` takes a `view` argument |
+| `src/sections/lead-map/components/lead-map-tab.js` | Asks for `view=summary` |
+
+Two things stay on the fat list: the install map (its own `/leads/install-map` endpoint)
+and Installer Jobs, which reads `assignmentProducts` straight off the rows.
+
+**Cache note.** SWR keys the list on its query string, so re-selecting a period the reader
+has already visited shows that period's cached response while the refetch runs. That is
+SWR's normal stale-while-revalidate behaviour and is left as-is.
 
 ---
 
