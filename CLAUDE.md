@@ -2112,6 +2112,113 @@ produce the figure the screen passes in. tsc 75 (baseline unchanged); eslint 0 e
 confirm the red refund block appears on Job Price, Confirm becomes live, and Review shows the
 method/reason/approver form.
 
+### The contract card shows what the refund did to the deal
+
+Ticket, against the Lead Center's Contract Details card: *"i need to display the refund
+amount, total contract price, contract value after refund… these details show only after
+accpted the refund request otherwise no need to display."* The screenshot's own deal —
+**Original Contract Price $8,065 with a Down Payment of $8,500** — is the case: $8,500
+collected, re-priced to $8,065, **$435 back**.
+
+Three rows now render under the contract price once the refund is accepted: the
+**Original Contract Price** (what it was), **Refund to Customer** (−$435, with a
+`REFUNDED` / `IN PROGRESS` chip), and **Contract After Refund**.
+
+**New pure `src/utils/contract-refund-summary.ts`** holds the model
+(`buildContractRefundSummary` + `isAcceptedRefund` / `acceptedRefundTotal` /
+`firstAcceptedRefund` / `contractPricesFromDraft` / `contractFromSaleParts` /
+`resolveBeforePrice` / `paymentsFromFunding` / `fundingContractPrice`).
+
+#### ⚠️ Four rules that are each wrong SILENTLY
+
+1. **`before − after` is NOT the refund**, and the card must never compute one from the
+   other. The contract price moves for reasons that have nothing to do with money going
+   back — a second addendum, a scope change — so all three figures are reported
+   independently and the refund is always read from the refund records. (They coincide on
+   the reported deal only because it was collected in full.)
+2. ⚠️ **"Accepted" means the CUSTOMER SIGNED, not that an approver approved.**
+   `customerSigned` / `issuing` / `refunded` qualify; `pendingApproval`,
+   **`pendingCustomer`** and `failed` do not. A request an approver has passed but the
+   customer has not signed may still fall through, and `failed` was agreed while the
+   money demonstrably did not move — printing a reduced contract value for either
+   misstates the job to whoever reads the card next.
+3. ⚠️ **A "before" price must be strictly GREATER than the price now**
+   (`resolveBeforePrice`), and that guard is the whole function. Once the customer signs,
+   the `/public` summary's `current.pricing` has **caught up** to `proposed` — both are
+   the NEW price — so an ungated read labels one number as both "before" and "after".
+   Three candidates are offered (the addendum, the funding record's `contractPrice`, and
+   `downPayment + balance`) and the LARGEST viable one wins; when none is, **the row is
+   omitted** rather than shown wrong. The same guard discards a partially-collected
+   deal's parts, which sum to less than the contract.
+4. ⚠️ **The payment rows live at `data.funding.payments`.** The shallow `data.payments`
+   reads as plausible and resolves to **nothing**, which makes the card silently
+   invisible — no error, just an empty lead. `paymentsFromFunding` is the only unwrap,
+   and `useLeadFunding` must never hand-roll one again. **This exact path was written
+   here and caught by the spec.**
+
+⚠️ A refund still IN FLIGHT is REPORTED rather than hidden (`accepted: false`) but prints
+no before/after — nothing has been agreed yet. `settled` separates money that has landed
+from money that is agreed and moving, which is what the row's chip says.
+
+#### ⚠️ The spec arrived as a test file, and it corrected the implementation
+
+`__tests__/utils/contract-refund-summary.test.ts` (52 tests) was already on disk, written
+against this exact deal, and it **disagreed with the first pass on rules 2 and 4** — the
+first read "accepted" as approver-approved, and shipped the `data.payments` unwrap that
+resolves to nothing. Both were corrected to the spec. A near-duplicate
+`isRefundAccepted` / `acceptedRefundTotal` pair briefly existed in
+`screens/DynamicDealCenter/utils/funding.ts` with the LOOSER meaning and was **deleted**:
+two functions of the same name disagreeing about what "accepted" means is precisely the
+drift this repo keeps paying for.
+
+⚠️ **No extra request.** `JobDocsSection` already chains the approvals and funding reads
+for the approvals card; the summary is built from the funding record it has and from
+`downPayment + balance` on the lead. **No draft is fetched** — the sale's own parts are
+what recover the reported deal's $8,500.
+
+⚠️ Both `JobDocsSection.tsx` and `ContractDetailsCard.tsx` are **CRLF**.
+
+tsc 44 (baseline unchanged); the new util, `useLeadFunding`, `useLeadApprovals`,
+`ContractDetailsCard` and `funding.ts` are eslint-clean and `JobDocsSection.tsx` is at its
+exact HEAD baseline (39 problems: 10 errors / 29 warnings). 8 suites / 207 tests pass and
+the iOS bundle builds.
+
+#### …and the first render had a duplicate row and double-counted the refund
+
+QA screenshot of the shipped card:
+
+```
+Original Contract Price   $8,065.00   ← the stock row
+Original Contract Price   $8,500.00   ← the refund block's  ⇠ SAME LABEL, different value
+Refund to Customer       −$435.00
+Contract After Refund     $7,630.00   ⇠ WRONG: 8,500 − 435 = 8,065
+```
+
+1. ⚠️ **The duplicate is structural, not a slip.** The lead's `originalContractPrice` is
+   **rewritten to the new figure** when the addendum is accepted, so on a refunded deal
+   the stock row shows the POST-refund price under a label reading "Original" — directly
+   above the refund block's genuine original. The stock row is now **suppressed** whenever
+   the block can tell the whole story.
+2. ⚠️ **`after` IS the post-refund figure, so it is printed AS IS.** Subtracting the
+   refund from it takes the money off twice. The rows are now
+   `before` → `−refunded` → `after`, and on a fully-collected deal they reconcile
+   exactly: 8,500 − 435 = 8,065.
+
+⚠️ **The block only replaces the stock row when it has a `before` price**
+(`showRefundBlock`). Without one it could print only "Contract After Refund", which on
+this card equals the row above it — the same number twice under two labels, i.e. the very
+duplicate being fixed. When `resolveBeforePrice` trusts no candidate the stock row stays
+and no refund rows are drawn.
+
+Labels are the reporter's: **Original Contract Value · Refund Value · Contract After
+Refund**. Down Payment, Remaining Balance and Install Date are untouched. The
+`REFUNDED` / `IN PROGRESS` chip was dropped — the approvals card directly above already
+reports that status, and the ask was three clean values.
+
+⚠️ Needs a device check: open the reported deal and confirm the card reads $8,500 →
+−$435 → $8,065 with **one** Original row; that a lead whose refund is still
+`pendingApproval` shows **no** refund rows; and that an ordinary sale is untouched.
+
 ### `GET /lead/v1/:leadId/approvals` on the Lead Center — and who the rep may chase
 
 Ticket: *"IMPLEMENT THIS END point to get all the remaining approvals and also make sure
