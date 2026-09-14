@@ -55,6 +55,17 @@ export interface ZoomableImageProps {
    */
   resetKey?: string | number;
   maxScale?: number;
+  /**
+   * Fired on a single tap that is NOT the start of a double tap.
+   *
+   * Optional, and the gesture is only composed in when it is supplied — see `singleTap`.
+   */
+  onSingleTap?: () => void;
+  /**
+   * A horizontal swipe across the image while it is NOT zoomed, for hosts that page
+   * between images. Receives the gesture's total travel; the host decides what counts.
+   */
+  onSwipe?: (translationX: number, translationY: number) => void;
 }
 
 export const ZoomableImage: React.FC<ZoomableImageProps> = ({
@@ -64,6 +75,8 @@ export const ZoomableImage: React.FC<ZoomableImageProps> = ({
   resizeMode = 'contain',
   resetKey,
   maxScale = DEFAULT_MAX_SCALE,
+  onSingleTap,
+  onSwipe,
 }) => {
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -162,7 +175,47 @@ export const ZoomableImage: React.FC<ZoomableImageProps> = ({
       savedTy.value = ty.value;
     });
 
-  const composed = Gesture.Simultaneous(pan, pinch, doubleTap);
+  /**
+   * A single tap on the image, for hosts that use it to toggle their own chrome.
+   *
+   * ⚠️ `Gesture.Exclusive(doubleTap, singleTap)` — NOT `Simultaneous`. A double tap
+   * begins with a single one, so composing them in parallel would fire the host's toggle
+   * on the first tap of every zoom gesture: the chrome would flash away each time a rep
+   * double-tapped to zoom into detail. Exclusive makes the single tap wait for the double
+   * to fail, which is the standard 250 ms this component already sets on `maxDuration`.
+   *
+   * Absent the prop the composition is byte-identical to before, so the other callers
+   * (the pitch book's inline card, Roofline Deck) are untouched.
+   */
+  const singleTap = Gesture.Tap()
+    .numberOfTaps(1)
+    .onEnd((_e, success) => {
+      if (success && onSingleTap) runOnJS(onSingleTap)();
+    });
+
+  /**
+   * Paging swipe — the exact COMPLEMENT of `pan` above, which is `.enabled(zoomed)`.
+   *
+   * ⚠️ It lives in this composition rather than in an overlay laid on top of the image,
+   * and that is the whole point. A sibling `GestureDetector` covering the image swallows
+   * the touch whether or not its gesture activates, so the previous edge-strip version
+   * ate taps on any control beneath it — the prev/next arrows sit at exactly those edges
+   * — and only worked in the strips. Composed here it arbitrates with pinch and pan
+   * properly and works across the WHOLE image.
+   *
+   * ⚠️ `.enabled(!zoomed)` is what keeps a zoomed-in slide draggable: pan and swipe are
+   * never both live, so panning to detail can never turn into a page change.
+   */
+  const swipe = Gesture.Pan()
+    .enabled(!zoomed && !!onSwipe)
+    // Horizontal intent only, so a vertical drag still reaches a scrolling parent.
+    .activeOffsetX([-15, 15])
+    .onEnd((e) => {
+      if (onSwipe) runOnJS(onSwipe)(e.translationX, e.translationY);
+    });
+
+  const taps = onSingleTap ? Gesture.Exclusive(doubleTap, singleTap) : doubleTap;
+  const composed = Gesture.Simultaneous(pan, pinch, taps, swipe);
 
   const imageStyle = useAnimatedStyle(() => ({
     transform: [

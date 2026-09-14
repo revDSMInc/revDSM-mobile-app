@@ -6190,6 +6190,455 @@ yarn lint                  # eslint
 yarn test                  # jest
 ```
 
+### Pitch Book fullscreen opens with a gesture tutorial — and the gestures it teaches are NEW
+
+Ticket: *"open the app, create a new lead, open the lead detail page, then go to the Tools section and
+open the pitch book, then click on the full screen icon — when the full screen is open we need to
+display these details"*, against a mock of a **QUICK TUTORIAL / Presentation Gestures** card with two
+panels (**Tap Center**, **Swipe Edge-to-Edge**) and **Got It, Dismiss** / **Don't show me again**.
+
+⚠️ **NEITHER GESTURE EXISTED.** Fullscreen had `ZoomableImage`'s pinch / double-tap / pan and the
+chevron arrows, and nothing else — no centre tap, no edge swipe (`grep` for `PanResponder`,
+`showControls`, `Gesture.Tap` in `screens/Pitchbook/index.tsx` was empty). Shipping the card alone would
+have taught a rep two gestures that do nothing in front of a customer, so **both were implemented**;
+the card's copy is the contract with them and must not outlive either.
+
+| card | what it now does |
+|---|---|
+| **Tap Center** | single tap on the slide toggles the presentation chrome — counter, exit, arrows, tabs, tools tab |
+| **Swipe Edge-to-Edge** | a horizontal swipe in either border strip changes slide |
+
+#### The tap had to go INSIDE `ZoomableImage`, not over it
+
+New optional **`onSingleTap`** prop. A sibling detector over the middle of the slide would have
+swallowed the pinch and double-tap that live there, so the tap is composed with them instead:
+
+⚠️ **`Gesture.Exclusive(doubleTap, singleTap)`, never `Simultaneous`.** A double tap BEGINS with a
+single one, so a parallel composition would fire the host's toggle on the first tap of every zoom — the
+chrome flashing away each time a rep double-tapped into detail. Exclusive makes the single tap wait for
+the double to fail, on the 250 ms `maxDuration` the component already sets. Absent the prop the
+composition is byte-identical, so the inline pitch-book card and Roofline Deck are untouched.
+
+#### The swipe is two border STRIPS, which is what makes it safe
+
+**`EdgeSwipeZones`** renders an 18 %-wide `Gesture.Pan` strip down each side.
+
+⚠️ **Not full width.** The middle belongs to pinch and pan, and a full-width swipe handler would fight
+panning a zoomed-in slide — the one gesture a rep uses while a customer is looking at detail. It is also
+exactly what the card promises (*"near the screen borders"*), so copy and hit areas cannot drift apart.
+
+⚠️ **`zIndex: 5`, below the chrome's 10.** The prev/next arrows sit at these very edges; a strip above
+them would swallow the taps the tutorial never mentions but the rep still relies on.
+
+⚠️ **Direction comes from the TRAVEL, not from which strip was touched** — keying it to the strip would
+make a left-edge swipe-left go backwards. `swipeDirection` also requires `MIN_SWIPE_DISTANCE` of travel
+**and** more horizontal than vertical movement; without the second test a slight drag while reaching for
+an arrow changes slide mid sentence. An exact 45° drag is refused rather than guessed.
+
+#### Chrome gating, and the two buttons
+
+The chrome is the run of siblings that FOLLOWS the image in each layout, so one `{chromeVisible && (<>…)}`
+fragment gates each run rather than ten separate conditions; the portrait top bar and both tab strips are
+flow children and are gated on their own.
+
+⚠️ **`chromeVisible` resets to true on every fullscreen OPEN.** Leaving a presentation with the chrome
+hidden must never strand the next one — the exit button is in there.
+
+⚠️ **The centre tap is swallowed while the tutorial is up**, so the tap that dismisses it cannot also
+hide the controls behind it: the rep would land on a bare slide having pressed a button that said
+"Got It".
+
+⚠️ **Only "Don't show me again" writes** (MMKV `pitchbook-gesture-tutorial-v1`). "Got It, Dismiss" closes
+for now and the card returns next presentation — treating the two alike is the easy mistake and makes the
+quieter button pointless. An unrecognised stored value SHOWS the tutorial: one time too many beats a rep
+never learning the gestures.
+
+⚠️ The overlay is `StyleSheet.absoluteFill` inside the EXISTING fullscreen `Modal`, rendered last — not a
+modal of its own. Stacking native modals is unreliable on both platforms, the rule the CoC signature pad
+and the funding sheet already follow. Its `BlurView` carries a near-opaque
+`reducedTransparencyFallbackColor`, because with Reduce Transparency on there is no blur and the card is
+unreadable over a bright slide.
+
+⚠️ **Keyed on the fullscreen open, not on mount.** The inline card has neither gesture, so teaching them
+where they do nothing would be worse than not teaching them.
+
+⚠️ **Roofline Deck was NOT given this.** It shares the fullscreen viewer's shape, and the earlier
+inspection-photos ticket did fix both — but that was a defect present in both, and this is a new feature
+the ticket scoped to the pitch book. It is a two-line addition there if wanted, and it needs the same two
+gestures first.
+
+Rules live in the pure **`src/utils/presentation-tutorial.ts`**, for the reason `utils/addendum-drafts.ts`
+exists: the screen pulls in React Native and is untestable under jest here, and a rule that gets this
+wrong either nags a rep who asked to be left alone or silently never shows the tutorial.
+
+Verified with 13 tests (`__tests__/utils/presentation-tutorial.test.ts`): both buttons' storage
+behaviour and an unrecognised value erring toward showing; swipe left = next / right = prev, a too-short drag, **a mostly-vertical drag refused**, a genuinely horizontal
+diagonal accepted, an exact 45° refused, and junk as null. tsc 51 (baseline unchanged);
+`Pitchbook/index.tsx` is back at its HEAD eslint baseline (68 problems: 12 errors / 56 warnings), the two
+new widgets and the util are error-free, and `ZoomableImage.tsx` carries its 1 pre-existing warning.
+
+⚠️ Needs a device check (this repo cannot render-test): the card on the first fullscreen open, both
+buttons' behaviour across a relaunch, the centre tap hiding and restoring the chrome without disturbing
+double-tap zoom, an edge swipe changing slide while a mid-slide pinch still zooms, and the arrows still
+tappable where the strips overlap them.
+
+### Pitch Book fullscreen: ONE floating dock replaces the tabs bar and the Interactive Tools button
+
+Ticket: *"update the bottom bar like this style … remove the interactive button and add that
+functionality when pressing the new icon. Actually adding two new icons on the bottom: one is a layer
+icon that will open the bottom bar in which LeafFilter Story, Problems & Risk, Rules & Elimination etc
+are shown, and the other icon press shows the bar that is currently shown on pressing Interactive
+Tools."*
+
+**New `widgets/components/pitchbook/PresentationDock.tsx`** — a floating rounded bar with a leading
+icon PAIR that chooses which half is showing:
+
+| icon | mode | shows |
+|---|---|---|
+| **layers** ⬓ | `slides` | the deck's category tabs — LeafFilter Story, Problems & Risk, … |
+| **wand** ✨ | `tools` | Inspection / Risk / Videos / Notes, over their content, with a ✕ |
+
+#### What it replaced
+
+| gone | was |
+|---|---|
+| landscape `#111` category strip | a flow child under the image |
+| landscape right-edge green tools tab | a vertical pill at the screen edge |
+| portrait tabs bar + **Interactive Tools** button | a flow bar under the image |
+| `{renderInteractiveTools()}` in fullscreen | a bottom sheet over the slide |
+
+⚠️ **`renderInteractiveTools` itself STAYS** — it still serves the non-fullscreen drawer, which is a
+themed bottom sheet and is unchanged. Only the fullscreen call site was removed.
+
+⚠️ **The dock is rendered ONCE for both orientations**, outside the landscape/portrait branch, with only
+its insets differing. The two bars it replaced had drifted into different designs already; one component
+is what stops that recurring.
+
+#### The decisions
+
+⚠️ **Both leading icons stay visible in BOTH modes.** They are the only way between the two halves, so
+hiding either behind its own mode would strand the rep — which is exactly what the old right-edge tab
+did once the tabs bar was gone.
+
+⚠️ **The ✕ returns to `slides`; it does NOT dismiss the dock.** This bar is also how the rep changes
+section, so a close that hid the whole thing would take the deck's navigation with it.
+
+⚠️ **`dockMode` resets to `slides` on every fullscreen open**, alongside `chromeVisible`, for the same
+reason: landing in `tools` would hide the navigation the rep opened the presentation to use.
+
+⚠️ **The wand is not offered in Homeowner mode** (`showTools={viewMode === 'rep'}`) — the same gate the
+old right-edge tab carried, so it cannot open an empty panel in front of a customer.
+
+⚠️ **The tool panel is capped** (`maxToolHeight`, 52 % landscape / 46 % portrait) so it never swallows
+the slide being presented.
+
+#### ⚠️ The tool bodies could NOT be shared with the drawer
+
+The dock is dark by design; the drawer is a themed surface whose headings use `text-text-primary`, which
+in LIGHT theme is near-black and **invisible** on the dock. So `renderDockToolContent` is a separate
+renderer with explicit colours (`dockStyles`) for the copy this screen owns. The two shared panels —
+`InspectionPhotosPanel` and `RiskContent` — draw their own cards and read correctly on either ground, so
+they ARE reused; only the headings, the notes card and the videos empty state are restated.
+
+`PhotoPeekScrollLockProvider` + `PeekAwareScrollView` come across with them: without the lock a stray
+drag during a hold-to-peek scrolls the list, steals the touch and dismisses the peek mid-hold.
+
+#### It sits correctly with the gesture layer added in the ticket above
+
+`zIndex: 20` — above `EdgeSwipeZones` (5) and the arrows (10), so dock taps are never swallowed by a
+swipe strip. It is gated on `chromeVisible`, so the centre tap hides and restores it with the rest of
+the chrome, which keeps the tutorial's *"toggle toolbar and presentation controls"* copy true. The
+tutorial overlay is still rendered after it and so still covers it.
+
+tsc 51 (baseline unchanged); `Pitchbook/index.tsx` holds its 12 pre-existing eslint errors and drops
+from 56 warnings to 45 — the removed bars took their inline styles with them — and `PresentationDock.tsx`
+is error- and warning-free.
+
+⚠️ Needs a device check (this repo cannot render-test): both icons switching halves in portrait AND
+landscape, the ✕ returning to the tabs rather than closing, the active category still highlighted after
+a swipe changes slide, the tool panel scrolling without dismissing a hold-to-peek, and Homeowner mode
+showing the layers icon alone.
+
+### Pitch Book: one top bar (✕ + page count) on every surface, and the tutorial hides the chrome
+
+Two tickets on the same screen.
+
+#### 1. `PresentationTopBar` — a round ✕ left, the page count right
+
+Ticket: *"add the cross button and the page number on the top in this format when the app is in full
+screen mode or normal mode."*
+
+**New `widgets/components/pitchbook/PresentationTopBar.tsx`**, used on all THREE surfaces, which had
+drifted into three different treatments:
+
+| surface | was |
+|---|---|
+| fullscreen landscape | a plain `2 / 77` pill top-left + a `contract` icon top-right |
+| fullscreen portrait | a FLOW row that pushed the slide down by its own height |
+| inline card | a green `1 of 8` chip beside a "Back to Map" button |
+
+(The inline card takes the page count only — see the `showClose` note below.)
+
+⚠️ **The page count is TWO `Text`s, not one string.** The design weights the current page and dims the
+total, which is what makes the pair readable across a customer's living room.
+
+⚠️ **`pointerEvents="box-none"` on the row.** It spans the full width of the slide, and without it the
+row would swallow every tap and pinch landing between the two controls — including the centre tap that
+toggles this very chrome.
+
+⚠️ **The ✕ is FULLSCREEN-ONLY** (`showClose`). It shipped on the inline card too and was a control with
+nothing of its own to do — that screen already has the toolbar's back arrow ABOVE the slide and a "Back
+to Map" button directly beside it, so a third way out sat on the artwork earning nothing. Reported as
+*"the cross button is also displayed here, that is useless."*
+
+⚠️ **The inline card is `compact`.** The fullscreen pill is deliberately large — it has to be read from
+across a customer's living room — and that same size on a 4:3 thumbnail reads as an oversized box, which
+is the second half of the same report. Compact drops the pill to 26pt with 12/10.5 type.
+
+⚠️ **The pill aligns its text `center`, NOT `baseline`.** The two numbers are different sizes, and
+baseline alignment lines up their BASELINES rather than centring the pair — so inside the fixed-height
+pill the text sat high. Baseline is the typographically "correct" pairing for mixed sizes and is exactly
+wrong here: the pill is a fixed box, and what has to look centred is the block, not the type. Both Texts
+also carry `includeFontPadding: false`, since Android reserves space for ascenders the string may not
+use and pushes it off centre the same way.
+
+⚠️ **With no ✕ the row switches to `justifyContent: 'flex-end'`.** One child under `space-between` parks
+on the LEFT, and the count belongs on the right on every surface.
+
+⚠️ **The inline one is NOT gated on `chromeShown`.** That flag belongs to the fullscreen centre tap,
+and there is no centre tap out here to bring the controls back with.
+
+⚠️ Portrait's bar became an overlay rather than a flow row, so both orientations now frame the slide
+identically.
+
+#### 2. The tutorial hides the chrome — and that was an overlap BUG, not just tidiness
+
+Ticket: *"when the gesture screen is displayed, no need to show the bottom bar also"*, with a
+screenshot of the dock painted across the tutorial's two buttons.
+
+⚠️ **The dock carries `zIndex: 20` and the tutorial's root carried none, and in React Native zIndex
+beats document order among siblings** — so rendering the tutorial last was not enough and the dock drew
+over it. New derived **`chromeShown = chromeVisible && !showGestureTutorial`** gates every fullscreen
+chrome element, which fixes the overlap at its cause rather than starting a zIndex war, and leaves the
+rep looking only at the card they are being asked to read. The tutorial teaches what that chrome does,
+so there is nothing to demonstrate against while it is up — the same reason the centre tap is already
+swallowed there.
+
+The tutorial root also gained `zIndex: 60` as the belt to that braces, so a future control with a zIndex
+of its own still cannot paint over the card.
+
+#### 3. ⚠️ `insets.top` is ZERO inside the fullscreen Modal — the chrome sat on the clock
+
+Ticket: *"when this full screen is open, make sure the bar in which time, battery and other details are
+shown is hidden, and also make sure the cross button and the numbering are not touching that bar."*
+Two causes behind one screenshot.
+
+**The status bar was only hidden in LANDSCAPE** (`hidden={isLandscape}`), so a portrait presentation
+showed the clock, wifi and battery over the slide — in front of a customer. Now `hidden` outright, for
+the whole fullscreen modal.
+
+**And the safe-area inset resolved to 0.** A `Modal` is its own native view tree, so it sits outside the
+`SafeAreaProvider`'s host view and `useSafeAreaInsets()` has no window to measure. `Math.max(insets.top
++ 8, 20)` therefore collapsed to a flat **20** and put the ✕ and the page count straight through the
+notch and across the clock.
+
+New **`fullscreenTopInset`** applies a floor: `Math.max(insets.top, isLandscape ? 12 : 44) + 8`.
+
+⚠️ **44 is the NOTCH, not the status bar.** Hiding the status bar does not reclaim the notch or the
+Dynamic Island — iOS still refuses to draw there — so the clearance is needed even with nothing left to
+collide with. Landscape gets a much smaller floor because the cutout moves to the SIDE there and the top
+inset really is near-zero; `insets.left` / `landscapeRightInset` guard the sides.
+
+⚠️ A floor rather than a nested `SafeAreaProvider`: one number, and no new context inside a modal whose
+other children read `insets` too and would all shift at once.
+
+⚠️ **And the SIDES had it too — the camera cutout.** `Math.max(insets.left, 16)` resolved to **16** on
+the first rotation, because the portrait side insets are `0`, which put the ✕ (or the page count,
+depending which way the phone was turned) **underneath the camera module**; once the rotation settled
+`insets` reported the real 44–59, which is why it looked right on the second attempt.
+`fullscreenLeftInset` / `fullscreenRightInset` floor at **44** and feed the top bar, the arrows AND the
+dock, so the three cannot disagree.
+
+⚠️ **The side floor is SYMMETRIC.** Which side the cutout is on depends on the rotation DIRECTION, and
+the only value that would tell us is the one that is unreliable here. On a device with no cutout it
+costs a little of the black letterbox and nothing of the slide. The Android navigation bar still raises
+the right side past the floor where it applies — `landscapeRightInset` keeps its own 48 minimum.
+
+⚠️ **…and the modal's LAYOUT is stale across a rotation too, which is a different problem from the
+stale values.** Reported: rotating portrait → landscape with fullscreen ALREADY OPEN left the chrome
+clipped at the edge, while closing and reopening in landscape was correct. That asymmetry is the tell —
+the numbers are right either way, so what is stale is the layout the modal is holding. A `Modal` is
+presented by its own native controller and does not reliably re-measure its subtree on a rotation, so
+the absolute chrome kept positions computed against the previous frame until the modal was torn down.
+The fullscreen `GestureHandlerRootView` is therefore **keyed on the orientation**, which does that
+teardown on every turn instead of waiting for the rep to do it by hand.
+
+⚠️ That key resets the slide's ZOOM and the dock's scroll offset on rotation — acceptable, and arguably
+right since the slide re-fits to the new frame anyway, but it is the cost: do not extend the key to
+anything whose state must survive a turn. `chromeVisible`, `dockMode` and the tutorial flag all live on
+the SCREEN, above it, and are untouched.
+
+⚠️ **The dock had the same defect at the bottom** and is fixed in the same pass
+(`fullscreenBottomInset`). Its floor is SMALLER, and not for symmetry: the home indicator is a thin bar
+the OS draws over whatever is beneath it, not a region iOS refuses to render in. It needs clearing, not
+avoiding.
+
+#### 4. …and in LANDSCAPE the inset was counted TWICE, with a stale value
+
+Ticket: *"when we open the full screen and rotate, on the first attempt the cross button and the page
+numbers are not shown in their place."* Two compounding causes, and the words "first attempt" name the
+second one.
+
+**The landscape root carried `paddingTop: insets.top`** and the bar inside it adds `fullscreenTopInset`
+— which contains the same inset — so the chrome sat roughly **2× the inset** down the screen, about a
+third of the way. That padding existed to hold content below the status bar, which is now hidden for
+the whole presentation, so it is simply gone. The slide gets that height back too, which is why it was
+letterboxed small in the report.
+
+⚠️ **And LANDSCAPE now ignores `insets.top` entirely — a fixed 12, not a floor.** `insets` is re-read
+across a rotation, and on the FIRST rotation it still holds the PORTRAIT top inset (~59); taking
+`Math.max` of the two therefore inherited that stale number until something else forced a re-render.
+That is exactly "on the first attempt". The landscape top inset is genuinely near-zero on every device
+— the cutout moves to the SIDE — so a constant is both correct and immune to the staleness.
+
+⚠️ **`flexShrink: 0` on both controls** of `PresentationTopBar`. The row is `space-between` across the
+full width of the slide, and a narrow landscape frame squeezed the pill until it clipped its own total
+to `2 / ⌐`.
+
+#### 5. Swipe and arrows on the INLINE card too
+
+Ticket: *"user can change slides by swiping or tapping arrows — add this functionality also."*
+Fullscreen had both; the inline card had **neither** — a rep presenting without going fullscreen could
+only move with the buttons under the progress bar. It now carries the same `EdgeSwipeZones` and a new
+shared **`SlideArrows`**.
+
+#### 6. ✅ ROOT CAUSE: the swipe STRIPS were eating the arrow taps — `EdgeSwipeZones` is deleted
+
+Ticket: *"when I click on the arrow button the page does not move forward and backward, and when we try
+to swipe, that is also not working perfectly."* **One cause, both symptoms.**
+
+The swipe shipped as two 18 %-wide `GestureDetector` strips laid over the slide, on the reasoning that
+the middle belonged to pinch. ⚠️ **A sibling `GestureDetector` swallows the touch whether or not its
+gesture activates** — `zIndex` orders PAINTING, it does not hand the touch back — and the prev/next
+arrows sit at `left: 12` / `right: 12`, i.e. **inside those very strips**. So the arrows were dead, and
+swiping only worked in an 18 % band, which is "not working perfectly".
+
+**The swipe moved INSIDE `ZoomableImage`'s own composition**, as new `onSwipe`:
+
+```ts
+const swipe = Gesture.Pan().enabled(!zoomed && !!onSwipe).activeOffsetX([-15, 15])…
+const composed = Gesture.Simultaneous(pan, pinch, taps, swipe);
+```
+
+⚠️ **`.enabled(!zoomed)` is the exact COMPLEMENT of `pan`, which is `.enabled(zoomed)`.** The two are
+never both live, so panning a zoomed-in slide to detail can never turn into a page change — which is
+what a full-area swipe overlay could not have guaranteed. Composed here it arbitrates with pinch
+properly and works across the WHOLE slide.
+
+⚠️ **`activeOffsetX([-15, 15])`** keeps a vertical drag reaching a scrolling parent — needed for the
+inline card, which lives in the pitch book's scrollable body.
+
+⚠️ **`EdgeSwipeZones.tsx` is DELETED, and `presentationZone` / `EDGE_BAND_FRACTION` went with it. Do not
+reintroduce an edge band.** It is recorded in `presentation-tutorial.ts` as the trap it was.
+
+⚠️ **The tutorial's Swipe card body diverges from the design mock** (*"near the screen borders"*) and now
+reads *"anywhere on the slide"* — a tutorial has to describe what the app does. The TITLE keeps the
+mock's "Swipe Edge-to-Edge", which reads as the travel rather than the hit area.
+
+⚠️ **`SlideArrows` disables at the ends rather than hiding.** An arrow that vanishes at slide 1 moves
+the one beside it and makes the rep re-aim mid-sentence. Its vertical centring is `top: '50%'` plus a
+negative half-height margin — RN has no `translateY(-50%)`, the same rule the inspection viewer's
+chevrons record.
+
+#### 7. …and then all FOUR fullscreen arrows moved onto it, for two visual defects
+
+⚠️ **The portrait pair carried NO `top` at all.** Two absolutely-positioned siblings with no vertical
+anchor fall back to their static flow position inside a `justifyContent: 'center'` container, which is
+why the forward arrow appeared off the slide entirely — *"the forward button should not be cut out."*
+
+⚠️ **The landscape next arrow still offset itself by `landscapeRightInset + 48`** to clear the
+right-edge Interactive Tools tab — a control deleted two tickets earlier. `SlideArrows` now takes
+`leftInset` / `rightInset` separately, because in landscape the two sides are genuinely different: the
+cutout is on one, the Android navigation bar on the other, and a single value either clips one arrow or
+pushes both needlessly inward.
+
+⚠️ **A disabled arrow dims only its GLYPH — the disc stays at full strength.** It first dimmed the
+whole control to `opacity: 0.3`, and a near-black disc at 30 % over the fullscreen slide's BLACK
+letterbox is invisible: on slide 1 the back arrow vanished and was reported as *"only one forward and
+backward icon is displayed."* Dimming the chevron alone keeps the control present, which is the entire
+reason it is disabled rather than hidden — an arrow that disappears at the ends moves the one beside it
+and makes the rep re-aim mid-sentence.
+
+⚠️ **The arrows are nearly OPAQUE with a light ring, not the translucent scrim the top bar uses.**
+Reported: *"in portrait these forward and backward buttons are not displayed clearly, their background
+colour merges into the white background page."* They sit ON the slide, and a slide is arbitrary
+artwork — at `rgba(0,0,0,0.45)` a white chevron over a white table was invisible. The ✕ and the page
+count get away with a scrim because they sit in the letterboxed BLACK margin with nothing behind them.
+The ring carries it the other way: an almost-black disc on an almost-black slide would disappear just as
+completely.
+
+#### 8. The chrome auto-hides after 3 s, and only a TAP brings it back
+
+Ticket: *"the cross icon, page number, forward and backward buttons and also the bottom UI controls
+automatically hide after 3 seconds, and when the user taps on the screen show all the controls and hide
+automatically after 3 seconds — and make sure when the user uses the swipe gesture do not show it, show
+only when the user taps."*
+
+One effect drives it, re-armed by a `chromeNudge` counter that every deliberate interaction bumps:
+
+```ts
+useEffect(() => {
+  if (!isFullscreen || !chromeVisible || showGestureTutorial || dockMode === 'tools') return;
+  const timer = setTimeout(() => setChromeVisible(false), CHROME_AUTO_HIDE_MS);
+  return () => clearTimeout(timer);
+}, [isFullscreen, chromeVisible, showGestureTutorial, dockMode, chromeNudge]);
+```
+
+⚠️ **Held open while the TOOL panel is showing** (`dockMode === 'tools'`). That panel is content the rep
+is reading — inspection photos, the risk report — and timing it out from under them is the one case
+where hiding is destructive rather than tidy. It resumes on returning to the slide tabs.
+
+⚠️ **The centre tap no longer TOGGLES, it reveals** (`revealChrome`). A toggle would give a rep who taps
+while the controls happen to be up the opposite of what they asked for — and they cannot know which
+state they are in, because the whole point is that the chrome comes and goes by itself.
+
+⚠️ **Two distinct helpers, and the split is the requirement:**
+- `revealChrome` — shows AND re-arms. Only the slide's single tap calls it.
+- `keepChromeAlive` — re-arms ONLY, never reveals. The arrows, category tabs and dock icons call it, so
+  a rep working the controls never loses them mid-reach.
+
+⚠️ **`handlePrev` / `handleNext` are shared with the SWIPE, so they must stay free of chrome behaviour
+themselves.** That is why the arrows go through `handleArrowPrev` / `handleArrowNext` wrappers rather
+than the raw handlers — putting the nudge inside the shared handler would put the controls back on every
+swipe, which is exactly what the ticket rules out.
+
+⚠️ **A swipe cannot reach `revealChrome` at all**, and not by a check: the swipe is a `Gesture.Pan` with
+`activeOffsetX`, and once a pan activates RNGH cancels the tap composed beside it. A drag too small to
+activate the pan is a tap by any reasonable reading, so revealing there is correct.
+
+⚠️ **Fullscreen only.** The inline card keeps its controls permanently — it is a scrolling page with no
+centre tap to bring them back, so the same behaviour there would strand the rep. Its arrows therefore
+keep the RAW handlers.
+
+⚠️ **`StatusBar.setHidden(true)` imperatively, as WELL as `<StatusBar hidden />`.** The declarative one
+does not reliably win inside a `Modal` — the modal is presented by its own native controller and the
+component's value is applied against the screen's stack entry — so the clock and battery stayed over the
+slide on device. Restored in the effect's cleanup rather than on unmount, so leaving fullscreen puts the
+bar back while the screen behind stays mounted.
+
+tsc 51 (baseline unchanged); `Pitchbook/index.tsx` holds its 12 pre-existing eslint errors and drops
+from 56 warnings to 39 across these passes — the replaced bars took their inline styles with them — and
+the three new pitch-book widgets are error- and warning-free.
+
+⚠️ Needs a device check (this repo cannot render-test): the ✕ and the count in fullscreen portrait,
+fullscreen landscape and on the inline card; **no status bar in fullscreen either way, and neither
+control touching the notch**; the dock clear of the home indicator; the inline ✕ leaving the pitch book
+while the fullscreen one only leaves fullscreen; the centre tap still hiding and restoring the pair; and
+the tutorial appearing over a bare slide with no dock, arrows or counter behind it; and on the INLINE
+card, a swipe and the new arrows changing slide while a vertical drag still scrolls the page; and — the
+regression this last pass fixed — **the fullscreen arrows actually responding**, with a swipe working
+anywhere on the slide but NOT while it is zoomed in.
+
 ### iOS pods: `bundle exec pod install`, never a bare `pod install`
 
 CocoaPods is **pinned in the repo's `Gemfile`** (`>= 1.13, != 1.15.0, != 1.15.1`) and installed into
