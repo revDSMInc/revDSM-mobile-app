@@ -15,6 +15,7 @@
  */
 
 import Mapbox from '@rnmapbox/maps';
+import { registerSessionResetHook } from './sessionScope';
 
 import { Storage } from '../utils/storage';
 
@@ -317,6 +318,30 @@ class OfflineMapManager {
     removeRecord(name);
   }
 
+  /**
+   * Drop EVERY pack and its metadata — the session ending, not a rep's choice.
+   *
+   * ⚠️ Registered as a session reset hook, which is why it reads the registry synchronously and
+   * deletes in the background: the hook runs before the MMKV wipe, so this is the last moment the
+   * pack NAMES exist. Wiping the registry without this would leave the downloaded tiles on disk
+   * with nothing left pointing at them — invisible, unlistable, and impossible to reclaim.
+   *
+   * A pack is keyed by lead, so the registry is the previous rep's route; it does not survive them.
+   */
+  deleteAllPacksForSessionEnd(): void {
+    const names = readRegistry().map((r) => r.name);
+    if (!names.length) return;
+    void (async () => {
+      for (const name of names) {
+        try {
+          await this.deletePack(name);
+        } catch (e) {
+          console.warn(`[offlineMap] could not delete "${name}" on session end`, e);
+        }
+      }
+    })();
+  }
+
   /** Pause a currently downloading pack. */
   async pausePack(name: string): Promise<void> {
     try {
@@ -558,3 +583,7 @@ function resolveStyleURL(styleKey: string): string {
  * await offlineMapManager.downloadLeadPack(id, coords);
  */
 export const offlineMapManager = new OfflineMapManager();
+
+// The pack registry names the previous rep's leads, so it ends with their session — and the tiles
+// go with it rather than being orphaned. See `services/sessionScope.ts`.
+registerSessionResetHook(() => offlineMapManager.deleteAllPacksForSessionEnd());

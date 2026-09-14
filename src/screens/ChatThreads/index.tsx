@@ -13,6 +13,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../hooks/useAuth';
 import { useUserRole } from '../../hooks/useUserRole';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useIsOnline } from '../../hooks/useIsOnline';
+import { offlineNoticeFor } from '../../utils/offline-capability';
 import Icon from 'react-native-vector-icons/Ionicons';
 import SafeBottomSpacer from '../../widgets/common/SafeBottomSpacer';
 import {
@@ -178,10 +180,22 @@ export default function ChatThreadsScreen({ navigation }: any) {
     });
   };
 
+  // ⚠️ An empty thread list and an unreachable one look identical, and only one of them means
+  // "you have no messages". Saying which sends the rep back to it when they have signal rather
+  // than leaving them believing the conversation is gone.
+  const online = useIsOnline();
+
   const emptyState = (
     <View className="pt-[30%] items-center">
       {loading ? (
         <ActivityIndicator color={colors.primary.main} />
+      ) : !online ? (
+        <>
+          <Icon name="cloud-offline-outline" size={64} color="#C4CDD5" />
+          <Text className="mt-4 px-8 text-xs text-center" style={{ color: '#919EAB' }}>
+            {offlineNoticeFor('chat')?.message}
+          </Text>
+        </>
       ) : (
         <>
           <Icon

@@ -31,8 +31,26 @@ import LeadCreateModal from '../../widgets/modals/LeadCreate';
 import ZoneCanvasserMap from '../../widgets/modals/ZoneCanvasserMap';
 import { LeadCard } from '../../widgets/components/LeadCard';
 import { PendingLeadsBanner } from '../../widgets/components/PendingLeadsBanner';
-import { offlineLeadsForTab, isOfflineLead } from '../../utils/offline-lead-work';
-import { getOfflineWork, subscribeOfflineWork } from '../../services/offlineLeadStore';
+import {
+  offlineArchivedLeads,
+  offlineLeadsForTab,
+  isOfflineLead,
+  pendingLeadArchives,
+  pendingLeadDeletes,
+} from '../../utils/offline-lead-work';
+import {
+  getOfflineWork,
+  queueLeadWorkStart,
+  subscribeOfflineWork,
+} from '../../services/offlineLeadStore';
+import {
+  applyOfflineWorkflow,
+  getOfflineWorkflow,
+  markLeadCheckedInOffline,
+  subscribeOfflineWorkflow,
+} from '../../services/offlineLeadStatus';
+import { planStartAppointment, logLeadActionClick } from '../../utils/lead-activity-log';
+import { warmLeadCalculators } from '../../services/dealCenterWarmer';
 import { isOnline } from '../../services/connectivity';
 import { Header } from '../../widgets/common/MainHeader';
 import { RootStackParamList } from '../../navigation';
@@ -49,6 +67,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../../services/api/leads';
 import { triggerThresholdCrossing, prepareHaptic } from '../../utils/haptics';
 import { logEvent } from '../../services/api/LoggerService';
+
+/**
+ * How long a just-filed lead may be held on the list while its server row is fetched.
+ *
+ * Generous — it is a backstop for a refetch that never settles, not a timing knob: the hold is
+ * released by the refetch itself in the ordinary case, which is well under a second.
+ */
+const LEAD_HANDOFF_MAX_MS = 15000;
 
 export default function LeadsPage() {
   const queryClient = useQueryClient();
@@ -155,21 +181,105 @@ export default function LeadsPage() {
   const [offlineWork, setOfflineWork] = useState(() => getOfflineWork());
   useEffect(() => subscribeOfflineWork(() => setOfflineWork([...getOfflineWork()])), []);
 
+  /**
+   * Records whose upload landed since this screen mounted, held on screen until the refetch that
+   * replaces them with the server's own row settles. See the effect below.
+   *
+   * ⚠️ Seeded EMPTY and driven by an observed transition, never by the record's current status.
+   * A record that was already `uploaded` when the screen mounted must not be held — its server row
+   * is in the list we are about to draw, and holding it would print the door twice.
+   */
+  const [justLandedIds, setJustLandedIds] = useState<string[]>([]);
+  const seenWorkRef = useRef(offlineWork);
+
+  /**
+   * Appointments the rep started with no signal.
+   *
+   * Offline the Leads screen skips the `work` call entirely, so nothing moved `workflowState` and
+   * the card still offered **Start Appointment** on a door the rep was already standing at.
+   */
+  const [offlineWorkflow, setOfflineWorkflow] = useState(() => getOfflineWorkflow());
+  useEffect(
+    () => subscribeOfflineWorkflow(() => setOfflineWorkflow({ ...getOfflineWorkflow() })),
+    []
+  );
+
   const serverLeads = isRehash ? rehashLeads : leads;
 
+  /** What the server already carries, so the projection can stand down for those doors. */
+  const serverLeadIds = useMemo(
+    () => (serverLeads || []).map((l: any) => String(l?._id || '')).filter(Boolean),
+    [serverLeads]
+  );
+
+  /**
+   * Doors the rep archived or deleted with no signal.
+   *
+   * ⚠️ The list has no other defence against these. `removeLocalLead` prunes the query cache,
+   * which the next refetch — or the cached list a relaunch serves — simply refills, so without a
+   * standing suppression a lead the rep deleted comes straight back in front of them. Both sets
+   * clear themselves the moment the change reaches the server, and the upload awaits the list
+   * refetch before it lets go, so there is no frame where the old row is back.
+   */
+  const deletedOffline = useMemo(() => pendingLeadDeletes(offlineWork), [offlineWork]);
+  const archivedOffline = useMemo(() => pendingLeadArchives(offlineWork), [offlineWork]);
+  const isArchivedTab = currentTab === 'selfGen' && selfGenSubTab === 'archived';
+
   const sourceLeads = useMemo(() => {
-    if (isRehash) return serverLeads;
+    /** Drop what this device knows is gone, and what it knows belongs on another tab. */
+    const applyOfflineActions = (list: any[] | null | undefined) =>
+      (list || []).filter((l) => {
+        const id = String(l?._id || l?.id || '');
+        if (!id) return true;
+        if (deletedOffline.has(id)) return false;
+        const archived = archivedOffline.get(id);
+        // No pending change: the server's own answer stands, whichever tab this is.
+        if (archived === undefined) return true;
+        return archived === isArchivedTab;
+      });
+    // ⚠️ Applied to the REHASH tab too. The mark is keyed by lead id and `applyOfflineWorkflow`
+    // returns the same reference when there is nothing to paint, so this costs a tab that never
+    // sees one exactly nothing.
+    const withWorkflow = (list: any[] | null | undefined) =>
+      applyOfflineActions(list).map((l) => applyOfflineWorkflow(l, offlineWorkflow));
+    if (isRehash) return withWorkflow(serverLeads);
+    // ⚠️ A lead archived with no signal is in NEITHER server list — not Today, which no longer
+    // offers it, and not Archived, which was fetched before the change. Left to the sync it would
+    // simply be gone, which reads to the rep as the delete they did not perform, so the device
+    // draws its own snapshot here until the PATCH lands.
+    if (isArchivedTab) {
+      const archivedHere = offlineArchivedLeads(offlineWork, { serverLeadIds });
+      if (!archivedHere.length) return withWorkflow(serverLeads);
+      return withWorkflow([...archivedHere, ...(serverLeads || [])]);
+    }
     // ⚠️ Only on the tab a NEW lead would land on. Showing it under Archived or Sold would say the
     // lead has a history it does not have yet.
     const onCurrentTab =
       currentTab === 'issued' ? issuedSubTab === 'today' : selfGenSubTab === 'today';
-    if (!onCurrentTab) return serverLeads;
+    if (!onCurrentTab) return withWorkflow(serverLeads);
 
-    const pending = offlineLeadsForTab(offlineWork, currentTab === 'issued' ? 'lfLead' : 'selfGen');
-    if (!pending.length) return serverLeads;
+    const pending = offlineLeadsForTab(
+      offlineWork,
+      currentTab === 'issued' ? 'lfLead' : 'selfGen',
+      { serverLeadIds, keepUploaded: justLandedIds }
+    );
+    if (!pending.length) return withWorkflow(serverLeads);
     // First: they carry no scheduled time, and it is the lead the rep just knocked.
-    return [...pending, ...(serverLeads || [])];
-  }, [isRehash, serverLeads, offlineWork, currentTab, issuedSubTab, selfGenSubTab]);
+    return withWorkflow([...pending, ...(serverLeads || [])]);
+  }, [
+    isRehash,
+    serverLeads,
+    serverLeadIds,
+    offlineWork,
+    offlineWorkflow,
+    justLandedIds,
+    deletedOffline,
+    archivedOffline,
+    isArchivedTab,
+    currentTab,
+    issuedSubTab,
+    selfGenSubTab,
+  ]);
   const isListLoading = isRehash ? rehashLoading : loading;
   const refreshActive = useCallback(
     () => (isRehash ? refreshRehash() : refresh()),
@@ -181,6 +291,51 @@ export default function LeadsPage() {
     (id: string) => (isRehash ? removeLocalRehashLead(id) : removeLocalLead(id)),
     [isRehash, removeLocalRehashLead, removeLocalLead]
   );
+
+  /**
+   * A queued lead has just been filed — pull the server's copy in before letting go of ours.
+   *
+   * The drain runs in the background on reconnect and nothing here was watching it, so the list
+   * kept serving the copy it fetched before the lead existed. The rep saw their lead disappear the
+   * moment it uploaded and come back only on a manual pull-to-refresh, which reads as the app
+   * having lost it — the client flagged it as "weird" for exactly that reason.
+   *
+   * ⚠️ The row is HELD (`justLandedIds`) across the refetch rather than dropped and re-added.
+   * Invalidating alone still blinks: `uploaded` removes the projection in the same tick, and the
+   * server row is a round trip behind it.
+   */
+  useEffect(() => {
+    const seen = seenWorkRef.current;
+    seenWorkRef.current = offlineWork;
+
+    const landed = offlineWork
+      .filter(
+        (w) =>
+          w.status === 'uploaded' &&
+          seen.some((prev) => prev.clientId === w.clientId && prev.status !== 'uploaded')
+      )
+      .map((w) => w.clientId);
+    if (!landed.length) return;
+
+    setJustLandedIds((prev) => Array.from(new Set([...prev, ...landed])));
+    const release = () =>
+      setJustLandedIds((prev) => prev.filter((id) => !landed.includes(id)));
+
+    // ⚠️ A hard cap as well as the promise. A refetch that never settles (the signal that came
+    // back is gone again) must not pin a filed lead to the list forever — the record is uploaded,
+    // so once the hold lapses the server list is the only honest source for it.
+    const cap = setTimeout(release, LEAD_HANDOFF_MAX_MS);
+
+    // The whole `['leads']` prefix, not just the tab on screen: a lead lands on one tab but the
+    // others are cached for five minutes, so switching to one would serve a list that predates it.
+    queryClient
+      .invalidateQueries({ queryKey: ['leads'] })
+      .catch((err) => console.warn('[Leads] post-upload refresh failed:', err))
+      .finally(() => {
+        clearTimeout(cap);
+        release();
+      });
+  }, [offlineWork, queryClient]);
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -359,6 +514,24 @@ export default function LeadsPage() {
     }, [filteredLeads, user])
   );
 
+  /**
+   * Read each visible lead's quote while there is still signal.
+   *
+   * ⚠️ This is the Leads list's job, not the Deal Center's, and that is the whole point. The Deal
+   * Center caches what it opens, which only ever helps a lead the rep has already worked — a lead
+   * knocked for the FIRST time out of coverage still met "This quote isn't saved on your device",
+   * and the rep could do nothing about it at the door. Here they are usually still in the truck.
+   *
+   * A no-op offline, while a pass is running, or when every lead already holds a fresh snapshot,
+   * and it never creates an appointment — see `dealCenterWarmer`.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      if (!isOnline() || !sourceLeads?.length) return;
+      void warmLeadCalculators(sourceLeads as any[], user?._id || (user as any)?.id);
+    }, [sourceLeads, user])
+  );
+
   const workMutation = useWorkLeadMutation();
   const [navigatingLeadId, setNavigatingLeadId] = useState<string | null>(null);
 
@@ -385,6 +558,35 @@ export default function LeadsPage() {
     // watch a spinner for the length of that timeout before the catch below opens the screen
     // anyway — so go straight there. A lead with no server record has no appointment to start.
     if (isOfflineLead(item) || !isOnline()) {
+      // …but the ARRIVAL still happened, and it used to leave no trace at all: no log for the
+      // office, and a card that went on offering **Start Appointment** on a door the rep was
+      // standing at. Both are recorded here — the log is held and replayed on reconnect
+      // (carrying `occurredAt`), the card state is local and never uploaded.
+      //
+      // ⚠️ Gated on the SAME plan the online path runs, so an out-of-range tap that would not
+      // have checked in online does not check in here either.
+      try {
+        await persistActiveLeadId(item._id);
+        const plan = planStartAppointment(item, userLocation);
+        if (plan.shouldCallWork) {
+          if (plan.logModule) {
+            // Not awaited: it is held on disk, and the rep should not wait on a write to open
+            // the lead they are standing in front of.
+            void logLeadActionClick(user, plan.logModule, item);
+          }
+          // A REVIEW is off-site — the rep never arrived — so it must not colour the card as
+          // resumed. Online the same distinction is made by what `work` returns.
+          if (plan.logModule !== 'lead_review') {
+            markLeadCheckedInOffline(item._id || (item as any).id);
+            // …and the SERVER half. The mark above only colours this device's card; without
+            // this the office never learns the door was worked, and once the mark ages out
+            // the lead reads **Start Appointment** again as though nobody had been.
+            queueLeadWorkStart(item, String(user?._id || (user as any)?.id || ''));
+          }
+        }
+      } catch (e) {
+        console.warn('[Leads] offline check-in could not be recorded:', e);
+      }
       setNavigatingLeadId(null);
       navigation.navigate('LeadCenter', { lead: item });
       return;

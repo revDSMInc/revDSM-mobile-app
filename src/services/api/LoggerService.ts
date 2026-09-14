@@ -2,6 +2,9 @@ import axios from 'axios';
 import { ENV } from '../../config/env';
 import { Storage } from '../../utils/storage';
 import Geolocation from 'react-native-geolocation-service';
+import { isOnline } from '../connectivity';
+import { queueActivityLog, setActivityLogSender } from '../offlineActivityLog';
+import { isQueueableLog, stampOfflineLog } from '../../utils/offline-activity-log';
 
 const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
 
@@ -82,7 +85,13 @@ const sendLog = (
   payload: any,
   meta: any,
   attachLocation: boolean,
-  token: string | null
+  token: string | null,
+  /**
+   * Reject instead of swallowing. Only the offline REPLAY passes this: a live log is
+   * fire-and-forget by design (the comment in the catch below), but a held one has to know
+   * whether it landed or the queue would drop rows that never reached the portal.
+   */
+  rethrow = false
 ) => {
   // Enqueue synchronously so the queue order == the order logEvent was called in.
   const run = logChain.then(async () => {
@@ -117,6 +126,7 @@ const sendLog = (
         `[Logger] ✗ ${eventType} — ${err?.response?.status ?? 'no response'}:`,
         err?.response?.data ?? err?.message ?? err
       );
+      if (rethrow) throw err;
     }
   });
 
@@ -125,6 +135,22 @@ const sendLog = (
   logChain = run.catch(() => {});
   return run;
 };
+
+// ---------------------------------------------------------------------------
+// Offline replay
+// ---------------------------------------------------------------------------
+// A held log goes out through the SAME chained POST a live one does, so a replay cannot
+// overtake a log the rep is firing right now.
+//
+// ⚠️ `attachLocation: false`, always. The held row already carries the fix from where the rep
+// actually stood (stamped at queue time, below); asking the device again at replay time would
+// pin a 9am doorstep to wherever the truck is when signal returns — a plausible-looking lie on
+// the one field the office uses to prove attendance.
+setActivityLogSender((entry) => {
+  const token = Storage.getItem('accessToken');
+  if (!token) throw new Error('no session to replay an activity log with');
+  return sendLog(entry.eventType, entry.payload, entry.payload?.meta ?? entry.meta, false, token, true);
+});
 
 // ---------------------------------------------------------------------------
 // Pre-auth buffer
@@ -259,6 +285,30 @@ export const logEvent = async (eventType: string, details: any = {}) => {
   if (!token) {
     if (pendingLogs.length >= MAX_PENDING_LOGS) pendingLogs.shift();
     pendingLogs.push({ eventType, payload, meta, attachLocation });
+    return;
+  }
+
+  // No CONNECTION — hold the few events the office actually reads, on disk, and replay them on
+  // reconnect. Everything else stays fire-and-forget: see `QUEUEABLE_LOG_MODULES` for why this is
+  // an allow-list rather than "queue everything".
+  if (!isOnline() && isQueueableLog(details.module_type)) {
+    const occurredAt = new Date().toISOString();
+    // ⚠️ The location is taken NOW, from the fix this session already has, rather than at replay
+    // time — these events are the record of where the rep was standing. A stale-or-missing fix is
+    // the honest answer; the wrong one is not.
+    if (attachLocation && cachedLocation && Date.now() - cachedLocation.at < LOCATION_TTL_MS) {
+      meta.lat = cachedLocation.lat;
+      meta.long = cachedLocation.long;
+    }
+    const heldMeta = stampOfflineLog(meta, occurredAt);
+    queueActivityLog({
+      eventType,
+      payload: { ...payload, meta: heldMeta },
+      meta: heldMeta,
+      attachLocation: false,
+      occurredAt,
+    });
+    if (isDev) console.log(`[Logger] ⤓ ${eventType} held offline (${details.module_type})`);
     return;
   }
 

@@ -41,6 +41,8 @@ import { RootStackParamList } from '../../navigation';
 import { useChatSession } from '../../hooks/useChatSession';
 import { useVoiceNote, formatTime, formatMs } from '../../hooks/useVoiceNote';
 import { useTeamChannelPermission } from '../../hooks/useTeamChannelPermission';
+import { useIsOnline } from '../../hooks/useIsOnline';
+import { offlineNoticeFor } from '../../utils/offline-capability';
 
 const GiftedChatAny = GiftedChat as any;
 // ─── Custom Message Type ──────────────────────────────────────────────────────
@@ -234,9 +236,27 @@ export default function ChatDetailScreen() {
   const isManager = user?.role === 'Manager' || user?.role === 'Admin' || user?.isAdmin;
   const isViewOnly = isChannel ? (!canPost && !isManager) : false;
 
+  /**
+   * ⚠️ A SECOND, separate lock — deliberately not folded into `isViewOnly`.
+   *
+   * They are different facts and the rep must be told which one applies: view-only means "this
+   * channel is not yours to post in", which no amount of waiting changes, while offline means
+   * "try again in a minute". Merging them would tell a rep with no signal they lack permission.
+   *
+   * The Lead Center blocks the ENTRY to a thread offline; this covers the connection dropping
+   * while the rep is already inside one — the composer would otherwise look ready and swallow
+   * whatever they typed, since nothing here queues a message.
+   */
+  const online = useIsOnline();
+  const offlineLocked = !online;
 
   const handleDisabledClick = useCallback(() => {
     Alert.alert('Info', 'You are not allowed to post in this channel.');
+  }, []);
+
+  const handleOfflineClick = useCallback(() => {
+    const notice = offlineNoticeFor('chat-send');
+    if (notice) FlashMessage.info(notice.title, notice.message);
   }, []);
 
   const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
@@ -768,6 +788,26 @@ export default function ChatDetailScreen() {
 
   const renderInputToolbar = useCallback(
     (props: any) => {
+      // ⚠️ Offline is tested FIRST. A rep with no signal in a channel they cannot post in has two
+      // reasons they cannot type; the one they can act on is the one worth telling them.
+      if (offlineLocked) {
+        return (
+          <TouchableOpacity
+            onPress={handleOfflineClick}
+            activeOpacity={0.85}
+            className="p-4 items-center justify-center border-t flex-row"
+            style={{ backgroundColor: colors.card, borderTopColor: colors.border }}
+          >
+            <MCIcon name="cloud-off-outline" size={15} color={colors.textSecondary} />
+            <Text
+              className="text-[13px] font-bold ml-2"
+              style={{ color: colors.textSecondary }}
+            >
+              Messages can't be sent offline
+            </Text>
+          </TouchableOpacity>
+        );
+      }
       if (isViewOnly) {
         return (
           <TouchableOpacity
@@ -930,7 +970,7 @@ export default function ChatDetailScreen() {
         </View>
       );
     },
-    [isViewOnly, isRecording, isRecorded, recordedUri, pendingAttachments, colors, renderComposer, handleDisabledClick, cancelRecording, recordingTime, handleVoicePress, handleSendVoiceNote, isDark, reset, removePendingAttachment, replyingTo, currentUserId, editingMessage, setReplyingTo, setEditingMessage, handleSend]
+    [offlineLocked, handleOfflineClick, isViewOnly, isRecording, isRecorded, recordedUri, pendingAttachments, colors, renderComposer, handleDisabledClick, cancelRecording, recordingTime, handleVoicePress, handleSendVoiceNote, isDark, reset, removePendingAttachment, replyingTo, currentUserId, editingMessage, setReplyingTo, setEditingMessage, handleSend]
   );
 
   const renderFooter = useCallback(() => {

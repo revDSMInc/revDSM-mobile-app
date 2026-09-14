@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { useAuth } from './useAuth';
 import { LeadService } from '../services/api/leads';
 import { ENV } from '../config/env';
+import { isOnline } from '../services/connectivity';
+import { OFFLINE_CACHE, cachedFetch } from '../utils/offline-query-cache';
+import { warmToLocalCache } from '../utils/imageFileCache';
 
 // ----------------------------------------------------------------------
 
@@ -24,6 +27,7 @@ import { ENV } from '../config/env';
 export function useSecureLogo(): string | null {
   const { user } = useAuth();
   const source: any = user?.companyLogo || user?.profilePicture || null;
+  const userId = user?._id || user?.id;
 
   const [secureLogo, setSecureLogo] = useState<string | null>(null);
 
@@ -52,12 +56,26 @@ export function useSecureLogo(): string | null {
 
     (async () => {
       try {
-        const res: any = await LeadService.getSecureUrls([
-          { bucketName: bucketName || ENV.S3_BUCKET, filePath },
-        ]);
-        const url =
-          res?.data?.data?.[0]?.secureUrl || res?.data?.[0]?.secureUrl || null;
-        if (active) setSecureLogo(url);
+        // Kept per logo PATH so a company that changes its logo is not stuck showing the old
+        // one, and so the presign round trip is skipped entirely when there is no connection.
+        const url = await cachedFetch<string | null>(
+          `${OFFLINE_CACHE.COMPANY_LOGO}:url:${filePath}`,
+          async () => {
+            const res: any = await LeadService.getSecureUrls([
+              { bucketName: bucketName || ENV.S3_BUCKET, filePath },
+            ]);
+            return res?.data?.data?.[0]?.secureUrl || res?.data?.[0]?.secureUrl || null;
+          },
+          { online: isOnline(), userId }
+        );
+        if (!active) return;
+
+        // ⚠️ A recalled url is EXPIRED and cannot be fetched — but it still names the same
+        // cached file, so the logo renders offline from disk. Resolving the local copy here
+        // rather than at each call site is what covers the header avatar as well as the
+        // Investment Center's brand mark: both consumers just render what this returns.
+        const local = await warmToLocalCache(url).catch(() => null);
+        if (active) setSecureLogo(local || url);
       } catch (error) {
         console.warn('[useSecureLogo] resolve failed:', error);
         if (active) setSecureLogo(null);
@@ -68,7 +86,7 @@ export function useSecureLogo(): string | null {
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filePath, bucketName]);
+  }, [filePath, bucketName, userId]);
 
   return secureLogo;
 }

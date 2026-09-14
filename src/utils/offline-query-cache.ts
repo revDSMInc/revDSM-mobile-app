@@ -16,6 +16,7 @@
  */
 
 import { Storage } from './storage';
+import { DEAL_CENTER_CALC_CACHE } from './offline-deal-center';
 import {
   buildCacheKey,
   decodeEnvelope,
@@ -68,6 +69,50 @@ export const OFFLINE_CACHE = {
    * company's mark, which is a visibly different contract from the one signed with signal.
    */
   COMPANY_LOGO: 'company-logo',
+
+  // ── The presentation tools ──────────────────────────────────────────────────
+  // Everything below the Deal Center on the Lead Center's Tools tab. None of it is the
+  // rep's own work — it is the company's sales material and the lead's own photos — but it
+  // is what the rep stands in front of a customer and SHOWS, so its absence is not a
+  // degraded screen, it is a presentation that cannot happen.
+  //
+  // ⚠️ Each of these caches the RESOLVED SECURE-URL MAP, not just the ids. That looks odd
+  // (a presigned url expires in an hour, so the cached one is dead on arrival) and is
+  // deliberate: `getLocalCachePath` strips the query string, so the EXPIRED url still
+  // resolves to the same on-disk path as the live one did. The stale map is how an offline
+  // device finds the bytes it already downloaded. Never "fix" this by storing only ids.
+  /** `GET /pitch-books/sales-rep` — the published book list behind the card's expander. */
+  PITCH_BOOK_LIST: 'pitch-book-list',
+  /** `GET /pitch-books/sales-rep/:id` — per book; its sections, slides and their urls. */
+  PITCH_BOOK_DECK: 'pitch-book-deck',
+  /** `POST /secure-urls` — per photo set; the lead's own photos, keyed by the set. */
+  SECURE_URLS: 'secure-urls',
+  /** `GET /rev-render/runs/:leadId` — the generated renders the Investment Center shows. */
+  REVRENDER_RUNS: 'revrender-runs',
+
+  // ── The rep's own leads ────────────────────────────────────────────────────
+  // Everything above this point is company SETUP. These two are the rep's WORK, and they are here
+  // for a failure nothing else covers: React Query holds the leads list and each hydrated lead in
+  // memory only, so killing the app threw both away. A rep who force-quit in a dead zone reopened
+  // to an empty Leads list — not "offline", just empty, which reads as their route having been
+  // taken off them.
+  //
+  // ⚠️ Both are per REP (the envelope keys on `userId`), because these are assignments and must
+  // never survive into another rep's session on a shared device.
+  /** `GET demo/v1/leads/sales-portal` — per tab; the slim summary rows `LeadCard` draws. */
+  LEADS_LIST: 'leads-list',
+  /** `GET demo/v1/leads/sales-portal/:id` — per lead; the full record the Lead Center renders. */
+  LEAD_DETAIL: 'lead-detail',
+  /**
+   * `GET /appointments/{id}/lfcalculators` — per lead; the quote the rep has already built.
+   *
+   * ⚠️ The only entry here that is the rep's own WORK ON A LEAD rather than a list of leads, and
+   * it is cached to stop the Deal Center inventing a rival copy. Offline it could not read the
+   * server, so it minted an empty calculator — which the queue then filed as an EXTRA calculator
+   * beside the ones the rep had actually built. The name is per lead; build it with
+   * `dealCenterCacheName`, never by hand.
+   */
+  DEAL_CENTER_CALCULATORS: DEAL_CENTER_CALC_CACHE,
 } as const;
 
 /** Read a snapshot, or `null` when there is any reason not to trust it. */

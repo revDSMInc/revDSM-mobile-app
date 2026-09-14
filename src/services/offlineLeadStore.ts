@@ -18,12 +18,16 @@
  * been committed and only the server can say. That is what buys idempotency with no backend change.
  */
 
+import { AppState } from 'react-native';
 import RNFS from 'react-native-fs';
 import { storage } from '../utils/storage';
 import { LeadService } from './api/leads';
 import { fetchOutcomeDocumentRows } from '../screens/DynamicDealCenter/utils/outcome-documents';
 import { buildDocumentPayloads } from '../screens/DynamicDealCenter/utils/document-payloads';
 import { isOnline, onReconnect } from './connectivity';
+import { getSessionOwner, registerSessionResetHook } from './sessionScope';
+import { isOwnedBy } from '../utils/session-scope';
+import { uploadQueueManager } from '../utils/uploadQueue';
 import { describeQueuedLead, isSuccessfulCreate, messageOfError } from '../utils/offline-lead-queue';
 import {
   applyResolvedAddress,
@@ -32,6 +36,16 @@ import {
   resolveSyncAddress,
 } from '../utils/offline-lead-location';
 import { reverseGeocode } from '../utils/places';
+import { queryClient } from './api/queryClient';
+import { rekeyLeadWorkflow } from './offlineLeadStatus';
+import { leadDetailForCache } from '../utils/offline-lead-detail-cache';
+import { submitConsentForm, finalizeConsentUpload } from './api/consent-forms';
+import {
+  consentSignatureName,
+  hasFiledConsentReport,
+  splitConsentPayload,
+  type ConsentFormKind,
+} from '../utils/consent-forms';
 import {
   applyStepDecision,
   adoptExistingWork,
@@ -39,10 +53,12 @@ import {
   buildIdMap,
   decideAfterStepError,
   findUnresolvedClientIds,
+  isStepPending,
   markStepDone,
   newWorkId,
   nextUploadStep,
   readCreatedId,
+  rearmStep,
   readExistingAppointmentId,
   resolveClientIds,
   documentRootKey,
@@ -50,6 +66,7 @@ import {
   uploadableWork,
   type OfflineCalculatorWork,
   type OfflineDocumentCategory,
+  type OfflineConsentForm,
   type OfflineJobDocument,
   type OfflineLeadWork,
   type StepDecision,
@@ -98,16 +115,42 @@ const persist = (): void => {
   });
 };
 
+// ─── Ownership ────────────────────────────────────────────────────────────────
+
+/**
+ * The records belonging to the rep signed in right now.
+ *
+ * ⚠️ Every read goes through this, and so does the DRAIN — that second one is the half with teeth.
+ * Hiding another rep's queued lead from the list is a display fix; refusing to UPLOAD it is what
+ * stops a lead one rep took at a door being filed under the next rep's token, onto their company's
+ * data, where nobody would ever connect it back.
+ *
+ * A record with no owner (written before ownership existed) belongs to nobody and is excluded by
+ * the same rule — inert rather than misattributed. See `utils/session-scope.ts`.
+ */
+const mine = (): OfflineLeadWork[] => {
+  const owner = getSessionOwner();
+  return store.filter((w) => isOwnedBy(w.ownerId, owner));
+};
+
+// ⚠️ MMKV is only half of it: this module keeps the parsed array in `store`, so a wipe that did not
+// reach here would be undone by the next write. `loaded` goes back to false so the next read
+// re-reads what is now an empty key.
+registerSessionResetHook(() => {
+  store = [];
+  loaded = false;
+});
+
 // ─── Public reads ─────────────────────────────────────────────────────────────
 
 export const getOfflineWork = (): OfflineLeadWork[] => {
   load();
-  return store;
+  return mine();
 };
 
 export const findOfflineWork = (clientId: string): OfflineLeadWork | undefined => {
   load();
-  return store.find((w) => w.clientId === clientId || w.serverIds.leadId === clientId);
+  return mine().find((w) => w.clientId === clientId || w.serverIds.leadId === clientId);
 };
 
 export const subscribeOfflineWork = (listener: () => void): (() => void) => {
@@ -127,7 +170,13 @@ export const subscribeOfflineWork = (listener: () => void): (() => void) => {
  */
 export const putOfflineWork = (work: OfflineLeadWork): OfflineLeadWork => {
   load();
-  const next = { ...work, updatedAt: new Date().toISOString() };
+  // ⚠️ `work.ownerId ||`, never a bare overwrite. This is the only write, so a patch during a
+  // different rep's session would otherwise TRANSFER a record to them — the leak, inverted.
+  const next = {
+    ...work,
+    ownerId: work.ownerId || getSessionOwner(),
+    updatedAt: new Date().toISOString(),
+  };
   const i = store.findIndex((w) => w.clientId === work.clientId);
   store = i === -1 ? [...store, next] : store.map((w, n) => (n === i ? next : w));
   persist();
@@ -164,8 +213,29 @@ export const beginOfflineWorkOnLead = (
   seed: Parameters<typeof adoptExistingWork>[2] = {}
 ): OfflineLeadWork => {
   load();
-  const existing = store.find((w) => w.serverIds.leadId === leadId && w.status !== 'uploaded');
+  // ⚠️ `mine()`, not `store`: adopting another rep's half-finished record for the same lead would
+  // hand them its queued appointment and calculators, and upload the pair as one.
+  const existing = mine().find((w) => w.serverIds.leadId === leadId && w.status !== 'uploaded');
   return existing || putOfflineWork(adoptExistingWork(leadId, label, seed));
+};
+
+/**
+ * The record for the lead a screen is open on — READ ONLY, never started.
+ *
+ * ⚠️ Deliberately distinct from `ensureOfflineWorkForLead`, and both halves of the difference
+ * matter. It creates nothing, so a screen may ask "is anything stored for this lead?" on mount
+ * without filing a record for every lead the rep merely opens. And unlike that function it does
+ * NOT skip an `uploaded` record: once the queue has drained, that record is still the only copy of
+ * the build this device has, and offline it is the one thing standing between the rep and an empty
+ * screen. Whether it is authoritative is a separate question — see `resolveJobBuildSource`.
+ */
+export const findOfflineWorkForLead = (lead: any): OfflineLeadWork | undefined => {
+  load();
+  const id = String(lead?._id || lead?.id || '');
+  if (!id) return undefined;
+  const rows = mine().filter((w) => w.clientId === id || w.serverIds.leadId === id);
+  // A lead worked twice can hold a drained record and a live one; the live one is the truth.
+  return rows.find((w) => w.status !== 'uploaded') || rows[0];
 };
 
 /**
@@ -181,7 +251,7 @@ export const ensureOfflineWorkForLead = (lead: any): OfflineLeadWork | null => {
   const id = String(lead?._id || lead?.id || '');
   if (!id) return null;
 
-  const existing = store.find(
+  const existing = mine().find(
     (w) => (w.clientId === id || w.serverIds.leadId === id) && w.status !== 'uploaded'
   );
   if (existing) return existing;
@@ -209,15 +279,23 @@ export const saveOfflineDealCenter = (
     calculators: OfflineCalculatorWork[];
   }
 ): OfflineLeadWork | null =>
-  patchOfflineWork(workClientId, (w) => ({
-    ...w,
-    appointment: data.appointment ?? w.appointment,
-    appointmentClientId: data.appointmentClientId ?? w.appointmentClientId,
-    serverIds: data.appointmentServerId
-      ? { ...w.serverIds, appointmentId: data.appointmentServerId }
-      : w.serverIds,
-    calculators: data.calculators,
-  }));
+  patchOfflineWork(workClientId, (w) => {
+    const next: OfflineLeadWork = {
+      ...w,
+      appointment: data.appointment ?? w.appointment,
+      appointmentClientId: data.appointmentClientId ?? w.appointmentClientId,
+      serverIds: data.appointmentServerId
+        ? { ...w.serverIds, appointmentId: data.appointmentServerId }
+        : w.serverIds,
+      calculators: data.calculators,
+    };
+    // ⚠️ Both steps are re-armed, because the state they were marked done against has just been
+    // replaced. A lead worked offline, drained, then worked offline AGAIN would otherwise store the
+    // second session and never upload it — `nextUploadStep` skips anything already in `done`, so
+    // the record sat there looking saved. Safe to repeat: `calculator` creates only the tabs that
+    // still lack a server id, and `calculatorState` is an idempotent full-state PUT.
+    return rearmStep(rearmStep(next, 'calculator'), 'calculatorState');
+  });
 
 /**
  * The Job Builder's draft autosave, with no signal.
@@ -234,11 +312,18 @@ export const saveOfflineJobBuilderDraft = (
   outcome: Record<string, unknown>,
   outcomeCalculatorClientId?: string
 ): OfflineLeadWork | null =>
-  patchOfflineWork(workClientId, (w) => ({
-    ...w,
-    outcome: stripDocumentKeys(outcome),
-    outcomeCalculatorClientId: outcomeCalculatorClientId ?? w.outcomeCalculatorClientId,
-  }));
+  patchOfflineWork(workClientId, (w) =>
+    // Re-armed for the same reason as the Deal Center's two steps above: this is a full-state PUT
+    // and the state has just changed, so "the server has this" has stopped being true.
+    rearmStep(
+      {
+        ...w,
+        outcome: stripDocumentKeys(outcome),
+        outcomeCalculatorClientId: outcomeCalculatorClientId ?? w.outcomeCalculatorClientId,
+      },
+      'outcome'
+    )
+  );
 
 /**
  * Queue a document captured at the door — a device-signed agreement, or a scanned order sheet.
@@ -267,6 +352,62 @@ export const addOfflineJobDocument = async (
     documents: [...(w.documents || []), entry],
   }));
   return saved ? entry : null;
+};
+
+/**
+ * Queue a Customer Consent Form or Roof Waiver the customer just signed with no signal.
+ *
+ * ⚠️ Queueing it is only half of what this does. The consent is the GATE — no quote may be
+ * presented until one is signed — and the server's `generatedReports` is what every "is it signed?"
+ * check reads. Offline that answer is no, and after an app kill the screen's own "just signed" flag
+ * is gone too, so without this record the gate would close again in front of a customer who has
+ * already signed. `hasQueuedConsent` reads it back.
+ */
+export const queueOfflineConsent = async (
+  workClientId: string,
+  kind: ConsentFormKind,
+  data: any,
+  opts: { knownFiledBefore?: boolean } = {}
+): Promise<OfflineConsentForm | null> => {
+  const { fields, signature } = splitConsentPayload(data);
+  const sig = signature as { uri: string; name?: string; type?: string } | null;
+
+  // ⚠️ The modal writes every signature as `signature.svg` into the CACHES directory. Fine for a
+  // form posted and forgotten; not for one that has to survive an app kill and sit beside other
+  // queued signatures in one folder. Its own name, in the documents directory.
+  const signatureUri = sig?.uri
+    ? await persistOfflineDocumentFile(sig.uri, consentSignatureName(kind))
+    : undefined;
+
+  const entry: OfflineConsentForm = {
+    clientId: newWorkId('consent'),
+    kind,
+    payload: fields,
+    signatureUri,
+    signatureName: sig?.name || 'signature.svg',
+    signatureType: sig?.type || 'image/svg+xml',
+    knownFiledBefore: !!opts.knownFiledBefore,
+  };
+
+  const saved = patchOfflineWork(workClientId, (w) => ({
+    ...w,
+    consents: [...(w.consents || []), entry],
+  }));
+  return saved ? entry : null;
+};
+
+/** Record how far ONE queued form got, the instant it gets there. */
+const patchOfflineConsent = (
+  workClientId: string,
+  consentClientId: string,
+  change: Partial<OfflineConsentForm>
+): void => {
+  patchOfflineWork(workClientId, (w) => ({
+    ...w,
+    consents: (w.consents || []).map((c) =>
+      c.clientId === consentClientId ? { ...c, ...change } : c
+    ),
+  }));
 };
 
 /**
@@ -351,6 +492,175 @@ export const completeOfflineJobBuilder = (
  * backend files a SECOND agreement row on submit"). Offline that risk is worse, because a stored
  * payload is re-sent whenever an upload resumes. The documents step owns filing; nothing else does.
  */
+// ─── Archiving and deleting a lead with no signal ───────────────────────────
+
+/** The record this lead answers to — whichever id the caller is holding. */
+const workForLead = (lead: any): { id: string; work?: OfflineLeadWork } => {
+  load();
+  const id = String(lead?._id || lead?.id || '');
+  if (!id) return { id: '' };
+  // ⚠️ `mine()`, not `store` — acting on another rep's record would queue THEIR lead for deletion.
+  // Uploaded records are deliberately included: a lead whose offline session already drained can
+  // still be archived or deleted, and reusing its record keeps one row per lead.
+  return { id, work: mine().find((w) => w.clientId === id || w.serverIds.leadId === id) };
+};
+
+const labelForLead = (lead: any): string =>
+  describeQueuedLead({ customer: lead?.customerDetails || {}, fullAddress: lead?.fullAddress });
+
+/**
+ * The rep started or resumed this appointment with no signal.
+ *
+ * The card is coloured immediately by `markLeadCheckedInOffline`; this is the half that tells the
+ * SERVER, so the office learns the door was worked and the state survives the local mark ageing out.
+ */
+export const queueLeadWorkStart = (lead: any, userId: string): boolean => {
+  const { id, work } = workForLead(lead);
+  if (!id || !userId) return false;
+  const base = work || adoptExistingWork(id, labelForLead(lead));
+  // ⚠️ The FIRST check-in of the session wins — re-arriving at the same door does not need a
+  // second PUT, and overwriting would only move the timestamp we are already not sending.
+  if (base.workStarted) return true;
+  putOfflineWork({
+    ...base,
+    workStarted: { userId, at: new Date().toISOString() },
+    status: base.status === 'uploaded' ? 'draft' : base.status,
+    label: base.label || labelForLead(lead),
+  });
+  runUpload();
+  return true;
+};
+
+/**
+ * The rep corrected the customer's details with no signal.
+ *
+ * ⚠️ TWO things happen, and neither is redundant. The PATCH is queued so the correction reaches
+ * the server whatever state the lead is in; and when the lead's own CREATE has not run yet, the
+ * five fields the create body carries are folded into it as well, so the lead is filed with the
+ * right name and address the first time rather than being filed wrong and corrected a request
+ * later. (The create body has no `coBuyers`, which is exactly why the PATCH is still queued.)
+ */
+export const queueCustomerUpdate = (lead: any, payload: Record<string, unknown>): boolean => {
+  const { id, work } = workForLead(lead);
+  if (!id) return false;
+  const base = work || adoptExistingWork(id, labelForLead(lead));
+
+  // ⚠️ The CUSTOMER record's id, and only that. `handleCustomerSubmit` falls back to the lead's
+  // own `_id` when building the online url; inheriting that fallback here would file this rep's
+  // edit against the wrong document. An unknown id is left blank and resolved at upload time,
+  // where there is a connection to read the lead with.
+  const customerId = String(
+    lead?.customerDetails?._id || lead?.customerDetails?.id || ''
+  ).trim();
+
+  const creatingLead = base.origin === 'created-offline' && isStepPending(base, 'lead');
+  const leadBody = creatingLead ? ((base.lead || {}) as Record<string, any>) : null;
+  const address = payload.address as string | undefined;
+
+  putOfflineWork(
+    // ⚠️ Re-armed for the same reason `archive` is: a rep who corrects a spelling twice offline
+    // must have the LAST version sent. Safe because the PATCH carries the whole record.
+    rearmStep(
+      {
+        ...base,
+        customer: { customerId, payload },
+        lead: leadBody
+          ? {
+              ...leadBody,
+              fullAddress: address || leadBody.fullAddress,
+              customer: {
+                ...((leadBody.customer as Record<string, any>) || {}),
+                firstName: payload.firstName,
+                lastName: payload.lastName,
+                phone: payload.phone,
+                email: payload.email,
+                address: address || (leadBody.customer as any)?.address,
+              },
+            }
+          : base.lead,
+        status: 'draft',
+        attempts: 0,
+        lastError: undefined,
+        label: base.label || labelForLead(lead),
+      },
+      'customer'
+    )
+  );
+  runUpload();
+  return true;
+};
+
+/** Queued, or discarded outright because the server had never heard of the lead. */
+export type OfflineDeleteOutcome = 'queued' | 'discarded';
+
+/**
+ * Delete a lead with no signal.
+ *
+ * ⚠️ A lead the rep created at the door and then deleted before it uploaded is DISCARDED, not
+ * queued. There is nothing on the server to remove, so the only honest action is to forget it —
+ * and queueing the pair would file the lead on the portal for however long the create and the
+ * delete take to land, which is a real row the office can see and act on in between.
+ */
+export const queueLeadDelete = (lead: any): OfflineDeleteOutcome | null => {
+  const { id, work } = workForLead(lead);
+  if (!id) return null;
+
+  if (work && work.origin === 'created-offline' && !work.serverIds.leadId) {
+    uploadQueueManager.dropLead(work.clientId);
+    removeOfflineWork(work.clientId);
+    return 'discarded';
+  }
+
+  const base = work || adoptExistingWork(id, labelForLead(lead));
+  // Both ids, because photos queued before the create landed are still addressed by the client one.
+  uploadQueueManager.dropLead(base.clientId);
+  uploadQueueManager.dropLead(base.serverIds.leadId || id);
+  putOfflineWork({
+    ...base,
+    deleteLead: true,
+    status: 'draft',
+    attempts: 0,
+    lastError: undefined,
+    label: base.label || labelForLead(lead),
+  });
+  runUpload();
+  return 'queued';
+};
+
+/**
+ * Archive — or un-archive — a lead with no signal.
+ *
+ * The snapshot is what lets the Archived tab draw the row before the PATCH lands; see
+ * `offlineArchivedLeads`. It is pruned first, because a lead record can carry base64 documents and
+ * this store is MMKV, which rewrites itself whole on every write.
+ */
+export const queueLeadArchive = (lead: any, isArchive: boolean): boolean => {
+  const { id, work } = workForLead(lead);
+  if (!id) return false;
+
+  const base = work || adoptExistingWork(id, labelForLead(lead));
+  const snapshot = leadDetailForCache({ ...(lead || {}), isArchive }) as
+    | Record<string, unknown>
+    | null;
+  putOfflineWork(
+    // ⚠️ Re-armed: a rep who archives, un-archives and archives again offline must have the LAST
+    // of those sent. Without this the second change sits in the record looking saved and never goes.
+    rearmStep(
+      {
+        ...base,
+        archive: { isArchive, lead: snapshot || undefined },
+        status: 'draft',
+        attempts: 0,
+        lastError: undefined,
+        label: base.label || labelForLead(lead),
+      },
+      'archive'
+    )
+  );
+  runUpload();
+  return true;
+};
+
 const DOCUMENT_BODY_KEYS = ['agreements', 'orderSheets', 'paperWork', 'downPaymentReceipt'];
 
 const stripDocumentKeys = (payload: Record<string, unknown>): Record<string, unknown> =>
@@ -385,6 +695,17 @@ const readIs409 = (err: any): boolean => {
     err?.response?.status === 409 ||
     err?.status === 409 ||
     /already has an appointment/i.test(String(body?.message || err?.message || ''))
+  );
+};
+
+/** A 404 / "not found" in any of the shapes this API and the axios interceptor produce. */
+const readIsNotFound = (err: any): boolean => {
+  const body = err?.response?.data ?? err;
+  return (
+    body?.code === 404 ||
+    err?.response?.status === 404 ||
+    err?.status === 404 ||
+    /not\s*found|does not exist|already deleted/i.test(String(body?.message || err?.message || ''))
   );
 };
 
@@ -569,6 +890,20 @@ const isAlreadySubmitted = async (work: OfflineLeadWork): Promise<boolean> => {
 };
 
 /**
+ * Is a form of this kind already filed on the lead?
+ *
+ * ⚠️ The guarded replay's whole evidence base, and the reason no `Idempotency-Key` is needed to
+ * queue a legal form. A filed consent shows up as a `generatedReport` on the lead, so a retry whose
+ * first attempt timed out can LOOK before it writes rather than filing a second record of one
+ * signature. Only ever consulted on an ambiguous retry — the happy path never reads.
+ */
+const isConsentAlreadyFiled = async (leadId: string, kind: ConsentFormKind): Promise<boolean> => {
+  const res = await LeadService.getSalesDealById(leadId);
+  const lead = res?.data?.data || res?.data?.lead || res?.data || {};
+  return hasFiledConsentReport(lead, kind);
+};
+
+/**
  * Turn the coordinates captured at the door into a street address, now that there is a connection.
  *
  * This is the second half of "capture the fix now, resolve the address later": with no signal there
@@ -582,13 +917,14 @@ const isAlreadySubmitted = async (work: OfflineLeadWork): Promise<boolean> => {
  *
  * ⚠️ A failed geocode is NOT a failed upload. The lead files with its coordinates exactly as before
  * — which is at least true and actionable — rather than being held back over a cosmetic field.
+ *
+ * Returns the resolved street address, or `null` when there is nothing to change — so the caller
+ * can apply it to BOTH the outgoing body and the record kept on the device, which have to agree.
  */
-const resolveQueuedLeadAddress = async (
-  payload: Record<string, any>
-): Promise<Record<string, any>> => {
+const resolveQueuedLeadAddress = async (payload: Record<string, any>): Promise<string | null> => {
   const address = payload?.fullAddress;
   const coords = coordsFromLeadPayload(payload);
-  if (!needsAddressResolution(address, coords)) return payload;
+  if (!needsAddressResolution(address, coords)) return null;
 
   let reverseGeocoded: string | null = null;
   try {
@@ -598,7 +934,7 @@ const resolveQueuedLeadAddress = async (
   }
 
   const { address: resolved, source } = resolveSyncAddress({ address, coords, reverseGeocoded });
-  return source === 'reverse-geocoded' ? applyResolvedAddress(payload, resolved) : payload;
+  return source === 'reverse-geocoded' ? resolved : null;
 };
 
 // ─── The steps ────────────────────────────────────────────────────────────────
@@ -615,6 +951,23 @@ type StepResult = {
  * `guarded` is set when we are retrying a create whose outcome was unknown: the step looks for what
  * the earlier attempt may have created and adopts it instead of writing a second copy.
  */
+/**
+ * Pull the server's lead lists in, and WAIT for them.
+ *
+ * ⚠️ Awaited on purpose, and it is what closes the handover window rather than tidiness.
+ * The Leads screen hides a row while its archive or delete is still pending; the moment the step
+ * is marked done that suppression lifts, and if the list in hand is the one fetched before the
+ * change, the lead the rep archived reappears under Today for a beat. `invalidateQueries` resolves
+ * once the active refetches have settled, so by the time the step returns the list already agrees.
+ */
+const refreshLeadLists = async (): Promise<void> => {
+  try {
+    await queryClient.invalidateQueries({ queryKey: ['leads'] });
+  } catch (e) {
+    console.warn('[leadStore] lead list refresh failed', e);
+  }
+};
+
 const runStep = async (
   work: OfflineLeadWork,
   step: UploadStep,
@@ -637,8 +990,12 @@ const runStep = async (
 
   switch (step) {
     case 'lead': {
+      const body = send(work.lead) as Record<string, any>;
+      // Coordinates -> a street address, now that there IS a connection. Resolved before the
+      // create rather than corrected after it, so the lead is never filed holding a placeholder.
+      const resolvedAddress = await resolveQueuedLeadAddress(body);
       const res = await LeadService.createLead(
-        await resolveQueuedLeadAddress(send(work.lead) as Record<string, any>)
+        resolvedAddress ? applyResolvedAddress(body, resolvedAddress) : body
       );
       // ⚠️ This endpoint answers some failures with a 200 carrying a message, so a resolved promise
       // is not proof the lead was filed.
@@ -647,6 +1004,31 @@ const runStep = async (
       }
       const id = readCreatedId(res?.data);
       if (!id) throw new Error('lead created but the response carried no _id');
+      // ⚠️ Hand the new id to the PHOTO queue before anything else runs. Photos are the one
+      // part of an offline session this store does not own — they are large binaries that must
+      // not live in MMKV, so they sit in `uploadQueueManager`, addressed by the client id this
+      // device minted. Until they are re-addressed they cannot be sent, and every later step of
+      // this upload is a chance for the connection to drop again before they are.
+      uploadQueueManager.rekeyLead(work.clientId, id);
+      // ⚠️ And the CHECK-IN mark, for the same reason and in the same breath. It is keyed by the
+      // id the card was drawn with — the client one — so without this the server row arrives under
+      // a real `_id` the map has no entry for and the card regresses to **Start Appointment** on a
+      // door the rep already worked.
+      rekeyLeadWorkflow(work.clientId, id);
+      // ⚠️ Keep the DEVICE's copy of the lead in step with what was just filed. Resolving only the
+      // outgoing body leaves the server holding the street address while every screen that reads
+      // the offline record still shows the raw coordinates — the Lead Center header, and any
+      // agreement generated from here on, since `offlineWorkToLead` projects this payload. The
+      // record would only correct itself whenever some later refetch happened to replace it.
+      // `uploadOne` re-reads through `latest()` after each step, so this cannot be clobbered.
+      if (resolvedAddress) {
+        patchOfflineWork(work.clientId, (w) => ({
+          ...w,
+          lead: w.lead
+            ? applyResolvedAddress(w.lead as Record<string, any>, resolvedAddress)
+            : w.lead,
+        }));
+      }
       return { leadId: id };
     }
 
@@ -775,6 +1157,131 @@ const runStep = async (
       return {};
     }
 
+    case 'consent': {
+      const consentLeadId = work.serverIds.leadId;
+      if (!consentLeadId) throw new Error('the consent form has no lead id to file against');
+
+      for (const form of (work.consents || []).filter((c) => !c.uploadedAt)) {
+        // ── the POST ────────────────────────────────────────────────────────────
+        // ⚠️ Split from the finalize below, and each half recorded as it lands. They are two
+        // requests: the first files the form and renders the PDF, the second registers that PDF as
+        // the `generatedReport` the gate reads. If a connection dies between them and a retry
+        // started over, the customer's ONE signature would be filed as TWO consent records.
+        let pdfPath = form.pdfPath;
+        if (!form.submittedAt || !pdfPath) {
+          if (guarded && !form.knownFiledBefore && (await isConsentAlreadyFiled(consentLeadId, form.kind))) {
+            // The earlier attempt did land. Adopting it is the whole point of the guard.
+            patchOfflineConsent(work.clientId, form.clientId, {
+              submittedAt: new Date().toISOString(),
+              uploadedAt: new Date().toISOString(),
+            });
+            discardOfflineDocumentFile(form.signatureUri);
+            continue;
+          }
+
+          pdfPath = await submitConsentForm({
+            kind: form.kind,
+            leadId: consentLeadId,
+            payload: {
+              // ⚠️ `payload.leadId` is the HUMAN Lead ID the rep sees on the form (`41PCDLG`, or
+              // `N/A` on a self-gen lead) — NOT the mongo `_id`. Overwriting it with the server id
+              // would print a database key in the Lead ID box of a document the customer signed.
+              // The association that matters is made by the finalize below, which files the PDF
+              // against the real lead id.
+              ...form.payload,
+              ...(form.signatureUri
+                ? {
+                    file: {
+                      uri: form.signatureUri,
+                      name: form.signatureName,
+                      type: form.signatureType,
+                    },
+                  }
+                : {}),
+            },
+          });
+          // ⚠️ Kept, not left in CacheDir: iOS empties caches under pressure, and if the finalize
+          // below fails the retry needs this exact document rather than a second submission.
+          pdfPath = await persistOfflineDocumentFile(
+            pdfPath,
+            `${form.kind}_${form.clientId}.pdf`
+          );
+          patchOfflineConsent(work.clientId, form.clientId, {
+            submittedAt: new Date().toISOString(),
+            pdfPath,
+          });
+        }
+
+        // ── the finalize ────────────────────────────────────────────────────────
+        await finalizeConsentUpload({ leadId: consentLeadId, pdfPath, kind: form.kind });
+        patchOfflineConsent(work.clientId, form.clientId, {
+          uploadedAt: new Date().toISOString(),
+        });
+        discardOfflineDocumentFile(form.signatureUri);
+        discardOfflineDocumentFile(pdfPath);
+      }
+      return {};
+    }
+
+    case 'work': {
+      if (!leadId) throw new Error('cannot record work on a lead with no server id');
+      // ⚠️ The rep who was AT the door, taken from the record — never the session's current user.
+      // A handset is shared, and filing the visit under whoever happens to be signed in when the
+      // signal returns credits the wrong person for the knock.
+      await LeadService.workLead(leadId, String(work.workStarted?.userId || ''));
+      await refreshLeadLists();
+      return {};
+    }
+
+    case 'customer': {
+      const edit = work.customer;
+      if (!edit) return {};
+      // ⚠️ Resolved here rather than refused at queue time, because a lead created at the door has
+      // no customer record until its create lands — so the id simply does not exist while the rep
+      // is standing there. One read, only on the path that needs it.
+      let customerId = edit.customerId;
+      if (!customerId) {
+        if (!leadId) throw new Error('cannot update a customer on a lead with no server id');
+        const res = await LeadService.getSalesDealById(leadId);
+        const body = res?.data?.data || res?.data || {};
+        const fresh = body?.lead?.customerDetails || body?.customerDetails || {};
+        customerId = String(fresh?._id || fresh?.id || '').trim();
+      }
+      if (!customerId) throw new Error('customer record not found for this lead');
+      await LeadService.updateCustomer(customerId, edit.payload);
+      // ⚠️ The lead DETAIL too, not just the lists. `offlineCustomerOverlay` stops the moment this
+      // step lands, so without a refetch the Lead Center falls back to the record it was holding —
+      // which is the optimistic copy, and would never be reconciled with what the server stored.
+      await queryClient
+        .invalidateQueries({ queryKey: ['lead', leadId] })
+        .catch(() => undefined);
+      await refreshLeadLists();
+      return {};
+    }
+
+    case 'archive': {
+      if (!leadId) throw new Error('cannot archive a lead with no server id');
+      // ⚠️ The stored STATE, never a toggle off the current value — that is what makes the retry
+      // free, and it is also correct: the rep decided "archived", not "the other one".
+      await LeadService.archiveLead(leadId, work.archive?.isArchive === true);
+      await refreshLeadLists();
+      return {};
+    }
+
+    case 'delete': {
+      if (!leadId) throw new Error('cannot delete a lead with no server id');
+      try {
+        await LeadService.deleteLead(leadId);
+      } catch (err) {
+        // ⚠️ Already gone IS the state we wanted. Reporting it as a failure would park a door the
+        // rep removed in the "needs your check" list and invite them to remove it a second time.
+        if (!readIsNotFound(err)) throw err;
+      }
+      uploadQueueManager.dropLead(leadId);
+      await refreshLeadLists();
+      return {};
+    }
+
     default:
       throw new Error(`unknown upload step: ${step}`);
   }
@@ -801,7 +1308,10 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
   for (;;) {
     const step = nextUploadStep(work);
     if (!step) {
-      putOfflineWork({ ...work, status: 'uploaded' });
+      const finished = putOfflineWork({ ...work, status: 'uploaded' });
+      // The door is gone from the server, so the record describes nothing. Keeping it would leave
+      // a tombstone suppressing an id that can never come back, one per lead the rep ever deleted.
+      if (finished.deleteLead) removeOfflineWork(finished.clientId);
       return;
     }
     if (!isOnline()) {
@@ -843,11 +1353,27 @@ export const drainOfflineWork = async (): Promise<void> => {
   if (draining || !isOnline()) return;
   draining = true;
   try {
+    /**
+     * Records that could not get any further on THIS pass.
+     *
+     * ⚠️ They are SKIPPED, never treated as a full stop — and that distinction is the whole of
+     * this fix. The guard here used to `return`, so one record failing in a way that leaves it
+     * `draft` (a timeout, a 5xx, a blip mid-request — anything the table calls `retry`) abandoned
+     * every record queued behind it. QA hit exactly that: five leads, four of them untouched and
+     * still reading "waiting", on a phone with full signal.
+     *
+     * The original intent was only to stop the loop SPINNING on a record making no progress, and
+     * skipping achieves that: the set grows monotonically against a finite queue, so this always
+     * terminates.
+     */
+    const stalled = new Set<string>();
     for (;;) {
-      const next = uploadableWork(store)[0];
+      const next = uploadableWork(mine()).find((w) => !stalled.has(w.clientId));
       if (!next || !isOnline()) return;
       await uploadOne(next);
-      if (uploadableWork(store)[0]?.clientId === next.clientId) return; // made no progress — stop
+      if (uploadableWork(mine()).some((w) => w.clientId === next.clientId)) {
+        stalled.add(next.clientId);
+      }
     }
   } finally {
     draining = false;
@@ -861,10 +1387,41 @@ export const runUpload = (): void => {
 
 let syncStarted = false;
 
-/** Idempotent. Drains on every reconnect, plus once on a cold start in case we launched online. */
+/**
+ * How often to look again while the app is open, online, and holding work.
+ *
+ * ⚠️ Not a poll of the network — `connectivity` already knows that. It is a retry for the pass
+ * that failed, and without one there is none: the reconnect hook fires on the offline→online EDGE,
+ * so a record that failed its first attempt while online sat there until the app was relaunched or
+ * the rep happened to lose signal again. On screen that is a lead marked "waiting" on a phone with
+ * five bars, and nothing the rep can do about it.
+ */
+const RETRY_SWEEP_MS = 60_000;
+
+/**
+ * Idempotent. Drains on every reconnect, on every return to the foreground, once on a cold start
+ * in case we launched online, and on a slow sweep while anything is still outstanding.
+ */
 export const startOfflineWorkSync = (): void => {
   if (syncStarted) return;
   syncStarted = true;
+
   onReconnect(() => runUpload());
+
+  // Coming back to the app is the moment the rep expects to see progress, and it is also when a
+  // connection that recovered while backgrounded first becomes usable.
+  AppState.addEventListener('change', (next) => {
+    if (next === 'active') runUpload();
+  });
+
+  setInterval(() => {
+    // Cheap to skip: `load()` is memoised and both guards are in-memory reads, so a session with
+    // nothing queued does no work at all.
+    if (!isOnline()) return;
+    load();
+    if (!uploadableWork(mine()).length) return;
+    runUpload();
+  }, RETRY_SWEEP_MS);
+
   runUpload();
 };

@@ -3,6 +3,7 @@ import { useDispatch } from 'react-redux';
 import { AuthService, LoginData } from '../services/api/auth';
 import { login as loginAction } from '../redux/reducer/auth.reducer';
 import { setSessionHeader } from '../services/api';
+import { adoptSessionOwner } from '../services/sessionScope';
 import SocketManager from '../services/SocketManager';
 import PushNotificationService from '../services/PushNotificationService';
 import { Platform } from 'react-native';
@@ -91,6 +92,15 @@ export const useLoginMutation = () => {
       // 5. Gate on the dashboard permission — installer or sales only.
       assertMobileAccess(userData);
 
+      // ⚠️ Claim the device for this rep BEFORE anything renders. Handsets are shared, and if the
+      // last person to use this one was somebody else, `adoptSessionOwner` wipes their cached data
+      // here rather than letting a screen paint it. It is a no-op when the same rep signs back in,
+      // so their own queued leads and photos survive.
+      //
+      // This is the belt to the sign-out braces: a session that ended in a crash, a force-quit or
+      // an app kill ran no cleanup at all, and this is the only place that can still catch it.
+      adoptSessionOwner(userData?._id || userData?.id);
+
       return { userData };
     },
     onSuccess: (res: any) => {
@@ -163,6 +173,15 @@ export const useVerifyOtpMutation = () => {
 
       // Same gate as the password path — 2FA is just the second half of a sign-in.
       assertMobileAccess(userData);
+
+      // ⚠️ Claim the device for this rep BEFORE anything renders. Handsets are shared, and if the
+      // last person to use this one was somebody else, `adoptSessionOwner` wipes their cached data
+      // here rather than letting a screen paint it. It is a no-op when the same rep signs back in,
+      // so their own queued leads and photos survive.
+      //
+      // This is the belt to the sign-out braces: a session that ended in a crash, a force-quit or
+      // an app kill ran no cleanup at all, and this is the only place that can still catch it.
+      adoptSessionOwner(userData?._id || userData?.id);
 
       return userData;
     },

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { AgreementSignatureModal } from '../../../modals/job-builder/AgreementSignatureModal';
 import { DynamicAgreementGenerator } from './DynamicAgreementGenerator';
@@ -8,6 +8,9 @@ import { AgreementRemoteSignModal } from '../../../modals/job-builder/AgreementR
 import { useGetAgreementConfig } from '../../../../screens/DynamicDealCenter/hooks/useAgreementConfig';
 import { isOnline } from '../../../../services/connectivity';
 import { isClientId } from '../../../../utils/offline-lead-work';
+// ⚠️ The local `new Date(raw)` this replaced printed TBD on every scheduled job — Hermes cannot
+// parse the `M/d/yyyy` the scheduler writes. See `utils/install-date.ts`.
+import { formatInstallDate } from '../../../../utils/install-date';
 import { LeadService } from '../../../../services/api/leads';
 import { useGetDescriptionSchema } from '../../../../screens/DynamicDealCenter/hooks/useDescriptionSchema';
 import { evaluateDescriptionSchema } from '../../../../utils/dynamic-job-builder/agreement/description-schema-evaluator';
@@ -74,19 +77,6 @@ function toDisplayId(rawId: any): string {
   return str;
 }
 
-function formatInstallDate(raw: any): string {
-  if (!raw) return 'TBD';
-  if (raw === 'TBD') return 'TBD';
-  try {
-    const d = raw instanceof Date ? raw : new Date(raw);
-    if (Number.isNaN(d.getTime())) return 'TBD';
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${mm}/${dd}/${d.getFullYear()}`;
-  } catch {
-    return 'TBD';
-  }
-}
 
 // Grouped thousands so the agreement reads the same as the Contract Details card it
 // is generated from — was `$${v}`, which printed a contract price as "$22411".
@@ -134,6 +124,15 @@ export function DynamicAgreementDialog({
   // analog of web's AuthContext + useLead() context. Only fetch while visible.
   const { user } = useAuth();
   const { data: leadData, isLoading: leadLoading } = useLeadQuery(visible ? leadId || '' : '');
+
+  // ⚠️ Read HERE, outside the `Modal`, and painted as an explicit spacer below — a
+  // `SafeAreaView` rendered INSIDE a react-native `Modal` is a separate native view hierarchy
+  // that the app-root SafeAreaProvider does not reach, so its insets come back as ZERO and the
+  // header lands under the status bar with its title struck through by the clock. That is what
+  // QA hit, and it took the close button with it: the only way out of a full-screen dialog was
+  // half-hidden behind the system bar. `AgreementSignatureModal` already does exactly this, and
+  // it is why THAT screen never had the problem.
+  const insets = useSafeAreaInsets();
 
   // ── Rendering the agreement at a door with no signal ────────────────────────
   //
@@ -451,7 +450,8 @@ export function DynamicAgreementDialog({
   // once `agreementData` arrives the signature modal takes over the screen.
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen">
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#F5F5F5' }} edges={['top', 'bottom']}>
+      <View style={styles.page}>
+        <View style={[styles.statusBarPad, { height: insets.top }]} />
         {renderHeader()}
 
         {/* ── Offline: the device renders the agreement and the customer signs on it ──
@@ -564,12 +564,16 @@ export function DynamicAgreementDialog({
             onRemoteSent={onRemoteSent}
           />
         )}
-      </SafeAreaView>
+        <View style={{ height: insets.bottom }} />
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  page: { flex: 1, backgroundColor: '#F5F5F5' },
+  /** Paints the notch area in the header's own white so the two read as one bar. */
+  statusBarPad: { backgroundColor: '#fff' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

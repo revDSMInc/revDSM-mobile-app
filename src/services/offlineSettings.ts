@@ -12,6 +12,7 @@
 import { storage } from '../utils/storage';
 import { SettingsService } from './api/SettingsService';
 import { isOnline, onReconnect } from './connectivity';
+import { registerSessionResetHook } from './sessionScope';
 import {
   hasPendingSettings,
   mergePendingSettings,
@@ -102,6 +103,26 @@ export const flushCalculatorSettings = async (
     flushing = false;
   }
 };
+
+/**
+ * A pending default is one rep's PREFERENCE, and it is applied to whoever is signed in
+ * (`applyPendingSettingsToUser` overlays it onto the Redux user). So unlike the queued leads and
+ * photos it cannot simply be owner-filtered and left — it ends with the session.
+ *
+ * ⚠️ The memo has to go with the MMKV key. Left holding the old value, the next write would
+ * persist it straight back under the new rep.
+ */
+registerSessionResetHook(() => {
+  pending = null;
+  loaded = false;
+  listeners.forEach((l) => {
+    try {
+      l();
+    } catch {
+      /* a bad listener must not stop the reset */
+    }
+  });
+});
 
 let syncStarted = false;
 

@@ -20,6 +20,9 @@ import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Ionicon from 'react-native-vector-icons/Ionicons';
 import Feather from 'react-native-vector-icons/Feather';
 import { getRawPhoneNumber } from '../../utils/phone-util';
+import { isOnline } from '../../services/connectivity';
+import { isClientId } from '../../utils/offline-lead-work';
+import { queueLeadArchive, queueLeadDelete } from '../../services/offlineLeadStore';
 import {
   useArchiveLeadMutation,
   useDeleteLeadMutation,
@@ -402,10 +405,32 @@ export const LeadCard = React.memo(
     }
   }, [leadState.shouldPulse]);
 
+  /**
+   * Is this lead beyond the reach of a request right now?
+   *
+   * ⚠️ A CLIENT id disqualifies a lead as surely as no signal does. A door created at the
+   * door is addressed by an id this device minted, so `PATCH lead/v1/lead-1773…/archive` 404s
+   * however good the connection is — the same rule the agreement dialog and the consent queue
+   * already apply.
+   */
+  const mustQueue = () => !isOnline() || isClientId(String(lead._id || ''));
+
   const handleArchive = () => {
     if (!lead._id) return;
+    const next = !isArchived;
+    if (mustQueue()) {
+      if (!queueLeadArchive(lead, next)) return;
+      FlashMessage.success(
+        next ? 'Archived' : 'Restored',
+        next
+          ? 'Saved on your device. It will be archived on the server once you are back online.'
+          : 'Saved on your device. It will be restored on the server once you are back online.'
+      );
+      onArchiveSuccess?.(lead._id!);
+      return;
+    }
     archiveMutation.mutate(
-      { leadId: lead._id, isArchive: !isArchived },
+      { leadId: lead._id, isArchive: next },
       { onSuccess: () => onArchiveSuccess?.(lead._id!) }
     );
   };
@@ -762,13 +787,26 @@ export const LeadCard = React.memo(
         message="Permanently delete this lead? This cannot be undone."
         confirmText="Delete"
         onConfirm={() => {
-          if (lead._id)
-            deleteMutation.mutate(lead._id, {
-              onSuccess: () => {
-                onDeleteSuccess?.(lead._id!);
-                setShowDeleteModal(false);
-              },
-            });
+          if (!lead._id) return;
+          if (mustQueue()) {
+            const outcome = queueLeadDelete(lead);
+            if (!outcome) return;
+            FlashMessage.success(
+              'Deleted',
+              outcome === 'discarded'
+                ? 'This lead was never sent, so it has simply been removed.'
+                : 'Removed here. It will be deleted on the server once you are back online.'
+            );
+            onDeleteSuccess?.(lead._id);
+            setShowDeleteModal(false);
+            return;
+          }
+          deleteMutation.mutate(lead._id, {
+            onSuccess: () => {
+              onDeleteSuccess?.(lead._id!);
+              setShowDeleteModal(false);
+            },
+          });
         }}
         onCancel={() => setShowDeleteModal(false)}
         onClose={() => setShowDeleteModal(false)}

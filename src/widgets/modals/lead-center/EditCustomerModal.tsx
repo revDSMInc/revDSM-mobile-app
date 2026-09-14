@@ -19,6 +19,7 @@ import { formatUSPhoneNumber } from '../../../utils/phone-util';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
+import { useIsOnline } from '../../../hooks/useIsOnline';
 import {
   fetchPlacePredictions,
   geocodePlaceId,
@@ -487,9 +488,17 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   // showing the same address back — reads as a duplicate address field.
   const skipSearchRef = useRef(true);
 
+  /**
+   * ⚠️ Places autocomplete is SUPPRESSED offline rather than left to fail into its own catch.
+   * The details themselves save fine with no signal (the edit is queued), but the search is a
+   * network call — left armed it spins and then quietly returns nothing, which reads as the whole
+   * form being broken. The rep types the address off the door instead, and the caption says so.
+   */
+  const online = useIsOnline();
+
   useEffect(() => {
     const query = address.trim();
-    if (skipSearchRef.current || query.length < 3) {
+    if (!online || skipSearchRef.current || query.length < 3) {
       setPredictions([]);
       return;
     }
@@ -502,7 +511,7 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [address]);
+  }, [address, online]);
 
   const handlePickPrediction = async (prediction: PlacePrediction) => {
     skipSearchRef.current = true;
@@ -533,7 +542,7 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
 
   useEffect(() => {
     const query = coBuyerSearchQuery.trim();
-    if (coBuyerSkipSearchRef.current || query.length < 3) {
+    if (!online || coBuyerSkipSearchRef.current || query.length < 3) {
       setCoBuyerPredictions([]);
       return;
     }
@@ -546,7 +555,7 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [coBuyerSearchQuery]);
+  }, [coBuyerSearchQuery, online]);
 
   /** Drop any open suggestion list and disarm the search. */
   const closeCoBuyerAddressSearch = () => {
@@ -903,6 +912,12 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
                   </TouchableOpacity>
                 </View>
 
+                {!online && (
+                  <Text style={styles.offlineHint}>
+                    Address search needs a connection — type the address as it reads on the door.
+                  </Text>
+                )}
+
                 {predictions.length > 0 && (
                   <View style={styles.predictionList}>
                     {predictions.slice(0, 5).map((prediction) => (
@@ -1142,6 +1157,11 @@ const styles = StyleSheet.create({
   floatingLabelText: {
     fontSize: 11,
     color: '#000000',
+  },
+  offlineHint: {
+    marginTop: 6,
+    fontSize: 11,
+    color: '#919EAB',
   },
   fieldBox: {
     flexDirection: 'row',

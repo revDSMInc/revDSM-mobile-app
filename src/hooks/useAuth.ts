@@ -6,6 +6,7 @@ import { AuthService } from '../services/api/auth';
 import { setSessionHeader } from '../services/api';
 import SocketManager from '../services/SocketManager';
 import { queryClient } from '../services/api/queryClient';
+import { resetSessionStorage } from '../services/sessionScope';
 import { logLogout } from '../utils/activity-log/auth-log';
 import { clearPendingLogs } from '../services/api/LoggerService';
 import { clearActiveInstallerJob } from '../utils/activity-log/installer-log';
@@ -90,6 +91,19 @@ export const useAuth = () => {
       //    the same reason — the next person to sign in on this device must not
       //    inherit it.
       clearPendingLogs();
+
+      // 10. And the same for EVERYTHING else on disk. `queryClient.clear()` above only
+      //     empties memory; the leads list, every lead's full record, the Deal Center
+      //     configs, the pitch books, the map packs and the photo cache all live in MMKV
+      //     and survived a sign-out untouched — so the next rep to use this handset
+      //     opened the app to the previous rep's customers.
+      //
+      //     ⚠️ What it deliberately KEEPS is the rep's own unsynced work (see
+      //     `utils/session-scope.ts`): a queued lead, a queued photo. Those are owner-locked
+      //     rather than deleted, so nobody else can see or upload them, and their owner
+      //     still has them when they sign back in. Destroying a morning's work at a door is
+      //     not something a Log Out button should do.
+      resetSessionStorage();
     } catch (err) {
       console.error('Logout failed', err);
     }

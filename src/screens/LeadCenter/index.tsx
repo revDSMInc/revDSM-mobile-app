@@ -78,6 +78,23 @@ import RNFS from 'react-native-fs';
 
 import { useLeadCenterData } from '../../hooks/useLeadCenterData';
 import { usePrecacheLeadPhotos } from '../../hooks/usePrecacheLeadPhotos';
+import { useGetAgreementConfig } from '../DynamicDealCenter/hooks/useAgreementConfig';
+import { useCompanyLogoBase64 } from '../../hooks/useCompanyLogoBase64';
+import { useIsOnline } from '../../hooks/useIsOnline';
+import { isOnline } from '../../services/connectivity';
+import { offlineBlockFor } from '../../utils/offline-capability';
+import {
+  ensureOfflineWorkForLead,
+  queueCustomerUpdate,
+  queueOfflineConsent,
+  runUpload,
+} from '../../services/offlineLeadStore';
+import { isClientId } from '../../utils/offline-lead-work';
+import {
+  consentFormLabel,
+  hasFiledConsentReport,
+  type ConsentFormKind,
+} from '../../utils/consent-forms';
 import { useLeadReports } from '../../hooks/useLeadReports';
 import { useLeadCenterModals } from '../../hooks/useLeadCenterModals';
 import { InspectionFormModal } from '../../widgets/modals/lead-center/InspectionFormModal';
@@ -150,6 +167,24 @@ export default function LeadCenterPage() {
   // the app is lazy — it happens when the rep looks — which offline is exactly too late.
   usePrecacheLeadPhotos(lead);
 
+  // ── The offline agreement's two company-wide assets ────────────────────────────
+  //
+  // ⚠️ These were warmed only from the Job Builder's SUMMARY tab, which is the last screen
+  // before the agreement and is reached long after the rep has left signal. So a rep who had
+  // never finished a job online had no layout on the device, and Generate Agreement at the door
+  // answered "This agreement's layout hasn't been downloaded yet. Open a lead once while you're
+  // online, then try again." — advice the app did not actually honour, because opening a lead
+  // warmed nothing. It does now, which makes that message true.
+  //
+  // Cheap to repeat: the config query is shared and 5-minute-stale, and the logo serves any copy
+  // under a day old without touching the network. The Summary-tab warms stay — they also cover
+  // the per-product description schema, which cannot be resolved from here.
+  // ⚠️ `useIsOnline()`, not the imperative `isOnline()` — this is a render-time read, and it has
+  // to re-run the warm when a connection comes BACK while the rep is sitting on the lead.
+  const leadCenterOnline = useIsOnline();
+  useGetAgreementConfig(leadCenterOnline);
+  useCompanyLogoBase64(leadCenterOnline);
+
   // ── Contract Details pencil opens the 4-step deal-edit wizard ───────────────
   // Install Date → Job Build → Job Price → Review & Submit, replacing the inline
   // "Edit Contract Details — select what to edit" modal.
@@ -173,6 +208,15 @@ export default function LeadCenterPage() {
   const handleEditDeal = useCallback(() => {
     const leadId = lead?._id || lead?.id || lead?.leadId;
     if (!leadId) return;
+    // ⚠️ Blocked at the ENTRY, not at Submit. The wizard reads the calculator, the schemas and the
+    // drafts on the way in, so offline it opens onto a build it cannot price — and the rep would
+    // walk four steps before being told. What it produces is an addendum, which the server raises
+    // and which texts the customer a signing link; there is nothing a device can stand in for.
+    const blockedEdit = offlineBlockFor('addendum', isOnline());
+    if (blockedEdit) {
+      FlashMessage.info(blockedEdit.title, blockedEdit.message);
+      return;
+    }
     navigation.navigate('DynamicDealCenter', {
       lead,
       mode: 'edit',
@@ -642,6 +686,15 @@ export default function LeadCenterPage() {
   }, [route.params?.openJobBuilder, isOutcomeLoading, calculatorData, outcomeForm]);
 
   const handleOpenChat = () => {
+    // ⚠️ Blocked at the DOOR rather than inside the thread. Ops chat is live: with no signal the
+    // history cannot load and nothing typed would reach anyone, so opening it puts the rep in a
+    // conversation that silently is not one. The thread guards its own composer as well, for a
+    // connection that drops while they are already in there.
+    const blocked = offlineBlockFor('chat', isOnline());
+    if (blocked) {
+      FlashMessage.info(blocked.title, blocked.message);
+      return;
+    }
     navigation.navigate('ChatDetail', {
       leadId: lead._id,
       chatId: lead.chatId || '',
@@ -756,8 +809,55 @@ export default function LeadCenterPage() {
   const ocrMutation = useUploadPaperConsentOCRMutation();
   const revRenderMutation = useGenerateRevRenderMutation();
 
+  /**
+   * Park a signed consent form / roof waiver on the device when it cannot be posted.
+   *
+   * ⚠️ Two reasons it cannot, and the second is easy to miss: no connection, OR a lead this device
+   * minted the id for. `POST .../lead-1773…/mobile/waiver-form` is a request that 404s however
+   * good the signal is, so a form signed on a lead created at the door has to queue even online.
+   *
+   * ⚠️ Queueing also SATISFIES THE GATE. The consent is what licenses presenting a quote, and the
+   * check reads the server's `generatedReports`; without the queued record the rep would be asked
+   * to collect a second signature from a customer who has already given one.
+   */
+  const queueConsentOffline = async (kind: ConsentFormKind, data: any): Promise<void> => {
+    const work = ensureOfflineWorkForLead(lead);
+    const queued = work
+      ? await queueOfflineConsent(work.clientId, kind, data, {
+          knownFiledBefore: hasFiledConsentReport(lead, kind),
+        })
+      : null;
+
+    if (!queued) {
+      FlashMessage.error('Not saved', `Couldn't keep the ${consentFormLabel(kind).toLowerCase()} on this device — please try again.`);
+      return;
+    }
+    // ⚠️ Never "Submitted". The PDF is rendered by the SERVER, so nothing is filed yet and there is
+    // no document to show — telling the rep otherwise invites them to promise the customer a copy
+    // that has not been produced.
+    FlashMessage.success(
+      'Saved on this device',
+      `${consentFormLabel(kind)} signed. It uploads on its own as soon as you have a connection.`
+    );
+    // ⚠️ A no-op with no signal, and the point of it is the OTHER reason a form queues: a lead
+    // whose id this device minted. There the connection is fine, so nothing would otherwise start
+    // the drain until connectivity happened to blip — and "uploads automatically" would be a lie
+    // for however long that took.
+    runUpload();
+  };
+
+  /** Can this form actually be posted right now? A client-id lead is as disqualifying as no signal. */
+  const consentMustQueue = (): boolean =>
+    !isOnline() || isClientId(String(lead?._id || lead?.id || ''));
+
   const handleConsentSubmit = async (data: any) => {
     toggleModal('showConsentModal', false);
+    if (consentMustQueue()) {
+      await queueConsentOffline('consent', data);
+      // Deliberately not a string: the modal reads a string as "here is your PDF" and offers to
+      // open, share and save it. There is no PDF until this uploads.
+      return null;
+    }
     setIsConsentGenerating(true);
     try {
       const res = await consentMutation.mutateAsync({ leadId: lead?._id, payload: data });
@@ -869,8 +969,19 @@ export default function LeadCenterPage() {
         payload.longitude = data.longitude;
       }
 
-      console.log('[EditCustomer] PATCH lead/v1/customer/' + customerId, payload);
-      await LeadService.updateCustomer(customerId, payload);
+      // ⚠️ A client id is as disqualifying as no signal — `PATCH lead/v1/customer/lead-1773…`
+      // 404s however good the connection is, so a lead created at the door queues even online.
+      // The rule the agreement dialog and the consent queue already apply.
+      const queueIt = !isOnline() || isClientId(customerId);
+      if (queueIt) {
+        if (!queueCustomerUpdate(lead, payload)) {
+          throw new Error('Could not save these details on this device. Try again with a connection.');
+        }
+        FlashMessage.success('Saved on your device', 'These details will sync once you are back online.');
+      } else {
+        console.log('[EditCustomer] PATCH lead/v1/customer/' + customerId, payload);
+        await LeadService.updateCustomer(customerId, payload);
+      }
 
       setLead((prev: any) => {
         if (!prev) return prev;
@@ -894,13 +1005,17 @@ export default function LeadCenterPage() {
         };
       });
 
-      FlashMessage.success('Success', 'Customer details updated successfully.');
+      if (!queueIt) FlashMessage.success('Success', 'Customer details updated successfully.');
+      // Queued or sent, the edit happened — and `customer_details` is on the held-log allow-list
+      // (`utils/offline-activity-log.ts`), so the row is kept and replayed rather than dropped.
       logCustomerDetailsEvent('submit', 'customer details saved');
       // ⚠️ The per-field `change` rows are NOT emitted here. They are debounced off the
       // rep's typing inside `EditCustomerModal` (web parity), so they have already been
       // sent by the time Save is pressed — emitting them again from the saved payload
       // would put every edit on the timeline twice.
-      refetch();
+      // ⚠️ Not offline: the read would fail, and the queued edit is already on screen through
+      // `applyOfflineResult`, which keeps showing it across a refetch and a relaunch alike.
+      if (!queueIt) refetch();
     } catch (error: any) {
       const apiError = error?.response?.data || error?.data || error;
       const errorMsg =
@@ -914,6 +1029,10 @@ export default function LeadCenterPage() {
 
   const handleWaiverSubmit = async (data: any) => {
     toggleModal('showWaiverModal', false);
+    if (consentMustQueue()) {
+      await queueConsentOffline('waiver', data);
+      return null;
+    }
     setIsWaiverGenerating(true);
     try {
       const res = await waiverMutation.mutateAsync({ leadId: lead?._id, payload: data });

@@ -154,6 +154,22 @@ axiosInstance.interceptors.response.use(
           SocketManager.disconnect();
           store.dispatch(logout());
 
+          // ⚠️ An expiring session must clean up exactly as the Log Out button does, and until
+          // now it did not: this path never touched MMKV, so the whole of the previous rep's
+          // cached data — their leads list, each lead's full record, the company configs — was
+          // still on disk for whoever signed in next. That is the harder half of the leak to
+          // notice, because nobody chose it.
+          //
+          // ⚠️ Lazily required, NOT imported at the top, for the same reason as the push teardown
+          // above: the offline stores register their reset hooks with this module, and several of
+          // them reach the axios wrapper, so a static import would close a cycle.
+          try {
+            const session = require('../sessionScope');
+            session?.resetSessionStorage?.();
+          } catch (sessionErr) {
+            console.warn('[session] reset on 401 failed:', sessionErr);
+          }
+
         }
       }
     }

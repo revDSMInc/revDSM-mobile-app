@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
+import { isOnline } from '../services/connectivity';
+import { OFFLINE_CACHE, cachedFetch } from '../utils/offline-query-cache';
 import { useAuth } from './useAuth';
 
 export const useLeadQuery = (leadId: string, initialData?: any) => {
@@ -21,12 +23,24 @@ export const useLeadQuery = (leadId: string, initialData?: any) => {
 };
 
 export const useRevRenderRunsQuery = (leadId: string) => {
+  const { user } = useAuth();
+  const userId = user?._id || user?.id;
+
   return useQuery({
     queryKey: ['revrender-runs', leadId],
     queryFn: async () => {
       if (!leadId) return [];
-      const res = await LeadService.getRevRenderRuns(leadId);
-      return res.data?.runs || res.data?.data?.runs || [];
+      // Kept per lead so a render generated online is still on the Investment Center with no
+      // signal. ⚠️ Only the LIST is cached — generating a new render is an AI round trip and
+      // cannot happen offline; see the offline guard on the revRender card.
+      return cachedFetch<any[]>(
+        `${OFFLINE_CACHE.REVRENDER_RUNS}:${leadId}`,
+        async () => {
+          const res = await LeadService.getRevRenderRuns(leadId);
+          return res.data?.runs || res.data?.data?.runs || [];
+        },
+        { online: isOnline(), userId }
+      );
     },
     enabled: !!leadId,
   });

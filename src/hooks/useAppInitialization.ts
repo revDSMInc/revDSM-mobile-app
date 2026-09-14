@@ -14,6 +14,9 @@ import SocketManager from '../services/SocketManager';
 import PushNotificationService from '../services/PushNotificationService';
 import { startOfflineSyncTimer, stopOfflineSyncTimer } from '../services/api/offlineUploadManager';
 import { startOfflineWorkSync } from '../services/offlineLeadStore';
+import { adoptSessionOwner } from '../services/sessionScope';
+import { startPhotoQueueSync } from '../utils/uploadQueue';
+import { startActivityLogSync } from '../services/offlineActivityLog';
 import { startCalculatorSettingsSync } from '../services/offlineSettings';
 import {
   startConnectivityMonitor,
@@ -130,6 +133,10 @@ export function useAppInitialization() {
           // Same gate as the catch: an offline launch may only restore a profile that was
           // already entitled to one of the two mobile dashboards.
           if (cachedUser && resolveMobileDashboard(cachedUser)) {
+            // Normally a no-op — the owner was recorded when they signed in — but it is what
+            // repairs a device whose last session ended without any cleanup, and it must run
+            // before the offline stores are read.
+            adoptSessionOwner(cachedUser?._id || cachedUser?.id);
             dispatch(setInitial({ user: cachedUser }));
             FlashMessage.warning(
               'Offline',
@@ -158,6 +165,11 @@ export function useAppInitialization() {
 
         // Anything the logger held while the token was still being restored can go up
         // now — this is the cold-start equivalent of the flush after sign-in.
+        // Same claim as the sign-in path. A cold start is the other moment the device can find
+        // itself holding data that belongs to somebody else — the previous session may have ended
+        // in a crash, an OS kill, or an install over a build that had no notion of an owner.
+        adoptSessionOwner(userData?._id || userData?.id);
+
         flushPendingLogs(userData);
         dispatch(setInitial({ user: userData }));
 
@@ -193,6 +205,8 @@ export function useAppInitialization() {
       // Still gated: an offline launch may only restore a profile that was already
       // entitled to one of the two mobile dashboards.
       if (isNetworkError(err) && persistedUser && resolveMobileDashboard(persistedUser)) {
+        // The offline fast path's twin — same claim, same reason.
+        adoptSessionOwner(persistedUser?._id || persistedUser?.id);
         dispatch(setInitial({ user: persistedUser }));
         FlashMessage.warning(
           'Offline',
@@ -221,6 +235,16 @@ export function useAppInitialization() {
     // Replay leads created with no signal. Also reconnect-driven, and idempotent — calling it a
     // second time is a no-op, so a remount cannot double-subscribe the drain.
     startOfflineWorkSync();
+
+    // Send inspection photos taken with no signal. Same shape, different queue: photos are
+    // binaries and live in `uploadQueueManager` rather than the lead store. Before this, nothing
+    // started that queue at launch — only a Lead Center mount did — so photos shot offline stayed
+    // on the device, unsent and unmentioned, until the rep happened to open a lead again.
+    startPhotoQueueSync();
+
+    // Replay the arrival events the office reads — check in / resume / review / pause — that were
+    // fired at a door with no signal. Same reconnect-driven, idempotent shape as the two above.
+    startActivityLogSync();
     // ⚠️ The local user is patched BEFORE the pending record clears. The other order drops the
     // override while redux still holds the older server value, and the rep's toggle flips back.
     startCalculatorSettingsSync((applied) => {

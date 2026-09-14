@@ -26,8 +26,11 @@ import {
 // request instead of racing to write the same file.
 const activeDownloads = new Map<string, Promise<boolean>>();
 
-/** Stable short hash (djb2) of a string — used to make the cache filename unique. */
-const hashString = (s: string): string => {
+/**
+ * Stable short hash (djb2) of a string — makes the cache filename unique, and is exported
+ * because the offline photo cache keys a whole photo SET the same way.
+ */
+export const hashString = (s: string): string => {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
   return h.toString(36);

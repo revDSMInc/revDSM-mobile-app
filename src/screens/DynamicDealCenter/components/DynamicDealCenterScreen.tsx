@@ -123,6 +123,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     setActiveTabId,
     appointmentId,
     loading: isCalcLoading,
+    offlineUnavailable,
     isSaving,
     lastUpdated,
     handleEntryChange,
@@ -649,6 +650,24 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color="#4CBB17" />
           <Text style={{ marginTop: 12, fontSize: 13, color: '#94A3B8' }}>Loading calculator…</Text>
+        </View>
+      ) : offlineUnavailable ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+          <Ionicons name="cloud-offline-outline" size={40} color="#CBD5E1" />
+          <Text style={{ marginTop: 12, fontSize: 15, fontWeight: '800', color: '#475569', textAlign: 'center' }}>
+            This quote isn’t saved on your device
+          </Text>
+          <Text style={{ marginTop: 6, fontSize: 12, color: '#94A3B8', textAlign: 'center', lineHeight: 18 }}>
+            This lead may already have calculators on the server, and starting a new one here
+            {'\n'}would file it alongside them.
+            {'\n'}{'\n'}Open the Deal Center once with a connection and it will be available offline.
+          </Text>
+          <TouchableOpacity
+            onPress={() => navigation?.goBack()}
+            style={{ marginTop: 20, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#4CBB17' }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Back to Tools</Text>
+          </TouchableOpacity>
         </View>
       ) : !isDynamicConfigured ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>

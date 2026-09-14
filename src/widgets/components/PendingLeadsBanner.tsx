@@ -24,8 +24,10 @@ import {
   getOfflineWork,
   removeOfflineWork,
   retryOfflineWork,
+  runUpload,
   subscribeOfflineWork,
 } from '../../services/offlineLeadStore';
+import { useIsOnline } from '../../hooks/useIsOnline';
 
 interface Props {
   colors: any;
@@ -34,6 +36,9 @@ interface Props {
 
 /** Copy per status. The `needs-review` line is the one that has to tell the rep what to DO. */
 const STATUS_TEXT: Record<WorkStatus, { label: string; tone: string; detail?: string }> = {
+  // ⚠️ Only true OFFLINE — see `draftLabel`. Saying "waiting for signal" to a rep holding a phone
+  // with five bars tells them the app has not noticed, and there is nothing on the row to correct
+  // it: a record that has already failed twice looks identical to one never attempted.
   draft: { label: 'Waiting for signal', tone: '#64748B' },
   uploading: { label: 'Uploading…', tone: '#2563EB' },
   uploaded: { label: 'Uploaded', tone: '#16A34A' },
@@ -47,9 +52,16 @@ const STATUS_TEXT: Record<WorkStatus, { label: string; tone: string; detail?: st
   },
 };
 
+/** What a `draft` row is actually doing, which depends on whether there is a connection. */
+const draftLabel = (item: OfflineLeadWork, online: boolean): string => {
+  if (!online) return 'Waiting for signal';
+  return item.attempts > 0 ? 'Retrying…' : 'Waiting to sync';
+};
+
 export const PendingLeadsBanner: React.FC<Props> = ({ colors, isDark }) => {
   const [items, setItems] = useState<OfflineLeadWork[]>(() => activeWork(getOfflineWork()));
   const [expanded, setExpanded] = useState(false);
+  const online = useIsOnline();
 
   useEffect(
     () => subscribeOfflineWork(() => setItems(activeWork(getOfflineWork()))),
@@ -85,14 +97,36 @@ export const PendingLeadsBanner: React.FC<Props> = ({ colors, isDark }) => {
         />
         <View style={{ flex: 1 }}>
           <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>
-            {items.length} {items.length === 1 ? 'lead' : 'leads'} not yet on the server
+            {/* ⚠️ "waiting to sync", not "not yet on the server". The queue holds more than
+                creates — a lead already on the server can be sitting here with its archive or its
+                delete outstanding, and telling the rep that lead does not exist yet is worse than
+                vague. */}
+            {items.length} {items.length === 1 ? 'lead' : 'leads'} waiting to sync
           </Text>
           <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
             {attention > 0
               ? `${attention} need${attention === 1 ? 's' : ''} your check${waiting ? ` · ${waiting} waiting to sync` : ''}`
-              : 'They will be created automatically when you have signal.'}
+              : 'They will be sent automatically when you have signal.'}
           </Text>
         </View>
+        {/* ⚠️ A manual sweep, and the reason it earns its place is that every automatic trigger is
+            an EVENT — a reconnect, a foreground, a slow sweep. A rep watching a row that will not
+            move has nothing to press, and "wait a minute" is not an answer to give someone standing
+            on a driveway. Hidden while offline, where it could only fail. */}
+        {online && waiting > 0 && (
+          <TouchableOpacity
+            onPress={() => runUpload()}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 5,
+              borderRadius: 8,
+              backgroundColor: '#16A34A',
+            }}
+          >
+            <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>Sync now</Text>
+          </TouchableOpacity>
+        )}
         <Ionicons
           name={expanded ? 'chevron-up' : 'chevron-down'}
           size={16}
@@ -102,7 +136,9 @@ export const PendingLeadsBanner: React.FC<Props> = ({ colors, isDark }) => {
 
       {expanded &&
         items.map((item) => {
-          const meta = STATUS_TEXT[item.status] || STATUS_TEXT.draft;
+          const base = STATUS_TEXT[item.status] || STATUS_TEXT.draft;
+          const meta =
+            item.status === 'draft' ? { ...base, label: draftLabel(item, online) } : base;
           // A whole lead uploads in several steps, so show it advancing rather than sitting on one
           // word for the length of six requests.
           const progress = uploadProgress(item);
@@ -140,7 +176,10 @@ export const PendingLeadsBanner: React.FC<Props> = ({ colors, isDark }) => {
                   {meta.detail}
                 </Text>
               )}
-              {!!item.lastError && item.status === 'failed' && (
+              {/* ⚠️ Shown for a stalled DRAFT too, not only a failed row. A draft that has already
+                  been refused carries the only explanation there is, and hiding it leaves the rep
+                  staring at a lead that says "waiting" for a reason nothing on screen will name. */}
+              {!!item.lastError && (item.status === 'failed' || item.attempts > 0) && (
                 <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6, lineHeight: 15 }}>
                   {item.lastError}
                 </Text>

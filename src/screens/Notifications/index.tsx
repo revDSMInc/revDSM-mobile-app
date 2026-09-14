@@ -31,6 +31,8 @@ import { isLeadResulted } from '../../utils/lead-result-status';
 import { LeadService } from '../../services/api/leads';
 import { resolveBuildIds } from '../../hooks/usePushNotifications';
 import { FlashMessage } from '../../config/message';
+import { useIsOnline } from '../../hooks/useIsOnline';
+import { offlineNoticeFor } from '../../utils/offline-capability';
 
 /**
  * Notification Center — the history side of the push feature.
@@ -93,6 +95,7 @@ export default function NotificationsScreen() {
    * found". The unread view is a client-side filter over the same list, which the
    * response already supports.
    */
+  const online = useIsOnline();
   const { rows, isLoading, isFetching, isError, hasMore, loadMore, refresh } =
     useNotificationHistory('all');
   const { unreadCount } = useUnreadNotificationCount();
@@ -376,7 +379,19 @@ export default function NotificationsScreen() {
       ) : isError && rows.length === 0 ? (
         <View style={styles.centre}>
           <Icon name="wifi-off" size={44} color={C.inkFaint} />
-          <Text style={styles.emptyTitle}>Couldn&rsquo;t load notifications</Text>
+          {/*
+            ⚠️ A failed read and an unreachable one are different, and the generic wording covered
+            both — so a rep with no signal was told the app "couldn't load", which reads as a fault
+            and invites them to keep retrying. Offline is a wait, not a failure, and saying so is
+            the whole difference. Try Again stays either way: it is the right control the moment
+            signal returns, and the flag can be wrong.
+          */}
+          <Text style={styles.emptyTitle}>
+            {online ? 'Couldn\u2019t load notifications' : offlineNoticeFor('notifications')?.title}
+          </Text>
+          {!online && (
+            <Text style={styles.emptyBody}>{offlineNoticeFor('notifications')?.message}</Text>
+          )}
           <TouchableOpacity onPress={refresh} style={styles.retryBtn}>
             <Text style={styles.retryText}>Try Again</Text>
           </TouchableOpacity>

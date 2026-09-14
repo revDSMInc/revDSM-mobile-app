@@ -5,6 +5,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import Svg, { Path } from 'react-native-svg';
 import { resolveS3Url } from '../../utils/s3-utils';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
+import { useWarmedImageUris } from '../../hooks/useWarmedImageUris';
 import { useSecureLogo } from '../../hooks/useSecureLogo';
 import { useAuth } from '../../hooks/useAuth';
 import { useRevRenderRunsQuery } from '../../hooks/useLeadQuery';
@@ -456,6 +457,20 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const afterUriOf = (p: any) => uriByS3[p?.s3UrlGenerated] || p?.generatedUrl || (p?.s3UrlGenerated ? resolveS3Url(p.s3UrlGenerated) : '') || '';
   const rendersLoading = renderPhotos.length > 0 && renderSecure.isLoading && Object.keys(uriByS3).length === 0;
 
+  // Pull the pair photos onto disk and paint the local copy.
+  //
+  // ⚠️ Without this the Investment Center shows two grey boxes with no signal. The urls above
+  // survive offline (they are cached with the photo set) but they are PRESIGNED and expired, so
+  // they are unusable as network addresses — they are only good for naming the cached file.
+  // This is the same rule the pitch book slides follow; see `useWarmedImageUris`.
+  const warmedRenders = useWarmedImageUris(
+    useMemo(
+      () => renders.flatMap((p) => [beforeUriOf(p), afterUriOf(p)]).filter(Boolean),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [renders, uriByS3]
+    )
+  );
+
   // Full rev-render runs for this lead — merged into the viewer runs by `runId` so
   // the before/after slider shows the same color-selection chips ("Soffit: Linen")
   // the Tools flow shows (the persisted `selectedRenders` carries no color summary).
@@ -774,11 +789,11 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
                     (same flow as Tools/revRender), positioned on this pair. */}
                 <View style={{ flexDirection: 'row', borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' }}>
                   <TouchableOpacity activeOpacity={0.85} disabled={!b} onPress={() => b && setViewerIndex(i)} style={{ flex: 1 }}>
-                    <Image source={{ uri: b }} style={{ width: '100%', aspectRatio: 4 / 3, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
+                    <Image source={{ uri: warmedRenders[b] || b }} style={{ width: '100%', aspectRatio: 4 / 3, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
                     <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', textAlign: 'center', paddingVertical: 4 }}>BEFORE</Text>
                   </TouchableOpacity>
                   <TouchableOpacity activeOpacity={0.85} disabled={!a} onPress={() => a && setViewerIndex(i)} style={{ flex: 1 }}>
-                    <Image source={{ uri: a }} style={{ width: '100%', aspectRatio: 4 / 3, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
+                    <Image source={{ uri: warmedRenders[a] || a }} style={{ width: '100%', aspectRatio: 4 / 3, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
                     <Text style={{ fontSize: 9, fontWeight: '900', color: '#4CBB17', textAlign: 'center', paddingVertical: 4 }}>AFTER</Text>
                   </TouchableOpacity>
                 </View>

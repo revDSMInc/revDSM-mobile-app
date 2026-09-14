@@ -23,6 +23,7 @@ import {
   addOfflineJobDocument,
   completeOfflineJobBuilder,
   ensureOfflineWorkForLead,
+  findOfflineWorkForLead,
   saveOfflineJobBuilderDraft,
 } from '../../services/offlineLeadStore';
 import { isClientId } from '../../utils/offline-lead-work';
@@ -59,6 +60,8 @@ import {
 import {
   extractCalculatorOutcome,
   extractSavedJobBuildState,
+  offlineSavedJobBuildState,
+  resolveJobBuildSource,
 } from './utils/saved-job-build';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -264,6 +267,32 @@ function DynamicJobBuilderInner({
   const { data: outcomeData, isFetched: isOutcomeFetched } = useQuery({
     queryKey: ['leadOutcome', leadId, calcId, startFresh],
     queryFn: async () => {
+      // Deserialize storage-keys → runtime ids with the SAME config web used to
+      // serialize (deserializeDynamicJobStateFromStorage). Idempotent for legacy
+      // raw saves — keys without the `__` storage marker pass through unchanged —
+      // so both web-written and old-mobile-written state rehydrate correctly.
+      //
+      // `startFresh` (web `skipDraftState`) drops it: on a rehash the rep answered
+      // "Start Fresh", so the outcome is still read — the documents query below and
+      // the record we save back to stay linked — but the prior build is NOT applied.
+      // ⚠️ It gates BOTH sources; a device draft is not a way around that answer.
+      const applySaved = (saved: any) =>
+        saved && typeof saved === 'object' && !startFresh
+          ? deserializeDynamicJobStateFromStorage(saved, initialConfig)
+          : undefined;
+
+      // ⚠️ THE DEVICE IS CONSULTED FIRST, and until this existed it was not consulted at all.
+      // The offline autosave writes the rep's build to the local record and this read went
+      // straight to the network, so leaving the Job Builder and coming back with no signal
+      // showed an EMPTY builder over work that was on the device the whole time — it only
+      // reappeared once the queue had drained. `resolveJobBuildSource` carries the rule.
+      const work = findOfflineWorkForLead(lead || { _id: leadId });
+      const stored = offlineSavedJobBuildState(work);
+      const offline = !isOnline() || isClientId(leadId) || isClientId(calcId);
+      if (resolveJobBuildSource({ work, offline }) === 'device') {
+        return { initialJobState: applySaved(stored) };
+      }
+
       try {
         const res = await LeadService.getLeadOutcomeByCalculator(leadId!, calcId);
         // Unwrap + locate the saved state through the shared helper, so the rehash
@@ -271,27 +300,20 @@ function DynamicJobBuilderInner({
         const outcome = extractCalculatorOutcome(res.data);
         const savedState = extractSavedJobBuildState(outcome);
 
-        // Deserialize storage-keys → runtime ids with the SAME config web used to
-        // serialize (deserializeDynamicJobStateFromStorage). Idempotent for legacy
-        // raw saves — keys without the `__` storage marker pass through unchanged —
-        // so both web-written and old-mobile-written state rehydrate correctly.
+        // ⚠️ A read that SUCCEEDS and reports no build is an ANSWER, not an absence, so the
+        // device copy is deliberately not substituted here — a job reset on the portal would
+        // otherwise be resurrected from a record this device has already uploaded.
         //
-        // `startFresh` (web `skipDraftState`) drops it: on a rehash the rep answered
-        // "Start Fresh", so the outcome is still read — the documents query below and
-        // the record we save back to stay linked — but the prior build is NOT applied.
-        const jobState =
-          savedState && typeof savedState === 'object' && !startFresh
-            ? deserializeDynamicJobStateFromStorage(savedState, initialConfig)
-            : undefined;
-
         // Return the draft state IMMEDIATELY. Documents are resolved by a SEPARATE
         // query (below) which re-reads this same endpoint — this one must not await
         // the signed-URL round-trip, or `initialJobState` (the draft) can't reach the
         // session until the whole doc chain settles. That is the "reopen shows empty,
         // then fills in a moment later" the rep sees.
-        return { initialJobState: jobState };
+        return { initialJobState: applySaved(savedState) };
       } catch {
-        return { initialJobState: undefined };
+        // A read that FAILED knows nothing. Answering `undefined` here is what blanked the
+        // builder on a flaky connection, so the device copy stands in when there is one.
+        return { initialJobState: applySaved(stored) };
       }
     },
     // Edit mode supplies the (already-deserialized) state from the PortalJobBuilder

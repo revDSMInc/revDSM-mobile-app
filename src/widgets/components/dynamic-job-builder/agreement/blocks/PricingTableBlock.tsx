@@ -1,15 +1,17 @@
 import React from 'react';
 import { View, Text, Image, TouchableOpacity } from 'react-native';
 import { AgreementBlockProps } from './types';
+import { formatInstallDate as formatDate } from '../../../../../utils/install-date';
 
-// Local, faithful copy of web `src/utils/format-time.js` formatDate — no mobile equivalent exists.
-function formatDate(dateString: any): string {
-  return new Date(dateString).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-  });
-}
+/**
+ * The Approximate Start Date cell.
+ *
+ * ⚠️ The rule lives in `utils/install-date.ts` and is SHARED with `DynamicAgreementDialog`, which
+ * formats the same value into the payload the server template renders. Two copies is how the cell
+ * and the contract came to disagree: the block was taught not to re-parse a `M/D/YYYY` string, but
+ * the dialog upstream of it still ran one through `new Date` — which Hermes cannot parse — so the
+ * block only ever received the literal `'TBD'` and dutifully printed it on a scheduled job.
+ */
 
 const cellStyle = {
   borderWidth: 1,
@@ -58,7 +60,7 @@ export default function PricingTableBlock({
           </View>
           <View style={[cellStyle, { flex: 1 }]}>
             <Text style={{ fontSize: 10, color: '#000' }}>
-              {formatDate(paymentDetails?.installDate) || 'TBD'}{' '}
+              {formatDate(paymentDetails?.installDate)}{' '}
               {paymentDetails?.installWindow ? `(${paymentDetails.installWindow})` : ''}
             </Text>
           </View>
