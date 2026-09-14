@@ -22,15 +22,28 @@ export interface PlaceCoords {
   longitude: number;
 }
 
-/** Address suggestions for what the user has typed so far. Never throws. */
-export const fetchPlacePredictions = async (input: string): Promise<PlacePrediction[]> => {
+export interface ResolvedPlace extends PlaceCoords {
+  formattedAddress: string | null;
+}
+
+/**
+ * Address suggestions for what the user has typed so far. Never throws.
+ * `types` restricts the prediction kind (e.g. `'address'`, as web's Places Autocomplete
+ * uses for the zone canvasser search); omit it for no restriction.
+ */
+export const fetchPlacePredictions = async (
+  input: string,
+  options?: { types?: string }
+): Promise<PlacePrediction[]> => {
   const query = input?.trim();
   if (!query) return [];
 
   try {
     const url =
       `${GOOGLE_MAPS_BASE}/place/autocomplete/json` +
-      `?input=${encodeURIComponent(query)}&key=${ENV.GOOGLE_MAPS_API_KEY}`;
+      `?input=${encodeURIComponent(query)}` +
+      (options?.types ? `&types=${encodeURIComponent(options.types)}` : '') +
+      `&key=${ENV.GOOGLE_MAPS_API_KEY}`;
     const res = await axios.get(url);
 
     return (res.data?.predictions || []).map((p: any) => ({
@@ -58,6 +71,34 @@ export const geocodePlaceId = async (placeId: string): Promise<PlaceCoords | nul
     return { latitude: location.lat, longitude: location.lng };
   } catch (error) {
     console.log('[Places] Geocode failed:', error);
+    return null;
+  }
+};
+
+/**
+ * Coordinates AND the formatted address for a picked place — web's `place_changed`
+ * reads both (`geometry.location` + `formatted_address`). Null when either is missing,
+ * matching web, which ignores a place that lacks them.
+ */
+export const resolvePlace = async (placeId: string): Promise<ResolvedPlace | null> => {
+  if (!placeId) return null;
+
+  try {
+    const url =
+      `${GOOGLE_MAPS_BASE}/geocode/json` +
+      `?place_id=${encodeURIComponent(placeId)}&key=${ENV.GOOGLE_MAPS_API_KEY}`;
+    const res = await axios.get(url);
+    const result = res.data?.results?.[0];
+    const location = result?.geometry?.location;
+    if (!location || !result?.formatted_address) return null;
+
+    return {
+      latitude: location.lat,
+      longitude: location.lng,
+      formattedAddress: result.formatted_address,
+    };
+  } catch (error) {
+    console.log('[Places] Resolve place failed:', error);
     return null;
   }
 };

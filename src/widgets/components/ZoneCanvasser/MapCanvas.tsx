@@ -1,5 +1,5 @@
-import React, { useMemo, useState, useCallback, useRef } from 'react';
-import { View, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import Mapbox, {
   MapView,
   Camera,
@@ -38,6 +38,8 @@ type Props = {
   zones: any[];
   allBuildings: ZoneCanvasserBuilding[];
   searchCoords: MapCoordinate | null;
+  /** Web `searchAddress` — shown in a callout when the search pin is tapped. */
+  searchAddress?: string;
   liveLocation?: {
     latitude: number;
     longitude: number;
@@ -101,6 +103,7 @@ export function MapCanvas({
   zones,
   allBuildings,
   searchCoords,
+  searchAddress = '',
   liveLocation,
   onMapPress,
   onBuildingPress,
@@ -121,6 +124,12 @@ export function MapCanvas({
     initialRegion ?? DEFAULT_REGION
   );
   const clusterIndexRef = useRef<Supercluster | null>(null);
+  // Web: the search pin's address popup is closed for every fresh search and opens
+  // only when the pin itself is tapped.
+  const [searchPopupOpen, setSearchPopupOpen] = useState(false);
+  useEffect(() => {
+    setSearchPopupOpen(false);
+  }, [searchCoords]);
 
   const cameraDefault = useMemo(() => {
     const r: Region = initialRegion ?? DEFAULT_REGION;
@@ -395,7 +404,25 @@ export function MapCanvas({
               anchor={{ x: 0.5, y: 1 }}
               allowOverlap={true}
             >
-              <MaterialCommunityIcons name="map-marker" size={36} color="#e53935" />
+              {/* The callout is part of the marker's own content (column, pin last), so
+                  the bottom anchor stays on the pin's tip whether it is open or not. */}
+              <View style={styles.searchMarker}>
+                {searchAddress && searchPopupOpen ? (
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() => setSearchPopupOpen(false)}
+                    style={styles.searchCallout}
+                  >
+                    <Text style={styles.searchCalloutText}>{searchAddress}</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => setSearchPopupOpen((v) => !v)}
+                >
+                  <MaterialCommunityIcons name="map-marker" size={36} color="#e53935" />
+                </TouchableOpacity>
+              </View>
             </MarkerView>
           )}
 
@@ -445,3 +472,27 @@ export function MapCanvas({
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  searchMarker: {
+    alignItems: 'center',
+  },
+  // Web mapbox Popup: white card over the pin, text wrapping at a fixed width.
+  searchCallout: {
+    maxWidth: 220,
+    marginBottom: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  searchCalloutText: {
+    fontSize: 12,
+    color: '#1E293B',
+  },
+});

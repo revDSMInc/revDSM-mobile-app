@@ -1,14 +1,21 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { formatZoneDisplayName } from '../../../utils/zone-canvasser-util';
+import { getZoneStats } from '../../../utils/zone-helpers';
 import { OverlayModal } from './OverlayModal';
 
 type Props = {
   visible: boolean;
   zone: any;
   onClose: () => void;
+  /** Web `onDelete` — offered only while nobody has knocked a door in the zone. */
+  onDelete?: (zone: any) => void | Promise<void>;
+  /** Web `onArchive` — offered only once the zone has knock history. */
+  onArchive?: (zone: any) => void | Promise<void>;
+  isProcessing?: boolean;
 };
 
 function StatItem({ label, value, textColor, mutedColor }: { label: string; value: number; textColor: string; mutedColor: string }) {
@@ -24,34 +31,68 @@ function StatItem({ label, value, textColor, mutedColor }: { label: string; valu
   );
 }
 
-export function ZoneStatsPopup({ visible, zone, onClose }: Props) {
+const DELETE_COLOR = '#FF5630'; // theme error.main — web `color="error"`
+const ARCHIVE_COLOR = '#FFAB00'; // theme warning.main — web `color="warning"`
+
+// Web zone-stats-popup ConfirmDialog copy, verbatim.
+const CONFIRM = {
+  delete: {
+    title: 'Delete Zone?',
+    content: 'This will permanently remove the zone. This action cannot be undone.',
+    action: 'Delete',
+  },
+  archive: {
+    title: 'Archive Zone?',
+    content:
+      'This zone will be archived and removed from your active map. Your knock history will be preserved.',
+    action: 'Archive',
+  },
+} as const;
+
+export function ZoneStatsPopup({
+  visible,
+  zone,
+  onClose,
+  onDelete,
+  onArchive,
+  isProcessing = false,
+}: Props) {
   const { colors, isDark } = useTheme();
-  const totalHomes = zone?.buildingDetails?.length || 0;
-
-  let allLeads: any[] = [];
-  if (Array.isArray(zone?.salesRepBuildingLeads)) {
-    allLeads = zone.salesRepBuildingLeads.flat();
-  } else if (zone?.buildingLeads && Array.isArray(zone.buildingLeads)) {
-    allLeads = zone.buildingLeads.flat();
-  }
-
-  const homesKnocked = allLeads.length;
-  const notHome = allLeads.filter((l) => l?.status === 'not_home').length;
-  const noAnswer = allLeads.filter((l) => l?.status === 'no_answer').length;
-  const notQualified = allLeads.filter((l) => l?.status === 'not_qualified').length;
-  const leadsCreated = allLeads.filter(
-    (l) => l?.status === 'create_lead' || l?.status === 'selfGenerated'
-  ).length;
-  const goBack = allLeads.filter((l) => l?.status === 'go_back').length;
-  const interestedNoTime = allLeads.filter((l) => l?.status === 'interested_no_time').length;
-  const notInterested = allLeads.filter((l) => l?.status === 'not_interested').length;
-  const noSoliciting = allLeads.filter((l) => l?.status === 'no_soliciting').length;
-  const percentage = totalHomes > 0 ? Math.round((homesKnocked / totalHomes) * 100) : 0;
+  const {
+    totalHomes,
+    homesKnocked,
+    notHome,
+    noAnswer,
+    notQualified,
+    leadsCreated,
+    goBack,
+    interestedNoTime,
+    notInterested,
+    noSoliciting,
+    percentage,
+    canDelete,
+    canArchive,
+  } = getZoneStats(zone);
   const displayName = formatZoneDisplayName(zone);
   const surfaceBg = isDark ? colors.surface : '#FFFFFF';
 
+  // A native Alert rather than a second Modal: this sheet is already a Modal inside the
+  // map's Modal, and stacking native modals is unreliable on both platforms.
+  const confirm = (kind: keyof typeof CONFIRM) => {
+    const handler = kind === 'delete' ? onDelete : onArchive;
+    if (!handler || isProcessing) return;
+    const copy = CONFIRM[kind];
+    Alert.alert(copy.title, copy.content, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: copy.action, style: 'destructive', onPress: () => handler(zone) },
+    ]);
+  };
+
+  const showAction = (canDelete && !!onDelete) || (canArchive && !!onArchive);
+  const actionColor = canDelete ? DELETE_COLOR : ARCHIVE_COLOR;
+
   return (
-    <OverlayModal visible={visible} onRequestClose={onClose}>
+    <OverlayModal visible={visible} onRequestClose={isProcessing ? undefined : onClose}>
       <View className="w-[90%] max-h-[80%] rounded-xl overflow-hidden" style={{ backgroundColor: surfaceBg }}>
         <View
           className="flex-row justify-between items-center px-5 py-4 border-b"
@@ -60,7 +101,7 @@ export function ZoneStatsPopup({ visible, zone, onClose }: Props) {
           <Text className="text-lg font-bold flex-1 pr-2" style={{ color: colors.text }}>
             {displayName}
           </Text>
-          <TouchableOpacity onPress={onClose}>
+          <TouchableOpacity onPress={onClose} disabled={isProcessing}>
             <Ionicons name="close" size={24} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
@@ -99,15 +140,29 @@ export function ZoneStatsPopup({ visible, zone, onClose }: Props) {
           </View>
         </ScrollView>
 
-        <View className="p-5">
-          <TouchableOpacity
-            onPress={onClose}
-            className="w-full py-3 rounded-lg items-center"
-            style={{ backgroundColor: colors.primary.main }}
-          >
-            <Text className="text-white font-bold">Close</Text>
-          </TouchableOpacity>
-        </View>
+        {showAction && (
+          <View className="p-5">
+            <TouchableOpacity
+              onPress={() => confirm(canDelete ? 'delete' : 'archive')}
+              disabled={isProcessing}
+              className="w-full py-3 rounded-lg flex-row items-center justify-center"
+              style={{ backgroundColor: actionColor, opacity: isProcessing ? 0.7 : 1 }}
+            >
+              {isProcessing ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <MaterialCommunityIcons
+                  name={canDelete ? 'delete-outline' : 'archive-outline'}
+                  size={20}
+                  color="#FFFFFF"
+                />
+              )}
+              <Text className="text-white font-bold ml-2">
+                {canDelete ? 'Delete Zone' : 'Archive Zone'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </OverlayModal>
   );
