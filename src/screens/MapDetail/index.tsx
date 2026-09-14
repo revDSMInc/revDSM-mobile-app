@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 
-import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp, useIsFocused } from '@react-navigation/native';
 import { useTheme } from '../../theme/ThemeProvider';
 import { LeadService } from '../../services/api/leads';
 import { useAuth } from '../../hooks/useAuth';
@@ -123,7 +123,19 @@ export default function MapDetailScreen() {
   const route = useRoute<RouteProp<RootStackParamList, 'MapDetail'>>();
   const { currentLead } = route.params || {};
 
-  const { setHeaderActions } = useHeader();
+  const headerCtx = useHeader();
+  const { setHeaderActions } = headerCtx;
+
+  /**
+   * Does the shared header CURRENTLY hold this screen's actions?
+   *
+   * A BOOLEAN on purpose, never the handler itself: the handlers are new closures on
+   * every render, so depending on their identity would re-register forever. This flips
+   * at most once per claim, so the self-heal below settles immediately.
+   */
+  const headerHasMapActions = !!headerCtx.onFilterPress;
+
+  const isFocused = useIsFocused();
 
   useEffect(() => {
     if (user) {
@@ -157,22 +169,53 @@ export default function MapDetailScreen() {
   // it tracks what the map is actually filtered by, not in-progress edits.
   const activeFilterCount = useMemo(() => countAppliedMapFilters(filters), [filters]);
 
-  useFocusEffect(
-    React.useCallback(() => {
+  /**
+   * Claim the header's filter + list icons — and RE-claim them if they ever go missing.
+   *
+   * ⚠️ This was a single `useFocusEffect`, i.e. a ONE-SHOT handshake fired the instant
+   * this screen focused, and that is why the icons were absent on arrival: anything that
+   * cleared the shared actions after that moment left the screen with no way to notice.
+   * It is a shared mutable store written by two screens and reset whenever the navigator
+   * that owns it re-mounts, so "set it once and hope" was never enough — and the symptom
+   * was an empty header with the map underneath perfectly functional, until the rep
+   * tapped the bell or the chat icon, which navigates away and back and re-fires the
+   * handshake.
+   *
+   * Listing `headerHasMapActions` makes the effect self-healing: the moment the header
+   * reports it is NOT holding them, this re-registers. It settles in one extra pass,
+   * because that dependency is a boolean.
+   *
+   * `useIsFocused()` + `useEffect` rather than `useFocusEffect` for the same reason —
+   * `useFocusEffect` only re-runs on a focus transition, so it cannot react to the store
+   * being emptied while this screen stays focused.
+   */
+  useEffect(() => {
+    if (!isFocused) return;
+    setHeaderActions({
+      onFilterPress: () => setShowFiltersModal(true),
+      onListPress: () => setIsListView(prev => !prev),
+      filterCount: activeFilterCount,
+    });
+  }, [isFocused, headerHasMapActions, activeFilterCount, setHeaderActions]);
+
+  /**
+   * Release them on blur or unmount — a separate effect so the claim above can re-run on
+   * a filter-count change WITHOUT tearing the icons down and putting them back.
+   *
+   * ⚠️ Keyed on `isFocused` only. Folding this into the claim effect would null the
+   * actions every time the applied-filter count changed, which is a visible flicker of
+   * the two icons while the rep is using the very filter modal they open.
+   */
+  useEffect(() => {
+    if (!isFocused) return;
+    return () => {
       setHeaderActions({
-        onFilterPress: () => setShowFiltersModal(true),
-        onListPress: () => setIsListView(prev => !prev),
-        filterCount: activeFilterCount,
+        onFilterPress: null,
+        onListPress: null,
+        filterCount: 0,
       });
-      return () => {
-        setHeaderActions({
-          onFilterPress: null,
-          onListPress: null,
-          filterCount: 0,
-        });
-      };
-    }, [isListView, activeFilterCount])
-  );
+    };
+  }, [isFocused, setHeaderActions]);
 
   const [jumpLead, setJumpLead] = useState<any>(null);
   const [centerCoords, setCenterCoords] = useState<{
