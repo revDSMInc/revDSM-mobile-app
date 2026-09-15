@@ -1,5 +1,5 @@
-import React from 'react';
-import { Modal, View, Text, TouchableOpacity, StatusBar, Platform } from 'react-native';
+import React, { useRef } from 'react';
+import { Modal, View, Text, TouchableOpacity, StatusBar, Platform, type TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -9,13 +9,14 @@ import { useWorkLeadMutation } from '../../hooks/useLeadMutation';
 import { useZoneCanvasser } from '../../hooks/useZoneCanvasser';
 import { MapCanvas } from '../components/ZoneCanvasser/MapCanvas';
 import { MapDrawTools } from '../components/ZoneCanvasser/MapDrawTools';
-import { MapLegend } from '../components/ZoneCanvasser/MapLegend';
+import { MapLegendCard, MapLegendToggle } from '../components/ZoneCanvasser/MapLegend';
+import { ArchivedZonesCard, ArchivedZonesToggle } from '../components/ZoneCanvasser/ArchivedZonesPanel';
 import { MapControlsPanel } from '../components/ZoneCanvasser/MapControlsPanel';
 import { DrawingToolbar } from '../components/ZoneCanvasser/DrawingToolbar';
 import { DrawingInfoBanner } from '../components/ZoneCanvasser/DrawingInfoBanner';
 import { LoadingOverlay } from '../components/ZoneCanvasser/LoadingOverlay';
 import { ZoneCanvasserModals } from '../components/ZoneCanvasser/ZoneCanvasserModals';
-import { SearchLocationModal } from '../components/ZoneCanvasser/SearchLocationModal';
+import { ZoneSearchBar } from '../components/ZoneCanvasser/ZoneSearchBar';
 import { executeStartAppointmentFlow } from '../../utils/lead-activity-log';
 import type { ZoneCanvasserMapProps } from '../../types/zone-canvasser';
 
@@ -29,6 +30,7 @@ export default function ZoneCanvasserMap({
   const insets = useSafeAreaInsets();
   const workMutation = useWorkLeadMutation();
   const z = useZoneCanvasser({ visible, user });
+  const searchInputRef = useRef<TextInput>(null);
 
   const handleSelectResult = (val: string) => {
     z.setResultsModalOpen(false);
@@ -97,9 +99,13 @@ export default function ZoneCanvasserMap({
           <View style={{ height: insets.top, backgroundColor: isDark ? colors.background : '#0E2A1C' }} />
         )}
         <Header
-          onFilterPress={() => z.setSearchModalVisible(true)}
-          // Here the filter button is a location search, not the map's filter
-          // set — so it never carries an applied-filter badge.
+          // Web's zone-map header funnel opens the address search. The search bar is
+          // always on the map here, so the funnel just puts the cursor in it.
+          onFilterPress={() => {
+            if (z.isDrawingMode) return;
+            searchInputRef.current?.focus();
+          }}
+          // A location search, not the map's filter set — never an applied-filter badge.
           filterCount={0}
           onNavigate={(route: string) => {
             if (route === 'Leads') {
@@ -116,22 +122,30 @@ export default function ZoneCanvasserMap({
         {z.isDrawingMode && <DrawingInfoBanner drawType={z.drawType} />}
 
         <View className="flex-1 relative" style={{ flex: 1 }}>
-          <SearchLocationModal
-            visible={z.searchModalVisible}
-            searchText={z.searchText}
-            onChangeText={z.setSearchText}
-            onClose={() => z.setSearchModalVisible(false)}
-            onLocationSelected={z.navigateToSearchLocation}
-            isProcessing={z.isProcessing}
-          />
-          {/* Back Button on Top Left Corner of Map */}
-          <TouchableOpacity
-            onPress={onClose}
-            className="absolute top-5 left-5 w-11 h-11 rounded-full bg-[#4CBB17] items-center justify-center shadow-md"
-            style={{ zIndex: 20 }}
+          {/* Top row: back button + address search (web zone-canvasser search bar).
+              The suggestions list grows DOWN inside this row, so it stays within its
+              parent's bounds — Android drops touches on children drawn outside them. */}
+          <View
+            className="absolute flex-row items-start"
+            style={{ top: 20, left: 20, right: 16, zIndex: 30, elevation: 30, gap: 8 }}
+            pointerEvents="box-none"
           >
-            <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
-          </TouchableOpacity>
+            <TouchableOpacity
+              onPress={onClose}
+              className="w-11 h-11 rounded-full bg-[#4CBB17] items-center justify-center shadow-md"
+            >
+              <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
+            </TouchableOpacity>
+            {/* Kept mounted while drawing (only hidden) so a typed query survives it. */}
+            <View style={{ flex: 1, display: z.isDrawingMode ? 'none' : 'flex' }}>
+              <ZoneSearchBar
+                ref={searchInputRef}
+                visible={visible}
+                onSearch={z.updateSearch}
+                onClear={z.clearSearch}
+              />
+            </View>
+          </View>
 
           <MapCanvas
             mapRef={z.mapRef}
@@ -144,6 +158,7 @@ export default function ZoneCanvasserMap({
             zones={z.zones}
             allBuildings={z.allBuildings}
             searchCoords={z.searchCoords}
+            searchAddress={z.searchAddress}
             liveLocation={z.liveLocation}
             onMapPress={z.handleMapPress}
             onBuildingPress={z.handleBuildingPress}
@@ -162,12 +177,32 @@ export default function ZoneCanvasserMap({
             onStartRectangle={() => z.startDrawing('rectangle')}
           />
 
+          {/* Bottom-left: archived zones + legend (web zone-canvasser-map). The open card
+              renders IN FLOW above the buttons, never as a popover off its own button —
+              Android would not deliver the Unarchive taps outside that button's bounds. */}
           {!z.isDrawingMode && (
-            <MapLegend
-              open={z.legendOpen}
-              onOpen={() => z.setLegendOpen(true)}
-              onClose={() => z.setLegendOpen(false)}
-            />
+            <View
+              className="absolute bottom-6 left-4"
+              style={{ zIndex: 25, elevation: 25 }}
+              pointerEvents="box-none"
+            >
+              {z.archivedOpen && (
+                <ArchivedZonesCard
+                  zones={z.archivedZones}
+                  loading={z.archivedLoading}
+                  onUnarchive={z.handleZoneUnarchive}
+                  processingId={z.unarchivingZoneId}
+                />
+              )}
+              {z.legendOpen && <MapLegendCard />}
+              <View className="self-start" style={{ gap: 8 }}>
+                <ArchivedZonesToggle open={z.archivedOpen} onPress={z.toggleArchivedOpen} />
+                <MapLegendToggle
+                  open={z.legendOpen}
+                  onPress={() => (z.legendOpen ? z.setLegendOpen(false) : z.openLegend())}
+                />
+              </View>
+            </View>
           )}
 
           <MapControlsPanel
@@ -240,6 +275,9 @@ export default function ZoneCanvasserMap({
           onLeadCreateSuccess={z.handleLeadCreateSuccess}
           onGoBackEdit={z.handleGoBackEdit}
           onStartAppointment={handleStartAppointment}
+          onZoneDelete={z.handleZoneDelete}
+          onZoneArchive={z.handleZoneArchive}
+          isZoneActionProcessing={z.isZoneActionProcessing}
         />
         </View>
     </Modal>
