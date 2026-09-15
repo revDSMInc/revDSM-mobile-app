@@ -6598,21 +6598,28 @@ useEffect(() => {
 is reading — inspection photos, the risk report — and timing it out from under them is the one case
 where hiding is destructive rather than tidy. It resumes on returning to the slide tabs.
 
-⚠️ **The centre tap no longer TOGGLES, it reveals** (`revealChrome`). A toggle would give a rep who taps
-while the controls happen to be up the opposite of what they asked for — and they cannot know which
-state they are in, because the whole point is that the chrome comes and goes by itself.
+⚠️ **The centre tap TOGGLES** (`toggleChrome`) — chrome up, a tap hides it immediately; chrome down, a
+tap brings it back and re-arms the timer.
 
-⚠️ **Two distinct helpers, and the split is the requirement:**
-- `revealChrome` — shows AND re-arms. Only the slide's single tap calls it.
-- `keepChromeAlive` — re-arms ONLY, never reveals. The arrows, category tabs and dock icons call it, so
-  a rep working the controls never loses them mid-reach.
+> ⚠️ **This REVERSES the first pass, which revealed only** (`revealChrome`), on the reasoning that a rep
+> who taps while the controls happen to be up would get the opposite of what they asked for, since the
+> chrome comes and goes by itself and they cannot know which state they are in. The reporter overruled
+> it: *"when user tap UI is displayed, we know after 3 seconds automatically hide — but when user taps
+> again the UI hides immediately, apply this also."* Waiting out the 3 s to clear the slide in front of a
+> customer is the case that decided it. Do not restore the reveal-only form.
+
+⚠️ **Two distinct helpers, and the split is still the requirement:**
+- `toggleChrome` — hides when shown; shows AND re-arms when hidden. Only the slide's single tap calls it.
+- `keepChromeAlive` — re-arms ONLY, never reveals or hides. The arrows, category tabs and dock icons call
+  it, so a rep working the controls never loses them mid-reach — and, just as important, a tap on a
+  CONTROL can never be read as the toggle and take the whole bar away mid-reach.
 
 ⚠️ **`handlePrev` / `handleNext` are shared with the SWIPE, so they must stay free of chrome behaviour
 themselves.** That is why the arrows go through `handleArrowPrev` / `handleArrowNext` wrappers rather
 than the raw handlers — putting the nudge inside the shared handler would put the controls back on every
 swipe, which is exactly what the ticket rules out.
 
-⚠️ **A swipe cannot reach `revealChrome` at all**, and not by a check: the swipe is a `Gesture.Pan` with
+⚠️ **A swipe cannot reach `toggleChrome` at all**, and not by a check: the swipe is a `Gesture.Pan` with
 `activeOffsetX`, and once a pan activates RNGH cancels the tap composed beside it. A drag too small to
 activate the pan is a tap by any reasonable reading, so revealing there is correct.
 
@@ -6638,6 +6645,180 @@ the tutorial appearing over a bare slide with no dock, arrows or counter behind 
 card, a swipe and the new arrows changing slide while a vertical drag still scrolls the page; and — the
 regression this last pass fixed — **the fullscreen arrows actually responding**, with a swipe working
 anywhere on the slide but NOT while it is zoomed in.
+
+#### 9. The four DOCK TOOL tabs are ONE width, not four
+
+Ticket: *"make sure these four tabs have different screen view aspect — make it equal to each other, the
+visual layout should be the same in the 4 tabs … I need to fix the width of each tab, currently it's not
+looking good, 2 small and 2 large."*
+
+`Inspection` / `Videos` rendered half again as wide as `Risk` / `Notes`, because every tab in
+`PresentationDock` sized to its OWN label — which is right for the deck's category tabs (portal-authored,
+any number, any length) and wrong for the tools row, which is a **fixed set of four** and reads as one
+segmented control.
+
+**`toolTab` is applied to the tool tabs only**: `minWidth: TOOL_TAB_MIN_WIDTH` + `flexGrow: 1` +
+`justifyContent: 'center'`, with `flexGrow: 1` on the scroll content **in tools mode only**.
+
+⚠️ **`minWidth` is what makes them equal; `flexGrow` only shares out what is left.** The min clamps every
+tab to the SAME flex base — `Risk` is widened up to `Inspection`'s natural width — and equal grow factors
+then split the remaining space evenly, so all four land on one number. `flexGrow` alone would preserve
+the difference, since grow distributes free space on TOP of each tab's own content width.
+
+⚠️ **`TOOL_TAB_MIN_WIDTH` (128) is the WIDEST label's natural width** — `Inspection` at 13.5pt semibold,
+plus its 15pt icon, that icon's 6pt margin and the tab's padding, with a little allowance. A longer tool
+label added to `DOCK_TOOLS` without widening it would exceed the clamp and grow past the other three,
+which is the exact defect this fixes. The label is capped at `numberOfLines={1}` so a tablet's font
+scaling truncates rather than reflowing the row.
+
+⚠️ **The narrow case still reads correctly.** In portrait the four cannot fit, free space is negative and
+`flexGrow` does nothing — but RN's default `flexShrink` is **0**, so each tab holds its 128 and the row
+simply scrolls. Equal either way; the only difference is whether the set fills the bar (landscape) or
+scrolls (portrait).
+
+⚠️ **The CATEGORY tabs are deliberately untouched.** Their count and labels come from the portal, so a
+shared width would either truncate a long section name or strand a deck of two categories across the
+whole bar. `toolScrollContent`'s `flexGrow` is gated on `toolsMode` for the same reason, preserving the
+existing rule that few categories left-align against the divider rather than stretching.
+
+tsc 49, with no error in any pitch-book file; `PresentationDock.tsx` is eslint error- and warning-free.
+
+⚠️ Needs a device check (this repo cannot render-test): the four tabs equal in fullscreen LANDSCAPE
+(filling the bar) and in PORTRAIT (equal, scrolling), with the active pill still reading as the selected
+one and each tab's icon+label centred in it.
+
+##### …and the PANEL each tab opens is one height too
+
+Follow-up: *"the inspection and video tab view is same but the Risk and the notes are not equal to that
+— make sure when user clicks on it, it contains the same space area as used for the inspection or video
+tab."* The tabs were now equal; the **body** each one opened was not.
+
+`toolPanel` carried **`maxHeight`**, so it sized to whatever the selected tool rendered and only stopped
+at the cap. Inspection (a photo grid) and Videos (a 44pt icon over its empty state) both reach it; Risk
+and Notes are short, so the dock **collapsed to their content** and the whole bar changed height as the
+rep moved between tabs — four differently-sized screens from one control.
+
+**`maxHeight` → `height`, and the prop renamed `maxToolHeight` → `toolHeight`.** The rename is the point:
+it is no longer a cap, and a future reader passing a "max" would reintroduce exactly this.
+
+⚠️ **The scroller had to be told to fill it** (`toolScroll: { flex: 1 }`). A `ScrollView` with no flex
+inside a fixed-height parent still sizes to its OWN content, so Notes would have left dead panel beneath
+it — visually right but deaf to a drag. `flexGrow: 1` on the content container keeps a short body at the
+top of that area rather than stretching its card down the panel.
+
+⚠️ **The height is unchanged** (52 % landscape / 46 % portrait) — this makes the short tools match the
+tall ones, never the other way round, so the slide keeps exactly the room it had.
+
+⚠️ **The non-fullscreen drawer is untouched.** It has its own `drawerHeight` and was already fixed at
+70 % (portrait) — which is why this only ever read as wrong on the dock.
+
+`Pitchbook/index.tsx` drops one `react-native/no-inline-styles` (the panel's `{ padding: 16 }` moved into
+`dockStyles`) to 46 problems / 12 pre-existing errors; `PresentationDock.tsx` stays eslint-clean and tsc
+is 49 with nothing in a pitch-book file.
+
+⚠️ Needs a device check alongside the tabs: switching Inspection → Risk → Notes → Videos without the
+dock resizing, and Inspection's photo grid still scrolling inside that area.
+
+##### …and one typography scale for all four, with Risk's white bar finally dark
+
+Follow-up: *"make sure the text used in these four tabs should use the same font, same colour and size —
+heading text colour for all the tabs the same and the hint text colour also the same; and the Risk report
+bar that gives the 1,2,3,4 years information is white, make sure this bar is in the black theme too."*
+
+**The dock now has THREE named text roles** (`DOCK_TEXT`, exported from `screens/Pitchbook/index.tsx`) —
+`heading` `#FFFFFF`, `body` `rgba(255,255,255,0.86)`, `hint` `rgba(255,255,255,0.55)` — plus `surface` /
+`surfaceBorder` / `glyphWell` / `glyph` for anything the dock draws. Before this the four tabs carried
+**two heading treatments and three different greys** between them: Notes' body was `0.86`, Videos' empty
+state `0.55`, and Risk used themed NativeWind classes (`text-text-primary`, `text-slate-400`,
+`text-slate-500`, `text-gray-400`) that resolve near-BLACK in light theme.
+
+- `DOCK_HEADING_TEXT` / `DOCK_HINT_TEXT` are single objects spread into the styles that need a margin,
+  so `heading` (stacked above a body) and `headingRow` (Risk's, in a row that already owns the gap)
+  cannot drift in colour, size or weight.
+- **Risk had no dock heading at all** — the other three each open with one. Its own `Report` title now
+  takes `headingRow` on the dock, so all four read as the same typography.
+
+**`RiskContent` takes a `dark` prop; it does NOT read the theme.** ⚠️ It is rendered from **two** call
+sites in this screen — the dock (dark in BOTH app themes) and the non-fullscreen drawer (themed, usually
+white) — so a theme test would get the drawer right and the dock wrong. `dark` defaults **false**, which
+is byte-for-byte the drawer's previous look; only the dock passes it. Every colour goes through one `t`
+token block: card fill and border, the glyph well and its alert icon, the `Risk Report` label, the
+progress **track** (was `bg-slate-100`), the `%` and step captions, `Generated History`, and the history
+rows (was `bg-white border-slate-100`).
+
+**The reported white slab is the report card itself** — it painted `backgroundColor: colors.background`,
+which is WHITE in light theme, so the bar carrying the year picker sat as a white block in the middle of
+a dark panel in front of a customer.
+
+**`YearDropdown` gained the same opt-in `dark`** (`widgets/components/YearDropdown.tsx`). ⚠️ It is
+hardcoded white — trigger AND the popup panel — and has **three** callers (Lead Center, Roofline Deck,
+Pitch Book), so the prop defaults to the light look and only the dock's Risk tab asks for dark. Its
+`ChevronIcon` took a `color` prop for the same reason. The dropdown rows, their selected fill and the
+panel border all move together, or the open list would be a white sheet over a dark trigger.
+
+⚠️ **`InspectionPhotosPanel` is deliberately NOT darkened.** Its white cards are photo frames — dark-on-
+white captions are correct against a photo, and the panel is shared with the light drawer and the
+Roofline Deck. The rule that changed is the copy **the dock itself owns**.
+
+⚠️ **`screens/RooflineDeck/index.tsx` has its own COPY of `RiskContent`** (and its own `YearDropdown`
+call) and was left alone — it has no dock, so it is never on a dark ground. If a dock is ever added
+there, that copy needs the same prop rather than a second set of colours.
+
+⚠️ Noted, NOT changed: `YearDropdown`'s list is a native `Modal`, and on the dock it opens **inside** the
+fullscreen presentation Modal — the stacked-native-modal hazard this file documents for the CoC signature
+pad. It predates this ticket and is reached only by tapping the year picker; if it misbehaves on iOS, make
+it an in-panel overlay rather than a Modal.
+
+tsc 49 (unchanged, nothing in a touched file); `Pitchbook/index.tsx` holds 46 problems / 12 pre-existing
+errors and `YearDropdown.tsx` drops 9 → 7 problems (the two removed are `react-native/no-inline-styles`,
+the hardcoded colours that moved into `tone`); its 1 error is pre-existing.
+
+⚠️ Needs a device check: the Risk tab with **no** white anywhere — card, year picker, its open list, the
+progress track and the history rows — and the four tabs' headings and hint text matching; then the
+**drawer** (non-fullscreen Tools) and the Lead Center's own year picker confirmed unchanged and still light.
+
+#### 10. The tab strip follows the deck — `useTabStripAutoScroll`
+
+Ticket: *"apply the auto scroll on the bar if user pass the pages, and the bottom bar also moves according
+to the page number that is linked with the bottom bar … if the user is on page 15 but the bottom view is
+still on the heading 1 from the bottom, that is wrong."*
+
+⚠️ **The STATE was already correct — only the scroll position was wrong**, which is why this reads as a
+navigation bug and is not one. `handleNext` advances `activeCategory` when the rep pages past a section's
+last slide, so the right tab really was highlighted; the strip is a horizontal `ScrollView` and **nothing
+ever moved it**, so on page 15 the live tab sat off-screen to the right while the bar still showed
+section 1. Do not go looking in the paging handlers.
+
+**New `src/hooks/useTabStripAutoScroll.ts`** returns `{ ref, onLayout, onContentSizeChange, onTabLayout }`;
+each tab reports its own box through `onTabLayout(id)` and the hook scrolls the active one into view.
+
+⚠️ **A hook rather than a copy in each bar, because there are TWO strips with this duty** — the fullscreen
+dock and the inline card's category bar, which gained swipe and arrows in the pass above and therefore
+rolls between sections exactly the same way. Two copies is precisely how the landscape and portrait
+presentation bars drifted apart before the dock replaced them.
+
+⚠️ **`scope` is not decoration.** The dock renders categories OR tools into the **same** scroller, so boxes
+are keyed `cat:<id>` / `tool:<id>`; unprefixed, a tool could read a stale category's box on the frame after
+a mode switch and scroll to an offset that means nothing in the row now on screen.
+
+⚠️ **`onTabLayout` re-reveals when the ACTIVE tab measures**, and that is the half without which this
+silently does nothing on arrival: at first paint (and after a set swap or a rotation) the effect has
+already run for that `activeId` with no box recorded, and nothing re-runs it. That call is deliberately
+**un-animated** — it is the resting position, not a move the rep should watch.
+
+⚠️ **The centre is CLAMPED** to `[0, content − viewport]`, so the first and last tabs stay flush against
+their ends instead of floating in from the edge. The clamp is skipped while the content width is still
+unknown rather than clamping to `0`, which would pin every early call to the far left.
+
+⚠️ The hook holds viewport/content widths in **refs, not state** — they are read during a scroll, never
+rendered, and as state each layout pass would re-render the whole dock.
+
+tsc 49 (unchanged, nothing in a touched file); the hook and `PresentationDock.tsx` are eslint-clean and
+`Pitchbook/index.tsx` holds its 46 problems / 12 pre-existing errors.
+
+⚠️ Needs a device check: page forward through a whole section in fullscreen and watch the dock bar carry
+the active tab along (and back again on reverse), the same on the inline card, the first and last sections
+sitting flush rather than centred, and the tools row still landing on the selected tool after a mode switch.
 
 ### iOS pods: `bundle exec pod install`, never a bare `pod install`
 
