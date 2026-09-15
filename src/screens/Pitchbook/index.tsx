@@ -56,6 +56,7 @@ import { storage } from '../../utils/storage';
 import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
 import { usePitchBookDeck } from '../../hooks/usePitchBooks';
+import { useTabStripAutoScroll } from '../../hooks/useTabStripAutoScroll';
 import Feather from 'react-native-vector-icons/Feather';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
@@ -228,24 +229,37 @@ export default function PitchbookScreen() {
   }, [isFullscreen, chromeVisible, showGestureTutorial, dockMode, chromeNudge]);
 
   /**
-   * A tap on the slide REVEALS the chrome and restarts its three seconds.
+   * A tap on the slide TOGGLES the chrome.
    *
-   * ⚠️ It no longer TOGGLES. The ticket asks for a tap to show the controls, and a toggle
-   * would mean a rep who taps while they happen to be visible gets the opposite of what
-   * they asked for — with no way to tell which state they were in, because the whole
-   * point is that the chrome comes and goes on its own.
+   *   hidden  → tap → shown, and it hides itself again after three seconds
+   *   shown   → tap → hidden IMMEDIATELY, without waiting out the countdown
    *
-   * ⚠️ **A SWIPE must not reach this** — *"when the user uses the swipe gesture do not
-   * show it, show only when the user taps."* It cannot: the swipe is a `Gesture.Pan` with
-   * `activeOffsetX`, and once a pan activates RNGH cancels the tap composed beside it. A
-   * drag too small to activate the pan is a tap by any reasonable reading, so revealing
-   * there is correct.
+   * Ticket: *"when the user taps, the UI is displayed and after 3 seconds automatically
+   * hides — but when the user taps again the UI hides immediately."*
+   *
+   * ⚠️ This SUPERSEDES the previous pass, where a tap only ever revealed. The worry then
+   * was that a rep could not tell which state they were in; in practice the chrome is
+   * plainly on screen or plainly not, and a rep who has finished pointing at a control
+   * wants it gone NOW rather than three seconds from now, in front of the customer.
+   *
+   * Showing bumps `chromeNudge` so the countdown always restarts from a full three
+   * seconds; hiding needs nothing, because the auto-hide effect keys on `chromeVisible`
+   * and its cleanup cancels the pending timer the moment it flips false.
+   *
+   * ⚠️ **A SWIPE still cannot reach this.** The swipe is a `Gesture.Pan` with
+   * `activeOffsetX`, and once a pan activates RNGH cancels the tap composed beside it — so
+   * paging through slides never flashes the chrome on OR knocks it off. A drag too small to
+   * activate the pan is a tap by any reasonable reading, so toggling there is correct.
    */
-  const revealChrome = useCallback(() => {
+  const toggleChrome = useCallback(() => {
     if (showGestureTutorial) return;
+    if (chromeVisible) {
+      setChromeVisible(false);
+      return;
+    }
     setChromeVisible(true);
     setChromeNudge((n) => n + 1);
-  }, [showGestureTutorial]);
+  }, [showGestureTutorial, chromeVisible]);
 
   /**
    * Restart the countdown WITHOUT forcing the chrome back on.
@@ -435,6 +449,13 @@ export default function PitchbookScreen() {
     },
     [keepChromeAlive]
   );
+
+  /*
+    The inline card's own category bar has the same duty as the dock's: it gained swipe and
+    arrows in an earlier pass, so paging through a section rolls into the next one and the
+    strip has to follow. Same hook, so the two bars cannot drift.
+  */
+  const inlineTabStrip = useTabStripAutoScroll(activeCategory);
 
   const handleSlideSwipe = useCallback(
     (dx: number, dy: number) => {
@@ -863,7 +884,8 @@ export default function PitchbookScreen() {
     <PhotoPeekScrollLockProvider>
       <PeekAwareScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ padding: 16 }}
+        style={dockStyles.toolScroll}
+        contentContainerStyle={dockStyles.toolScrollContent}
         keyboardShouldPersistTaps="handled"
       >
         {activeToolTab === 'inspection' && (
@@ -879,6 +901,7 @@ export default function PitchbookScreen() {
             refetch={refetch}
             reports={riskReports}
             onDownload={handleDownloadReport}
+            dark
           />
         )}
 
@@ -886,7 +909,7 @@ export default function PitchbookScreen() {
           <View>
             <Text style={dockStyles.heading}>Lead Notes</Text>
             <View style={dockStyles.notesCard}>
-              <Text style={dockStyles.notesText}>
+              <Text style={dockStyles.bodyText}>
                 {fullLeadData?.notes ||
                   fullLeadData?.customerDetails?.notes ||
                   'No specific notes available for this lead.'}
@@ -1208,9 +1231,12 @@ export default function PitchbookScreen() {
         {/* Categories Tab Bar */}
         <View className="bg-background shadow-sm pb-4">
           <ScrollView
+            ref={inlineTabStrip.ref}
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 0 }}
+            onLayout={inlineTabStrip.onLayout}
+            onContentSizeChange={inlineTabStrip.onContentSizeChange}
           >
             {CATEGORIES.map((cat) => {
               const isActive = activeCategory === cat.id;
@@ -1218,6 +1244,7 @@ export default function PitchbookScreen() {
                 <TouchableOpacity
                   key={cat.id}
                   onPress={() => handleTabChange(cat.id)}
+                  onLayout={inlineTabStrip.onTabLayout(cat.id)}
                   className="mr-5 pt-3 pb-1"
                   style={{
                     borderBottomWidth: isActive ? 2 : 0,
@@ -1467,7 +1494,7 @@ export default function PitchbookScreen() {
                       containerStyle={{ ...StyleSheet.absoluteFillObject }}
                       style={{ width: '100%', height: '100%' }}
                       resetKey={slideResetKey}
-                      onSingleTap={revealChrome}
+                      onSingleTap={toggleChrome}
                       onSwipe={handleSlideSwipe}
                     />
 
@@ -1529,7 +1556,7 @@ export default function PitchbookScreen() {
                       containerStyle={{ ...StyleSheet.absoluteFillObject }}
                       style={{ width: '100%', height: '100%' }}
                       resetKey={slideResetKey}
-                      onSingleTap={revealChrome}
+                      onSingleTap={toggleChrome}
                       onSwipe={handleSlideSwipe}
                     />
                   )}
@@ -1585,7 +1612,7 @@ export default function PitchbookScreen() {
                 showTools={viewMode === 'rep'}
                 /* Capped so the panel never swallows the slide the rep is presenting;
                    landscape has far less height to give, hence the two fractions. */
-                maxToolHeight={isLandscape ? winHeight * 0.52 : winHeight * 0.46}
+                toolHeight={isLandscape ? winHeight * 0.52 : winHeight * 0.46}
                 left={fullscreenLeftInset}
                 right={fullscreenRightInset}
                 bottom={fullscreenBottomInset}
@@ -1646,7 +1673,16 @@ function ToolTab({ label, icon, active, onPress }: any) {
   );
 }
 
-const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
+/**
+ * ⚠️ Rendered on TWO grounds — the fullscreen dock (dark, always) and the non-fullscreen
+ * drawer (themed, usually white) — so every surface and every text colour comes from `t`
+ * below. `dark` defaults false, which is byte-for-byte the drawer's previous look.
+ *
+ * The reported bug was the Risk Report bar (the one carrying the 1-5 YEAR picker): it
+ * painted `colors.background`, i.e. WHITE in light theme, so a white slab sat in the
+ * middle of the dark presentation panel in front of a customer.
+ */
+const RiskContent = ({ lead, refetch, reports, onDownload, dark = false }: any) => {
   const { colors, isDark } = useTheme();
   const { riskJob, handleStartRiskReport, handleResetRiskReport } = useLeadReports(lead, refetch);
   const [selectedYear, setSelectedYear] = useState(3);
@@ -1657,15 +1693,44 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
     (r: any) => r.reportName?.toLowerCase().includes('risk') || r.reportType?.includes('risk')
   );
 
+  const t = dark
+    ? {
+        surface: DOCK_TEXT.surface,
+        border: DOCK_TEXT.surfaceBorder,
+        heading: DOCK_TEXT.heading,
+        body: DOCK_TEXT.body,
+        hint: DOCK_TEXT.hint,
+        glyphWell: DOCK_TEXT.glyphWell,
+        glyph: DOCK_TEXT.glyph,
+        track: 'rgba(255,255,255,0.12)',
+      }
+    : {
+        surface: colors.background,
+        border: '#919EAB33',
+        heading: colors.text,
+        body: colors.text,
+        hint: '#919EAB',
+        glyphWell: '#919EAB1F',
+        glyph: '#637381',
+        track: '#F1F5F9',
+      };
+
   return (
     <View>
       <View className="flex-row justify-between items-center mb-4">
-        <Text className="text-text-primary font-bold text-base">Report</Text>
+        {/* The dock's other three tabs each open with one heading; this is Risk's, and it
+            takes the same style so the four cannot read as different typography. */}
+        <Text
+          style={dark ? dockStyles.headingRow : undefined}
+          className={dark ? undefined : 'text-text-primary font-bold text-base'}
+        >
+          Report
+        </Text>
         <TouchableOpacity onPress={() => setReportExpanded(!reportExpanded)}>
           <IonIcon
             name={reportExpanded ? 'chevron-up' : 'chevron-down'}
             size={22}
-            color="#919EAB"
+            color={dark ? DOCK_TEXT.glyph : '#919EAB'}
           />
         </TouchableOpacity>
       </View>
@@ -1674,19 +1739,19 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
         <View
           className="p-3 rounded-lg flex-col mb-4 border"
           style={{
-            borderColor: '#919EAB33',
-            backgroundColor: colors.background,
+            borderColor: t.border,
+            backgroundColor: t.surface,
           }}
         >
           <View className="flex-row justify-between items-center">
             <View
               className="w-8 h-8 rounded-full items-center justify-center"
-              style={{ backgroundColor: '#919EAB1F' }}
+              style={{ backgroundColor: t.glyphWell }}
             >
-              <Icon name="alert" size={16} color={'#637381'} />
+              <Icon name="alert" size={16} color={t.glyph} />
             </View>
             <View className="flex-1 ml-4">
-              <Text className="text-sm font-semibold" style={{ color: colors.text }}>
+              <Text className="text-sm font-semibold" style={{ color: t.body }}>
                 Risk Report
               </Text>
             </View>
@@ -1722,6 +1787,7 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
                       defaultValue={selectedYear}
                       min={1}
                       max={5}
+                      dark={dark}
                       onChange={(val: number) => setSelectedYear(val)}
                     />
                     <TouchableOpacity
@@ -1740,7 +1806,9 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
               {riskJob && riskJob.status !== 'completed' && (
                 <View className="flex-row items-center gap-2">
                   <ActivityIndicator size="small" color={colors.primary.main} />
-                  <Text className="text-[10px] font-bold text-slate-500 ">{riskJob.progress}%</Text>
+                  <Text className="text-[10px] font-bold" style={{ color: t.hint }}>
+                    {riskJob.progress}%
+                  </Text>
                 </View>
               )}
             </View>
@@ -1748,12 +1816,15 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
 
           {/* Progress Bar for Risk Job */}
           {riskJob && riskJob.status !== 'completed' && (
-            <View className="mt-3 h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+            <View
+              className="mt-3 h-1.5 w-full rounded-full overflow-hidden"
+              style={{ backgroundColor: t.track }}
+            >
               <View className="h-full bg-emerald-500" style={{ width: `${riskJob.progress}%` }} />
             </View>
           )}
           {riskJob && riskJob.status !== 'completed' && (
-            <Text className="text-[10px] text-slate-400 mt-1 italic">
+            <Text className="text-[10px] mt-1 italic" style={{ color: t.hint }}>
               {riskJob.step || 'Processing...'}
             </Text>
           )}
@@ -1761,27 +1832,34 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
       )}
       {reports.length > 1 && (
         <View className="mt-2 gap-3">
-          <Text className="text-xs font-black  text-gray-400 tracking-widest mb-1">
+          <Text className="text-xs font-black tracking-widest mb-1" style={{ color: t.hint }}>
             Generated History
           </Text>
           {reports.map((report: any, idx: number) => (
             <TouchableOpacity
               key={idx}
               onPress={() => onDownload(report, idx)}
-              className="flex-row items-center p-4 bg-white rounded-xl border border-slate-100 shadow-sm"
+              className="flex-row items-center p-4 rounded-xl border shadow-sm"
+              style={{
+                backgroundColor: dark ? t.surface : '#FFFFFF',
+                borderColor: dark ? t.border : '#F1F5F9',
+              }}
             >
-              <View className="w-10 h-10 bg-red-50 rounded-full items-center justify-center mr-3">
+              <View
+                className="w-10 h-10 rounded-full items-center justify-center mr-3"
+                style={{ backgroundColor: dark ? 'rgba(239,68,68,0.16)' : '#FEF2F2' }}
+              >
                 <Icon name="file-pdf-box" size={24} color="#EF4444" />
               </View>
               <View className="flex-1">
-                <Text className="text-text-primary font-bold text-sm" numberOfLines={1}>
+                <Text className="font-bold text-sm" numberOfLines={1} style={{ color: t.body }}>
                   {report.reportName}
                 </Text>
-                <Text className="text-text-secondary text-[10px]">
+                <Text className="text-[10px]" style={{ color: t.hint }}>
                   {new Date(report.createdAt).toLocaleDateString()}
                 </Text>
               </View>
-              <Icon name="chevron-right" size={20} color="#919EAB" />
+              <Icon name="chevron-right" size={20} color={dark ? DOCK_TEXT.glyph : '#919EAB'} />
             </TouchableOpacity>
           ))}
         </View>
@@ -1796,16 +1874,59 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
  * non-fullscreen drawer uses — those are near-black in light theme and would be
  * invisible here. See `renderDockToolContent`.
  */
+/**
+ * The dock's THREE text roles. Every tool body reads from these, so a heading is the same
+ * weight and colour on all four tabs and a hint is the same grey — the tabs used to carry
+ * three different greys and two heading sizes between them, which read as four screens
+ * built by different people.
+ *
+ * ⚠️ Risk is the one that needed the most work: it is a shared component rendered on BOTH
+ * the dark dock and the light drawer, so it takes these through a `dark` prop rather than
+ * hardcoding them. See `RiskContent`.
+ */
+export const DOCK_TEXT = {
+  /** Tool title — one per tab. */
+  heading: '#FFFFFF',
+  /** Primary copy: the note body, a report's name. */
+  body: 'rgba(255,255,255,0.86)',
+  /** Secondary copy: empty states, dates, captions, progress steps. */
+  hint: 'rgba(255,255,255,0.55)',
+  /** Card fill + hairline for any surface the dock owns. */
+  surface: 'rgba(255,255,255,0.06)',
+  surfaceBorder: 'rgba(255,255,255,0.10)',
+  /** A glyph well (the round icon badges). */
+  glyphWell: 'rgba(255,255,255,0.10)',
+  glyph: 'rgba(255,255,255,0.72)',
+} as const;
+
+const DOCK_HEADING_TEXT = {
+  color: DOCK_TEXT.heading,
+  fontSize: 15,
+  fontWeight: '700',
+} as const;
+
+const DOCK_HINT_TEXT = { color: DOCK_TEXT.hint, fontSize: 13, lineHeight: 20 } as const;
+
 const dockStyles = StyleSheet.create({
-  heading: { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 14 },
+  /*
+    `flex: 1` so the scroller fills the dock's now-FIXED tool panel rather than sizing to
+    its own body — otherwise a short tool (Notes, Risk) would leave dead panel beneath it
+    that does not take a drag. `flexGrow` on the content keeps a short body at the top.
+  */
+  toolScroll: { flex: 1 },
+  toolScrollContent: { padding: 16, flexGrow: 1 },
+  heading: { ...DOCK_HEADING_TEXT, marginBottom: 14 },
+  /* Risk's heading sits inside a row that already owns the gap below it. */
+  headingRow: DOCK_HEADING_TEXT,
   notesCard: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: DOCK_TEXT.surface,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.10)',
+    borderColor: DOCK_TEXT.surfaceBorder,
     borderRadius: 12,
     padding: 14,
   },
-  notesText: { color: 'rgba(255,255,255,0.86)', fontSize: 13.5, lineHeight: 22 },
+  /* One body style and one hint style, shared by every tab. */
+  bodyText: { color: DOCK_TEXT.body, fontSize: 13.5, lineHeight: 22 },
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 44 },
-  emptyText: { color: 'rgba(255,255,255,0.55)', fontSize: 13, marginTop: 14, textAlign: 'center' },
+  emptyText: { ...DOCK_HINT_TEXT, marginTop: 14, textAlign: 'center' },
 });

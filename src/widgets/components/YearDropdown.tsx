@@ -1,16 +1,25 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, Modal, FlatList, Animated, ScrollView } from 'react-native';
 
+/**
+ * ⚠️ `dark` is OPT-IN and defaults to the light look every existing caller relies on.
+ * The control is hardcoded white (trigger and panel), which is right on the Lead Center
+ * and the Roofline Deck but reads as a white slab on the Pitch Book's dark presentation
+ * dock — so that one caller asks for the dark palette rather than the component guessing
+ * from a theme it cannot see (the dock is dark in BOTH app themes).
+ */
 const YearDropdown = ({
   defaultValue = 3,
   min = 1,
   max = 5,
   onChange,
+  dark = false,
 }: {
   defaultValue?: number;
   min?: number;
   max?: number;
   onChange?: (val: number) => void;
+  dark?: boolean;
 }) => {
   const [selectedValue, setSelectedValue] = useState(defaultValue);
   const [isOpen, setIsOpen] = useState(false);
@@ -51,6 +60,30 @@ const YearDropdown = ({
     outputRange: ['0deg', '180deg'],
   });
 
+  const tone = dark
+    ? {
+        trigger: 'rgba(255,255,255,0.08)',
+        triggerBorder: 'rgba(255,255,255,0.18)',
+        label: '#FFFFFF',
+        panel: '#1A1C1D',
+        panelBorder: 'rgba(255,255,255,0.12)',
+        rowSelected: 'rgba(255,255,255,0.10)',
+        rowText: 'rgba(255,255,255,0.72)',
+        rowTextSelected: '#FFFFFF',
+        chevron: 'rgba(255,255,255,0.72)',
+      }
+    : {
+        trigger: '#FFFFFF',
+        triggerBorder: '#919EAB52',
+        label: '#1C252E',
+        panel: '#FFFFFF',
+        panelBorder: '#E5E7EB',
+        rowSelected: '#F3F4F6',
+        rowText: '#637381',
+        rowTextSelected: '#1C252E',
+        chevron: '#637381',
+      };
+
   return (
     <View>
       {/* Trigger */}
@@ -58,13 +91,14 @@ const YearDropdown = ({
         ref={triggerRef}
         onPress={isOpen ? closeDropdown : openDropdown}
         activeOpacity={0.8}
-        className="flex-row items-center justify-center px-3 py-2 bg-white border border-[#919EAB52] rounded-md"
+        className="flex-row items-center justify-center px-3 py-2 border rounded-md"
+        style={{ backgroundColor: tone.trigger, borderColor: tone.triggerBorder }}
       >
-        <Text className="text-sm font-semibold mr-2" style={{ color: '#1C252E' }}>
+        <Text className="text-sm font-semibold mr-2" style={{ color: tone.label }}>
           {selectedValue} {selectedValue === 1 ? 'Year' : 'Years'}
         </Text>
         <Animated.View style={{ transform: [{ rotate }] }}>
-          <ChevronIcon />
+          <ChevronIcon color={tone.chevron} />
         </Animated.View>
       </TouchableOpacity>
 
@@ -80,10 +114,10 @@ const YearDropdown = ({
               left: dropdownPos.x,
               width: dropdownPos.width,
               maxHeight: 200,
-              backgroundColor: '#ffffff',
+              backgroundColor: tone.panel,
               borderRadius: 8,
               borderWidth: 0.5,
-              borderColor: '#E5E7EB',
+              borderColor: tone.panelBorder,
               shadowColor: '#000',
               shadowOffset: { width: 0, height: 4 },
               shadowOpacity: 0.1,
@@ -108,12 +142,12 @@ const YearDropdown = ({
                     style={{
                       paddingHorizontal: 6,
                       paddingVertical: 12,
-                      backgroundColor: isSelected ? '#F3F4F6' : '#ffffff',
+                      backgroundColor: isSelected ? tone.rowSelected : tone.panel,
                     }}
                   >
                     <Text
                       className="text-sm font-semibold"
-                      style={{ color: isSelected ? '#1C252E' : '#637381' }}
+                      style={{ color: isSelected ? tone.rowTextSelected : tone.rowText }}
                     >
                       {item} {item === 1 ? 'Year' : 'Years'}
                     </Text>
@@ -128,7 +162,7 @@ const YearDropdown = ({
   );
 };
 
-const ChevronIcon = () => (
+const ChevronIcon = ({ color = '#637381' }: { color?: string }) => (
   <View style={{ width: 16, height: 16, alignItems: 'center', justifyContent: 'center' }}>
     <View
       style={{
@@ -136,7 +170,7 @@ const ChevronIcon = () => (
         height: 7,
         borderRightWidth: 1.5,
         borderBottomWidth: 1.5,
-        borderColor: '#637381',
+        borderColor: color,
         transform: [{ rotate: '45deg' }],
         marginTop: -4,
       }}

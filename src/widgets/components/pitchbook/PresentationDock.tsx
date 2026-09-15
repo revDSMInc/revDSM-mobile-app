@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTabStripAutoScroll } from '../../../hooks/useTabStripAutoScroll';
 
 /**
  * The floating dock at the bottom of the Pitch Book's fullscreen presentation.
@@ -44,6 +45,17 @@ export const DOCK_TOOLS: DockTool[] = [
   { id: 'notes', label: 'Notes', icon: 'file-document-outline' },
 ];
 
+/**
+ * Every tool tab is at least this wide, so the four of them read as one control.
+ *
+ * ⚠️ It is the natural width of the WIDEST label (`Inspection`, 13.5pt semibold) plus its
+ * icon, that icon's margin and the tab's own padding — with a little allowance. That is
+ * what makes the row equal: a narrow tab like `Risk` is clamped UP to this same flex base,
+ * so `flexGrow` then splits the leftover space evenly and all four land on one width.
+ * Widen it if a longer tool label is ever added, or that tab alone will grow past the rest.
+ */
+const TOOL_TAB_MIN_WIDTH = 128;
+
 interface Props {
   mode: DockMode;
   onModeChange: (mode: DockMode) => void;
@@ -59,8 +71,15 @@ interface Props {
    * would open an empty panel. The layers half, and the deck, stay.
    */
   showTools: boolean;
-  /** How tall the tool panel may grow. The dock never takes the whole slide. */
-  maxToolHeight: number;
+  /**
+   * The tool panel's height — FIXED, not a cap.
+   *
+   * ⚠️ Every tool gets the same area, so switching tabs never resizes the dock: a short
+   * body (Notes, Risk) used to collapse the panel while Inspection filled it, which read
+   * as four differently-sized screens. Tall content scrolls inside this height instead.
+   * It is still well under the slide, so the deck is never swallowed.
+   */
+  toolHeight: number;
   left: number;
   right: number;
   bottom: number;
@@ -101,12 +120,23 @@ export function PresentationDock({
   onSelectTool,
   toolContent,
   showTools,
-  maxToolHeight,
+  toolHeight,
   left,
   right,
   bottom,
 }: Props) {
   const toolsMode = showTools && mode === 'tools';
+  const activeId = toolsMode ? activeTool : activeCategory;
+
+  /*
+    ── The bar follows the deck ──────────────────────────────────────────────────
+    Paging past a section's last slide advances `activeCategory` (`handleNext` in the
+    screen), but the tab row is a horizontal scroller and nothing moved it — so a rep on
+    page 15 saw the bar still parked on the FIRST section with the live tab off-screen.
+    The `scope` argument matters here: this ONE scroller renders categories or tools
+    depending on the mode.
+  */
+  const strip = useTabStripAutoScroll(activeId, toolsMode ? 'tool' : 'cat');
 
   return (
     <View style={[styles.wrap, { left, right, bottom }]} pointerEvents="box-none">
@@ -139,11 +169,17 @@ export function PresentationDock({
             portal and six of them already fill a phone in landscape.
           */}
           <ScrollView
+            ref={strip.ref}
             horizontal
             showsHorizontalScrollIndicator={false}
             style={styles.tabScroll}
-            contentContainerStyle={styles.tabScrollContent}
+            contentContainerStyle={[
+              styles.tabScrollContent,
+              toolsMode && styles.toolScrollContent,
+            ]}
             keyboardShouldPersistTaps="handled"
+            onLayout={strip.onLayout}
+            onContentSizeChange={strip.onContentSizeChange}
           >
             {toolsMode
               ? DOCK_TOOLS.map((tool) => {
@@ -152,8 +188,9 @@ export function PresentationDock({
                     <TouchableOpacity
                       key={tool.id}
                       onPress={() => onSelectTool(tool.id)}
+                      onLayout={strip.onTabLayout(tool.id)}
                       activeOpacity={0.85}
-                      style={[styles.tab, active && styles.tabActive]}
+                      style={[styles.tab, styles.toolTab, active && styles.tabActive]}
                     >
                       <Icon
                         name={tool.icon}
@@ -161,7 +198,10 @@ export function PresentationDock({
                         color={active ? '#fff' : 'rgba(255,255,255,0.72)'}
                         style={styles.tabIcon}
                       />
-                      <Text style={[styles.tabText, active && styles.tabTextActive]}>
+                      <Text
+                        numberOfLines={1}
+                        style={[styles.tabText, active && styles.tabTextActive]}
+                      >
                         {tool.label}
                       </Text>
                     </TouchableOpacity>
@@ -173,6 +213,7 @@ export function PresentationDock({
                     <TouchableOpacity
                       key={cat.id}
                       onPress={() => onSelectCategory(cat.id)}
+                      onLayout={strip.onTabLayout(cat.id)}
                       activeOpacity={0.85}
                       style={[styles.tab, active && styles.tabActive]}
                     >
@@ -201,7 +242,7 @@ export function PresentationDock({
         </View>
 
         {toolsMode && (
-          <View style={[styles.toolPanel, { maxHeight: maxToolHeight }]}>{toolContent}</View>
+          <View style={[styles.toolPanel, { height: toolHeight }]}>{toolContent}</View>
         )}
       </View>
     </View>
@@ -237,6 +278,8 @@ const styles = StyleSheet.create({
 
   tabScroll: { flex: 1 },
   tabScrollContent: { alignItems: 'center', paddingRight: 4 },
+  /* Tools mode only: let the content fill the bar so the four tabs can share it evenly. */
+  toolScrollContent: { flexGrow: 1 },
   tab: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -244,6 +287,19 @@ const styles = StyleSheet.create({
     height: 38,
     borderRadius: 19,
     marginRight: 4,
+  },
+  /*
+    The four tool tabs are ONE control, so they are sized as a set rather than to their own
+    labels — `Inspection` / `Videos` used to render half again as wide as `Risk` / `Notes`.
+    `minWidth` clamps every tab to the same flex base and `flexGrow` splits what is left
+    equally, so they stay equal whether the bar is roomy (landscape) or has to scroll
+    (portrait). `justifyContent` centres the icon+label pair inside the wider pill.
+  */
+  toolTab: {
+    flexGrow: 1,
+    minWidth: TOOL_TAB_MIN_WIDTH,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
   },
   tabActive: { backgroundColor: GREEN },
   tabIcon: { marginRight: 6 },
