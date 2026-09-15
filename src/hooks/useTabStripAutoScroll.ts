@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useRef } from 'react';
-import type { LayoutChangeEvent, ScrollView } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, ScrollView } from 'react-native';
+
+/** Within this many points of an end counts as AT the end (sub-pixel offsets never read 0). */
+const EDGE_EPSILON = 2;
+/** A tap on an edge arrow moves this fraction of the visible width — enough to bring the
+ *  hidden neighbour fully in, never so much that the rep loses their place. */
+const STEP_FRACTION = 0.7;
 
 /**
  * Keeps the ACTIVE tab of a horizontal tab strip in view.
@@ -18,10 +24,16 @@ import type { LayoutChangeEvent, ScrollView } from 'react-native';
  * ```tsx
  * const strip = useTabStripAutoScroll(activeId);
  * <ScrollView horizontal ref={strip.ref} onLayout={strip.onLayout}
- *             onContentSizeChange={strip.onContentSizeChange}>
+ *             onContentSizeChange={strip.onContentSizeChange}
+ *             onScroll={strip.onScroll} scrollEventThrottle={16}>
  *   {tabs.map((t) => <Pill key={t.id} onLayout={strip.onTabLayout(t.id)} … />)}
  * </ScrollView>
+ * {strip.canScrollBack && <Arrow onPress={() => strip.step('back')} />}
  * ```
+ *
+ * `canScrollBack` / `canScrollForward` + `step` drive the edge arrows that tell the rep more
+ * tabs exist off-screen. ⚠️ `onScroll` must be wired (with `scrollEventThrottle`) or the two
+ * flags never move off their first value.
  *
  * @param activeId the id of the tab that should be visible
  * @param scope    a discriminator for strips that render DIFFERENT tab sets into the SAME
@@ -34,6 +46,21 @@ export function useTabStripAutoScroll(activeId: string, scope: string = 'default
   const boxes = useRef<Record<string, { x: number; width: number }>>({});
   const viewport = useRef(0);
   const content = useRef(0);
+  const offset = useRef(0);
+  const [edges, setEdges] = useState({ back: false, forward: false });
+
+  /*
+    ⚠️ Set ONLY when a flag actually flips. This runs on every scroll frame, and an
+    unconditional setState there would re-render the whole dock ~60 times a second while the
+    rep drags the strip.
+  */
+  const syncEdges = useCallback(() => {
+    const view = viewport.current;
+    const max = content.current - view;
+    const back = offset.current > EDGE_EPSILON;
+    const forward = view > 0 && max > EDGE_EPSILON && offset.current < max - EDGE_EPSILON;
+    setEdges((prev) => (prev.back === back && prev.forward === forward ? prev : { back, forward }));
+  }, []);
 
   const keyOf = useCallback((id: string) => `${scope}:${id}`, [scope]);
 
@@ -74,19 +101,47 @@ export function useTabStripAutoScroll(activeId: string, scope: string = 'default
     (e: LayoutChangeEvent) => {
       viewport.current = e.nativeEvent.layout.width;
       reveal(false);
+      syncEdges();
     },
-    [reveal]
+    [reveal, syncEdges]
   );
 
   const onContentSizeChange = useCallback(
     (w: number) => {
       content.current = w;
       reveal(false);
+      syncEdges();
     },
-    [reveal]
+    [reveal, syncEdges]
   );
 
-  return { ref, onLayout, onContentSizeChange, onTabLayout };
+  const onScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      offset.current = e.nativeEvent.contentOffset.x;
+      syncEdges();
+    },
+    [syncEdges]
+  );
+
+  const step = useCallback((direction: 'back' | 'forward') => {
+    const view = viewport.current;
+    if (view <= 0) return;
+    const max = Math.max(0, content.current - view);
+    const delta = view * STEP_FRACTION * (direction === 'forward' ? 1 : -1);
+    const x = Math.min(max, Math.max(0, offset.current + delta));
+    ref.current?.scrollTo({ x, animated: true });
+  }, []);
+
+  return {
+    ref,
+    onLayout,
+    onContentSizeChange,
+    onTabLayout,
+    onScroll,
+    step,
+    canScrollBack: edges.back,
+    canScrollForward: edges.forward,
+  };
 }
 
 export default useTabStripAutoScroll;

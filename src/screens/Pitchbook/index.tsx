@@ -20,6 +20,7 @@ import greenRooflinesImages, {
   GREEN_ROOFLINES_CATEGORIES,
 } from '../../constants/green-rooflines-pitchbook';
 import { InspectionPhotosPanel } from '../../widgets/components/InspectionPhotosPanel';
+import { buildInspectionSections } from '../../utils/inspection-photos';
 import { ZoomableImage } from '../../widgets/common/ZoomableImage';
 import { PresentationGesturesTutorial } from '../../widgets/components/pitchbook/PresentationGesturesTutorial';
 import { PresentationDock, type DockMode } from '../../widgets/components/pitchbook/PresentationDock';
@@ -339,6 +340,18 @@ export default function PitchbookScreen() {
   }, [fullLeadData, lead]);
 
   const { data: secureImages = {} } = useSecureUrls(activePhotos);
+
+  /*
+    The dock decides the Inspection tab's EMPTY state itself rather than letting
+    `InspectionPhotosPanel` draw its own: the panel's is a light-theme block (themed grey,
+    `opacity-50`, a bold title over a 10px hint) and it sat beside the Videos tab's regular
+    single line, so the two empty tabs read as different typography. Same pure builder the
+    panel uses, so the two cannot disagree about whether there is anything to show.
+  */
+  const hasInspectionPhotos = useMemo(
+    () => buildInspectionSections(activePhotos, secureImages).length > 0,
+    [activePhotos, secureImages]
+  );
 
   // Animation for tools drawer
   const toolsAnim = useRef(new Animated.Value(0)).current;
@@ -891,7 +904,15 @@ export default function PitchbookScreen() {
         {activeToolTab === 'inspection' && (
           <View>
             <Text style={dockStyles.heading}>Property Inspection Photos</Text>
-            <InspectionPhotosPanel photos={activePhotos} secureImages={secureImages} />
+            {hasInspectionPhotos ? (
+              <InspectionPhotosPanel photos={activePhotos} secureImages={secureImages} />
+            ) : (
+              <DockEmptyState
+                icon="image-off"
+                title="No inspection photos available"
+                hint="Photos added in Job Docs will appear here."
+              />
+            )}
           </View>
         )}
 
@@ -921,12 +942,11 @@ export default function PitchbookScreen() {
         {activeToolTab === 'videos' && (
           <View>
             <Text style={dockStyles.heading}>Educational Videos</Text>
-            <View style={dockStyles.emptyState}>
-              <Icon name="video-off" size={44} color="rgba(255,255,255,0.45)" />
-              <Text style={dockStyles.emptyText}>
-                Video content goes here. This area is scrollable.
-              </Text>
-            </View>
+            <DockEmptyState
+              icon="video-off"
+              title="No videos available"
+              hint="Video content goes here. This area is scrollable."
+            />
           </View>
         )}
       </PeekAwareScrollView>
@@ -1907,6 +1927,22 @@ const DOCK_HEADING_TEXT = {
 
 const DOCK_HINT_TEXT = { color: DOCK_TEXT.hint, fontSize: 13, lineHeight: 20 } as const;
 
+/**
+ * The ONE empty state every dock tool uses — icon, a bold title, a regular hint. Before this
+ * the Inspection tab drew the shared panel's own light-theme block (bold, dimmed to 50%) and
+ * Videos drew a single regular line, so two empty tabs side by side read as two different
+ * fonts. Any tool that can be empty should render this rather than its own.
+ */
+function DockEmptyState({ icon, title, hint }: { icon: string; title: string; hint?: string }) {
+  return (
+    <View style={dockStyles.emptyState}>
+      <Icon name={icon} size={44} color={DOCK_TEXT.hint} />
+      <Text style={dockStyles.emptyTitle}>{title}</Text>
+      {hint ? <Text style={dockStyles.emptyText}>{hint}</Text> : null}
+    </View>
+  );
+}
+
 const dockStyles = StyleSheet.create({
   /*
     `flex: 1` so the scroller fills the dock's now-FIXED tool panel rather than sizing to
@@ -1928,5 +1964,12 @@ const dockStyles = StyleSheet.create({
   /* One body style and one hint style, shared by every tab. */
   bodyText: { color: DOCK_TEXT.body, fontSize: 13.5, lineHeight: 22 },
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 44 },
-  emptyText: { ...DOCK_HINT_TEXT, marginTop: 14, textAlign: 'center' },
+  emptyTitle: {
+    color: DOCK_TEXT.body,
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  emptyText: { ...DOCK_HINT_TEXT, marginTop: 4, textAlign: 'center' },
 });

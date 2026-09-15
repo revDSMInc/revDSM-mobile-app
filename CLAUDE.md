@@ -6648,6 +6648,13 @@ anywhere on the slide but NOT while it is zoomed in.
 
 #### 9. The four DOCK TOOL tabs are ONE width, not four
 
+> ⚠️ **SUPERSEDED — the equal-width clamp below was REMOVED.** It rested on a misreading: the ticket's
+> *"2 small and 2 large screen"* was about the tool **panels** (fixed in the follow-up right below, which
+> is kept), not the tab pills. The clamp's 128pt `minWidth` + `flexGrow` left one pill hogging a phone's
+> whole strip with the next title cut off, reported as *"the space between … is very extra"*. Tabs are
+> content-sized again — see "…and compact tabs with edge arrows" under section 10. The rest of this
+> subsection is history; do not reintroduce `TOOL_TAB_MIN_WIDTH`.
+
 Ticket: *"make sure these four tabs have different screen view aspect — make it equal to each other, the
 visual layout should be the same in the 4 tabs … I need to fix the width of each tab, currently it's not
 looking good, 2 small and 2 large."*
@@ -6777,6 +6784,42 @@ the hardcoded colours that moved into `tone`); its 1 error is pre-existing.
 progress track and the history rows — and the four tabs' headings and hint text matching; then the
 **drawer** (non-fullscreen Tools) and the Lead Center's own year picker confirmed unchanged and still light.
 
+##### …and ONE empty state for every tool — Inspection's was a different font
+
+Follow-up, with screenshots of both tabs on a new lead: *"the font used in the inspection photo tab and
+the font used in the videos are still not the same — on inspection the font is bold but in the video tab
+the font is regular; we need bold in both screens"*, then *"see the hint text"*.
+
+⚠️ **The headings were already identical** (both `dockStyles.heading`) — the difference was the **empty
+state**, which is all either tab shows on a lead with no photos. Two different ones were on screen:
+
+| tab | empty state | title | hint |
+|---|---|---|---|
+| Inspection | `InspectionPhotosPanel`'s OWN block | **`font-bold`**, themed grey, whole block `opacity-50` | 10px, dimmer still |
+| Videos | the dock's `emptyText` | *(none)* — a single **regular** line | — |
+
+**New `DockEmptyState`** (screen-local, beside `dockStyles`): icon at `DOCK_TEXT.hint`, a **bold**
+`emptyTitle` (`DOCK_TEXT.body`, 14 / `700`) and a regular `emptyText` hint (`DOCK_HINT_TEXT`, 13). Both
+tabs render it, so the title weight and the hint colour/size cannot differ between them again.
+
+⚠️ **The dock decides Inspection's emptiness itself** (`hasInspectionPhotos`, via the pure
+`buildInspectionSections` the panel already uses) rather than letting the shared panel draw its own. The
+panel's empty state is a light-theme block and the panel is shared with the light drawer and the Roofline
+Deck, so restyling it there would have changed three screens to fix one. Same builder, so the dock and the
+panel cannot disagree about whether there is anything to show; with photos, the panel renders exactly as
+before.
+
+⚠️ **Videos gained a title — `No videos available` — so it has a bold line to match.** Its existing
+sentence (*"Video content goes here. This area is scrollable."*) is kept verbatim as the hint. That copy is
+still placeholder text (there is no video source behind this tab at all); it was left alone because
+rewriting it would be inventing product copy.
+
+tsc 49 (unchanged, nothing in a pitch-book file); `Pitchbook/index.tsx` holds its 46 problems / 12
+pre-existing errors.
+
+⚠️ Needs a device check: on a lead with no photos, Inspection and Videos showing the same bold title and
+the same hint colour and size, neither dimmed; and on a lead WITH photos, the Inspection grid unchanged.
+
 #### 10. The tab strip follows the deck — `useTabStripAutoScroll`
 
 Ticket: *"apply the auto scroll on the bar if user pass the pages, and the bottom bar also moves according
@@ -6819,6 +6862,54 @@ tsc 49 (unchanged, nothing in a touched file); the hook and `PresentationDock.ts
 ⚠️ Needs a device check: page forward through a whole section in fullscreen and watch the dock bar carry
 the active tab along (and back again on reverse), the same on the inline card, the first and last sections
 sitting flush rather than centred, and the tools row still landing on the selected tool after a mode switch.
+
+##### …and compact tabs with edge arrows
+
+Follow-up, with the portrait screenshots: *"the space between Inspection, Risk, Videos and Notes is very
+extra — when we select any one the other title is not shown. Fix the size and space, and also add an
+arrow so the user understands that some headings are also available on the back side or forward side."*
+The active `Inspection` pill filled the strip and `Risk` was cut to `Risl`.
+
+**The equal-width clamp is gone** (`TOOL_TAB_MIN_WIDTH`, `toolTab`, `toolScrollContent` deleted — see the
+superseded note on section 9). Every tab, tool or category, is sized to its own label with the SAME tight
+padding, so the gap between any two neighbours is identical and the selected tab's neighbours stay on
+screen:
+
+| | before | now |
+|---|---|---|
+| tab | 128pt min + grow, `paddingHorizontal: 14`, h 38, `marginRight: 4` | content-sized, `11`, h 34, `2` |
+| label / icon | 13.5pt / 15pt, gap 6 | 13pt / 14pt, gap 5 |
+| bar padding / divider margin / ✕ | 10 / 10 / 36 | 8 / 8 / 32 |
+
+The chrome trims give the strip back ~12pt on a phone — which matters there, since the mode well,
+divider and ✕ already take ~140pt of a ~366pt card in tools mode.
+
+⚠️ **The CATEGORY tabs got the same size change**, deliberately — it is one `tab` style for one scroller,
+and a slides row at the old size beside a tools row at the new one would be two designs in one bar.
+
+**Edge arrows.** `useTabStripAutoScroll` now also returns `onScroll`, `step(direction)`,
+`canScrollBack` and `canScrollForward`. A chevron sits over each end of the strip **only while the strip
+can scroll that way**, so at either end — or when every tab fits, as in landscape — nothing claims there
+is more. A tap moves 70% of the visible width (`STEP_FRACTION`): far enough to bring the hidden neighbour
+fully in, not so far the rep loses their place.
+
+- ⚠️ **The arrows are OVERLAYS, not flex siblings.** As siblings they would take width only while visible,
+  so the strip would resize each time one appeared at an end — re-measuring the tabs mid-scroll and moving
+  the target under the rep's finger. Their fill is the card's own colour, so a label passing beneath is
+  hidden rather than showing through the chevron.
+- ⚠️ **`onScroll` must be wired with `scrollEventThrottle`** or the two flags never leave their first
+  value. The hook sets state **only when a flag flips** — it runs every scroll frame, and an
+  unconditional `setState` there would re-render the whole dock ~60×/s during a drag.
+- ⚠️ The flags use a 2pt `EDGE_EPSILON`, because a scroll offset at rest is rarely exactly `0` or exactly
+  the maximum; without it an arrow could stay lit at the very end it points past.
+- The inline card's category bar uses the same hook but **does not render arrows** — the ticket was the
+  dock. It is two `TouchableOpacity`s away if wanted there.
+
+tsc 49 (unchanged, nothing in a touched file); `PresentationDock.tsx` and the hook are eslint-clean.
+
+⚠️ Needs a device check (portrait especially): the selected tool's neighbours visible beside it; the right
+arrow present on first open and the left one absent; both arrows stepping the strip and disappearing at
+their ends; no arrows at all in landscape when every tab fits; and the category row reading the same size.
 
 ### iOS pods: `bundle exec pod install`, never a bare `pod install`
 
