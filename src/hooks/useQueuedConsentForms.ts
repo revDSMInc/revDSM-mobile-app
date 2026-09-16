@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getOfflineWork, subscribeOfflineWork } from '../services/offlineLeadStore';
-import { hasQueuedConsent } from '../utils/offline-lead-work';
+import { hasPendingConsent, hasQueuedConsent } from '../utils/offline-lead-work';
 
 /**
  * Has the customer signed a consent / roof waiver this device is still holding?
@@ -14,7 +14,9 @@ import { hasQueuedConsent } from '../utils/offline-lead-work';
  * bespoke wiring because it also folds in a `localConsentSigned` flag this hook has no business
  * knowing about.
  */
-export const useQueuedConsentForms = (lead: any): { consent: boolean; waiver: boolean } => {
+export const useQueuedConsentForms = (
+  lead: any
+): { consent: boolean; waiver: boolean; consentPending: boolean; waiverPending: boolean } => {
   const [work, setWork] = useState(getOfflineWork);
   useEffect(() => subscribeOfflineWork(() => setWork([...getOfflineWork()])), []);
 
@@ -22,5 +24,8 @@ export const useQueuedConsentForms = (lead: any): { consent: boolean; waiver: bo
   return {
     consent: hasQueuedConsent(work, leadId, 'consent'),
     waiver: hasQueuedConsent(work, leadId, 'waiver'),
+    // Signed here and not filed yet — what tapping the card reports on.
+    consentPending: hasPendingConsent(work, leadId, 'consent'),
+    waiverPending: hasPendingConsent(work, leadId, 'waiver'),
   };
 };

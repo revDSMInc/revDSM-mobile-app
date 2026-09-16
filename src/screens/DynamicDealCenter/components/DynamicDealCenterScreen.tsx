@@ -24,6 +24,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
 import { useQueryClient } from '@tanstack/react-query';
 import { markLeadRolloutsConfirmed } from '../../../hooks/useLeadCalculatorStatus';
+import { isOnline } from '../../../services/connectivity';
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
 
@@ -667,6 +668,25 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
             style={{ marginTop: 20, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#4CBB17' }}
           >
             <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Back to Tools</Text>
+          </TouchableOpacity>
+        </View>
+      ) : !isDynamicConfigured && !isOnline() ? (
+        // ⚠️ Offline, a missing config means "never downloaded to this device", NOT "not
+        // configured". Telling a rep at a door to ask an admin is wrong and unactionable. The
+        // configs are cached once read online — the Leads list warms them (`useWarmDealCenterConfig`).
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+          <Ionicons name="cloud-offline-outline" size={40} color="#CBD5E1" />
+          <Text style={{ marginTop: 12, fontSize: 15, fontWeight: '800', color: '#475569', textAlign: 'center' }}>
+            Deal Center isn’t saved on this device yet
+          </Text>
+          <Text style={{ marginTop: 6, fontSize: 12, color: '#94A3B8', textAlign: 'center', lineHeight: 18 }}>
+            Open the Leads list or the Deal Center once with a connection and it will be available offline.
+          </Text>
+          <TouchableOpacity
+            onPress={() => navigation?.goBack()}
+            style={{ marginTop: 20, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#4CBB17' }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Back</Text>
           </TouchableOpacity>
         </View>
       ) : !isDynamicConfigured ? (

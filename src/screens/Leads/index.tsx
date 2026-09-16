@@ -51,6 +51,7 @@ import {
 } from '../../services/offlineLeadStatus';
 import { planStartAppointment, logLeadActionClick } from '../../utils/lead-activity-log';
 import { warmLeadCalculators } from '../../services/dealCenterWarmer';
+import { useWarmDealCenterConfig } from '../DynamicDealCenter/hooks/useWarmDealCenterConfig';
 import { isOnline } from '../../services/connectivity';
 import { Header } from '../../widgets/common/MainHeader';
 import { RootStackParamList } from '../../navigation';
@@ -525,6 +526,10 @@ export default function LeadsPage() {
    * A no-op offline, while a pass is running, or when every lead already holds a fresh snapshot,
    * and it never creates an appointment — see `dealCenterWarmer`.
    */
+  // …and the company's Deal Center setup those quotes are rendered with. Without it an offline
+  // Deal Center reads "isn't configured yet" on a device that never opened it online.
+  useWarmDealCenterConfig();
+
   useFocusEffect(
     useCallback(() => {
       if (!isOnline() || !sourceLeads?.length) return;

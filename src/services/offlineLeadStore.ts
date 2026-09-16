@@ -59,6 +59,8 @@ import {
   nextUploadStep,
   readCreatedId,
   rearmStep,
+  reopenIfPending,
+  stepPayloadChanged,
   readExistingAppointmentId,
   resolveClientIds,
   documentRootKey,
@@ -172,11 +174,12 @@ export const putOfflineWork = (work: OfflineLeadWork): OfflineLeadWork => {
   load();
   // ⚠️ `work.ownerId ||`, never a bare overwrite. This is the only write, so a patch during a
   // different rep's session would otherwise TRANSFER a record to them — the leak, inverted.
-  const next = {
+  // `reopenIfPending`: an `uploaded` record that has just been given new work must drain again.
+  const next = reopenIfPending({
     ...work,
     ownerId: work.ownerId || getSessionOwner(),
     updatedAt: new Date().toISOString(),
-  };
+  });
   const i = store.findIndex((w) => w.clientId === work.clientId);
   store = i === -1 ? [...store, next] : store.map((w, n) => (n === i ? next : w));
   persist();
@@ -251,9 +254,13 @@ export const ensureOfflineWorkForLead = (lead: any): OfflineLeadWork | null => {
   const id = String(lead?._id || lead?.id || '');
   if (!id) return null;
 
-  const existing = mine().find(
-    (w) => (w.clientId === id || w.serverIds.leadId === id) && w.status !== 'uploaded'
-  );
+  // ⚠️ A DRAINED record is reused too (live one first). Starting a second record here — which is
+  // what skipping `uploaded` did — drops the server ids the first one learned: the appointment and
+  // calculator ids. The Deal Center then files a SECOND appointment and a SECOND calculator, and a
+  // lead created at a door is re-adopted under its CLIENT id. Reusing it is safe because
+  // `putOfflineWork` reopens it the moment it is given new work (`reopenIfPending`).
+  const rows = mine().filter((w) => w.clientId === id || w.serverIds.leadId === id);
+  const existing = rows.find((w) => w.status !== 'uploaded') || rows[rows.length - 1];
   if (existing) return existing;
 
   // Not ours yet: a lead that exists on the server, being worked offline for the first time.
@@ -347,10 +354,11 @@ export const addOfflineJobDocument = async (
     uri,
     contentType: doc.contentType,
   };
-  const saved = patchOfflineWork(workClientId, (w) => ({
-    ...w,
-    documents: [...(w.documents || []), entry],
-  }));
+  // Re-armed: the step files only documents still lacking `uploadedAt`, so running it again is
+  // safe — and without it a document captured after an earlier drain was never filed.
+  const saved = patchOfflineWork(workClientId, (w) =>
+    rearmStep({ ...w, documents: [...(w.documents || []), entry] }, 'documents')
+  );
   return saved ? entry : null;
 };
 
@@ -389,10 +397,12 @@ export const queueOfflineConsent = async (
     knownFiledBefore: !!opts.knownFiledBefore,
   };
 
-  const saved = patchOfflineWork(workClientId, (w) => ({
-    ...w,
-    consents: [...(w.consents || []), entry],
-  }));
+  // ⚠️ Re-armed. A consent form that already synced left `consent` in `done`, so a roof waiver
+  // signed afterwards was stored, badged, and never filed. Safe: the step posts only forms still
+  // lacking `uploadedAt`.
+  const saved = patchOfflineWork(workClientId, (w) =>
+    rearmStep({ ...w, consents: [...(w.consents || []), entry] }, 'consent')
+  );
   return saved ? entry : null;
 };
 
@@ -1320,8 +1330,15 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
     }
 
     try {
-      const ids = await runStep(work, step, guarded);
-      work = putOfflineWork(markStepDone(latest(work), step, ids));
+      const sent = work;
+      const ids = await runStep(sent, step, guarded);
+      const now = latest(work);
+      let landed = markStepDone(now, step, ids);
+      // An edit made while this request was in flight was NOT sent — keep the ids, run it again.
+      if (stepPayloadChanged(sent, now, step)) landed = rearmStep(landed, step);
+      work = putOfflineWork(
+        nextUploadStep(landed) ? { ...landed, status: 'uploading' } : landed
+      );
       guarded = false;
     } catch (err) {
       const decision: StepDecision = decideAfterStepError(err, work, step);

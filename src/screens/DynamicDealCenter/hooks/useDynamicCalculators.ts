@@ -18,6 +18,7 @@ import { buildFieldLogLabel, findFieldStoryLabel } from '../utils/story-log-labe
 import { isOnline } from '../../../services/connectivity';
 import {
   ensureOfflineWorkForLead,
+  runUpload,
   saveOfflineDealCenter,
 } from '../../../services/offlineLeadStore';
 import {
@@ -738,6 +739,11 @@ export function useDynamicCalculators(
       appointmentServerId: apptServerIdRef.current || undefined,
       calculators,
     });
+    // ⚠️ Signal can come back while the rep is still on this screen, and this session stays on the
+    // device (one writer). Without a kick the edit waited for the 60 s sweep or the next reconnect
+    // edge — which, with the rep already online, never comes. `runUpload` is a no-op offline and
+    // while a drain is running (that drain picks the record up on its own).
+    if (isOnline()) runUpload();
   }, []);
   persistOfflineRef.current = persistOffline;
 
@@ -1072,6 +1078,7 @@ export function useDynamicCalculators(
             // Nothing the server could be holding — it has never heard of this lead.
             leadCreatedOffline:
               work.origin === 'created-offline' || isClientId(String(leadId || '')),
+            storedDrained: !hasUnsyncedDealCenter(work),
           });
 
           // ⚠️ `'unavailable'` is NOT the same as "no calculators", and treating it as one is the

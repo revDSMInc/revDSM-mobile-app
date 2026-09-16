@@ -583,6 +583,66 @@ export const rearmStep = (work: OfflineLeadWork, step: UploadStep): OfflineLeadW
 export const hasUnsyncedDealCenter = (work: OfflineLeadWork | null | undefined): boolean =>
   !!work && (isStepPending(work, 'calculator') || isStepPending(work, 'calculatorState'));
 
+/**
+ * A record marked `uploaded` that has picked up NEW work goes back to `draft`.
+ *
+ * ⚠️ `uploadableWork` only drains `draft` records, and `rearmStep` only edits `done` — so before this,
+ * a lead whose queue drained once and was then worked offline AGAIN stored the new state, re-armed
+ * its steps, and still read `uploaded`. It never uploaded, and the pending banner (which also skips
+ * `uploaded`) never mentioned it. Applied on every write (`putOfflineWork`), so a writer cannot
+ * forget it — including a step that was never applicable before, which `rearmStep` cannot see.
+ */
+export const reopenIfPending = (work: OfflineLeadWork): OfflineLeadWork =>
+  work.status === 'uploaded' && nextUploadStep(work) !== null
+    ? { ...work, status: 'draft', attempts: 0, lastError: undefined }
+    : work;
+
+/** What a full-state step SENDS, so an edit made while it was in flight can be detected. */
+const stepPayloadOf = (work: OfflineLeadWork, step: UploadStep): unknown => {
+  switch (step) {
+    case 'calculator':
+    case 'calculatorState':
+      return work.calculators;
+    case 'outcome':
+      return work.outcome;
+    case 'customer':
+      return work.customer;
+    case 'archive':
+      return work.archive;
+    // ⚠️ Per-item steps compare the LIST of items, not their contents: the step itself stamps
+    // `uploadedAt` on each as it lands, which is not an edit. A form or document added mid-run is.
+    case 'consent':
+      return (work.consents || []).map((c) => c.clientId);
+    case 'documents':
+      return (work.documents || []).map((d) => d.clientId);
+    default:
+      return undefined;
+  }
+};
+
+/**
+ * Did the rep change what this step sends while its request was in flight?
+ *
+ * ⚠️ The uploader marks a step done against the LATEST record. If the rep edited the Deal Center
+ * during the `calculatorState` PUT, that edit re-armed nothing (the step was not in `done` yet) and
+ * marking it done afterwards would record the edit as sent when the request carried the old state.
+ * When this is true the caller marks the step done (keeping any ids it produced) and re-arms it.
+ */
+export const stepPayloadChanged = (
+  sent: OfflineLeadWork,
+  now: OfflineLeadWork,
+  step: UploadStep
+): boolean => {
+  const a = stepPayloadOf(sent, step);
+  const b = stepPayloadOf(now, step);
+  if (a === b) return false;
+  try {
+    return JSON.stringify(a) !== JSON.stringify(b);
+  } catch {
+    return true;
+  }
+};
+
 /** The first step still to run, or `null` when the record is fully uploaded. */
 export const nextUploadStep = (work: OfflineLeadWork): UploadStep | null => {
   for (const step of UPLOAD_STEPS) {
@@ -863,8 +923,32 @@ export const findWorkForLead = (
 export const hasQueuedConsent = (
   items: OfflineLeadWork[] | undefined,
   leadId: string,
+  kind: ConsentFormKind,
+  onlyPending = false
+): boolean => {
+  const id = String(leadId || '');
+  // ⚠️ EVERY record for the lead, not `findWorkForLead`'s first: a lead worked twice holds a drained
+  // record ahead of the live one, and the form queued on the live one read as unsigned.
+  return (
+    !!id &&
+    (items || []).some(
+      (w) =>
+        (w.clientId === id || w.serverIds.leadId === id) &&
+        !!w.consents?.some((c) => c.kind === kind && !(onlyPending && c.uploadedAt))
+    )
+  );
+};
+
+/**
+ * A signed form this device has NOT filed yet. The badge reads `hasQueuedConsent`; tapping the card
+ * reads this, so a form that has already uploaded opens the server's PDF instead of claiming it is
+ * still waiting for a connection.
+ */
+export const hasPendingConsent = (
+  items: OfflineLeadWork[] | undefined,
+  leadId: string,
   kind: ConsentFormKind
-): boolean => !!findWorkForLead(items, leadId)?.consents?.some((c) => c.kind === kind);
+): boolean => hasQueuedConsent(items, leadId, kind, true);
 
 // ─── Showing a job COMPLETED offline, before it has uploaded ────────────────────────
 

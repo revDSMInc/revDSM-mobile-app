@@ -65,8 +65,18 @@ export const resolveOfflineDealCenterSource = (input: {
   cached?: CachedDealCenter | null;
   /** The lead itself only exists on this device (created at a door, or a client id). */
   leadCreatedOffline?: boolean;
+  /**
+   * The device's calculators have ALL reached the server already (nothing pending).
+   *
+   * ⚠️ Then the device copy is not newer than the server — the rep may have kept quoting online
+   * since, which is what the snapshot records. Preferring the device there would paint a stale quote
+   * and PUT it back over the newer one on the next edit. So a drained record only wins when there is
+   * no snapshot to prefer.
+   */
+  storedDrained?: boolean;
 }): OfflineDealCenterSource => {
-  if ((input.storedCalculators || 0) > 0) return 'device';
+  const snapshotHasRows = !!input.cached && cachedCalculatorsOf(input.cached).length > 0;
+  if ((input.storedCalculators || 0) > 0 && !(input.storedDrained && snapshotHasRows)) return 'device';
   // A snapshot is proof of what the server held. Empty is an ANSWER, not an absence.
   if (input.cached) return cachedCalculatorsOf(input.cached).length > 0 ? 'cache' : 'mint';
   return input.leadCreatedOffline ? 'mint' : 'unavailable';
