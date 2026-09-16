@@ -214,3 +214,58 @@ knocked one (each confirm, the spinner, the success alert actually appearing aft
 the archived list scrolling and Unarchive restoring the zone to the map **on Android**; search → pick →
 Search panning with the pin, the pin callout toggling, ✕ removing the pin; and the top row not colliding
 with the draw tools on a small phone.
+
+## Canvasser lead coordinates go to the backend as `[lng, lat]` — a 500 west of -90 longitude
+
+Ticket (`TAYYAB-CANVASSER-LEAD-GEO-COORDS.md`): creating a building lead from the footsteps map
+**500s in Los Angeles and "works" in Florida**. One bug, two symptoms.
+
+`buildingDetails.position` was posted in the map's own `[lat, lng]` order, but the backend puts a
+**2dsphere index** on that field (`SalesRepLeadEntity.ts:100`, `CanvasserLeadEntity.ts:114`), and a
+2dsphere index reads a bare 2-element array as a legacy pair in **`[longitude, latitude]`** order. So
+Mongo takes the *second* element as the latitude:
+
+| Zone | Sent `[lat, lng]` | Mongo reads latitude as | Result |
+|---|---|---|---|
+| Florida | `[27.9, -82.4]` | `-82.4` — in range | inserts at lng 27.9 / lat -82.4, **the Southern Ocean** |
+| Los Angeles | `[34.27, -118.48]` | `-118.48` — out of range | `16755` `Can't extract geo keys`, caught as a **500** |
+
+US latitudes (25-49) are always valid as a longitude, so latitude never trips the check — the dividing
+line is roughly **-90 longitude**: the East Coast appears to work, everything west of Texas 500s.
+⚠️ **The Florida half is the worse one**: those rows were stored at a garbage location, so
+`CanvasserLeadDBService.ts:317`'s `$nearSphere` (which correctly queries `[longitude, latitude]`) has
+never matched them.
+
+Fixed by swapping at the **API boundary** — `withGeoPosition` in `services/api/zone-canvasser.ts`,
+applied by all three lead writes (`createBuildingLead`, `updateBuildingLead`, `updateSalesRepLead`).
+Those three are the only callers of `/sales-rep/lead/v1/create`, `/canvasser/lead/v1/update/:id` and
+`/sales-rep/lead/v1/update/:id`, so one helper covers every path and a future call site cannot miss it.
+Web's `src/api/zone-canvasser.js` carries the byte-equivalent function — **keep the two diffable.**
+
+⚠️ **The swap is unconditional and must stay that way.** A heuristic (`if (Math.abs(p[1]) > 90) swap()`)
+cannot tell the orders apart in the ambiguous case — Florida's `lat 27 / lng -82` are both inside
++/-90 — so Florida and LA would take different branches, which is precisely the region-dependent
+behaviour being fixed. Every value reaching the helper comes from zone building data, which is
+`[lat, lng]` without exception. The guard only skips a payload with no 2-element `position` at all, and
+the payload is rebuilt rather than mutated.
+
+⚠️ **Do NOT flip anything else**, all three checked when this landed:
+
+- `handleActionSubmit` (`useZoneCanvasser.ts:724`) keeps passing `selectedBuilding.position` through
+  as-is — the swap belongs at the boundary, not in the payload builder.
+- `zone.buildingDetails[].position` stays `[lat, lng]`: that is what the backend generates
+  (`MapHelper.ts:784`, `[element.center.lat, element.center.lon]`) and what every marker renders from.
+  Only the **lead's copy** flips.
+- **No marker moves.** Leads are matched to buildings by `buildingDetails.id`
+  (`useZoneCanvasser.ts:245`), never by coordinates; nothing reads the lead's stored position for
+  display. Its only consumer is the `$nearSphere` query, which this makes correct for the first time.
+
+⚠️ **Existing rows are still stored reversed** on `salesrepleads` and `canvasserleads`. The backfill
+that swaps them must run **only after every client is on the new order** — run it earlier and it swaps
+the newly-correct rows back into the broken state. ⚠️ The backend validators still label `position.0`
+"Latitude" (`SalesRepLeadValidator.ts:17`, same in `CanvasserLeadValidator.ts`); those comments are
+wrong and are being corrected separately — don't follow them.
+
+**Not verified on device yet:** LA zone -> tap a building -> Not Interested -> Submit saves with no
+500/`16755`; a Florida zone still saves and now stores the real location; and a *Go Back* lead edit
+(the `updateSalesRepLead` path) saves too.
