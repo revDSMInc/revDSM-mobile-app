@@ -45,17 +45,6 @@ export const DOCK_TOOLS: DockTool[] = [
   { id: 'notes', label: 'Notes', icon: 'file-document-outline' },
 ];
 
-/**
- * Every tool tab is at least this wide, so the four of them read as one control.
- *
- * ⚠️ It is the natural width of the WIDEST label (`Inspection`, 13.5pt semibold) plus its
- * icon, that icon's margin and the tab's own padding — with a little allowance. That is
- * what makes the row equal: a narrow tab like `Risk` is clamped UP to this same flex base,
- * so `flexGrow` then splits the leftover space evenly and all four land on one width.
- * Widen it if a longer tool label is ever added, or that tab alone will grow past the rest.
- */
-const TOOL_TAB_MIN_WIDTH = 128;
-
 interface Props {
   mode: DockMode;
   onModeChange: (mode: DockMode) => void;
@@ -163,67 +152,99 @@ export function PresentationDock({
           <View style={styles.divider} />
 
           {/*
-            ⚠️ `flex: 1` on the scroller and NOT on its content, so a deck with few
+            ⚠️ `flex: 1` on the wrapper and NOT on the scroller's content, so a deck with few
             categories still left-aligns against the divider instead of the tabs
             stretching. Horizontal because the deck's category count is authored in the
             portal and six of them already fill a phone in landscape.
           */}
-          <ScrollView
-            ref={strip.ref}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.tabScroll}
-            contentContainerStyle={[
-              styles.tabScrollContent,
-              toolsMode && styles.toolScrollContent,
-            ]}
-            keyboardShouldPersistTaps="handled"
-            onLayout={strip.onLayout}
-            onContentSizeChange={strip.onContentSizeChange}
-          >
-            {toolsMode
-              ? DOCK_TOOLS.map((tool) => {
-                  const active = activeTool === tool.id;
-                  return (
-                    <TouchableOpacity
-                      key={tool.id}
-                      onPress={() => onSelectTool(tool.id)}
-                      onLayout={strip.onTabLayout(tool.id)}
-                      activeOpacity={0.85}
-                      style={[styles.tab, styles.toolTab, active && styles.tabActive]}
-                    >
-                      <Icon
-                        name={tool.icon}
-                        size={15}
-                        color={active ? '#fff' : 'rgba(255,255,255,0.72)'}
-                        style={styles.tabIcon}
-                      />
-                      <Text
-                        numberOfLines={1}
-                        style={[styles.tabText, active && styles.tabTextActive]}
+          <View style={styles.tabStrip}>
+            <ScrollView
+              ref={strip.ref}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.tabScrollContent}
+              keyboardShouldPersistTaps="handled"
+              onLayout={strip.onLayout}
+              onContentSizeChange={strip.onContentSizeChange}
+              onScroll={strip.onScroll}
+              scrollEventThrottle={16}
+            >
+              {toolsMode
+                ? DOCK_TOOLS.map((tool) => {
+                    const active = activeTool === tool.id;
+                    return (
+                      <TouchableOpacity
+                        key={tool.id}
+                        onPress={() => onSelectTool(tool.id)}
+                        onLayout={strip.onTabLayout(tool.id)}
+                        activeOpacity={0.85}
+                        style={[styles.tab, active && styles.tabActive]}
                       >
-                        {tool.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })
-              : categories.map((cat) => {
-                  const active = activeCategory === cat.id;
-                  return (
-                    <TouchableOpacity
-                      key={cat.id}
-                      onPress={() => onSelectCategory(cat.id)}
-                      onLayout={strip.onTabLayout(cat.id)}
-                      activeOpacity={0.85}
-                      style={[styles.tab, active && styles.tabActive]}
-                    >
-                      <Text style={[styles.tabText, active && styles.tabTextActive]}>
-                        {cat.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-          </ScrollView>
+                        <Icon
+                          name={tool.icon}
+                          size={14}
+                          color={active ? '#fff' : 'rgba(255,255,255,0.72)'}
+                          style={styles.tabIcon}
+                        />
+                        <Text
+                          numberOfLines={1}
+                          style={[styles.tabText, active && styles.tabTextActive]}
+                        >
+                          {tool.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })
+                : categories.map((cat) => {
+                    const active = activeCategory === cat.id;
+                    return (
+                      <TouchableOpacity
+                        key={cat.id}
+                        onPress={() => onSelectCategory(cat.id)}
+                        onLayout={strip.onTabLayout(cat.id)}
+                        activeOpacity={0.85}
+                        style={[styles.tab, active && styles.tabActive]}
+                      >
+                        <Text style={[styles.tabText, active && styles.tabTextActive]}>
+                          {cat.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+            </ScrollView>
+
+            {/*
+              Edge arrows: more tabs exist that way. Shown only while the strip can actually
+              scroll in that direction, so at either end — or when every tab fits — there is
+              nothing on screen claiming otherwise.
+
+              ⚠️ Overlays, not flex siblings. As siblings they would take width only while
+              visible, so the visible strip would resize every time one appeared at an end,
+              re-measuring the tabs mid-scroll and moving the rep's target under their finger.
+            */}
+            {strip.canScrollBack && (
+              <TouchableOpacity
+                onPress={() => strip.step('back')}
+                accessibilityRole="button"
+                accessibilityLabel="Show earlier tabs"
+                activeOpacity={0.85}
+                style={[styles.edgeArrow, styles.edgeArrowBack]}
+              >
+                <Icon name="chevron-left" size={22} color="#fff" />
+              </TouchableOpacity>
+            )}
+            {strip.canScrollForward && (
+              <TouchableOpacity
+                onPress={() => strip.step('forward')}
+                accessibilityRole="button"
+                accessibilityLabel="Show more tabs"
+                activeOpacity={0.85}
+                style={[styles.edgeArrow, styles.edgeArrowForward]}
+              >
+                <Icon name="chevron-right" size={22} color="#fff" />
+              </TouchableOpacity>
+            )}
+          </View>
 
           {/* Closing the tool panel returns to the slides tabs rather than hiding the
               dock: the bar is also how the rep changes section, so a ✕ that dismissed the
@@ -256,7 +277,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     overflow: 'hidden',
   },
-  bar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 10 },
+  bar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 10 },
 
   modeWell: {
     flexDirection: 'row',
@@ -272,41 +293,49 @@ const styles = StyleSheet.create({
   divider: {
     width: 1,
     alignSelf: 'stretch',
-    marginHorizontal: 10,
+    marginHorizontal: 8,
     backgroundColor: 'rgba(255,255,255,0.14)',
   },
 
-  tabScroll: { flex: 1 },
+  tabStrip: { flex: 1, justifyContent: 'center' },
   tabScrollContent: { alignItems: 'center', paddingRight: 4 },
-  /* Tools mode only: let the content fill the bar so the four tabs can share it evenly. */
-  toolScrollContent: { flexGrow: 1 },
+  /*
+    Every tab — tool or category — is sized to its OWN label with the same tight padding,
+    so the gap between any two neighbours is identical and the neighbours of the selected
+    tab stay on screen. ⚠️ The earlier equal-width clamp (a 128pt `minWidth` + `flexGrow`)
+    padded `Risk` / `Notes` out to `Inspection`'s width, which left one pill hogging a phone's
+    whole strip with the next title cut off — do not reintroduce it.
+  */
   tab: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    height: 38,
-    borderRadius: 19,
-    marginRight: 4,
-  },
-  /*
-    The four tool tabs are ONE control, so they are sized as a set rather than to their own
-    labels — `Inspection` / `Videos` used to render half again as wide as `Risk` / `Notes`.
-    `minWidth` clamps every tab to the same flex base and `flexGrow` splits what is left
-    equally, so they stay equal whether the bar is roomy (landscape) or has to scroll
-    (portrait). `justifyContent` centres the icon+label pair inside the wider pill.
-  */
-  toolTab: {
-    flexGrow: 1,
-    minWidth: TOOL_TAB_MIN_WIDTH,
-    justifyContent: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 11,
+    height: 34,
+    borderRadius: 17,
+    marginRight: 2,
   },
   tabActive: { backgroundColor: GREEN },
-  tabIcon: { marginRight: 6 },
-  tabText: { color: 'rgba(255,255,255,0.78)', fontSize: 13.5, fontWeight: '600' },
+  tabIcon: { marginRight: 5 },
+  tabText: { color: 'rgba(255,255,255,0.78)', fontSize: 13, fontWeight: '600' },
   tabTextActive: { color: '#fff', fontWeight: '700' },
 
-  close: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  close: { width: 32, height: 34, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+
+  /*
+    Solid in the card's own colour so a label passing underneath is hidden rather than
+    showing through the chevron — a half-visible word beneath an arrow reads as clutter.
+  */
+  edgeArrow: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#181A1B',
+  },
+  edgeArrowBack: { left: 0 },
+  edgeArrowForward: { right: 0 },
 
   toolPanel: {
     borderTopWidth: 1,
