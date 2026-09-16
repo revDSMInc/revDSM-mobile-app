@@ -287,3 +287,54 @@ This fixed **all three** non-danger `show()` call sites at once — `LeadCenter`
 which is why the wrapper was fixed rather than the reported call site. `FlashMessage.success` /
 `warning` / `info` / `error` were never affected: they either don't set the key or set a real value, so
 `FlashMessage.info(...)` was always the working path.
+
+## The repo guide now updates itself: a `doc-guard` hook routes each change to its part file
+
+Ticket: *"automatically add the command result according to the command md — if the user works on
+Installer then the installer file updates, if the user works in Deal Center then update that."* The
+standing rule (write every ticket up in `docs/claude/<area>.md`) lived only in the guide and in
+Claude's memory, so it held exactly as long as the model remembered it mid-task.
+
+It is now enforced by a Claude Code hook — **`.claude/hooks/doc-guard.js`**, wired in the tracked
+`.claude/settings.json`:
+
+- **`PostToolUse`** (`Edit|Write|MultiEdit|NotebookEdit`) → after the first edit to a given area it
+  injects "`src/screens/Installer/index.tsx` is covered by `docs/claude/installer.md`", which also
+  prompts the *read-before-changing* half of the rule. Once per part per session, so it cannot spam
+  the context.
+- **`Stop`** → refuses to end the turn while a **code file changed this session is newer than every
+  part file that covers it**, listing the files under the part that owes the note.
+
+**Routing is parsed from the §8 table in the root `CLAUDE.md`** — the backticked globs in its "Read
+before changing" column — so the table stays the single source of truth and a new area is routed by
+adding a row, never by editing the hook. Matching rules: `**` is any depth, `*` stays within a
+segment, and a **named file outranks a directory glob** (weight `1000 + literal length`), which is
+how `DynamicDealEditScreen.tsx` resolves to `deal-edit-addendums.md` even though
+`screens/DynamicDealCenter/**` also contains it. A bare name that exists at the repo root (`index.js`)
+anchors there rather than matching every `index.js` under `src/`. §8's rows were widened from screens
+and utils to the matching hooks so routing covers ~356 of 505 source files; anything unmatched is
+reported as "no §8 row covers this — use the closest part and add the path to that row", so the table
+fills itself in over time.
+
+⚠️ **Staleness is judged from the working tree (`git status` + mtimes), not from tool calls.** Edits
+made by a Bash/python script — the CRLF-safe path used all over this repo — would be invisible to a
+tool-call tracker but are caught here. The trade-off is that mtimes, not content, decide: touching a
+part file satisfies the guard.
+
+Three things keep it from becoming a nuisance, and all three are deliberate:
+
+- `stop_hook_active` is honoured — a turn the guard has already blocked once is allowed to end, which
+  is what prevents an infinite stop loop.
+- Each distinct set of undocumented files is raised **once** (fingerprinted in a per-session state file
+  under the OS temp dir), so a change Claude judged not worth a note is not re-raised every turn.
+- Only changes newer than the session's transcript file count, so a colleague's pre-existing
+  uncommitted work is never something this session is asked to write up.
+
+⚠️ **Every failure path exits 0 silently** (bad JSON, no git, no `docs/claude/`, a parse error) — a
+broken guard must never block real work. Scope is `src/**` plus root `index.js` / `App.tsx`, and only
+`.ts/.tsx/.js/.jsx`: assets and the gitignored `__tests__/` are not "a change". Deletions carry no
+mtime and are skipped — removing a file is the one edit the guard cannot see.
+
+⚠️ **Hooks are snapshotted at session start.** Editing `settings.json` does not arm them in the session
+that made the edit; the next session (or a review in `/hooks`) picks them up. Written in plain
+CommonJS Node with no dependencies because the team runs Claude Code on both macOS and Windows.

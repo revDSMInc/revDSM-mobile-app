@@ -14,5 +14,30 @@
       "PowerShell($o = npx tsc --noEmit -p tsconfig.json 2>&1 | Out-String; $errs = \\($o -split \"`n\"\\) | Where-Object { $_ -match 'error TS' }; \"tsc total: $\\($errs.Count\\) \\(baseline 59\\)\"; \"in my files: $\\(\\(\\($errs | Where-Object { $_ -match 'useLeadCenterData|Pitchbook|RooflineDeck' }\\).Count\\)\\)\"; \"--- eslint per file ---\"; foreach \\($f in @\\('src/hooks/useLeadCenterData.ts','src/screens/Pitchbook/index.tsx','src/screens/RooflineDeck/index.tsx'\\)\\) { $r = \\(npx eslint $f 2>&1 | Select-Object -Last 2\\) -join ' '; \"$f : $r\" })",
       "PowerShell($o = npx tsc --noEmit -p tsconfig.json 2>&1 | Out-String; $errs = \\($o -split \"`n\"\\) | Where-Object { $_ -match 'error TS' }; \"tsc total: $\\($errs.Count\\) \\(baseline 59\\)\"; \"in this file: $\\(\\(\\($errs | Where-Object { $_ -match 'AppointmentPhotosModal' }\\).Count\\)\\)\"; \"--- eslint AFTER ---\"; npx eslint src/widgets/modals/chat/AppointmentPhotosModal.tsx 2>&1 | Select-Object -Last 2; \"--- eslint BASELINE \\(HEAD via stdin\\) ---\"; git show HEAD:src/widgets/modals/chat/AppointmentPhotosModal.tsx | npx eslint --stdin --stdin-filename src/widgets/modals/chat/AppointmentPhotosModal.tsx 2>&1 | Select-Object -Last 2)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/doc-guard.js\" post-edit",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/doc-guard.js\" stop",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
   }
 }
