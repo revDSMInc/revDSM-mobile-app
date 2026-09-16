@@ -479,3 +479,52 @@ sets `serverStatus`) and the client-side list filter.
 ⚠️ **The two seeds must stay in sync.** The dropdown derives the key from the label
 (`opt.toLowerCase().replace(/ /g, '')`), so the pair has to be exactly what tapping the **All** row
 produces — seeding only the label would leave the list filtered while the control claimed otherwise.
+
+## Recent Leads rows are ordered by the lead's OWN time, not by chat recency
+
+Ticket: *"if the lead is Issued Lead and getting the time with the lead, the lead should be assigned
+according to time like 9am, 11am, 1pm, 3pm; if the lead is self-gen then displayed according to date
+and time. Today / Yesterday and the other categories stay as they are."*
+
+Under **TODAY** the rep saw `3pm`, `9am`, `1pm`, `11am` — every card naming a time, in an order that
+matched none of them. `useChatThreads` sorts by `lastMessageAt || updatedAt || createdAt` descending
+and `groupChatsByLeadDate` only bucketed that order into day sections, so the rows came out in
+whatever order the backend last touched each chat. **Chat recency is the wrong axis for a list whose
+rows are named after an appointment time.**
+
+The rule now lives in `utils/lead-thread-order.ts` (pure, so it is testable —
+`__tests__/utils/lead-thread-order.test.ts`) and is applied by `groupChatsByLeadDate`
+(`widgets/components/chat/ThreadItems.tsx`) to each section's `data`:
+
+- **issued lead** → `leadTime` ("9am", "1:30 PM") parsed to minutes, against `leadDate`.
+- **self-gen** → `leadDatetime` / `createdAt`, i.e. when the rep created it. `leadTime: 'N/A'` IS the
+  self-gen marker, the same test `isSelfGeneratedLead` uses in `utils/location-util.ts`.
+
+Both kinds reduce to "what time of day is this?", so they **interleave on one chronological axis**
+rather than being split into an issued block and a self-gen block.
+
+⚠️ **Rows sort ASCENDING while sections stay newest-first.** A day reads forwards like a schedule
+(9am → 3pm) under headers that run TODAY, YESTERDAY, SAT. That is the ticket's own example order; it
+is one comparator flip in `sortLeadThreadsByLeadTime` if it is ever wanted the other way.
+
+⚠️ **Dates are read as TEXT** (the `YYYY-MM-DD` / `THH:MM` prefix), never `new Date()` — the sort key
+is `YYYYMMDD * 1440 + minutes`. An offset ISO string (`2026-09-14T23:00:00+05:00`) shifts the calendar
+day through `new Date()`, which would sort a lead against the wrong day. Same rule as `dayKeyOf`
+above.
+
+Decisions worth keeping:
+
+- **Sorted in the grouping, not in `useChatThreads`.** The hook's recency order is left intact and
+  becomes the **tiebreak** for two leads in one slot, because `Array.sort` is stable — so same-slot
+  rows still lead with the one that moved last. It also means nothing outside this screen changes.
+- A date-only self-gen (`"2026-09-13"`, no clock) sits at the **head** of its day rather than having a
+  time invented for it; a row whose date cannot be read at all sorts **last** instead of being dropped.
+- `getDateSectionLabel` / the section bucketing were NOT touched — the ticket asks for the categories
+  to stay as they are.
+
+⚠️ `widgets/components/chat/ThreadItems.tsx` is **CRLF** (it was missing from the root guide's list —
+now added). A text-mode script rewrite buries the change in a whole-file diff.
+
+**Known gap:** ordering keys off `leadTime`, which carries only an hour for most payloads
+(`"9am"`); two leads in the same hour fall back to chat recency. Minutes are parsed when present
+(`"1:30 PM"`), so a payload that starts sending them sorts finer with no change here.
