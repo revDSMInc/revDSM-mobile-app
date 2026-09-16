@@ -36,7 +36,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashMessage } from '../../config/message';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { readMapLeadsCache, writeMapLeadsCache } from '../../utils/offline-map-leads-cache';
-import { isOnline } from '../../services/connectivity';
+import { offlineMapManager } from '../../services/offlineMapManager';
+import { isOnline, isOnWifi } from '../../services/connectivity';
 
 const { width, height } = Dimensions.get('window');
 
@@ -311,6 +312,10 @@ export default function MapDetailScreen() {
   useEffect(() => {
     if (Array.isArray(queryLeads) && queryLeads.length > 0) {
       writeMapLeadsCache(queryLeads, filters as unknown as Record<string, unknown>, user?._id);
+      // Street detail for where these leads are — queued, one download at a time, Wi-Fi only.
+      // Idempotent: an area already downloaded is skipped, and a filtered view never evicts one
+      // unless the tile budget needs the room.
+      if (isOnWifi()) void offlineMapManager.syncLeads(queryLeads);
     }
   }, [queryLeads, filters, user?._id]);
 

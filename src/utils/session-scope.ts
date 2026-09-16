@@ -53,6 +53,13 @@ export const SESSION_KEEP_KEYS: ReadonlySet<string> = new Set([
    * confusing bug than the one being fixed.
    */
   'accessToken',
+  /**
+   * The offline BASE map's registry (Florida at zoom 0-10). It is not any rep's data, and its
+   * tiles survive the sign-out — wiping the record that names them would have the next sign-in
+   * download the whole base map again beside the copy already on disk. The lead-AREA registry
+   * (`offline-map-packs`) is still wiped: that one is the previous rep's route.
+   */
+  'offline-map-base-packs',
 
   // ── The rep's own UNSYNCED WORK ─────────────────────────────────────────────
   // ⚠️ Deliberately KEPT, and this is the one judgement call in this file.

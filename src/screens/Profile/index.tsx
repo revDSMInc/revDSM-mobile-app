@@ -121,6 +121,33 @@ export default function ProfilePage() {
     [loadMapPacks],
   );
 
+  // Street detail for every lead area in one go — the Profile shows them as ONE row, not a row per
+  // area, so this is the only delete that row needs.
+  const handleDeleteMapAreas = useCallback(() => {
+    Alert.alert(
+      'Delete lead area maps?',
+      'Street detail around your leads will be removed from this device. It downloads again on Wi-Fi.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await offlineMapManager.deleteAllAreas();
+            loadMapPacks();
+          },
+        },
+      ],
+    );
+  }, [loadMapPacks]);
+
+  const mapSummary = React.useMemo(
+    () => offlineMapManager.getSummary(),
+    // `mapPacks` is re-read on every progress tick; the summary is derived from the same registry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mapPacks],
+  );
+
   const handleClearAllMaps = useCallback(() => {
     if (mapPacks.length === 0) return;
     Alert.alert(
@@ -1017,37 +1044,62 @@ export default function ProfilePage() {
                 </View>
 
                 <Text className="text-[11px] font-bold mt-2" style={{ color: colors.textSecondary }}>
-                  Map tiles are downloaded automatically around your leads when on Wi-Fi.
+                  A Florida base map, plus street detail around your leads, downloads automatically on Wi-Fi.
                 </Text>
 
                 {mapPacks.length > 0 ? (
                   <>
                     <View className="mt-3">
-                      {mapPacks.map((pack) => (
-                        <View
-                          key={pack.name}
-                          className="flex-row items-center justify-between py-2 border-b"
-                          style={{ borderColor: colors.border }}
-                        >
-                          <View className="flex-1 mr-3">
-                            <Text className="text-[13px] font-bold" style={{ color: colors.text }} numberOfLines={1}>
-                              {pack.name}
-                            </Text>
-                            <Text className="text-[11px] font-bold mt-0.5" style={{ color: colors.textSecondary }}>
-                              {formatBytes(pack.completedResourceSize)}
-                              {pack.status === 'active' ? ' · Downloading…' :
-                               pack.status === 'paused' ? ' · Paused' :
-                               pack.status === 'error' ? ' · Error' : ''}
-                            </Text>
-                          </View>
-                          <TouchableOpacity
-                            onPress={() => handleDeleteMapPack(pack.name)}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      {[
+                        mapSummary.base && {
+                          key: 'base',
+                          title: mapSummary.base.label || 'Base map',
+                          bytes: mapSummary.base.completedResourceSize,
+                          status:
+                            mapSummary.base.status === 'active'
+                              ? ` · Downloading ${Math.round(mapSummary.base.percentage)}%`
+                              : mapSummary.base.status === 'error'
+                                ? ' · Error'
+                                : mapSummary.base.status === 'complete'
+                                  ? ''
+                                  : ' · Waiting for Wi-Fi',
+                          onDelete: () => handleDeleteMapPack(mapSummary.base!.name),
+                        },
+                        mapSummary.areas.count > 0 && {
+                          key: 'areas',
+                          title: `Lead areas · ${mapSummary.areas.count} area${mapSummary.areas.count === 1 ? '' : 's'}`,
+                          bytes: mapSummary.areas.bytes,
+                          status:
+                            (mapSummary.areas.downloading ? ' · Downloading…' : '') +
+                            (mapSummary.areas.queued ? ` · ${mapSummary.areas.queued} waiting` : '') +
+                            (mapSummary.areas.failed ? ` · ${mapSummary.areas.failed} failed` : ''),
+                          onDelete: handleDeleteMapAreas,
+                        },
+                      ]
+                        .filter(Boolean)
+                        .map((row: any) => (
+                          <View
+                            key={row.key}
+                            className="flex-row items-center justify-between py-2 border-b"
+                            style={{ borderColor: colors.border }}
                           >
-                            <Icon name="trash-outline" size={16} color={colors.error?.main || '#EF4444'} />
-                          </TouchableOpacity>
-                        </View>
-                      ))}
+                            <View className="flex-1 mr-3">
+                              <Text className="text-[13px] font-bold" style={{ color: colors.text }} numberOfLines={1}>
+                                {row.title}
+                              </Text>
+                              <Text className="text-[11px] font-bold mt-0.5" style={{ color: colors.textSecondary }}>
+                                {formatBytes(row.bytes || 0)}
+                                {row.status}
+                              </Text>
+                            </View>
+                            <TouchableOpacity
+                              onPress={row.onDelete}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              <Icon name="trash-outline" size={16} color={colors.error?.main || '#EF4444'} />
+                            </TouchableOpacity>
+                          </View>
+                        ))}
                     </View>
 
                     <Text className="text-[11px] font-bold mt-3" style={{ color: colors.textSecondary }}>

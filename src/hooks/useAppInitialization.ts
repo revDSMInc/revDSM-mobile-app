@@ -22,7 +22,7 @@ import {
   startConnectivityMonitor,
   stopConnectivityMonitor,
   refreshConnectivity,
-  onWifiReconnect,
+  subscribeWifiStatus,
 } from '../services/connectivity';
 import { offlineMapManager } from '../services/offlineMapManager';
 import { readMapLeadsCache } from '../utils/offline-map-leads-cache';
@@ -260,12 +260,17 @@ export function useAppInitialization() {
 
 
 
-  // When Wi-Fi reconnects, resume any paused offline map packs and pull cached
-  // leads to trigger downloads for leads whose packs are incomplete.
+  // On Wi-Fi — at launch as well as on every reconnect — resume interrupted map packs, queue the
+  // Florida base map, and queue street detail for the cached leads' areas. One download runs at a
+  // time (see `services/offlineMapManager.ts`).
+  // ⚠️ `subscribeWifiStatus`, not `onWifiReconnect`: the latter only fires on the non-Wi-Fi -> Wi-Fi
+  // EDGE, so an app launched already on Wi-Fi never downloaded anything.
   useEffect(() => {
-    const unsubWifi = onWifiReconnect(async () => {
+    const unsubWifi = subscribeWifiStatus(async (onWifi) => {
+      if (!onWifi) return;
       try {
         await offlineMapManager.resumeAllPaused();
+        offlineMapManager.ensureBaseMap();
         const userId = (store.getState() as any)?.auth?.user?.id
           || (store.getState() as any)?.auth?.user?._id;
         if (userId) {
@@ -273,7 +278,11 @@ export function useAppInitialization() {
           if (snapshot?.leads?.length) {
             const typed = snapshot.leads as Array<{ _id: string; location?: { coordinates: [number, number] } }>;
             void offlineMapManager.syncLeads(typed);
+          } else {
+            void offlineMapManager.syncLeads([]);
           }
+        } else {
+          void offlineMapManager.syncLeads([]);
         }
       } catch (e) {
         // Non-fatal — next connectivity event will retry.
