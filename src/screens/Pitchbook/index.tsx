@@ -20,7 +20,20 @@ import greenRooflinesImages, {
   GREEN_ROOFLINES_CATEGORIES,
 } from '../../constants/green-rooflines-pitchbook';
 import { InspectionPhotosPanel } from '../../widgets/components/InspectionPhotosPanel';
+import { buildInspectionSections } from '../../utils/inspection-photos';
 import { ZoomableImage } from '../../widgets/common/ZoomableImage';
+import { PresentationGesturesTutorial } from '../../widgets/components/pitchbook/PresentationGesturesTutorial';
+import { PresentationDock, type DockMode } from '../../widgets/components/pitchbook/PresentationDock';
+import { PresentationTopBar } from '../../widgets/components/pitchbook/PresentationTopBar';
+import { SlideArrows } from '../../widgets/components/pitchbook/SlideArrows';
+import {
+  PRESENTATION_TUTORIAL_SEEN_KEY,
+  PRESENTATION_TUTORIAL_SEEN_VALUE,
+  CHROME_AUTO_HIDE_MS,
+  shouldShowPresentationTutorial,
+  swipeDirection,
+} from '../../utils/presentation-tutorial';
+import { Storage } from '../../utils/storage';
 import {
   PhotoPeekScrollLockProvider,
   PeekAwareScrollView,
@@ -44,6 +57,7 @@ import { storage } from '../../utils/storage';
 import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
 import { usePitchBookDeck } from '../../hooks/usePitchBooks';
+import { useTabStripAutoScroll } from '../../hooks/useTabStripAutoScroll';
 import Feather from 'react-native-vector-icons/Feather';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
@@ -147,6 +161,176 @@ export default function PitchbookScreen() {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(savedProgress?.slideIndex || 0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showTools, setShowTools] = useState(false);
+
+  /**
+   * The fullscreen gesture tutorial, and the chrome the centre tap toggles.
+   *
+   * `chromeVisible` starts TRUE: a rep who has dismissed the tutorial (or never saw it)
+   * must still land on a screen with its page counter, arrows and exit button, or the
+   * only way out of fullscreen would be a gesture they have not been told about.
+   */
+  const [showGestureTutorial, setShowGestureTutorial] = useState(false);
+  const [chromeVisible, setChromeVisible] = useState(true);
+
+  /**
+   * Bumped by every deliberate interaction, purely to RE-ARM the auto-hide below.
+   *
+   * ⚠️ A counter rather than a timestamp: the effect only needs to know that something
+   * happened, and a changing number is the cheapest dependency that says so. A timestamp
+   * would work identically and read as though the VALUE mattered.
+   */
+  const [chromeNudge, setChromeNudge] = useState(0);
+
+  /**
+   * Which half of the fullscreen dock is open.
+   *
+   * ⚠️ Reset to `slides` on every fullscreen open, for the same reason `chromeVisible`
+   * is: the deck's section tabs live in this bar, so landing in `tools` would hide the
+   * navigation a rep opens the presentation to use.
+   */
+  const [dockMode, setDockMode] = useState<DockMode>('slides');
+
+  /**
+   * What the fullscreen chrome actually renders on.
+   *
+   * ⚠️ **The tutorial hides it outright** — *"when the gesture screen is displayed, no
+   * need to show the bottom bar also."* It is not only tidier: the dock carries
+   * `zIndex: 20` and the tutorial's own root did not, and in React Native zIndex beats
+   * document order among siblings, so the dock painted OVER the card and sat across its
+   * two buttons. Gating the chrome fixes the overlap at its cause rather than starting a
+   * zIndex war, and it leaves the rep looking at the thing they are being asked to read.
+   *
+   * The tutorial teaches what this chrome does, so there is nothing to demonstrate
+   * against while it is up — the centre tap is swallowed for the same reason.
+   */
+  const chromeShown = chromeVisible && !showGestureTutorial;
+
+  /**
+   * The chrome gets out of the way on its own after three seconds.
+   *
+   * Ticket: *"the cross icon, page number, forward and backward buttons and also the
+   * bottom UI controls automatically hide after 3 seconds, and when the user taps on the
+   * screen show all the controls and hide automatically after 3 seconds."*
+   *
+   * ⚠️ **Held open while the TOOL panel is showing** (`dockMode === 'tools'`). That panel
+   * is content the rep is reading — inspection photos, the risk report — and timing it
+   * out from under them would be the one case where hiding is destructive rather than
+   * tidy. It resumes the moment they go back to the slide tabs.
+   *
+   * ⚠️ **Also held while the tutorial is up.** The chrome is force-hidden there anyway
+   * (`chromeShown`), so arming a timer against it would only fire a state change nobody
+   * can see and re-arm on dismissal a beat late.
+   *
+   * Re-arms on `chromeNudge`, which every interaction bumps — see below.
+   */
+  useEffect(() => {
+    if (!isFullscreen || !chromeVisible || showGestureTutorial || dockMode === 'tools') return;
+    const timer = setTimeout(() => setChromeVisible(false), CHROME_AUTO_HIDE_MS);
+    return () => clearTimeout(timer);
+  }, [isFullscreen, chromeVisible, showGestureTutorial, dockMode, chromeNudge]);
+
+  /**
+   * A tap on the slide TOGGLES the chrome.
+   *
+   *   hidden  → tap → shown, and it hides itself again after three seconds
+   *   shown   → tap → hidden IMMEDIATELY, without waiting out the countdown
+   *
+   * Ticket: *"when the user taps, the UI is displayed and after 3 seconds automatically
+   * hides — but when the user taps again the UI hides immediately."*
+   *
+   * ⚠️ This SUPERSEDES the previous pass, where a tap only ever revealed. The worry then
+   * was that a rep could not tell which state they were in; in practice the chrome is
+   * plainly on screen or plainly not, and a rep who has finished pointing at a control
+   * wants it gone NOW rather than three seconds from now, in front of the customer.
+   *
+   * Showing bumps `chromeNudge` so the countdown always restarts from a full three
+   * seconds; hiding needs nothing, because the auto-hide effect keys on `chromeVisible`
+   * and its cleanup cancels the pending timer the moment it flips false.
+   *
+   * ⚠️ **A SWIPE still cannot reach this.** The swipe is a `Gesture.Pan` with
+   * `activeOffsetX`, and once a pan activates RNGH cancels the tap composed beside it — so
+   * paging through slides never flashes the chrome on OR knocks it off. A drag too small to
+   * activate the pan is a tap by any reasonable reading, so toggling there is correct.
+   */
+  const toggleChrome = useCallback(() => {
+    if (showGestureTutorial) return;
+    if (chromeVisible) {
+      setChromeVisible(false);
+      return;
+    }
+    setChromeVisible(true);
+    setChromeNudge((n) => n + 1);
+  }, [showGestureTutorial, chromeVisible]);
+
+  /**
+   * Restart the countdown WITHOUT forcing the chrome back on.
+   *
+   * ⚠️ For presses on the chrome itself — an arrow, a category tab, the mode icons. A rep
+   * working the controls must not have them vanish mid-reach, but this must never reveal
+   * anything either: `handlePrev` / `handleNext` are shared with the SWIPE, so a reveal
+   * here would put the controls back on every swipe, which is exactly what the ticket
+   * rules out.
+   */
+  const keepChromeAlive = useCallback(() => setChromeNudge((n) => n + 1), []);
+
+  /**
+   * Top clearance for the fullscreen slide's chrome.
+   *
+   * ⚠️ **`insets.top` reports 0 inside the fullscreen `Modal`** — a Modal is its own
+   * native view tree, so it sits outside the `SafeAreaProvider`'s host view and the hook
+   * has no window to measure. `Math.max(insets.top + 8, 20)` therefore resolved to a flat
+   * 20, which put the ✕ and the page count straight through the notch and across the
+   * clock, which is what was reported.
+   *
+   * The floor is the fix rather than a nested provider: one number, no new context inside
+   * a modal whose children already read `insets` for other things and would all shift.
+   *
+   * ⚠️ **44 is the notch, not the status bar.** Hiding the status bar (above) does NOT
+   * reclaim the notch or the Dynamic Island — iOS still refuses to draw there — so the
+   * clearance is needed even with nothing to collide with.
+   *
+   * ⚠️ **LANDSCAPE IGNORES `insets.top` ENTIRELY — a fixed 12.** Not just a smaller floor:
+   * `insets` is a value the modal re-reads across a rotation, and on the FIRST rotation it
+   * still holds the PORTRAIT top inset (~59). Taking the larger of the two therefore
+   * inherited that stale number and dropped the chrome down the screen until something
+   * else forced a re-render, which is the "on the first attempt they are not in their
+   * place" report. The landscape top inset is genuinely near-zero on every device — the
+   * cutout moves to the SIDE — so a constant is both correct and immune to the staleness.
+   * `insets.left` / `landscapeRightInset` are what guard the sides.
+   */
+  const fullscreenTopInset = (isLandscape ? 12 : Math.max(insets.top, 44)) + 8;
+
+  /**
+   * Side clearance for the fullscreen chrome — the CAMERA CUTOUT, which lives on a side
+   * in landscape.
+   *
+   * ⚠️ A FLOOR of 44, not `Math.max(insets.left, 16)`, and for the same reason the top
+   * needed one: on the FIRST rotation `insets` still holds the PORTRAIT values, where the
+   * side insets are `0`. The old expression therefore resolved to 16pt and put the ✕ (or
+   * the page count, depending on which way the phone was turned) **underneath the camera
+   * module** — reported as *"one icon is hidden below the camera module."* Once the
+   * rotation settles `insets` reports the real 44–59, which is why it looked correct on
+   * the second attempt.
+   *
+   * ⚠️ Applied to BOTH sides. Which side the cutout is on depends on the rotation
+   * DIRECTION, and the only value that would tell us is the one that is unreliable here,
+   * so the clearance has to be symmetric. On a device with no cutout it costs a little of
+   * the black letterbox and nothing of the slide.
+   *
+   * The Android navigation bar still raises the right side beyond the floor where it
+   * applies (`landscapeRightInset` has its own 48 minimum).
+   */
+  const fullscreenLeftInset = isLandscape ? Math.max(insets.left || 0, 44) : 12;
+  const fullscreenRightInset = isLandscape ? Math.max(landscapeRightInset, 44) : 12;
+
+  /**
+   * The same zero-inset problem at the bottom, where the HOME INDICATOR is.
+   *
+   * ⚠️ A smaller floor than the top, and not for symmetry's sake: the indicator is a thin
+   * bar the OS draws over whatever is beneath it, not a region iOS refuses to render in
+   * like the notch. It needs clearing, not avoiding. Landscape's is shorter still.
+   */
+  const fullscreenBottomInset = Math.max(insets.bottom, isLandscape ? 12 : 24);
   const [activeToolTab, setActiveToolTab] = useState('inspection');
   const [loading, setLoading] = useState(true);
   const [fullLeadData, setFullLeadData] = useState<any>(null);
@@ -156,6 +340,18 @@ export default function PitchbookScreen() {
   }, [fullLeadData, lead]);
 
   const { data: secureImages = {} } = useSecureUrls(activePhotos);
+
+  /*
+    The dock decides the Inspection tab's EMPTY state itself rather than letting
+    `InspectionPhotosPanel` draw its own: the panel's is a light-theme block (themed grey,
+    `opacity-50`, a bold title over a 10px hint) and it sat beside the Videos tab's regular
+    single line, so the two empty tabs read as different typography. Same pure builder the
+    panel uses, so the two cannot disagree about whether there is anything to show.
+  */
+  const hasInspectionPhotos = useMemo(
+    () => buildInspectionSections(activePhotos, secureImages).length > 0,
+    [activePhotos, secureImages]
+  );
 
   // Animation for tools drawer
   const toolsAnim = useRef(new Animated.Value(0)).current;
@@ -170,6 +366,125 @@ export default function PitchbookScreen() {
     }).start();
     setShowTools(!showTools);
   };
+
+  /**
+   * Raise the tutorial the first time a rep presents fullscreen.
+   *
+   * ⚠️ Keyed on the fullscreen OPEN, not on mount — the inline card has neither of these
+   * gestures, so teaching them on the screen where they do nothing would be worse than
+   * not teaching them at all. The chrome is restored on every open too, so leaving a
+   * presentation with it hidden never strands the next one.
+   */
+  useEffect(() => {
+    if (!isFullscreen) return;
+
+    /**
+     * ⚠️ Imperative as WELL as the `<StatusBar hidden />` inside the modal, because the
+     * declarative one does not reliably win there: a `Modal` is presented by its own
+     * native controller, and the component's value is applied against the screen's stack
+     * entry rather than the modal's — the clock, wifi and battery stayed over the slide
+     * on device even with `hidden` set. `setHidden` goes straight to the module.
+     *
+     * Restored on the way out rather than on unmount, so leaving fullscreen puts the bar
+     * back even though the screen behind it is still mounted.
+     */
+    StatusBar.setHidden(true, 'fade');
+    setChromeVisible(true);
+    setDockMode('slides');
+    if (shouldShowPresentationTutorial(Storage.getItem(PRESENTATION_TUTORIAL_SEEN_KEY))) {
+      setShowGestureTutorial(true);
+    }
+
+    return () => StatusBar.setHidden(false, 'fade');
+  }, [isFullscreen]);
+
+  // "Got It, Dismiss" — closes for now. Deliberately writes nothing; see the util.
+  const dismissGestureTutorial = useCallback(() => setShowGestureTutorial(false), []);
+
+  const neverShowGestureTutorial = useCallback(() => {
+    Storage.setItem(PRESENTATION_TUTORIAL_SEEN_KEY, PRESENTATION_TUTORIAL_SEEN_VALUE);
+    setShowGestureTutorial(false);
+  }, []);
+
+  /**
+   * Centre tap → toggle the presentation chrome.
+   *
+   * ⚠️ Swallowed while the tutorial is up, so the tap that dismisses it cannot also hide
+   * the controls behind it — the rep would be left on a bare slide having pressed a
+   * button that said "Got It".
+   */
+  /**
+   * A swipe anywhere on the slide changes it.
+   *
+   * ⚠️ Handed to `ZoomableImage` as `onSwipe` rather than laid over the image as its own
+   * detector. An overlay swallows the touch whether or not its gesture activates, which
+   * is why the edge strips this replaces ate taps on the prev/next arrows sitting at
+   * those very edges — and why swiping only worked in an 18 % band. `swipeDirection`
+   * still decides what counts, so a vertical or half-hearted drag changes nothing.
+   */
+  /**
+   * The arrows, wrapped so a PRESS keeps the chrome alive — `handlePrev` / `handleNext`
+   * are shared with the swipe and must stay free of any chrome behaviour themselves.
+   */
+  const handleArrowPrev = useCallback(() => {
+    keepChromeAlive();
+    handlePrev();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keepChromeAlive, activeCategory, currentSlideIndex]);
+
+  const handleArrowNext = useCallback(() => {
+    keepChromeAlive();
+    handleNext();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keepChromeAlive, activeCategory, currentSlideIndex]);
+
+  const handleDockCategory = useCallback(
+    (id: string) => {
+      keepChromeAlive();
+      handleTabChange(id);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [keepChromeAlive, activeCategory, currentSlideIndex]
+  );
+
+  const handleDockMode = useCallback(
+    (mode: DockMode) => {
+      keepChromeAlive();
+      setDockMode(mode);
+    },
+    [keepChromeAlive]
+  );
+
+  const handleDockTool = useCallback(
+    (id: string) => {
+      keepChromeAlive();
+      setActiveToolTab(id);
+    },
+    [keepChromeAlive]
+  );
+
+  /*
+    The inline card's own category bar has the same duty as the dock's: it gained swipe and
+    arrows in an earlier pass, so paging through a section rolls into the next one and the
+    strip has to follow. Same hook, so the two bars cannot drift.
+  */
+  const inlineTabStrip = useTabStripAutoScroll(activeCategory);
+
+  const handleSlideSwipe = useCallback(
+    (dx: number, dy: number) => {
+      const direction = swipeDirection(dx, dy);
+      if (direction === 'next') handleNext();
+      else if (direction === 'prev') handlePrev();
+    },
+    /**
+     * ⚠️ Deliberately NOT listing `currentGlobalPageNumber` — it is declared further down
+     * the component and referencing it here is a use-before-declaration. The two handlers
+     * below read the live state through the same refs the arrows do, so the identity of
+     * this callback does not need to track the page at all.
+     */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeCategory, currentSlideIndex]
+  );
 
   const getGlobalPosition = useCallback((categoryId: string, slideIndex: number) => {
     let count = 0;
@@ -565,6 +880,79 @@ export default function PitchbookScreen() {
   // window, so the backdrop now covers the header too. The FULLSCREEN path
   // passes nothing: the drawer is already inside a Modal there (stacked native
   // modals are unreliable) and that modal already owns the whole screen.
+  /**
+   * The tool bodies as the fullscreen DOCK shows them — dark, and inside a bar rather
+   * than a bottom sheet.
+   *
+   * ⚠️ Separate from `renderInteractiveTools`, which still serves the NON-fullscreen
+   * drawer unchanged. The bodies could not simply be shared: that sheet is a themed
+   * surface and its headings use `text-text-primary`, which in LIGHT theme is near-black
+   * — invisible on the dock's dark panel. The two shared panels below
+   * (`InspectionPhotosPanel`, `RiskContent`) draw their own cards and read correctly on
+   * either ground; only the copy this screen owns needs the explicit colour.
+   */
+  const renderDockToolContent = () => (
+    // The peek holds a finger down over an enlarged preview; without the lock a stray
+    // drag scrolls this list, steals the touch and dismisses the peek mid-hold.
+    <PhotoPeekScrollLockProvider>
+      <PeekAwareScrollView
+        showsVerticalScrollIndicator={false}
+        style={dockStyles.toolScroll}
+        contentContainerStyle={dockStyles.toolScrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        {activeToolTab === 'inspection' && (
+          <View>
+            <Text style={dockStyles.heading}>Property Inspection Photos</Text>
+            {hasInspectionPhotos ? (
+              <InspectionPhotosPanel photos={activePhotos} secureImages={secureImages} />
+            ) : (
+              <DockEmptyState
+                icon="image-off"
+                title="No inspection photos available"
+                hint="Photos added in Job Docs will appear here."
+              />
+            )}
+          </View>
+        )}
+
+        {activeToolTab === 'risk' && (
+          <RiskContent
+            lead={lead}
+            refetch={refetch}
+            reports={riskReports}
+            onDownload={handleDownloadReport}
+            dark
+          />
+        )}
+
+        {activeToolTab === 'notes' && (
+          <View>
+            <Text style={dockStyles.heading}>Lead Notes</Text>
+            <View style={dockStyles.notesCard}>
+              <Text style={dockStyles.bodyText}>
+                {fullLeadData?.notes ||
+                  fullLeadData?.customerDetails?.notes ||
+                  'No specific notes available for this lead.'}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {activeToolTab === 'videos' && (
+          <View>
+            <Text style={dockStyles.heading}>Educational Videos</Text>
+            <DockEmptyState
+              icon="video-off"
+              title="No videos available"
+              hint="Video content goes here. This area is scrollable."
+            />
+          </View>
+        )}
+      </PeekAwareScrollView>
+    </PhotoPeekScrollLockProvider>
+  );
+
   const renderInteractiveTools = (asModal = false) => {
     if (viewMode !== 'rep' || !showTools) return null;
     const drawerHeight = isLandscape
@@ -863,9 +1251,12 @@ export default function PitchbookScreen() {
         {/* Categories Tab Bar */}
         <View className="bg-background shadow-sm pb-4">
           <ScrollView
+            ref={inlineTabStrip.ref}
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 0 }}
+            onLayout={inlineTabStrip.onLayout}
+            onContentSizeChange={inlineTabStrip.onContentSizeChange}
           >
             {CATEGORIES.map((cat) => {
               const isActive = activeCategory === cat.id;
@@ -873,6 +1264,7 @@ export default function PitchbookScreen() {
                 <TouchableOpacity
                   key={cat.id}
                   onPress={() => handleTabChange(cat.id)}
+                  onLayout={inlineTabStrip.onTabLayout(cat.id)}
                   className="mr-5 pt-3 pb-1"
                   style={{
                     borderBottomWidth: isActive ? 2 : 0,
@@ -935,6 +1327,48 @@ export default function PitchbookScreen() {
                 containerStyle={{ width: '100%', height: '100%' }}
                 style={{ width: '100%', height: '100%' }}
                 resetKey={slideResetKey}
+                onSwipe={handleSlideSwipe}
+              />
+
+              {/* The page count, in the same place the fullscreen slide carries it —
+                  *"when the app is in full screen mode OR normal mode"*.
+
+                  ⚠️ **No ✕ here.** It shipped with one and it was a control with nothing
+                  of its own to do: this screen already has the toolbar's back arrow
+                  ABOVE the slide and a "Back to Map" button directly beside it, so a
+                  third way out sat on the artwork earning nothing.
+
+                  ⚠️ `compact`, because the fullscreen pill is deliberately large — it is
+                  read from across a customer's living room — and that same size on this
+                  4:3 card reads as an oversized box on a thumbnail.
+
+                  ⚠️ Deliberately NOT gated on `chromeShown`: that flag belongs to the
+                  fullscreen centre tap, and there is no centre tap out here to bring the
+                  controls back with. */}
+              <PresentationTopBar
+                current={currentGlobalPageNumber}
+                total={totalGlobalPages}
+                showClose={false}
+                compact
+                top={10}
+                left={10}
+                right={10}
+              />
+
+              {/* *"User can change slides by swiping or tapping arrows."* Fullscreen had
+                  both already; this card had NEITHER — a rep presenting without going
+                  fullscreen could only move with the buttons under the progress bar.
+
+                  ⚠️ Same border strips as fullscreen, not a full-width swipe: the middle
+                  belongs to `ZoomableImage`'s pinch, and the strips are what the gesture
+                  tutorial promises. The pan needs 15pt of HORIZONTAL travel before it
+                  activates, so a vertical drag still scrolls this screen. */}
+
+              <SlideArrows
+                onPrev={handlePrev}
+                onNext={handleNext}
+                canPrev={currentGlobalPageNumber > 1}
+                canNext={currentGlobalPageNumber < totalGlobalPages}
               />
             </View>
           </View>
@@ -1025,15 +1459,49 @@ export default function PitchbookScreen() {
           {/* A Modal is its own native view tree on Android, so the app-root
               GestureHandlerRootView in App.tsx does not reach it — without this one the
               slide's pinch/pan gestures never fire in fullscreen. */}
-          <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#000' }}>
+          {/*
+            ⚠️ KEYED ON THE ORIENTATION, which remounts this subtree when the device is
+            turned.
+
+            Reported: rotating portrait → landscape with fullscreen ALREADY OPEN left the
+            chrome clipped at the edge, while closing and reopening in landscape was
+            correct. That asymmetry is the whole tell — the values are right either way,
+            so what is stale is the LAYOUT the modal is holding: a `Modal` is presented by
+            its own native controller and does not reliably re-measure its subtree on a
+            rotation, so the absolute chrome kept positions computed against the previous
+            frame until the modal was torn down and rebuilt.
+
+            The key does that teardown on every rotation instead of waiting for the rep to
+            do it by hand.
+
+            ⚠️ It resets the slide's ZOOM and the dock's scroll offset on rotation. That
+            is acceptable and arguably right — the slide re-fits to the new frame anyway —
+            but it is the cost, so do not extend this key to anything whose state has to
+            survive a turn. `chromeVisible`, `dockMode` and the tutorial flag all live on
+            the SCREEN, above this, and are untouched.
+          */}
+          <GestureHandlerRootView
+            key={isLandscape ? 'fs-landscape' : 'fs-portrait'}
+            style={{ flex: 1, backgroundColor: '#000' }}
+          >
             {/* Hide status bar in landscape */}
-            <StatusBar hidden={isLandscape} backgroundColor="transparent" translucent />
+            {/* ⚠️ Hidden in BOTH orientations. It was `hidden={isLandscape}`, so a
+                portrait presentation still showed the clock, wifi and battery over the
+                slide — and the rep is showing this to a customer. Requested directly:
+                *"when this full screen is open, make sure the bar in which time, battery
+                and other details are shown is hidden."* */}
+            <StatusBar hidden backgroundColor="transparent" translucent />
 
             {isLandscape ? (
               /* ════════════════════════════════════════
                  LANDSCAPE LAYOUT
                  ════════════════════════════════════════ */
-              <View style={{ flex: 1, backgroundColor: '#000', position: 'relative', paddingTop: insets.top }}>
+              /* ⚠️ NO `paddingTop: insets.top` here. It used to hold the content below the
+                 status bar — which is now hidden for the whole presentation — and the
+                 chrome inside positions itself with `fullscreenTopInset`, so keeping it
+                 counted the inset TWICE and pushed the ✕ and the page count a third of
+                 the way down the screen. It also cost the slide that much height. */
+              <View style={{ flex: 1, backgroundColor: '#000', position: 'relative' }}>
 
                 {/* ── Centre: image area + category tabs below image ── */}
                 <View style={{ flex: 1, flexDirection: 'column' }}>
@@ -1046,209 +1514,59 @@ export default function PitchbookScreen() {
                       containerStyle={{ ...StyleSheet.absoluteFillObject }}
                       style={{ width: '100%', height: '100%' }}
                       resetKey={slideResetKey}
+                      onSingleTap={toggleChrome}
+                      onSwipe={handleSlideSwipe}
                     />
 
-                    {/* ── Overlay: page counter top-left ── */}
-                    <View
-                      style={{
-                        position: 'absolute',
-                        top: Math.max(insets.top + 10, 24),
-                        left: 16,
-                        backgroundColor: 'rgba(0,0,0,0.50)',
-                        paddingHorizontal: 10,
-                        paddingVertical: 4,
-                        borderRadius: 12,
-                        zIndex: 10,
-                      }}
-                    >
-                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
-                        {currentGlobalPageNumber} / {totalGlobalPages}
-                      </Text>
-                    </View>
 
-                    {/* ── Overlay: compress button top-right ── */}
-                    <TouchableOpacity
-                      onPress={() => setIsFullscreen(false)}
-                      style={{
-                        position: 'absolute',
-                        top: Math.max(insets.top + 8, 20),
-                        right: Math.max(landscapeRightInset, 16),
-                        width: 36,
-                        height: 36,
-                        borderRadius: 18,
-                        backgroundColor: 'rgba(255,255,255,0.15)',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        zIndex: 10,
-                      }}
-                    >
-                      <IonIcon name="contract" size={20} color="#fff" />
-                    </TouchableOpacity>
+                    {/* Everything from here to the end of this block is the presentation
+                        CHROME the centre tap toggles — counter, exit, both arrows. They
+                        are the run of siblings that follow the image, so one fragment
+                        gates them all rather than ten separate conditions. */}
+                    {chromeShown && (
+                      <>
+                    <PresentationTopBar
+                      current={currentGlobalPageNumber}
+                      total={totalGlobalPages}
+                      onClose={() => setIsFullscreen(false)}
+                      closeLabel="Exit fullscreen"
+                      top={fullscreenTopInset}
+                      left={fullscreenLeftInset}
+                      right={fullscreenRightInset}
+                    />
 
-                    {/* Prev Arrow (Floating next to image) */}
-                    <TouchableOpacity
-                      onPress={handlePrev}
-                      disabled={currentGlobalPageNumber === 1}
-                      style={{
-                        position: 'absolute',
-                        left: Math.max((insets.left || 0) + 24, 48),
-                        top: '50%',
-                        transform: [{ translateY: -20 }],
-                        width: 40,
-                        height: 40,
-                        borderRadius: 20,
-                        backgroundColor: 'rgba(255,255,255,0.22)',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        opacity: currentGlobalPageNumber === 1 ? 0.25 : 1,
-                        zIndex: 10,
-                      }}
-                    >
-                      <IonIcon
-                        name="chevron-back"
-                        size={22}
-                        color="#fff"
-                      />
-                    </TouchableOpacity>
 
-                    {/* Next Arrow (Floating next to image, adjusted to clear tools tab) */}
-                    <TouchableOpacity
-                      onPress={handleNext}
-                      disabled={currentGlobalPageNumber === totalGlobalPages}
-                      style={{
-                        position: 'absolute',
-                        right: viewMode === 'rep' ? Math.max(landscapeRightInset + 48, 48) : Math.max(landscapeRightInset + 24, 48),
-                        top: '50%',
-                        transform: [{ translateY: -20 }],
-                        width: 40,
-                        height: 40,
-                        borderRadius: 20,
-                        backgroundColor: 'rgba(255,255,255,0.22)',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        opacity: currentGlobalPageNumber === totalGlobalPages ? 0.25 : 1,
-                        zIndex: 10,
-                      }}
-                    >
-                      <IonIcon
-                        name="chevron-forward"
-                        size={22}
-                        color="#fff"
-                      />
-                    </TouchableOpacity>
+                    {/* ⚠️ Shared component. The old next arrow carried
+                        `landscapeRightInset + 48` to clear the right-edge Interactive
+                        Tools tab — a control that no longer exists, so the offset only
+                        pushed it inward (and, with a large inset, off the slide). Each
+                        side now takes its OWN real inset: the cutout is on one side and
+                        the Android nav bar on the other. */}
+                    <SlideArrows
+                      onPrev={handleArrowPrev}
+                      onNext={handleArrowNext}
+                      canPrev={currentGlobalPageNumber > 1}
+                      canNext={currentGlobalPageNumber < totalGlobalPages}
+                      leftInset={fullscreenLeftInset}
+                      rightInset={fullscreenRightInset}
+                    />
+                      </>
+                    )}
                   </View>
 
-                  {/* Bottom part: category tabs (sits below image, not overlayed) */}
-                  <View
-                    style={{
-                      backgroundColor: '#111',
-                      paddingTop: 10,
-                      paddingBottom: Math.max(insets.bottom, 10),
-                      paddingLeft: Math.max(insets.left, 8),
-                      paddingRight: Math.max(landscapeRightInset, 8),
-                      borderTopWidth: 1,
-                      borderTopColor: 'rgba(255,255,255,0.08)',
-                    }}
-                  >
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={{
-                        flexGrow: 1,
-                        justifyContent: 'center',
-                        paddingHorizontal: 8,
-                      }}
-                    >
-                      {CATEGORIES.map((cat) => {
-                        const isActive = activeCategory === cat.id;
-                        return (
-                          <TouchableOpacity
-                            key={cat.id}
-                            onPress={() => handleTabChange(cat.id)}
-                            style={{
-                              marginHorizontal: 4,
-                              paddingHorizontal: 14,
-                              paddingVertical: 6,
-                              borderRadius: 20,
-                              backgroundColor: isActive
-                                ? colors.primary.main
-                                : 'rgba(255,255,255,0.12)',
-                              borderWidth: isActive ? 0 : 1,
-                              borderColor: 'rgba(255,255,255,0.18)',
-                            }}
-                          >
-                            <Text
-                              style={{
-                                fontSize: 11,
-                                fontWeight: '600',
-                                color: isActive ? '#fff' : 'rgba(255,255,255,0.65)',
-                              }}
-                            >
-                              {cat.label}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </ScrollView>
-                  </View>
                 </View>
 
-                {/* ── Interactive Tools: right-edge vertical tab (Rep Mode only) ── */}
-                {viewMode === 'rep' && (
-                  <TouchableOpacity
-                    onPress={toggleTools}
-                    style={{
-                      position: 'absolute',
-                      right: landscapeRightInset,
-                      top: '50%',
-                      transform: [{ translateY: -40 }],
-                      width: 32,
-                      height: 80,
-                      backgroundColor: '#72BD00',
-                      borderTopLeftRadius: 16,
-                      borderBottomLeftRadius: 16,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      zIndex: 99,
-                    }}
-                  >
-                    <IonIcon name="chevron-back" size={20} color="#fff" />
-                  </TouchableOpacity>
-                )}
               </View>
             ) : (
               /* ════════════════════════════════════════
-                 PORTRAIT LAYOUT  (unchanged)
+                 PORTRAIT LAYOUT
                  ════════════════════════════════════════ */
               <View style={{ flex: 1, backgroundColor: '#000' }}>
-                {/* Top bar: page counter + exit button */}
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    paddingHorizontal: 16,
-                    paddingTop: insets.top + 40,
-                    paddingBottom: 5,
-                  }}
-                >
-                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
-                    {currentGlobalPageNumber} / {totalGlobalPages}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => setIsFullscreen(false)}
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: 'rgba(255,255,255,0.15)',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <IonIcon name="contract" size={20} color="#fff" />
-                  </TouchableOpacity>
-                </View>
+                {/* ⚠️ The page count and the exit control are an OVERLAY here now, not a
+                    flow row at the top — they used to push the slide down by their own
+                    height. `PresentationTopBar` floats over the image inside the block
+                    below, so both orientations frame the slide identically and the pair
+                    is gated with the rest of the chrome. */}
 
                 {/* Image with prev/next arrows */}
                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -1258,147 +1576,84 @@ export default function PitchbookScreen() {
                       containerStyle={{ ...StyleSheet.absoluteFillObject }}
                       style={{ width: '100%', height: '100%' }}
                       resetKey={slideResetKey}
+                      onSingleTap={toggleChrome}
+                      onSwipe={handleSlideSwipe}
                     />
                   )}
 
-                  {/* Prev Arrow */}
-                  <TouchableOpacity
-                    onPress={handlePrev}
-                    disabled={currentGlobalPageNumber === 1}
-                    style={{
-                      position: 'absolute',
-                      left: 12,
-                      width: 40,
-                      height: 40,
-                      borderRadius: 20,
-                      backgroundColor:
-                        currentGlobalPageNumber === 1
-                          ? 'rgba(255,255,255,0.10)'
-                          : 'rgba(255,255,255,0.22)',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <IonIcon
-                      name="chevron-back"
-                      size={22}
-                      color={currentGlobalPageNumber === 1 ? 'rgba(255,255,255,0.35)' : '#fff'}
-                    />
-                  </TouchableOpacity>
 
-                  {/* Next Arrow */}
-                  <TouchableOpacity
-                    onPress={handleNext}
-                    disabled={currentGlobalPageNumber === totalGlobalPages}
-                    style={{
-                      position: 'absolute',
-                      right: 12,
-                      width: 40,
-                      height: 40,
-                      borderRadius: 20,
-                      backgroundColor:
-                        currentGlobalPageNumber === totalGlobalPages
-                          ? 'rgba(255,255,255,0.10)'
-                          : 'rgba(255,255,255,0.22)',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <IonIcon
-                      name="chevron-forward"
-                      size={22}
-                      color={
-                        currentGlobalPageNumber === totalGlobalPages
-                          ? 'rgba(255,255,255,0.35)'
-                          : '#fff'
-                      }
-                    />
-                  </TouchableOpacity>
-                </View>
+                  {chromeShown && (
+                    <>
+                  <PresentationTopBar
+                    current={currentGlobalPageNumber}
+                    total={totalGlobalPages}
+                    onClose={() => setIsFullscreen(false)}
+                    closeLabel="Exit fullscreen"
+                    top={fullscreenTopInset}
+                    left={16}
+                    right={16}
+                  />
 
-                {/* Bottom: category tabs + interactive tools button */}
-                <View
-                  style={{
-                    backgroundColor: '#111',
-                    paddingBottom: insets.bottom + 4,
-                    borderTopWidth: 1,
-                    borderTopColor: 'rgba(255,255,255,0.08)',
-                  }}
-                >
-                  {/* Category tab strip */}
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 10 }}
-                  >
-                    {CATEGORIES.map((cat) => {
-                      const isActive = activeCategory === cat.id;
-                      return (
-                        <TouchableOpacity
-                          key={cat.id}
-                          onPress={() => handleTabChange(cat.id)}
-                          style={{
-                            marginRight: 8,
-                            paddingHorizontal: 14,
-                            paddingVertical: 7,
-                            borderRadius: 20,
-                            backgroundColor: isActive ? colors.primary.main : 'rgba(255,255,255,0.10)',
-                            borderWidth: isActive ? 0 : 1,
-                            borderColor: 'rgba(255,255,255,0.15)',
-                          }}
-                        >
-                          <Text
-                            style={{
-                              fontSize: 12,
-                              fontWeight: '600',
-                              color: isActive ? '#fff' : 'rgba(255,255,255,0.6)',
-                            }}
-                          >
-                            {cat.label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
-
-                  {/* Interactive Tools button (Rep Mode only) */}
-                  {viewMode === 'rep' && (
-                    <TouchableOpacity
-                      onPress={toggleTools}
-                      style={{
-                        marginHorizontal: 12,
-                        marginBottom: 6,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        paddingVertical: 12,
-                        borderRadius: 10,
-                        backgroundColor: '#F0FAE8',
-                        borderWidth: 1,
-                        borderColor: colors.primary.main,
-                      }}
-                    >
-                      <IonIcon
-                        name="chevron-up"
-                        size={18}
-                        color={colors.primary.main}
-                        style={{ marginRight: 6 }}
-                      />
-                      <Text style={{ color: colors.primary.main, fontWeight: '700', fontSize: 13 }}>
-                        Interactive Tools
-                      </Text>
-                    </TouchableOpacity>
+                  {/* ⚠️ Shared component, not two inline `TouchableOpacity`s. The pair
+                      here carried NO `top` at all, so each fell back to its static flow
+                      position inside a `justifyContent: center` container — which is why
+                      the forward arrow landed off the slide. `SlideArrows` pins both to
+                      the true vertical centre. */}
+                  <SlideArrows
+                    onPrev={handleArrowPrev}
+                    onNext={handleArrowNext}
+                    canPrev={currentGlobalPageNumber > 1}
+                    canNext={currentGlobalPageNumber < totalGlobalPages}
+                    inset={12}
+                  />
+                    </>
                   )}
                 </View>
+
               </View>
             )}
-            {renderInteractiveTools()}
+
+            {/* ── The dock: section tabs and the interactive tools, in ONE bar ──
+                Rendered once for BOTH orientations rather than inside each layout
+                branch, so the two can never drift apart — only its insets differ.
+                Part of the chrome, so the centre tap hides it with everything else. */}
+            {chromeShown && (
+              <PresentationDock
+                mode={dockMode}
+                onModeChange={handleDockMode}
+                categories={CATEGORIES}
+                activeCategory={activeCategory}
+                onSelectCategory={handleDockCategory}
+                activeTool={activeToolTab}
+                onSelectTool={handleDockTool}
+                toolContent={renderDockToolContent()}
+                // Homeowner mode has no interactive tools, so the wand is not offered —
+                // the same gate the old right-edge tab carried.
+                showTools={viewMode === 'rep'}
+                /* Capped so the panel never swallows the slide the rep is presenting;
+                   landscape has far less height to give, hence the two fractions. */
+                toolHeight={isLandscape ? winHeight * 0.52 : winHeight * 0.46}
+                left={fullscreenLeftInset}
+                right={fullscreenRightInset}
+                bottom={fullscreenBottomInset}
+              />
+            )}
 
             <PdfPreviewModal
               visible={showPdfModal && isFullscreen}
               onClose={() => setShowPdfModal(false)}
               uri={pdfPreviewData.url}
               title={pdfPreviewData.title}
+            />
+
+            {/* ⚠️ LAST child of the fullscreen modal, and not a Modal of its own —
+                stacking a second native modal over one already up is unreliable on both
+                platforms. Rendered here it covers the slide, its chrome and the tools
+                drawer. */}
+            <PresentationGesturesTutorial
+              visible={showGestureTutorial}
+              onDismiss={dismissGestureTutorial}
+              onNeverAgain={neverShowGestureTutorial}
             />
           </GestureHandlerRootView>
         </Modal>
@@ -1438,7 +1693,16 @@ function ToolTab({ label, icon, active, onPress }: any) {
   );
 }
 
-const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
+/**
+ * ⚠️ Rendered on TWO grounds — the fullscreen dock (dark, always) and the non-fullscreen
+ * drawer (themed, usually white) — so every surface and every text colour comes from `t`
+ * below. `dark` defaults false, which is byte-for-byte the drawer's previous look.
+ *
+ * The reported bug was the Risk Report bar (the one carrying the 1-5 YEAR picker): it
+ * painted `colors.background`, i.e. WHITE in light theme, so a white slab sat in the
+ * middle of the dark presentation panel in front of a customer.
+ */
+const RiskContent = ({ lead, refetch, reports, onDownload, dark = false }: any) => {
   const { colors, isDark } = useTheme();
   const { riskJob, handleStartRiskReport, handleResetRiskReport } = useLeadReports(lead, refetch);
   const [selectedYear, setSelectedYear] = useState(3);
@@ -1449,15 +1713,44 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
     (r: any) => r.reportName?.toLowerCase().includes('risk') || r.reportType?.includes('risk')
   );
 
+  const t = dark
+    ? {
+        surface: DOCK_TEXT.surface,
+        border: DOCK_TEXT.surfaceBorder,
+        heading: DOCK_TEXT.heading,
+        body: DOCK_TEXT.body,
+        hint: DOCK_TEXT.hint,
+        glyphWell: DOCK_TEXT.glyphWell,
+        glyph: DOCK_TEXT.glyph,
+        track: 'rgba(255,255,255,0.12)',
+      }
+    : {
+        surface: colors.background,
+        border: '#919EAB33',
+        heading: colors.text,
+        body: colors.text,
+        hint: '#919EAB',
+        glyphWell: '#919EAB1F',
+        glyph: '#637381',
+        track: '#F1F5F9',
+      };
+
   return (
     <View>
       <View className="flex-row justify-between items-center mb-4">
-        <Text className="text-text-primary font-bold text-base">Report</Text>
+        {/* The dock's other three tabs each open with one heading; this is Risk's, and it
+            takes the same style so the four cannot read as different typography. */}
+        <Text
+          style={dark ? dockStyles.headingRow : undefined}
+          className={dark ? undefined : 'text-text-primary font-bold text-base'}
+        >
+          Report
+        </Text>
         <TouchableOpacity onPress={() => setReportExpanded(!reportExpanded)}>
           <IonIcon
             name={reportExpanded ? 'chevron-up' : 'chevron-down'}
             size={22}
-            color="#919EAB"
+            color={dark ? DOCK_TEXT.glyph : '#919EAB'}
           />
         </TouchableOpacity>
       </View>
@@ -1466,19 +1759,19 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
         <View
           className="p-3 rounded-lg flex-col mb-4 border"
           style={{
-            borderColor: '#919EAB33',
-            backgroundColor: colors.background,
+            borderColor: t.border,
+            backgroundColor: t.surface,
           }}
         >
           <View className="flex-row justify-between items-center">
             <View
               className="w-8 h-8 rounded-full items-center justify-center"
-              style={{ backgroundColor: '#919EAB1F' }}
+              style={{ backgroundColor: t.glyphWell }}
             >
-              <Icon name="alert" size={16} color={'#637381'} />
+              <Icon name="alert" size={16} color={t.glyph} />
             </View>
             <View className="flex-1 ml-4">
-              <Text className="text-sm font-semibold" style={{ color: colors.text }}>
+              <Text className="text-sm font-semibold" style={{ color: t.body }}>
                 Risk Report
               </Text>
             </View>
@@ -1514,6 +1807,7 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
                       defaultValue={selectedYear}
                       min={1}
                       max={5}
+                      dark={dark}
                       onChange={(val: number) => setSelectedYear(val)}
                     />
                     <TouchableOpacity
@@ -1532,7 +1826,9 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
               {riskJob && riskJob.status !== 'completed' && (
                 <View className="flex-row items-center gap-2">
                   <ActivityIndicator size="small" color={colors.primary.main} />
-                  <Text className="text-[10px] font-bold text-slate-500 ">{riskJob.progress}%</Text>
+                  <Text className="text-[10px] font-bold" style={{ color: t.hint }}>
+                    {riskJob.progress}%
+                  </Text>
                 </View>
               )}
             </View>
@@ -1540,12 +1836,15 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
 
           {/* Progress Bar for Risk Job */}
           {riskJob && riskJob.status !== 'completed' && (
-            <View className="mt-3 h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+            <View
+              className="mt-3 h-1.5 w-full rounded-full overflow-hidden"
+              style={{ backgroundColor: t.track }}
+            >
               <View className="h-full bg-emerald-500" style={{ width: `${riskJob.progress}%` }} />
             </View>
           )}
           {riskJob && riskJob.status !== 'completed' && (
-            <Text className="text-[10px] text-slate-400 mt-1 italic">
+            <Text className="text-[10px] mt-1 italic" style={{ color: t.hint }}>
               {riskJob.step || 'Processing...'}
             </Text>
           )}
@@ -1553,27 +1852,34 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
       )}
       {reports.length > 1 && (
         <View className="mt-2 gap-3">
-          <Text className="text-xs font-black  text-gray-400 tracking-widest mb-1">
+          <Text className="text-xs font-black tracking-widest mb-1" style={{ color: t.hint }}>
             Generated History
           </Text>
           {reports.map((report: any, idx: number) => (
             <TouchableOpacity
               key={idx}
               onPress={() => onDownload(report, idx)}
-              className="flex-row items-center p-4 bg-white rounded-xl border border-slate-100 shadow-sm"
+              className="flex-row items-center p-4 rounded-xl border shadow-sm"
+              style={{
+                backgroundColor: dark ? t.surface : '#FFFFFF',
+                borderColor: dark ? t.border : '#F1F5F9',
+              }}
             >
-              <View className="w-10 h-10 bg-red-50 rounded-full items-center justify-center mr-3">
+              <View
+                className="w-10 h-10 rounded-full items-center justify-center mr-3"
+                style={{ backgroundColor: dark ? 'rgba(239,68,68,0.16)' : '#FEF2F2' }}
+              >
                 <Icon name="file-pdf-box" size={24} color="#EF4444" />
               </View>
               <View className="flex-1">
-                <Text className="text-text-primary font-bold text-sm" numberOfLines={1}>
+                <Text className="font-bold text-sm" numberOfLines={1} style={{ color: t.body }}>
                   {report.reportName}
                 </Text>
-                <Text className="text-text-secondary text-[10px]">
+                <Text className="text-[10px]" style={{ color: t.hint }}>
                   {new Date(report.createdAt).toLocaleDateString()}
                 </Text>
               </View>
-              <Icon name="chevron-right" size={20} color="#919EAB" />
+              <Icon name="chevron-right" size={20} color={dark ? DOCK_TEXT.glyph : '#919EAB'} />
             </TouchableOpacity>
           ))}
         </View>
@@ -1581,3 +1887,89 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
     </View>
   );
 };
+
+/**
+ * The fullscreen dock's tool panel is dark by design, so the copy this screen owns
+ * carries explicit colours rather than the themed `text-text-primary` classes the
+ * non-fullscreen drawer uses — those are near-black in light theme and would be
+ * invisible here. See `renderDockToolContent`.
+ */
+/**
+ * The dock's THREE text roles. Every tool body reads from these, so a heading is the same
+ * weight and colour on all four tabs and a hint is the same grey — the tabs used to carry
+ * three different greys and two heading sizes between them, which read as four screens
+ * built by different people.
+ *
+ * ⚠️ Risk is the one that needed the most work: it is a shared component rendered on BOTH
+ * the dark dock and the light drawer, so it takes these through a `dark` prop rather than
+ * hardcoding them. See `RiskContent`.
+ */
+export const DOCK_TEXT = {
+  /** Tool title — one per tab. */
+  heading: '#FFFFFF',
+  /** Primary copy: the note body, a report's name. */
+  body: 'rgba(255,255,255,0.86)',
+  /** Secondary copy: empty states, dates, captions, progress steps. */
+  hint: 'rgba(255,255,255,0.55)',
+  /** Card fill + hairline for any surface the dock owns. */
+  surface: 'rgba(255,255,255,0.06)',
+  surfaceBorder: 'rgba(255,255,255,0.10)',
+  /** A glyph well (the round icon badges). */
+  glyphWell: 'rgba(255,255,255,0.10)',
+  glyph: 'rgba(255,255,255,0.72)',
+} as const;
+
+const DOCK_HEADING_TEXT = {
+  color: DOCK_TEXT.heading,
+  fontSize: 15,
+  fontWeight: '700',
+} as const;
+
+const DOCK_HINT_TEXT = { color: DOCK_TEXT.hint, fontSize: 13, lineHeight: 20 } as const;
+
+/**
+ * The ONE empty state every dock tool uses — icon, a bold title, a regular hint. Before this
+ * the Inspection tab drew the shared panel's own light-theme block (bold, dimmed to 50%) and
+ * Videos drew a single regular line, so two empty tabs side by side read as two different
+ * fonts. Any tool that can be empty should render this rather than its own.
+ */
+function DockEmptyState({ icon, title, hint }: { icon: string; title: string; hint?: string }) {
+  return (
+    <View style={dockStyles.emptyState}>
+      <Icon name={icon} size={44} color={DOCK_TEXT.hint} />
+      <Text style={dockStyles.emptyTitle}>{title}</Text>
+      {hint ? <Text style={dockStyles.emptyText}>{hint}</Text> : null}
+    </View>
+  );
+}
+
+const dockStyles = StyleSheet.create({
+  /*
+    `flex: 1` so the scroller fills the dock's now-FIXED tool panel rather than sizing to
+    its own body — otherwise a short tool (Notes, Risk) would leave dead panel beneath it
+    that does not take a drag. `flexGrow` on the content keeps a short body at the top.
+  */
+  toolScroll: { flex: 1 },
+  toolScrollContent: { padding: 16, flexGrow: 1 },
+  heading: { ...DOCK_HEADING_TEXT, marginBottom: 14 },
+  /* Risk's heading sits inside a row that already owns the gap below it. */
+  headingRow: DOCK_HEADING_TEXT,
+  notesCard: {
+    backgroundColor: DOCK_TEXT.surface,
+    borderWidth: 1,
+    borderColor: DOCK_TEXT.surfaceBorder,
+    borderRadius: 12,
+    padding: 14,
+  },
+  /* One body style and one hint style, shared by every tab. */
+  bodyText: { color: DOCK_TEXT.body, fontSize: 13.5, lineHeight: 22 },
+  emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 44 },
+  emptyTitle: {
+    color: DOCK_TEXT.body,
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  emptyText: { ...DOCK_HINT_TEXT, marginTop: 4, textAlign: 'center' },
+});

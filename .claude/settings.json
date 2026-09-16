@@ -16,5 +16,30 @@
       "Bash(grep -v \"^$\")",
       "Bash(git check-ignore *)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/doc-guard.js\" post-edit",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/doc-guard.js\" stop",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
   }
 }

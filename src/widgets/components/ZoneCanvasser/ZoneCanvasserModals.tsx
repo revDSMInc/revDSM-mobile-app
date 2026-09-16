@@ -37,6 +37,9 @@ type Props = {
   onLeadCreateSuccess: (lead: any) => void;
   onGoBackEdit: () => void;
   onStartAppointment: () => void | Promise<void>;
+  onZoneDelete: (zone: any) => void | Promise<void>;
+  onZoneArchive: (zone: any) => void | Promise<void>;
+  isZoneActionProcessing: boolean;
 };
 
 export function ZoneCanvasserModals({
@@ -69,6 +72,9 @@ export function ZoneCanvasserModals({
   onLeadCreateSuccess,
   onGoBackEdit,
   onStartAppointment,
+  onZoneDelete,
+  onZoneArchive,
+  isZoneActionProcessing,
 }: Props) {
   const address =
     propertyData?.formattedAddress ||
@@ -173,6 +179,9 @@ export function ZoneCanvasserModals({
             setZoneStatsPopupOpen(false);
             setSelectedZone(null);
           }}
+          onDelete={onZoneDelete}
+          onArchive={onZoneArchive}
+          isProcessing={isZoneActionProcessing}
         />
       )}
 

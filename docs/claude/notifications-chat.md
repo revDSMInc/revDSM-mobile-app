@@ -1,0 +1,481 @@
+# Notifications, push routing & chat
+
+> Part of the repo guide — the index is the root `CLAUDE.md`. **Read this before changing:** `src/screens/Notifications/**`, `src/screens/ChatThreads/**`, `src/screens/ChatDetail/**`, `widgets/components/chat/**`, `hooks/usePushNotifications.ts`, `hooks/useNotifications.ts`, `utils/push-routing.ts`, `utils/notification-groups.ts`, `utils/job-change-summary.ts`.
+>
+> Each `##` section is one ticket: the ask, the root cause, the decision, and the ⚠️ traps that must not be
+> "fixed" back. Newest follow-ups sit under their original ticket. Add new notes for this area HERE, not in the root file.
+
+## The Notification Center rebuilt to the `notify-ui.txt` design
+
+Ticket: *"this file contains the notification UI design … update the Notification UI according to this
+design"*, with `notify-ui.txt` (an HTML/CSS mock, in the repo root) and two screenshots of the finished
+list. The screen was a flat `FlatList` of hairline-separated rows on the app's plain white; it is now
+the mock's layout — a warm paper ground, **day sections**, one bordered **card** per run of
+notifications about the same lead, and repeats collapsed behind a disclosure.
+
+| the design | how it is built |
+|---|---|
+| paper ground `#F6F5F0`, white cards, `#E6E3DA` rules | a `C` token block in the screen, copied from the mock's `:root` |
+| `Today · Sep 7` / `Yesterday` / `2 days ago` headings | `SectionList` + `formatDayLabel` |
+| ~~one card per lead, hairline between its rows~~ | **SUPERSEDED — one card per NOTIFICATION.** See the follow-up below |
+| 3px pine rail + wash on an unread row | `styles.rail` + `itemUnread`, clipped by the card's `overflow` |
+| 40px tinted bubble, four families | `describeNotification` now returns `{ icon, color, tint, family }` |
+| monospace lead chip (`41PCDLG` / `SelfGen`) | `leadTagOf` |
+| ~~`+1 more update on this lead` / `Show breakdown`~~ | **SUPERSEDED — removed.** See the follow-up below |
+| `Unread ⑷` count pill | `unreadCount` from the existing badge query |
+| `You're viewing the last 3 days` | `endHintFor` — **derived**, see below |
+
+**Every rule lives in the pure `src/utils/notification-groups.ts`**, for the reason
+`utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist: the screen pulls in React Native and
+is untestable under jest here, and each of these fails **silently** — a row filed under the wrong day, a
+mongo id printed as a lead tag, or two unrelated notifications merged into one card all read as a
+styling quirk rather than an error.
+
+### ~~The grouping is three passes, and each guard is load-bearing~~ — ALL REMOVED
+
+> ⚠️ **SUPERSEDED in full by "…and then the grouping was reversed" below.** Everything in this
+> subsection — the card runs, the stacking, the `lead-issued` aggregation and every guard on them — was
+> deleted on request. It is left here only so a reader who finds `cardKeyOf` / `stackKeyOf` in the git
+> history knows what they did and why they are gone. **Do not reintroduce any of it.**
+
+1. **Day buckets**, then 2. **cards** — a RUN of *adjacent* rows sharing a card key, not a global
+   group-by, so an hours-old row can never be pulled up beside a fresh one and read as though they
+   happened together — then 3. **items**, where repeats of one event family collapse into the newest and
+   the rest become the disclosure's sub-rows.
+
+- ⚠️ **A row with no resolvable identity keys on its OWN id**, so it can never merge into a neighbour.
+  Telling the rep two unrelated notifications concern the same lead is worse than an extra card.
+- ⚠️ **`addendum-signed` carries its `outcome` in the stack key.** The title reads "Addendum signed" for
+  a DECLINE too (the rule `push-routing.addendumOutcome` states), so collapsing the two would hide a
+  refusal behind an approval.
+- ⚠️ **A collapsed item is unread when ANY row behind it is.** The disclosure hides rows; a hidden
+  unread would leave the bell counting something the rep has no way to reach. For the same reason the
+  tap marks **every** `ids` entry read, not just the head.
+- **`lead-issued` AGGREGATES** rather than collapsing — consecutive batches sum to
+  `4 new leads issued to you` with `Show breakdown`, which is the design's own row. An absent `count`
+  counts as **one, never zero**, which would erase the row from its own total.
+
+### Dates are parsed as TEXT, and the day heading and the clock share that parse
+
+⚠️ The repo's standing rule (`utils/job-change-summary.ts`) is that an offset ISO string shifts the
+calendar day either side of midnight. The stronger reason here is **consistency**: `dayKeyOf` and
+`formatClockTime` read the same `YYYY-MM-DDTHH:MM` prefix, so a row filed under "Yesterday" can never
+print a time from today. Change one and you must change the other.
+
+⚠️ **A future day is clamped to `Today`.** Reachable without any clock being wrong — `createdAt` can be
+UTC while the rep is behind it — and "Tomorrow" on a notification that has already arrived is the worse
+answer. `daysBetween` builds both sides through `Date.UTC` on the parsed components so neither can be
+shifted by the device timezone.
+
+### `leadTagOf` reads a FIXED key list and REJECTS a mongo id
+
+The design's chips are `41PCDLG`, `41AK` and `SelfGen` — the lead's human number, or its `leadCode`
+when the number is `"N/A"` (which is exactly what a self-gen lead stores; see `response-one.txt`).
+
+⚠️ **The push payload's `leadId` is a mongo id while the lead RECORD's `leadId` is that human number.**
+Both are read from the same key, and the 24-hex guard is the whole reason that is safe: whichever the
+backend sends, the right one renders and the wrong one never does. Without it the chip would be filled
+on every row with a database key that looks deliberate. `'N/A'`, the other placeholders, and anything
+over 16 characters are rejected too, and an unrecognised payload yields `''` so the chip is simply
+absent — the discipline `readDocumentGroup` sets.
+
+### Two deliberate divergences from the mock
+
+⚠️ **The heading is not a serif.** The mock loads Source Serif 4; this app bundles **Public Sans only**
+(and naming an unbundled family drops that text straight back onto the device font — the rule the
+app-wide font ticket records). The heading is carried by size and tighter tracking instead.
+
+⚠️ **The unread wash is a FLAT tint, not the mock's gradient.** `rgba(30,92,67,0.06) → transparent` needs
+a gradient library this repo does not ship, and pulling `react-native-svg` in behind every row to fake
+one is not worth it. `#F1F6F2` is that tint flattened over white; the 3px pine rail is what actually
+carries the signal.
+
+⚠️ **`You're viewing the last 3 days` is DERIVED from the oldest row loaded**, not hardcoded, and only
+shows once `hasMore` is false. The app has no retention window to quote, so a fixed number would be a
+claim nothing backs. A list that only reaches today reads *"You're viewing today's notifications"*.
+
+### Smaller decisions
+
+- **The colour block is literals, not `useTheme()`.** The paper ground is not a colour the app's palette
+  has; reading `colors.background` would put the cards on plain white and lose the separation the whole
+  design rests on. The app is light-only today (`ThemeProvider` forces it) — give the block a dark twin
+  if that changes.
+- **`stickySectionHeadersEnabled={false}`** — a pinned day heading over a card list reads as a second
+  header, and the design pins only the screen header.
+- **`overflow: 'hidden'` on the card** clips the rail and the row wash to its corners. Safe only because
+  the card carries no shadow; iOS drops a shadow on a view that sets it (the inspection-photo card note
+  above).
+- **Mark all read stays MOUNTED at zero**, dimmed and disabled, rather than being swapped for a spacer —
+  the header no longer reflows the moment the last notification is read.
+- The tap handler, `resolvePushRoute` branch for branch, and the "always fetch `all`, filter unread
+  client-side" rule are **unchanged**; only the presentation moved.
+
+Tests: `__tests__/utils/notification-groups.test.ts`.
+
+⚠️ Needs a device check — this repo cannot render-test and the whole ticket is layout: the day headings,
+the card grouping on a lead with several notifications, the disclosure expanding, and that the chip shows
+a readable lead number rather than nothing. **If every chip is absent, the payload is naming no human
+lead id** — add the key the backend actually sends to `LEAD_TAG_KEYS`; do not relax the mongo-id guard.
+
+### …and then the grouping was reversed: ONE CARD PER NOTIFICATION
+
+Follow-up on the same screen: *"currently you have implemented the group notification UI but i need a
+separate notification for each notification like grouping in message, issued lead etc — convert it from
+group to single."*
+
+Every merging pass is **gone**. `buildNotificationSections` is now a mapping, not a grouping: day
+sections, and inside each one **one card per history row**, in the order the API returned them.
+
+| removed | what it used to do |
+|---|---|
+| `NotificationCard` + `cardKeyOf` | merged adjacent rows about the same lead into a shared card |
+| `stackKeyOf` / `buildItem`'s stack | collapsed repeats of one event behind `+N more update on this lead` |
+| `issuedCount` / the `lead-issued` aggregate | summed two batches into `4 new leads issued to you` |
+| `stackNoun` / `plural` | the disclosure copy |
+| `NotificationItem.ids` / `.stack` / `.moreLabel` / `.lessLabel` | the disclosure's data |
+| `styles.itemDivided` / `stackMore` / `subList` / `subRow` | the in-card divider and the sub-rows |
+| the screen's `expanded` state + `toggleStack` | which stack was open |
+
+- **`NotificationSection.data` is now `NotificationItem[]`** — the card layer is gone entirely, so the
+  screen's `renderItem` paints one row and `styles.card` picked up the `flexDirection: 'row'` the item
+  used to carry. Each card is its own `TouchableOpacity`.
+- **Mark-read is back to one id.** The tap cleared every `ids` entry precisely because a stack could
+  hide unread rows; with nothing hidden, `row.id` is the whole of it.
+- **`item.key` is the history id**, which is unique per notification and stable across a refetch, so a
+  pressed row cannot swap identity under the rep.
+- ⚠️ **Rows are still bucketed by day in ARRIVAL ORDER, not sorted.** An out-of-order list therefore
+  renders two sections with the same label rather than silently rearranging the rep's notifications —
+  the API returns them newest-first, and resorting here would hide a paging bug instead of showing it.
+- ⚠️ **`CHAT_EVENTS` is no longer imported by the grouper** (nothing keys a card any more), so the note
+  on the export names the three behaviours that remain. The export stays — it is still the one list, and
+  the de-duplication it bought is what makes that true.
+
+⚠️ The **day sections, the paper ground, the bubbles, the lead chip, the unread rail and wash, the tabs
+and the derived end hint are all unchanged.** Only the merging was reversed; this is not a revert of the
+redesign.
+
+## A resulted lead's `agreement-signed` notification opens the LEAD, not the Job Builder
+
+Ticket: *"when the lead is resulted and the user click on the signed agreement then do not move the user
+to the agreement screen — user should move to the lead main screen."*
+
+`agreement-signed` resolves to `{ kind: 'jobBuilder' }`, and the reasoning on that route is sound for
+the normal case: signing the agreement is what **unblocks** submitting the job, so the rep's next action
+is "Complete Job" and Job Docs is a detour. Once the lead is **resulted** that stops being true — the
+deal lives on the Lead Center, which is where the agreement, the contract details and the addendums all
+are — and dropping the rep into a builder for a job that is already done reads as though the app has
+lost the submission.
+
+**New pure `src/utils/lead-result-status.ts`** (`isLeadResulted` / `normalizeResultStatus`), for the
+reason `utils/push-routing.ts` is pure: the two callers are both untestable under jest here and they
+**must** answer identically.
+
+⚠️ **BOTH tap paths changed, and that is the point.** The check runs in
+`screens/Notifications/index.tsx` *and* in `hooks/usePushNotifications.ts`, against the same helper — a
+row and the banner that raised it landing on different screens is the exact failure the shared routing
+module exists to prevent. Changing one and not the other would be invisible until a rep noticed.
+
+⚠️ **An ALLOWLIST of resulted statuses, NOT the `NON_RESULTED_STATUSES` deny-list** that
+`widgets/components/LeadCard.tsx` and `screens/DealDetail` use (`['lfLead','selfGenerated','scheduled']`,
+web parity with `job-card.js`). The two are not interchangeable here: a deny-list reads a **missing or
+unknown** status as resulted, and since this rule now decides where a notification lands, that default
+would silently divert every status-less lead away from the Job Builder. The allowlist fails the other
+way — anything unrecognised keeps the behaviour the app already ships. Its values are
+`JobDocsSection.isResulted`'s, so the screen the rep is sent to agrees about why they are there.
+
+- **Placed FIRST in the branch**, above the `isDynamic === false` test and above `resolveBuildIds`, so a
+  resulted lead also skips the calculator round trip. Resulted therefore outranks an explicitly dynamic
+  push — the dynamic flag says the builder *exists*, not that it should be opened.
+- **Navigated with no `tab`**, so the Lead Center opens on its own default (`job_docs`) — the lead's
+  main view rather than a sub-tab chosen by a notification.
+- **Statuses are normalized** (lower-cased, non-alpha stripped), so `Demo No Sale` → `demonosale`.
+- ⚠️ Three other copies of the non-resulted rule exist (`LeadCard.tsx`, `DealDetail/index.tsx`,
+  `utils/lead-activity-log.ts`). They were **left alone** — pointing a shared list at big unrelated
+  screens is not something a notification ticket should carry — but they are the obvious next adopters.
+
+Tests: `__tests__/utils/lead-result-status.test.ts`.
+
+⚠️ Needs a device check: sign an agreement on a lead that is already resulted and confirm the banner and
+the Notification Center row both open the Lead Center, and that a NOT-yet-resulted lead still opens the
+Job Builder on its Summary step.
+
+## `chat-reaction` — the tenth event type, and the duplicate list it exposed
+
+Contract: **`CHAT-REACTION-NOTIFICATIONS.md`** (repo root, REVUIUX-97 QA item 5). A rep is not told when
+someone reacts to their message. Reactions already exist and already broadcast over the socket
+(`reaction-added`); what is missing is the push. §6 of that document says **the app must ship first, or
+at least together** — if the backend sends `chat-reaction` to a build that does not know it,
+`resolvePushRoute` returns `null` and every reaction is a banner whose tap does nothing and a list row
+reading *"There is nothing more to open for this one."*
+
+**This is the app half only. Nothing is sent yet**, and every edit below is INERT until the backend
+adds `NotificationEventTypes.ChatReaction` — which is exactly why it is safe to land now.
+
+| site | change |
+|---|---|
+| `PushEventType` (`utils/push-routing.ts`) | `'chat-reaction'` added to the union |
+| `CHAT_EVENTS` (same file) | the event added — **and the set EXPORTED**, see below |
+| `describeNotification` (`hooks/useNotifications.ts`) | `case 'chat-reaction'` → slate + `emoticon-happy-outline` |
+| `NOTIFICATION_TYPES` (`services/api/notifications.ts`) | added, so `NotificationHistoryType` stays honest |
+| `invalidationKeysFor` | **no case, deliberately** — now written down rather than assumed |
+| `usePushNotifications` | untouched: it is generic over `isRenderable` / `channelForEvent` |
+
+### ⚠️ Membership of `CHAT_EVENTS` is the whole implementation — and there were TWO copies
+
+Adding the event to that one set gives it the destination (`resolvePushRoute`'s chat branch already
+reads `chatId` and treats an absent `leadId` as a channel), the Android channel (`channelForEvent` →
+`CHANNEL_MESSAGES`, so a rep who has muted chatter is not woken by a thumbs-up), and foreground
+suppression — which matters more here than for a message, since reacting is cheap and usually happens
+while both parties are looking at the thread.
+
+⚠️ **The Notification Center redesign had quietly made a SECOND copy of that list.**
+`utils/notification-groups.ts` declared its own `CHAT_EVENTS` for card keying, so the contract's
+one-line change would have covered three of the four behaviours and silently missed the fourth: a
+reaction would key on its `leadId` (or, on a channel, on its own row id) instead of `chat:<chatId>`,
+and would sit in a card of its OWN beside the thread it belongs to. The set was **exported from
+`push-routing` and imported** by the grouper. That import is now gone — the ungrouping follow-up above
+deleted the card keying entirely, so nothing keys a card any more — but **the export stays**: it is the
+one list, and keeping it that way is what stops the eleventh event type repeating this.
+
+### The two places the contract's text had to be translated rather than copied
+
+⚠️ **`describeNotification`'s suggested `color: '#0B6A85'` is stale.** That is the OLD chat tint,
+written before the function moved to the redesign's four families; taking the hex literally would make
+the reaction the one chat row painted a fifth colour. It uses **slate** (`#3E5C78`), that colour's
+replacement, so a reaction still reads as chat. The document's actual instruction — *don't let it fall
+to `default` and show a grey bell in an "Other" group next to correctly grouped chat rows* — is what is
+honoured.
+
+⚠️ ~~**The disclosure label could no longer say "on this lead".**~~ **Moot** — the ungrouping follow-up
+above removed the disclosure, so a burst now renders as one row per reaction. §5's burst problem is
+therefore the BACKEND's to solve (its "notify once, then stay silent for N minutes" option), not
+something the list absorbs. Worth knowing if reps report a flooded Notification Center.
+
+### Not done, and why
+
+- ⚠️ **Tapping does NOT scroll to the reacted message.** `messageId` is in the payload, but §3 files
+  this as an open question and says it needs an optional `messageId` on the `chat` `PushRoute` **and**
+  `ChatDetail` honouring it — the document's own words, *"a larger change than the rest of this
+  document, and worth deciding separately"*. The tap opens the thread, which is the contract's baseline.
+- **Every §5 decision is the backend's** — who is notified (proposal: the message author only, never
+  self-reactions), the burst rule, never notifying on `remove-reaction`, and whether a reaction writes
+  a history row at all. ⚠️ That last one has an app-side consequence: `isRenderable` currently ties
+  display and history together, so **banner-only would be the first exception to it** and is not
+  something the app can opt into per type today.
+
+Tests: `__tests__/utils/chat-reaction.test.ts`.
+
+⚠️ Nothing can be checked on device until the backend sends the event. `npm run test-push -- --user=<id>
+--event=chat-reaction` (§6.4) is what fires a real payload without needing two accounts in a chat.
+
+## `lead-issued` opens the Leads LIST, never one lead's screen
+
+Ticket: *"when a lead is assigned and user click on the lead it will navigate the user to the lead
+screen instead of the lead listing screen — fix this issue: when assign lead is clicked from the
+notification it will move to the listing screen, not detail screen."*
+
+One line in `resolvePushRoute`:
+
+```ts
+const issued = str(data?.issuedLeadId);
+return issued ? { kind: 'lead', leadId: issued } : { kind: 'leadList' };   // ← the bug
+```
+
+`lead-issued` has **three shapes** and only the first can name a lead at all — single issue carries
+`issuedLeadId`, while bulk issue and route dispatch carry `count` only. So the deep link fired on
+exactly one of them, and **the same notification landed in two different places depending on how the
+office happened to issue the work.** A rep told *"4 new leads issued to you"* got the list; a rep told
+*"1 new lead issued to you"* got that lead's detail screen, with no sense of what else had come in.
+
+Being issued work is a **queue** event, so the queue is the destination. The branch is now
+unconditional `{ kind: 'leadList' }`.
+
+⚠️ **`issuedLeadId` is no longer read here — do not "restore" the deep link for the single-lead case.**
+That asymmetry IS the bug. (`utils/notification-groups.ts` still reads the key for the row's lead
+chip, which is a LABEL, not a destination — and its mongo-id guard drops it anyway.)
+
+⚠️ **Fixed in the shared pure router, so BOTH taps changed together** — the push banner
+(`usePushNotifications`) and the Notification Center row (`screens/Notifications`) already had a
+`leadList` branch navigating to `'Leads'`, so neither screen needed an edit. That is the whole reason
+the routing lives in one module; had this been patched at a call site, the other surface would still
+be opening the detail screen.
+
+⚠️ **The other lead events are UNCHANGED and should be.** `lead-cancelled`, `appointment-issued` and
+`addendum-signed` each name one specific lead the rep is being sent to read, so they still resolve to
+`{ kind: 'lead' }`. Asserted, so a future sweep over this switch cannot flatten them by accident.
+
+`channelForEvent` (`CHANNEL_LEADS`) and `invalidationKeysFor` are untouched.
+
+Tests: `__tests__/utils/lead-issued-routing.test.ts`.
+
+⚠️ Noted, NOT touched: three `__tests__/screens/DynamicDealCenter/` suites (`auto-adjust-cost-floor`,
+`funding-settled-on-return`, `refund-hold-and-reminders`) fail to RUN here — they import
+`screens/DynamicDealCenter/utils/funding`, which does not exist on this branch. They are stale local
+files from another branch's checkout; `__tests__/` is gitignored, so nothing keeps them in step.
+
+## Chat: the lead header photo had no preview, and message photos opened slowly
+
+Ticket: *"Sales app - messages - should let me preview photo / image should open instantly like re
+render and inspection photo"*, circling the **lead thumbnail in the chat header**.
+
+Two separate gaps behind one sentence:
+
+**1. The header thumbnail was inert.** `LeadHeaderThumbnail` (`widgets/components/chat/ChatHeader.tsx`)
+rendered a bare `<Image>` with **no press handling at all** — there was no way to open it. It is now a
+**`PhotoPeekPressable`**: HOLD peeks it enlarged (instant, warmed to a local `file://`), and a TAP
+opens the same **`ImageGalleryModal`** the chat's image messages already use, so the two surfaces
+behave alike. The tap gets its uri from `PhotoPeekPressable`'s **`onPress(peekUri)`** — added for the
+inspection grid — so the gallery opens on the warmed file rather than re-fetching. The
+home-outline placeholder branch is untouched: nothing to preview, nothing to press.
+
+**2. Message photos already had a viewer, but it wasn't instant.** `ImageGalleryModal` rendered raw
+urls with `cache: 'force-cache'`, which **buys nothing** on our pre-signed S3 links (no cache headers —
+see "Hold-to-peek previews" above). It now resolves through the local-file cache, in both the pager and
+the filmstrip.
+
+⚠️ The gallery warms **only while `visible`**. It is mounted per message bubble, so warming on mount
+would download every attachment in the thread on open.
+
+The warming hook is now shared: **`src/hooks/useWarmedImageUris.ts`** (`{ [url]: fileUri }`, filling in
+as downloads land), used by `ImageGalleryModal` and `InspectionPhotosPanel`. It was written for the
+inspection viewer last ticket and moved out rather than copied on the second consumer. It keys its
+effect on the **joined url string**, not the array identity — callers build the array inline, so
+depending on identity would restart every download on every render.
+
+⚠️ Reach for this hook (or `PhotoPeekPressable`, which warms its own) for **any** new full-size photo
+view. `Image.prefetch` and `cache: 'force-cache'` do not work on these urls — that is the standing
+gotcha in §6, and this ticket is the third surface to hit it.
+
+Not changed: chat image **messages** were already previewable via `ImageGalleryModal` from
+`ChatMessageBubble`, so only their speed needed fixing.
+
+## Chat: job-change addendum lifecycle cards
+
+Spec: **`SALES-APP-ADDENDUM-CHAT.md`** (repo root, 2026-08-12) — read it, it is the contract. The
+lead chat now receives **general (sender-less) system messages** for the addendum lifecycle: the rep
+proposed job changes, and the customer approved or declined them.
+
+**Mobile emits nothing and calls no new endpoint to make these appear.** They ride the existing
+`GET /chat/v1/:chatId/messages` and the existing `new-message` socket event; `ChatService.normalizeMessage`
+spreads `...m`, so `metadata` already survives **both** paths with no service change. The entire ticket
+is *rendering* plus the two View destinations.
+
+⚠️ **There is no web ref to port from.** `grep -rl "JOB_CHANGE_ADDENDUM\|JobChangeMessageCard"` over
+`mhalt-revDSM-sales-frontend` returns only `src/api/leads.js` — the sales web app has the two API
+functions but not the chat card, so this was written against the spec. §8 of the spec names the web
+files to mirror **once they land**.
+
+**Three new files.**
+
+- **`src/utils/job-change-summary.ts`** — pure, zero imports (no React, no RN, no date library).
+  Detection (`getJobChangeMeta` / `isJobChangeAddendum` / `getJobChangeTitle` / `formatChatTime`) plus
+  the whole diff (`buildJobChangeSummary`). Split out for the same reason as `utils/inspection-photos.ts`
+  and `utils/pitch-book.ts`: the card and the modal both pull in RN and are untestable under jest here,
+  so **every rule that can be got wrong lives in this file**.
+- **`src/widgets/components/chat/JobChangeMessageCard.tsx`** — the row: round status icon, the
+  server-authored line, outlined green **View**. ⚠️ The **timestamp sits ABOVE the card, centered**,
+  not inside it — it reads as a chat time separator rather than card content, which is how web draws
+  it. The first pass put it under the title inside the card and QA sent back the web screenshot.
+  The card is a single vertically-centred row (icon | title | View), so the title wraps to two lines
+  without pushing anything out of alignment.
+- **`src/widgets/components/chat/JobChangeDetailsModal.tsx`** — the before/after, reading
+  `LeadService.getDraftSummary` (`/lead/v1/job-builder-draft/{draftId}/public`, **no auth** — the same
+  payload the customer's own consent page renders, which is the point).
+
+`ChatDetail/index.tsx` wires them: **`renderMessage` short-circuits** to the card when
+`getJobChangeMeta(props.currentMessage)` is non-null, and mounts `JobChangeDetailsModal` +
+`PdfPreviewModal`. Both `GiftedChatAny` instances (iOS / Android branches) share that one
+`renderMessage`, so a single change covers both.
+
+⚠️ **Intercepting at `renderMessage` — before `<Message>` — is what drops the sender**, and that is the
+whole failure mode the spec calls out. `senderId` is a *required, populated* user reference (so it can
+never be a `"system"` sentinel), and **all three events carry the REP as the technical sender —
+including the customer's approve/decline**, which arrives on a public no-auth endpoint where there is
+no user at all. Rendering these through the normal path would draw
+*"Customer has approved job changes"* as the rep's **own outgoing bubble**. Bypassing `<Message>` also
+suppresses the avatar, me/them alignment, reactions, reply, edit, pin, the long-press menu and the
+read-receipt row in one move, rather than teaching each of them an exception.
+
+⚠️ **Gate on `metadata`, NEVER on the message text.** An unrecognised `metadata.type` (e.g.
+`INSTALLER_JOB_STATUS_REQUEST`) returns `null` from `getJobChangeMeta`, so future event types degrade
+to normal bubble rendering instead of rendering as a broken card.
+
+**View is action-dependent, and deliberately so** (client-specified): `ACCEPTED` → the signed PDF
+directly, no intermediate screen; `PROPOSED` / `DECLINED` → the changes screen. **Approved ⇒ PDF,
+always** — including when the changes screen is opened from a `PROPOSED` card and the fetched draft
+turns out to be `accepted` (the customer signed after the card was posted), which renders a short note
+plus an "Open signed addendum PDF" button instead of change rows.
+
+⚠️ **`addendumPdfPending` is BOTH the spinner and the double-tap guard.** `/amendment-pdf`
+**generates the document on demand** for addendums approved before this feature existed, so two taps
+mean two Puppeteer builds and two S3 uploads for one addendum. A `409` (draft not accepted) falls back
+to the changes screen rather than dead-ending. The url is a short-lived pre-signed S3 link — fetched at
+tap time, never cached.
+
+⚠️ **The spinner is keyed on the MESSAGE id (`cardId`), not on `draftId`.** QA: *"when i try to view
+approved changes loader should only show with approved card."* It shipped keyed on `draftId` and lit up
+**two** cards. Not a rendering slip — one addendum posts up to three cards (proposed →
+approved/declined) and **they all carry the same `draftId` by design** (§6), so the draft can never
+identify which card was tapped. `addendumPdfPending` therefore holds `{ draftId, cardId }`: `draftId`
+still de-duplicates the in-flight request (two taps on the two cards of one addendum ARE the same PDF,
+so the second is correctly ignored) while `cardId` scopes the spinner. `JobChangeMessageCard` derives
+`cardId` from `message._id` and hands it back through `onView(meta, cardId)`. The details modal has a
+single button and no card to disambiguate, so it passes a `modal:<draftId>` sentinel and reads the
+plain `pdfLoading` boolean.
+
+⚠️ **Always `metadata.draftId` from the tapped card.** A lead can carry several addendums, each a
+separate record with its own PDF, so *"the lead's addendum"* is never a valid lookup. Cards are **not
+numbered** — the deal-details screen numbers them newest-first, so its numbering shifts whenever a new
+one is raised and any numbering here would contradict it. Timestamps are the disambiguator. The server
+de-duplicates per `(draftId, action)`, so no client-side dedupe is needed.
+
+### The four formatting rules are not optional
+
+The two sides of a draft are **written by different screens**, so a naive comparison reports unchanged
+values as changes — phantom edits on a document a customer signs. All four live in
+`job-change-summary.ts`:
+
+1. **Compare the FORMATTED values, not the raw ones.** `current.scheduleTime.date` may be `"7/21/26"`
+   while `proposed` holds `"2026-07-21T…"` for the same day; `"14000"` vs `14000` likewise.
+2. **Parse ISO dates as TEXT** — `ISO_DATE` reads the `YYYY-MM-DD` prefix with a regex. ⚠️ The string
+   carries a **timezone offset**, so building a local `Date` shifts the calendar day: verified that
+   `new Date('2026-08-03T00:30:00+05:00')` is **Aug 2** in `America/New_York` while the text parse is
+   **Aug 3**. This is a date a customer signs — never route it through a `Date`.
+3. **Normalise the time window before comparing.** `morning → 8:00 AM - 12:00 PM`,
+   `afternoon → 12:00 PM - 4:00 PM`, whitespace collapsed, unicode dashes folded. ⚠️ That dash class is
+   written as the **escape sequence** `/[\u2010-\u2015\u2212]/` — U+2010–U+2015 and U+2212 are visually
+   indistinguishable from `-` in a diff, so a literal class is unreviewable (same family of trap as the
+   `SCOPE_SEP` NUL rule).
+4. **Strip raw authored ids** out of `buildChangeSummary[].changes[].field` — split on `·`, drop any
+   segment matching `^(field|section|tab)_\d{10,}[\w-]*$`, rejoin; `"Job Build"` if nothing survives.
+
+Two guards beyond the spec, both to avoid inventing a change: the **Schedule row is only emitted when
+the PROPOSED side actually carries a `scheduleTime`** (a pricing-only addendum leaves it absent, and
+absent means unchanged, not "changed to `—`"), and **money/time formatting is hand-rolled** rather than
+`toLocaleString`/`toLocaleTimeString` so it cannot depend on Intl being compiled into the JS engine —
+the same precedent set by `formatCaptureTime` in `utils/inspection-photos.ts`.
+
+Balance Method renders as `GreenSky — 2521`, taking the provider from the **same side** of the draft so
+a provider change still reads as a change. Legacy addendums carry `buildChangeSummary: null` — valid,
+pricing and schedule only. `/public` 404 means the draft was hard-deleted: an error state with Try
+Again, never a crash.
+
+⚠️ **`DealDetail`'s own `DraftComparison` (`screens/DealDetail/index.tsx:638`) implements NONE of these
+four rules** — it compares raw values and prints `ch.field` verbatim. That screen is currently
+unreachable (see the My Deals section above), which is why it wasn't touched, but if it is ever revived
+it should be pointed at `buildJobChangeSummary` rather than re-deriving the diff.
+
+## Recent Leads chat opens on "All", not "Unresulted Leads"
+
+Ticket: *"by default it should be all when we land on this screen instead of Unresulted leads."*
+`ChatThreads` seeded `statusFilter: 'unresultedleads'` / `selectedStatus: 'Unresulted Leads'`, so the
+list opened already filtered and a rep with only resulted leads landed on **"No Leads Conversations
+found"** — an empty screen that reads as broken rather than filtered.
+
+Two seeds, now `'all'` / `'All'`. Nothing else changed: `useChatThreads` already treats `'all'` as "no
+status constraint" on **both** sides — the server query (`else if (statusFilter !== 'all')` before it
+sets `serverStatus`) and the client-side list filter.
+
+⚠️ **The two seeds must stay in sync.** The dropdown derives the key from the label
+(`opt.toLowerCase().replace(/ /g, '')`), so the pair has to be exactly what tapping the **All** row
+produces — seeding only the label would leave the list filtered while the control claimed otherwise.

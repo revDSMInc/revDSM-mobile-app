@@ -70,6 +70,8 @@ __tests__/
 *.spec.tsx
 *.txt
 *.md
+# ...except the repo guide's part files: the root CLAUDE.md indexes them (§8), so they must be tracked.
+!docs/claude/*.md
 # ─── Yarn Berry (not used, but safe to include) ───────────────────────────────
 .yarn/*
 !.yarn/patches

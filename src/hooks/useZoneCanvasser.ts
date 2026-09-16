@@ -7,16 +7,30 @@ import axios from 'axios';
 
 import { useDeviceHeading } from './useDeviceHeading';
 
-import api from '../services/api';
-import { ENV } from '../config/env';
 import { logEvent } from '../services/api/LoggerService';
 import { logMapPinSelected } from '../utils/activity-log/map-activity-log';
 import { normalizeLeadStatus } from '../utils/zone-canvasser-status';
 import {
+  archiveZone,
   createBuildingLead,
+  createZone,
+  deleteZone,
+  fetchArchivedZones,
+  fetchCanvasserZones,
+  unarchiveZone,
   updateBuildingLead,
   updateSalesRepLead,
 } from '../services/api/zone-canvasser';
+import {
+  DEFAULT_ZONE_COLOR,
+  createZonePayload,
+  isZoneActionSuccess,
+  overpassElementsToHouses,
+  resolveZoneCreateError,
+  toZoneCoordinates,
+  validateZonePayload,
+  zoneApiId,
+} from '../utils/zone-helpers';
 import {
   clearZoneMapState,
   markZoneCanvasserShouldReopen,
@@ -53,8 +67,8 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
   const [isDrawingMode, setIsDrawingMode] = useState(false);
   const [drawType, setDrawType] = useState<'polygon' | 'rectangle'>('polygon');
   const [drawCoordinates, setDrawCoordinates] = useState<MapCoordinate[]>([]);
-  const [searchModalVisible, setSearchModalVisible] = useState(false);
-  const [searchText, setSearchText] = useState('');
+  // Web zone-canvasser-search-context: the committed search (address + pin coords).
+  const [searchAddress, setSearchAddress] = useState('');
   const [searchCoords, setSearchCoords] = useState<MapCoordinate | null>(null);
   const [isEditingGoBack, setIsEditingGoBack] = useState(false);
   const [legendOpen, setLegendOpen] = useState(false);
@@ -80,24 +94,36 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
   >({});
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Archived zones (web archived-zones-panel + useGetArchivedZones).
+  const [archivedZones, setArchivedZones] = useState<any[]>([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  // Web `unarchivingZoneId` — scopes the row spinner to the zone being restored.
+  const [unarchivingZoneId, setUnarchivingZoneId] = useState<string | null>(null);
+  // Web `isZoneActionProcessing` — the stats popup's delete / archive in flight.
+  const [isZoneActionProcessing, setIsZoneActionProcessing] = useState(false);
+
   const fetchZones = useCallback(async () => {
     setLoadingZones(true);
     try {
-      const response = await api.get<any>('/revzones/v1/sales-rep/my-revzones');
-      const data = response?.data;
-      if (data && typeof data === 'object') {
-        if (Array.isArray(data)) setZones(data);
-        else if (Array.isArray(data.zones)) setZones(data.zones);
-        else if (Array.isArray(data.data)) setZones(data.data);
-        else setZones([]);
-      } else {
-        setZones([]);
-      }
+      setZones(await fetchCanvasserZones());
     } catch (error) {
       console.error('Error fetching zones:', error);
       setZones([]);
     } finally {
       setLoadingZones(false);
+    }
+  }, []);
+
+  const fetchArchived = useCallback(async () => {
+    setArchivedLoading(true);
+    try {
+      setArchivedZones(await fetchArchivedZones());
+    } catch (error) {
+      console.error('Error fetching archived zones:', error);
+      setArchivedZones([]);
+    } finally {
+      setArchivedLoading(false);
     }
   }, []);
 
@@ -142,14 +168,20 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     if (!visible) {
       hasRestoredRef.current = false;
       pendingRestoreRef.current = null;
+      // Web `closeZoneMap` clears the search — the modal stays MOUNTED while hidden,
+      // so without this the last search pin would still be on the map next time.
+      setSearchAddress('');
+      setSearchCoords(null);
+      setArchivedOpen(false);
       return;
     }
     setBuildingStatusOverrides({});
     fetchZones();
+    fetchArchived();
     handleGetCurrentLocation();
     const saved = peekZoneMapState();
     if (saved) pendingRestoreRef.current = saved;
-  }, [visible, fetchZones, handleGetCurrentLocation]);
+  }, [visible, fetchZones, fetchArchived, handleGetCurrentLocation]);
 
   // Continuous live-location watch (web parity: useUserLocation in live-location-layer.js).
   // Runs only while the map is visible and NOT while drawing a zone; cleaned up on unmount.
@@ -367,19 +399,22 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     };
   }, [visible, allBuildings]);
 
-  const navigateToSearchLocation = useCallback((coords: MapCoordinate) => {
+  /** Web `updateSearch` + the map's `easeTo({ zoom: 17 })` on new search coords. */
+  const updateSearch = useCallback((address: string, coords: MapCoordinate) => {
+    setSearchAddress(address);
     setSearchCoords(coords);
-    animateToRegion(
-      {
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        latitudeDelta: 0.00922,
-        longitudeDelta: 0.00421,
-      },
-      500
-    );
-    setSearchModalVisible(false);
-  }, [animateToRegion]);
+    cameraRef.current?.setCamera({
+      centerCoordinate: [coords.longitude, coords.latitude],
+      zoomLevel: 17,
+      animationDuration: 500,
+    });
+  }, []);
+
+  /** Web `clearSearch` — removes the pin and its address. */
+  const clearSearch = useCallback(() => {
+    setSearchAddress('');
+    setSearchCoords(null);
+  }, []);
 
   const handleZoom = async (zoomIn: boolean) => {
     try {
@@ -450,6 +485,8 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
   const handleTouchEnd = () => setStartPoint(null);
 
   const handleMapPress = (e: any) => {
+    // Web archived-zones-panel ClickAwayListener: tapping the map dismisses the panel.
+    if (archivedOpen) setArchivedOpen(false);
     if (!isDrawingMode || drawType !== 'polygon') return;
     // Extract coordinate synchronously before setState — React's event pooling
     // nullifies e.nativeEvent by the time the updater callback runs, causing
@@ -460,129 +497,179 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
   };
 
   const handleSaveZone = async () => {
-    if (drawCoordinates.length < 3) {
-      Alert.alert('Invalid Zone', 'A zone must have at least 3 points.');
+    // Web `handleZoneCreated`: [lat, lng] pairs, the duplicate closing vertex dropped.
+    const coordinates = toZoneCoordinates(drawCoordinates);
+    if (coordinates.length < 3) {
+      Alert.alert('Invalid Zone', 'Please draw a valid area');
       return;
     }
+
     setIsProcessing(true);
     try {
-      let closedCoords = [...drawCoordinates];
-      if (closedCoords.length > 0) {
-        const first = closedCoords[0];
-        const last = closedCoords[closedCoords.length - 1];
-        if (first.latitude !== last.latitude || first.longitude !== last.longitude) {
-          closedCoords.push(first);
-        }
-      }
-      const polygonString = closedCoords.map((c) => `${c.latitude} ${c.longitude}`).join(' ');
+      // Web `fetchBuildingsInPolygon` — a failed read yields NO buildings rather than
+      // aborting, and the create call below reports it. The extra mirrors are mobile-only
+      // resilience: a field rep on a weak connection hits the primary's rate limit far
+      // more often than a desk browser does. Same query, same element mapping.
+      const polygonString = coordinates.map((c) => `${c[0]} ${c[1]}`).join(' ');
       const overpassQuery = `
         [out:json];
-        ( way["building"](poly:"${polygonString}"); relation["building"](poly:"${polygonString}"); );
+        (
+          way["building"](poly:"${polygonString}");
+          relation["building"](poly:"${polygonString}");
+        );
         out center;
       `;
-      let response: any = null;
-      let overpassError: any = null;
-      const endpoints = [
+      const overpassEndpoints = [
         'https://overpass-api.de/api/interpreter',
         'https://lz4.overpass-api.de/api/interpreter',
         'https://overpass.kumi.systems/api/interpreter',
       ];
-      
-      for (let i = 0; i < endpoints.length; i++) {
+      let elements: any[] | null = null;
+      for (const endpoint of overpassEndpoints) {
         try {
-          response = await axios.post(endpoints[i], overpassQuery, {
+          const response = await axios.post(endpoint, overpassQuery, {
             headers: {
               'Content-Type': 'text/plain',
               'User-Agent': 'RevDSMSalesMobile/1.0 (dev@revdsm.com)',
             },
-            timeout: 15000, // 15 seconds
+            timeout: 15000,
           });
-          if (response && response.data) break;
+          if (response?.data) {
+            elements = response.data.elements || [];
+            break;
+          }
         } catch (err: any) {
-          overpassError = err;
-          console.warn(`Overpass API failed on ${endpoints[i]}:`, err?.message);
-          // Wait 1s before trying next endpoint to allow servers to breathe/cache
-          await new Promise(resolve => setTimeout(() => resolve(undefined), 1000));
+          console.warn(`Overpass API failed on ${endpoint}:`, err?.message);
         }
       }
+      const buildingsFetchFailed = elements === null;
+      const buildingsData = overpassElementsToHouses(elements || []);
 
-      if (!response || !response.data) {
-        throw new Error(
-          `Failed to fetch building data. Please try again or draw a smaller zone. (${overpassError?.message || 'Timeout'})`
-        );
-      }
+      const payload = createZonePayload({
+        coordinates,
+        buildingDetails: buildingsData,
+        layerType: 'polygon',
+        color: DEFAULT_ZONE_COLOR,
+        userId: user?._id || user?.id,
+        companyId: user?.companyId,
+      });
 
-      const elements = response.data.elements || [];
-      const buildingsData = elements
-        .filter((el: any) => el.center)
-        .map((element: any, index: number) => ({
-          id: element.id || `building-${Date.now()}-${index}`,
-          position: [element.center?.lat, element.center?.lon],
-          label: element.tags?.name || `Building ${index + 1}`,
-          type: element.tags?.building || 'yes',
-        }));
-
-      const residentialBuildings = buildingsData.filter((b: any) =>
-        ['house', 'yes', 'detached', 'residential'].includes(b.type)
-      );
-
-      if (residentialBuildings.length === 0) {
-        Alert.alert(
-          'No Buildings Found',
-          'We could not detect any residential buildings within the boundary of this zone.'
-        );
-        setIsProcessing(false);
+      const validation = validateZonePayload(payload);
+      if (!validation.isValid) {
+        console.error('Zone payload validation failed:', validation.errors);
+        Alert.alert('Error', `Validation failed: ${validation.errors.join(', ')}`);
         return;
       }
 
-      const zoneId = Date.now().toString() + Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-      const zoneName = `REV-${zoneId}`;
-      const processedBuildings = residentialBuildings.map((b: any, idx: number) => ({
-        ...b,
-        id: b.id || (800400000 + (parseInt(zoneId.slice(-3)) || 0) * 100 + idx + 1),
-      }));
-
-      const geoJSONCoordinates = drawCoordinates.map((c) => [c.longitude, c.latitude]);
-      if (geoJSONCoordinates.length > 0) {
-        const first = geoJSONCoordinates[0];
-        const last = geoJSONCoordinates[geoJSONCoordinates.length - 1];
-        if (first[0] !== last[0] || first[1] !== last[1]) geoJSONCoordinates.push(first);
+      try {
+        const response = await createZone(payload);
+        if (response?.code === 200) {
+          Alert.alert(
+            'Success',
+            `Zone ${payload.zoneName} created with ${buildingsData.length} buildings`
+          );
+          setIsDrawingMode(false);
+          setDrawCoordinates([]);
+          fetchZones();
+        } else {
+          Alert.alert('Error', resolveZoneCreateError(response?.message));
+        }
+      } catch (error: any) {
+        console.error('Error creating zone:', error);
+        // One alert, not web's two stacked snackbars: a native Alert queued behind
+        // another is easy to miss, and the building read is usually WHY create failed.
+        const message = resolveZoneCreateError(error?.message);
+        Alert.alert(
+          'Error',
+          buildingsFetchFailed ? `Failed to fetch buildings. ${message}` : message
+        );
       }
-
-      const payload = {
-        zoneId,
-        zoneName,
-        assignedUsers: [],
-        layerType: 'polygon',
-        color: '#99FFB1',
-        geoJSON: {
-          type: 'Feature',
-          properties: {},
-          geometry: { type: 'Polygon', coordinates: [geoJSONCoordinates] },
-        },
-        coordinates: drawCoordinates.map((c) => [c.latitude, c.longitude]),
-        buildingDetails: processedBuildings,
-        userId: user?._id || user?.id,
-        companyId: user?.companyId,
-      };
-
-      const res = await api.post('/revzones/v1/sales-rep/create', payload);
-      if (res.status === 200 || res.status === 201) {
-        Alert.alert('Success', `Zone successfully created with ${processedBuildings.length} buildings.`);
-        setIsDrawingMode(false);
-        setDrawCoordinates([]);
-        fetchZones();
-      } else {
-        Alert.alert('Error', 'Failed to save zone details to server.');
-      }
-    } catch (error: any) {
-      Alert.alert(
-        'Error',
-        `${error?.message || 'Error occurred while creating zone.'}`
-      );
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  /** Web `handleZoneDelete` — only offered for a zone with no knocked doors. */
+  const handleZoneDelete = async (zone: any) => {
+    const zoneId = zoneApiId(zone);
+    if (!zoneId) return;
+    try {
+      setIsZoneActionProcessing(true);
+      const response = await deleteZone(zoneId);
+      if (response?.code === 200) {
+        setZoneStatsPopupOpen(false);
+        setSelectedZone(null);
+        fetchZones();
+        // Raised once the stats sheet has dismissed — an Alert presented while a
+        // native Modal is still animating out is dropped on iOS.
+        setTimeout(() => Alert.alert('Success', 'Zone deleted successfully'), 400);
+      } else {
+        Alert.alert('Error', response?.message || 'Failed to delete zone');
+      }
+    } catch (error: any) {
+      console.error('Error deleting zone:', error);
+      Alert.alert('Error', error?.message || 'Failed to delete zone');
+    } finally {
+      setIsZoneActionProcessing(false);
+    }
+  };
+
+  /** Web `handleZoneArchive` — only offered for a zone WITH knock history. */
+  const handleZoneArchive = async (zone: any) => {
+    const zoneId = zoneApiId(zone);
+    if (!zoneId) return;
+    try {
+      setIsZoneActionProcessing(true);
+      const response = await archiveZone(zoneId);
+      if (isZoneActionSuccess(response)) {
+        setZoneStatsPopupOpen(false);
+        setSelectedZone(null);
+        fetchZones();
+        fetchArchived();
+        setTimeout(() => Alert.alert('Success', 'Zone archived successfully'), 400);
+      } else {
+        Alert.alert('Error', response?.message || 'Failed to archive zone');
+      }
+    } catch (error: any) {
+      console.error('Error archiving zone:', error);
+      Alert.alert('Error', error?.message || 'Failed to archive zone');
+    } finally {
+      setIsZoneActionProcessing(false);
+    }
+  };
+
+  /** Web `handleZoneUnarchive`. */
+  const handleZoneUnarchive = async (zone: any) => {
+    const zoneId = zoneApiId(zone);
+    if (!zoneId) return;
+    try {
+      setUnarchivingZoneId(zoneId);
+      const response = await unarchiveZone(zoneId);
+      if (isZoneActionSuccess(response)) {
+        setArchivedOpen(false);
+        fetchArchived();
+        fetchZones();
+        Alert.alert('Success', 'Zone unarchived successfully');
+      } else {
+        Alert.alert('Error', response?.message || 'Failed to unarchive zone');
+      }
+    } catch (error: any) {
+      console.error('Error unarchiving zone:', error);
+      Alert.alert('Error', error?.message || 'Failed to unarchive zone');
+    } finally {
+      setUnarchivingZoneId(null);
+    }
+  };
+
+  /** Web: opening the archived panel closes the legend, and vice versa. */
+  const toggleArchivedOpen = () => {
+    setArchivedOpen((v) => !v);
+    setLegendOpen(false);
+  };
+
+  const openLegend = () => {
+    setLegendOpen(true);
+    setArchivedOpen(false);
   };
 
   const handleBuildingPress = (building: ZoneCanvasserBuilding) => {
@@ -831,11 +918,10 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     drawType,
     drawCoordinates,
     setDrawCoordinates,
-    searchModalVisible,
-    setSearchModalVisible,
-    searchText,
-    setSearchText,
+    searchAddress,
     searchCoords,
+    updateSearch,
+    clearSearch,
     isEditingGoBack,
     legendOpen,
     setLegendOpen,
@@ -866,7 +952,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     setZoneStatsPopupOpen,
     isProcessing,
     handleGetCurrentLocation,
-    navigateToSearchLocation,
     handleZoom,
     handleTouchStart,
     handleTouchMove,
@@ -886,5 +971,16 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     saveMapStateForAppointment,
     patchBuildingLeadAfterWork,
     fetchZones,
+    archivedZones,
+    archivedLoading,
+    archivedOpen,
+    setArchivedOpen,
+    toggleArchivedOpen,
+    openLegend,
+    unarchivingZoneId,
+    isZoneActionProcessing,
+    handleZoneDelete,
+    handleZoneArchive,
+    handleZoneUnarchive,
   };
 }
