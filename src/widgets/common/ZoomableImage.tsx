@@ -15,6 +15,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { isRemoteImageUrl, warmToLocalCache } from '../../utils/imageFileCache';
 import {
+  SWIPE_ACTIVATE_DISTANCE,
+  TAP_MAX_DISTANCE,
   anchoredTranslate,
   clampPan,
   clampZoomScale,
@@ -230,9 +232,16 @@ export const ZoomableImage: React.FC<ZoomableImageProps> = ({
    *
    * Absent the prop the composition is byte-identical to before, so the other callers
    * (the pitch book's inline card, Roofline Deck) are untouched.
+   *
+   * ⚠️ `maxDistance` is what keeps a SWIPE from also being this tap. The composition below
+   * is `Simultaneous`, so the swipe activating does not cancel the tap, and an RNGH tap has
+   * no movement limit by default — a quick swipe used to end as a successful tap as well,
+   * and in the pitch book that toggled the dock back on with every page turn. See
+   * `TAP_MAX_DISTANCE` in `utils/zoom-transform.ts`.
    */
   const singleTap = Gesture.Tap()
     .numberOfTaps(1)
+    .maxDistance(TAP_MAX_DISTANCE)
     .onEnd((_e, success) => {
       if (success && onSingleTap) runOnJS(onSingleTap)();
     });
@@ -253,7 +262,7 @@ export const ZoomableImage: React.FC<ZoomableImageProps> = ({
   const swipe = Gesture.Pan()
     .enabled(!zoomed && !!onSwipe)
     // Horizontal intent only, so a vertical drag still reaches a scrolling parent.
-    .activeOffsetX([-15, 15])
+    .activeOffsetX([-SWIPE_ACTIVATE_DISTANCE, SWIPE_ACTIVATE_DISTANCE])
     .onEnd((e) => {
       if (onSwipe) runOnJS(onSwipe)(e.translationX, e.translationY);
     });
