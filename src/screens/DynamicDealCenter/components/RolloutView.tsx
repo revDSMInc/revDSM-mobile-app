@@ -1146,8 +1146,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   /**
    * Is the ROLLOUT END PRICE box locked? Narrower than `isLocked` below, on purpose.
    *
-   * On a rehash the rollout really is still confirmed — the badge, the drops, the
-   * discount tiles and the Jobs-Built button all stay exactly as they are — but the
+   * On a rehash the rollout really is still confirmed — the badge, the drops and the
+   * Jobs-Built button all stay exactly as they are — but the
    * price is the one thing the second visit exists to change. So this single control
    * unlocks and nothing else does, matching the calculator step, where the locked
    * receipt likewise exposes the end price and only the end price.
@@ -1176,14 +1176,19 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }
   };
 
-  // A confirmed rollout is a LOCKED quote: the breakdown behind the chevron is a
-  // receipt, not a form. Anything that would move MSRP / the program totals is
-  // read-only from here on (the end price input already is) — otherwise a rep
-  // could re-price a locked calculator by tapping a Pre-Order Discount tile.
+  // A confirmed rollout locks Add Renders (and, via `priceLocked`, the end price).
+  //
+  // ⚠️ It deliberately does NOT lock the Pre-Order Discount tiles or their Default
+  // toggle. Ticket: "after confirming the rollout the 15% / 20% / 25% are locked — they
+  // should stay unlocked." That is also web's rule: `QuoteResultCard`'s discount group is
+  // `disabled={isDisabled}`, and `isDisabled` is `isAnyJobSubmitted && (confirmed ||
+  // submitted)` — a SUBMITTED job, not a confirmed rollout. A tile moves MSRP and the
+  // 1-Year totals, never the confirmed end price (the In-Home grand total), and it
+  // saves through the same debounced path as the post-lock down payment. Once a job IS
+  // submitted, the card-wide `pointerEvents` wrapper below locks the tiles with the rest.
   const isLocked = !!calculator.isRolloutConfirmed;
 
   const toggleDefaultDiscount = async (next: boolean) => {
-    if (isLocked) return;
     try {
       await SettingsService.updateCalculatorsSetting({ defaultPercentage: next ? discountPct : null });
       await refreshUser?.();
@@ -1716,9 +1721,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Text style={{ fontSize: 8, fontWeight: '700', color: '#94A3B8', marginRight: 6 }}>Default</Text>
                     <TouchableOpacity
-                      disabled={isLocked}
                       onPress={() => toggleDefaultDiscount(!isDefaultDiscount)}
-                      style={{ width: 32, height: 20, borderRadius: 10, justifyContent: 'center', paddingHorizontal: 4, backgroundColor: isDefaultDiscount ? '#22C55E' : '#CBD5E1', alignItems: isDefaultDiscount ? 'flex-end' : 'flex-start', opacity: isLocked ? 0.5 : 1 }}
+                      style={{ width: 32, height: 20, borderRadius: 10, justifyContent: 'center', paddingHorizontal: 4, backgroundColor: isDefaultDiscount ? '#22C55E' : '#CBD5E1', alignItems: isDefaultDiscount ? 'flex-end' : 'flex-start' }}
                     >
                       <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff' }} />
                     </TouchableOpacity>
@@ -1730,11 +1734,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                     return (
                       <TouchableOpacity
                         key={d}
-                        disabled={isLocked}
                         onPress={() => onDiscountChange(calculator.id, d)}
-                        // Locked: the chosen % still reads clearly, the rest fade
-                        // out so the row presents as a record, not a choice.
-                        style={{ flex: 1, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: active ? '#4CBB17' : '#E2E8F0', backgroundColor: active ? '#4CBB170D' : '#fff', opacity: isLocked && !active ? 0.4 : 1 }}
+                        style={{ flex: 1, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: active ? '#4CBB17' : '#E2E8F0', backgroundColor: active ? '#4CBB170D' : '#fff' }}
                       >
                         <Text style={{ fontSize: 12, fontWeight: '900', color: active ? '#15803D' : '#94A3B8' }}>{d}%</Text>
                       </TouchableOpacity>

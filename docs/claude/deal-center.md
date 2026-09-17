@@ -1699,3 +1699,48 @@ filed nothing.
 
 ⚠️ That file is **CRLF** — `newline=''`
 on both ends.
+
+## Pre-Order Discount tiles stay live after Confirm Rollouts
+
+Ticket: *"when the price is locked after confirm rollout inside the Deal Center, the 15%, 20% and 25%
+are currently locked — we should unlock these values even after the rollout price is confirmed."*
+
+`PremiumQuoteCard` (`RolloutView.tsx`) disabled the tiles and faded the unchosen ones on
+`isLocked = !!calculator.isRolloutConfirmed`, reasoning that a confirmed rollout is a receipt and a tile
+tap would "re-price" it. The Default toggle beside them was disabled the same way.
+
+**Mobile was stricter than web.** Web's `QuoteResultCard` discount group is `disabled={isDisabled}`, and
+`ViewAllCalculators.js` passes `isDisabled = isAnyJobSubmitted && (isRolloutConfirmed ||
+hasJobBuilderSubmitted(id))` — a **submitted job**, not a confirmed rollout. Web's Default checkbox is
+only `disabled={!currentDiscount}`. The screenshot's state (every rollout confirmed, "Jobs Built — Back
+to Tools" showing, no job submitted) is one where web lets the rep change the discount.
+
+Both controls now drop the `isLocked` gate and the fade. Nothing else changed:
+
+- **What a tile moves:** MSRP and the 1-Year Program totals, via `computeRolloutResult`. It does **not**
+  move the confirmed end price — the In-Home grand total stays the locked figure.
+- **How it saves:** `handleSetDiscount` → `markDirty` → the debounced PUT, with no confirmed-tab guard.
+  That is the same path the down payment already uses after lock, and the hook's **unmount flush** saves
+  a tile tapped just before "Jobs Built — Back to Tools".
+- **Downstream:** the Investment Center reads the saved `calculator.discountPercentage` live
+  (`InvestmentPanel.tsx`), and the Complete-Job payload picks it up in `job-submit-payload.ts`.
+- **Still locked after a job is submitted:** the card-wide `pointerEvents={jobLock.isAnySubmitted ?
+  'none' : 'auto'}` wrapper covers the tiles along with everything else, which is web's
+  `isDisabled`.
+
+⚠️ **`isLocked` is kept, and still gates Add Renders** (`RevRenderSlots locked={isLocked}`). The ticket
+named only the discount values, so do not read this as "a confirmed rollout locks nothing".
+
+⚠️ **Do not re-lock the tiles on `isRolloutConfirmed`.** That reinstates the stricter-than-web rule this
+ticket removed. The comment on `isLocked` records why.
+
+⚠️ `RolloutView.tsx` is **CRLF** (already in the root guide's list). No unit test: the change is
+interaction gating inside a React Native component, and no pricing rule moved.
+
+**Needs a device check:**
+- On a confirmed rollout, open the chevron, tap 20% and then 25%. MSRP and the 1-Year totals should
+  follow while the end price and the In-Home grand total stay put.
+- The Default toggle sets and clears.
+- Leave through "Jobs Built — Back to Tools" and reopen. The new % should persist and appear in the
+  Investment Center.
+- After Result / a submitted job, the tiles no longer respond.
