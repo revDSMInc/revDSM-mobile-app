@@ -33,6 +33,8 @@ import {
   applyResolvedAddress,
   coordsFromLeadPayload,
   needsAddressResolution,
+  parseCoordsAddress,
+  resolveFormAddress,
   resolveSyncAddress,
 } from '../utils/offline-lead-location';
 import { reverseGeocode } from '../utils/places';
@@ -947,6 +949,33 @@ const resolveQueuedLeadAddress = async (payload: Record<string, any>): Promise<s
   return source === 'reverse-geocoded' ? resolved : null;
 };
 
+/**
+ * The street address a queued consent form / roof waiver should be filed with, or `null` to send it
+ * unchanged. The rules are `resolveFormAddress`; this only gathers the inputs.
+ *
+ * ⚠️ Only a form signed while the lead held nothing but its GPS fix gets here — and the geocode is
+ * only spent when the lead has no real address to lend it. A failed lookup files the form with its
+ * coordinates, as before: a signed form is never held back over its address line.
+ */
+const resolveQueuedFormAddress = async (
+  work: OfflineLeadWork,
+  payload: Record<string, unknown>
+): Promise<string | null> => {
+  const leadAddress = (work.lead as Record<string, any> | undefined)?.fullAddress;
+  const fromLead = resolveFormAddress({ address: payload.address, leadAddress });
+  if (fromLead) return fromLead;
+
+  const coords = parseCoordsAddress(payload.address as string);
+  if (!coords) return null;
+  let reverseGeocoded: string | null = null;
+  try {
+    reverseGeocoded = await reverseGeocode(coords);
+  } catch {
+    /* keep the coordinates */
+  }
+  return resolveFormAddress({ address: payload.address, reverseGeocoded });
+};
+
 // ─── The steps ────────────────────────────────────────────────────────────────
 
 type StepResult = {
@@ -1189,6 +1218,16 @@ const runStep = async (
             continue;
           }
 
+          // Coordinates -> a street address, now that there is a connection. Written back to the
+          // queued form first, so a retry files the SAME address rather than looking it up again.
+          const resolvedAddress = await resolveQueuedFormAddress(work, form.payload);
+          const formPayload = resolvedAddress
+            ? { ...form.payload, address: resolvedAddress }
+            : form.payload;
+          if (resolvedAddress) {
+            patchOfflineConsent(work.clientId, form.clientId, { payload: formPayload });
+          }
+
           pdfPath = await submitConsentForm({
             kind: form.kind,
             leadId: consentLeadId,
@@ -1198,7 +1237,7 @@ const runStep = async (
               // would print a database key in the Lead ID box of a document the customer signed.
               // The association that matters is made by the finalize below, which files the PDF
               // against the real lead id.
-              ...form.payload,
+              ...formPayload,
               ...(form.signatureUri
                 ? {
                     file: {

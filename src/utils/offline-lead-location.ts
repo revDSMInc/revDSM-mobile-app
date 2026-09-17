@@ -261,3 +261,48 @@ export const applyResolvedAddress = <T extends Record<string, any>>(payload: T, 
     ...(payload.customer ? { customer: { ...payload.customer, address } } : {}),
   };
 };
+
+// ─── A signed form's address, at upload time ──────────────────────────────────
+
+export interface FormAddressInput {
+  /** The `address` field the form was signed with (pre-filled from the lead at the door). */
+  address: unknown;
+  /** The lead's address as the device holds it NOW — already resolved if the `lead` step ran. */
+  leadAddress?: unknown;
+  /** A reverse-geocode of the form's own coordinates; `null` when not attempted or it failed. */
+  reverseGeocoded?: string | null;
+}
+
+/**
+ * The street address to file a queued consent form / roof waiver with, or `null` to send it as is.
+ *
+ * The server renders those PDFs from the fields it is POSTed, and the modal pre-fills `address`
+ * from `lead.fullAddress` — which, at a door with no signal, is the GPS fix. Sent unchanged, the
+ * customer's copy prints `31.46608, 74.20334`.
+ *
+ * | the form's address | what ships |
+ * |---|---|
+ * | typed by the rep (anything but coordinates) | unchanged — `null` |
+ * | coordinates, and the lead now has a real address | **the lead's** — form and lead agree |
+ * | coordinates, the lead doesn't, and the geocode answered | the geocoded address |
+ * | coordinates and nothing resolved | unchanged — the coordinates are still true |
+ * | blank | unchanged — nothing to resolve from |
+ *
+ * ⚠️ The lead's address wins over a fresh geocode on purpose: the `lead` step already resolved the
+ * same fix (or the rep corrected it through Edit Customer), and two lookups can snap to two
+ * different houses — the form would then name a different address from the lead it is filed on.
+ */
+export const resolveFormAddress = ({
+  address,
+  leadAddress,
+  reverseGeocoded,
+}: FormAddressInput): string | null => {
+  const current = typeof address === 'string' ? address.trim() : '';
+  if (!current || !isCoordsOnlyAddress(current)) return null;
+
+  const lead = typeof leadAddress === 'string' ? leadAddress.trim() : '';
+  if (lead && !isCoordsOnlyAddress(lead)) return lead;
+
+  const geocoded = typeof reverseGeocoded === 'string' ? reverseGeocoded.trim() : '';
+  return geocoded || null;
+};

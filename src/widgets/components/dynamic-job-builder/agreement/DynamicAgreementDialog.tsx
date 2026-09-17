@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { AgreementSignatureModal } from '../../../modals/job-builder/AgreementSignatureModal';
 import { DynamicAgreementGenerator } from './DynamicAgreementGenerator';
@@ -450,7 +451,10 @@ export function DynamicAgreementDialog({
   // once `agreementData` arrives the signature modal takes over the screen.
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen">
-      <View style={styles.page}>
+      {/* ⚠️ A `Modal` is its own native view tree, so the app-root GestureHandlerRootView does not
+          reach it. Without this one, Android never delivers the offline agreement's pinch / pan
+          (`DynamicAgreementGenerator`) — iOS happened to work, which hid it. */}
+      <GestureHandlerRootView style={styles.page}>
         <View style={[styles.statusBarPad, { height: insets.top }]} />
         {renderHeader()}
 
@@ -565,7 +569,7 @@ export function DynamicAgreementDialog({
           />
         )}
         <View style={{ height: insets.bottom }} />
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
