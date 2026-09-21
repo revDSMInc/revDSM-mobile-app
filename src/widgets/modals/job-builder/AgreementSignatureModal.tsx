@@ -98,6 +98,18 @@ interface AgreementSignatureModalProps {
   /** Fired when the rep SENDS the agreement for remote signature (now pending). The
    *  parent closes the whole stack and marks the summary "Pending Customer Signature". */
   onRemoteSent?: (agreementId?: string) => void;
+  /**
+   * How this modal presents itself. Defaults to `slide`, which is right when it is
+   * opened straight from a screen (the legacy Job Builder summary).
+   *
+   * WARNING Pass `fade` when this is rendered INSIDE an already-open full-screen
+   * modal, as `DynamicAgreementDialog` does. Two nested modals both sliding up reads
+   * to the rep as the app opening two separate screens for one 'Generate' tap - they
+   * watch a page slide up to show a spinner, then a second page slide up over it. A
+   * cross-fade makes the document replace the spinner in place, so the whole thing
+   * looks like the one screen it logically is.
+   */
+  animationType?: 'none' | 'slide' | 'fade';
 }
 
 export const AgreementSignatureModal = ({
@@ -113,6 +125,7 @@ export const AgreementSignatureModal = ({
   customerDetails,
   onRemoteComplete,
   onRemoteSent,
+  animationType = 'slide',
 }: AgreementSignatureModalProps) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -400,7 +413,7 @@ export const AgreementSignatureModal = ({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false} statusBarTranslucent>
+    <Modal visible={visible} animationType={animationType} transparent={false} statusBarTranslucent>
       <StatusBar barStyle="light-content" backgroundColor={statusBarBg} translucent />
       <GestureHandlerRootView style={{ flex: 1 }}>
         <SafeAreaProvider>

@@ -435,14 +435,18 @@ export function DynamicAgreementDialog({
             most likely to want it: the customer can sign later, on their own phone, once the
             request goes out. */}
         {renderLocally && !!leadId && (
+          <>
           <TouchableOpacity onPress={() => setRemoteOpen(true)} style={styles.remoteBtn}>
             <Icon name="send-outline" size={16} color="#118D57" />
             <Text style={styles.remoteBtnText}>SEND REMOTELY</Text>
           </TouchableOpacity>
-        )}
-        <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+               <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
           <Icon name="close" size={20} color="#1C252E" />
         </TouchableOpacity>
+          </>
+        )}
+   
+       
       </View>
     </View>
   );
@@ -456,6 +460,8 @@ export function DynamicAgreementDialog({
           (`DynamicAgreementGenerator`) — iOS happened to work, which hid it. */}
       <GestureHandlerRootView style={styles.page}>
         <View style={[styles.statusBarPad, { height: insets.top }]} />
+        
+        
         {renderHeader()}
 
         {/* ── Offline: the device renders the agreement and the customer signs on it ──
@@ -552,6 +558,14 @@ export function DynamicAgreementDialog({
             // level-2 modal out a frame BEFORE this dialog (level 1) closes — the
             // blank-black-screen fix. `onClose` routes through the staged teardown.
             visible={signVisible}
+            // ⚠️ `fade`, NOT the default `slide`. This modal is a CHILD of the dialog's own
+            // full-screen modal, which is already on screen showing "Generating agreement…".
+            // Sliding it up too meant one 'Generate' tap played two full-screen open
+            // animations, which reads as the app opening two separate screens. Fading it in
+            // swaps the document in over the spinner, so the pair reads as the single screen
+            // it logically is. The loading shell already renders `null` once `agreementData`
+            // exists, so nothing shows through the cross-fade.
+            animationType="fade"
             onClose={handleSignClose}
             leadId={leadId || ''}
             agreementId={agreementData.agreementId}
