@@ -154,17 +154,31 @@ export async function fetchPropertyDetails(latitude: number, longitude: number) 
 }
 
 
+// Mongo indexes buildingDetails.position as 2dsphere, which needs GeoJSON order
+// [lng, lat]. The map works in [lat, lng], so swap at this boundary - sending
+// [lat, lng] makes Mongo read the longitude as a latitude and reject any point
+// past +/-90 lng (LA fails, Florida silently stores a bogus point).
+function withGeoPosition(payload: any) {
+  const position = payload?.buildingDetails?.position;
+  if (!Array.isArray(position) || position.length !== 2) return payload;
+  const [lat, lng] = position;
+  return {
+    ...payload,
+    buildingDetails: { ...payload.buildingDetails, position: [lng, lat] },
+  };
+}
+
 export async function createBuildingLead(payload: any) {
-  const res = await api.post<any>('/sales-rep/lead/v1/create', payload);
+  const res = await api.post<any>('/sales-rep/lead/v1/create', withGeoPosition(payload));
   return res.data;
 }
 
 export async function updateBuildingLead(leadId: string, payload: any) {
-  const res = await api.put<any>(`/canvasser/lead/v1/update/${leadId}`, payload);
+  const res = await api.put<any>(`/canvasser/lead/v1/update/${leadId}`, withGeoPosition(payload));
   return res.data;
 }
 
 export async function updateSalesRepLead(leadId: string, payload: any) {
-  const res = await api.put<any>(`/sales-rep/lead/v1/update/${leadId}`, payload);
+  const res = await api.put<any>(`/sales-rep/lead/v1/update/${leadId}`, withGeoPosition(payload));
   return res.data;
 }

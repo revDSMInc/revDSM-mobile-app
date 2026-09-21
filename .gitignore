@@ -69,9 +69,19 @@ __tests__/
 *.spec.ts
 *.spec.tsx
 *.txt
+
+# ─── Markdown ─────────────────────────────────────────────────────────────────
+# No markdown is pushed EXCEPT the Claude repo guide, so ticket write-ups and handoff
+# notes stay on the machine that wrote them. What IS pushed:
+#   CLAUDE.md        the root guide (and any nested CLAUDE.md)
+#   docs/claude/**   its part files - CLAUDE.md §8 indexes them and doc-guard parses §8
+#   .claude/**       Claude Code's own config (commands / agents / skills are .md files)
+# CLAUDE.local.md is personal by design and stays ignored.
+# NOTE: ignoring cannot untrack a file that is already committed; that takes `git rm --cached`.
 *.md
-# ...except the repo guide's part files: the root CLAUDE.md indexes them (§8), so they must be tracked.
-!docs/claude/*.md
+!CLAUDE.md
+!docs/claude/**/*.md
+!.claude/**/*.md
 # ─── Yarn Berry (not used, but safe to include) ───────────────────────────────
 .yarn/*
 !.yarn/patches

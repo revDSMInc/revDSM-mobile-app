@@ -722,9 +722,10 @@ themselves.** That is why the arrows go through `handleArrowPrev` / `handleArrow
 than the raw handlers — putting the nudge inside the shared handler would put the controls back on every
 swipe, which is exactly what the ticket rules out.
 
-⚠️ **A swipe cannot reach `toggleChrome` at all**, and not by a check: the swipe is a `Gesture.Pan` with
-`activeOffsetX`, and once a pan activates RNGH cancels the tap composed beside it. A drag too small to
-activate the pan is a tap by any reasonable reading, so revealing there is correct.
+~~⚠️ **A swipe cannot reach `toggleChrome` at all**, and not by a check: the swipe is a `Gesture.Pan` with
+`activeOffsetX`, and once a pan activates RNGH cancels the tap composed beside it.~~ **WRONG — a swipe DID
+reach it, and brought the dock back on every page turn.** The composition is `Simultaneous`, which cancels
+nothing; see *"…and a SWIPE still brought the dock back"* below.
 
 ⚠️ **Fullscreen only.** The inline card keeps its controls permanently — it is a scrolling page with no
 centre tap to bring them back, so the same behaviour there would strand the rep. Its arrows therefore
@@ -744,6 +745,52 @@ the tutorial appearing over a bare slide with no dock, arrows or counter behind 
 card, a swipe and the new arrows changing slide while a vertical drag still scrolls the page; and — the
 regression this last pass fixed — **the fullscreen arrows actually responding**, with a swipe working
 anywhere on the slide but NOT while it is zoomed in.
+
+#### …and a SWIPE still brought the dock back — the tap had no movement limit
+
+Ticket: *"the bottom bar should only be displayed by tapping on the screen, but currently when we swipe
+the page back and forward the bottom bar is also displayed — show or hide it only on a tap, or hide it
+after 3 s automatically."*
+
+The screen side was already right and is unchanged: `handleSlideSwipe` → `handlePrev` / `handleNext`
+carry no chrome behaviour, the arrows still go through their wrappers, and `toggleChrome` and the 3 s
+auto-hide effect are untouched. **The leak was in `ZoomableImage`'s gesture composition.**
+
+- "Once a pan activates RNGH cancels the tap beside it" holds for `Exclusive` / `Race` — **not** for
+  `Gesture.Simultaneous(pan, pinch, taps, swipe)`, which is what lets pinch and the swipe coexist (§6).
+- An RNGH `Tap` has **no movement limit unless one is set**: `_maxDistSq = NAN` in `RNTapHandler.m`,
+  `MAX_VALUE_IGNORE` in `TapGestureHandler.kt` (checked in the installed 2.32.0).
+
+So a quick swipe lifted inside the tap's default 500 ms `maxDuration` ALSO ended as a successful single
+tap: the double tap timed out, the single tap fired, `toggleChrome` ran. With the dock hidden, every page
+turn brought it back — and with it showing, a swipe hid it, the same bug from the other side.
+
+Fixed with **`.maxDistance(TAP_MAX_DISTANCE)`** on the single tap. `TAP_MAX_DISTANCE = 10` and the
+swipe's activation distance `SWIPE_ACTIVATE_DISTANCE = 15` (previously an inline
+`activeOffsetX([-15, 15])`) now sit side by side in the pure `utils/zoom-transform.ts`:
+
+| finger travel | what the touch is |
+|---|---|
+| up to 10 pt | a **tap** — toggles the chrome |
+| 10 – 15 pt | neither |
+| over 15 pt horizontally | a **swipe** — turns the page only past `MIN_SWIPE_DISTANCE` (40) |
+
+⚠️ **Keep `TAP_MAX_DISTANCE` below `SWIPE_ACTIVATE_DISTANCE`** or the two overlap again. Pinned by
+`__tests__/utils/tap-vs-swipe.test.ts`, which also checks that a tap-sized touch can never turn a page.
+
+⚠️ **Do not "fix" this by making the composition `Exclusive`.** `Simultaneous` is what lets pinch
+arbitrate with pan and swipe; the distance limit is the narrow fix and changes nothing else.
+
+Scope: only the fullscreen portrait and landscape viewers pass `onSingleTap`, and without it the single
+tap is not in the composition at all — so the inline card and Roofline Deck are unaffected (their
+swipe threshold is the same 15). The **double tap was deliberately left without a limit**, so zoom
+behaves as before. Intended side effect: a slow or vertical drag on the fullscreen slide no longer
+toggles the chrome either — only a touch that stays put does. A swipe with the dock SHOWING now leaves it
+alone, and the running 3 s timer takes it down as usual.
+
+⚠️ Needs a device check: with the dock hidden, swipe forward and back repeatedly, fast and slow, in
+portrait and landscape — **the dock must stay hidden**; a still tap shows it, a second tap hides it, and
+it hides itself after 3 s; a double tap still zooms without flashing the dock; a zoomed slide still pans.
 
 ### 9. The four DOCK TOOL tabs are ONE width, not four
 

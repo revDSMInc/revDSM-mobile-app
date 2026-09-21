@@ -6,6 +6,7 @@ import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns';
 import { STATUS_CONFIG } from './constants';
 import { useLeadPreviewUrl } from '../../../hooks/useLeadPreviewUrl';
 import { buildJobNumber } from '../../../utils/office-initials';
+import { sortLeadThreadsByLeadTime } from '../../../utils/lead-thread-order';
 import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 // ─── MainTabOption ────────────────────────────────────────────────────────────
@@ -121,9 +122,13 @@ export function groupChatsByLeadDate(chats: any[]) {
     groups.get(label)!.data.push(chat);
   });
 
+  // Sections stay newest-day-first; the ROWS inside a day read forwards (9am, 11am, 1pm,
+  // 3pm) off each lead's own appointment time, self-gens taking their creation time. See
+  // `utils/lead-thread-order.ts` - `useChatThreads` sorts by chat recency, which bears no
+  // relation to the time printed on the card.
   return Array.from(groups.values())
     .sort((a, b) => b.sortKey - a.sortKey)
-    .map(({ label, data }) => ({ title: label, data }));
+    .map(({ label, data }) => ({ title: label, data: sortLeadThreadsByLeadTime(data) }));
 }
 
 /** `MM.dd.yy`, or '' for a missing / unparseable date (web uses date-fns `format`). */

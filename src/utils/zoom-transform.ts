@@ -78,3 +78,23 @@ export const clampPan = (
   const bound = panBound(boxSize, scale);
   return Math.min(Math.max(savedTranslate + delta, -bound), bound);
 };
+
+/**
+ * How far a finger may travel, in points, and still count as a TAP.
+ *
+ * ⚠️ RNGH's `Gesture.Tap()` has NO movement limit unless one is set, on either platform
+ * (`_maxDistSq = NAN` in `RNTapHandler.m`, `MAX_VALUE_IGNORE` in `TapGestureHandler.kt`).
+ * `ZoomableImage` composes its taps `Simultaneous` with the paging swipe, so the swipe
+ * activating does NOT cancel them — a quick swipe lifted inside the tap's 500 ms window
+ * also ENDED AS A SUCCESSFUL SINGLE TAP. The pitch book's single tap toggles the
+ * presentation chrome, so every swipe brought the dock back.
+ *
+ * Must stay BELOW `SWIPE_ACTIVATE_DISTANCE`, so one touch can never be both a tap and a
+ * swipe: up to 10 pt it is a tap, past 15 pt a swipe, and in between it is neither.
+ *
+ * Plain numbers rather than worklets: they are read once, when the gestures are built.
+ */
+export const TAP_MAX_DISTANCE = 10;
+
+/** Horizontal travel, in points, before the paging swipe activates (its `activeOffsetX`). */
+export const SWIPE_ACTIVATE_DISTANCE = 15;
