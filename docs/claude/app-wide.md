@@ -338,3 +338,59 @@ mtime and are skipped — removing a file is the one edit the guard cannot see.
 ⚠️ **Hooks are snapshotted at session start.** Editing `settings.json` does not arm them in the session
 that made the edit; the next session (or a review in `/hooks`) picks them up. Written in plain
 CommonJS Node with no dependencies because the team runs Claude Code on both macOS and Windows.
+## A flash raised from inside a `Modal` rendered BEHIND it — banners now route to an in-sheet host
+
+Ticket: *"on the funding side we are getting the error from the backend and the error is hitting, but
+the error displays below the sheet — fix this, the error should display in front."* A `PUT
+/lead/v1/:id/funding` answered `422 "Down payments total $600, above the 50% maximum ($550)"`, the
+network tab showed it, `useFunding.report` flashed it — and the rep saw nothing.
+
+**Root cause: the app's only `<FlashMessage />` lives in `App.tsx`, and a native `Modal` is its own
+view tree.** Every banner raised while a sheet is open was drawn into the window UNDERNEATH it, behind
+that sheet's scrim/blur. The `zIndex: 9999` / `elevation: 9999` the wrapper already sets cannot reach
+it — those order siblings within one tree, and the modal is a separate window.
+
+`src/config/message.ts` now carries a **host stack**:
+
+```ts
+export interface FlashHost { show: (options: MessageOptions) => boolean }
+export function registerFlashHost(host: FlashHost): () => void   // returns the unregister
+```
+
+and every wrapper method raises through one internal `emit()` — topmost host that accepts it, else the
+app-root instance. **`src/widgets/common/ModalFlashHost.tsx`** is the other half: a `<RNFlashMessage>`
+mounted as the last child of a modal's root view, registered for as long as it is open.
+
+```tsx
+<Modal ...>
+  <KeyboardAvoidingView style={{ flex: 1 }}>
+    {/* the sheet */}
+    <ModalFlashHost active={visible} />
+  </KeyboardAvoidingView>
+</Modal>
+```
+
+**Nothing changes at the call site** — and that is the point. `FlashMessage.error(...)` inside
+`useFunding` has no idea which sheet is on screen, yet its banner now lands inside it.
+
+⚠️ **The fallback in `emit()` is not optional.** A host whose ref has not attached yet, or whose modal
+is mid-dismissal, answers `false` and the banner goes to the root instance. Swallowing it there would
+be worse than the bug being fixed: a refusal nobody ever sees.
+
+⚠️ **`canRegisterAsDefault={false}` on the in-modal instance.** Without it the component asks
+`FlashMessageManager` to become the process-wide default for the library's own `showMessage()`. It is
+a no-op *today* (the manager keeps the FIRST registrant, which is App.tsx's), but it would hijack every
+global banner in the app the moment mount order changed. Our routing is the registry, never that manager.
+
+⚠️ **A STACK, not a single slot, and unregister removes by IDENTITY.** Sheets nest, and React does not
+guarantee unmount order — popping would leave a dead host on top and send banners into an unmounted tree.
+
+⚠️ **`ModalFlashHost` deliberately does not read `useSafeAreaInsets()`.** Insets read 0 or stale inside
+a `Modal` (root guide), and the library derives the status-bar offset itself in `FlashMessageWrapper`
+from the options `config/message.ts` already sends — so a banner does not jump when a sheet opens.
+
+⚠️ **Not a fix for `RNFlashMessage` instances a modal already owns.** `ConsentFormModal`,
+`RoofWaiverModal`, `OutcomeModal`, `InspectionFormModal`, `LeadCreate` and `useRoofWaiver` each
+hand-roll a local instance with their own `flashRef` wrapper; they keep working untouched. New sheets
+should use `ModalFlashHost` instead of copying that block — it is the same fix without the duplicated
+wrapper, and it also catches banners raised by hooks rather than by the component.

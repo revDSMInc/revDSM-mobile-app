@@ -37,6 +37,7 @@ import {
 } from '../../../utils/activity-log/result-lead-log';
 import { RESULT_LEAD_MODULE } from '../../../constants/activity-log.constants';
 import { FS, FUND, PS } from './funding/funding-theme';
+import { ModalFlashHost } from '../../../widgets/common/ModalFlashHost';
 import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
 import { FundingView } from './funding/FundingView';
 import { SendLinkModal } from './funding/SendLinkModal';
@@ -375,6 +376,17 @@ export function ResultJobModal({
   const [linkTarget, setLinkTarget] = useState<string | null>(null);
   const [linkUrl, setLinkUrl] = useState('');
   const [isLoadingLink, setIsLoadingLink] = useState(false);
+  /**
+   * The server's reason for refusing the last Confirm, kept ON the sheet.
+   *
+   * ⚠️ The flash banner alone is not enough for this one. A `422` here is a RULE the
+   * rep has to act on ("Down payments total $600, above the 50% maximum ($550)") and
+   * the banner is gone in four seconds, so it is also written above the button that
+   * was refused — where the blockers for that same button already are. Cleared by
+   * the next edit, because any change to the rows or the price makes it a claim
+   * about a deal that no longer exists.
+   */
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const isSale = resultType === 'sale';
   const payments = funding.payments;
@@ -413,6 +425,7 @@ export function ResultJobModal({
     setResultChoice('sale');
     setLinkTarget(null);
     setLinkUrl('');
+    setSaveError(null);
     funding.clearServerBlockers();
 
     const seededPrice = initialPrice && initialPrice > 0 ? String(Math.round(initialPrice)) : '';
@@ -801,6 +814,16 @@ export function ResultJobModal({
     </View>
   ));
 
+  /**
+   * Any edit retires the server's last refusal — it was about rows that no longer
+   * exist. ⚠️ Keyed on the three pieces of state the whole pricing panel writes
+   * through, rather than cleared inside each setter: a per-setter list is one the
+   * next field added to this panel would quietly fall off.
+   */
+  useEffect(() => {
+    setSaveError(null);
+  }, [rows, contractPrice, payMode]);
+
   // ── gate into funding ────────────────────────────────────────────────────
 
   const totalAssigned = useMemo(() => assignedTotal(activeRows, contractNum), [activeRows, contractNum]);
@@ -847,7 +870,14 @@ export function ResultJobModal({
     // `savePayments` logs the save itself (with the full breakdown) — it is the only
     // place the server's answer exists.
     const res = await funding.savePayments(Math.round(contractNum), upsert, payMode);
-    if (!res.ok) return;
+    if (!res.ok) {
+      // `useFunding` already flashed it — into THIS sheet, via `ModalFlashHost`.
+      // This keeps the same sentence above Confirm after the banner goes, because a
+      // refused rule is something the rep has to fix, not something to acknowledge.
+      setSaveError(res.error?.message || 'The payments could not be saved.');
+      return;
+    }
+    setSaveError(null);
     logFundingOpened({
       ...logCtx,
       contractPrice: Math.round(contractNum),
@@ -1470,6 +1500,15 @@ export function ResultJobModal({
                 </>
               ) : isSale ? (
                 <>
+                  {/* The server's own refusal, in the same place as the local
+                      blockers — one column of reasons the button will not go. */}
+                  {!!saveError && (
+                    <View style={{ backgroundColor: FUND.RED_BG, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 11 }}>
+                      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, lineHeight: 17, color: FUND.RED_TEXT }}>
+                        {saveError}
+                      </Text>
+                    </View>
+                  )}
                   {/* Same control as the Submit footer — the reasons are visible
                       before the tap, not discovered by it. */}
                   <BlockerList items={resultBlockers} title="Before you can confirm:" />
@@ -1530,6 +1569,12 @@ export function ResultJobModal({
             <FullPackageInfoOverlay anchorRect={packageAnchor} onClose={() => setShowPackageInfo(false)} />
           )}
         </View>
+
+        {/* Every banner this sheet raises — its own, and the ones `useFunding` raises
+            from inside an endpoint call — lands here rather than on the app-root
+            instance, which is OUTSIDE this Modal's view tree and therefore behind it.
+            Last child, so it draws over the card. */}
+        <ModalFlashHost active={visible} />
       </KeyboardAvoidingView>
     </Modal>
   );

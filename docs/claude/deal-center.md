@@ -1699,3 +1699,38 @@ filed nothing.
 
 ⚠️ That file is **CRLF** — `newline=''`
 on both ends.
+## The Result Lead sheet shows the funding server's refusal — in front of the sheet, and it stays
+
+Ticket: *"on the funding side we are getting the error from the backend and the error is hitting, but
+the error displays below the sheet."* Confirm with a $600 down payment on an $1100 contract →
+`PUT /lead/v1/:id/funding` `422 "Down payments total $600, above the 50% maximum ($550)"`. The call,
+the classification (`KIND_BY_STATUS[422] → 'rule'`) and the `FlashMessage.warning` were all correct;
+the banner was simply drawn behind the sheet, because `ResultJobModal` is a native `Modal` and the
+app's only `<FlashMessage />` is in `App.tsx`. Full mechanism and the trap list in
+[`app-wide.md`](app-wide.md) — "A flash raised from inside a `Modal` rendered BEHIND it".
+
+Two changes here:
+
+1. **`<ModalFlashHost active={visible} />` is the last child of the sheet's `KeyboardAvoidingView`.**
+   Every banner the sheet raises now lands inside it — its own (`'Not ready to confirm'`) *and* the
+   ones `useFunding` raises from inside an endpoint call, which know nothing about which sheet is up.
+   This covers the Funding screen too (card declined, link not sent, setup required): same Modal.
+2. **`saveError` — the server's sentence, kept above Confirm.** A `422` is a RULE the rep has to act
+   on, and a four-second banner is not where that belongs. `goFunding` writes `res.error?.message`
+   into state on a refused save and renders it in `FUND.RED_BG` directly above the `BlockerList`, so
+   the server's reason sits in the same column as the local ones.
+
+⚠️ **`saveError` is cleared by an effect keyed on `rows` / `contractPrice` / `payMode`, not inside each
+setter.** Every field on the pricing panel writes through one of those three; a per-setter clear is a
+list the next field added to the panel would quietly fall off, leaving a stale refusal above a deal it
+no longer describes. It is also reset in the sheet-open effect.
+
+⚠️ **The flash and the inline line are BOTH wanted — this is not a duplicate.** The banner is the
+"something just happened"; the inline copy is what the rep reads while fixing the split. Do not drop
+one for the other.
+
+⚠️ **The client still does NOT enforce the ceiling, and must not start.** `FundingService`
+`getDownPaymentLimit` (`GET /company/v1/down-payment-limit/sales`) exists and has **no consumer** —
+deliberately advisory, for showing the ceiling beside the input. The server is the enforcer; a
+client-side cap that disagreed with it would either block a legal down payment or promise an illegal
+one. Surfacing the limit in the UI is unbuilt, not forgotten.
