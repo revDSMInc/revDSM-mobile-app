@@ -34,6 +34,7 @@ import { IconifyIcon } from '../../widgets/common/IconifyIcon';
 import { FlashMessage } from '../../config/message';
 import { isOnline } from '../../services/connectivity';
 import { offlineBlockFor } from '../../utils/offline-capability';
+import { warmToLocalCache } from '../../utils/imageFileCache';
 
 // ─── Dynamic (schema-driven) product picker helpers — port of web before.js ─────
 // Photos captured via the dynamic inspection flow are stored under a PRODUCT-SCOPED
@@ -178,8 +179,6 @@ const INITIAL_CONFIG = {
   downspoutChecked: false,
 };
 
-const loadedUris = new Set<string>();
-
 // ─── Payload Helpers ──────────────────────────────────────────────────────────
 
 /** Converts a UI type label to snake_case API value, stripping the section label suffix.
@@ -217,39 +216,77 @@ const getFilename = (url: string | undefined): string => {
   return parts[parts.length - 1] || '';
 };
 
+// Track local file URIs across HouseImage remounts (grid → Configure) so
+// the image renders instantly from disk on the second screen.
+const localFileUris = new Map<string, string>();
+
 const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; height?: number }) => {
   const { colors, isDark } = useTheme();
-  const [loading, setLoading] = useState(!loadedUris.has(uri));
+  const [resolvedUri, setResolvedUri] = useState<string | null>(localFileUris.get(uri) || null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    if (!uri) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
+    warmToLocalCache(uri)
+      .then((file) => {
+        if (cancelled) return;
+        if (file) {
+          localFileUris.set(uri, file);
+          setResolvedUri(file);
+        } else {
+          setResolvedUri(uri);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedUri(uri);
+      });
+    return () => { cancelled = true; };
+  }, [uri, retryKey]);
+
+  const retry = () => {
+    localFileUris.delete(uri);
+    setResolvedUri(null);
+    setError(false);
+    setLoading(true);
+    setRetryKey((k) => k + 1);
+  };
+
   return (
     <View style={[{ height, backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8' }, style]}>
-      {loading && (
+      {loading && !error && (
         <View className="absolute inset-0 items-center justify-center z-10">
           <ActivityIndicator color={colors.primary.main} />
         </View>
       )}
-      <Image
-        key={uri}
-        source={{ uri, cache: 'force-cache' }}
-        style={{ width: '100%', height: '100%' }}
-        resizeMode="cover"
-        fadeDuration={0}
-        onLoadStart={() => {
-          if (!loadedUris.has(uri)) {
-            setLoading(true);
-          }
-        }}
-        onLoad={() => {
-          loadedUris.add(uri);
-          setLoading(false);
-        }}
-        onLoadEnd={() => {
-          loadedUris.add(uri);
-          setLoading(false);
-        }}
-        onError={() => {
-          setLoading(false);
-        }}
-      />
+      {error ? (
+        <TouchableOpacity
+          onPress={retry}
+          className="absolute inset-0 items-center justify-center z-10"
+          activeOpacity={0.7}
+        >
+          <Icon name="image-off-outline" size={28} color="#C4CDD5" />
+          <Text style={{ color: '#919EAB', fontSize: 11, marginTop: 4 }}>Tap to retry</Text>
+        </TouchableOpacity>
+      ) : resolvedUri ? (
+        <Image
+          key={`${resolvedUri}-${retryKey}`}
+          source={{ uri: resolvedUri }}
+          style={{ width: '100%', height: '100%' }}
+          resizeMode="cover"
+          fadeDuration={0}
+          onLoad={() => setLoading(false)}
+          onLoadEnd={() => setLoading(false)}
+          onError={() => {
+            setError(true);
+            setLoading(false);
+          }}
+        />
+      ) : null}
     </View>
   );
 };
@@ -310,14 +347,10 @@ export default function RevRenderScreen() {
     return out;
   }, [sectionImages]);
 
-  // Warm the RN image cache for every RevRender photo shortly after mount, so that
-  // tapping into Configure (and the full-screen viewer) shows the full-res photo
-  // INSTANTLY from cache instead of downloading it on tap — the "image takes time
-  // to come" fix. There is no server-side thumbnail, so the display images are the
-  // full-res S3 photos; prefetching them ahead of need is the win. On success the
-  // uri is recorded in `loadedUris`, which makes HouseImage skip its spinner and
-  // render the cached image immediately. Deferred a beat so the visible grid
-  // thumbnails fetch first, then the rest warm in the background.
+  // Warm the RN network layer for every RevRender photo shortly after mount, so
+  // that the actual <Image> decode is faster when the component mounts.
+  // HouseImage uses warmToLocalCache for disk-level caching; this is a lighter
+  // pre-warm of the HTTP pipeline. Deferred a beat so the visible grid thumbnails fetch first.
   useEffect(() => {
     const uris = Array.from(
       new Set(
@@ -329,10 +362,7 @@ export default function RevRenderScreen() {
     if (!uris.length) return;
     const t = setTimeout(() => {
       uris.forEach((u) => {
-        if (loadedUris.has(u)) return;
-        Image.prefetch(u)
-          .then(() => loadedUris.add(u))
-          .catch(() => {});
+        Image.prefetch(u).catch(() => {});
       });
     }, 350);
     return () => clearTimeout(t);
