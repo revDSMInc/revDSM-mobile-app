@@ -124,6 +124,50 @@ const releaseWarmSlot = () => {
   warmQueue.shift()?.();
 };
 
+// ── warmed-uri memo ───────────────────────────────────────────────────────
+// Which photos are already on disk. `warmToLocalCache` is the only writer.
+//
+// Without it every remount pays an async `fs.exists` hop before it can even name the
+// file to render, so a grid that is FULLY cached still paints spinners on the way back
+// to it — the "the images load again every time I come back" report on revRender. The
+// memo lets a caller resolve the local copy SYNCHRONOUSLY, on the first render.
+//
+// ⚠️ Keyed by the CACHE PATH, never by the url. Photo links are pre-signed and re-signed
+// on every read of the lead, so the same photo arrives under a different url each visit;
+// it is `getLocalCachePath` dropping the query that makes the second visit a hit. Keying
+// on the url itself would miss every time and look exactly like no cache at all.
+const warmedPaths = new Map<string, string>();
+
+/**
+ * The local `file://` copy of `url` if it is already known to be on disk, else null —
+ * with no await. Seed component state with this so a cached image renders on the FIRST
+ * frame; when it returns null, fall back to `warmToLocalCache` as usual.
+ */
+export const getWarmedLocalUri = (url?: string | null): string | null => {
+  if (!isRemoteImageUrl(url)) return null;
+  const path = getLocalCachePath(url);
+  return (path && warmedPaths.get(path)) || null;
+};
+
+/** Forget a path once it is unlinked, so the next ask re-downloads rather than handing
+ *  back a `file://` that no longer resolves. */
+const forgetWarmedPath = (path: string) => {
+  warmedPaths.delete(path);
+};
+
+/**
+ * Drop `url`'s cached copy — the memo entry AND the file — so the next warm downloads it
+ * again. Backs a "tap to retry" on an image that failed to render: without the unlink the
+ * retry just re-renders the same broken file forever.
+ */
+export const forgetWarmedUri = async (url?: string | null): Promise<void> => {
+  if (!isRemoteImageUrl(url)) return;
+  const path = getLocalCachePath(url);
+  if (!path) return;
+  forgetWarmedPath(path);
+  await ReactNativeBlobUtil.fs.unlink(path).catch(() => {});
+};
+
 /**
  * Ensure `url` exists as a local file and return its `file://` uri, or null if
  * it isn't cacheable / the download failed (callers then fall back to the
@@ -134,8 +178,16 @@ export const warmToLocalCache = async (url?: string | null): Promise<string | nu
   const path = getLocalCachePath(url);
   if (!path) return null;
 
+  // Already known to be on disk — answer without touching the filesystem at all.
+  const memoed = warmedPaths.get(path);
+  if (memoed) return memoed;
+
+  const localUri = `file://${path}`;
   try {
-    if (await ReactNativeBlobUtil.fs.exists(path)) return `file://${path}`;
+    if (await ReactNativeBlobUtil.fs.exists(path)) {
+      warmedPaths.set(path, localUri);
+      return localUri;
+    }
   } catch {
     return null;
   }
@@ -144,13 +196,14 @@ export const warmToLocalCache = async (url?: string | null): Promise<string | nu
   try {
     const ok = await downloadImage(url, path);
     if (ok) {
+      warmedPaths.set(path, localUri);
       // Self-managing: the cache trims itself as it grows rather than needing a caller to
       // remember. Internally throttled to once a minute, so a grid warming 22 thumbnails
       // sweeps the directory once, not 22 times. Deliberately NOT awaited — the photo is on
       // disk and the caller should paint it now.
       void enforceImageCacheBudget();
     }
-    return ok ? `file://${path}` : null;
+    return ok ? localUri : null;
   } catch {
     return null;
   } finally {
@@ -236,6 +289,9 @@ export const enforceImageCacheBudget = async (
     const victims = selectEvictions(await listCacheFiles(), budget, inFlightPaths());
     let removed = 0;
     for (const path of victims) {
+      // Forget it FIRST, and whether or not the unlink lands: a memo entry pointing at
+      // a file this sweep has decided to remove is the one thing that must not survive.
+      forgetWarmedPath(path);
       try {
         await ReactNativeBlobUtil.fs.unlink(path);
         removed += 1;
@@ -256,6 +312,7 @@ export const enforceImageCacheBudget = async (
 export const clearImageCache = async (): Promise<number> => {
   let removed = 0;
   for (const file of await listCacheFiles()) {
+    forgetWarmedPath(file.path);
     try {
       await ReactNativeBlobUtil.fs.unlink(file.path);
       removed += 1;

@@ -34,7 +34,7 @@ import { IconifyIcon } from '../../widgets/common/IconifyIcon';
 import { FlashMessage } from '../../config/message';
 import { isOnline } from '../../services/connectivity';
 import { offlineBlockFor } from '../../utils/offline-capability';
-import { warmToLocalCache } from '../../utils/imageFileCache';
+import { forgetWarmedUri, getWarmedLocalUri, warmToLocalCache } from '../../utils/imageFileCache';
 
 // ─── Dynamic (schema-driven) product picker helpers — port of web before.js ─────
 // Photos captured via the dynamic inspection flow are stored under a PRODUCT-SCOPED
@@ -216,31 +216,38 @@ const getFilename = (url: string | undefined): string => {
   return parts[parts.length - 1] || '';
 };
 
-// Track local file URIs across HouseImage remounts (grid → Configure) so
-// the image renders instantly from disk on the second screen.
-const localFileUris = new Map<string, string>();
-
 const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; height?: number }) => {
   const { colors, isDark } = useTheme();
-  const [resolvedUri, setResolvedUri] = useState<string | null>(localFileUris.get(uri) || null);
-  const [loading, setLoading] = useState(true);
+  // ⚠️ Seeded SYNCHRONOUSLY from the file cache, and the spinner starts OFF when that hits.
+  // Coming back to this screen remounts every card, and asking `warmToLocalCache` even for
+  // a photo already on disk costs an async round trip — so the whole grid re-armed its
+  // spinners for a beat on every visit, which is what the rep read as "the images load
+  // again every time". `getWarmedLocalUri` answers from memory, so a warm photo paints on
+  // the first frame and nothing spins. It returns null the first time through; the effect
+  // below is still what fills the cache.
+  const seeded = getWarmedLocalUri(uri);
+  const [resolvedUri, setResolvedUri] = useState<string | null>(seeded);
+  const [loading, setLoading] = useState(!seeded);
   const [error, setError] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     if (!uri) return;
+    const known = getWarmedLocalUri(uri);
+    if (known) {
+      // On disk already: adopt it and leave the spinner alone. Re-arming `loading` here
+      // would put the flicker straight back for the cached case this exists to fix.
+      setResolvedUri(known);
+      setLoading(false);
+      setError(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError(false);
     warmToLocalCache(uri)
       .then((file) => {
-        if (cancelled) return;
-        if (file) {
-          localFileUris.set(uri, file);
-          setResolvedUri(file);
-        } else {
-          setResolvedUri(uri);
-        }
+        if (!cancelled) setResolvedUri(file || uri);
       })
       .catch(() => {
         if (!cancelled) setResolvedUri(uri);
@@ -249,11 +256,15 @@ const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; he
   }, [uri, retryKey]);
 
   const retry = () => {
-    localFileUris.delete(uri);
     setResolvedUri(null);
     setError(false);
     setLoading(true);
-    setRetryKey((k) => k + 1);
+    // Bin the cached FILE, not just our reference to it. A retry that kept the file would
+    // re-render the same unreadable bytes and fail again, forever. Re-arm only once the
+    // unlink has settled, so the re-warm can't race it and find the bad file still there.
+    forgetWarmedUri(uri)
+      .catch(() => {})
+      .then(() => setRetryKey((k) => k + 1));
   };
 
   return (
@@ -347,10 +358,17 @@ export default function RevRenderScreen() {
     return out;
   }, [sectionImages]);
 
-  // Warm the RN network layer for every RevRender photo shortly after mount, so
-  // that the actual <Image> decode is faster when the component mounts.
-  // HouseImage uses warmToLocalCache for disk-level caching; this is a lighter
-  // pre-warm of the HTTP pipeline. Deferred a beat so the visible grid thumbnails fetch first.
+  // Warm every RevRender photo into the local FILE cache shortly after mount, so the tabs
+  // the rep hasn't opened yet — and the full-res photo behind Configure — are already on
+  // disk by the time they get there.
+  //
+  // ⚠️ Do NOT put `Image.prefetch` back here. These are pre-signed S3 urls with no cache
+  // headers, so the OS image cache refuses to store them (the whole reason
+  // `utils/imageFileCache.ts` exists). Prefetching re-downloaded every photo on every
+  // mount, hit nothing, and stole bandwidth from the thumbnails actually on screen — it
+  // made the reload-every-visit complaint worse, not better. `warmToLocalCache` writes a
+  // real file, so the second visit costs nothing, and it holds its own 3-at-a-time
+  // semaphore. Deferred a beat so the visible grid thumbnails claim those slots first.
   useEffect(() => {
     const uris = Array.from(
       new Set(
@@ -360,12 +378,14 @@ export default function RevRenderScreen() {
       )
     );
     if (!uris.length) return;
+    let cancelled = false;
     const t = setTimeout(() => {
       uris.forEach((u) => {
-        Image.prefetch(u).catch(() => {});
+        if (cancelled) return;
+        warmToLocalCache(u).catch(() => {});
       });
     }, 350);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [rawPhotos]);
 
   const hasProductScopedPhotos = useMemo(
