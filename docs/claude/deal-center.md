@@ -1744,3 +1744,281 @@ interaction gating inside a React Native component, and no pricing rule moved.
 - Leave through "Jobs Built — Back to Tools" and reopen. The new % should persist and appear in the
   Investment Center.
 - After Result / a submitted job, the tiles no longer respond.
+
+## Ticket 1063 — dropdowns become dependent fields (option rules, defaults, `disabled`)
+
+Portal `feature/ticket-1063` (`40f31a96`, 2026-08-11) turned the `dropdown` field type from a plain
+static list into a first-class dependent field. The portal is only the **authoring** side, so every one
+of the five capabilities is a Sales-app behaviour. The keys ride the existing job-builder schema JSON —
+**no backend or API change**; mobile only consumes them. Both entry points inherit this, because both
+render through `DynamicTabRenderer`: the **lead-creation → Deal Center → Job Builder** flow
+(`DynamicDealCenterScreen` → `DynamicJobBuilderScreen`) and the **My Deals edit wizard**
+(`DynamicDealEditScreen`, which embeds the same builder with `mode="edit"`).
+
+### ⚠️ The previous "port" was documented but never landed
+
+`deal-edit-addendums.md` § *"Also ported en route: web `ticket-1063`"* claimed this work was **"now in"**
+six engine files. It was not — the paragraph entered the repo in `4b9ffa9 "update the Claude md file"`
+(2026-09-15) with no code beside it; no branch, local or remote, had `getVisibleFieldOptions` in `src/`.
+That block is now corrected to point here. **Treat a doc claim with no code behind it as a spec, not a
+record** — this one would have sent the next reader straight back into the bug.
+
+### `toggle-utils.ts` — the fix everything else hangs off
+
+`filterVisibleToggleOptions`'s **2nd parameter changed from `dealCenterData` to the full rule context**.
+An `optionVisibility` entry is an ordinary rule group: given only `{dealCenterData, state}` it cannot
+resolve a field by KEY, reach another section, or read an allocation metric, so every such reference
+evaluated `undefined` → read as "rule not met" → **the option silently disappeared**.
+
+- New `getVisibleFieldOptions(field, ctx, state, applyConditions)` is the real implementation;
+  `filterVisibleToggleOptions` is kept as an alias so toggle/optionList call sites read the same.
+- New `getBaseFieldOptions(field)` reads `optionShowFields` **KEYS** for a dropdown (`field.options` is
+  stale for a dependency-mode field). It covers `select` too — the renderer runs both through one
+  `case 'dropdown': case 'select':` branch, and gating on `'dropdown'` alone would have quietly dropped
+  `optionShowFields` support for a `select`.
+
+⚠️ **Any new caller MUST pass the rule context, never `dealCenterData`.** It still type-checks (`any`)
+and still "works" for same-section rules, which is exactly how the bug stayed invisible. The three
+renderer call sites (`text`-with-options, `toggle`, `optionList`) and `tab-validation.ts:200` now pass
+`depCtx`.
+
+### `dependency-engine.ts`
+
+- `buildRuleEvaluationContext` is **exported** — option rules must share the exact context field-level
+  rules use.
+- `isDefaultColorActive` reads the opt-in through the new shared
+  `isDefaultValueOptedIn` (`dropdown-utils.ts`): `useDefaultColor ?? useDefaultValue ??
+  Boolean(defaultValue)`. Pre-flag configs behave exactly as before; `useDefaultValue: false` now stops a
+  leftover `defaultValue` being applied.
+- New `resolveEffectiveDefaultValue(field, state, ctx)` — "what is the effective default", returning `''`
+  for all three no-default cases. Distinct from `resolveConditionalDefault`, which returns `undefined`
+  when there is no `defaultWhen` at all; **do not merge them**, the storage layer depends on that
+  `undefined` to leave unconditioned defaults alone.
+- `validateDependencies` validates `optionVisibility` for `dropdown` alongside toggle/optionList.
+
+### The default is written into STATE, not just displayed
+
+This is the load-bearing half, and the reason a render-only default is not enough: other fields'
+`optionVisibility` rules read `state[field.id]`, so a defaulted dropdown that is only render-resolved is
+**invisible to them and rules their options out** — the field looks answered while everything downstream
+behaves as if it were blank.
+
+Three layers, each gated differently on purpose:
+
+| Layer | File | Gate |
+|---|---|---|
+| Seed at build | `combination-utils.ts` `buildDefaultItemFromFields` | `dropdown` joins `text`; **condition-blind** (this file must not import the dependency engine) but honours `isDefaultValueOptedIn`, which is a flag read, not a rule |
+| Gate at hydrate | `dynamic-job-state-storage.ts` `hydrateFieldValue` | `resolveConditionalDefault` now runs on the **non-locked** branch too, before falling back to `buildDefaultItemFromFields` |
+| Seed/clear at render | `DropdownField.tsx` → `dropdown-state-sync.ts` | full `depCtx`, via `resolveEffectiveDefaultValue` |
+
+⚠️ The hydrate gate is the one that is easy to miss: without it a dropdown carrying `defaultValue` +
+`defaultWhen` gets its **raw** default persisted even when the condition is not met — the same
+phantom-value class already fixed for locked LeafFilter colours, just reached through the other branch.
+
+⚠️ `comboHasEnteredData` drops a combo carrying only LOCKED/`defaultValue` values, so a newly seeded
+dropdown default on an untouched combo is pruned rather than saved as a phantom combo. **Keep that.**
+
+### `DropdownField.tsx` + `dropdown-state-sync.ts` (new)
+
+Mobile renders a "dropdown" as the same chip grid as `optionList`, so this is the dropdown twin of
+`OptionToggleField` — and it exists for the same reason that component does: `renderField` is a plain
+function, so a hook cannot live there. It owns hide-when-empty, the state seed and the stale-value clear.
+The **decision** is a pure function in `dropdown-state-sync.ts` so it can be unit tested (a component
+cannot be loaded under jest here); the component only commits it.
+
+⚠️ **Zero visible options writes NOTHING** — no clear. This reads like a divergence from the spec's
+`if (currentValue && !opts.includes(currentValue)) onChange('')` but is the same behaviour: sales returns
+`null` from the renderer *before* mounting the component, so its effect never runs with an empty list
+either. Mobile keeps the guard inside the component so hook order stays stable. It matters because the
+rule context settles across several renders here (`dealCenterData` and the saved draft both arrive async
+— see the draft-restore notes in `useDynamicJobBuilderSession`): a momentarily-empty option list is not
+proof the stored answer is stale, and clearing on it would destroy a saved selection the next render
+offers again. `OptionToggleField` takes the same early return.
+
+⚠️ The seed writes through the normal field-change path, which latches `userEditedRef` in
+`useDynamicJobBuilderSession`. That is safe because `resolveDropdownSync` is **idempotent** — it returns
+`{write: false}` once the value is present — and because the draft restore is keyed on `draftToken`, not
+on that latch. Do not add a seed that can re-fire.
+
+### `field.disabled` — "Rep can use this dropdown → No"
+
+`OptionList` / `DynamicOptionField` take a `disabled` prop: chips grey (`#94A3B8`, precedent
+`CalculatorView.tsx` `FieldRow`), the **current value stays visibly selected** so the rep can still read
+what was chosen for them, and `handlePress` is a complete no-op — including the deselect-on-tap, which
+would otherwise let the rep clear a value they are not allowed to set.
+
+⚠️ **The deal-edit wizard UNLOCKS it**: `Boolean(field.disabled) && !editMode`, the same rule the
+`colorSelection` lock already uses. Per the portal's own helper text.
+
+### `tab-validation.ts`
+
+⚠️ **The dropdown exemptions live in `isFieldValueComplete`, NOT in `isEmptyRequiredValue`.** An earlier
+draft of the spec put them in the latter; that is wrong, and `isEmptyRequiredValue`'s `case 'dropdown'`
+stays the bare `!value` it always was. The three exemptions join the **existing** all-options-ruled-out
+guard, which also has its 2nd argument swapped from `dealCenterData` to `depCtx`:
+
+1. no visible options → not the blocker (the field renders nothing);
+2. `field.disabled` → the rep cannot answer it;
+3. an active default **that is among the visible options**.
+
+⚠️ Condition 3's visibility check is not optional. A default whose option is currently ruled out is **not
+an answer** — the renderer will not show it and `resolveDropdownSync` will not seed it — so counting it
+would enable Next over a field that reads blank.
+
+### ⚠️ `resolveConditionalDefault` at hydrate, never `resolveEffectiveDefaultValue`
+
+The two are **not** interchangeable and the difference is a real regression, not a style point.
+`resolveEffectiveDefaultValue` always returns a string, so using it in `hydrateFieldValue` would hand
+`''` to **every** field — including `roomPicker` (needs `[]`), `locationGrid` (needs `null`) and every
+type whose default comes from `buildDefaultItemFromFields`. `resolveConditionalDefault` returns
+`undefined` unless the field actually carries a `dependencies.defaultWhen`, so it intervenes only where
+it should and leaves every other field byte-identical. Covered by the acceptance #14 regression test.
+
+### `sections` on both dependency contexts (spec §3.1)
+
+Added to the renderer's `depCtx` and validation's `buildDepCtx` so the two cannot disagree about which
+options exist — if they did, the field would render fine while Next stayed disabled.
+
+⚠️ **On mobile this is belt-and-braces, NOT the fix the spec expects it to be.** The spec calls a missing
+`sections` the single most likely cause of a vanishing field, because web's resolver needs it for a
+compound `sectionId:fieldId` ref. Mobile's `findFieldContextOnTab` falls back to `getTabSections(tab)`,
+so those refs already resolved: probed against the live LeafFilter shape (width gated on profile, both
+nested in a stack, rule written `section_…:field_…`) with `sections` absent, present, and with a
+`tab`-less ctx — **all three returned the correctly narrowed list.** Do not spend a debugging session
+here. It is read straight off `tab` rather than via `getTabSections` because `depCtx` is rebuilt per
+field and that call normalizes every section.
+
+### Verification
+
+`__tests__/utils/dynamic-dropdown-ticket-1063.test.ts` — 31 tests covering the portal's 13-row
+acceptance checklist through the pure rules (options by key / cross-section / dependency-mode, all-ruled-
+out, stale clear, default seeded / withheld / opted out, disabled and default as answered, the
+toggle/optionList regression row). Zero new tsc or eslint findings; the 11 pre-existing suite failures
+(`contract-refund-summary`, `funding`, `FundingService` — modules that do not exist) are unchanged.
+⚠️ `__tests__/` is gitignored, so this suite does not survive a clone.
+
+**Needs a device check** (do both flows — the create flow and My Deals → edit):
+- A dropdown gated on another field narrows as that field changes; an ungated option always shows.
+- A rule pointing at another section or an allocation metric resolves (this is the half that was broken).
+- Every option ruled out → the field disappears and Next is not blocked.
+- Change the parent after selecting → the now-unoffered selection clears.
+- `useDefaultValue` + `defaultValue` preselects AND other fields' rules react to it; with an unmet
+  `defaultWhen` nothing is shown or saved; `useDefaultValue: false` applies nothing.
+- `disabled` greys out and cannot be changed in the create flow, and is editable again in deal edit.
+
+### A lone visible option is auto-selected (and why the width dropdown was missing)
+
+Reported from device: Combination #1 showed a label-less grey box reading "Versa Max" and **no Gutter
+Opening Width field at all**, while Combination #2 showed both fields.
+
+That box is not `LockedField` — it has no padlock and no *Locked from Job Summary* caption. It is an
+**unselected option chip** at 50% width (`autoColumns` returns 2 for a one-option list). So the profile
+dropdown offered exactly one option and held **no value** — and the width dropdown's `optionVisibility`
+rules are gated on that value, so every width option was ruled out and the field correctly rendered
+nothing. The allocation card reading `Used 0ft` is the same symptom.
+
+`resolveDropdownSync` now writes a lone visible option into state. This is **parity with
+`OptionToggleField`**, which has done exactly this for toggle / optionList since it was written — read
+its docstring, it explains why the write (not just the visual) is load-bearing. It matters most on a
+`disabled` dropdown: the rep cannot select it themselves, so nothing else would ever fill it in, and the
+tab stays un-completable with nothing on screen to act on.
+
+⚠️ Not applied when `readOnly` — a locked field's value comes from the calculator snapshot and must never
+be written back from the renderer.
+
+### ⚠️ The one place this deviates from the spec's literal text: `combination-utils.ts`
+
+§4.3 says `(field.type === 'text' || field.type === 'dropdown') && field.defaultValue`. Mobile also
+requires `isDefaultValueOptedIn(field)`. Without it, acceptance **#8** ("`useDefaultValue: false` with a
+leftover `defaultValue` → no default applied") **fails**: `buildDefaultItemFromFields` would seed the raw
+`defaultValue` into state, and from then on `shownValue` renders it as the selected chip because the
+value is genuinely in state — the renderer's `resolveEffectiveDefaultValue` gate never gets a say. The
+check is a flag read, not a rule, so the file stays condition-blind and still imports no engine. A config
+authoring neither flag is unaffected (`Boolean(defaultValue)` keeps it seeding).
+
+### ⚠️ A DISABLED dropdown renders its VALUE, not a greyed option list
+
+Three device rounds on the LeafFilter tab converged here. Combination #2 showed two tidy boxes
+("Gutter Opening Width / 7\"", "LeafFilter Profile / Versa"); Combination #1 showed a label-less strip
+of greyed chips (`< 2.5 | 2.5 - 3.4 | > 7`) and no visible selection. Same data, two different-looking
+cards.
+
+Spec §2.3 is explicit and easy to skim past: *"Greyed out on Sales: **shows its value**, cannot be
+opened."* On web that is automatic — a disabled `<Select>` only ever shows its selection. Mobile draws a
+dropdown as a chip grid, so the literal translation ("grey the chips") wrongly leaves the whole option
+list on screen. `LockedField` **is** that value box, so `DropdownField` reuses it when `disabled`, which
+makes the two presentations identical rather than merely similar.
+
+⚠️ **The box is rendered INSIDE `DropdownField`, after the hooks — never from `renderField`.** Returning
+a box from the renderer instead would unmount the seed/clear effect, and that effect is what writes the
+value other fields' `optionVisibility` rules read. That is precisely what left the width dropdown with
+no selectable option and hid it completely.
+
+⚠️ **It passes `field.label`, not the `label` prop.** `label` has already been through the renderer's
+`showLabel` / `repeatsParentLabel` suppression, which is a rule for an inline chip grid sitting under a
+heading that already names it. The locked branch has always passed `field.label` straight through, so
+honouring the suppression here prints a label in one card and none in the next.
+
+⚠️ **The box resolves its value in three steps**, in this order: job state → the active
+`resolveEffectiveDefaultValue` default → `fallbackValue`, which is the SAME
+`resolveLockedValue(field, dealCenterData)` resolution the locked branch uses. The third step is not
+optional: a disabled dropdown that the CALCULATOR answers rather than the rep holds nothing in state, so
+without it the box renders a bare "—" beside a locked field showing the same class of value fine.
+`resolveLockedValue` is combination-independent, so it answers for every combination, not only the one
+carrying state. It is display-only — never written back into job state.
+
+⚠️ **The label is `field.label || field.title`**, the fallback this engine already uses
+(`dependency-engine` `collectFieldRefs`, `field-value-utils`). A field authored with only `title`
+otherwise renders a label-less box beside a labelled one — which is how this was first reported.
+
+⚠️ **In deal-edit it is a full chip grid again**, because `disabled` is gated
+`Boolean(field.disabled) && !editMode` — Lance's manual-override requirement. The value box is the
+create-flow presentation only.
+
+### The editable dropdown is a REAL dropdown (`DropdownSelect.tsx`)
+
+The ticket's title is the requirement: *"My deals — NEVER have text inputs — always should be a drop down
+with all options."* Mobile drew every option field as a chip grid, so in the deal-edit wizard — where
+conditions are lifted and a LeafFilter width field therefore offers all seven options at once — one
+combination rendered a four-row block of chips and pushed the rest of the card off screen. `DropdownSelect`
+collapses that to a single row showing the current selection, which opens the list on tap.
+
+Applied for `dropdown` / `select` only, and only when **single-select**: a collapsed control cannot show
+several selections at once, so a `multiSelect` dropdown keeps the chip grid. toggle / optionList are
+untouched — they are authored as inline choosers on purpose.
+
+⚠️ **The list expands INLINE — never a `Modal`, never an absolute overlay.** Both are traps recorded in
+the root guide: the Job Builder already renders inside a native `Modal` and iOS silently drops a
+presentation requested while another is dismissing (this froze the CoC paper-fallback scanner); and an
+absolute overlay would lose its touches anyway, because a sibling `GestureDetector` swallows them
+whatever its `zIndex` — `zIndex` orders painting only — and these fields sit inside gesture-driven,
+scrollable combination cards. Expanding in flow costs a little scroll height and sidesteps both.
+
+⚠️ **It keeps tap-to-clear**, matching the chip grid it replaces (`useCanDeselectSelection`), so a
+non-required dropdown can still be unanswered.
+
+⚠️ **It passes the renderer's `visibleLabel`, NOT `field.label || field.title`** — the opposite of the
+disabled box above, and deliberately. The `showLabel` / `repeatsParentLabel` suppression exists for
+inline choosers sitting under a heading that already names them (Flooring → "Existing Flooring Type"
+printed its title twice before that fix). The disabled box overrides it only because it reuses
+`LockedField`, whose branch has always passed `field.label` straight through. If a dropdown shows no
+label in edit mode, that is the config's `showLabel: false`, not this component.
+
+#### Ruled out along the way — do not re-investigate
+
+- **It is not the locked branch.** An early attempt made `renderField`'s locked branch render a chip grid
+  for dropdown-typed fields. That was wrong twice over: Combination #2's `LockedField` boxes were already
+  the *desired* look, and the change touched every locked dropdown app-wide. Reverted.
+- **It is not spec §3.1 (`sections`).** See that section above — probed three ways, all correct without it.
+- **The "Versa Max" box was never a `LockedField`** — no padlock, no *Locked from Job Summary* caption. It
+  was an unselected chip at 50% width (`autoColumns` returns 2 for a one-option list). That is what put
+  the lone-option auto-select above in.
+
+**Needs a device check:** both LeafFilter combinations should now show the same labelled value boxes in
+the create flow, and the same deal opened from My Deals → edit should show selectable chip grids.
+
+### Out of scope, noted by the backend author
+- `mhalt-revDSM-backend` `jobBuilderSummary/engine/dependency-engine.ts:880` has the **same**
+  `toggle || optionList` gap in `validateDependencies` — separate ticket, not a mobile blocker.
+- `DEAL_PRICING_DEBUG` in `dynamic-deal-pricing.ts` is still `true` on `dev-v1-funding` and must be
+  `false` before release. **Not changed here** — it is not part of this ticket.

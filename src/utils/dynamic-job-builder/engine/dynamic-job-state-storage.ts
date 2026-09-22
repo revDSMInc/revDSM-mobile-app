@@ -140,6 +140,18 @@ function hydrateFieldValue(
 
   if (existingValue !== undefined) return existingValue;
 
+  // Ticket 1063: the conditional gate must run on the NON-locked branch too.
+  // `buildDefaultItemFromFields` is condition-blind by design (it cannot import the
+  // dependency engine), so without this a dropdown carrying `defaultValue` +
+  // `dependencies.defaultWhen` gets its RAW default persisted even when the
+  // condition is not met — the same phantom-value class already fixed for locked
+  // LeafFilter colours, just reached through the other branch.
+  // `resolveConditionalDefault` returns `undefined` when the field has no
+  // `defaultWhen` at all, so an unconditioned default still falls through to the
+  // normal seeding path untouched.
+  const conditionalDefault = resolveConditionalDefault(field, existing, { dealCenterData });
+  if (conditionalDefault !== undefined) return conditionalDefault;
+
   const defaults = buildDefaultItemFromFields([field], {}, dealCenterData);
   return defaults[field.id];
 }

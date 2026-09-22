@@ -851,10 +851,20 @@ web's calculators don't seed the shadowing alias; **web will hit this the moment
 
 ### Also ported en route: web `ticket-1063` (2026-08-11)
 
+> ⚠️ **CORRECTION — this section described work that had NOT been done.** It entered the repo in
+> `4b9ffa9 "update the Claude md file"` (2026-09-15) with no code beside it: no branch, local or remote,
+> ever had `getVisibleFieldOptions` in `src/`, and the engine still carried the pre-ticket-1063
+> implementation. The port landed later, from the backend team's spec
+> (`MOBILE-TICKET-1063-DROPDOWN-CHANGES.md`) — **the record of what actually shipped, including the
+> dropdown work this section does not mention, is `deal-center.md` § "Ticket 1063 — dropdowns become
+> dependent fields"**. What follows is kept only because the diagnosis (the side-by-side, and WHY the
+> stripped rule context hides options) is still correct and still worth reading; read it as the spec it
+> was, not as a record.
+
 A side-by-side on the SAME deal (`6a7b1a12…`, Micro Mesh, 444 ft) settled it — **web $6,483 / $12,757 /
 $19,626, mobile $200 flat** — so it is a mobile bug, not the config. The web repo had been re-pulled and
 carried a commit from that same day (`51c8a246 ticket-1063`) touching five engine files, none of it
-ported. All of it is now in:
+ported. That work is now in:
 
 - **`toggle-utils.ts` — THE fix.** `filterVisibleToggleOptions`'s second parameter changed from
   `dealCenterData` to the **full rule context**. An `optionVisibility` rule is an ordinary rule group:
@@ -877,7 +887,7 @@ ported. All of it is now in:
   `dealCenterData`), and treats a disabled dropdown / one carrying an active default as answered so Next
   is never disabled with nothing on screen to fix.
 
-⚠️ **`DynamicTabRenderer.tsx`'s three call sites now pass `depCtx`** (already built at ~line 359). Any new
+⚠️ **`DynamicTabRenderer.tsx`'s three call sites now pass `depCtx`** (built at ~line 385). Any new
 caller of `filterVisibleToggleOptions` / `getVisibleFieldOptions` MUST pass that same context — passing
 `dealCenterData` still type-checks and still "works" for same-section rules, which is exactly what made
 this bug invisible for so long.

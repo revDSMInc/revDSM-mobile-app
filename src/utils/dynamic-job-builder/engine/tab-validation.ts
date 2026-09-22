@@ -183,22 +183,51 @@ function buildDepCtx(ctx: any, state: any) {
     section: ctx.section,
     sectionState: ctx.sectionState ?? state,
     combos: ctx.combos,
+    // Ticket 1063 §3.1 — must match the renderer's `depCtx` exactly. If validation
+    // and the renderer disagreed about which options exist, the field would render
+    // fine while Next stayed disabled, which is the worst of both worlds.
+    sections: ctx.sections ?? ctx.tab?.sections,
   };
 }
 
 export function isFieldValueComplete(field: any, state: any, ctx: any = {}) {
   if (SKIPPED_FIELD_TYPES.has(field.type)) return true;
 
-  const { applyConditions = true, dealCenterData, colorValues = {} } = ctx;
+  const { applyConditions = true, colorValues = {} } = ctx;
   const depCtx = buildDepCtx(ctx, state);
 
   if (applyConditions && !isFieldVisibleWithConditions(field, state, depCtx, applyConditions)) {
     return true;
   }
 
-  if (field.type === 'toggle' || field.type === 'optionList') {
-    const visibleOptions = filterVisibleToggleOptions(field, dealCenterData, state, applyConditions);
+  if (field.type === 'toggle' || field.type === 'optionList' || field.type === 'dropdown') {
+    // ⚠️ `depCtx`, NOT `dealCenterData` — an optionVisibility rule that references a
+    // field by key / another section / an allocation metric silently resolves to
+    // `undefined` against the stripped context, hides every option, and then this
+    // exemption would never fire.
+    const visibleOptions = filterVisibleToggleOptions(field, depCtx, state, applyConditions);
+
+    // Ticket 1063 added `dropdown` here: a required dropdown whose options are all
+    // ruled out renders nothing, so without this Next is disabled with nothing on
+    // screen to fix.
     if (!visibleOptions.length) {
+      return true;
+    }
+
+    // The rep is not allowed to open it, so it can never be the blocker.
+    if (field.type === 'dropdown' && field.disabled) {
+      return true;
+    }
+
+    // An ACTIVE default is already the answer — but only when its option is
+    // actually on offer. ⚠️ A default whose option is currently ruled out is NOT an
+    // answer: the renderer will not show it and `resolveDropdownSync` will not seed
+    // it, so counting it here would enable Next over a field that reads blank.
+    if (
+      field.type === 'dropdown' &&
+      isDefaultColorActive(field, state, depCtx) &&
+      visibleOptions.includes(field.defaultValue)
+    ) {
       return true;
     }
   }

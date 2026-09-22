@@ -11,6 +11,12 @@ interface OptionListProps {
   columns?: number;
   /** Multi-select (web `field.multiSelect`) — value is an array, boxes toggle in/out. */
   isMulti?: boolean;
+  /**
+   * Ticket 1063 — portal "Rep can use this dropdown → No" (`field.disabled`).
+   * The chips grey out and stop responding, but the CURRENT VALUE STAYS VISIBLY
+   * SELECTED: the rep must still be able to read what was chosen for them.
+   */
+  disabled?: boolean;
 }
 
 const GAP = 8; // matches gap-2 used by SwatchPicker/RoomPicker
@@ -46,6 +52,7 @@ export function OptionList({
   color = '#22C55E',
   columns,
   isMulti = false,
+  disabled = false,
 }: OptionListProps) {
   const requestedCols = columns && columns > 0 ? Math.max(1, Math.round(columns)) : autoColumns(options);
   // Long option labels (e.g. Roofing → Labor "Standard (4/12 and under)" / Shingles
@@ -63,6 +70,10 @@ export function OptionList({
     isMulti ? selectedValues.includes(opt) : value === opt;
 
   const handlePress = (opt: string) => {
+    // Ticket 1063: a disabled field is not just visually locked — tapping must be a
+    // complete no-op, INCLUDING the deselect-on-tap below, or the rep could clear a
+    // value they are not allowed to set.
+    if (disabled) return;
     if (isMulti) {
       // Web parity (option-selector.js): toggle membership in the array.
       const next = selectedValues.includes(opt)
@@ -87,6 +98,8 @@ export function OptionList({
             <View key={opt} style={{ width: `${100 / cols}%`, padding: GAP / 2 }}>
               <TouchableOpacity
                 onPress={() => handlePress(opt)}
+                disabled={disabled}
+                accessibilityState={{ disabled, selected }}
                 className="py-3.5 rounded-xl border-2"
                 style={{
                   // Stacked options read left-aligned with roomy padding (web's
@@ -94,15 +107,19 @@ export function OptionList({
                   // their column and drop the padding so labels don't clip.
                   alignItems: cols > 1 ? 'center' : 'flex-start',
                   paddingHorizontal: cols > 1 ? 4 : 20,
-                  borderColor: selected ? color : '#F1F5F9',
-                  backgroundColor: selected ? `${color}12` : '#fff',
+                  // Disabled keeps the SELECTED chip readable (muted slate, not the
+                  // accent) and mutes the rest — precedent: CalculatorView FieldRow's
+                  // `#94A3B8`. Never `x ? v : undefined` here: these values are read
+                  // directly, but keeping them concrete also keeps the style mergeable.
+                  borderColor: disabled ? (selected ? '#CBD5E1' : '#F1F5F9') : selected ? color : '#F1F5F9',
+                  backgroundColor: disabled ? '#F8FAFC' : selected ? `${color}12` : '#fff',
                 }}
               >
                 <Text
                   numberOfLines={3}
                   className="text-[12px] font-black"
                   style={{
-                    color: selected ? color : '#64748B',
+                    color: disabled ? (selected ? '#64748B' : '#94A3B8') : selected ? color : '#64748B',
                     textAlign: cols > 1 ? 'center' : 'left',
                   }}
                 >

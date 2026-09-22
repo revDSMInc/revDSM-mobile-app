@@ -12,6 +12,8 @@ interface DynamicOptionFieldProps {
   color?: string;
   columns?: number;
   isMulti?: boolean;
+  /** Ticket 1063 — `field.disabled`: greyed chips, current value still shown. */
+  disabled?: boolean;
 }
 
 /**
@@ -31,6 +33,7 @@ export function DynamicOptionField({
   color,
   columns,
   isMulti,
+  disabled,
 }: DynamicOptionFieldProps) {
   const { noticeModal, handleValueChange } = useFieldNotice(field);
 
@@ -47,6 +50,7 @@ export function DynamicOptionField({
         color={color}
         columns={columns}
         isMulti={isMulti}
+        disabled={disabled}
       />
       {noticeModal}
     </View>

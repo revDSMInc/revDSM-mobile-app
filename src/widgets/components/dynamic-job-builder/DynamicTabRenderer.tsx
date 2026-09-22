@@ -22,6 +22,7 @@ import {
   isDefaultColorActive,
   isFieldRequired,
   resolveConditionalDefault,
+  resolveEffectiveDefaultValue,
 } from '../../../utils/dynamic-job-builder/engine/dependency-engine';
 import { isRequiredFieldValueMissing } from '../../../utils/dynamic-job-builder/engine/field-value-utils';
 import { isAllocationField, computeGridTotal, resolveLockedValue } from '../../../utils/dynamic-job-builder/engine/allocation-utils';
@@ -34,8 +35,10 @@ import {
 import { isAllocationCardActive } from '../../../utils/dynamic-job-builder/engine/allocation-config-utils';
 import { resolveAllocationMetrics } from '../../../utils/dynamic-job-builder/engine/allocation-value-resolver';
 import { resolveAccordionAllocationStatus } from '../../../utils/dynamic-job-builder/engine/accordion-allocation-utils';
-import { filterVisibleToggleOptions } from '../../../utils/dynamic-job-builder/engine/toggle-utils';
-import { getEffectiveDropdownOptions } from '../../../utils/dynamic-job-builder/engine/dropdown-utils';
+import {
+  filterVisibleToggleOptions,
+  getVisibleFieldOptions,
+} from '../../../utils/dynamic-job-builder/engine/toggle-utils';
 import {
   getWarningConfig,
   getOptionGridSize,
@@ -65,6 +68,7 @@ import { TextField } from './TextField';
 import { TextareaField } from './TextareaField';
 import { ToggleGroup } from './ToggleGroup';
 import { DynamicOptionField } from './DynamicOptionField';
+import { DropdownField } from './DropdownField';
 import { OptionToggleField } from './OptionToggleField';
 import { SwatchPicker } from './SwatchPicker';
 import { LockedField } from './LockedField';
@@ -335,6 +339,8 @@ function renderField(
     tabState?: any;
     section?: any;
     sectionState?: any;
+    /** All sections on the tab — completes the rule context (ticket 1063 §3.1). */
+    sections?: any[];
     combos?: any[];
     sectionFields?: any[];
     products?: any[];
@@ -390,6 +396,16 @@ function renderField(
     section: ctx?.section,
     sectionState: ctx?.sectionState ?? state,
     combos: ctx?.combos,
+    // Ticket 1063 §3.1 — `sections` completes the rule context that
+    // `buildRuleEvaluationContext` expects; `findFieldContextOnTab` feeds it to
+    // `buildTabForFieldOptions` when resolving a compound `sectionId:fieldId` ref.
+    // ⚠️ On mobile this is belt-and-braces, NOT the fix the spec expects it to be:
+    // `findFieldContextOnTab` already falls back to `getTabSections(tab)`, so a
+    // compound ref resolves correctly without it (verified against the live
+    // LeafFilter shape — width gated on profile, both nested in a stack). It is
+    // read straight off `tab` rather than via `getTabSections` because this runs
+    // per field and that call normalizes every section.
+    sections: ctx?.sections ?? ctx?.tab?.sections,
   };
 
   // Web parity (resolveEffectiveColorBehavior): a color field with an active
@@ -523,7 +539,8 @@ function renderField(
       }
       if ((field.options || field.choices || field.items)?.length) {
         const baseOpts = field.options || field.choices || field.items;
-        const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
+        // ⚠️ 2nd arg is the FULL rule context, never `dealCenterData` — see toggle-utils.
+        const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, depCtx, state, applyConditions);
         return (
           <DynamicOptionField
             key={field.id}
@@ -651,7 +668,8 @@ function renderField(
 
     case 'toggle': {
       const baseOpts = field.options || field.choices || field.items || [];
-      const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
+      // ⚠️ 2nd arg is the FULL rule context, never `dealCenterData` — see toggle-utils.
+      const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, depCtx, state, applyConditions);
       const toggleValue = field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '');
       return (
         <OptionToggleField
@@ -676,7 +694,8 @@ function renderField(
 
     case 'optionList': {
       const baseOpts = field.options || field.choices || field.items || [];
-      const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
+      // ⚠️ 2nd arg is the FULL rule context, never `dealCenterData` — see toggle-utils.
+      const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, depCtx, state, applyConditions);
       const listValue = field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '');
       return (
         <OptionToggleField
@@ -703,10 +722,20 @@ function renderField(
 
     case 'dropdown':
     case 'select': {
-      const dOpts = getEffectiveDropdownOptions(field);
-      const opts = (dOpts && dOpts.length ? dOpts : field.options || field.choices || field.items) || [];
+      // Ticket 1063. `getVisibleFieldOptions` does BOTH jobs in one call: it reads
+      // `optionShowFields` KEYS for a dependency-mode dropdown (`field.options` is
+      // stale for those) and then applies the per-option `optionVisibility` rules
+      // against the full `depCtx`. The `choices`/`items` fallback is kept only for
+      // non-standard `select` shapes that carry neither `options` nor
+      // `optionShowFields`.
+      const ruleOpts = getVisibleFieldOptions(field, depCtx, state, applyConditions);
+      const opts = (ruleOpts.length ? ruleOpts : field.choices || field.items) || [];
+      // Web parity: `disabled` ("Rep can use this dropdown → No") greys the field
+      // out everywhere EXCEPT the deal-edit wizard, which unlocks every field —
+      // same `&& !editMode` rule as the `colorSelection` lock below.
+      const dropdownDisabled = Boolean(field.disabled) && !editMode;
       return (
-        <DynamicOptionField
+        <DropdownField
           key={field.id}
           field={field}
           label={visibleLabel}
@@ -716,6 +745,18 @@ function renderField(
           color={verticalColor}
           columns={optionColumnsFor(field)}
           isMulti={!!field.multiSelect}
+          disabled={dropdownDisabled || readOnly}
+          defaultValue={resolveEffectiveDefaultValue(field, state, depCtx)}
+          // Display-only fallback for the disabled box: the SAME resolution the
+          // locked branch uses, so a dropdown the calculator answers shows its
+          // value instead of '—'. '—' is that helper's "unresolvable" marker.
+          fallbackValue={(() => {
+            const dc = resolveLockedValue(field, dealCenterData, {
+              fallbackDefault: resolveConditionalDefault(field, state, depCtx),
+            });
+            return dc === undefined || dc === '—' || dc === '' ? undefined : String(dc);
+          })()}
+          readOnly={readOnly}
         />
       );
     }

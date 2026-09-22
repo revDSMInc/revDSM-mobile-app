@@ -1,5 +1,6 @@
 import { isContainerFieldType, migrateConfigColorFields } from '../constants/field-types';
 import { getDealCenterDataValue, sumDealCenterRefs } from './deal-center-field-utils';
+import { isDefaultValueOptedIn } from './dropdown-utils';
 
 export function flattenLeafFields(fields: any[] = []): any[] {
   const result: any[] = [];
@@ -62,7 +63,18 @@ export function buildDefaultItemFromFields(fields: any[] = [], existing: any = {
       item[field.id] = null;
     } else if (field.type === 'roomPicker') {
       item[field.id] = [];
-    } else if (field.type === 'text' && field.defaultValue) {
+    } else if (
+      (field.type === 'text' || field.type === 'dropdown') &&
+      field.defaultValue &&
+      isDefaultValueOptedIn(field)
+    ) {
+      // Ticket 1063: a `dropdown` seeds its configured default the same way `text`
+      // always has. Deliberately CONDITION-BLIND — this file must not import the
+      // dependency engine, so `dependencies.defaultWhen` is NOT consulted here; the
+      // gate is applied at hydrate time (`dynamic-job-state-storage.hydrateFieldValue`)
+      // and at render time (`DropdownField`). `isDefaultValueOptedIn` is only a flag
+      // read, not a rule, so it is safe here — and it is what stops a
+      // `useDefaultValue: false` config from seeding a leftover `defaultValue`.
       item[field.id] = field.defaultValue;
     } else {
       item[field.id] = '';

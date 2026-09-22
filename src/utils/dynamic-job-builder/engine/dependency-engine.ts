@@ -18,7 +18,11 @@ import {
   sumDealCenterRefs,
   toDealCenterNumber,
 } from './deal-center-field-utils';
-import { hasDropdownOptionDependencies, isVisibleByDropdownMapping } from './dropdown-utils';
+import {
+  hasDropdownOptionDependencies,
+  isDefaultValueOptedIn,
+  isVisibleByDropdownMapping,
+} from './dropdown-utils';
 
 export const RULE_OPERATORS = [
   'truthy',
@@ -48,7 +52,13 @@ function toNumber(value: any) {
   return Number.isNaN(n) ? 0 : n;
 }
 
-function buildRuleEvaluationContext(ctx: any = {}, state: any = {}) {
+/**
+ * The canonical rule context. Exported (ticket 1063) because per-option
+ * `optionVisibility` rules in `toggle-utils` must be evaluated against the SAME
+ * context as field-level `visibleWhen`/`requiredWhen` — anything less makes
+ * cross-section, by-key and allocation-metric references resolve to `undefined`.
+ */
+export function buildRuleEvaluationContext(ctx: any = {}, state: any = {}) {
   return {
     dealCenterData: ctx.dealCenterData || {},
     state: state || ctx.state || {},
@@ -562,7 +572,7 @@ export function isFieldRequired(field: any, state: any = {}, ctx: any = {}) {
 /** True when a configured default color should apply for the current state.
  * Web parity: src/components/dynamic-job-builder/engine/dependency-engine.js. */
 export function isDefaultColorActive(field: any, state: any = {}, ctx: any = {}) {
-  const useDefault = field?.useDefaultColor ?? Boolean(field?.defaultValue);
+  const useDefault = isDefaultValueOptedIn(field);
   if (!useDefault || !field?.defaultValue) return false;
 
   const defaultWhen = field?.dependencies?.defaultWhen;
@@ -583,6 +593,19 @@ export function isDefaultColorActive(field: any, state: any = {}, ctx: any = {})
  */
 export function resolveConditionalDefault(field: any, state: any = {}, ctx: any = {}) {
   if (!field?.dependencies?.defaultWhen) return undefined;
+  return isDefaultColorActive(field, state, ctx) ? (field.defaultValue ?? '') : '';
+}
+
+/**
+ * The default a field should actually show/seed right now, or '' when none applies.
+ *
+ * Unlike `resolveConditionalDefault` this never returns `undefined`: it answers
+ * "what is the effective default", not "is there a conditional one". '' covers
+ * all three no-default cases — the opt-in is off (`useDefaultValue: false` with a
+ * leftover `defaultValue`), no `defaultValue` is authored, or `defaultWhen` is
+ * not met. Ticket 1063; web parity: dependency-engine.js `resolveEffectiveDefaultValue`.
+ */
+export function resolveEffectiveDefaultValue(field: any, state: any = {}, ctx: any = {}) {
   return isDefaultColorActive(field, state, ctx) ? (field.defaultValue ?? '') : '';
 }
 
@@ -902,7 +925,7 @@ export function validateDependencies(config: any) {
         }
 
         if (
-          (field.type === 'toggle' || field.type === 'optionList') &&
+          (field.type === 'toggle' || field.type === 'optionList' || field.type === 'dropdown') &&
           field.optionVisibility
         ) {
           Object.entries(field.optionVisibility).forEach(([option, ruleGroup]) => {
