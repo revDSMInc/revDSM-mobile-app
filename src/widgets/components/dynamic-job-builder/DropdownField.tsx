@@ -19,6 +19,12 @@ interface DropdownFieldProps {
    * chooser (spec §2.3: "greyed out: shows its value, cannot be opened").
    */
   disabled?: boolean;
+  /**
+   * Title for the DISABLED value box. Resolved by the renderer's `boxTitleFor`,
+   * which falls back to the containing stack's label — a field authored without one
+   * otherwise renders a completely untitled box.
+   */
+  boxLabel?: string;
   /** Already resolved by `resolveEffectiveDefaultValue`; '' when none applies. */
   defaultValue?: string;
   /**
@@ -73,6 +79,7 @@ export function DropdownField({
   columns,
   isMulti,
   disabled,
+  boxLabel,
   defaultValue,
   fallbackValue,
   readOnly,
@@ -86,7 +93,25 @@ export function DropdownField({
   // returns a fresh array every render, which would re-run this on every render.
   const optionsKey = visibleOptions.join(' ');
   const singleValue = typeof value === 'string' ? value : '';
-  const seedable = !!defaultValue && visibleOptions.includes(defaultValue);
+
+  // ⚠️ THE CONFIG-RESOLVED VALUE MUST REACH JOB STATE — displaying it is not enough.
+  //
+  // Spec §2.4: "the default is written into STATE, not just displayed … because
+  // rules on OTHER fields read state. A defaulted dropdown that is only
+  // render-resolved is invisible to `optionVisibility`, so a rule pointing at it
+  // evaluates as empty and silently rules every option out."
+  //
+  // That is not theoretical — it was reported three separate ways on the LeafFilter
+  // tab, all one cause: a profile box that DISPLAYED "Versa" while state held
+  // nothing. The width dropdown's options are each gated on that profile, so every
+  // rule failed and the whole field vanished from the combination; the Job Builder
+  // Summary dropped its row; and the value would not have been saved.
+  //
+  // So the seed candidate is the same chain the box displays: the active default
+  // first, then `fallbackValue` (the deal-center / config answer). Whatever the rep
+  // is shown is what the rest of the engine gets to read.
+  const configValue = defaultValue || fallbackValue || '';
+  const seedable = !!configValue && visibleOptions.includes(configValue);
 
   useLayoutEffect(() => {
     // The decision itself lives in `dropdown-state-sync.ts` so it can be unit
@@ -94,13 +119,14 @@ export function DropdownField({
     const sync = resolveDropdownSync({
       options: visibleOptions,
       value: singleValue,
-      defaultValue,
+      defaultValue: configValue,
       isMulti,
       readOnly,
+      disabled,
     });
     if (sync.write) onChangeRef.current?.(sync.value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [optionsKey, singleValue, defaultValue, isMulti, readOnly]);
+  }, [optionsKey, singleValue, configValue, isMulti, readOnly, disabled]);
 
   if (!visibleOptions.length) return null;
 
@@ -115,7 +141,7 @@ export function DropdownField({
       ? value
       : []
     : (visibleOptions.includes(singleValue) && singleValue) ||
-      (seedable && (defaultValue as string)) ||
+      (seedable && configValue) ||
       '';
 
   // ⚠️ DISABLED RENDERS THE VALUE, NOT THE OPTIONS.
@@ -153,12 +179,30 @@ export function DropdownField({
     // ⚠️ `field.label || field.title` — the fallback this engine already uses
     // (`dependency-engine` collectFieldRefs, `field-value-utils`). A field authored
     // with only `title` otherwise renders a label-less box beside a labelled one.
-    return (
-      <LockedField
-        label={field?.label || field?.title}
-        value={(shownValue as string) || fallbackValue || undefined}
-      />
-    );
+    // ⚠️ RESOLUTION ORDER MATTERS. The CONFIG wins over saved state here — the
+    // opposite of both `shownValue` and the usual "never clobber what is stored".
+    //
+    // A `disabled` field's value was never the rep's to set; the portal answers it.
+    // So when the portal's answer and the saved draft disagree, the portal is right
+    // and the draft is simply out of date.
+    //
+    // This is also the fix for a specific reported symptom: the box showed the
+    // CORRECT (new) value for a moment and then reverted to an old one. The config
+    // resolves synchronously on mount, but the saved draft arrives later from the
+    // outcome GET (`useDynamicJobBuilderSession` applies it when `draftToken` /
+    // `draftSettled` settle) — so with state first in this chain, the late write
+    // visibly overwrote the fresh value a second after the screen opened.
+    //
+    // `fallbackValue` is the portal-derived answer: `resolveLockedValue` reads the
+    // field's `dcField`/`dcFields` out of the quote and falls back to the config's
+    // own `defaultValue`. Saved state stays last, so a field the config cannot
+    // answer at all still shows what the deal holds rather than going blank.
+    //
+    // ⚠️ DISPLAY ONLY — job state is deliberately NOT rewritten. Showing the
+    // portal's current answer is safe; silently re-saving every already-submitted
+    // deal because someone edited a default is not.
+    const boxValue = fallbackValue || (seedable ? configValue : '') || singleValue || undefined;
+    return <LockedField label={boxLabel || field?.label || field?.title} value={boxValue} />;
   }
 
   // Editable + single-select → a REAL dropdown, which is what the ticket asks for

@@ -68,6 +68,10 @@ export function buildRuleEvaluationContext(ctx: any = {}, state: any = {}) {
     sectionState: ctx.sectionState,
     combos: ctx.combos,
     sections: ctx.sections,
+    // Which surface the builder is on, for `flow` rules. Sales passes `editMode`;
+    // the portal and admin editors pass `unrestrictedEdit`. Both names are read so
+    // the three engines stay diffable.
+    editMode: Boolean(ctx.editMode ?? ctx.unrestrictedEdit),
   };
 }
 
@@ -111,6 +115,55 @@ function resolveAllocationMetricValue(field: any, rule: any, ctx: any) {
 
 function resolveAllocationTolerance(field: any) {
   return Number(normalizeAllocationStatusMessages(field?.statusMessages).tolerance) || 0;
+}
+
+/** The surfaces the builder runs on. A `flow` rule compares against these. */
+export const FLOW_MODES = ['create', 'edit'];
+
+/** True for a rule that asks which surface the builder is on rather than reading a value. */
+function isFlowRule(rule: any) {
+  return (rule?.source || 'dealCenter') === 'flow';
+}
+
+/**
+ * Evaluate a `flow` rule — "is the rep building this job, or amending it in My Deals?"
+ *
+ * ⚠️ A flow rule only ever does work at CREATE time. The deal-edit flow runs the
+ * builder with `applyConditions: false` — every condition is bypassed so an
+ * amendment can reach any field — so in My Deals the option list is returned
+ * unfiltered before any rule is consulted. That is why "show when flow is edit" is
+ * the useful direction: it hides the option while the job is being built, and edit
+ * mode shows everything regardless. The reverse, "show only at create", cannot be
+ * enforced, because nothing is enforced in edit mode. Web behaves identically
+ * (`effectiveApplyConditions = editMode ? false : …`), so this is parity, not a
+ * mobile limitation — and it is why no create/edit toggle belongs in the UI.
+ */
+function evaluateFlowRule(rule: any, ctx: any) {
+  const current = ctx?.editMode ? 'edit' : 'create';
+  const operator = rule?.operator || 'eq';
+  const wanted = (Array.isArray(rule?.value) ? rule.value : [rule?.value])
+    .map((v: any) => String(v ?? '').trim())
+    .filter(Boolean);
+
+  // An unanswered flow rule decides nothing, like any other unauthored rule.
+  if (!wanted.length) return true;
+
+  const matches = wanted.includes(current);
+  return operator === 'neq' || operator === 'notIn' ? !matches : matches;
+}
+
+/**
+ * True when a rule names no field of any kind.
+ *
+ * Such a rule cannot be evaluated: `resolveSourceValue` has nothing to look up and
+ * returns `undefined`, which every operator then reads as a failure. That is the
+ * wrong default for an unauthored condition — it silently hides whatever the rule
+ * was attached to, and for an `optionVisibility` entry it can empty a dropdown's
+ * option list entirely, which makes the whole field disappear with nothing on
+ * screen saying why.
+ */
+function ruleReferencesNoField(rule: any) {
+  return !rule?.field && !rule?.fieldId && !rule?.fields?.length && !rule?.fieldIds?.length;
 }
 
 export function getJobBuilderFieldRefs(rule: any) {
@@ -268,6 +321,32 @@ function isTruthyValue(value: any): boolean {
 
 export function evaluateRule(rule: any, ctx: any = {}) {
   if (!rule) return true;
+
+  // ⚠️⚠️ ORDER IS LOAD-BEARING: the flow branch goes ABOVE the unauthored-rule
+  // guard below. A `flow` rule names no field BY DESIGN — it asks which surface the
+  // builder is on, it does not read a value — so `ruleReferencesNoField` is true for
+  // every one of them. Put this second and each flow rule is read as "no rule",
+  // returns true, and the options it was meant to hide at create time all show:
+  // silently, and it is exactly the bug the feature exists to prevent.
+  if (isFlowRule(rule)) return evaluateFlowRule(rule, ctx);
+
+  // ⚠️ An unauthored rule is NOT a condition — fail OPEN, not closed.
+  //
+  // Treated as "no rule", matching `evaluateRule(null)` / `evaluateRuleGroup(null)`,
+  // so a half-filled rule leaves the option showing. This is the whole reason the
+  // reported LeafFilter config rendered broken: its profile dropdown carries
+  // `optionVisibility["Versa"] = { source: 'dealCenter', field: '', operator:
+  // 'anyNonZero' }`. Failing closed hid "Versa", which left only "Versa Max", which
+  // failed every one of the seven width options' rules, which removed the width
+  // field from the screen entirely — one unauthored rule taking out two controls
+  // with nothing explaining why.
+  //
+  // Failing open is also what Lance's requirement asks for: the rep must always be
+  // able to pick any width the company configured, as a manual override.
+  //
+  // Blast radius measured on web across every job-builder config in the dev
+  // database: 1 rule out of 519 references no field — that one.
+  if (ruleReferencesNoField(rule)) return true;
 
   const operator = rule.operator || 'truthy';
   const operand = rule.value;
@@ -692,8 +771,12 @@ function validateRuleRefs(rule: any, knownKeys: Set<string>, location: string, e
     });
   }
 
-  if (source === 'dealCenter' && rule.field && !String(rule.field).trim()) {
-    errors.push(`${location}: Deal Center field key is required`);
+  // Was `rule.field && !String(rule.field).trim()`, which can only be true for a
+  // WHITESPACE-ONLY key — for `field: ''` the first clause is falsy, so the one
+  // case it exists to catch (a rule saved with no field picked at all) was never
+  // reported, and the broken config reached production silently.
+  if (source === 'dealCenter' && !rule.field && !rule.fields?.length) {
+    errors.push(`${location}: Deal Center field is required`);
   }
 
   if (rule.operator && !RULE_OPERATORS.includes(rule.operator)) {

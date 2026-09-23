@@ -187,6 +187,11 @@ function buildDepCtx(ctx: any, state: any) {
     // and the renderer disagreed about which options exist, the field would render
     // fine while Next stayed disabled, which is the worst of both worlds.
     sections: ctx.sections ?? ctx.tab?.sections,
+    // ⚠️ Same flag the renderer uses, so Next cannot disagree with what is on
+    // screen. Wiring only the renderer is a real bug, not a cosmetic one: the
+    // option list would come from one flag and the completeness check from another
+    // — the same class of failure as the original `tab-validation` depCtx gap.
+    editMode: ctx.editMode,
   };
 }
 
@@ -489,6 +494,9 @@ export function isTabComplete(tab: any, tabState: any = {}, ctx: any = {}) {
     products: ctx.products,
     tab,
     tabState,
+    // Reaches every `buildDepCtx` call below, so `flow` rules resolve the same way
+    // here as in the renderer.
+    editMode: ctx.editMode,
   };
 
   if (hasTabFields) {

@@ -27,12 +27,20 @@ export function resolveDropdownSync(params: {
   isMulti?: boolean;
   /** View-only render: never write to job state. */
   readOnly?: boolean;
+  /** `field.disabled` — accepted for symmetry; see the note below, it does not gate writes. */
+  disabled?: boolean;
 }): DropdownSync {
   const { value, defaultValue, isMulti, readOnly } = params;
   const options = Array.isArray(params.options) ? params.options : [];
 
   // A multi-select dropdown holds an array and has no single default to seed.
   if (isMulti || readOnly) return NO_WRITE;
+
+  // NOTE: `disabled` is deliberately NOT a no-write gate. The spec expects a
+  // disabled dropdown's configured default to still be applied and written (it is
+  // the answer the portal chose on the rep's behalf, and other fields' rules read
+  // it). The corruption this guarded against came from the removed auto-select
+  // below, not from seeding.
 
   // ⚠️ No options visible → write NOTHING, deliberately (see DropdownField).
   // On mobile the rule context settles across several renders (dealCenterData and
@@ -55,20 +63,18 @@ export function resolveDropdownSync(params: {
     return { write: true, value: defaultValue };
   }
 
-  // Exactly ONE option left and nothing chosen → that option IS the answer.
+  // ⚠️ DO NOT add a "lone visible option → select it" rule here.
   //
-  // Parity with `OptionToggleField`, which has always done this for toggle /
-  // optionList. Its docstring explains why it is load-bearing rather than
-  // cosmetic, and the same applies here: the value has to be WRITTEN, because
-  // other fields read it. A LeafFilter combination whose profile dropdown offers
-  // only "Versa Max" but holds no value rules out every option of the width
-  // dropdown that depends on it — so the width field renders nothing, the
-  // allocation card stays at "Used 0ft", and Next is disabled with nothing on
-  // screen to fix. It matters most when the field is `disabled`: the rep cannot
-  // select it themselves, so nothing else would ever fill it in.
-  if (options.length === 1) {
-    return { write: true, value: options[0] };
-  }
-
+  // It was tried, to make a profile dropdown showing only "Versa Max" fill itself
+  // in so the width field that depends on it would stop hiding. It WROTE
+  // "Versa Max" into combinations whose real profile was "Versa" — the symptom
+  // being a Job Builder disagreeing with the Deal Center over the same deal.
+  //
+  // The single option was itself the bug: an unauthored `optionVisibility` rule was
+  // hiding "Versa" (see `ruleReferencesNoField` in dependency-engine). With that
+  // fixed the list is complete and the configured default applies normally, so
+  // there is nothing left for an auto-select to repair. `OptionToggleField` does
+  // auto-select for toggle/optionList, but it owns its value; a dropdown here can
+  // be answered by the calculator, and overwriting that is data loss.
   return NO_WRITE;
 }

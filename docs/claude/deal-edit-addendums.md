@@ -1206,3 +1206,72 @@ into `describeCombo`, i.e. into the submitted addendum's text; it is a separator
 ⚠️ **A pair that changed ONE field still stays a plain row.** The "a card holding a single value is
 heavier" reasoning no longer strictly applies now that the card is always full, but widening it would
 re-card edits nobody reported — left alone deliberately.
+
+## My Deals hides a LeafFilter combination whose colour was never picked
+
+Ticket: *"inside My Deals make sure only that combination should be displayed in which the color value is
+already selected — if the color value is not selected then that combination should not be displayed at
+any cost."*
+
+A combination the rep never finished is noise in the edit wizard: it cannot be reviewed or signed off,
+and on a multi-combination deal it pushes the finished ones off screen. `CombinationSectionBlock`
+(`DynamicTabRenderer.tsx`) now skips it when `editMode && !comboHasSelectedColor(combo, baseRowFields)`.
+
+The rule is a pure util, `utils/dynamic-job-builder/engine/combination-color-filter.ts`, so it is unit
+tested (`__tests__/utils/combination-color-filter.test.ts`, 12 cases) — the component itself cannot be
+loaded under jest here.
+
+⚠️ **DISPLAY ONLY, and edit-mode only.** The combination stays in job state and round-trips untouched, so
+hiding it destroys nothing. The CREATE flow is deliberately not filtered — that is where the rep is still
+picking colours, and hiding a combination mid-entry would remove the row they were working on.
+
+⚠️ **`return null` INSIDE `combos.map`, never a filtered array.** Every handler in that block is bound to
+`comboIndex`, and `handleRemoveCombo` renumbers by position — filtering first would edit and delete the
+wrong combination.
+
+⚠️ **THREE surfaces render a combination, and hiding it on the tab hides it on ONE of them.** The other
+two read their own entries straight from `tabState`, so the filtered combinations came back listing
+"Not Selected" against every field — exactly what hiding them was meant to stop. All three now apply the
+same gate, edit-mode only:
+
+| Surface | Where |
+|---|---|
+| The combination cards | `DynamicTabRenderer` `CombinationSectionBlock` — `isComboHidden` |
+| "Grand Total - All Combinations" | `DynamicTabRenderer` `visibleSummaryEntries`, filtered BEFORE `shouldShowTabGrandTotalSummary` so an emptied tab drops the card entirely rather than rendering a blank one |
+| The Job Builder Summary step | `vertical-summary-utils` `buildCombinationSectionSummary` — its own `comboHasMeaningfulData` is a looser rule and let them through |
+
+Each resolves the field list from its OWN section (`getFlattenedCombinationSectionRowFields(section)`) —
+sections have different row fields, so a shared list would test the wrong ones. **A fourth surface would
+need the same gate**; the value lives in job state and is deliberately not removed from it.
+
+⚠️ **The section's "Add Combination" button goes with them.** Once the filter empties a section, that
+bare button was the only thing left of it — a row of orphaned "Add Combination" buttons under an
+otherwise empty LeafFilter tab. It is hidden when `visibleComboCount === 0`. Adding one there would
+create a combination with no colour, which the same filter hides the instant it is made, so the button
+could not do anything useful either. `isComboHidden` / `visibleComboCount` are computed ONCE per section
+so the render loop and the button cannot disagree; both are inert outside `editMode`.
+
+⚠️ **THE COLOUR IS NESTED — look inside containers.** This is what made the first attempt do nothing.
+LeafFilter authors its colour INSIDE a stack (the amber "INCOMPLETE - Color Required" card *is* that
+stack), so a flat scan of the row fields found the stack and no colour field, fell through to the
+"no colour field → always show" rule, and every unfinished combination stayed on screen. Two fixes,
+both needed:
+
+- `comboHasSelectedColor` flattens any field carrying `fields` (stack, accordion, anything) before
+  filtering for colours.
+- The call site passes `getFlattenedCombinationSectionRowFields(section)`, **not** `baseRowFields` —
+  that list drops accordions outright (`.filter(f => f.type !== 'accordion')`) and leaves stacks
+  unflattened.
+
+Container children live FLAT in the combination's state, so a nested colour's value is still read
+straight off `combo[field.id]`.
+
+⚠️ **A combination with NO colour field is always shown.** The rule is "an unanswered colour hides it",
+not "a colour is required"; gating on a field the config never authored would blank whole verticals.
+Where a combination has several colour fields, every one must be answered — they are all part of the same
+finished combination, so a half-filled one is exactly the unfinished case this exists to hide.
+
+⚠️ **A colour is not identified by `type` alone.** `isColorField` also matches a `text` / `locked` field
+carrying `palette`, `colors` or `colorKey`, because `renderField` draws those as a SwatchPicker too.
+`resolveComboColorValue` checks the field id, the field key AND the `colorValues` side-map, which is how
+a picked colour survives the save round-trip.

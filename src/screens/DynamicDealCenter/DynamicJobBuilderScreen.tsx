@@ -951,7 +951,11 @@ function DynamicJobBuilderInner({
     dealCenterData: dealCenterData || {},
     applyConditions,
     products: initialConfig?.products || [],
-  }), [dealCenterData, initialConfig, applyConditions]);
+    // Which surface the builder is on, for `flow` rules.
+    editMode: isEdit,
+    // ⚠️ `isEdit` belongs in the dep array too, or the memo keeps a stale flag when
+    // the screen is reused.
+  }), [dealCenterData, initialConfig, applyConditions, isEdit]);
 
   const tabCompletionById = useMemo(() => {
     const verticalState = jobState?.[selectedVerticalId] || {};
