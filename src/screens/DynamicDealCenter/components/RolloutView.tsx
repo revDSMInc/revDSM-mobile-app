@@ -910,6 +910,16 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const acceptedDrop = drops.find((d) => d.status === 'accepted');
   const activeMethod = acceptedDrop?.paymentMethod || method;
   const activeDownPayment = Number(acceptedDrop?.downPayment) || 0;
+  /**
+   * What the Result Lead modal should OPEN with.
+   *
+   * ⚠️ Not `activeDownPayment`. That one is the accepted DROP's figure, so on the plain
+   * Result Lead path — no drops, which is the common case — it is always 0 and the modal
+   * opened at $0.00 even when a down payment was already saved on this calculator. The
+   * drop's value still wins when one is accepted: the deal is being resulted at the drop,
+   * and the drop carries its own down payment.
+   */
+  const resultDownPayment = acceptedDrop ? activeDownPayment : (Number(calculator.downPayment) || 0);
 
   // ── Rollout activity logs the portal timeline renders (web parity) ──────────
   const logCalculator = { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId };
@@ -1484,10 +1494,11 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     const secured = autoSecureLastDrop(drops);
     // Seeded from the CURRENT state; overridden below by the row just secured, whose
     // own plan and down payment are what the deal is being resulted at. `activeMethod`
-    // / `activeDownPayment` derive from an ALREADY-accepted drop, so on this path they
-    // are still the pre-secure values.
+    // derives from an ALREADY-accepted drop, so on this path it is still the pre-secure
+    // value; `resultDownPayment` falls back to the calculator's own saved down payment
+    // for the same reason (see its definition).
     let chooseAt = finalPrice;
-    let chooseDown = activeDownPayment;
+    let chooseDown = resultDownPayment;
     if (secured !== drops) {
       onDropChange(calculator.id, secured);
       const idx = secured.length - 1;
@@ -1533,7 +1544,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     const lastDrop = drops.length
       ? Number(drops[drops.length - 1]?.price ?? drops[drops.length - 1]?.dropedPrice) || 0
       : Number(calculator.price) || 0;
-    onResult(calculator.id, 'demo', lastDrop, activeMethod, activeDownPayment);
+    onResult(calculator.id, 'demo', lastDrop, activeMethod, resultDownPayment);
   };
 
   // The resolved `method` can be a key that ISN'T offered for this lead/company —

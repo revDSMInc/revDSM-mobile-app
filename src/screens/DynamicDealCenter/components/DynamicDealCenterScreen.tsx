@@ -354,6 +354,20 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
 
   const handleResultConfirm = useCallback((data: any) => {
     setResultModal({ visible: false });
+
+    // Persist the down payment the rep typed IN THIS MODAL back onto the calculator.
+    //
+    // ⚠️ Without this the figure lives only in `calculatorResultData`, which is screen
+    // state: Build Job → back → reopen Result Lead and the field reads $0.00 again,
+    // because `initialDownPayment` comes from the SAVED calculator and nothing ever wrote
+    // it there. Reported as "down payment not saved when entered in lead result modal".
+    // `handleSetDownPayment` marks the tab dirty, so it rides the same debounced
+    // `PUT /lfcalculators/{id}` as the rollout card's own down-payment input and hydrates
+    // on the next load. A demo has no down payment, so only a sale writes.
+    if (currentCalculatorId && data?.resultType === 'sale') {
+      handleSetDownPayment(currentCalculatorId, Number(data?.downPayment) || 0);
+    }
+
     // Attach the calculator snapshot + appointment so the outcome payload can send
     // `LFCalculator` and `selectedAppointmentId` (web parity — every outcome save
     // carries the associated calculator object; previously omitted on mobile).
@@ -435,7 +449,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         }
         openJobBuilder(false);
       });
-  }, [currentCalculatorId, tabs, lead, user, appointmentId]);
+  }, [currentCalculatorId, tabs, lead, user, appointmentId, handleSetDownPayment]);
 
   const handleJobBuilderBack = useCallback(() => {
     setFlowStep('calculator');
