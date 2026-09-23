@@ -24,6 +24,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
 import { useQueryClient } from '@tanstack/react-query';
 import { markLeadRolloutsConfirmed } from '../../../hooks/useLeadCalculatorStatus';
+import { allRolloutsConfirmed } from '../../../utils/rollout-status';
 import { isOnline } from '../../../services/connectivity';
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
@@ -581,6 +582,33 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
             // noted on `rehashBuild`.
             releaseRehashDrafts(rehashLatchRef.current, confirmed.map((c) => c.id));
             handleConfirmRollouts(confirmed);
+
+            // ⚠️ Arm the tools list's local-confirmation grace HERE, at the moment of
+            // confirmation — not only on "Jobs Built — Back to Tools" below.
+            //
+            // The confirmation is written by the DEBOUNCED save engine
+            // (`SAVE_DEBOUNCE_MS = 1500` plus the round trip), and the Investment Center
+            // tile reads the server on focus. `markLeadRolloutsConfirmed` is what bridges
+            // that gap, but it used to fire only on that one button — so every other way
+            // out of here raced the PUT: the header back arrow, hardware back, and the
+            // 10-minute AUTO-confirm (`checkAndAutoConfirm`, which the rep never sees).
+            // Win the race on a fast connection and the tile is open; lose it on weak LTE
+            // and it reads "Please Fully Build ALL jobs first". That is the intermittent
+            // "confirmed rollouts but Investment Center not ready" report — it is a
+            // timing bug, which is exactly why it reproduces on some devices and not
+            // others.
+            //
+            // Guarded on the confirm completing the WHOLE set, because the override
+            // asserts `allConfirmed` outright; confirming one of three must not unlock
+            // anything. `handleConfirmRollouts`' state update hasn't landed yet, so the
+            // set is projected from `confirmed` rather than re-read from `tabs`.
+            const justConfirmed = new Set(confirmed.map((c) => c.id));
+            const afterConfirm = tabs.map((t) =>
+              justConfirmed.has(t.id) ? { ...t, isRolloutConfirmed: true } : t
+            );
+            if (allRolloutsConfirmed(afterConfirm)) {
+              markLeadRolloutsConfirmed(queryClient, lead);
+            }
           }}
           onResultJob={handleResultJob}
           // Persist the entered end price live (survives back-to-calculator edits) and

@@ -15,6 +15,7 @@ import { describeFullPackage } from '../utils/tab-naming';
 import { autoSecureLastDrop, dropPriceOf } from '../utils/drop-prices';
 import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { FlashMessage } from '../../../config/message';
+import { allRolloutsConfirmed, rolloutCalculators } from '../../../utils/rollout-status';
 import { useAuth } from '../../../hooks/useAuth';
 import {
   DealPricing,
@@ -2171,10 +2172,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   // is still a bare number is empty (no entries → derived name is just its
   // position) and must NOT appear in the rollout — only real, named calculators
   // can be priced/confirmed.
-  const visibleCalculators = useMemo(
-    () => calculators.filter((c) => !/^\d+$/.test((c.title || '').trim())),
-    [calculators]
-  );
+  const visibleCalculators = useMemo(() => rolloutCalculators(calculators), [calculators]);
   /**
    * Calculators that are a FULL PACKAGE — their tab in the strip above shows the
    * package icon + ⓘ instead of the `G+VMax+Versa+S+FWrap` letters, matching the
@@ -2197,7 +2195,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
     setPackageAnchor(rect);
     setPackageInfoVisible(true);
   }, []);
-  const allConfirmed = visibleCalculators.length > 0 && visibleCalculators.every((c) => c.isRolloutConfirmed);
+  const allConfirmed = allRolloutsConfirmed(visibleCalculators);
   const allHavePrices = visibleCalculators.length > 0 && visibleCalculators.every((c) => effectivePrice(c) > 0);
   // Progress tracks calculators with an END PRICE ENTERED (web `ConfirmRolloutPrices`
   // counts `price > 0`, not confirmations), so the bar fills as the rep prices each
