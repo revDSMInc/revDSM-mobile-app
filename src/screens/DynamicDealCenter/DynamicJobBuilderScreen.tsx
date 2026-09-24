@@ -2011,6 +2011,7 @@ function DynamicJobBuilderInner({
               applyConditions={applyConditions}
               hideAllocationTrackers={hideAllocationTrackers}
               collapsingScrollProps={collapsingHeader.scrollProps}
+              collapsingUnderHeaderStyle={collapsingHeader.underHeaderStyle}
               verticalId={selectedVertical?.id}
               verticalColor={selectedVertical?.color || '#22c55e'}
               products={initialConfig?.products || []}

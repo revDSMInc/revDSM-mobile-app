@@ -1,5 +1,5 @@
 import React, { useMemo, Fragment } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Platform, Animated } from 'react-native';
 import {
   getTabSections,
   getCombinationSectionRowFields,
@@ -307,6 +307,16 @@ interface DynamicTabRendererProps {
    * it — that is the half of the ticket that says the tracker always stays.
    */
   collapsingScrollProps?: Record<string, any>;
+  /**
+   * Animated top padding for the PINNED allocation tracker, from
+   * `useCollapsingHeader().underHeaderStyle`.
+   *
+   * ⚠️ The tracker sits directly under the collapsing header and does not move with it.
+   * With a fixed `paddingTop` the gap above the tracker stayed at its full open size once
+   * the header had gone, leaving the cards stranded below a band of white. This closes it
+   * over the same travel, so header + tracker read as one block.
+   */
+  collapsingUnderHeaderStyle?: Record<string, any>;
   verticalId?: string;
   verticalColor?: string;
   products?: any[];
@@ -1491,6 +1501,7 @@ export function DynamicTabRenderer({
   editMode,
   hideAllocationTrackers = false,
   collapsingScrollProps,
+  collapsingUnderHeaderStyle,
   leadId,
   calculatorResultData,
   customerName,
@@ -1777,9 +1788,14 @@ export function DynamicTabRenderer({
           (no header bar, no collapse); 3 per row, wrapping. Each card shows its own
           Avail / Used / Left + status banner, matching the normal JB. */}
       {!hideAllocationTrackers && showAllocationGrid && (
-        <View
+        <Animated.View
           className="bg-white border-b border-slate-100"
-          style={{ zIndex: 50, paddingHorizontal: 8, paddingTop: 8, paddingBottom: 2 }}
+          // ⚠️ `paddingTop` comes LAST so the animated value wins over the static one.
+          // Spreading the style first would pin the gap open again.
+          style={[
+            { zIndex: 50, paddingHorizontal: 8, paddingTop: 8, paddingBottom: 2 },
+            collapsingUnderHeaderStyle,
+          ]}
         >
           <View className="flex-row flex-wrap">
             {trackerCards.map((card) => (
@@ -1798,7 +1814,7 @@ export function DynamicTabRenderer({
               </View>
             ))}
           </View>
-        </View>
+        </Animated.View>
       )}
 
       {/* FIXED footage accordion tracker — pinned below the allocation grid, same

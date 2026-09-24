@@ -30,9 +30,19 @@ export interface CollapsingHeader {
     onMomentumScrollEnd: () => void;
     scrollEventThrottle: number;
   };
+  /**
+   * Animated top padding for whatever sits DIRECTLY under the header — here the pinned
+   * allocation tracker. Tracks the collapse so the gap above the tracker closes with the
+   * header instead of leaving it stranded below a band of white.
+   */
+  underHeaderStyle: { paddingTop: Animated.AnimatedInterpolation<number> | number };
   /** True once the header is more than half eaten. For callers that need to know. */
   hidden: boolean;
 }
+
+/** Gap above the pinned tracker with the header fully open / fully collapsed. */
+export const UNDER_HEADER_PAD_OPEN = 8;
+export const UNDER_HEADER_PAD_COLLAPSED = 2;
 
 /**
  * Instagram-style collapsing header: the header's height FOLLOWS THE FINGER as the rep
@@ -195,6 +205,18 @@ export function useCollapsingHeader(
             })
           : 1,
       overflow: 'hidden',
+    },
+    underHeaderStyle: {
+      // Eases from the open gap to the collapsed one across the SAME travel as the
+      // header, so the two move as one block rather than the padding snapping at the end.
+      paddingTop:
+        headerHeight > 0
+          ? collapsed.interpolate({
+              inputRange: [0, headerHeight],
+              outputRange: [UNDER_HEADER_PAD_OPEN, UNDER_HEADER_PAD_COLLAPSED],
+              extrapolate: 'clamp',
+            })
+          : UNDER_HEADER_PAD_OPEN,
     },
     onHeaderLayout,
     scrollProps: {
