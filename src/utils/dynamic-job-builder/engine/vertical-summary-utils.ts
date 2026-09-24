@@ -7,7 +7,7 @@ import {
 } from './combination-utils';
 import { isAllocationField, isFieldLocked, resolveLockedValue } from './allocation-utils';
 import { isPairedQuantityEmpty } from './locked-color-defaults';
-import { comboHasSelectedColor } from './combination-color-filter';
+import { isComboHiddenInDealEdit } from './combination-color-filter';
 import {
   evaluateRuleGroup,
   isFieldVisibleWithConditions,
@@ -664,10 +664,7 @@ function buildCombinationSectionSummary(
     // (`combination-color-filter.ts`), so it must not reappear in the summary
     // either — `comboHasMeaningfulData` is a different, looser rule and lets it
     // through. Edit-mode only; the create flow is untouched.
-    if (
-      ctx?.editMode &&
-      !comboHasSelectedColor(combo, getFlattenedCombinationSectionRowFields(section))
-    ) {
+    if (isComboHiddenInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), ctx?.editMode)) {
       return;
     }
     if (!comboHasMeaningfulData(section, combo, { ...ctx, tab, tabState, section })) return;

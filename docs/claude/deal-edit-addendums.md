@@ -1275,3 +1275,30 @@ finished combination, so a half-filled one is exactly the unfinished case this e
 carrying `palette`, `colors` or `colorKey`, because `renderField` draws those as a SwatchPicker too.
 `resolveComboColorValue` checks the field id, the field key AND the `colorValues` side-map, which is how
 a picked colour survives the save round-trip.
+
+### Follow-up — Add Combination looked dead; chip numbers had gaps
+
+*"inside My Deals the combination count is not accurate and the Add Combination button is not working —
+fix the same as the Deal Center."* (Deal Center side: `deal-center.md`, "combination numbering & the parent
+combination".)
+
+- **Add Combination was working, but its combination was hidden straight away.** A new combination has no
+  colour, so `isComboHidden` hid it as soon as it was created. `handleAddCombo` now tags it in edit mode
+  with **`ADDED_IN_EDIT_KEY` (`'_addedInEdit'`)**, and the rule, moved into
+  **`isComboHiddenInDealEdit(combo, fields, editMode)`** (`combination-color-filter.ts`), always shows a
+  tagged combination. All three surfaces call that one helper now (cards, Grand Total card, Summary step
+  `buildCombinationSectionSummary`), so a fourth one should call it too.
+- ⚠️ **The marker is session-only and must stay that way.** On save, `ensureTabStateShape` rebuilds each
+  combination from its row fields plus `_combinationNumber`, so the marker is dropped (covered by a
+  serialize test). In memory it is skipped by every walk over combination keys: activity-log
+  `SKIP_STATE_KEYS`, `empty-step-gate`, storage `comboHasEnteredData`, and the diff's `SKIP_LEAF_KEYS`.
+  **If a new walk over combination keys is added, add the marker to its skip list too**, or an added
+  combination shows up as a field change. After a reload a still-colourless combination hides again, as
+  it should.
+- **Numbering counts only SHOWN combinations.** Chips (`chipNumbers` in `CombinationSectionBlock`),
+  section offsets (`comboIndexOffsets`), the Grand Total `#N` badges (numbered after the filter), and the
+  stored numbers (`renumberTabCombinations(..., isComboShown)`) all skip a hidden combination. A hidden
+  combination keeps its old stored number and takes no slot, so the visible chips run 1..N with no gap.
+- **The parent is the first SHOWN combination** (`isParentCombination(index, firstShownIndex)`). When a
+  hidden saved combination comes first, the first visible one is the parent and has no Remove.
+- Tests: `__tests__/combination-numbering.test.ts`.

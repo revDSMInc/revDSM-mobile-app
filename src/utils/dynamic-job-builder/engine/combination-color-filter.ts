@@ -87,3 +87,28 @@ export function comboHasSelectedColor(combo: any, fields: any[] = []): boolean {
   if (!colorFields.length) return true;
   return colorFields.every((field) => !!resolveComboColorValue(field, combo));
 }
+
+/**
+ * Session-only marker on a combination the rep ADDED in the My Deals edit wizard.
+ *
+ * A new combination starts with no colour, so the colour filter hid it the instant
+ * "Add Combination" made it: the button looked dead. A combination carrying this key
+ * is always shown.
+ *
+ * ⚠️ Never persisted: `ensureTabStateShape` (run by `serializeDynamicJobStateForStorage`)
+ * rebuilds each combination from its row fields plus `_combinationNumber`, which drops
+ * it on save. Every combination-key walker skips it (activity logs, empty-step gate,
+ * storage `comboHasEnteredData`, the deal diff's `SKIP_LEAF_KEYS`).
+ */
+export const ADDED_IN_EDIT_KEY = '_addedInEdit';
+
+/**
+ * THE My Deals visibility rule, shared by every surface that renders a combination
+ * (cards, Grand Total card, Summary step, numbering). Edit-mode only: an unfinished
+ * SAVED combination — no colour picked — is hidden; one added this session is not.
+ */
+export function isComboHiddenInDealEdit(combo: any, fields: any[] = [], editMode?: boolean): boolean {
+  if (!editMode) return false;
+  if (combo?.[ADDED_IN_EDIT_KEY]) return false;
+  return !comboHasSelectedColor(combo, fields);
+}

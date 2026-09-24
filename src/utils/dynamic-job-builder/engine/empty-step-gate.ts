@@ -35,7 +35,7 @@ export function stateHasContent(obj: any, lockedFieldIds?: Set<string>): boolean
   if (Array.isArray(obj)) return obj.some((v) => stateHasContent(v, lockedFieldIds));
   if (typeof obj === 'object') {
     return Object.entries(obj).some(([k, v]) => {
-      if (k === 'colorValues' || k === '_combinationNumber' || k === '_storageVersion') {
+      if (k === 'colorValues' || k === '_combinationNumber' || k === '_addedInEdit' || k === '_storageVersion') {
         return false;
       }
       if (lockedFieldIds && lockedFieldIds.has(k)) return false;

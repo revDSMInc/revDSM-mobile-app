@@ -5,7 +5,9 @@ import {
   getCombinationSectionRowFields,
   canAddMoreCombinations,
   createNextCombinationItem,
-  getCombinationDisplayNumber,
+  isParentCombination,
+  getRenderedSectionCombos,
+  renumberTabCombinations,
   getCombinationSectionHeaderFields,
   getFlattenedCombinationSectionRowFields,
   buildComboGroupSectionState,
@@ -39,7 +41,7 @@ import {
   filterVisibleToggleOptions,
   getVisibleFieldOptions,
 } from '../../../utils/dynamic-job-builder/engine/toggle-utils';
-import { comboHasSelectedColor } from '../../../utils/dynamic-job-builder/engine/combination-color-filter';
+import { ADDED_IN_EDIT_KEY, isComboHiddenInDealEdit } from '../../../utils/dynamic-job-builder/engine/combination-color-filter';
 import {
   getWarningConfig,
   getOptionGridSize,
@@ -1292,12 +1294,21 @@ function CombinationSectionBlock({
   const baseRowFields = getCombinationSectionRowFields(section).filter((f: any) => f.type !== 'accordion');
   const canAddCombo = canAddMoreCombinations(section);
 
-  // My Deals: a combination whose colour was never picked is hidden (see
-  // `combination-color-filter.ts`). Computed ONCE here so the render loop and the
-  // "Add Combination" button below cannot disagree about which combos are on screen.
+  // My Deals: a SAVED combination whose colour was never picked is hidden (see
+  // `combination-color-filter.ts`); one the rep adds here is not. Computed ONCE here
+  // so the render loop, the numbering and the "Add Combination" button below cannot
+  // disagree about which combos are on screen.
   const isComboHidden = (combo: any) =>
-    editMode && !comboHasSelectedColor(combo, getFlattenedCombinationSectionRowFields(section));
+    isComboHiddenInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), editMode);
   const visibleComboCount = combos.filter((combo: any) => !isComboHidden(combo)).length;
+  // The parent is the first combination SHOWN (a hidden saved one can precede it).
+  const firstShownIndex = Math.max(0, combos.findIndex((combo: any) => !isComboHidden(combo)));
+  // Chip numbers by position among the SHOWN combinations only, so a hidden one
+  // leaves no gap (`-1` for a hidden combination, which never renders).
+  let shownCount = 0;
+  const chipNumbers = combos.map((combo: any) =>
+    isComboHidden(combo) ? -1 : comboIndexOffset + ++shownCount
+  );
   // Portal-controlled: whether the "Combination #N" chip is shown on Sales
   // (web `dynamic-tab-renderer.js:233`). Sections that hold a single logical
   // configuration — Downspout & Accessories, Measurements — switch it off in the
@@ -1323,11 +1334,14 @@ function CombinationSectionBlock({
 
   const handleAddCombo = () => {
     if (readOnly || !canAddCombo) return;
-    onUpdateCombos([...combos, createNextCombinationItem(section, combos, comboIndexOffset)]);
+    const added = createNextCombinationItem(section, combos, comboIndexOffset);
+    // My Deals: mark it so the colour filter does not hide it before a colour is
+    // picked — that is what made this button look dead. Session-only, never saved.
+    onUpdateCombos([...combos, editMode ? { ...added, [ADDED_IN_EDIT_KEY]: true } : added]);
   };
 
   const handleRemoveCombo = (index: number) => {
-    if (readOnly) return;
+    if (readOnly || isParentCombination(index, firstShownIndex)) return;
     const next = combos
       .filter((_, i) => i !== index)
       .map((combo, idx) => ({ ...combo, _combinationNumber: comboIndexOffset + idx + 1 }));
@@ -1382,8 +1396,15 @@ function CombinationSectionBlock({
         if (isComboHidden(combo)) return null;
 
         const borderThemeColor = COMBINATION_COLORS[comboIndex % COMBINATION_COLORS.length];
-        const combinationNumber = getCombinationDisplayNumber(combo, comboIndex, comboIndexOffset);
+        // By position, so the chip is right at run time even before a stale stored
+        // number has been rewritten by the next edit.
+        const combinationNumber = chipNumbers[comboIndex];
         const comboTotal = gridField ? computeGridTotal(combo[gridKey]) : 0;
+        // The first combination is the section's PARENT — the one hydration seeds
+        // (locked from the Job Summary). Only rep-added combinations after it can be
+        // removed. Positional on purpose: hydration keeps only known
+        // keys plus `_combinationNumber`, so a marker flag would not survive a reload.
+        const canEditCombo = !readOnly && !isParentCombination(comboIndex, firstShownIndex);
 
         return (
           <SectionCard key={combo._combinationNumber ?? comboIndex} borderColor={borderThemeColor}>
@@ -1398,7 +1419,7 @@ function CombinationSectionBlock({
                 // Spacer keeps Remove right-aligned when the chip is hidden (web parity).
                 <View />
               )}
-              {combos.length > 1 && !readOnly && (
+              {canEditCombo && (
                 <TouchableOpacity onPress={() => handleRemoveCombo(comboIndex)}>
                   <Text className="text-xs text-red-500 font-black">Remove</Text>
                 </TouchableOpacity>
@@ -1634,18 +1655,36 @@ export function DynamicTabRenderer({
     onStateChange((prev: any) => ({ ...prev, [key]: val }));
   };
 
+  // My Deals: whether a combination is on screen (the colour filter hides unfinished
+  // SAVED ones). Hidden combinations take no number, so the chips run with no gap.
+  const isComboShown = (combo: any, section: any) =>
+    !isComboHiddenInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), editMode);
+
+  // The combination sections that render, in order — the order the chips count in.
+  const getRenderedCombinationSections = (state: any) =>
+    sections.filter((section: any) =>
+      section.sectionType !== 'simple' &&
+      (section.fields || []).length > 0 &&
+      !(applyConditions && !isSummarySectionVisible(section, state, dealCenterData, tab))
+    );
+
   const updateSectionCombos = (sectionId: string, combos: any[]) => {
     if (readOnly || !onStateChange) return;
-    onStateChange((prev: any) => ({
-      ...prev,
-      comboGroups: {
-        ...(prev.comboGroups || {}),
-        [sectionId]: {
-          ...(prev.comboGroups?.[sectionId] || {}),
-          combinations: combos,
+    onStateChange((prev: any) => {
+      const next = {
+        ...prev,
+        comboGroups: {
+          ...(prev.comboGroups || {}),
+          [sectionId]: {
+            ...(prev.comboGroups?.[sectionId] || {}),
+            combinations: combos,
+          },
         },
-      },
-    }));
+      };
+      // Numbers run across sections, so a change in one section re-counts the
+      // sections after it (see `renumberTabCombinations`).
+      return renumberTabCombinations(getRenderedCombinationSections(next), next, isComboShown);
+    });
   };
 
   const updateComboGroupSectionState = (sectionId: string, sectionStateOrUpdater: any) => {
@@ -1687,14 +1726,16 @@ export function DynamicTabRenderer({
     });
   };
 
-  const getSectionCombos = (section: any) => {
-    const fromGroups = tabState?.comboGroups?.[section.id]?.combinations;
-    if (fromGroups?.length) return fromGroups;
-    if (section.id === 'default' && tabState?.combinations?.length) {
-      return tabState.combinations;
-    }
-    return [{ ...(section.defaultItem || {}) }];
-  };
+  const getSectionCombos = (section: any) => getRenderedSectionCombos(section, tabState);
+
+  // Each section's first chip number, by POSITION: the combinations rendered in the
+  // sections above it. Not read from the first combo's stored number — a stale one
+  // (a draft saved before tab-wide renumbering) would repeat another section's chip.
+  const comboIndexOffsets: Record<string, number> = {};
+  getRenderedCombinationSections(tabState).reduce((count: number, section: any) => {
+    comboIndexOffsets[section.id] = count;
+    return count + getSectionCombos(section).filter((combo: any) => isComboShown(combo, section)).length;
+  }, 0);
 
   const getSimpleSectionState = (section: any) =>
     tabState?.sectionFields?.[section.id] || {};
@@ -1718,11 +1759,24 @@ export function DynamicTabRenderer({
   //
   // Each entry carries its own `section`, so the field list is resolved per entry —
   // sections have different row fields and a shared list would test the wrong ones.
+  //
+  // Then the "#N" badges take the same positional numbers as the chips above them, so
+  // the two can never disagree (entries arrive section by section, in each section's
+  // combination order; numbered AFTER filtering, as the chips are).
   const visibleSummaryEntries = useMemo(() => {
-    if (!editMode) return tabSummaryEntries;
-    return tabSummaryEntries.filter((entry: any) =>
-      comboHasSelectedColor(entry.combo, getFlattenedCombinationSectionRowFields(entry.section))
-    );
+    const seen: Record<string, number> = {};
+    return tabSummaryEntries
+      .filter((entry: any) => isComboShown(entry.combo, entry.section))
+      .map((entry: any) => {
+        const offset = comboIndexOffsets[entry.section.id];
+        if (offset === undefined) return entry;
+        const index = seen[entry.section.id] ?? 0;
+        seen[entry.section.id] = index + 1;
+        return { ...entry, displayNumber: offset + index + 1 };
+      });
+    // `isComboShown` / `comboIndexOffsets` derive from `tabState` (inside
+    // `tabSummaryEntries`) and `editMode`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabSummaryEntries, editMode]);
 
   const lastVisibleCombinationSectionId = useMemo(() => {
@@ -2022,8 +2076,7 @@ export function DynamicTabRenderer({
         }
 
         const combos = getSectionCombos(section);
-        const firstSectionEntry = tabSummaryEntries.find((entry) => entry.section.id === section.id);
-        const comboIndexOffset = firstSectionEntry ? firstSectionEntry.displayNumber - 1 : 0;
+        const comboIndexOffset = comboIndexOffsets[section.id] ?? 0;
         const isLastCombinationSection = section.id === lastVisibleCombinationSectionId;
 
         return (

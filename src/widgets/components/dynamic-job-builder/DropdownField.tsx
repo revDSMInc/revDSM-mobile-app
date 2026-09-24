@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useRef } from 'react';
 import { DynamicOptionField } from './DynamicOptionField';
 import { DropdownSelect } from './DropdownSelect';
+import { useFieldNotice } from './FieldNoticeModal';
 import { LockedField } from './LockedField';
 import { resolveDropdownSync } from '../../../utils/dynamic-job-builder/engine/dropdown-state-sync';
 
@@ -88,6 +89,18 @@ export function DropdownField({
 
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+
+  // The field's "Important Notice" popup (`field.notice`, e.g. LeafFilter Versa Max
+  // + a gutter opening width option → "Ensure Agreement has Special Can't Guarantee
+  // Cleaning or Sealing Clause"). Web's `DropdownField` fires it from onChange; the
+  // Ticket 1063 move of `dropdown` fields onto THIS component dropped it on mobile,
+  // because only the chip grid (`DynamicOptionField`) wired it.
+  //
+  // ⚠️ Fired from the REP's pick only — never from the auto seed/clear in the
+  // effect below (`onChangeRef`), or restoring a saved deal or writing a default
+  // would pop the notice on its own (web parity: "never from the current value on
+  // render").
+  const { noticeModal, handleValueChange } = useFieldNotice(field);
 
   // Keyed on the option VALUES, not the array identity: `getVisibleFieldOptions`
   // returns a fresh array every render, which would re-run this on every render.
@@ -218,15 +231,23 @@ export function DropdownField({
   // Multi-select keeps the chip grid: a collapsed control cannot show several
   // selections at once, and `field.multiSelect` dropdowns are authored to behave
   // like an optionList.
+  //
+  // Multi-select goes through `DynamicOptionField`, which wires the notice itself.
   if (!isMulti) {
     return (
-      <DropdownSelect
-        label={label}
-        options={visibleOptions}
-        value={shownValue as string}
-        onChange={onChange}
-        accentColor={color}
-      />
+      <>
+        <DropdownSelect
+          label={label}
+          options={visibleOptions}
+          value={shownValue as string}
+          onChange={(val) => {
+            onChange?.(val);
+            handleValueChange(val);
+          }}
+          accentColor={color}
+        />
+        {noticeModal}
+      </>
     );
   }
 

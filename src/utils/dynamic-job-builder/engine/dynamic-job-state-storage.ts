@@ -804,7 +804,7 @@ function comboHasEnteredData(
   const keys = new Set([...Object.keys(combo), ...Object.keys(colorValues)]);
 
   return [...keys].some((key) => {
-    if (key === 'colorValues' || key === '_combinationNumber') return false;
+    if (key === 'colorValues' || key === '_combinationNumber' || key === '_addedInEdit') return false;
     const field = fieldsById.get(key);
     if (field && isFieldLocked(field)) return false; // auto-resolved, not rep-built
     const value = combo[key] !== undefined ? combo[key] : colorValues[key];

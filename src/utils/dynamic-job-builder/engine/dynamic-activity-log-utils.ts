@@ -9,7 +9,8 @@ import { isContainerFieldType } from '../constants/field-types';
 import { resolveLocationGridConfig } from './location-grid-utils';
 
 const SKIP_FIELD_TYPES = new Set(['allocation', 'combinationSummary', 'sectionLabel']);
-const SKIP_STATE_KEYS = new Set(['colorValues', '_combinationNumber']);
+// `_addedInEdit`: session-only My Deals marker (`combination-color-filter.ts`).
+const SKIP_STATE_KEYS = new Set(['colorValues', '_combinationNumber', '_addedInEdit']);
 
 // Standalone color-picker field types. Their stored value is a color name and
 // their own label is usually generic ("Color"), so a change log needs the

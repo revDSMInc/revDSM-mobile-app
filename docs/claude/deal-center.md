@@ -2288,3 +2288,70 @@ called anywhere in `src/`, so it changes no runtime behaviour on the phone — a
   `toggle || optionList` gap in `validateDependencies` — separate ticket, not a mobile blocker.
 - `DEAL_PRICING_DEBUG` in `dynamic-deal-pricing.ts` is still `true` on `dev-v1-funding` and must be
   `false` before release. **Not changed here** — it is not part of this ticket.
+
+### Follow-up — the dropdown lost its "Important Notice" popup
+
+*"when we add the value in the Versa Max and then select the 2.5 value from the drop down, this alert
+[Important Notice — Ensure Agreement has Special Can't Guarantee Cleaning or Sealing Clause] should show;
+currently it doesn't."* The popup is schema-driven: `field.notice` `{ enabled, head, dealsDescription,
+triggerValue }`, resolved by `resolveFieldNotice` (`notice-utils.ts`) and shown by `useFieldNotice`
+(`FieldNoticeModal.tsx`). Web's `DropdownField` (`field-registry.js`) fires it from `onChange`.
+Moving `dropdown`/`select` onto `DropdownField.tsx` in this ticket dropped it, because only
+`DynamicOptionField` (the chip grid) wired the notice, and the single-select path renders
+`DropdownSelect` directly.
+
+- `DropdownField` now calls `useFieldNotice(field)` and wraps the single-select `DropdownSelect`
+  `onChange` with `handleValueChange`. Multi-select still goes through `DynamicOptionField`, which wires
+  the notice itself, so it isn't wired twice.
+- ⚠️ **Only the rep's pick opens it.** The auto seed/clear in the `useLayoutEffect` writes through
+  `onChangeRef` and must NOT call `handleValueChange`, or reopening a saved deal or seeding a default would
+  pop the notice on its own.
+- The notice is a child `Modal` of the Job Builder's modal, the same as the chip-grid notice.
+  `DropdownSelect` expands inline (not a Modal), so there's no stacked-dismiss trap.
+- Which option triggers it is **config** (`notice.triggerValue`, exact string match; empty = any value).
+  If it still doesn't show, check the portal field's `notice.enabled` / `triggerValue` against the option
+  text. Test: `__tests__/field-notice.test.ts`.
+
+## Dynamic Job Builder — combination numbering & the parent combination (LeafFilter and every combination section)
+
+Report: the LeafFilter "+" (Add Combination) *"is not working properly … the combination should come
+with the accurate combination number"*. A per-combination "+" duplicate button was tried and then
+**removed at the user's request** — *"we only add the combination by pressing the bottom button, do not
+need any plus icon on top"*. Don't re-add a header "+".
+
+- **Add Combination (bottom) is the only way to add**; it still adds a **blank** default combination.
+  `createNextCombinationItem` now numbers `max(offset + length, highest chip on screen) + 1`, so a stale
+  stored `_combinationNumber` from a saved draft can no longer hand the new one a number already taken.
+- **The parent combination gets no Remove.** The parent is the section's **first** combination
+  (`isParentCombination(index)` → `index === 0`, `combination-utils.ts`): hydration seeds exactly one per
+  section (fields "Locked from Job Summary"); everything after it was added by the rep. Remove renders
+  only on `index > 0` (it used to show on the parent whenever `combos.length > 1`), and
+  `handleRemoveCombo` also refuses index 0.
+- ⚠️ **Positional, not a `_userAdded` flag, on purpose.** `ensureTabStateShape`
+  (`dynamic-job-state-storage.ts`) rebuilds each combination from its known row fields plus
+  `_combinationNumber` only, so a marker would be dropped on the next reload, and an extra `_` key would
+  also leak into the activity-log / empty-step-gate / diff key walks, which skip only the known ones.
+- Test: `__tests__/combination-numbering.test.ts` (gitignored, see §6).
+
+### Follow-up — numbers run ACROSS sections; renumbered tab-wide, displayed by position
+
+*"we received two combinations; if I add after combination 2 first, then after combination 1, the count
+is disturbed."* LeafFilter has **two combination sections** (6" parent = #1, 7" parent = #2) and the
+chip numbers run across them. Each section numbered a new combination only from its own count
+(`comboIndexOffset` was read from the section's first stored number), and the later section's stored
+numbers were never shifted — so 7" add → #3, then 6" add → **#2 again**.
+
+- **`renumberTabCombinations(sections, tabState)`** (`combination-utils.ts`) rewrites every
+  `_combinationNumber` 1..N in render order. `updateSectionCombos` (`DynamicTabRenderer.tsx`) runs it on
+  every combinations write (add, remove, any field edit), so the stored numbers the summary, logs and
+  diff read stay in step. `sections` must be the **rendered** combination sections
+  (`getRenderedCombinationSections`: not simple, has fields, visible). A section with nothing saved
+  still counts its one default combination but is **not written** into state.
+- **Chips and the Grand Total card's `#N` are positional** (`comboIndexOffsets[section.id] + index + 1`),
+  never the stored number, so a draft saved before this fix displays correctly at once; its stored
+  numbers are fixed by the next edit. `_combinationNumber` is in the diff's `SKIP_LEAF_KEYS`, so
+  renumbering produces no phantom addendum rows.
+- `getRenderedSectionCombos` mirrors the renderer's old inline `getSectionCombos` (now delegates to it).
+- **My Deals** (edit mode) uses the same numbering plus the colour filter: hidden combinations take no
+  number, and an added combination is tagged `_addedInEdit` so it isn't hidden. See `deal-edit-addendums.md`,
+  "Add Combination looked dead; chip numbers had gaps".
