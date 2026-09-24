@@ -3,8 +3,14 @@ import { View, Text, TouchableOpacity, Dimensions, StyleSheet } from 'react-nati
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import IonIcon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
-import { format } from 'date-fns';
 import { getOfflineImagesForJob } from '../../../services/api/offlineUploadManager';
+import {
+  getDisplayJobNumber,
+  getPinDateLabel,
+  getProductsCount,
+  getProductsText,
+  getRepDisplayName,
+} from '../../../utils/sales-pins';
 
 const { width } = Dimensions.get('window');
 
@@ -69,10 +75,10 @@ export const MapJobCard = ({
     return { houseNum: '', rest };
   };
 
-  const formattedDate = job.installationDate
-    ? format(new Date(job.installationDate), 'MM/dd/yyyy')
-    : job.leadDate ? format(new Date(job.leadDate), 'MM/dd/yyyy')
-      : job.createdAt ? format(new Date(job.createdAt), 'MM/dd/yyyy') : 'N/A';
+  // Pending-install pins show the scheduled / sale date; a sold job's
+  // `installationDate` is null until installed and must never be formatted.
+  const formattedDate = getPinDateLabel(job);
+  const productsText = getProductsText(job);
 
   return (
     <View
@@ -93,13 +99,15 @@ export const MapJobCard = ({
       <View className="p-4">
         {/* Header */}
         <View className="flex-row justify-between items-start mb-1">
-          <View>
+          <View style={{ flex: 1, marginRight: 8 }}>
             <Text className="text-[17px] font-black text-[#4CBB17]">
-              Job#{job.jobNumber || 'N/A'}
+              Job#{getDisplayJobNumber(job) || 'N/A'}
             </Text>
             <View className="flex-row items-center mt-1">
               <Icon name="calendar-blank" size={16} color="#4CBB17" />
-              <Text className="text-[13px] text-[#4CBB17] ml-1 font-bold">{formattedDate}</Text>
+              <Text className="text-[13px] text-[#4CBB17] ml-1 font-bold" style={{ flexShrink: 1 }}>
+                {formattedDate}
+              </Text>
             </View>
           </View>
           <TouchableOpacity onPress={onClose} className="p-1">
@@ -115,7 +123,7 @@ export const MapJobCard = ({
                 Sales Rep
               </Text>
               <Text className="text-[14px] font-bold text-slate-700" numberOfLines={1}>
-                {job.userName || job.salesRepName || job.salesRep?.fullName || job.salesRep?.firstName || 'Unknown'}
+                {getRepDisplayName(job)}
               </Text>
             </View>
           )}
@@ -159,8 +167,12 @@ export const MapJobCard = ({
         {/* Product Row */}
         {showProduct && (
           <View className="flex-row items-center mb-5">
-            <Text className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">Product:</Text>
-            <Text className="text-[12px] font-black text-slate-700 ml-2">{job.product || 'N/A'}</Text>
+            <Text className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">
+              {getProductsCount(job) > 1 ? 'Products:' : 'Product:'}
+            </Text>
+            <Text className="text-[12px] font-black text-slate-700 ml-2" style={{ flexShrink: 1 }} numberOfLines={2}>
+              {productsText || 'N/A'}
+            </Text>
           </View>
         )}
 

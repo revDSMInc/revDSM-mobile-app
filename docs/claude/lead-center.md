@@ -940,3 +940,18 @@ what stops a fast re-focus from stacking calls.
 The Map tab navigates to `MapDetail` rather than rendering a map inside this `ScrollView` (only
 `job_docs` and `tools` render inline), so there is no gesture to conflict with. `stickyHeaderIndices`
 is unaffected — the control sits above the sticky child.
+
+## Map job card & pins: sold-job categories (REVUIUX-439), recorded in `maps-zone-canvasser.md`
+
+`LeadMap.tsx` and `MapJobCard.tsx` (under `widgets/components/LeadCenter/`) now colour pins by
+`pinCategory`, show a legend, and render `displayJobNumber`, the pending-install date line,
+`repDisplayName` and `products`. The full notes and traps are in
+**`docs/claude/maps-zone-canvasser.md` › "Sales pins"**; read them before touching either file.
+
+### Follow-up — pending-install pins drawn on top (`symbolSortKey`)
+
+`LeadMap.tsx`'s `job-markers-symbols` layer now sets `symbolSortKey: PIN_SORT_KEY` (from
+`pinSortKeyExpression()` in `utils/sales-pins.ts`). Without it, overlapping pins stack by screen Y, and
+the 18 purple pending-install pins were hidden under the green clusters. ⚠️ A new pin `category` needs a
+rank in `PIN_DRAW_ORDER`. Full notes: `maps-zone-canvasser.md` › "the purple pending-install pins were
+painted over".

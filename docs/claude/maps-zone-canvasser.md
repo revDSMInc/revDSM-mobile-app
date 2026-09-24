@@ -1,6 +1,6 @@
 # Map view header & Zone Canvasser (footsteps map)
 
-> Part of the repo guide — the index is the root `CLAUDE.md`. **Read this before changing:** `src/screens/MapDetail/**`, `src/navigation/index.tsx` (HeaderContext), `hooks/useZoneCanvasser.ts`, `services/api/zone-canvasser.ts`, `utils/zone-helpers.ts`, `widgets/components/ZoneCanvasser/**`.
+> Part of the repo guide — the index is the root `CLAUDE.md`. **Read this before changing:** `src/screens/MapDetail/**`, `src/navigation/index.tsx` (HeaderContext), `hooks/useZoneCanvasser.ts`, `services/api/zone-canvasser.ts`, `utils/zone-helpers.ts`, `widgets/components/ZoneCanvasser/**`, `utils/sales-pins.ts`, `widgets/modals/MapFiltersModal.tsx`, `widgets/components/LeadCenter/{LeadMap,MapJobCard}.tsx`.
 >
 > Each `##` section is one ticket: the ask, the root cause, the decision, and the ⚠️ traps that must not be
 > "fixed" back. Newest follow-ups sit under their original ticket. Add new notes for this area HERE, not in the root file.
@@ -269,3 +269,93 @@ wrong and are being corrected separately — don't follow them.
 **Not verified on device yet:** LA zone -> tap a building -> Not Interested -> Submit saves with no
 500/`16755`; a Florida zone still saves and now stores the real location; and a *Go Back* lead edit
 (the `updateSalesRepLead` path) saves too.
+
+## Sales pins: sold jobs, category colours, status filter, legend (REVUIUX-439)
+
+Ticket spec: `TAYYAB-SALES-PINS.md`. The backend (`feature/ticket-439-mobile-board`) made every job a
+company pin: CSV uploads, plus a pin created when a lead is marked **Sale** (`pendingInstall` until the
+installer completes it, then `installed`; undoing the sale removes it). `POST /job/v1/find` returns both,
+and **the request did not change**. New fields per pin: `pinCategory` (`uploaded` / `pendingInstall` /
+`installed`, always present), `source`, `status`, `displayJobNumber`, `repDisplayName`,
+`installationDate` (null while pending), `scheduledInstallDate`, `saleDate`, `leadOrigin`.
+`salesRepId` may be null (CSV rep with no account); the `isJobOwner` fallbacks already handle that.
+
+Every rule lives in the pure **`src/utils/sales-pins.ts`** (the map widgets pull in RN / Mapbox and
+can't load under jest). Tests: `__tests__/utils/sales-pins.test.ts`.
+
+| Where | Change |
+|---|---|
+| `LeadMap.tsx` | GeoJSON `category` = `searched` › `favorite` › pin category (`uploaded` stays `default` green). `iconImage` match adds `installed` → `markerInstalled`, `pendingInstall` → `markerPending`. Legend with per-category counts above the right toggle rail. Search highlighting also matches `displayJobNumber`. |
+| `SalesLeadPins.tsx` (Zone Canvasser) | Same category colours (no search/favorite tints there). No legend. |
+| `MapFiltersModal.tsx` | `FilterState.statusFilter: 'all' \| 'pendingInstall' \| 'installed'`, a dropdown below the date range; counted by `countAppliedMapFilters` when not `all`; logged as `pin_status_filter`. |
+| `MapDetail/index.tsx` | `DEFAULT_MAP_FILTERS.statusFilter = 'all'`; applied in `baseFilteredLeads`; text search + exact-jump match `displayJobNumber` as well as `jobNumber`; sort + date range use `getPinSortDate` (install → **sale** → created); list card uses the helpers below. |
+| `MapJobCard.tsx` + list | `displayJobNumber`; date line = "Install scheduled {d}" / "Sold {d} · pending install" / install date; rep = `repDisplayName` first; **`products`** (the card read `job.product`, which doesn't exist, so it always said N/A). |
+
+Pin images `assets/images/map/marker-{installed,pending}{,@2x,@3x}.png` are generated from
+`marker-green*`: the teardrop recoloured to `#0B6E4F` / `#7B2FF7`, its see-through centre filled solid,
+and a white check / dot drawn in (same sizes and anchor as the existing pins).
+
+⚠️ **The status filter is CLIENT-side (web's approach), not `/find`'s `pinStatus`.** Pending =
+`pinCategory === 'pendingInstall'`; installed = **everything else**, because uploaded pins are
+historical installs. Keeping it on the device means the query key and the request are unchanged. It is
+**not** written to `savedFilters` (web's saved shape has no such field), so it resets to "All" on a
+fresh open.
+
+⚠️ **Never format a null date.** `installationDate` is null while a sold job is pending, and `new
+Date(null)` prints 01/01/1970. `formatPinDate` returns null for that, and reads a calendar date
+(`YYYY-MM-DD`, or that at UTC midnight) as **text**, so an install date no longer slips back a day in US
+timezones. A real timestamp (e.g. `createdAt`) is still shown in local time.
+
+⚠️ **The legend is `position: 'absolute'` with a FIXED width inside the rail container.** Absolute keeps
+it from shifting the toggles. The fixed width is needed because an absolute child is measured against
+the narrow toggle column, which truncates the labels. It is display-only (`pointerEvents="none"`), so
+Android's rule against touches outside the parent's bounds doesn't apply. It hides with the pins in
+heatmap mode.
+
+⚠️ `searched` / `favorite` must keep winning over the category (web does the same). A searched sold job
+is red, not purple.
+
+⚠️ Needs a device check (this repo cannot render-test) — the spec's smoke test: mark a lead Sale → a
+purple pin appears; dispatch → the card shows "Install scheduled …" and the `T…` job number; complete →
+dark green with a check; back to Demo → the pin disappears; 5-mile radius → only nearby pins. Also check
+that the legend doesn't collide with the toggles on the 420 px Lead Center map.
+
+### Follow-up — the purple pending-install pins were painted over
+
+*"the legend says Pending install 18 in purple, but we can't find them on the map."* The pins were being
+drawn, just underneath the green ones. Every pin is in ONE SymbolLayer with `iconAllowOverlap`, and with no
+`symbolSortKey` Mapbox stacks overlapping symbols by **screen Y** (`symbolZOrder: auto`). The 18 sold
+jobs sit inside the same dense Tampa/Orlando clusters as ~2,500 uploaded pins, so green pins covered
+them.
+
+- **`PIN_DRAW_ORDER`** + **`pinSortKeyExpression()`** (`utils/sales-pins.ts`): `default`/`uploaded` 0 ›
+  `installed` 1 › `pendingInstall` 2 › `favorite` 3 › `searched` 4. Higher is drawn later, so it sits on top.
+  Applied as `symbolSortKey` on BOTH pin layers: `LeadMap.tsx` (`job-markers-symbols`) and
+  `SalesLeadPins.tsx` (Zone Canvasser). The expression is built once at module level (`PIN_SORT_KEY`),
+  because a new array every render re-sends the layer style.
+- ⚠️ **Order is by the feature's `category` property**, so a new pin category needs a rank here, or it
+  falls back to 0 and is buried again.
+- ⚠️ `symbolSortKey` sorts within a tile. A pin exactly on a tile edge can still be overlapped by one from
+  the next tile. It hasn't been seen at the density involved here, but a separate top layer would be the
+  complete fix.
+- Test: `__tests__/utils/sales-pins.test.ts` (draw-order block).
+- **The actual reason the purple pins were missing from Florida: they are in Lahore.** Read from the
+  device log: all 18 `pendingInstall` jobs (`SG-…`, `source: 'sale'`) have
+  `location.coordinates ≈ [74.2904, 31.4667]` (Lahore, Pakistan), in correct `[lng, lat]` order. They are
+  test sales: the jobs' own `address` is "Plot 161, Block F Phase 1 Johar Town, Lahore" (self-generated leads
+  by reps "Mike R" / "Oliver Mateo", `geocodeFailed: false`), so backend geocoding is correct too. The uploaded pins are in
+  Florida (`[-82.06, 28.11]`). The code is correct, so don't "fix" it by swapping coordinates. Before assuming a
+  rendering bug, check where the pins actually are: `adb logcat | grep ReactNativeJS` shows JS logs from
+  the dev build.
+
+### TEMPORARY — Sales Map boundary lock lifted for testing
+
+To let the team see the Lahore test pins, `LeadMap.tsx` has `UNLOCK_MAP_BOUNDS_FOR_TESTING = true`.
+While it's on (and only in a `__DEV__` build, via `MAP_BOUNDS_UNLOCKED`):
+- `Camera` gets no `maxBounds` (spread in, never a present `undefined`);
+- `isWithinMapBounds` returns `true`, so the office centring, "locate me" and the startup fix will centre
+  on a location outside North America too. On a device in Lahore, "locate me" now flies there.
+
+⚠️ **Set it back to `false` when testing is done.** The North America box (`MAP_BOUNDS`, SW
+`[-180, 15]` / NE `[-40, 85]`) is deliberate web parity. The `__DEV__` gate means a release build keeps
+the lock regardless, but a debug build handed to QA would not.

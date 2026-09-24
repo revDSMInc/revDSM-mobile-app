@@ -43,6 +43,17 @@ import { MapGalleryModal } from './MapGalleryModal';
 import { MapToggleSwitch } from '../../common/MapToggleSwitch';
 import { JobImageUploadModal } from '../../modals/JobImageUploadModal';
 import { ReferralModal } from '../../modals/ReferralModal';
+import {
+  PIN_CATEGORIES,
+  PIN_CATEGORY_META,
+  countPinCategories,
+  getPinCategory,
+  jobNumberMatches,
+  pinSortKeyExpression,
+} from '../../../utils/sales-pins';
+
+// Built once — a new array each render would re-send the layer style to native.
+const PIN_SORT_KEY = pinSortKeyExpression();
 
 // Mapbox uses an access token initialized once at module load.
 Mapbox.setAccessToken(ENV.MAPBOX_ACCESS_TOKEN);
@@ -52,6 +63,9 @@ const MARKER_IMAGES = {
   searched: require('../../../assets/images/map/marker-red.png'),
   favorite: require('../../../assets/images/map/marker-amber.png'),
   selected: require('../../../assets/images/map/marker-selected.png'),
+  // REVUIUX-439 sold-job pins: dark green + white check / purple + white dot.
+  installed: require('../../../assets/images/map/marker-installed.png'),
+  pendingInstall: require('../../../assets/images/map/marker-pending.png'),
 };
 
 const { width, height } = Dimensions.get('window');
@@ -69,14 +83,23 @@ const MAP_BOUNDS = {
   sw: [-180, 15] as [number, number],
 };
 
+// ⚠️ TESTING ONLY — lifts the boundary lock so pins anywhere in the world can be
+// reached (the dev team's test sales sit in Lahore, far outside MAP_BOUNDS).
+// Only effective in a __DEV__ build, so a release build keeps the lock whatever
+// this is set to. Set back to `false` once testing is done.
+const UNLOCK_MAP_BOUNDS_FOR_TESTING = true;
+const MAP_BOUNDS_UNLOCKED = __DEV__ && UNLOCK_MAP_BOUNDS_FOR_TESTING;
+
 // True when [lng, lat] falls inside MAP_BOUNDS (web parity: `isWithinMapBounds`).
 // Anything outside is unusable as a camera target: `maxBounds` clamps it to the
 // edge of the box, which lands the map in open ocean rather than on the point.
+// Unlocked, every point is a valid camera target (there is no box to clamp to).
 const isWithinMapBounds = (longitude: number, latitude: number) =>
-  longitude >= MAP_BOUNDS.sw[0] &&
-  longitude <= MAP_BOUNDS.ne[0] &&
-  latitude >= MAP_BOUNDS.sw[1] &&
-  latitude <= MAP_BOUNDS.ne[1];
+  MAP_BOUNDS_UNLOCKED ||
+  (longitude >= MAP_BOUNDS.sw[0] &&
+    longitude <= MAP_BOUNDS.ne[0] &&
+    latitude >= MAP_BOUNDS.sw[1] &&
+    latitude <= MAP_BOUNDS.ne[1]);
 
 // Match web app logic exactly - check salesRepId and name-based properties
 const isJobOwner = (item: any, user: any): boolean => {
@@ -343,8 +366,7 @@ export const LeadMap = ({
     const defaults: any[] = [];
 
     filteredLeads.forEach(job => {
-      const isSearchedJob = searchedJobNumber && job.jobNumber &&
-        job.jobNumber.toLowerCase().trim().includes(searchedJobNumber.toLowerCase().trim());
+      const isSearchedJob = !!searchedJobNumber && jobNumberMatches(job, searchedJobNumber);
 
       if (isSearchedJob) {
         searched.push(job);
@@ -374,7 +396,13 @@ export const LeadMap = ({
   // ─── Combined GeoJSON for all job markers ──────────────────────────────────
   // One FeatureCollection with a `category` property so a single SymbolLayer can
   // pick the right pin image. SymbolLayer renders thousands of points smoothly.
+  // `searched` / `favorite` win over the pin category (web parity); a default pin
+  // takes its `pinCategory` — `uploaded` keeps the existing green `default`.
   const markersGeoJson = useMemo(() => {
+    const defaultCategory = (job: any) => {
+      const c = getPinCategory(job);
+      return c === 'uploaded' ? 'default' : c;
+    };
     const toFeature = (job: any, category: string) => ({
       type: 'Feature' as const,
       geometry: {
@@ -389,12 +417,21 @@ export const LeadMap = ({
     return {
       type: 'FeatureCollection' as const,
       features: [
-        ...defaultLeads.filter(hasCoords).map(j => toFeature(j, 'default')),
+        ...defaultLeads.filter(hasCoords).map(j => toFeature(j, defaultCategory(j))),
         ...favoriteLeads.filter(hasCoords).map(j => toFeature(j, 'favorite')),
         ...searchedLeads.filter(hasCoords).map(j => toFeature(j, 'searched')),
       ],
     };
   }, [defaultLeads, favoriteLeads, searchedLeads]);
+
+  // Per-category counts for the legend (web parity) — the pins actually on the map.
+  const pinCategoryCounts = useMemo(
+    () =>
+      countPinCategories(
+        filteredLeads.filter((j: any) => j.location?.coordinates && j.location.coordinates.length >= 2)
+      ),
+    [filteredLeads]
+  );
 
   // ─── Heatmap GeoJSON ───────────────────────────────────────────────────────
   // Each point carries a numeric `weight` derived from price: a 0.3 baseline for
@@ -953,7 +990,8 @@ export const LeadMap = ({
       >
         <Camera
           ref={cameraRef}
-          maxBounds={MAP_BOUNDS}
+          // Spread in rather than `x ? MAP_BOUNDS : undefined` — see §6 on present-undefined props.
+          {...(MAP_BOUNDS_UNLOCKED ? {} : { maxBounds: MAP_BOUNDS })}
           maxZoomLevel={20}
           defaultSettings={defaultCameraSettings}
         />
@@ -1023,6 +1061,8 @@ export const LeadMap = ({
             markerGreen: MARKER_IMAGES.default,
             markerRed: MARKER_IMAGES.searched,
             markerAmber: MARKER_IMAGES.favorite,
+            markerInstalled: MARKER_IMAGES.installed,
+            markerPending: MARKER_IMAGES.pendingInstall,
           }}
         />
 
@@ -1047,8 +1087,14 @@ export const LeadMap = ({
                   ['get', 'category'],
                   'favorite', 'markerAmber',
                   'searched', 'markerRed',
-                  /* default */ 'markerGreen',
+                  'installed', 'markerInstalled',
+                  'pendingInstall', 'markerPending',
+                  /* default (uploaded) */ 'markerGreen',
                 ],
+                // Draw pending / installed / favourite / searched ABOVE the plain green
+                // pins — by default overlapping pins stack by screen Y and the few purple
+                // ones were buried in the green clusters (see `PIN_DRAW_ORDER`).
+                symbolSortKey: PIN_SORT_KEY,
                 iconSize: ['interpolate', ['linear'], ['zoom'], 8, 0.7, 12, 0.9, 16, 1.1],
                 iconAnchor: 'bottom',
                 iconAllowOverlap: true,
@@ -1226,6 +1272,58 @@ export const LeadMap = ({
           bottom: Platform.OS === 'android' ? 120 + insets.bottom : 120,
         }}
       >
+        {/* Pin-colour legend with per-category counts (web parity). Absolute above
+             the toggles so it never shifts the rail; display-only, so Android's
+             out-of-bounds touch rule doesn't matter. Hidden with the pins. */}
+        {!isHeatMapActive && (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              bottom: '100%',
+              right: 0,
+              // Fixed width: an absolute child is measured against the narrow toggle
+              // column otherwise, and its labels would be truncated.
+              width: 148,
+              marginBottom: 10,
+              paddingHorizontal: 8,
+              paddingVertical: 6,
+              borderRadius: 10,
+              gap: 3,
+              backgroundColor: isDark ? 'rgba(30,30,30,0.92)' : 'rgba(255,255,255,0.94)',
+              borderWidth: 1,
+              borderColor: isDark ? '#333' : '#e2e8f0',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.12,
+              shadowRadius: 4,
+              elevation: 4,
+            }}
+          >
+            {PIN_CATEGORIES.map((c) => (
+              <View key={c} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 5,
+                    backgroundColor: PIN_CATEGORY_META[c].color,
+                    marginRight: 6,
+                  }}
+                />
+                <Text
+                  numberOfLines={1}
+                  style={{ flex: 1, fontSize: 10, fontWeight: '700', color: isDark ? '#e2e8f0' : '#334155' }}
+                >
+                  {PIN_CATEGORY_META[c].label}
+                </Text>
+                <Text style={{ fontSize: 10, fontWeight: '800', color: isDark ? '#ffffff' : '#0f172a', marginLeft: 4 }}>
+                  {pinCategoryCounts[c]}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
         <View className="gap-2">
           {[
             { active: 'HM', inactive: 'DEF', id: 'HT-0', type: 'heatmap' as const },
