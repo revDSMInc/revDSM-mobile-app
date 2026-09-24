@@ -1141,26 +1141,44 @@ function renderField(
         ? <StackFieldGrid columns={stackCols}>{renderedChildren}</StackFieldGrid>
         : renderedChildren;
 
-      if (!showContainer) {
-        return (
-          <View key={field.id} className={showStackLabel ? 'mb-4' : ''}>
-            {labelNode}
-            {stackContent}
-          </View>
-        );
-      }
-
+      /**
+       * ⚠️ ONE container, styled conditionally — NOT two different JSX trees, and the
+       * children must keep FIXED POSITIONS.
+       *
+       * This branch used to return a bare `<View>` when there was no warning and a
+       * bordered one when there was, with `warningNode` inserted between the label and
+       * the fields only in the second. React reconciles unkeyed children BY INDEX, so
+       * the moment a warning cleared, `stackContent` moved from index 1 to index 2 and
+       * React tore the whole subtree down and rebuilt it.
+       *
+       * What that looked like: in Lighting ▸ Measurements, typing the FIRST digit takes
+       * the grid total from 0 to non-zero, which satisfies "Allocate remaining footage",
+       * so the warning cleared, the grid remounted, the `TextInput` was destroyed
+       * mid-edit and the keyboard dismissed. Every keystroke after that was
+       * warning-off → warning-off, nothing moved, and it behaved — which is exactly the
+       * "only the first time" the ticket describes.
+       *
+       * `labelNode` and `warningNode` are rendered unconditionally (they are `null` when
+       * absent). A `null` child still OCCUPIES its slot in the children array, so
+       * `stackContent` now sits at index 2 whatever the warning does, and the grid is
+       * never remounted. Do not collapse these back into `&&` short-circuits or move
+       * them behind an early return.
+       */
       return (
         <View
           key={field.id}
-          className="mb-4"
-          style={{
-            borderWidth: 2,
-            borderColor: effectiveBorderColor || 'rgba(0,0,0,0.08)',
-            borderRadius: 8,
-            padding: 12,
-            backgroundColor: showWarning && effectiveBorderColor ? `${effectiveBorderColor}08` : '#fff',
-          }}
+          className={showContainer || showStackLabel ? 'mb-4' : ''}
+          style={
+            showContainer
+              ? {
+                borderWidth: 2,
+                borderColor: effectiveBorderColor || 'rgba(0,0,0,0.08)',
+                borderRadius: 8,
+                padding: 12,
+                backgroundColor: showWarning && effectiveBorderColor ? `${effectiveBorderColor}08` : '#fff',
+              }
+              : undefined
+          }
         >
           {labelNode}
           {warningNode}
