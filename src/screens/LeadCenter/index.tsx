@@ -22,7 +22,7 @@ import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/nativ
 import { Storage } from '../../utils/storage';
 import { logLeadSessionPause } from '../../utils/lead-activity-log';
 import { useLocationBroadcaster } from '../../hooks/useLocationBroadcaster';
-import { clearLeadWorkSession } from '../../utils/lead-work-session';
+import { beginLeadWorkSession, clearLeadWorkSession } from '../../utils/lead-work-session';
 import { androidTextStyle } from '../../utils/platform-font';
 import { ENV } from '../../config/env';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -268,11 +268,6 @@ export default function LeadCenterPage() {
    * unmount cleanup runs with whatever closure it was created with.
    */
   const pauseLeadSession = useCallback(() => {
-    // Web `job-capture-images-view.js`: a deal is opened to be read, not worked, so
-    // firing a pause would mark the rep as having worked a closed job in the ops
-    // session log. Every other route pauses the session check-in / resume started.
-    if (fromMyDeals) return Promise.resolve();
-
     /**
      * ⚠️ A pause means the REP LEFT THE LEAD — and they can only do that while the app
      * is the thing on screen.
@@ -296,11 +291,42 @@ export default function LeadCenterPage() {
      */
     if (AppState.currentState !== 'active') return Promise.resolve();
 
-    if (!leadRef.current?._id || hasLoggedPauseRef.current) return Promise.resolve();
+    const leadId = leadRef.current?._id;
+    if (!leadId || hasLoggedPauseRef.current) return Promise.resolve();
     hasLoggedPauseRef.current = true;
     // The rep left of their own accord, so the next launch must not treat this session
     // as one a kill left behind and file a second pause for it.
     clearLeadWorkSession();
+
+    /**
+     * RELEASE the work session here, beside the log that announces it.
+     *
+     * ⚠️ This used to live ONLY in `useLeadCenterData`'s unmount cleanup, so it was
+     * tied to the screen being DESTROYED rather than to the rep leaving. Observed on
+     * device: the screen's own back arrow sent `{ workStartedBy: null }`, and **no route
+     * through the green `MainHeader` did** — the logo included, even though it lands back
+     * on `Leads`. The pause log went out on all of them, so ops read the rep as having
+     * left while the server still had them as `workStartedBy: <them>`, which is a rep who
+     * looks like they are sitting in a customer's house they walked out of.
+     *
+     * The bell / chat / account buttons additionally PUSH their screen on top, so Lead
+     * Center is not even unmounted on those.
+     *
+     * Releasing from the one exit path every route already goes through is what makes
+     * the two halves inseparable: no route can now pause without releasing, whatever the
+     * navigator does to the screen afterwards. Do NOT move this back into an unmount.
+     */
+    LeadService.endWorkLead(leadId).catch((e) =>
+      console.warn('[LeadCenter] Work end failed:', e)
+    );
+
+    // Web `job-capture-images-view.js`: a deal is opened to be read, not worked, so
+    // firing a pause would mark the rep as having worked a closed job in the ops
+    // session log. ⚠️ The RELEASE above still runs for a deal — the Lead Center opens a
+    // work session on mount either way and it has to be given back. Only the LOG is
+    // suppressed.
+    if (fromMyDeals) return Promise.resolve();
+
     return logLeadSessionPause(userRef.current, leadRef.current).catch((err) => {
       console.warn('[LeadCenter] Session pause logging failed:', err);
     });
@@ -332,6 +358,42 @@ export default function LeadCenterPage() {
       });
       return () => setHeaderActions({ onNavigate: null });
     }, [setHeaderActions, navigation])
+  );
+
+  /**
+   * The other half of `pauseLeadSession`: coming BACK to a lead re-opens the session it
+   * released.
+   *
+   * ⚠️ Without this, making the pause release the work session would have created a
+   * worse bug than the one it fixed. The header's bell / chat / account buttons PUSH
+   * their screen on top, so Lead Center is never unmounted — it is only blurred. The
+   * mount effect in `useLeadCenterData` that calls `workLead` is keyed on
+   * `lead._id`/`user._id`, so it does not re-run on the way back, and the rep would
+   * return to a lead the server thinks nobody is working.
+   *
+   * Keyed on `hasLoggedPauseRef`, so this is a no-op on the FIRST focus — the mount
+   * effect has already opened the session, and re-sending `workLead` there would stamp a
+   * second check-in for one arrival.
+   *
+   * ⚠️ Runs for a deal too. `pauseLeadSession` releases a deal's session (it just files
+   * no log), so a deal has to be able to re-acquire it or the two stop matching.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasLoggedPauseRef.current) return;
+      const currentLead = leadRef.current;
+      const leadId = currentLead?._id;
+      const userId = userRef.current?._id || userRef.current?.id;
+      if (!leadId || !userId) return;
+
+      hasLoggedPauseRef.current = false;
+      // Re-arm the killed-app backstop as well — the pause cleared the stored record, so
+      // without this a kill from here on would leave the re-opened session dangling.
+      beginLeadWorkSession(currentLead, userRef.current, fromMyDeals);
+      LeadService.workLead(leadId, userId).catch((e) =>
+        console.warn('[LeadCenter] Work resume failed:', e)
+      );
+    }, [fromMyDeals])
   );
 
   useEffect(() => {

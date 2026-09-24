@@ -393,25 +393,25 @@ export const useLeadCenterData = (
       // read differently depending on which client the rep used. `logLeadSessionPause`
       // (fired by `LeadCenter`, which knows whether this is a deal) is the replacement.
       //
-      // This call stays: it is mobile's `setLeadWork(leadId, null)`, which web makes on
-      // the same back press to release the work session.
+      // ⚠️ The `endWorkLead` release used to live HERE and no longer does — it moved to
+      // `LeadCenter.pauseLeadSession`, which is the one exit path every route already
+      // goes through. An unmount is not the only way the rep leaves a lead: the header's
+      // bell / chat / account buttons PUSH their screen on top, so this cleanup never ran
+      // for them and the session was never given back. Releasing beside the pause log
+      // makes the two inseparable, and `LeadCenter`'s focus effect re-acquires on the way
+      // back. Do not add a second release here — two owners is how they drifted apart.
       //
-      // ⚠️ Guarded on the app being in the FOREGROUND, for the same reason — and it is
-      // the half that actually matters. Opening the camera hands the foreground to
-      // another activity, and Android can tear this screen down behind it; this cleanup
-      // then released the work session, which is what marks the rep offline on the ops
-      // side. Suppressing only the pause LOG would have left the lead going offline
-      // exactly as reported. `LeadCenter.pauseLeadSession` carries the same check and
-      // the reasoning in full.
+      // ⚠️ Guarded on the app being in the FOREGROUND. Opening the camera hands the
+      // foreground to another activity, and Android can tear this screen down behind it;
+      // clearing the stored session then would let a kill go unswept.
+      // `LeadCenter.pauseLeadSession` carries the same check and the reasoning in full.
       if (AppState.currentState !== 'active') return;
 
-      // Closed here and now, so the next launch does not treat it as stale and file a
-      // second pause for a lead the rep already left.
+      // Forgotten here and now, so the next launch does not treat it as stale and file a
+      // second pause for a lead the rep already left. `pauseLeadSession` clears it too;
+      // the call is idempotent and this is the backstop for an unmount that somehow
+      // bypassed it.
       clearLeadWorkSession();
-
-      LeadService.endWorkLead(lead._id).catch((e) =>
-        console.warn('[LeadCenter] Work end failed:', e)
-      );
     };
   }, [lead?._id, user?._id, options?.appointmentStarted, options?.fromMyDeals]);
 
