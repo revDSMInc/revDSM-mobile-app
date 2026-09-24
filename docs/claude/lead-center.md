@@ -955,3 +955,10 @@ is unaffected — the control sits above the sticky child.
 the 18 purple pending-install pins were hidden under the green clusters. ⚠️ A new pin `category` needs a
 rank in `PIN_DRAW_ORDER`. Full notes: `maps-zone-canvasser.md` › "the purple pending-install pins were
 painted over".
+
+### Follow-up — Sales Map legend moved bottom-left behind a palette button
+
+`LeadMap.tsx`'s pin-colour legend is now a bottom-left palette button that opens the card and turns into a
+✕ (footsteps pattern, `MapLegendToggle`). Also, in the `UNLOCK_MAP_BOUNDS_FOR_TESTING` mode the camera
+frames every pin on load. Full notes and the Android touch trap: `maps-zone-canvasser.md` › "Sales Map pin
+legend: bottom-left…".

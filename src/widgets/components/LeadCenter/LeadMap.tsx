@@ -43,6 +43,7 @@ import { MapGalleryModal } from './MapGalleryModal';
 import { MapToggleSwitch } from '../../common/MapToggleSwitch';
 import { JobImageUploadModal } from '../../modals/JobImageUploadModal';
 import { ReferralModal } from '../../modals/ReferralModal';
+import { MapLegendToggle } from '../ZoneCanvasser/MapLegend';
 import {
   PIN_CATEGORIES,
   PIN_CATEGORY_META,
@@ -197,6 +198,10 @@ export const LeadMap = ({
   const insets = useSafeAreaInsets();
   const mapViewRef = useRef<MapView>(null);
   const cameraRef = useRef<Camera>(null);
+  const didFrameAllPinsRef = useRef(false);
+  // Pin-colour legend: closed until the rep taps the palette button (same as the
+  // footsteps map's legend).
+  const [legendOpen, setLegendOpen] = useState(false);
   const zoomRef = useRef(10); // tracks current zoom for +/- buttons
 
   // ─── Data source ─────────────────────────────────────────────────────────
@@ -594,6 +599,28 @@ export const LeadMap = ({
       animationDuration: 300,
     });
   }, [focusOfficeOnOpen, hasExplicitTarget, officeCoords, mapReady]);
+
+  // ⚠️ TESTING ONLY (`MAP_BOUNDS_UNLOCKED`) — fly out to frame EVERY pin on load,
+  // office/Tampa/Florida and the far-away test pins alike. The bounds unlock
+  // (above) only lets the camera reach a distant pin; it does nothing to point the
+  // camera there, so a pin whose count went up in the legend was still invisible
+  // unless someone manually panned across the globe to find it. This is what
+  // actually "shows every pin, wherever it is" for testing.
+  useEffect(() => {
+    if (!MAP_BOUNDS_UNLOCKED || !mapReady || didFrameAllPinsRef.current) return;
+    const coordsList = markersGeoJson.features.map((f: any) => f.geometry.coordinates as [number, number]);
+    if (coordsList.length < 2) return;
+    didFrameAllPinsRef.current = true;
+    const lngs = coordsList.map((c) => c[0]);
+    const lats = coordsList.map((c) => c[1]);
+    // [ne, sw] — `fitBounds`'s order, not GeoJSON's [lng, lat] pair order.
+    cameraRef.current?.fitBounds(
+      [Math.max(...lngs), Math.max(...lats)],
+      [Math.min(...lngs), Math.min(...lats)],
+      60,
+      800
+    );
+  }, [markersGeoJson, mapReady]);
 
   useEffect(() => {
     if (focusLead?.location?.coordinates) {
@@ -1272,58 +1299,6 @@ export const LeadMap = ({
           bottom: Platform.OS === 'android' ? 120 + insets.bottom : 120,
         }}
       >
-        {/* Pin-colour legend with per-category counts (web parity). Absolute above
-             the toggles so it never shifts the rail; display-only, so Android's
-             out-of-bounds touch rule doesn't matter. Hidden with the pins. */}
-        {!isHeatMapActive && (
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              bottom: '100%',
-              right: 0,
-              // Fixed width: an absolute child is measured against the narrow toggle
-              // column otherwise, and its labels would be truncated.
-              width: 148,
-              marginBottom: 10,
-              paddingHorizontal: 8,
-              paddingVertical: 6,
-              borderRadius: 10,
-              gap: 3,
-              backgroundColor: isDark ? 'rgba(30,30,30,0.92)' : 'rgba(255,255,255,0.94)',
-              borderWidth: 1,
-              borderColor: isDark ? '#333' : '#e2e8f0',
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.12,
-              shadowRadius: 4,
-              elevation: 4,
-            }}
-          >
-            {PIN_CATEGORIES.map((c) => (
-              <View key={c} style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View
-                  style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: 5,
-                    backgroundColor: PIN_CATEGORY_META[c].color,
-                    marginRight: 6,
-                  }}
-                />
-                <Text
-                  numberOfLines={1}
-                  style={{ flex: 1, fontSize: 10, fontWeight: '700', color: isDark ? '#e2e8f0' : '#334155' }}
-                >
-                  {PIN_CATEGORY_META[c].label}
-                </Text>
-                <Text style={{ fontSize: 10, fontWeight: '800', color: isDark ? '#ffffff' : '#0f172a', marginLeft: 4 }}>
-                  {pinCategoryCounts[c]}
-                </Text>
-              </View>
-            ))}
-          </View>
-        )}
         <View className="gap-2">
           {[
             { active: 'HM', inactive: 'DEF', id: 'HT-0', type: 'heatmap' as const },
@@ -1355,6 +1330,70 @@ export const LeadMap = ({
           })}
         </View>
       </View>
+
+      {/* Bottom-left: pin-colour legend (same pattern as the footsteps map — palette
+          button, card opens IN FLOW above it, button becomes a close ✕ while open).
+          In flow rather than an absolute popover off the button so the ✕ stays inside
+          its parent's bounds — Android does not deliver touches outside them.
+          Hidden with the pins in heatmap mode. */}
+      {!isHeatMapActive && (
+        <View
+          className="absolute left-6"
+          style={{
+            zIndex: 10,
+            bottom: Platform.OS === 'android' ? 40 + insets.bottom : 40,
+          }}
+          pointerEvents="box-none"
+        >
+          {legendOpen && (
+            <View
+              style={{
+                alignSelf: 'flex-start',
+                minWidth: 170,
+                marginBottom: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                borderRadius: 12,
+                gap: 6,
+                backgroundColor: isDark ? 'rgba(30,30,30,0.96)' : '#FFFFFF',
+                borderWidth: 1,
+                borderColor: isDark ? '#333' : '#e2e8f0',
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.15,
+                shadowRadius: 4,
+                elevation: 6,
+              }}
+            >
+              {PIN_CATEGORIES.map((c) => (
+                <View key={c} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View
+                    style={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: 6,
+                      backgroundColor: PIN_CATEGORY_META[c].color,
+                      marginRight: 8,
+                    }}
+                  />
+                  <Text
+                    numberOfLines={1}
+                    style={{ flex: 1, fontSize: 12, fontWeight: '700', color: isDark ? '#e2e8f0' : '#334155' }}
+                  >
+                    {PIN_CATEGORY_META[c].label}
+                  </Text>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: isDark ? '#ffffff' : '#0f172a', marginLeft: 12 }}>
+                    {pinCategoryCounts[c]}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+          <View className="self-start">
+            <MapLegendToggle open={legendOpen} onPress={() => setLegendOpen((prev) => !prev)} />
+          </View>
+        </View>
+      )}
 
       {/* Bottom Right Controls (GPS & Zoom) */}
       <View 

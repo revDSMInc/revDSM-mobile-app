@@ -285,7 +285,7 @@ can't load under jest). Tests: `__tests__/utils/sales-pins.test.ts`.
 
 | Where | Change |
 |---|---|
-| `LeadMap.tsx` | GeoJSON `category` = `searched` › `favorite` › pin category (`uploaded` stays `default` green). `iconImage` match adds `installed` → `markerInstalled`, `pendingInstall` → `markerPending`. Legend with per-category counts above the right toggle rail. Search highlighting also matches `displayJobNumber`. |
+| `LeadMap.tsx` | GeoJSON `category` = `searched` › `favorite` › pin category (`uploaded` stays `default` green). `iconImage` match adds `installed` → `markerInstalled`, `pendingInstall` → `markerPending`. Legend with per-category counts: bottom-LEFT, behind a palette button (see the follow-up below). Search highlighting also matches `displayJobNumber`. |
 | `SalesLeadPins.tsx` (Zone Canvasser) | Same category colours (no search/favorite tints there). No legend. |
 | `MapFiltersModal.tsx` | `FilterState.statusFilter: 'all' \| 'pendingInstall' \| 'installed'`, a dropdown below the date range; counted by `countAppliedMapFilters` when not `all`; logged as `pin_status_filter`. |
 | `MapDetail/index.tsx` | `DEFAULT_MAP_FILTERS.statusFilter = 'all'`; applied in `baseFilteredLeads`; text search + exact-jump match `displayJobNumber` as well as `jobNumber`; sort + date range use `getPinSortDate` (install → **sale** → created); list card uses the helpers below. |
@@ -359,3 +359,27 @@ While it's on (and only in a `__DEV__` build, via `MAP_BOUNDS_UNLOCKED`):
 ⚠️ **Set it back to `false` when testing is done.** The North America box (`MAP_BOUNDS`, SW
 `[-180, 15]` / NE `[-40, 85]`) is deliberate web parity. The `__DEV__` gate means a release build keeps
 the lock regardless, but a debug build handed to QA would not.
+
+### Follow-up — Sales Map pin legend: bottom-left, palette button + ✕ (footsteps pattern)
+
+The legend (Uploaded / Installed / Pending install + counts) sat permanently above the right toggle rail.
+It now behaves like the footsteps map's building-status legend (`ZoneCanvasserMap.tsx` + `MapLegend.tsx`):
+
+- **Bottom-left**, mirroring the GPS/zoom cluster on the right (`left-6`, same `bottom`).
+- Closed by default. The reused **`MapLegendToggle`** (`ZoneCanvasser/MapLegend.tsx`) shows a palette
+  icon; tapping it opens the card, and the same button becomes a dark **✕** that closes it. State is
+  `legendOpen` in `LeadMap` (`useState(false)`).
+- ⚠️ **The card renders IN FLOW above the button, inside a `box-none` container** — not an absolute
+  popover off the button. Android doesn't deliver touches to a child drawn outside its parent's bounds,
+  which would leave the ✕ untappable. Same reason the footsteps map does it.
+- Hidden together with the pins in heatmap mode (button included).
+- `MapLegendCard` (the footsteps card) is deliberately NOT reused: it renders building-status markers;
+  this card is category dots + counts (`PIN_CATEGORY_META`, `countPinCategories`).
+
+### TEMPORARY (test mode) — the camera frames every pin on load
+
+While `MAP_BOUNDS_UNLOCKED` is on, `LeadMap` calls `cameraRef.fitBounds(ne, sw, 60, 800)` once
+(`didFrameAllPinsRef`) when the map is ready and there are ≥ 2 pins, so far-away test pins (Lahore) are on
+screen without hunting for them — unlocking `maxBounds` alone only made them reachable. It overrides
+the office/Tampa opening view, which is intended for testing. It goes away with the unlock: set
+`UNLOCK_MAP_BOUNDS_FOR_TESTING = false` before release.
