@@ -292,6 +292,21 @@ interface DynamicTabRendererProps {
   // allocation grid + accordion tracker. Field sections already render without
   // their own allocation UI, so this is the only allocation chrome to suppress.
   hideAllocationTrackers?: boolean;
+  /**
+   * Spread onto this tab's `ScrollView` so the SCREEN's step header can collapse as the
+   * rep scrolls (`hooks/useCollapsingHeader`). The scroll that drives it lives here, two
+   * components below the header it moves, so it has to be handed down.
+   *
+   * Every tab wires it: the field ScrollView below, and `VerticalSummaryTab`, which owns
+   * its own and returns before that one.
+   *
+   * ⚠️ SPREAD it whole. It carries the touch/momentum handlers as well as `onScroll`,
+   * and without them the header blinks — see `userDriven` in `utils/collapsing-header.ts`.
+   *
+   * ⚠️ The pinned allocation trackers sit ABOVE the field ScrollView and must NOT take
+   * it — that is the half of the ticket that says the tracker always stays.
+   */
+  collapsingScrollProps?: Record<string, any>;
   verticalId?: string;
   verticalColor?: string;
   products?: any[];
@@ -1457,6 +1472,7 @@ export function DynamicTabRenderer({
   repDetails,
   editMode,
   hideAllocationTrackers = false,
+  collapsingScrollProps,
   leadId,
   calculatorResultData,
   customerName,
@@ -1500,6 +1516,7 @@ export function DynamicTabRenderer({
         isDocUploadingRef={isDocUploadingRef}
         onUploadDocs={onUploadDocs}
         onRefreshDocs={onRefreshDocs}
+        collapsingScrollProps={collapsingScrollProps}
       />
     );
   }
@@ -1829,6 +1846,7 @@ export function DynamicTabRenderer({
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+        {...collapsingScrollProps}
       >
       {!hasAllocationOnly && hasTabFields && (() => {
         const nonAllocFields = filterFields(

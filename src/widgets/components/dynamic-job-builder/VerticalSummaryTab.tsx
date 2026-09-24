@@ -37,6 +37,14 @@ interface VerticalSummaryTabProps {
   onUploadDocs?: (cat: 'agreement' | 'orderSheet', payloads: any[]) => Promise<any[] | null>;
   /** Re-reads the lead's stored documents for a category (no upload). */
   onRefreshDocs?: (cat: 'agreement' | 'orderSheet') => Promise<any[] | null>;
+  /**
+   * Drives the Job Builder's collapsing step header. The Summary tab owns its OWN
+   * ScrollView (it returns before `DynamicTabRenderer`'s), so it has to be wired
+   * separately or the header would sit frozen on this one tab.
+   *
+   * ⚠️ Spread it whole — it carries touch/momentum handlers, not just `onScroll`.
+   */
+  collapsingScrollProps?: Record<string, any>;
 }
 
 function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: string; text: string; variant?: string; showLabel?: boolean }) {
@@ -215,6 +223,7 @@ export function VerticalSummaryTab({
   isDocUploadingRef,
   onUploadDocs,
   onRefreshDocs,
+  collapsingScrollProps,
 }: VerticalSummaryTabProps) {
   // `products` + `schemas` feed `resolveTabAccentColor` (web parity): they carry the
   // per-tab category colour that gives each summary card its own header colour.
@@ -272,6 +281,7 @@ export function VerticalSummaryTab({
       // Keep a focused input (appointment / agreement fields) above the keyboard —
       // the screen no longer wraps this in a padding KeyboardAvoidingView.
       automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+      {...collapsingScrollProps}
     >
       <View className="mb-4">
         <Text className="text-xl font-extrabold text-slate-850">Job Builder Summary</Text>
