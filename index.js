@@ -66,15 +66,43 @@ const OriginalTextInput = TextInput;
 // picks it up too. Without this wiring the util is inert and every unclassed <Text>
 // goes back to following the device font.
 
+/**
+ * How far the OS text-size setting may grow the app's type.
+ *
+ * ⚠️ NOT 1.0 / `allowFontScaling={false}`. Ignoring the setting outright is an
+ * accessibility regression — a rep who has raised their phone's text size did so
+ * because they need it, and this app is used outdoors on a doorstep. A cap keeps the
+ * layout intact (the Lead Center's two-column rows, the Job Builder's step strip and
+ * the measurement grids all break well before 2x) while still honouring the setting.
+ *
+ * ⚠️ This is the SIZE setting only. A device font-FAMILY change (Samsung/Pixel "font
+ * style") is already defeated by `resolveFontPatch`, which names a Public Sans face on
+ * every Text — but only because those faces are actually bundled on Android, which
+ * they were not until the fonts were linked into
+ * `android/app/src/main/assets/fonts`. If Android ever goes back to the device font,
+ * check that directory FIRST: the manifest can claim the assets are linked while the
+ * directory does not exist.
+ *
+ * Individual call sites may still pass a lower cap; an explicit prop wins over this.
+ */
+const MAX_FONT_SCALE = 1.25;
+
 // Create wrapper for Text component
 const ScaledText = React.forwardRef((props, ref) => {
-  const { style, ...rest } = props;
+  const { style, maxFontSizeMultiplier, ...rest } = props;
   const flatStyle = StyleSheet.flatten(style);
   const fontPatch = resolveFontPatch(flatStyle);
+  // A call site that already states its own cap keeps it.
+  const cap = maxFontSizeMultiplier ?? MAX_FONT_SCALE;
 
   if (!isTablet()) {
     return (
-      <OriginalText ref={ref} style={fontPatch ? [style, fontPatch] : style} {...rest} />
+      <OriginalText
+        ref={ref}
+        maxFontSizeMultiplier={cap}
+        style={fontPatch ? [style, fontPatch] : style}
+        {...rest}
+      />
     );
   }
 
@@ -87,18 +115,31 @@ const ScaledText = React.forwardRef((props, ref) => {
     scaledStyle.lineHeight = flatStyle.lineHeight + 2;
   }
 
-  return <OriginalText ref={ref} style={[style, fontPatch, scaledStyle]} {...rest} />;
+  return (
+    <OriginalText
+      ref={ref}
+      maxFontSizeMultiplier={cap}
+      style={[style, fontPatch, scaledStyle]}
+      {...rest}
+    />
+  );
 });
 
 // Create wrapper for TextInput component
 const ScaledTextInput = React.forwardRef((props, ref) => {
-  const { style, ...rest } = props;
+  const { style, maxFontSizeMultiplier, ...rest } = props;
   const flatStyle = StyleSheet.flatten(style);
   const fontPatch = resolveFontPatch(flatStyle);
+  const cap = maxFontSizeMultiplier ?? MAX_FONT_SCALE;
 
   if (!isTablet()) {
     return (
-      <OriginalTextInput ref={ref} style={fontPatch ? [style, fontPatch] : style} {...rest} />
+      <OriginalTextInput
+        ref={ref}
+        maxFontSizeMultiplier={cap}
+        style={fontPatch ? [style, fontPatch] : style}
+        {...rest}
+      />
     );
   }
 
@@ -108,7 +149,12 @@ const ScaledTextInput = React.forwardRef((props, ref) => {
   const scaledStyle = { fontSize: baseFontSize + 2 };
 
   return (
-    <OriginalTextInput ref={ref} style={[style, fontPatch, scaledStyle]} {...rest} />
+    <OriginalTextInput
+      ref={ref}
+      maxFontSizeMultiplier={cap}
+      style={[style, fontPatch, scaledStyle]}
+      {...rest}
+    />
   );
 });
 
