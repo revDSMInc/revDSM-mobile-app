@@ -292,8 +292,9 @@ can't load under jest). Tests: `__tests__/utils/sales-pins.test.ts`.
 | `MapJobCard.tsx` + list | `displayJobNumber`; date line = "Install scheduled {d}" / "Sold {d} · pending install" / install date; rep = `repDisplayName` first; **`products`** (the card read `job.product`, which doesn't exist, so it always said N/A). |
 
 Pin images `assets/images/map/marker-{installed,pending}{,@2x,@3x}.png` are generated from
-`marker-green*`: the teardrop recoloured to `#0B6E4F` / `#7B2FF7`, its see-through centre filled solid,
-and a white check / dot drawn in (same sizes and anchor as the existing pins).
+`marker-green*`: the teardrop recoloured to `#0B6E4F` (installed — later changed to `#00FFA3`, see the
+"Installed pin colour" follow-up) / `#7B2FF7`, its see-through centre filled solid, and a white check / dot
+drawn in (same sizes and anchor as the existing pins).
 
 ⚠️ **The status filter is CLIENT-side (web's approach), not `/find`'s `pinStatus`.** Pending =
 `pinCategory === 'pendingInstall'`; installed = **everything else**, because uploaded pins are
@@ -375,6 +376,168 @@ It now behaves like the footsteps map's building-status legend (`ZoneCanvasserMa
 - Hidden together with the pins in heatmap mode (button included).
 - `MapLegendCard` (the footsteps card) is deliberately NOT reused: it renders building-status markers;
   this card is category dots + counts (`PIN_CATEGORY_META`, `countPinCategories`).
+
+### Follow-up — Installed pin colour: dark green → spring-mint `#00FFA3`
+
+*"The installed pin and the uploaded pin colours are matched with each other — change the green shade of
+the installed pin so it is clearly visible on the map."* The installed pin was a dark forest green
+(`#0B6E4F`), which sank into satellite terrain / tree cover and read as the same "green" as the lime
+uploaded pin (`#4CBB17`) at cluster zoom.
+
+- **Installed is spring-mint `#00FFA3`** — a cooler, lighter hue than the yellow-green uploaded pin, legible
+  on satellite (dark green / brown) and on the street map (the pin's dark outline carries it on light
+  backgrounds). It went through four colours; **`#00FFA3` is the one the user signed off** (*"the 2nd last
+  colour shade is perfect"*), so treat it as final:
+  `#0B6E4F` → `#00E676` → **`#00FFA3`** → magenta `#FF00C8` (reverted).
+- ⚠️ **Do NOT "fix" it back to magenta or another hue.** Magenta `#FF00C8` was built and measured as the
+  mathematically best option — the only hue no other layer uses (uploaded lime, searched red, favorite amber,
+  pending purple, the heatmap ramp, the Zone Canvasser building / appointment colours), ≥ 57 ΔE from every
+  other pin and ≥ 98 from every basemap background — and the user still rejected it for the mint. Don't
+  re-litigate it from the numbers. The trade-off they accepted: mint is only ΔE ≈ 42 from lime (the pin
+  colour it shares a hue family with), and the white check on it is soft (~1.4:1). If a future ticket says
+  the installed / uploaded pins are hard to tell apart again, the free hue is magenta, and `#00E5A0`
+  (43 / 46) is the same-family option with a crisper check.
+- **Measured, not eyeballed** (CIELAB ΔE against nine basemap backgrounds — satellite forest / grass / brown /
+  roof / water, street beige / park / water / road — and against the other pin colours): `#00FFA3` is **≈ 52
+  from the nearest background, ≈ 42 from lime**; `#00E676` was 55 / 29 (too close to lime); the original
+  `#0B6E4F` was 22 / 65 — distinct from lime but invisible on terrain, which was the real problem.
+- Changed in **two places that must stay in step**: the three PNGs `assets/images/map/marker-installed{,@2x,@3x}.png`
+  (used by `LeadMap` and `SalesLeadPins` through the `markerInstalled` image) and
+  `PIN_CATEGORY_META.installed.color` (`utils/sales-pins.ts`, the legend dot in `LeadMap`).
+- ⚠️ The PNGs were **recoloured, not redrawn**: the fill and its anti-aliased blends with the black outline /
+  white check are remapped to the new fill, so size, anchor, outline and check are the same shape (1180 fill
+  pixels at @3x before and after). Always remap from the **original `#0B6E4F` files** (`git show
+  <commit-before-this-change>:src/assets/images/map/marker-installed@3x.png`), not from the current ones —
+  each hop through a lighter or darker fill loses a little anti-aliasing accuracy — and change
+  `PIN_CATEGORY_META` too, or the legend dot stops matching the pin. (`pngjs` is already in `node_modules`;
+  no new dependency is needed.)
+- The draw order is unchanged (`installed` = 1, above uploaded, below pending), so a more prominent installed
+  pin is no more likely to hide the purple pending ones.
+
+### Follow-up — a new pending-install pin did not appear until the map cache aged out
+
+*"I create a new lead that is pending install but it is not shown on the map. A pending-install lead
+(purple) should automatically display when the map is opened."* Then, mid-investigation: *"if I enter the
+exact location in a search, that lead is displayed."* That second fact is the diagnosis: the pin **exists,
+has valid coordinates and passes every client filter**; the map was simply showing an old copy of
+`POST /job/v1/find`.
+
+- **Cause.** `MapDetail`'s `['mapJobs', ...]` query had `staleTime: 5 min` and nothing on the device
+  invalidates it when a lead is marked Sale — the pending pin is created by the **backend** (see the top of
+  this ticket), so no client mutation ever knew to. The Leads screen and Lead Center also `prefetchQuery`
+  `['mapJobs', 'all']` with the same 5 min, so a cache seeded when the rep opened Leads was served as-is.
+  Typing a location + radius changes the query key (`['mapJobs', lat, lng, radius]`), which is a cache miss and
+  therefore a live request — that is why searching "found" it. Only report generation (`useLeadReports`) and
+  `OFFLINE_UPLOAD_SUCCESS` ever invalidated `mapJobs`.
+- **Fix** (`screens/MapDetail/index.tsx`, the query + one effect): `refetchOnMount: 'always'`, so every open
+  asks the server; and a `wasFocusedRef` effect that `refetchQuery()`s on a **focus** transition, because
+  returning to a map that never unmounted (open a lead from it, make a sale, go back) is not a mount. Cached
+  pins still paint immediately and `isLoading` stays false (there is data), so there is no spinner; the fresh
+  pins arrive when the request lands.
+- ⚠️ **Do not "optimise" this back to `staleTime` alone, and do not switch to invalidating at the sale-submit
+  sites.** A sale made on the web, an installer completing a job (pending → installed) or another rep's sale
+  never runs any code on this device, so only a revalidation on open catches them. Leave the Leads / Lead
+  Center prefetches as they are — they make the first paint instant; `refetchOnMount: 'always'` is what
+  keeps them honest.
+- ⚠️ **`screens/MapDetail/index.tsx` is CRLF** — edited with `newline=''` on read and write (diff is +14).
+- `SalesLeadPins` (Zone Canvasser) was **not** changed: `useSalesMapPins` fetches once per hook mount
+  (`fetchedRef`). It is inside the Zone Canvasser modal, which should remount per open, but that is unverified.
+  If a pending pin is ever missing on the footsteps map only, look there first.
+- ⚠️ **Not verified on device.** Smoke test: create a lead → mark Sale → open the Sales Map **without**
+  searching → the purple pin is there (and `Pending install` in the legend counts it). Two things this fix
+  cannot cure, both already recorded above: a sale whose address geocodes far from the rep (the Lahore test
+  leads) draws its pin there, not where the map opens, and the North America bounds lock stops a release build
+  from panning to it.
+
+### Follow-up — opening the map from a lead lands on its pending-install pin
+
+*"1234 Island Slough Ln, Davenport, FL 33837 is my lead and it is not listed on the map, but if I search that
+address it is displayed. If the lead is created and the status is pending install, show it directly."*
+Follow-up to the stale-cache fix above; this is the **other half** — the pin can be in the data and still be
+off-screen. The full map opens on the rep's **GPS** (`focusUserLocationOnOpen`, QA ticket 321 — a plain lead
+open deliberately does NOT suppress it), so a lead ~50 mi from the rep is a needle in the Tampa–Orlando cluster
+until an address search flies the camera there (and drops the app's own **red** search marker — `LeadMap`
+"Location-search center marker" — which is easy to mistake for the lead).
+
+Decision (asked, not assumed — it partly reverses ticket 321): the user picked *"open on that lead's pin when the
+map is opened from the lead"*, via the Lead Center **Map** tab / **Expand Map** (both pass `currentLead: lead`).
+
+- **`findPendingInstallPinForLead(jobs, lead)`** (`utils/sales-pins.ts`, pure, tested in
+  `sales-pins.test.ts`): a pin belongs to a lead when `_id` / `leadId` matches the lead's `_id` / `id` / `leadId`,
+  **or** the job number matches — a sold job's own `jobNumber` IS the lead number (`SG-XXXXXX` for a
+  self-generated lead, per the spec), and `displayJobNumber` (installer `T…`) is compared too. Text compare,
+  trimmed. Only a **`pendingInstall`** pin **with coordinates** counts: an uploaded / installed pin with the same
+  number is history, and a pin with no location can't be framed.
+- **`MapDetail`**: `leadPendingPin` is looked up in `baseFilteredLeads` (a pin the active filters hide is never
+  jumped to) and handed to the existing `focusLead` machinery (`setJumpLead`) from the same effect that already
+  jumps to a searched job number. `LeadMap` then flies to it at zoom 14, selects it (card popup), and — because
+  `focusLead` counts as a search target — the one-shot GPS re-centre stands down.
+- ⚠️ **One-shot per lead** (`openedOnLeadPinRef`, keyed by lead id). A refetch hands back a new pin object; without
+  the latch the effect would re-jump on every refetch (including the focus refetch) and snatch the camera back from
+  wherever the rep has panned. Keyed by id so a second lead opened into the same screen instance still jumps.
+- ⚠️ **Only when opened from a lead.** The header map icon passes no lead, so it still opens on the GPS —
+  ticket 321 stands. An address / job-number search and a saved location filter (`centerCoords`) both take
+  precedence (they are earlier branches of that effect).
+- ⚠️ **It waits for the pin.** The jump fires when the pin is in the list — the cached list on open, or the
+  fresh one once the `refetchOnMount: 'always'` request lands — so the camera may sit on the GPS for a moment
+  first and then fly. If the backend has not created the pin, nothing jumps (never fabricate a pin client-side:
+  the sale can be undone, and the installer flips it to `installed`).
+- ⚠️ **Not verified on device.** The match hinges on the lead's `jobNumber` equalling the pin's `jobNumber`
+  (spec-derived). If a fresh sale still doesn't frame, log `lead.jobNumber` / `lead._id` next to the pending
+  pins' `jobNumber` / `displayJobNumber` from `[MapDetail DEBUG]` and fix the key here, not the camera.
+  Smoke test: create a lead (e.g. the Davenport address) → mark Sale → Lead Center → Map → the camera flies to
+  a purple pin with its card, without searching. Zone Canvasser is untouched.
+
+### Follow-up — "Pending install 3" but only one purple pin: the leads were pinned on the rep's GPS, not their address
+
+*"The legend says 3 pending-install pins but I only see two pins on the map — one is missing."* Legend counts
+every pin in the list (`pinCategoryCounts`, same set as the GeoJSON), including ones far off-screen, so a
+count that beats what you can see means a pin is somewhere ELSE. Measured, not guessed: a temporary `__DEV__`
+log of the non-uploaded pins, read over `adb logcat -d -s ReactNativeJS` (device attached, Metro hot-reloads
+the edit), showed 291 pins = 287 + 1 + 3, and:
+
+| pin | coordinates `[lng, lat]` | where |
+|---|---|---|
+| `96314` pending | `-82.52, 28.18` | north Tampa — the one purple pin on screen |
+| `SG-FB9788` pending | `74.2903789, 31.4667283` | **Lahore, Pakistan** |
+| `SG-FCA16F` pending | `74.2903854, 31.46672` | **Lahore, Pakistan** (≈ 1 m from the other) |
+| `6925417` installed | `-82.68, 28.32` | near Spring Hill — the mint pin on screen |
+
+So nothing was hidden by the renderer: two pins were 7,000 miles away. The 1 m jitter between the two `SG-` pins
+is a **GPS fix**, not a geocoded address (an address geocodes to identical coordinates every time).
+
+- **Root cause — `widgets/modals/LeadCreate/index.tsx`.** On open the form silently fills *Full Address* from
+  the phone's GPS (`handleGetCurrentLocation(true)`: reverse-geocode → `form.address` **and**
+  `setLocation(gps)`). `handleAddressSearch` (the address `onChangeText`) changed only the text, so a rep who
+  overtyped the address and did NOT tap a suggestion saved `fullAddress: "1234 Island Slough Ln, Davenport, FL"`
+  with `location.coordinates` = their own GPS (Lahore). The backend builds the sale's pin from the lead's
+  `location`, so the pin followed the coordinates, not the address. A picked suggestion whose Place-Details call
+  failed silently (`console.warn` only) did the same.
+- **Fix.** (1) `handleAddressSearch` now `setLocation(null)` — coordinates belong to the address they were
+  captured for, so editing the text drops them (`handleSelectSuggestion` sets the picked place's; programmatic
+  address fills — the GPS pin icon — don't fire `onChangeText`, so they keep theirs). (2) At submit,
+  `leadLocation = location || (await geocodeAddress(form.address))` and the payload (both the Issued and
+  Self-Gen branches, and the zone `latitude`/`longitude`) uses `leadLocation`. **`geocodeAddress`** is new in
+  `utils/places.ts` (`geocode/json?address=`; null on no result / network error, never throws; tested in
+  `__tests__/utils/places.test.ts`).
+- ⚠️ **Geocode failure sends NO location — never a fallback to the GPS.** No coordinates is a lead the backend
+  can still handle; wrong coordinates is a pin in the wrong country with no error anywhere. Don't "make it
+  robust" by falling back to `location`/the device fix.
+- ⚠️ **Zone leads are unaffected**: their address is `editable={!fromZone}` and `prefilledCoords` are the
+  building's, so `handleAddressSearch` never fires for them. `EditCustomerModal` already keeps its own
+  `addressCoords` (picked place → `geocodePlaceId`), so it does not have this bug.
+- ⚠️ **The two existing Lahore pins are bad DATA and this fix does not move them** — they were saved with the GPS
+  coordinates. Correct them by re-saving the address (Edit Customer) if the backend re-derives the job pin from
+  the lead, or fix them in the database; don't add a client-side coordinate override on the map. In a release build
+  they are also unreachable (North America `MAP_BOUNDS`), which is why the legend count and the visible pins can
+  disagree until the data is fixed. Only a `__DEV__` build (`MAP_BOUNDS_UNLOCKED`) can pan to Lahore.
+- **Debugging recipe worth keeping:** to find where counted pins really are, add a temporary `__DEV__`
+  `console.log` of `activeLeads.filter(j => getPinCategory(j) !== 'uploaded')` (category, `jobNumber`,
+  `location.coordinates`, `geocodeFailed`) in the `queryLeads` sync effect of `MapDetail`, then read it with
+  `adb logcat -d -s ReactNativeJS`. Remove it afterwards.
+- ⚠️ **Not verified on device.** Smoke test: Add New Lead → overtype the auto-filled address with a Florida one
+  WITHOUT tapping a suggestion → create → mark Sale → the pending pin is in Florida (log line
+  `location.coordinates` ≈ `[-81.x, 28.x]`), not at the rep's position.
 
 ### TEMPORARY (test mode) — the camera frames every pin on load
 

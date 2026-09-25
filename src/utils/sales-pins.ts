@@ -17,7 +17,7 @@ export const PIN_CATEGORIES: PinCategory[] = ['uploaded', 'installed', 'pendingI
 /** Web map colours. `uploaded` is the existing green pin. */
 export const PIN_CATEGORY_META: Record<PinCategory, { label: string; color: string }> = {
   uploaded: { label: 'Uploaded', color: '#4CBB17' },
-  installed: { label: 'Installed', color: '#0B6E4F' },
+  installed: { label: 'Installed', color: '#00FFA3' },
   pendingInstall: { label: 'Pending install', color: '#7B2FF7' },
 };
 
@@ -77,6 +77,38 @@ export const countPinCategories = (jobs: any[]): Record<PinCategory, number> => 
   const counts: Record<PinCategory, number> = { uploaded: 0, installed: 0, pendingInstall: 0 };
   for (const job of jobs || []) counts[getPinCategory(job)] += 1;
   return counts;
+};
+
+const idText = (v: any): string => (v == null ? '' : String(v).trim());
+
+/**
+ * The purple pending-install pin that belongs to `lead`, or `null`.
+ *
+ * Used when the Sales Map is opened FROM a lead (Lead Center -> Map): a lead that has just
+ * been sold should open the map on its own pin, not only on the rep's GPS fix.
+ *
+ * A pin is linked to its lead by id OR by job number — a sold job's own `jobNumber` IS the
+ * lead number (`SG-XXXXXX` for a self-generated lead; `displayJobNumber` is the separate
+ * installer `T…` number, so it is compared against the lead's number too). Only a
+ * `pendingInstall` pin with usable coordinates counts: an uploaded / installed pin with the
+ * same number is history, and a pin with no location cannot be framed.
+ */
+export const findPendingInstallPinForLead = (jobs: any[] | null | undefined, lead: any): any | null => {
+  if (!lead || !Array.isArray(jobs)) return null;
+  const ids = [lead._id, lead.id, lead.leadId].map(idText).filter(Boolean);
+  const numbers = [lead.jobNumber, lead.displayJobNumber].map(idText).filter(Boolean);
+  if (!ids.length && !numbers.length) return null;
+
+  return (
+    jobs.find((job: any) => {
+      if (getPinCategory(job) !== 'pendingInstall') return false;
+      const coords = job?.location?.coordinates;
+      if (!Array.isArray(coords) || coords.length < 2) return false;
+      const jobIds = [job._id, job.leadId].map(idText).filter(Boolean);
+      const jobNumbers = [job.jobNumber, job.displayJobNumber].map(idText).filter(Boolean);
+      return jobIds.some((v) => ids.includes(v)) || jobNumbers.some((v) => numbers.includes(v));
+    }) || null
+  );
 };
 
 /** A sold job's own `jobNumber` is the lead number; `displayJobNumber` is the one to show. */
