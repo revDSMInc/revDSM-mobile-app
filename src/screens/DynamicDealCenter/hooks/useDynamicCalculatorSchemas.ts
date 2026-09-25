@@ -50,6 +50,8 @@ interface UseDynamicCalculatorSchemasResult {
   /** true when the backend published a usable (has verticals) config */
   isConfigured: boolean;
   isLoading: boolean;
+  /** Force a re-read of the published config (pull-to-refresh, or after an edit). */
+  refetch: () => void;
 }
 
 export function useDynamicCalculatorSchemas(
@@ -62,7 +64,7 @@ export function useDynamicCalculatorSchemas(
   const { user } = useAuth();
   const userId = user?._id || user?.id;
 
-  const { data, isLoading } = useQuery<JobBuilderConfig | null>({
+  const { data, isLoading, refetch } = useQuery<JobBuilderConfig | null>({
     queryKey: ['jobBuilderProductsConfig'],
     queryFn: () =>
       cachedFetch(
@@ -87,7 +89,28 @@ export function useDynamicCalculatorSchemas(
         { online: isOnline(), userId, isEmpty: (d: any) => !d?.verticals?.length }
       ),
     enabled,
-    staleTime: 5 * 60 * 1000,
+    // ⚠️ The portal is the AUTHORING side of this config, so it changes under a
+    // running app — a rep can be looking at a tab while someone renames an option
+    // or edits a default. This used to be `staleTime: 5 * 60 * 1000`, which meant
+    // a portal edit stayed invisible for at least five minutes, and in practice
+    // longer: `refetchOnWindowFocus` is false globally (`queryClient.ts`) and
+    // nothing wires React Query's `focusManager` to RN's `AppState`, so a mounted
+    // builder never revalidated at all. The cache is memory-only (no
+    // `persistQueryClient`), which is why only a full app restart picked changes up.
+    //
+    // `staleTime: 0` + `refetchOnMount: 'always'` gives stale-while-revalidate:
+    // React Query hands back the cached config synchronously so the tab still
+    // paints instantly, then refetches in the background and re-renders if the
+    // config actually changed. The cost is one GET per mount of the Deal Center /
+    // Job Builder / Investment Center, not per render — all three share this one
+    // query key.
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnReconnect: true,
+    // Opts INTO focus refetching (the global default is false). `queryClient.ts`
+    // wires `focusManager` to `AppState`, so coming back from the background
+    // revalidates the config even when the screen never unmounted.
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 
@@ -100,6 +123,7 @@ export function useDynamicCalculatorSchemas(
       isRemote,
       isConfigured: isRemote,
       isLoading,
+      refetch,
     };
-  }, [data, isLoading]);
+  }, [data, isLoading, refetch]);
 }

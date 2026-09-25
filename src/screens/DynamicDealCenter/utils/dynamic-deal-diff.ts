@@ -14,7 +14,8 @@ import { resolveLocationGridConfig } from '../../../utils/dynamic-job-builder/en
 
 const STRUCTURAL_STATE_KEYS = new Set(['_storageVersion', 'scheduleTime', 'agreements', 'orderSheets']);
 
-const SKIP_LEAF_KEYS = new Set(['colorValues', '_combinationNumber', '_storageVersion']);
+// `_addedInEdit`: session-only My Deals marker (`combination-color-filter.ts`).
+const SKIP_LEAF_KEYS = new Set(['colorValues', '_combinationNumber', '_addedInEdit', '_storageVersion']);
 
 const COLOR_FIELD_TYPES = new Set(['swatch', 'colorSelection', 'customColor']);
 

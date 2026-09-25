@@ -338,3 +338,46 @@ mtime and are skipped — removing a file is the one edit the guard cannot see.
 ⚠️ **Hooks are snapshotted at session start.** Editing `settings.json` does not arm them in the session
 that made the edit; the next session (or a review in `/hooks`) picks them up. Written in plain
 CommonJS Node with no dependencies because the team runs Claude Code on both macOS and Windows.
+
+## `focusManager` is wired to `AppState` (React Query revalidates on foreground)
+
+`services/api/queryClient.ts` now calls `focusManager.setFocused(status === 'active')` from an
+`AppState` listener.
+
+Why it was needed: React Query's "window focus" is a browser concept, and on React Native nothing drives
+it unless `focusManager` is told about `AppState`. So `refetchOnWindowFocus` was **inert app-wide** — a
+query that set it got no foreground revalidation at all. That is half of why portal-authored job-builder
+config edits never reached a running app (full write-up: `deal-center.md`).
+
+⚠️ **This only ENABLES the behaviour.** The client default stays `refetchOnWindowFocus: false`, so a
+query revalidates on foreground only if it opts in explicitly. Today exactly one does:
+`['jobBuilderProductsConfig']` in `useDynamicCalculatorSchemas`.
+
+⚠️ **Setting `refetchOnWindowFocus: true` on a query now actually does something.** Before this it was a
+no-op, so any query already carrying it starts refetching on every foreground — check before adding it
+to a heavy or paginated query.
+
+⚠️ The listener is module-scope, registered once when `queryClient.ts` is first imported, and
+deliberately never removed — the client lives for the process.
+
+### Merge note: `onlineManager` and `focusManager` are BOTH wired, independently
+
+When `dev-v1-multi-tenat` merged into the offline branch, `queryClient.ts` conflicted: the offline work
+had added the `onlineManager` wiring (+ `networkMode: 'offlineFirst'`, `refetchOnReconnect`) and the
+other branch had added the `focusManager` wiring, both at the top of the same file. **The resolution is
+the union — neither replaces the other.**
+
+They answer different questions and React Query gates a refetch on BOTH:
+
+| Manager | Question | Fed by |
+|---|---|---|
+| `onlineManager` | Is there a link? | `subscribeConnectivity` (`services/connectivity.ts`) |
+| `focusManager` | Is the app in front of the rep? | `AppState` `change` |
+
+⚠️ **Deleting either one silently disables refetching the other appears to provide.** Drop
+`focusManager` and the config never revalidates on foreground however good the signal; drop
+`onlineManager` and nothing resumes on reconnect. A future conflict here must keep both blocks.
+
+⚠️ **`offlineFirst` does NOT defeat the focus refetch.** It defers only the RETRIES, so a query
+returning to the foreground still issues its first request. The two settings are compatible; this was
+checked when resolving, because it is the non-obvious way the union could have been wrong.

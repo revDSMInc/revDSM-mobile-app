@@ -7,7 +7,12 @@ import {
 } from './combination-utils';
 import { isAllocationField, isFieldLocked, resolveLockedValue } from './allocation-utils';
 import { isPairedQuantityEmpty } from './locked-color-defaults';
-import { evaluateRuleGroup, isFieldVisibleWithConditions } from './dependency-engine';
+import { isComboHiddenInDealEdit } from './combination-color-filter';
+import {
+  evaluateRuleGroup,
+  isFieldVisibleWithConditions,
+  resolveConditionalDefault,
+} from './dependency-engine';
 import {
   formatComboFieldSummaryValue,
   getSectionSummaryField,
@@ -297,6 +302,38 @@ function formatFieldSummaryValue(field: any, state: any = {}, options: any = {})
     const lockedValue = resolveLockedValue(field, dealCenterData);
     if (lockedValue !== undefined && lockedValue !== null && lockedValue !== '' && lockedValue !== '—') {
       resolvedState[field.id] = lockedValue;
+      return formatComboFieldSummaryValue(field, resolvedState, options);
+    }
+  }
+
+  // Ticket 1063 — a DISABLED dropdown is answered by the config, not the rep.
+  //
+  // ⚠️ Its value is DISPLAY-ONLY in the builder: `DropdownField` resolves it for the
+  // box but deliberately never writes it into job state (re-saving every submitted
+  // deal because a portal default changed is not something a render should do). The
+  // summary reads job state, so without this branch the row was simply MISSING —
+  // reported as "Gutter Opening Width shows for Combination #2 but not #1", the
+  // difference being only that #2 happened to carry a stored value.
+  //
+  // Kept separate from the locked branch above rather than folded into it: that one
+  // is load-bearing for the deal-edit flow and passes the RAW `field.defaultValue`,
+  // and this one must gate on `dependencies.defaultWhen` the same way the builder
+  // box does, so a default is never shown past its own condition. Nothing about the
+  // locked path changes.
+  //
+  // `editMode && hasLiveValue` defers to the rep for the same reason as above: in
+  // the deal-edit wizard a disabled dropdown is unlocked, so their value wins.
+  if (!isFieldLocked(field) && field?.disabled && !(editMode && hasLiveValue)) {
+    const configValue = resolveLockedValue(field, dealCenterData || {}, {
+      fallbackDefault: resolveConditionalDefault(field, state, { dealCenterData }),
+    });
+    if (
+      configValue !== undefined &&
+      configValue !== null &&
+      configValue !== '' &&
+      configValue !== '—'
+    ) {
+      resolvedState[field.id] = configValue;
       return formatComboFieldSummaryValue(field, resolvedState, options);
     }
   }
@@ -623,6 +660,13 @@ function buildCombinationSectionSummary(
 
   const combinations: any[] = [];
   sectionCombos.forEach((combo: any, index: number) => {
+    // My Deals: a combination whose colour was never picked is hidden on the tab
+    // (`combination-color-filter.ts`), so it must not reappear in the summary
+    // either — `comboHasMeaningfulData` is a different, looser rule and lets it
+    // through. Edit-mode only; the create flow is untouched.
+    if (isComboHiddenInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), ctx?.editMode)) {
+      return;
+    }
     if (!comboHasMeaningfulData(section, combo, { ...ctx, tab, tabState, section })) return;
     combinations.push(buildCombinationEntry(section, combo, index, combinationIndexOffset, { ...ctx, tab, tabState, section }));
   });

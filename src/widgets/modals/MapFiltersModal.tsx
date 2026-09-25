@@ -10,6 +10,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { LeadService } from '../../services/api/leads';
 import { NUMERIC_KEYBOARD } from '../../utils/keyboard-type';
+import { PIN_STATUS_FILTER_LABELS, PinStatusFilter } from '../../utils/sales-pins';
 
 // Dedicated, interceptor-free client for the Google Places/Geocode web-service calls,
 // with a finite timeout so a hung request fails fast instead of surfacing a bare
@@ -31,6 +32,9 @@ export interface FilterState {
   isHeatMap: boolean;
   showRoute: boolean;
   showProduct: boolean;
+  // Sold-job pin status (REVUIUX-439), applied on the device like web: pending =
+  // `pinCategory === 'pendingInstall'`, installed = everything else.
+  statusFilter: PinStatusFilter;
   centerCoords?: { latitude: number; longitude: number };
   // Persisted so a re-hydrated (saved) filter set restores the search mode and the
   // date-range label (web `savedFilters.searchType` / `savedFilters.rangeType`).
@@ -86,7 +90,7 @@ export const savedFiltersToFilterState = (sf: any): Partial<FilterState> => {
  * Mobile keeps the location text in the same `jobNumber` field as a job-number
  * search, so a geocoded location (which also sets `centerCoords`) counts once
  * rather than twice. The product/route switches are display toggles and are not
- * counted, matching web.
+ * counted, matching web. A pin status other than "all" counts as one.
  */
 export const countAppliedMapFilters = (filters: FilterState | null | undefined): number => {
   if (!filters) return 0;
@@ -99,6 +103,7 @@ export const countAppliedMapFilters = (filters: FilterState | null | undefined):
     !!filters.maxPrice?.trim(),
     !!(filters.startDate || filters.endDate),
     !!filters.isFavoriteOnly,
+    !!filters.statusFilter && filters.statusFilter !== 'all',
   ].filter(Boolean).length;
 };
 
@@ -151,6 +156,7 @@ export const MapFiltersModal = ({
   const [showRadiusDropdown, setShowRadiusDropdown] = useState(false);
   const [showDateRangeDropdown, setShowDateRangeDropdown] = useState(false);
   const [dateRangeLabel, setDateRangeLabel] = useState('Select Date Range');
+  const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const skipSearch = useRef(false);
 
@@ -303,6 +309,15 @@ export const MapFiltersModal = ({
       });
     }
 
+    if (localFilters.statusFilter && localFilters.statusFilter !== 'all') {
+      logEvent('apply', {
+        user_id: uid,
+        module_type: 'pin_status_filter',
+        created_by: uid,
+        meta: { pinStatus: localFilters.statusFilter },
+      });
+    }
+
     if (localFilters.isFavoriteOnly) {
       logEvent('apply', {
         user_id: uid,
@@ -343,6 +358,7 @@ export const MapFiltersModal = ({
           hasPrice: !!(localFilters.minPrice || localFilters.maxPrice),
           hasDateRange: dateRangeLabel !== 'Select Date Range',
           hasFavorite: localFilters.isFavoriteOnly,
+          pinStatus: localFilters.statusFilter || 'all',
           hasProduct: localFilters.showProduct,
           hasHeatMap: localFilters.isHeatMap,
         },
@@ -656,7 +672,10 @@ export const MapFiltersModal = ({
                     <Icon name="calendar-month" size={22} color="white" />
                   </View>
                   <TouchableOpacity
-                    onPress={() => setShowDateRangeDropdown(!showDateRangeDropdown)}
+                    onPress={() => {
+                      setShowDateRangeDropdown(!showDateRangeDropdown);
+                      setShowStatusDropdown(false);
+                    }}
                     className="flex-1 px-3 flex-row items-center justify-between"
                   >
                     <Text className={`font-bold text-[13px] ${dateRangeLabel !== 'Select Date Range' ? 'text-slate-700' : 'text-slate-400'}`}>
@@ -716,6 +735,51 @@ export const MapFiltersModal = ({
                   </View>
                 </View>
               )}
+
+              {/* Pin status (REVUIUX-439): all / pending install / installed. Below the
+                  date range's own dropdown in paint order (z 70 < 80) so that one
+                  still opens over this row. */}
+              <View className="z-[70] mb-3">
+                <View className="flex-row items-center bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
+                  <View className="w-[50px] h-full items-center justify-center" style={{ backgroundColor: colors.primary.main }}>
+                    <Icon name="map-marker-check" size={22} color="white" />
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowStatusDropdown(!showStatusDropdown);
+                      setShowDateRangeDropdown(false);
+                      setShowRadiusDropdown(false);
+                      setShowTypeDropdown(false);
+                    }}
+                    className="flex-1 px-3 flex-row items-center justify-between"
+                  >
+                    <Text className={`font-bold text-[13px] ${localFilters.statusFilter && localFilters.statusFilter !== 'all' ? 'text-slate-700' : 'text-slate-400'}`}>
+                      {PIN_STATUS_FILTER_LABELS[localFilters.statusFilter || 'all']}
+                    </Text>
+                    <Icon name={showStatusDropdown ? "chevron-up" : "chevron-down"} size={18} color="#94a3b8" />
+                  </TouchableOpacity>
+                </View>
+
+                {showStatusDropdown && (
+                  <View
+                    className="absolute top-[52px] left-[50px] right-0 bg-white rounded-xl shadow-xl border border-slate-100 z-[120]"
+                    style={{ elevation: 10 }}
+                  >
+                    {(Object.keys(PIN_STATUS_FILTER_LABELS) as PinStatusFilter[]).map((opt) => (
+                      <TouchableOpacity
+                        key={opt}
+                        className="p-4 border-b border-slate-50"
+                        onPress={() => {
+                          setLocalFilters((prev) => ({ ...prev, statusFilter: opt }));
+                          setShowStatusDropdown(false);
+                        }}
+                      >
+                        <Text className="font-bold text-[13px] text-slate-700">{PIN_STATUS_FILTER_LABELS[opt]}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </View>
 
               {/* Toggles Row */}
               <View className="flex-row items-center justify-between mb-8 px-1">

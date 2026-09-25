@@ -5,7 +5,9 @@ import {
   getCombinationSectionRowFields,
   canAddMoreCombinations,
   createNextCombinationItem,
-  getCombinationDisplayNumber,
+  isParentCombination,
+  getRenderedSectionCombos,
+  renumberTabCombinations,
   getCombinationSectionHeaderFields,
   getFlattenedCombinationSectionRowFields,
   buildComboGroupSectionState,
@@ -22,6 +24,7 @@ import {
   isDefaultColorActive,
   isFieldRequired,
   resolveConditionalDefault,
+  resolveEffectiveDefaultValue,
 } from '../../../utils/dynamic-job-builder/engine/dependency-engine';
 import { isRequiredFieldValueMissing } from '../../../utils/dynamic-job-builder/engine/field-value-utils';
 import { isAllocationField, computeGridTotal, resolveLockedValue } from '../../../utils/dynamic-job-builder/engine/allocation-utils';
@@ -34,8 +37,11 @@ import {
 import { isAllocationCardActive } from '../../../utils/dynamic-job-builder/engine/allocation-config-utils';
 import { resolveAllocationMetrics } from '../../../utils/dynamic-job-builder/engine/allocation-value-resolver';
 import { resolveAccordionAllocationStatus } from '../../../utils/dynamic-job-builder/engine/accordion-allocation-utils';
-import { filterVisibleToggleOptions } from '../../../utils/dynamic-job-builder/engine/toggle-utils';
-import { getEffectiveDropdownOptions } from '../../../utils/dynamic-job-builder/engine/dropdown-utils';
+import {
+  filterVisibleToggleOptions,
+  getVisibleFieldOptions,
+} from '../../../utils/dynamic-job-builder/engine/toggle-utils';
+import { ADDED_IN_EDIT_KEY, isComboHiddenInDealEdit } from '../../../utils/dynamic-job-builder/engine/combination-color-filter';
 import {
   getWarningConfig,
   getOptionGridSize,
@@ -50,6 +56,24 @@ import {
 // When the schema leaves `columns` unset we return undefined so `OptionList` can
 // auto-size from the option count/length the way web's `option-selector.js`
 // `getGridSize()` does (3 short options → one row of 3).
+/**
+ * The title to print on a read-only VALUE BOX (`LockedField`).
+ *
+ * ⚠️ Falls back to the containing stack/accordion's label. `containerLabel` is
+ * computed in the container branch and passed down as `ctx.parentLabel`, but it is
+ * only ever used to SUPPRESS a duplicate child label — it is never rendered as a
+ * heading. So a field authored with no `label` of its own, sitting inside a stack
+ * that carries the name (the LeafFilter "Gutter Opening Width" / "LeafFilter
+ * Profile" shape), printed a completely untitled box. `title` is in the `Field`
+ * type but nothing else reads it; `label` is the canonical key.
+ *
+ * Only for the boxed presentation — an inline chooser keeps the renderer's
+ * `visibleLabel`, whose suppression rules exist precisely to stop it repeating a
+ * heading that is already on screen.
+ */
+const boxTitleFor = (field: any, ctx?: any): string | undefined =>
+  field?.label || field?.title || ctx?.parentLabel || undefined;
+
 const optionColumnsFor = (field: any): number | undefined => {
   const span = getOptionGridSize(field?.columns);
   return span ? Math.max(1, Math.round(12 / span)) : undefined;
@@ -65,6 +89,7 @@ import { TextField } from './TextField';
 import { TextareaField } from './TextareaField';
 import { ToggleGroup } from './ToggleGroup';
 import { DynamicOptionField } from './DynamicOptionField';
+import { DropdownField } from './DropdownField';
 import { OptionToggleField } from './OptionToggleField';
 import { SwatchPicker } from './SwatchPicker';
 import { LockedField } from './LockedField';
@@ -360,6 +385,8 @@ function renderField(
     tabState?: any;
     section?: any;
     sectionState?: any;
+    /** All sections on the tab — completes the rule context (ticket 1063 §3.1). */
+    sections?: any[];
     combos?: any[];
     sectionFields?: any[];
     products?: any[];
@@ -415,6 +442,18 @@ function renderField(
     section: ctx?.section,
     sectionState: ctx?.sectionState ?? state,
     combos: ctx?.combos,
+    // Ticket 1063 §3.1 — `sections` completes the rule context that
+    // `buildRuleEvaluationContext` expects; `findFieldContextOnTab` feeds it to
+    // `buildTabForFieldOptions` when resolving a compound `sectionId:fieldId` ref.
+    // ⚠️ On mobile this is belt-and-braces, NOT the fix the spec expects it to be:
+    // `findFieldContextOnTab` already falls back to `getTabSections(tab)`, so a
+    // compound ref resolves correctly without it (verified against the live
+    // LeafFilter shape — width gated on profile, both nested in a stack). It is
+    // read straight off `tab` rather than via `getTabSections` because this runs
+    // per field and that call normalizes every section.
+    sections: ctx?.sections ?? ctx?.tab?.sections,
+    // Carries the flow (create vs My Deals edit) through to `flow` rules.
+    editMode: Boolean(editMode),
   };
 
   // Web parity (resolveEffectiveColorBehavior): a color field with an active
@@ -514,7 +553,7 @@ function renderField(
       : dcResolved
         ? lockedValue
         : stateFallback ?? lockedValue;
-    return <LockedField key={field.id} label={field.label} value={lockedDisplay} />;
+    return <LockedField key={field.id} label={boxTitleFor(field, ctx)} value={lockedDisplay} />;
   }
 
   const normalizedType = field.widget || field.inputType || field.type;
@@ -548,7 +587,8 @@ function renderField(
       }
       if ((field.options || field.choices || field.items)?.length) {
         const baseOpts = field.options || field.choices || field.items;
-        const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
+        // ⚠️ 2nd arg is the FULL rule context, never `dealCenterData` — see toggle-utils.
+        const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, depCtx, state, applyConditions);
         return (
           <DynamicOptionField
             key={field.id}
@@ -676,7 +716,8 @@ function renderField(
 
     case 'toggle': {
       const baseOpts = field.options || field.choices || field.items || [];
-      const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
+      // ⚠️ 2nd arg is the FULL rule context, never `dealCenterData` — see toggle-utils.
+      const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, depCtx, state, applyConditions);
       const toggleValue = field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '');
       return (
         <OptionToggleField
@@ -701,7 +742,8 @@ function renderField(
 
     case 'optionList': {
       const baseOpts = field.options || field.choices || field.items || [];
-      const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
+      // ⚠️ 2nd arg is the FULL rule context, never `dealCenterData` — see toggle-utils.
+      const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, depCtx, state, applyConditions);
       const listValue = field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '');
       return (
         <OptionToggleField
@@ -728,10 +770,47 @@ function renderField(
 
     case 'dropdown':
     case 'select': {
-      const dOpts = getEffectiveDropdownOptions(field);
-      const opts = (dOpts && dOpts.length ? dOpts : field.options || field.choices || field.items) || [];
+      // Ticket 1063. `getVisibleFieldOptions` does BOTH jobs in one call: it reads
+      // `optionShowFields` KEYS for a dependency-mode dropdown (`field.options` is
+      // stale for those) and then applies the per-option `optionVisibility` rules
+      // against the full `depCtx`. The `choices`/`items` fallback is kept only for
+      // non-standard `select` shapes that carry neither `options` nor
+      // `optionShowFields`.
+      const ruleOpts = getVisibleFieldOptions(field, depCtx, state, applyConditions);
+      // ⚠️ The `choices`/`items` fallback is for a non-standard `select` that carries
+      // NEITHER `options` NOR `optionShowFields` — it must never fire because the
+      // RULES said no. Ungated, a field that deliberately ruled every option out
+      // would fall back to its full raw list. Nothing in the DB hits that today, but
+      // the two cases are opposites and the gate keeps them apart.
+      const hasAuthoredOptions = !!field.options?.length || !!field.optionShowFields;
+      const opts =
+        (ruleOpts.length || hasAuthoredOptions ? ruleOpts : field.choices || field.items) || [];
+
+      // A dropdown that rules out every option renders NOTHING, by design — but on
+      // screen that is indistinguishable from a field the config forgot, and it
+      // cost several rounds of guessing from screenshots to tell the two apart.
+      // This says which rule did it and what the referenced field actually held.
+      if (__DEV__ && !opts.length && hasAuthoredOptions) {
+        const why = Object.entries(field.optionVisibility || {}).map(([opt, group]: [string, any]) => {
+          const refs = ((group?.rules || [group]) as any[])
+            .filter(Boolean)
+            .flatMap((r: any) => (r?.fieldIds?.length ? r.fieldIds : r?.fieldId ? [r.fieldId] : r?.fields?.length ? r.fields : r?.field ? [r.field] : []))
+            .map((ref: string) => {
+              const id = ref.includes(':') ? ref.split(':').pop() : ref;
+              return `${ref}=${JSON.stringify(state?.[id as string])}`;
+            });
+          return `${opt} needs [${refs.join(', ')}]`;
+        });
+        console.log(
+          `[Dropdown] "${field.label || field.id}" hidden — 0 of ${(field.options || Object.keys(field.optionShowFields || {})).length} options visible. ${why.join(' | ')}`
+        );
+      }
+      // Web parity: `disabled` ("Rep can use this dropdown → No") greys the field
+      // out everywhere EXCEPT the deal-edit wizard, which unlocks every field —
+      // same `&& !editMode` rule as the `colorSelection` lock below.
+      const dropdownDisabled = Boolean(field.disabled) && !editMode;
       return (
-        <DynamicOptionField
+        <DropdownField
           key={field.id}
           field={field}
           label={visibleLabel}
@@ -741,6 +820,21 @@ function renderField(
           color={verticalColor}
           columns={optionColumnsFor(field)}
           isMulti={!!field.multiSelect}
+          disabled={dropdownDisabled || readOnly}
+          // Title for the DISABLED box only; the chip grid / picker keeps
+          // `visibleLabel` above, whose suppression rules still apply there.
+          boxLabel={boxTitleFor(field, ctx)}
+          defaultValue={resolveEffectiveDefaultValue(field, state, depCtx)}
+          // Display-only fallback for the disabled box: the SAME resolution the
+          // locked branch uses, so a dropdown the calculator answers shows its
+          // value instead of '—'. '—' is that helper's "unresolvable" marker.
+          fallbackValue={(() => {
+            const dc = resolveLockedValue(field, dealCenterData, {
+              fallbackDefault: resolveConditionalDefault(field, state, depCtx),
+            });
+            return dc === undefined || dc === '—' || dc === '' ? undefined : String(dc);
+          })()}
+          readOnly={readOnly}
         />
       );
     }
@@ -1242,6 +1336,22 @@ function CombinationSectionBlock({
   // Visibility is resolved per-combo below so combo-sibling visibleWhen rules work.
   const baseRowFields = getCombinationSectionRowFields(section).filter((f: any) => f.type !== 'accordion');
   const canAddCombo = canAddMoreCombinations(section);
+
+  // My Deals: a SAVED combination whose colour was never picked is hidden (see
+  // `combination-color-filter.ts`); one the rep adds here is not. Computed ONCE here
+  // so the render loop, the numbering and the "Add Combination" button below cannot
+  // disagree about which combos are on screen.
+  const isComboHidden = (combo: any) =>
+    isComboHiddenInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), editMode);
+  const visibleComboCount = combos.filter((combo: any) => !isComboHidden(combo)).length;
+  // The parent is the first combination SHOWN (a hidden saved one can precede it).
+  const firstShownIndex = Math.max(0, combos.findIndex((combo: any) => !isComboHidden(combo)));
+  // Chip numbers by position among the SHOWN combinations only, so a hidden one
+  // leaves no gap (`-1` for a hidden combination, which never renders).
+  let shownCount = 0;
+  const chipNumbers = combos.map((combo: any) =>
+    isComboHidden(combo) ? -1 : comboIndexOffset + ++shownCount
+  );
   // Portal-controlled: whether the "Combination #N" chip is shown on Sales
   // (web `dynamic-tab-renderer.js:233`). Sections that hold a single logical
   // configuration — Downspout & Accessories, Measurements — switch it off in the
@@ -1267,11 +1377,14 @@ function CombinationSectionBlock({
 
   const handleAddCombo = () => {
     if (readOnly || !canAddCombo) return;
-    onUpdateCombos([...combos, createNextCombinationItem(section, combos, comboIndexOffset)]);
+    const added = createNextCombinationItem(section, combos, comboIndexOffset);
+    // My Deals: mark it so the colour filter does not hide it before a colour is
+    // picked — that is what made this button look dead. Session-only, never saved.
+    onUpdateCombos([...combos, editMode ? { ...added, [ADDED_IN_EDIT_KEY]: true } : added]);
   };
 
   const handleRemoveCombo = (index: number) => {
-    if (readOnly) return;
+    if (readOnly || isParentCombination(index, firstShownIndex)) return;
     const next = combos
       .filter((_, i) => i !== index)
       .map((combo, idx) => ({ ...combo, _combinationNumber: comboIndexOffset + idx + 1 }));
@@ -1314,9 +1427,27 @@ function CombinationSectionBlock({
       })}
 
       {combos.map((combo: any, comboIndex: number) => {
+        // My Deals only: a combination whose colour was never picked is unfinished
+        // and is hidden from the edit wizard. DISPLAY ONLY — the combination stays
+        // in job state and round-trips untouched, and the create flow (where the
+        // rep is still filling colours in) is deliberately not filtered.
+        //
+        // ⚠️ Returning null INSIDE the map rather than filtering `combos` first:
+        // every handler below is bound to `comboIndex`, and `handleRemoveCombo`
+        // renumbers by position, so a filtered array would edit and delete the
+        // wrong combination.
+        if (isComboHidden(combo)) return null;
+
         const borderThemeColor = COMBINATION_COLORS[comboIndex % COMBINATION_COLORS.length];
-        const combinationNumber = getCombinationDisplayNumber(combo, comboIndex, comboIndexOffset);
+        // By position, so the chip is right at run time even before a stale stored
+        // number has been rewritten by the next edit.
+        const combinationNumber = chipNumbers[comboIndex];
         const comboTotal = gridField ? computeGridTotal(combo[gridKey]) : 0;
+        // The first combination is the section's PARENT — the one hydration seeds
+        // (locked from the Job Summary). Only rep-added combinations after it can be
+        // removed. Positional on purpose: hydration keeps only known
+        // keys plus `_combinationNumber`, so a marker flag would not survive a reload.
+        const canEditCombo = !readOnly && !isParentCombination(comboIndex, firstShownIndex);
 
         return (
           <SectionCard key={combo._combinationNumber ?? comboIndex} borderColor={borderThemeColor}>
@@ -1331,7 +1462,7 @@ function CombinationSectionBlock({
                 // Spacer keeps Remove right-aligned when the chip is hidden (web parity).
                 <View />
               )}
-              {combos.length > 1 && !readOnly && (
+              {canEditCombo && (
                 <TouchableOpacity onPress={() => handleRemoveCombo(comboIndex)}>
                   <Text className="text-xs text-red-500 font-black">Remove</Text>
                 </TouchableOpacity>
@@ -1368,7 +1499,18 @@ function CombinationSectionBlock({
         );
       })}
 
-      {!readOnly && canAddCombo && (
+      {/*
+        ⚠️ Hidden when the colour filter has emptied the section. Once every
+        combination is filtered out, the bare "Add Combination" button was the only
+        thing left of the section — the reported row of orphaned buttons under an
+        otherwise empty LeafFilter tab. Adding one there would also create a
+        combination with no colour, which the same filter hides the instant it is
+        made, so the button could not do anything useful either.
+
+        The CREATE flow is untouched: `isComboHidden` is false outside `editMode`,
+        so `visibleComboCount` is simply `combos.length` there.
+      */}
+      {!readOnly && canAddCombo && visibleComboCount > 0 && (
         <AddCombinationButton onClick={handleAddCombo} />
       )}
     </View>
@@ -1559,18 +1701,36 @@ export function DynamicTabRenderer({
     onStateChange((prev: any) => ({ ...prev, [key]: val }));
   };
 
+  // My Deals: whether a combination is on screen (the colour filter hides unfinished
+  // SAVED ones). Hidden combinations take no number, so the chips run with no gap.
+  const isComboShown = (combo: any, section: any) =>
+    !isComboHiddenInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), editMode);
+
+  // The combination sections that render, in order — the order the chips count in.
+  const getRenderedCombinationSections = (state: any) =>
+    sections.filter((section: any) =>
+      section.sectionType !== 'simple' &&
+      (section.fields || []).length > 0 &&
+      !(applyConditions && !isSummarySectionVisible(section, state, dealCenterData, tab))
+    );
+
   const updateSectionCombos = (sectionId: string, combos: any[]) => {
     if (readOnly || !onStateChange) return;
-    onStateChange((prev: any) => ({
-      ...prev,
-      comboGroups: {
-        ...(prev.comboGroups || {}),
-        [sectionId]: {
-          ...(prev.comboGroups?.[sectionId] || {}),
-          combinations: combos,
+    onStateChange((prev: any) => {
+      const next = {
+        ...prev,
+        comboGroups: {
+          ...(prev.comboGroups || {}),
+          [sectionId]: {
+            ...(prev.comboGroups?.[sectionId] || {}),
+            combinations: combos,
+          },
         },
-      },
-    }));
+      };
+      // Numbers run across sections, so a change in one section re-counts the
+      // sections after it (see `renumberTabCombinations`).
+      return renumberTabCombinations(getRenderedCombinationSections(next), next, isComboShown);
+    });
   };
 
   const updateComboGroupSectionState = (sectionId: string, sectionStateOrUpdater: any) => {
@@ -1612,14 +1772,16 @@ export function DynamicTabRenderer({
     });
   };
 
-  const getSectionCombos = (section: any) => {
-    const fromGroups = tabState?.comboGroups?.[section.id]?.combinations;
-    if (fromGroups?.length) return fromGroups;
-    if (section.id === 'default' && tabState?.combinations?.length) {
-      return tabState.combinations;
-    }
-    return [{ ...(section.defaultItem || {}) }];
-  };
+  const getSectionCombos = (section: any) => getRenderedSectionCombos(section, tabState);
+
+  // Each section's first chip number, by POSITION: the combinations rendered in the
+  // sections above it. Not read from the first combo's stored number — a stale one
+  // (a draft saved before tab-wide renumbering) would repeat another section's chip.
+  const comboIndexOffsets: Record<string, number> = {};
+  getRenderedCombinationSections(tabState).reduce((count: number, section: any) => {
+    comboIndexOffsets[section.id] = count;
+    return count + getSectionCombos(section).filter((combo: any) => isComboShown(combo, section)).length;
+  }, 0);
 
   const getSimpleSectionState = (section: any) =>
     tabState?.sectionFields?.[section.id] || {};
@@ -1632,6 +1794,36 @@ export function DynamicTabRenderer({
     applyConditions,
     products,
   }), [tab, tabState, dealCenterData, applyConditions, products]);
+
+  // My Deals: the "Grand Total - All Combinations" card reads its own entries from
+  // `tabState`, NOT from the render loop, so the combinations hidden by the colour
+  // filter came straight back at the bottom of the tab — listing "Not Selected"
+  // against every field, which is exactly what hiding them was meant to stop.
+  //
+  // Filtered BEFORE `shouldShowTabGrandTotalSummary` below, so a tab whose every
+  // combination is hidden drops the card entirely instead of rendering an empty one.
+  //
+  // Each entry carries its own `section`, so the field list is resolved per entry —
+  // sections have different row fields and a shared list would test the wrong ones.
+  //
+  // Then the "#N" badges take the same positional numbers as the chips above them, so
+  // the two can never disagree (entries arrive section by section, in each section's
+  // combination order; numbered AFTER filtering, as the chips are).
+  const visibleSummaryEntries = useMemo(() => {
+    const seen: Record<string, number> = {};
+    return tabSummaryEntries
+      .filter((entry: any) => isComboShown(entry.combo, entry.section))
+      .map((entry: any) => {
+        const offset = comboIndexOffsets[entry.section.id];
+        if (offset === undefined) return entry;
+        const index = seen[entry.section.id] ?? 0;
+        seen[entry.section.id] = index + 1;
+        return { ...entry, displayNumber: offset + index + 1 };
+      });
+    // `isComboShown` / `comboIndexOffsets` derive from `tabState` (inside
+    // `tabSummaryEntries`) and `editMode`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabSummaryEntries, editMode]);
 
   const lastVisibleCombinationSectionId = useMemo(() => {
     return sections.reduce((lastId: string | null, section: any) => {
@@ -1649,7 +1841,7 @@ export function DynamicTabRenderer({
   });
   const hasAllocationOnly = hasTabFields && tabFields.every(isAllocationField) && !hasRenderableSections;
 
-  const showTabGrandTotal = shouldShowTabGrandTotalSummary(tab, tabSummaryEntries);
+  const showTabGrandTotal = shouldShowTabGrandTotalSummary(tab, visibleSummaryEntries);
 
   // Collect all allocation field contexts from tab-level + all sections so they
   // render in a single sticky grid at the top of the tab (max 3 per row).
@@ -1936,8 +2128,7 @@ export function DynamicTabRenderer({
         }
 
         const combos = getSectionCombos(section);
-        const firstSectionEntry = tabSummaryEntries.find((entry) => entry.section.id === section.id);
-        const comboIndexOffset = firstSectionEntry ? firstSectionEntry.displayNumber - 1 : 0;
+        const comboIndexOffset = comboIndexOffsets[section.id] ?? 0;
         const isLastCombinationSection = section.id === lastVisibleCombinationSectionId;
 
         return (
@@ -1960,7 +2151,7 @@ export function DynamicTabRenderer({
             />
             {isLastCombinationSection && showTabGrandTotal && (
               <GrandTotalCard
-                entries={tabSummaryEntries}
+                entries={visibleSummaryEntries}
                 tabLabel={tab.label}
                 accentColor={verticalColor}
               />

@@ -138,7 +138,49 @@ function hydrateFieldValue(
     if (locked !== undefined && locked !== '—') return locked;
   }
 
+  // Ticket 1063 — a `disabled` dropdown is answered by the CONFIG, exactly like a
+  // locked field, so it is resolved here for the same reason locked fields are:
+  // the value has to be in STATE from the moment the state is built, for EVERY
+  // combination, before anything renders.
+  //
+  // ⚠️ Doing this in the renderer is not equivalent, and that is the trap. A field
+  // whose value another field's rules depend on may never reach `DropdownField`
+  // at all — if it is also `locked` the renderer returns a `LockedField` before the
+  // type switch, so the seeding effect never runs — and even when it does run, it
+  // runs a render LATE. Meanwhile the dependent field's `optionVisibility` /
+  // `optionShowFields` rules have already read an empty state, ruled every option
+  // out, and removed themselves from the screen. That is the reported
+  // "Combination #2 shows LeafFilter Profile but no Gutter Opening Width": the
+  // profile DISPLAYED a value that state did not hold.
+  //
+  // Resolving at hydrate time fixes the cascade at its source and is independent of
+  // which branch ends up drawing the field.
+  //
+  // `preserveExisting` (deal-edit) still defers to the rep: there the field is
+  // unlocked and their entry wins.
+  if (!isFieldLocked(field) && field?.disabled) {
+    if (preserveExisting && existingValue !== undefined) return existingValue;
+    const configAnswer = resolveLockedValue(field, dealCenterData, {
+      fallbackDefault: resolveConditionalDefault(field, existing, { dealCenterData }),
+    });
+    if (configAnswer !== undefined && configAnswer !== '—' && configAnswer !== '') {
+      return configAnswer;
+    }
+  }
+
   if (existingValue !== undefined) return existingValue;
+
+  // Ticket 1063: the conditional gate must run on the NON-locked branch too.
+  // `buildDefaultItemFromFields` is condition-blind by design (it cannot import the
+  // dependency engine), so without this a dropdown carrying `defaultValue` +
+  // `dependencies.defaultWhen` gets its RAW default persisted even when the
+  // condition is not met — the same phantom-value class already fixed for locked
+  // LeafFilter colours, just reached through the other branch.
+  // `resolveConditionalDefault` returns `undefined` when the field has no
+  // `defaultWhen` at all, so an unconditioned default still falls through to the
+  // normal seeding path untouched.
+  const conditionalDefault = resolveConditionalDefault(field, existing, { dealCenterData });
+  if (conditionalDefault !== undefined) return conditionalDefault;
 
   const defaults = buildDefaultItemFromFields([field], {}, dealCenterData);
   return defaults[field.id];
@@ -762,7 +804,7 @@ function comboHasEnteredData(
   const keys = new Set([...Object.keys(combo), ...Object.keys(colorValues)]);
 
   return [...keys].some((key) => {
-    if (key === 'colorValues' || key === '_combinationNumber') return false;
+    if (key === 'colorValues' || key === '_combinationNumber' || key === '_addedInEdit') return false;
     const field = fieldsById.get(key);
     if (field && isFieldLocked(field)) return false; // auto-resolved, not rep-built
     const value = combo[key] !== undefined ? combo[key] : colorValues[key];

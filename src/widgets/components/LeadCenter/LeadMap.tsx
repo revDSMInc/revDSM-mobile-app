@@ -43,6 +43,18 @@ import { MapGalleryModal } from './MapGalleryModal';
 import { MapToggleSwitch } from '../../common/MapToggleSwitch';
 import { JobImageUploadModal } from '../../modals/JobImageUploadModal';
 import { ReferralModal } from '../../modals/ReferralModal';
+import { MapLegendToggle } from '../ZoneCanvasser/MapLegend';
+import {
+  PIN_CATEGORIES,
+  PIN_CATEGORY_META,
+  countPinCategories,
+  getPinCategory,
+  jobNumberMatches,
+  pinSortKeyExpression,
+} from '../../../utils/sales-pins';
+
+// Built once — a new array each render would re-send the layer style to native.
+const PIN_SORT_KEY = pinSortKeyExpression();
 
 // Mapbox uses an access token initialized once at module load.
 Mapbox.setAccessToken(ENV.MAPBOX_ACCESS_TOKEN);
@@ -52,6 +64,9 @@ const MARKER_IMAGES = {
   searched: require('../../../assets/images/map/marker-red.png'),
   favorite: require('../../../assets/images/map/marker-amber.png'),
   selected: require('../../../assets/images/map/marker-selected.png'),
+  // REVUIUX-439 sold-job pins: dark green + white check / purple + white dot.
+  installed: require('../../../assets/images/map/marker-installed.png'),
+  pendingInstall: require('../../../assets/images/map/marker-pending.png'),
 };
 
 const { width, height } = Dimensions.get('window');
@@ -174,6 +189,9 @@ export const LeadMap = ({
   const insets = useSafeAreaInsets();
   const mapViewRef = useRef<MapView>(null);
   const cameraRef = useRef<Camera>(null);
+  // Pin-colour legend: closed until the rep taps the palette button (same as the
+  // footsteps map's legend).
+  const [legendOpen, setLegendOpen] = useState(false);
   const zoomRef = useRef(10); // tracks current zoom for +/- buttons
 
   // ─── Data source ─────────────────────────────────────────────────────────
@@ -343,8 +361,7 @@ export const LeadMap = ({
     const defaults: any[] = [];
 
     filteredLeads.forEach(job => {
-      const isSearchedJob = searchedJobNumber && job.jobNumber &&
-        job.jobNumber.toLowerCase().trim().includes(searchedJobNumber.toLowerCase().trim());
+      const isSearchedJob = !!searchedJobNumber && jobNumberMatches(job, searchedJobNumber);
 
       if (isSearchedJob) {
         searched.push(job);
@@ -374,7 +391,13 @@ export const LeadMap = ({
   // ─── Combined GeoJSON for all job markers ──────────────────────────────────
   // One FeatureCollection with a `category` property so a single SymbolLayer can
   // pick the right pin image. SymbolLayer renders thousands of points smoothly.
+  // `searched` / `favorite` win over the pin category (web parity); a default pin
+  // takes its `pinCategory` — `uploaded` keeps the existing green `default`.
   const markersGeoJson = useMemo(() => {
+    const defaultCategory = (job: any) => {
+      const c = getPinCategory(job);
+      return c === 'uploaded' ? 'default' : c;
+    };
     const toFeature = (job: any, category: string) => ({
       type: 'Feature' as const,
       geometry: {
@@ -389,12 +412,21 @@ export const LeadMap = ({
     return {
       type: 'FeatureCollection' as const,
       features: [
-        ...defaultLeads.filter(hasCoords).map(j => toFeature(j, 'default')),
+        ...defaultLeads.filter(hasCoords).map(j => toFeature(j, defaultCategory(j))),
         ...favoriteLeads.filter(hasCoords).map(j => toFeature(j, 'favorite')),
         ...searchedLeads.filter(hasCoords).map(j => toFeature(j, 'searched')),
       ],
     };
   }, [defaultLeads, favoriteLeads, searchedLeads]);
+
+  // Per-category counts for the legend (web parity) — the pins actually on the map.
+  const pinCategoryCounts = useMemo(
+    () =>
+      countPinCategories(
+        filteredLeads.filter((j: any) => j.location?.coordinates && j.location.coordinates.length >= 2)
+      ),
+    [filteredLeads]
+  );
 
   // ─── Heatmap GeoJSON ───────────────────────────────────────────────────────
   // Each point carries a numeric `weight` derived from price: a 0.3 baseline for
@@ -1023,6 +1055,8 @@ export const LeadMap = ({
             markerGreen: MARKER_IMAGES.default,
             markerRed: MARKER_IMAGES.searched,
             markerAmber: MARKER_IMAGES.favorite,
+            markerInstalled: MARKER_IMAGES.installed,
+            markerPending: MARKER_IMAGES.pendingInstall,
           }}
         />
 
@@ -1047,8 +1081,14 @@ export const LeadMap = ({
                   ['get', 'category'],
                   'favorite', 'markerAmber',
                   'searched', 'markerRed',
-                  /* default */ 'markerGreen',
+                  'installed', 'markerInstalled',
+                  'pendingInstall', 'markerPending',
+                  /* default (uploaded) */ 'markerGreen',
                 ],
+                // Draw pending / installed / favourite / searched ABOVE the plain green
+                // pins — by default overlapping pins stack by screen Y and the few purple
+                // ones were buried in the green clusters (see `PIN_DRAW_ORDER`).
+                symbolSortKey: PIN_SORT_KEY,
                 iconSize: ['interpolate', ['linear'], ['zoom'], 8, 0.7, 12, 0.9, 16, 1.1],
                 iconAnchor: 'bottom',
                 iconAllowOverlap: true,
@@ -1257,6 +1297,70 @@ export const LeadMap = ({
           })}
         </View>
       </View>
+
+      {/* Bottom-left: pin-colour legend (same pattern as the footsteps map — palette
+          button, card opens IN FLOW above it, button becomes a close ✕ while open).
+          In flow rather than an absolute popover off the button so the ✕ stays inside
+          its parent's bounds — Android does not deliver touches outside them.
+          Hidden with the pins in heatmap mode. */}
+      {!isHeatMapActive && (
+        <View
+          className="absolute left-6"
+          style={{
+            zIndex: 10,
+            bottom: Platform.OS === 'android' ? 40 + insets.bottom : 40,
+          }}
+          pointerEvents="box-none"
+        >
+          {legendOpen && (
+            <View
+              style={{
+                alignSelf: 'flex-start',
+                minWidth: 170,
+                marginBottom: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                borderRadius: 12,
+                gap: 6,
+                backgroundColor: isDark ? 'rgba(30,30,30,0.96)' : '#FFFFFF',
+                borderWidth: 1,
+                borderColor: isDark ? '#333' : '#e2e8f0',
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.15,
+                shadowRadius: 4,
+                elevation: 6,
+              }}
+            >
+              {PIN_CATEGORIES.map((c) => (
+                <View key={c} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View
+                    style={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: 6,
+                      backgroundColor: PIN_CATEGORY_META[c].color,
+                      marginRight: 8,
+                    }}
+                  />
+                  <Text
+                    numberOfLines={1}
+                    style={{ flex: 1, fontSize: 12, fontWeight: '700', color: isDark ? '#e2e8f0' : '#334155' }}
+                  >
+                    {PIN_CATEGORY_META[c].label}
+                  </Text>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: isDark ? '#ffffff' : '#0f172a', marginLeft: 12 }}>
+                    {pinCategoryCounts[c]}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+          <View className="self-start">
+            <MapLegendToggle open={legendOpen} onPress={() => setLegendOpen((prev) => !prev)} />
+          </View>
+        </View>
+      )}
 
       {/* Bottom Right Controls (GPS & Zoom) */}
       <View 

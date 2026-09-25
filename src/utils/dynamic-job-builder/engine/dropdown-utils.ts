@@ -13,6 +13,23 @@ export function getEffectiveDropdownOptions(field: any) {
   return field?.options || [];
 }
 
+/**
+ * Ticket 1063 — shared opt-in flag for a configured default VALUE.
+ *
+ * `useDefaultColor` is the original (colour) opt-in; `useDefaultValue` is its
+ * dropdown twin. Precedence is `useDefaultColor ?? useDefaultValue ??
+ * Boolean(defaultValue)`, so a pre-flag config (neither key authored) keeps
+ * behaving exactly as before, and an explicit `false` stops a leftover
+ * `defaultValue` from being applied.
+ *
+ * It lives here — in the one engine file with NO imports — because both
+ * `dependency-engine` (rule-aware) and `combination-utils` (deliberately
+ * condition-blind, must not import the engine) need the same precedence.
+ */
+export function isDefaultValueOptedIn(field: any) {
+  return field?.useDefaultColor ?? field?.useDefaultValue ?? Boolean(field?.defaultValue);
+}
+
 export function buildOptionShowFieldsFromOptions(options: string[] = [], existing: any = {}) {
   const next: Record<string, string[]> = {};
   options.forEach((option) => {
