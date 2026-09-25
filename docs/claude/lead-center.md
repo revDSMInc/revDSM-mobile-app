@@ -959,6 +959,5 @@ painted over".
 ### Follow-up — Sales Map legend moved bottom-left behind a palette button
 
 `LeadMap.tsx`'s pin-colour legend is now a bottom-left palette button that opens the card and turns into a
-✕ (footsteps pattern, `MapLegendToggle`). Also, in the `UNLOCK_MAP_BOUNDS_FOR_TESTING` mode the camera
-frames every pin on load. Full notes and the Android touch trap: `maps-zone-canvasser.md` › "Sales Map pin
-legend: bottom-left…".
+✕ (footsteps pattern, `MapLegendToggle`). The temporary boundary-lock bypass has been removed again. Full
+notes and the Android touch trap: `maps-zone-canvasser.md` › "Sales Map pin legend: bottom-left…".
