@@ -338,6 +338,7 @@ mtime and are skipped — removing a file is the one edit the guard cannot see.
 ⚠️ **Hooks are snapshotted at session start.** Editing `settings.json` does not arm them in the session
 that made the edit; the next session (or a review in `/hooks`) picks them up. Written in plain
 CommonJS Node with no dependencies because the team runs Claude Code on both macOS and Windows.
+
 ## A flash raised from inside a `Modal` rendered BEHIND it — banners now route to an in-sheet host
 
 Ticket: *"on the funding side we are getting the error from the backend and the error is hitting, but
@@ -394,3 +395,24 @@ from the options `config/message.ts` already sends — so a banner does not jump
 hand-roll a local instance with their own `flashRef` wrapper; they keep working untouched. New sheets
 should use `ModalFlashHost` instead of copying that block — it is the same fix without the duplicated
 wrapper, and it also catches banners raised by hooks rather than by the component.
+
+## `focusManager` is wired to `AppState` (React Query revalidates on foreground)
+
+`services/api/queryClient.ts` now calls `focusManager.setFocused(status === 'active')` from an
+`AppState` listener.
+
+Why it was needed: React Query's "window focus" is a browser concept, and on React Native nothing drives
+it unless `focusManager` is told about `AppState`. So `refetchOnWindowFocus` was **inert app-wide** — a
+query that set it got no foreground revalidation at all. That is half of why portal-authored job-builder
+config edits never reached a running app (full write-up: `deal-center.md`).
+
+⚠️ **This only ENABLES the behaviour.** The client default stays `refetchOnWindowFocus: false`, so a
+query revalidates on foreground only if it opts in explicitly. Today exactly one does:
+`['jobBuilderProductsConfig']` in `useDynamicCalculatorSchemas`.
+
+⚠️ **Setting `refetchOnWindowFocus: true` on a query now actually does something.** Before this it was a
+no-op, so any query already carrying it starts refetching on every foreground — check before adding it
+to a heavy or paginated query.
+
+⚠️ The listener is module-scope, registered once when `queryClient.ts` is first imported, and
+deliberately never removed — the client lives for the process.

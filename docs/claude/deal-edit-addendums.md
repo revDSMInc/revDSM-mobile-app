@@ -851,10 +851,20 @@ web's calculators don't seed the shadowing alias; **web will hit this the moment
 
 ### Also ported en route: web `ticket-1063` (2026-08-11)
 
+> ⚠️ **CORRECTION — this section described work that had NOT been done.** It entered the repo in
+> `4b9ffa9 "update the Claude md file"` (2026-09-15) with no code beside it: no branch, local or remote,
+> ever had `getVisibleFieldOptions` in `src/`, and the engine still carried the pre-ticket-1063
+> implementation. The port landed later, from the backend team's spec
+> (`MOBILE-TICKET-1063-DROPDOWN-CHANGES.md`) — **the record of what actually shipped, including the
+> dropdown work this section does not mention, is `deal-center.md` § "Ticket 1063 — dropdowns become
+> dependent fields"**. What follows is kept only because the diagnosis (the side-by-side, and WHY the
+> stripped rule context hides options) is still correct and still worth reading; read it as the spec it
+> was, not as a record.
+
 A side-by-side on the SAME deal (`6a7b1a12…`, Micro Mesh, 444 ft) settled it — **web $6,483 / $12,757 /
 $19,626, mobile $200 flat** — so it is a mobile bug, not the config. The web repo had been re-pulled and
 carried a commit from that same day (`51c8a246 ticket-1063`) touching five engine files, none of it
-ported. All of it is now in:
+ported. That work is now in:
 
 - **`toggle-utils.ts` — THE fix.** `filterVisibleToggleOptions`'s second parameter changed from
   `dealCenterData` to the **full rule context**. An `optionVisibility` rule is an ordinary rule group:
@@ -877,7 +887,7 @@ ported. All of it is now in:
   `dealCenterData`), and treats a disabled dropdown / one carrying an active default as answered so Next
   is never disabled with nothing on screen to fix.
 
-⚠️ **`DynamicTabRenderer.tsx`'s three call sites now pass `depCtx`** (already built at ~line 359). Any new
+⚠️ **`DynamicTabRenderer.tsx`'s three call sites now pass `depCtx`** (built at ~line 385). Any new
 caller of `filterVisibleToggleOptions` / `getVisibleFieldOptions` MUST pass that same context — passing
 `dealCenterData` still type-checks and still "works" for same-section rules, which is exactly what made
 this bug invisible for so long.
@@ -1196,3 +1206,99 @@ into `describeCombo`, i.e. into the submitted addendum's text; it is a separator
 ⚠️ **A pair that changed ONE field still stays a plain row.** The "a card holding a single value is
 heavier" reasoning no longer strictly applies now that the card is always full, but widening it would
 re-card edits nobody reported — left alone deliberately.
+
+## My Deals hides a LeafFilter combination whose colour was never picked
+
+Ticket: *"inside My Deals make sure only that combination should be displayed in which the color value is
+already selected — if the color value is not selected then that combination should not be displayed at
+any cost."*
+
+A combination the rep never finished is noise in the edit wizard: it cannot be reviewed or signed off,
+and on a multi-combination deal it pushes the finished ones off screen. `CombinationSectionBlock`
+(`DynamicTabRenderer.tsx`) now skips it when `editMode && !comboHasSelectedColor(combo, baseRowFields)`.
+
+The rule is a pure util, `utils/dynamic-job-builder/engine/combination-color-filter.ts`, so it is unit
+tested (`__tests__/utils/combination-color-filter.test.ts`, 12 cases) — the component itself cannot be
+loaded under jest here.
+
+⚠️ **DISPLAY ONLY, and edit-mode only.** The combination stays in job state and round-trips untouched, so
+hiding it destroys nothing. The CREATE flow is deliberately not filtered — that is where the rep is still
+picking colours, and hiding a combination mid-entry would remove the row they were working on.
+
+⚠️ **`return null` INSIDE `combos.map`, never a filtered array.** Every handler in that block is bound to
+`comboIndex`, and `handleRemoveCombo` renumbers by position — filtering first would edit and delete the
+wrong combination.
+
+⚠️ **THREE surfaces render a combination, and hiding it on the tab hides it on ONE of them.** The other
+two read their own entries straight from `tabState`, so the filtered combinations came back listing
+"Not Selected" against every field — exactly what hiding them was meant to stop. All three now apply the
+same gate, edit-mode only:
+
+| Surface | Where |
+|---|---|
+| The combination cards | `DynamicTabRenderer` `CombinationSectionBlock` — `isComboHidden` |
+| "Grand Total - All Combinations" | `DynamicTabRenderer` `visibleSummaryEntries`, filtered BEFORE `shouldShowTabGrandTotalSummary` so an emptied tab drops the card entirely rather than rendering a blank one |
+| The Job Builder Summary step | `vertical-summary-utils` `buildCombinationSectionSummary` — its own `comboHasMeaningfulData` is a looser rule and let them through |
+
+Each resolves the field list from its OWN section (`getFlattenedCombinationSectionRowFields(section)`) —
+sections have different row fields, so a shared list would test the wrong ones. **A fourth surface would
+need the same gate**; the value lives in job state and is deliberately not removed from it.
+
+⚠️ **The section's "Add Combination" button goes with them.** Once the filter empties a section, that
+bare button was the only thing left of it — a row of orphaned "Add Combination" buttons under an
+otherwise empty LeafFilter tab. It is hidden when `visibleComboCount === 0`. Adding one there would
+create a combination with no colour, which the same filter hides the instant it is made, so the button
+could not do anything useful either. `isComboHidden` / `visibleComboCount` are computed ONCE per section
+so the render loop and the button cannot disagree; both are inert outside `editMode`.
+
+⚠️ **THE COLOUR IS NESTED — look inside containers.** This is what made the first attempt do nothing.
+LeafFilter authors its colour INSIDE a stack (the amber "INCOMPLETE - Color Required" card *is* that
+stack), so a flat scan of the row fields found the stack and no colour field, fell through to the
+"no colour field → always show" rule, and every unfinished combination stayed on screen. Two fixes,
+both needed:
+
+- `comboHasSelectedColor` flattens any field carrying `fields` (stack, accordion, anything) before
+  filtering for colours.
+- The call site passes `getFlattenedCombinationSectionRowFields(section)`, **not** `baseRowFields` —
+  that list drops accordions outright (`.filter(f => f.type !== 'accordion')`) and leaves stacks
+  unflattened.
+
+Container children live FLAT in the combination's state, so a nested colour's value is still read
+straight off `combo[field.id]`.
+
+⚠️ **A combination with NO colour field is always shown.** The rule is "an unanswered colour hides it",
+not "a colour is required"; gating on a field the config never authored would blank whole verticals.
+Where a combination has several colour fields, every one must be answered — they are all part of the same
+finished combination, so a half-filled one is exactly the unfinished case this exists to hide.
+
+⚠️ **A colour is not identified by `type` alone.** `isColorField` also matches a `text` / `locked` field
+carrying `palette`, `colors` or `colorKey`, because `renderField` draws those as a SwatchPicker too.
+`resolveComboColorValue` checks the field id, the field key AND the `colorValues` side-map, which is how
+a picked colour survives the save round-trip.
+
+### Follow-up — Add Combination looked dead; chip numbers had gaps
+
+*"inside My Deals the combination count is not accurate and the Add Combination button is not working —
+fix the same as the Deal Center."* (Deal Center side: `deal-center.md`, "combination numbering & the parent
+combination".)
+
+- **Add Combination was working, but its combination was hidden straight away.** A new combination has no
+  colour, so `isComboHidden` hid it as soon as it was created. `handleAddCombo` now tags it in edit mode
+  with **`ADDED_IN_EDIT_KEY` (`'_addedInEdit'`)**, and the rule, moved into
+  **`isComboHiddenInDealEdit(combo, fields, editMode)`** (`combination-color-filter.ts`), always shows a
+  tagged combination. All three surfaces call that one helper now (cards, Grand Total card, Summary step
+  `buildCombinationSectionSummary`), so a fourth one should call it too.
+- ⚠️ **The marker is session-only and must stay that way.** On save, `ensureTabStateShape` rebuilds each
+  combination from its row fields plus `_combinationNumber`, so the marker is dropped (covered by a
+  serialize test). In memory it is skipped by every walk over combination keys: activity-log
+  `SKIP_STATE_KEYS`, `empty-step-gate`, storage `comboHasEnteredData`, and the diff's `SKIP_LEAF_KEYS`.
+  **If a new walk over combination keys is added, add the marker to its skip list too**, or an added
+  combination shows up as a field change. After a reload a still-colourless combination hides again, as
+  it should.
+- **Numbering counts only SHOWN combinations.** Chips (`chipNumbers` in `CombinationSectionBlock`),
+  section offsets (`comboIndexOffsets`), the Grand Total `#N` badges (numbered after the filter), and the
+  stored numbers (`renumberTabCombinations(..., isComboShown)`) all skip a hidden combination. A hidden
+  combination keeps its old stored number and takes no slot, so the visible chips run 1..N with no gap.
+- **The parent is the first SHOWN combination** (`isParentCombination(index, firstShownIndex)`). When a
+  hidden saved combination comes first, the first visible one is the parent and has no Remove.
+- Tests: `__tests__/combination-numbering.test.ts`.

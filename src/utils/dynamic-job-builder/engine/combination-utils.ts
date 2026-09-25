@@ -1,5 +1,6 @@
 import { isContainerFieldType, migrateConfigColorFields } from '../constants/field-types';
 import { getDealCenterDataValue, sumDealCenterRefs } from './deal-center-field-utils';
+import { isDefaultValueOptedIn } from './dropdown-utils';
 
 export function flattenLeafFields(fields: any[] = []): any[] {
   const result: any[] = [];
@@ -62,7 +63,18 @@ export function buildDefaultItemFromFields(fields: any[] = [], existing: any = {
       item[field.id] = null;
     } else if (field.type === 'roomPicker') {
       item[field.id] = [];
-    } else if (field.type === 'text' && field.defaultValue) {
+    } else if (
+      (field.type === 'text' || field.type === 'dropdown') &&
+      field.defaultValue &&
+      isDefaultValueOptedIn(field)
+    ) {
+      // Ticket 1063: a `dropdown` seeds its configured default the same way `text`
+      // always has. Deliberately CONDITION-BLIND — this file must not import the
+      // dependency engine, so `dependencies.defaultWhen` is NOT consulted here; the
+      // gate is applied at hydrate time (`dynamic-job-state-storage.hydrateFieldValue`)
+      // and at render time (`DropdownField`). `isDefaultValueOptedIn` is only a flag
+      // read, not a rule, so it is safe here — and it is what stops a
+      // `useDefaultValue: false` config from seeding a leftover `defaultValue`.
       item[field.id] = field.defaultValue;
     } else {
       item[field.id] = '';
@@ -164,10 +176,96 @@ export function getCombinationDisplayNumber(combo: any, index: number, indexOffs
 }
 
 export function createNextCombinationItem(section: any, combos: any[] = [], indexOffset = 0) {
+  // Never below the highest chip already on screen: a stale stored number (from a
+  // saved draft) would otherwise hand the new combination a number that is taken.
+  const highest = combos.reduce(
+    (max: number, combo: any, idx: number) =>
+      Math.max(max, getCombinationDisplayNumber(combo, idx, indexOffset)),
+    indexOffset
+  );
   return {
     ...buildComboGroupDefaultItem(section),
-    _combinationNumber: indexOffset + combos.length + 1,
+    _combinationNumber: Math.max(indexOffset + combos.length, highest) + 1,
   };
+}
+
+/**
+ * The first combination of a section is its PARENT: hydration seeds exactly one per
+ * section (locked from the Job Summary), and everything after it was added by the rep.
+ * The parent cannot be removed.
+ *
+ * `firstShownIndex` — in My Deals an unfinished saved combination can be hidden, so
+ * the parent is the first combination actually SHOWN. 0 everywhere else.
+ */
+export function isParentCombination(index: number, firstShownIndex = 0) {
+  return index === firstShownIndex;
+}
+
+/**
+ * The combinations a combination section renders — its `comboGroups` list, the legacy
+ * tab-level `combinations` for the `default` section, else the one unsaved default item.
+ * Mirrors `getSectionCombos` in `DynamicTabRenderer.tsx`.
+ */
+export function getRenderedSectionCombos(section: any, tabState: any = {}) {
+  const fromGroups = tabState?.comboGroups?.[section.id]?.combinations;
+  if (fromGroups?.length) return fromGroups;
+  if (section.id === 'default' && tabState?.combinations?.length) return tabState.combinations;
+  return [{ ...(section.defaultItem || {}) }];
+}
+
+/**
+ * Renumber every combination of a tab 1..N, in the order the sections render.
+ *
+ * Numbering runs ACROSS sections (LeafFilter's 6" section holds #1, its 7" section
+ * #2, …). Each section used to number only from its own count, so adding to the 7"
+ * section first (#3) and then to the 6" one handed out #2 a second time — the 7"
+ * section's stored numbers were never shifted. Running this after every change keeps
+ * the stored `_combinationNumber` (read by the summary, logs and diff) in step with
+ * what is on screen.
+ *
+ * `sections` must be the combination sections actually rendered, in order. A section
+ * with nothing saved yet still counts its one default combination, which is not
+ * written into state (it has no stored number and displays by position).
+ *
+ * `isShown(combo, section)` — My Deals hides unfinished saved combinations; those
+ * are skipped (keep their stored number, take no slot) so the visible chips run
+ * 1..N with no gap. Defaults to counting every combination.
+ */
+export function renumberTabCombinations(
+  sections: any[] = [],
+  tabState: any = {},
+  isShown: (combo: any, section: any) => boolean = () => true
+) {
+  let next = tabState;
+  let number = 0;
+  sections.forEach((section: any) => {
+    const saved = tabState?.comboGroups?.[section.id]?.combinations;
+    const legacy = !saved?.length && section.id === 'default' && tabState?.combinations?.length;
+    const combos = getRenderedSectionCombos(section, tabState);
+    if (!saved?.length && !legacy) {
+      number += combos.filter((combo: any) => isShown(combo, section)).length;
+      return;
+    }
+    let changed = false;
+    const renumbered = combos.map((combo: any) => {
+      if (!isShown(combo, section)) return combo;
+      number += 1;
+      if (combo?._combinationNumber === number) return combo;
+      changed = true;
+      return { ...combo, _combinationNumber: number };
+    });
+    if (!changed) return;
+    next = legacy
+      ? { ...next, combinations: renumbered }
+      : {
+          ...next,
+          comboGroups: {
+            ...(next.comboGroups || {}),
+            [section.id]: { ...(next.comboGroups?.[section.id] || {}), combinations: renumbered },
+          },
+        };
+  });
+  return next;
 }
 
 export function buildComboGroupSectionState(section: any, dealCenterData: any = {}) {

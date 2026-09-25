@@ -6,8 +6,9 @@
  *
  * Differences from the Sales Map (by request):
  *   - NO filter set — a single show/hide toggle drives everything (`enabled`).
- *   - All pins are the default green marker (the Sales Map only tints amber/red
- *     when its favorite/search filters are active, which we don't have here).
+ *   - Pins are coloured by `pinCategory` only (REVUIUX-439: green uploaded, dark
+ *     green installed, purple pending install). The Sales Map's amber/red tints come
+ *     from its favorite/search filters, which we don't have here.
  *
  * The job card is a native `MarkerView` anchored CENTERED right above the tapped pin
  * (with a downward pointer), exactly like the Sales Map. On tap the camera flies to
@@ -35,8 +36,13 @@ import { useAuth } from '../../../hooks/useAuth';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { logEvent } from '../../../services/api/LoggerService';
 import { logMapPinSelected, logFavoriteJobClick } from '../../../utils/activity-log/map-activity-log';
+import { getPinCategory, pinSortKeyExpression } from '../../../utils/sales-pins';
 
 const MARKER_GREEN = require('../../../assets/images/map/marker-green.png');
+const MARKER_INSTALLED = require('../../../assets/images/map/marker-installed.png');
+const MARKER_PENDING = require('../../../assets/images/map/marker-pending.png');
+// Built once — a new array each render would re-send the layer style to native.
+const PIN_SORT_KEY = pinSortKeyExpression();
 
 // Zoom the camera flies to on pin tap — matches the Sales Map (`LeadMap`), which at
 // this zoom lands the anchored card centered on screen. (Zoom 16 pushed it low.)
@@ -147,7 +153,7 @@ export function useSalesMapPins({
           type: 'Point' as const,
           coordinates: [Number(job.location.coordinates[0]), Number(job.location.coordinates[1])],
         },
-        properties: { id: job._id },
+        properties: { id: job._id, category: getPinCategory(job) },
       })),
     }),
     [validLeads]
@@ -322,8 +328,14 @@ export function SalesLeadPinsLayer({
 
   return (
     <>
-      {/* Pin image registered with the style for the SymbolLayer. */}
-      <Images images={{ markerGreen: MARKER_GREEN }} />
+      {/* Pin images registered with the style for the SymbolLayer. */}
+      <Images
+        images={{
+          markerGreen: MARKER_GREEN,
+          markerInstalled: MARKER_INSTALLED,
+          markerPending: MARKER_PENDING,
+        }}
+      />
 
       {enabled && markersGeoJson.features.length > 0 && (
         <ShapeSource
@@ -335,7 +347,15 @@ export function SalesLeadPinsLayer({
           <SymbolLayer
             id="sales-lead-pins-symbols"
             style={{
-              iconImage: 'markerGreen',
+              iconImage: [
+                'match',
+                ['get', 'category'],
+                'installed', 'markerInstalled',
+                'pendingInstall', 'markerPending',
+                /* uploaded */ 'markerGreen',
+              ],
+              // Pending / installed pins on top of the green ones (`PIN_DRAW_ORDER`).
+              symbolSortKey: PIN_SORT_KEY,
               iconSize: ['interpolate', ['linear'], ['zoom'], 8, 0.7, 12, 0.9, 16, 1.1],
               iconAnchor: 'bottom',
               iconAllowOverlap: true,

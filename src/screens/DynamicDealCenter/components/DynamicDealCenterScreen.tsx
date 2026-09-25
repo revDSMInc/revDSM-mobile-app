@@ -104,6 +104,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     config: jobBuilderConfig,
     isConfigured: hasJobBuilderConfig,
     isLoading: isJobBuilderConfigLoading,
+    refetch: refetchJobBuilderConfig,
   } = useDynamicCalculatorSchemas();
 
   const {
@@ -450,6 +451,9 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     const targetId = pushedCalcId || resolveLeadCalculatorId(lead) || undefined;
     if (targetId && tabs.some((t) => t.id === targetId)) setActiveTabId(targetId);
 
+    // Same reason as `openJobBuilder` below: this path opens the builder without
+    // remounting anything, so the config has to be re-read explicitly.
+    refetchJobBuilderConfig();
     setFlowStep('jobBuilder');
     // Clear it so a later re-render (or a Back into this screen) cannot re-trigger.
     navigation?.setParams({ openJobBuilder: undefined } as any);
@@ -539,6 +543,20 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
      * already this callback's.
      */
     const openJobBuilder = (startFresh: boolean) => {
+      // ⚠️ Re-read the published config EVERY time the builder is opened.
+      //
+      // `refetchOnMount: 'always'` on the query only fires when a new OBSERVER
+      // mounts, and this screen owns the only one — `DynamicJobBuilderScreen`
+      // receives the config as the `initialConfig` prop rather than calling the
+      // hook. Opening the builder just flips `flowStep`, and closing it with the ✕
+      // flips it back, so the Deal Center never unmounts and the config was fetched
+      // exactly once per visit to Tools. A portal edit made while the rep sat on
+      // this screen was therefore never picked up.
+      //
+      // The refetch is deliberately NOT awaited: React Query serves the cached
+      // config synchronously so the builder opens with no delay, then re-renders if
+      // the refetch actually returns something different.
+      refetchJobBuilderConfig();
       setRehashBuild({ prompt: false, startFresh });
       setFlowStep('jobBuilder');
     };
@@ -563,7 +581,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         }
         openJobBuilder(false);
       });
-  }, [currentCalculatorId, tabs, lead, user, appointmentId]);
+  }, [currentCalculatorId, tabs, lead, user, appointmentId, refetchJobBuilderConfig]);
 
   // Assigned every render so the resume path always fires the CURRENT closure. A
   // `useEffect` would land a render late, and this is invoked from an async handler

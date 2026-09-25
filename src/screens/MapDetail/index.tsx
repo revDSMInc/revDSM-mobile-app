@@ -30,8 +30,15 @@ import { MapGalleryModal } from '../../widgets/components/LeadCenter/MapGalleryM
 import { ReferralModal } from '../../widgets/modals/ReferralModal';
 import { BeforeAfterModal } from '../../widgets/modals/BeforeAfterModal';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { format } from 'date-fns';
 import { getOfflineImagesForJob } from '../../services/api/offlineUploadManager';
+import {
+  getDisplayJobNumber,
+  getPinDateLabel,
+  getPinSortDate,
+  getRepDisplayName,
+  jobNumberMatches,
+  matchesPinStatusFilter,
+} from '../../utils/sales-pins';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashMessage } from '../../config/message';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -111,6 +118,7 @@ const DEFAULT_MAP_FILTERS: FilterState = {
   isHeatMap: false,
   showRoute: false,
   showProduct: true,
+  statusFilter: 'all',
   centerCoords: undefined,
 };
 
@@ -379,7 +387,8 @@ export default function MapDetailScreen() {
         // Coerce to string — jobNumber/fullAddress can be numeric in API data,
         // where `?.toLowerCase()` would throw "undefined is not a function".
         const search = String(filters.jobNumber).toLowerCase();
-        const matchesJob = String(item.jobNumber ?? '').toLowerCase().includes(search);
+        // `displayJobNumber` (e.g. T500008) or the raw number (the lead number for a sold job).
+        const matchesJob = jobNumberMatches(item, search);
         const matchesAddress = String(item.fullAddress ?? '').toLowerCase().includes(search);
         if (!matchesJob && !matchesAddress) return false;
       }
@@ -409,6 +418,9 @@ export default function MapDetailScreen() {
         if (!isFav) return false;
       }
 
+      // Pin status — client side, like web (pending vs everything else).
+      if (!matchesPinStatusFilter(item, filters.statusFilter)) return false;
+
       // Price Range
       if (filters.minPrice && (item.price || 0) < parseFloat(filters.minPrice)) return false;
       if (filters.maxPrice && (item.price || 0) > parseFloat(filters.maxPrice)) return false;
@@ -426,13 +438,14 @@ export default function MapDetailScreen() {
         if (miles > filters.radius) return false;
       }
 
-      // Date Range
+      // Date Range — a pending job has no install date, so it is dated by its sale
+      // date (backend `dateFilter` parity) rather than dropped / dated by createdAt.
       if (filters.startDate) {
-        const itemDate = new Date(item.installationDate || item.createdAt || 0);
+        const itemDate = new Date(getPinSortDate(item));
         if (itemDate < new Date(filters.startDate)) return false;
       }
       if (filters.endDate) {
-        const itemDate = new Date(item.installationDate || item.createdAt || 0);
+        const itemDate = new Date(getPinSortDate(item));
         if (itemDate > new Date(filters.endDate)) return false;
       }
 
@@ -441,7 +454,7 @@ export default function MapDetailScreen() {
 
     const processed = result.map((item) => ({
       ...item,
-      _timestamp: new Date(item.installationDate || item.createdAt || 0).getTime(),
+      _timestamp: new Date(getPinSortDate(item)).getTime(),
     }));
 
     console.log('[MapDetail DEBUG] Recalculated filteredLeads. final count:', processed.length);
@@ -452,6 +465,7 @@ export default function MapDetailScreen() {
     filters.myJobsOnly,
     filters.isFavoriteOnly,
     filters.isReferralOnly,
+    filters.statusFilter,
     filters.minPrice,
     filters.maxPrice,
     filters.startDate,
@@ -490,7 +504,7 @@ export default function MapDetailScreen() {
       setCenterCoords(null);
       if (filters.jobNumber && filteredLeads.length > 0) {
         const search = filters.jobNumber.toLowerCase();
-        const exactMatch = filteredLeads.find(l => l.jobNumber?.toLowerCase() === search);
+        const exactMatch = filteredLeads.find(l => jobNumberMatches(l, search, true));
         if (exactMatch) {
           setJumpLead(exactMatch);
         } else if (filteredLeads.length === 1) {
@@ -728,10 +742,7 @@ export default function MapDetailScreen() {
               removeClippedSubviews={Platform.OS === 'android'}
               contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
               renderItem={({ item: job }) => {
-                const dateStr = job.installationDate
-                  ? format(new Date(job.installationDate), 'MM/dd/yyyy')
-                  : job.leadDate ? format(new Date(job.leadDate), 'MM/dd/yyyy')
-                    : job.createdAt ? format(new Date(job.createdAt), 'MM/dd/yyyy') : 'N/A';
+                const dateStr = getPinDateLabel(job);
 
                 const addressStr = typeof job.fullAddress === 'string' ? job.fullAddress :
                   (job.address && typeof job.address === 'object'
@@ -760,7 +771,7 @@ export default function MapDetailScreen() {
                       {/* Card Header */}
                       <View className="flex-row justify-between items-start mb-4">
                         <View className="bg-green-50 dark:bg-green-900/20 px-3 py-1.5 rounded-lg border border-green-100 dark:border-green-900/30">
-                          <Text className="text-[13px] font-black text-[#2EDE56]">#{job.jobNumber}</Text>
+                          <Text className="text-[13px] font-black text-[#2EDE56]">#{getDisplayJobNumber(job)}</Text>
                         </View>
                         {(() => {
                           const offlineBefore = getOfflineImagesForJob(job.jobNumber, 'before');
@@ -812,7 +823,7 @@ export default function MapDetailScreen() {
                           <View className="flex-row items-center">
                             <Icon name="account-circle-outline" size={18} color="#2EDE56" />
                             <Text className="text-[14px] font-bold text-slate-700 dark:text-zinc-300 ml-1">
-                              {job.salesRep?.fullName || job.salesRep?.firstName || job.salesRepName || job.salesRep || job.userName || 'Unknown'}
+                              {getRepDisplayName(job)}
                             </Text>
                           </View>
                         </View>
