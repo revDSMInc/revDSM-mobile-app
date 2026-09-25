@@ -380,6 +380,18 @@ export interface TabNameInput {
    * nothing has been entered yet. See `computeDerivedTitles`.
    */
   storedTitle?: string;
+  /**
+   * The name this calculator was CREATED with -- the customer's name on the first
+   * calculator, absent on the rest.
+   *
+   * ⚠️ Distinct from `storedTitle` on purpose, and the difference is the whole point:
+   * `storedTitle` is whatever was last SAVED, which after any entry is a DERIVED name
+   * (`Labor`, `LF Misc`). Falling back to it when the rep clears every field leaves the
+   * tab wearing a name for products that are no longer on it. This carries the original
+   * instead, so clearing returns the tab to the customer's name rather than stranding it
+   * on the last thing that happened to be entered.
+   */
+  originalTitle?: string;
 }
 
 /**
@@ -417,13 +429,20 @@ export function computeDerivedTitles(
     }
     const base = getLiveSchemaBaseName(t.entries, schemas);
     if (!base) {
-      // Nothing entered yet → the stored title (web `calc.title`), else the 1-based
-      // position. The first calculator is stored under the customer's name and so
-      // shows it; every other one is stored under a numeric placeholder, and a
-      // purely numeric title renders as a BLANK tab (the `/^\d+$/` check in
-      // CalculatorView and web `TabLabel`) — so those still show no name until
-      // values are entered.
-      result[t.id] = (t.storedTitle || '').trim() || String(i + 1);
+      // Nothing entered → the name this calculator STARTED with (the customer's name on
+      // the first one), else the 1-based position. A purely numeric title renders as a
+      // BLANK tab (the `/^\d+$/` check in CalculatorView and web `TabLabel`), so every
+      // calculator after the first shows no name until values are entered — unchanged.
+      //
+      // ⚠️ `originalTitle`, NOT `storedTitle`. `storedTitle` is the LAST SAVED name, which
+      // after any entry is a DERIVED one (`Labor`, `LF Misc`) — so clearing every field
+      // used to leave the tab labelled for products it no longer contains, and the rep had
+      // no way to get the customer's name back. Reported as "tab naming not removed when
+      // the data is cleared". Falling back to the ORIGINAL name makes clearing symmetrical
+      // with entering: the tab returns to exactly what it showed before anything was typed.
+      //
+      // ⚠️ A manual rename is unaffected — `manualTitle` returns above, before this.
+      result[t.id] = (t.originalTitle || '').trim() || String(i + 1);
       return;
     }
     withBase.push({ id: t.id, base, price: t.price || 0 });
