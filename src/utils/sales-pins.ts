@@ -29,7 +29,7 @@ export const PIN_CATEGORIES: PinCategory[] = ['uploaded', 'installed', 'pendingI
 export const PIN_CATEGORY_META: Record<PinCategory, { label: string; color: string }> = {
   uploaded: { label: 'Uploaded', color: '#4CBB17' },
   installed: { label: 'Installed', color: '#4CBB17' },
-  pendingInstall: { label: 'Pending install', color: '#FFD400' },
+  pendingInstall: { label: 'Pending Install', color: '#FFD400' },
 };
 
 /**
@@ -89,6 +89,52 @@ export const countPinCategories = (jobs: any[]): Record<PinCategory, number> => 
   for (const job of jobs || []) counts[getPinCategory(job)] += 1;
   return counts;
 };
+
+/**
+ * Legend row for the Sales Map's pin-colour legend key.
+ *
+ * ⚠️ `key` is a legend-row id, NOT necessarily a `PinCategory` — `installed` here covers
+ * BOTH `uploaded` and `installed` pins, see `legendRows` below.
+ */
+export interface LegendRow {
+  key: string;
+  label: string;
+  color: string;
+  count: number;
+}
+
+/**
+ * Ticket: "remove the Uploaded title, merge the pins into the Installed title, because
+ * both pins are the same — installed and uploaded [pins]." Uploaded and installed pins
+ * are now colour- and shape-identical on the map (the two design-match follow-ups above
+ * in `docs/claude/maps-zone-canvasser.md`), so a legend that still split them into two
+ * rows was explaining a distinction the rep can no longer see: one pin style, two counts.
+ *
+ * Returns exactly the two rows the legend now shows — `installed` merges `uploaded` +
+ * `installed`, `pendingInstall` is unchanged.
+ *
+ * ⚠️ This merges the LEGEND DISPLAY ONLY. `PinCategory` itself stays three-valued —
+ * `getPinCategory` / `countPinCategories` / the GeoJSON `category` / `PIN_DRAW_ORDER` are
+ * all untouched, and none of them read this function. The merge is safe precisely because
+ * nothing else needed to change: the status filter (`MapFiltersModal`) already treats
+ * "installed" as `!== pendingInstall` — i.e. uploaded OR installed — per the ⚠️ in the
+ * REVUIUX-439 section above, so the legend is the only place still presenting them as two
+ * separate things.
+ */
+export const legendRows = (counts: Record<PinCategory, number>): LegendRow[] => [
+  {
+    key: 'installed',
+    label: PIN_CATEGORY_META.installed.label,
+    color: PIN_CATEGORY_META.installed.color,
+    count: counts.uploaded + counts.installed,
+  },
+  {
+    key: 'pendingInstall',
+    label: PIN_CATEGORY_META.pendingInstall.label,
+    color: PIN_CATEGORY_META.pendingInstall.color,
+    count: counts.pendingInstall,
+  },
+];
 
 const idText = (v: any): string => (v == null ? '' : String(v).trim());
 
@@ -193,15 +239,27 @@ export const formatPinDate = (value: any): string | null => {
 
 /**
  * The card / list date line.
- *   - pending install: "Install scheduled {date}", else "Sold {date} · pending install".
+ *   - pending install: "Install scheduled {date}", else just "Sold {date}".
  *   - otherwise: the install date, falling back to the lead / created date as before.
+ *
+ * ⚠️ Ticket: "still status is on the card — pending install — I want to remove the
+ * status from the card." Used to append `· pending install` to the sold date (and,
+ * with no sale date either, return the bare word "Pending install" as the whole line).
+ * The pin's status is now shown by its COLOUR alone (the pin itself, the legend, the
+ * on-map `INS` / `PI` toggles — all `PIN_CATEGORY_META`) — this text line is a DATE, and
+ * saying the status a second time in words was the thing asked to go. Do not re-add it;
+ * a status BADGE was also tried on the card and separately reverted for the same reason
+ * (`docs/claude/maps-zone-canvasser.md`).
  */
 export const getPinDateLabel = (job: any): string => {
   if (getPinCategory(job) === 'pendingInstall') {
     const scheduled = formatPinDate(job?.scheduledInstallDate);
     if (scheduled) return `Install scheduled ${scheduled}`;
     const sold = formatPinDate(job?.saleDate);
-    return sold ? `Sold ${sold} · pending install` : 'Pending install';
+    // No sale date either — genuinely no date to show (a pending-install pin implies a
+    // sale happened, so this is effectively unreachable on real data). Empty rather than
+    // falling back to a bare status word, per the same ticket.
+    return sold ? `Sold ${sold}` : '';
   }
   return (
     formatPinDate(job?.installationDate) ||
