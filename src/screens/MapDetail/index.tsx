@@ -897,8 +897,8 @@ export default function MapDetailScreen() {
                         <View className="flex-1">
                           <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Price</Text>
                           <View className="flex-row items-center">
-                            <Text className="text-[#2EDE56] font-bold mr-1">$</Text>
-                            <Text className="text-[17px] font-black text-slate-800 dark:text-zinc-200">
+                            <Text className="text-[14px] font-black text-slate-800 dark:text-zinc-200">$</Text>
+                            <Text className="text-[14px] font-black text-slate-800 dark:text-zinc-200">
                               {(job.price || 0).toLocaleString()}
                             </Text>
                           </View>

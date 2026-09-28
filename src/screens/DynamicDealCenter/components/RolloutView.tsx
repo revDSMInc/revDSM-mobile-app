@@ -46,7 +46,8 @@ import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-uti
 import { logRolloutChange } from '../../../utils/activity-log/rollout-log-meta';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 import { RevRenderSlots, type RenderPair } from './RevRenderSlots';
-import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../../widgets/common/PhotoPeekScrollLock';
+import { PhotoPeekScrollLockProvider } from '../../../widgets/common/PhotoPeekScrollLock';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { OneYearMonthlyPlan, type OneYearMonthlyValue } from './OneYearMonthlyPlan';
 import { scopeSignature } from '../utils/scope-signature';
 import type { CalculatorLockState } from '../utils/job-builder-submission';
@@ -2296,11 +2297,15 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
 
   return (
     <PhotoPeekScrollLockProvider>
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: '#fff' }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 120 : 24}
-    >
+    {/* `View`, not `KeyboardAvoidingView` — its `behavior="padding"` shrank this whole
+        column whenever the keyboard opened, which is what let the footer below the
+        `KeyboardAwareScrollView` visually land on top of a just-focused field (ticket:
+        "the button is looking up and hiding the drop price field"). The library's
+        `KeyboardAwareScrollView` already keeps the focused input above the keyboard on
+        its own; stacking a padding `KeyboardAvoidingView` around it double-compensates
+        instead of helping. Same deliberate choice `DynamicDealEditScreen` documents at
+        its own `KeyboardAwareScrollView`s. */}
+    <View style={{ flex: 1, backgroundColor: '#fff' }}>
       <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#DFE3E8', backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center' }}>
         <TouchableOpacity onPress={onBack} style={{ padding: 8, marginRight: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#DFE3E8', borderRadius: 12, backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
           <Ionicons name="arrow-back" size={18} color="#212B36" />
@@ -2404,7 +2409,15 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
         </View>
       </View>
 
-      <PeekAwareScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+      {/* `KeyboardAwareScrollView`, not `PeekAwareScrollView` — this content never renders a
+          `PhotoPeekPressable` (no photos in the quote card), so the peek-lock machinery was
+          dead weight here, and swapping it out locally avoids touching the shared component
+          other screens rely on. Ticket: "the button is looking up and hiding the drop price
+          field" — Rollout End Price, Add Down Payment and the inline drop-price input all
+          live in this one scroll view with no way to bring a focused field above the keyboard;
+          `KeyboardAwareScrollView` does that automatically for whichever one is focused,
+          instead of a hand-rolled `scrollToEnd` that only helped the bottom-most field. */}
+      <KeyboardAwareScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled" bottomOffset={24}>
         <View style={{ maxWidth: 600, alignSelf: 'center', width: '100%' }}>
           {selectedCalc ? (
             <PremiumQuoteCard key={selectedCalc.id} calculator={selectedCalc}
@@ -2449,7 +2462,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
             </View>
           )}
         </View>
-      </PeekAwareScrollView>
+      </KeyboardAwareScrollView>
 
       {visibleCalculators.length > 0 && !allConfirmed && (
         <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16 }}>
@@ -2542,7 +2555,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
         onClose={() => setPackageInfoVisible(false)}
         anchorRect={packageAnchor}
       />
-    </KeyboardAvoidingView>
+    </View>
     </PhotoPeekScrollLockProvider>
   );
 }
