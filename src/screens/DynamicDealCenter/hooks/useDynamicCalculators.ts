@@ -436,6 +436,9 @@ export function useDynamicCalculators(
   // without churning their identities.
   const schemasRef = useRef(schemas);
   schemasRef.current = schemas;
+  // Same reason, for the customer name an emptied first tab falls back to.
+  const leadRef = useRef(lead);
+  leadRef.current = lead;
   const snapshotId = () => schemasRef.current?.[0]?.id || 'static';
 
   // Resolve a field's category id to its human name (web parity: DealCenterContext
@@ -453,6 +456,31 @@ export function useDynamicCalculators(
     return categoryId;
   }, []);
 
+  /**
+   * Build `computeDerivedTitles`' input for a list of tabs.
+   *
+   * One place, because all three callers must agree: two of them decide what gets PUT to
+   * the server, so a list built differently in one of them would persist a different name
+   * than the tab shows.
+   *
+   * ⚠️ `originalTitle` is the customer's name for the FIRST calculator only, matching how
+   * it is created (`customerTitleOf`). It is what an emptied tab falls back to — see the
+   * warning in `computeDerivedTitles`. Index, not id: the first tab is positional here, as
+   * it is everywhere else in this hook.
+   */
+  const titleInputs = useCallback(
+    (list: CalcTab[]) =>
+      list.map((t, i) => ({
+        id: t.id,
+        entries: t.entries,
+        price: t.totals?.retail || 0,
+        manualTitle: t.manualTitle,
+        storedTitle: t.title,
+        originalTitle: i === 0 ? customerTitleOf(leadRef.current) : undefined,
+      })),
+    []
+  );
+
   // The title we may SAFELY persist for a calculator (web `DealCenterContext.resolveTitle`).
   // The backend enforces a unique title per appointment, so a shared "⚠️" duplicate-price
   // title (which `computeDerivedTitles` produces when two calcs match on name AND price)
@@ -460,12 +488,12 @@ export function useDynamicCalculators(
   // SM/MD/LG size. Reads only refs, so it is stable ([] deps).
   const resolveSafeTitle = useCallback((tab: CalcTab): string => {
     const derived = computeDerivedTitles(
-      tabsRef.current.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle, storedTitle: t.title })),
+      titleInputs(tabsRef.current),
       schemasRef.current || [],
     );
     const persistable = getUniquePersistableTitles(derived);
     return persistable[tab.id] || lastSavedTitle.current[tab.id] || tab.title || '1';
-  }, []);
+  }, [titleInputs]);
 
   // Latest payload builder in a ref so the unmount flush (a [] effect) always
   // uses current leadId/enteredBy/schema instead of the mount-time closure.
@@ -513,7 +541,7 @@ export function useDynamicCalculators(
   // back to its position — so this pass can no longer rename the first tab to "1".
   const retitle = useCallback((list: CalcTab[]): CalcTab[] => {
     const titles = computeDerivedTitles(
-      list.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle, storedTitle: t.title })),
+      titleInputs(list),
       schemasRef.current || [],
     );
     let changed = false;
@@ -527,7 +555,7 @@ export function useDynamicCalculators(
     // Return the SAME reference when nothing changed so `setTabs` can bail out
     // (prevents a re-render loop when `schemas` is a fresh array each render).
     return changed ? next : list;
-  }, []);
+  }, [titleInputs]);
 
   // ── Debounced save engine (ports web DealCenterContext.flushSave) ───────────
   const flushSaveRef = useRef<((tabId: string) => void) | null>(null);
@@ -645,7 +673,7 @@ export function useDynamicCalculators(
     if (all.length <= 1) return;
 
     const derived = computeDerivedTitles(
-      all.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle, storedTitle: t.title })),
+      titleInputs(all),
       schemasRef.current || [],
     );
     const persistable = getUniquePersistableTitles(derived);
@@ -685,7 +713,7 @@ export function useDynamicCalculators(
         // non-fatal — a sibling rename must not block the changed calc's own save
       }
     }
-  }, [enteredBy, appointmentId, leadId, adoptDropIds]);
+  }, [enteredBy, appointmentId, leadId, adoptDropIds, titleInputs]);
 
   const flushSave = useCallback(
     async (tabId: string) => {

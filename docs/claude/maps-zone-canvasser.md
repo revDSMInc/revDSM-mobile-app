@@ -349,17 +349,14 @@ them.
   rendering bug, check where the pins actually are: `adb logcat | grep ReactNativeJS` shows JS logs from
   the dev build.
 
-### TEMPORARY — Sales Map boundary lock lifted for testing
+### Sales Map boundary lock: test bypass added, then REMOVED
 
-To let the team see the Lahore test pins, `LeadMap.tsx` has `UNLOCK_MAP_BOUNDS_FOR_TESTING = true`.
-While it's on (and only in a `__DEV__` build, via `MAP_BOUNDS_UNLOCKED`):
-- `Camera` gets no `maxBounds` (spread in, never a present `undefined`);
-- `isWithinMapBounds` returns `true`, so the office centring, "locate me" and the startup fix will centre
-  on a location outside North America too. On a device in Lahore, "locate me" now flies there.
-
-⚠️ **Set it back to `false` when testing is done.** The North America box (`MAP_BOUNDS`, SW
-`[-180, 15]` / NE `[-40, 85]`) is deliberate web parity. The `__DEV__` gate means a release build keeps
-the lock regardless, but a debug build handed to QA would not.
+A temporary `UNLOCK_MAP_BOUNDS_FOR_TESTING` switch in `LeadMap.tsx` (no `maxBounds`, `isWithinMapBounds`
+always true) and a "frame every pin on load" `fitBounds` were used to reach the Lahore test pins. Both
+are **gone**: `Camera` is `maxBounds={MAP_BOUNDS}` again and `isWithinMapBounds` is the original box check
+(North America, SW `[-180, 15]` / NE `[-40, 85]`, web parity). ⚠️ Don't reintroduce a global switch for
+this; if a debug unlock is needed again, keep it out of committed code. Consequence: the Lahore test pins
+(and the legend's Pending count for them) are counted but not reachable on the map, by design.
 
 ### Follow-up — Sales Map pin legend: bottom-left, palette button + ✕ (footsteps pattern)
 
@@ -591,11 +588,3 @@ is a **GPS fix**, not a geocoded address (an address geocodes to identical coord
 - ⚠️ **Not verified on device.** Smoke test: Add New Lead → overtype the auto-filled address with a Florida one
   WITHOUT tapping a suggestion → create → mark Sale → the pending pin is in Florida (log line
   `location.coordinates` ≈ `[-81.x, 28.x]`), not at the rep's position.
-
-### TEMPORARY (test mode) — the camera frames every pin on load
-
-While `MAP_BOUNDS_UNLOCKED` is on, `LeadMap` calls `cameraRef.fitBounds(ne, sw, 60, 800)` once
-(`didFrameAllPinsRef`) when the map is ready and there are ≥ 2 pins, so far-away test pins (Lahore) are on
-screen without hunting for them — unlocking `maxBounds` alone only made them reachable. It overrides
-the office/Tampa opening view, which is intended for testing. It goes away with the unlock: set
-`UNLOCK_MAP_BOUNDS_FOR_TESTING = false` before release.

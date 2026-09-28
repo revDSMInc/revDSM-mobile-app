@@ -84,23 +84,14 @@ const MAP_BOUNDS = {
   sw: [-180, 15] as [number, number],
 };
 
-// ⚠️ TESTING ONLY — lifts the boundary lock so pins anywhere in the world can be
-// reached (the dev team's test sales sit in Lahore, far outside MAP_BOUNDS).
-// Only effective in a __DEV__ build, so a release build keeps the lock whatever
-// this is set to. Set back to `false` once testing is done.
-const UNLOCK_MAP_BOUNDS_FOR_TESTING = true;
-const MAP_BOUNDS_UNLOCKED = __DEV__ && UNLOCK_MAP_BOUNDS_FOR_TESTING;
-
 // True when [lng, lat] falls inside MAP_BOUNDS (web parity: `isWithinMapBounds`).
 // Anything outside is unusable as a camera target: `maxBounds` clamps it to the
 // edge of the box, which lands the map in open ocean rather than on the point.
-// Unlocked, every point is a valid camera target (there is no box to clamp to).
 const isWithinMapBounds = (longitude: number, latitude: number) =>
-  MAP_BOUNDS_UNLOCKED ||
-  (longitude >= MAP_BOUNDS.sw[0] &&
-    longitude <= MAP_BOUNDS.ne[0] &&
-    latitude >= MAP_BOUNDS.sw[1] &&
-    latitude <= MAP_BOUNDS.ne[1]);
+  longitude >= MAP_BOUNDS.sw[0] &&
+  longitude <= MAP_BOUNDS.ne[0] &&
+  latitude >= MAP_BOUNDS.sw[1] &&
+  latitude <= MAP_BOUNDS.ne[1];
 
 // Match web app logic exactly - check salesRepId and name-based properties
 const isJobOwner = (item: any, user: any): boolean => {
@@ -198,7 +189,6 @@ export const LeadMap = ({
   const insets = useSafeAreaInsets();
   const mapViewRef = useRef<MapView>(null);
   const cameraRef = useRef<Camera>(null);
-  const didFrameAllPinsRef = useRef(false);
   // Pin-colour legend: closed until the rep taps the palette button (same as the
   // footsteps map's legend).
   const [legendOpen, setLegendOpen] = useState(false);
@@ -600,28 +590,6 @@ export const LeadMap = ({
     });
   }, [focusOfficeOnOpen, hasExplicitTarget, officeCoords, mapReady]);
 
-  // ⚠️ TESTING ONLY (`MAP_BOUNDS_UNLOCKED`) — fly out to frame EVERY pin on load,
-  // office/Tampa/Florida and the far-away test pins alike. The bounds unlock
-  // (above) only lets the camera reach a distant pin; it does nothing to point the
-  // camera there, so a pin whose count went up in the legend was still invisible
-  // unless someone manually panned across the globe to find it. This is what
-  // actually "shows every pin, wherever it is" for testing.
-  useEffect(() => {
-    if (!MAP_BOUNDS_UNLOCKED || !mapReady || didFrameAllPinsRef.current) return;
-    const coordsList = markersGeoJson.features.map((f: any) => f.geometry.coordinates as [number, number]);
-    if (coordsList.length < 2) return;
-    didFrameAllPinsRef.current = true;
-    const lngs = coordsList.map((c) => c[0]);
-    const lats = coordsList.map((c) => c[1]);
-    // [ne, sw] — `fitBounds`'s order, not GeoJSON's [lng, lat] pair order.
-    cameraRef.current?.fitBounds(
-      [Math.max(...lngs), Math.max(...lats)],
-      [Math.min(...lngs), Math.min(...lats)],
-      60,
-      800
-    );
-  }, [markersGeoJson, mapReady]);
-
   useEffect(() => {
     if (focusLead?.location?.coordinates) {
       const coords = focusLead.location.coordinates;
@@ -1017,8 +985,7 @@ export const LeadMap = ({
       >
         <Camera
           ref={cameraRef}
-          // Spread in rather than `x ? MAP_BOUNDS : undefined` — see §6 on present-undefined props.
-          {...(MAP_BOUNDS_UNLOCKED ? {} : { maxBounds: MAP_BOUNDS })}
+          maxBounds={MAP_BOUNDS}
           maxZoomLevel={20}
           defaultSettings={defaultCameraSettings}
         />
