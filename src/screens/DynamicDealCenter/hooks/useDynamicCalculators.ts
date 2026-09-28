@@ -860,8 +860,10 @@ export function useDynamicCalculators(
    *
    * Fires on the rep's Decline / Secure, never on opening the drop sheet. Sends the whole
    * array every time (each row with its `_id`), so a request that fails is healed by the
-   * next drop action rather than needing per-row bookkeeping; one immediate retry covers
-   * the transient case.
+   * next drop action rather than needing per-row bookkeeping; one immediate retry covers a
+   * truly transient blip, and a SECOND failure falls back to the device (below) rather than
+   * being dropped — the same "flaky bars" case `scheduleSave` already covers for every other
+   * field.
    */
   const saveDropsNow = useCallback(
     async (tabId: string, drops: any[], attempt = 0) => {
@@ -888,7 +890,20 @@ export function useDynamicCalculators(
         );
         await adoptDropIds(tabId, res);
       } catch {
-        if (attempt === 0) dropSavePending.current[tabId] = drops; // one retry
+        if (attempt === 0) {
+          dropSavePending.current[tabId] = drops; // one immediate retry
+        } else {
+          // ⚠️ Two failures in a row on a connection `isOnline()` still calls "up" means the
+          // flag is lying — the exact "little bars" case reported for every other field
+          // (`scheduleSave` above). Falling through to a THIRD network attempt would just lose
+          // the drop silently (the original bug): the rep sees Secure/Decline close and the row
+          // on screen, with nothing ever written anywhere durable. Switch this session to the
+          // device from here on, same as `scheduleSave`'s offline branch, so the negotiation the
+          // rep just walked the customer through is on disk and the existing reconnect/AppState/
+          // 60s-sweep drain (`offlineLeadStore`) picks it up like any other offline edit.
+          offlineModeRef.current = true;
+          persistOfflineRef.current?.();
+        }
       } finally {
         dropSaveInFlight.current[tabId] = false;
         setIsSaving(anyInFlight() || Object.values(dropSaveInFlight.current).some(Boolean));

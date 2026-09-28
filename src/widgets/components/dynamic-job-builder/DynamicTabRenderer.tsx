@@ -1,5 +1,6 @@
 import React, { useMemo, Fragment } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, Animated } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import {
   getTabSections,
   getCombinationSectionRowFields,
@@ -2062,16 +2063,21 @@ export function DynamicTabRenderer({
         </View>
       )}
 
-      <ScrollView
+      <KeyboardAwareScrollView
         className="flex-1"
-        // Bottom padding + iOS keyboard-inset auto-adjust so a focused input (e.g.
-        // Roofing → Flashing measurements) scrolls clear of the keyboard instead of
-        // being hidden behind it. Android relies on the manifest `adjustResize`.
+        // `KeyboardAwareScrollView` (not a plain `ScrollView` + `adjustResize`) so the
+        // FOCUSED field stays scrolled into view both while typing AND after the keyboard
+        // is dismissed. Ticket: on Android, tapping "Done" closed the keyboard and the
+        // scroll offset stayed put, so a field entered near the bottom (e.g. "# of End
+        // Caps (Lefts)") scrolled out from under the fold the instant the window resized
+        // back to full height — the rep had no way to see what they'd just typed.
+        // `bottomOffset` matches the pattern already used for this in
+        // `DynamicDealEditScreen`'s Job Price / Addendum steps.
         contentContainerStyle={{ padding: 12, paddingBottom: 160 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
-        automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+        bottomOffset={24}
         {...collapsingScrollProps}
       >
       {!hasAllocationOnly && hasTabFields && (() => {
@@ -2159,7 +2165,7 @@ export function DynamicTabRenderer({
           </Fragment>
         );
       })}
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </View>
   );
 }
