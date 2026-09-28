@@ -50,6 +50,11 @@ import {
   resolveRetryDecision,
 } from '../../../utils/offline-lead-queue';
 
+/** Capitalize just the first character as the rep types — leaves the rest untouched so a
+ *  legitimately mixed-case name (McDonald, O'Brien) isn't forced to lowercase mid-entry. */
+const capitalizeFirst = (text: string): string =>
+  text.length ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+
 interface Props {
   visible: boolean;
   onClose: () => void;
@@ -441,9 +446,15 @@ export default function LeadCreateModal({
 
       // The pin is placed from these coordinates, so they must match `submitAddress`. With none
       // (the rep typed the address without picking a suggestion, and no GPS fix was captured)
-      // look the typed address up; if Google can't place it, send none rather than somebody
-      // else's location.
-      const leadLocation = location || (await geocodeAddress(form.address));
+      // recover a coords placeholder if the text still carries one, else look the typed address
+      // up ONLINE ONLY — every other network call in this handler is `isOnline()`-gated, and an
+      // offline attempt here would just add latency to the queue-and-park path below for a call
+      // `geocodeAddress` will swallow into `null` anyway. If Google can't place it, send none
+      // rather than somebody else's location.
+      const leadLocation =
+        location ||
+        parseCoordsPlaceholder(form.address) ||
+        (isOnline() ? await geocodeAddress(form.address) : null);
 
       payload = isLF
         ? {
@@ -645,7 +656,8 @@ export default function LeadCreateModal({
                   <CustomInput
                     label="First Name*"
                     value={form.firstName}
-                    onChangeText={(t) => setForm({ ...form, firstName: t })}
+                    onChangeText={(t) => setForm({ ...form, firstName: capitalizeFirst(t) })}
+                    autoCapitalize="words"
                     placeholder="Enter First Name"
                   />
                 </View>
@@ -653,7 +665,8 @@ export default function LeadCreateModal({
                   <CustomInput
                     label="Last Name*"
                     value={form.lastName}
-                    onChangeText={(t) => setForm({ ...form, lastName: t })}
+                    onChangeText={(t) => setForm({ ...form, lastName: capitalizeFirst(t) })}
+                    autoCapitalize="words"
                     placeholder="Enter Last Name"
                   />
                 </View>
