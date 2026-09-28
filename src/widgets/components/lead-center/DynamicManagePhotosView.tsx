@@ -544,9 +544,10 @@ export function DynamicManagePhotosView({
             </View>
           )}
 
-          {/* Actions are hidden in select mode (web parity) */}
+          {/* Actions are hidden in select mode (web parity). Ticket: "Scale down Trash
+              and move icon" — both shrunk from the original 32px-tall row. */}
           {!selectMode && !isPending && (
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8, padding: 8 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 6, padding: 6 }}>
               {canMove && moveTargetCount > 1 ? (
                 <TouchableOpacity
                   disabled={busy}
@@ -563,12 +564,12 @@ export function DynamicManagePhotosView({
                   }
                   style={{
                     flex: 1,
-                    height: 32,
-                    borderRadius: 8,
+                    height: 26,
+                    borderRadius: 7,
                     flexDirection: 'row',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 4,
+                    gap: 3,
                     borderWidth: 1.5,
                     borderStyle: 'dashed',
                     borderColor: 'rgba(76,187,23,0.4)',
@@ -579,8 +580,8 @@ export function DynamicManagePhotosView({
                     <ActivityIndicator size="small" color={GREEN} />
                   ) : (
                     <>
-                      <Icon name="folder-move-outline" size={14} color={GREEN} />
-                      <Text style={{ color: GREEN, fontWeight: '700', fontSize: 11 }}>Move</Text>
+                      <Icon name="folder-move-outline" size={11} color={GREEN} />
+                      <Text style={{ color: GREEN, fontWeight: '700', fontSize: 10 }}>Move</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -598,9 +599,9 @@ export function DynamicManagePhotosView({
                   })
                 }
                 style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
+                  width: 26,
+                  height: 26,
+                  borderRadius: 7,
                   alignItems: 'center',
                   justifyContent: 'center',
                   borderWidth: 1.5,
@@ -612,7 +613,7 @@ export function DynamicManagePhotosView({
                 {capture.deletingKeys[card.key] ? (
                   <ActivityIndicator size="small" color={RED} />
                 ) : (
-                  <Icon name="trash-can-outline" size={18} color={RED} />
+                  <Icon name="trash-can-outline" size={14} color={RED} />
                 )}
               </TouchableOpacity>
             </View>
