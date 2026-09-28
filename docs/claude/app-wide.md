@@ -359,3 +359,37 @@ to a heavy or paginated query.
 
 ⚠️ The listener is module-scope, registered once when `queryClient.ts` is first imported, and
 deliberately never removed — the client lives for the process.
+
+## `MapToggleSwitch` gained per-instance colours — its ON state was hardcoded green for every caller
+
+Ticket (Sales Map): *"all the toggles [look] the same, make it different for pending install and
+installed."* `widgets/common/MapToggleSwitch.tsx` is the small vertical switch behind every quick-filter
+toggle on the Sales Map (heatmap, my jobs, referral, favorite, and two new pin-status ones — full ticket
+in `maps-zone-canvasser.md` › "the two new toggles were both the switch's default green"). Every instance
+turned the identical green (`#4CBB17`) when ON, because the ON colour was a literal inside the component,
+not a prop — six switches with six different meanings all looked the same active.
+
+Three new **optional** props, each defaulting to the ORIGINAL hardcoded literal so every existing caller
+renders byte-identical to before:
+
+- `activeColor` (default `'#4CBB17'`) — the track colour when ON.
+- `activeDotColor` (default `'#4ade80'`) — the inner thumb-dot colour when ON.
+- `activeLabelColor` (default `'white'`) — the ON-state label text colour.
+
+⚠️ **The idle (OFF) track outline is now DERIVED from `activeColor`** — `` `${activeColor}33` `` — rather
+than a second hardcoded literal. For the default green this reproduces the original `#4CBB1733` exactly;
+a caller with a custom `activeColor` gets a matching faint outline while off for free, with no second
+prop to keep in sync.
+
+⚠️ **`activeLabelColor` exists because the naive fix would have shipped an accessibility bug.** The
+default label colour is white, which is illegible on a bright/light `activeColor` (the Sales Map's new
+pending-install yellow, `#FFD400`). Any caller passing a light `activeColor` must also pass a dark
+`activeLabelColor` — don't rely on the default.
+
+⚠️ **Pick `activeColor` from whatever colour SYSTEM the toggle represents, never a hand-picked hex.** The
+Sales Map instances pass `PIN_CATEGORY_META.<category>.color` — the exact same constant already driving
+that category's pin and legend dot — specifically so a toggle, its pin, and its legend row can never
+drift into three slightly-different colours across separate tickets.
+
+No behaviour change for the four pre-existing callers (heatmap / my jobs / referral / favorite) — they
+pass no colour props and get the defaults, which are the old literals verbatim.

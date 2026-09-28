@@ -34,6 +34,7 @@ import { getOfflineImagesForJob } from '../../services/api/offlineUploadManager'
 import {
   findPendingInstallPinForLead,
   getDisplayJobNumber,
+  getPinCategory,
   getPinDateLabel,
   getPinSortDate,
   getRepDisplayName,
@@ -120,6 +121,8 @@ const DEFAULT_MAP_FILTERS: FilterState = {
   showRoute: false,
   showProduct: true,
   statusFilter: 'all',
+  isMapInstalledOnly: false,
+  isMapPendingInstallOnly: false,
   centerCoords: undefined,
 };
 
@@ -433,8 +436,15 @@ export default function MapDetailScreen() {
         if (!isFav) return false;
       }
 
-      // Pin status — client side, like web (pending vs everything else).
+      // Pin status — client side, like web (pending vs everything else). The MODAL's
+      // dropdown only; see the ⚠️ on `isMapInstalledOnly` in MapFiltersModal.tsx.
       if (!matchesPinStatusFilter(item, filters.statusFilter)) return false;
+
+      // On-map "INS" / "PI" quick toggles — STRICT category match, independent of the
+      // dropdown above. "in the installed toggle only installed pins display, uploaded
+      // pins should not display in this toggle."
+      if (filters.isMapInstalledOnly && getPinCategory(item) !== 'installed') return false;
+      if (filters.isMapPendingInstallOnly && getPinCategory(item) !== 'pendingInstall') return false;
 
       // Price Range
       if (filters.minPrice && (item.price || 0) < parseFloat(filters.minPrice)) return false;
@@ -481,6 +491,8 @@ export default function MapDetailScreen() {
     filters.isFavoriteOnly,
     filters.isReferralOnly,
     filters.statusFilter,
+    filters.isMapInstalledOnly,
+    filters.isMapPendingInstallOnly,
     filters.minPrice,
     filters.maxPrice,
     filters.startDate,
@@ -583,6 +595,8 @@ export default function MapDetailScreen() {
           isReferralFilter={filters.isReferralOnly}
           isMyJobsFilter={filters.myJobsOnly}
           isHeatMapFilter={filters.isHeatMap}
+          isInstalledOnlyFilter={filters.isMapInstalledOnly}
+          isPendingInstallOnlyFilter={filters.isMapPendingInstallOnly}
           searchedJobNumber={filters.jobNumber}
           showProduct={filters.showProduct}
           isSatelliteView={isSatelliteView}
@@ -595,6 +609,20 @@ export default function MapDetailScreen() {
               else if (type === 'myjobs') next = { ...prev, myJobsOnly: !prev.myJobsOnly };
               else if (type === 'referral') next = { ...prev, isReferralOnly: !prev.isReferralOnly };
               else if (type === 'favorite') next = { ...prev, isFavoriteOnly: !prev.isFavoriteOnly };
+              // Independent of `statusFilter` — a STRICT `pinCategory` match, not the
+              // dropdown's "everything not pending" rule (see the ⚠️ on
+              // `isMapInstalledOnly` in MapFiltersModal.tsx). Mutually exclusive with
+              // EACH OTHER only, enforced here rather than by sharing one field: a pin
+              // can't be both, so turning one on turns the other off. Tapping the active
+              // one again clears it.
+              else if (type === 'installed') {
+                const nextOn = !prev.isMapInstalledOnly;
+                next = { ...prev, isMapInstalledOnly: nextOn, isMapPendingInstallOnly: nextOn ? false : prev.isMapPendingInstallOnly };
+              }
+              else if (type === 'pendingInstall') {
+                const nextOn = !prev.isMapPendingInstallOnly;
+                next = { ...prev, isMapPendingInstallOnly: nextOn, isMapInstalledOnly: nextOn ? false : prev.isMapInstalledOnly };
+              }
 
               const userId = user?._id || user?.id;
               if (userId && next !== prev) {
@@ -618,6 +646,16 @@ export default function MapDetailScreen() {
                     toggle: 'favorite',
                     enabled: next.isFavoriteOnly,
                     action: next.isFavoriteOnly ? 'favorite_filter_enabled' : 'favorite_filter_disabled',
+                  },
+                  installed: {
+                    toggle: 'installed_only',
+                    enabled: next.isMapInstalledOnly,
+                    action: next.isMapInstalledOnly ? 'installed_filter_enabled' : 'installed_filter_disabled',
+                  },
+                  pendingInstall: {
+                    toggle: 'pending_install_only',
+                    enabled: next.isMapPendingInstallOnly,
+                    action: next.isMapPendingInstallOnly ? 'pending_install_filter_enabled' : 'pending_install_filter_disabled',
                   },
                 };
                 const meta = toggleMeta[type];
