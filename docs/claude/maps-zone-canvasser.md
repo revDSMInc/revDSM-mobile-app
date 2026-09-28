@@ -403,6 +403,9 @@ Changed in the same four places the mint follow-up changed, mirrored:
   same proportion onto the new fill, so the black outline and white check are pixel-identical before and
   after. Verified per file: total non-transparent pixel count unchanged at every size, the white check
   pixel count exactly unchanged, and zero pixels left with a residual cast of the old hue.
+  **⚠️ Superseded for `marker-pending*` by the follow-up directly below — that recolour kept the OLD
+  thin-ring-and-white-dot shape, which turned out to be the actual complaint. `marker-installed*` still
+  IS this in-place recolour and is unaffected.**
 
 ⚠️ **`marker-installed*.png` was recoloured, not re-pointed at `marker-green*.png`.** The two categories
 keep independent asset files that now happen to render identically. A future "make installed distinct
@@ -427,6 +430,174 @@ alone — it is describing the historical bug that justified the draw order, not
 in Florida (dense clusters) and on an isolated sale, on satellite AND street map, at cluster and pin zoom;
 confirm the yellow doesn't get lost inside a favourite-heavy area and that installed truly reads as the
 same green as uploaded rather than "close but not quite" at a glance.
+
+### Follow-up — Sales Map legend: Uploaded merged into Installed
+
+Ticket: *"remove the Uploaded title, merge the pins into the Installed title, because both pins are
+the same — installed and uploaded."* Fair, once the two design-match follow-ups above landed: the legend
+still had three rows (Uploaded, Installed, Pending install) explaining a distinction the rep could no
+longer see on the map — Uploaded and Installed pins are colour- and shape-identical now.
+
+New pure `legendRows(counts)` in `utils/sales-pins.ts` returns exactly the two rows the legend renders:
+`installed` (label/colour from `PIN_CATEGORY_META.installed`, count = `uploaded + installed`) and
+`pendingInstall` unchanged. `LeadMap.tsx`'s legend now maps over `legendRows(pinCategoryCounts)` instead
+of `PIN_CATEGORIES`.
+
+⚠️ **This merges the LEGEND DISPLAY only.** `PinCategory` stays three-valued everywhere else —
+`getPinCategory`, `countPinCategories`, `PIN_DRAW_ORDER`, the GeoJSON `category` on each pin feature, all
+untouched, and none of them call `legendRows`. Safe to merge only the display because the status filter
+already treated them as one bucket (`matchesPinStatusFilter`: `installed` = `!== pendingInstall`, i.e.
+uploaded OR installed) — the legend was the last place still splitting them.
+
+No test change: `PIN_CATEGORIES` / `PIN_CATEGORY_META` are untouched and still exported (nothing else
+in the codebase imports `PIN_CATEGORIES` outside this legend, confirmed by grep, but the constant stays —
+it is still the correct enumeration of the three underlying categories, just not what the legend iterates).
+
+⚠️ Needs a device check: the legend now shows 2 rows, Installed's count is uploaded+installed summed
+correctly, and Pending install is unaffected.
+
+### Follow-up — the two new toggles were both the switch's default green
+
+Ticket: *"all the toggles [look] same, make it different for pending install and installed — and make
+sure Installed shows all pins that are installed OR uploaded."*
+
+**The second half was already true and needed no code change** — confirmed by reading
+`matchesPinStatusFilter`: `filter === 'installed'` returns `!isPending`, which is `true` for BOTH
+`'uploaded'` and `'installed'` categories (only `'pendingInstall'` sets `isPending`). The `IN` switch
+already showed uploaded + installed together from the follow-up above; this ticket only asked to make
+sure, so nothing there was touched.
+
+**The first half was real.** `MapToggleSwitch` hardcoded its ON colour to green (`#4CBB17`) — every one
+of the six switches (heatmap, my jobs, referral, favorite, and the two new ones) turned the SAME green
+when active, so `IN` and `PD` were indistinguishable from each other and from the four unrelated filters
+without reading the two-letter label.
+
+`MapToggleSwitch` gained three optional props — `activeColor`, `activeDotColor`, `activeLabelColor` —
+each defaulting to the ORIGINAL hardcoded literal (`#4CBB17` / `#4ade80` / `white`), so heatmap / my jobs
+/ referral / favorite render byte-identical to before; only `IN` and `PD` in `LeadMap.tsx`'s button array
+pass anything:
+
+- **`IN`** — `activeColor: PIN_CATEGORY_META.installed.color` (`#4CBB17`, same green as its pin).
+- **`PD`** — `activeColor: PIN_CATEGORY_META.pendingInstall.color` (`#FFD400`, same yellow as its pin),
+  plus `activeDotColor: '#FFF176'` and `activeLabelColor: '#1C252E'`.
+
+⚠️ **`activeLabelColor` is not cosmetic — it fixes a real contrast bug the default would have shipped.**
+White text (the switch's default `labelActive` colour) on `#FFD400` is illegible; `PD` is the only switch
+that overrides it, to a dark near-black that reads clearly on yellow.
+
+⚠️ **The idle track outline is now DERIVED from `activeColor`, not a second hardcoded literal.**
+`` `${activeColor}33` `` reproduces the original `#4CBB1733` exactly when no colour is passed, and gives
+`PD` a matching faint yellow outline while off, with no second prop needed.
+
+⚠️ **Colour comes from `PIN_CATEGORY_META`, not a hand-picked hex.** A toggle for a pin category is
+always this: `activeColor: PIN_CATEGORY_META.<category>.color`. Hand-picking a "close enough" colour here
+is exactly how a legend/toggle/pin trio drifts apart over separate tickets — the failure mode most of this
+file's ΔE and pixel-verification work exists to prevent.
+
+No filtering-logic change, no test change — this is presentational, and `matchesPinStatusFilter` (already
+covered by `sales-pins.test.ts`) was the thing being verified, not modified.
+
+⚠️ Needs a device check: `INS` turns Installed-green, `PI` turns Pending-yellow (labels renamed in the
+follow-up below — the colours and behaviour here are unchanged), both read clearly against the other four
+(still plain green) and against each other; `PI`'s dark label text is legible on the yellow track; the
+idle (OFF) state of all six is still visually consistent as one family of switches.
+
+### Follow-up — active-state labels renamed: `IN` → `INS`, `PD` → `PI`
+
+Ticket: *"pending install toggle name should be PI, installed toggle should be INS."* Label-only change
+in `LeadMap.tsx`'s button array (`active: 'INS'` / `active: 'PI'`); the `id`s (`IN-4` / `PD-5`), the
+`type`s (`'installed'` / `'pendingInstall'`), the colours and the filtering behaviour are all untouched.
+`INS` is 3 characters, same width the switch's existing `DEF` inactive label already proved fits at this
+font size — no layout change needed.
+
+⚠️ Every mention of `IN` / `PD` as the active label in the sections above this one is now stale — they
+describe the labels AS THEY WERE for that ticket, not what ships today. Match on `type: 'installed'` /
+`'pendingInstall'` or on `PIN_CATEGORY_META`, never on the two-letter label, when tracing this code.
+
+### Follow-up — On-map toggle switches for the pin-status filter (Installed / Pending install)
+
+Ticket: *"add a toggle button for the pending install pins and the installed pins, make sure the filter
+works properly, and make sure the toggle is the same as already appended on the map."* The status filter
+already existed — `MapFiltersModal`'s dropdown (`FilterState.statusFilter: 'all' | 'pendingInstall' |
+'installed'`, applied in `MapDetail`'s `baseFilteredLeads` via `matchesPinStatusFilter`) — but reaching it
+meant opening the filters modal. The right-side vertical stack of quick toggles (heatmap / my jobs /
+referral / favorite, `MapToggleSwitch`) didn't have one.
+
+**Two new toggle switches, `IN` (Installed) / `PD` (Pending install), added to that same stack** —
+literally the same `MapToggleSwitch` component, same button-array pattern, so they read as identical
+controls to the four already there ("the toggle should be same as already appended in the map").
+
+~~**No new filtering logic — both switches write the SAME `statusFilter` field the modal's dropdown
+already writes**, so `matchesPinStatusFilter` needed no change and the two ways of setting it (dropdown,
+on-map toggle) can never disagree:~~
+
+```
+// SUPERSEDED — see the follow-up "the on-map toggle now STRICTLY excludes uploaded pins" below.
+// Kept for history: this is what the two switches wrote at first.
+else if (type === 'installed') next = { ...prev, statusFilter: prev.statusFilter === 'installed' ? 'all' : 'installed' };
+else if (type === 'pendingInstall') next = { ...prev, statusFilter: prev.statusFilter === 'pendingInstall' ? 'all' : 'pendingInstall' };
+```
+
+⚠️ **SUPERSEDED.** The two are mutually exclusive with EACH OTHER, but independent of heatmap / my jobs /
+referral / favorite — that part still holds. ~~`statusFilter` is a single string, so switching one ON is
+automatically OFF for the other~~ — see below for how mutual exclusion is enforced now that they no
+longer share `statusFilter`. `LeadMap.tsx` still only receives two booleans (`isInstalledOnlyFilter` /
+`isPendingInstallOnlyFilter`) and forwards taps through `onToggleFilter`, whose union still has the same
+two members (`'installed' | 'pendingInstall'`) — only what `MapDetail` derives those booleans FROM, and
+what the handler writes TO, changed. Tapping the active switch again still clears it.
+
+⚠️ **`LeadMap`'s local-mode fallback (`activeFilters`, used when no `onToggleFilter` is passed — the
+embedded preview map in `OperationalSections.tsx`) has no analog for these two; both default `false`
+there.** A pin-status filter is moot on a single-lead preview with no pin list to filter.
+
+Logged the same way the other four switches are — `toggleMeta.installed` / `.pendingInstall` added to the
+existing `module_type: 'heat_map_filter'` toggle-event map in `MapDetail`'s `onToggleFilter` handler (yes,
+that module_type name covers the whole right-side stack, not just heatmap — kept for consistency with the
+other four rather than introduced fresh). The modal's own `pin_status_filter` log (fired on Apply) is
+unaffected and still fires when the rep uses the dropdown instead.
+
+No test change: this is UI wiring over an already-tested filter (`matchesPinStatusFilter` in
+`sales-pins.test.ts`), not new filtering logic.
+
+⚠️ Needs a device check: tapping Installed shows only uploaded+installed pins and the legend counts still
+foot; tapping Pending shows only the yellow pins; tapping the active one again returns to all pins; opening
+the filters modal afterward reflects the same selection in its dropdown (the modal's `useEffect` re-syncs
+`localFilters` from `filters` on every change, so this should already hold); "Clear filters" resets both.
+
+### Follow-up — Pending-install pin now uses the UPLOADED pin's shape, not just its colour
+
+Ticket: *"the pending install pins and the uploaded pins design should be the same — currently the
+pending install pin is slightly different on the map, design-wise."*
+
+The colour follow-up above recoloured `marker-pending*.png`'s EXISTING artwork purple → yellow, but
+that artwork was never the same design as `marker-green*` (uploaded) to begin with — REVUIUX-439 built
+`installed` and `pending` as a visually distinct sub-style: a thin ring outline with a white glyph inside
+(check for installed, dot for pending), against uploaded's solid teardrop with a normal-weight outline and
+no glyph. Measured directly (`@3x`, before this fix): uploaded — 137 black-outline px, 0 white px;
+pending — 18 black-outline px, 128 white px. Recolouring the fill alone (the follow-up above) could never
+close that gap; the shapes themselves had to converge.
+
+Fixed by discarding `marker-pending*`'s artwork and rebuilding it from **`marker-green*` itself** —
+same recolour technique, fill `#4CBB17` → `#FFD400` (the constant was already right; only the base
+artwork was wrong) — so the result isn't merely "close", it now shares uploaded's alpha silhouette
+**pixel-for-pixel** at all three sizes (verified: every alpha byte compared equal between the two files),
+with the same outline weight and no glyph.
+
+~~⚠️ **`installed` was deliberately left out of this fix.**~~ **DONE — see the follow-up near the end of
+this section ("installed pin now shares uploaded's design too").** The ticket named only pending vs.
+uploaded at the time; `marker-installed*` carried the old thin-ring-plus-checkmark design (colour matched
+to uploaded per the follow-up above, shape not) until a later ticket asked for the same treatment.
+
+⚠️ **Do not "restore" the dot glyph or thin ring on pending believing it was intentional signalling** —
+that shape was never a deliberate status affordance, it was leftover REVUIUX-439 artwork nobody was asked
+to change until this ticket. `PIN_CATEGORY_META.pendingInstall.color` is untouched (`#FFD400`); this was
+a base-artwork swap, not a colour change.
+
+No code or test change — `LeadMap.tsx` / `SalesLeadPins.tsx` already resolve `pendingInstall` to
+`marker-pending.png` by name, and `sales-pins.test.ts` asserts behaviour, not pixels.
+
+⚠️ Needs a device check: pending and uploaded pins side by side at a few zoom levels, confirming they now
+read as "the same pin, different colour" rather than two different pin styles.
 
 ### Follow-up — Installed pin colour: dark green → spring-mint `#00FFA3`
 
@@ -588,3 +759,156 @@ is a **GPS fix**, not a geocoded address (an address geocodes to identical coord
 - ⚠️ **Not verified on device.** Smoke test: Add New Lead → overtype the auto-filled address with a Florida one
   WITHOUT tapping a suggestion → create → mark Sale → the pending pin is in Florida (log line
   `location.coordinates` ≈ `[-81.x, 28.x]`), not at the rep's position.
+
+### Follow-up — the on-map toggle now STRICTLY excludes uploaded pins, and INS moved to the top of the stack
+
+Ticket: *"in the installed toggle only installed pins display, uploaded pins should not display in this
+toggle — and move that toggle from very bottom to top side in their position."*
+
+**Part 1 — strict filter.** The follow-up above deliberately reused `statusFilter` so the on-map toggle
+and the modal's dropdown could never disagree. That reuse is exactly what this ticket is against:
+`statusFilter === 'installed'` means "not pending" (uploaded counts as a historical install — the
+REVUIUX-439 web-parity rule at the top of this section), so the `INS` toggle was showing uploaded pins
+too. Fixed by giving the on-map toggles their OWN state, entirely independent of `statusFilter`:
+
+- Two new fields on `FilterState` (`MapFiltersModal.tsx`): `isMapInstalledOnly` / `isMapPendingInstallOnly`
+  — booleans, not a shared enum, matching the file's existing style for the other on-map-only toggles
+  (`isHeatMap` / `myJobsOnly` / `isReferralOnly`). Not counted in `countAppliedMapFilters`, not persisted
+  via `savedFiltersToFilterState`, same as those three.
+- `MapDetail`'s `baseFilteredLeads` gets a SECOND, independent pin-status check, after the existing
+  `matchesPinStatusFilter` line: `if (filters.isMapInstalledOnly && getPinCategory(item) !== 'installed')
+  return false;` (and the `pendingInstall` mirror). A STRICT `pinCategory` match, not "not pending".
+- `onToggleFilter`'s handler now flips these two booleans directly, enforcing mutual exclusion BETWEEN
+  THEM explicitly (turning one on sets the other to `false`) rather than getting it for free from sharing
+  one field.
+- `MapFiltersModal`'s dropdown — `statusFilter`, `matchesPinStatusFilter`, `PIN_STATUS_FILTER_LABELS` —
+  is **completely untouched** and keeps its documented "installed = everything else" web-parity meaning.
+
+⚠️ **This is now a deliberate three-way split, not two views of one rule:** the LEGEND still shows a
+merged "Installed" count (uploaded + installed, from the earlier follow-up); the MODAL's "Installed"
+dropdown option still means "not pending" (uploaded + installed); the on-map **`INS` toggle** means
+ONLY `pinCategory === 'installed'`. A rep CAN see the legend say "Installed: 289" while `INS` shows only
+2 pins — that is correct given this ticket, not a bug to reconcile. If a future ticket asks why the
+counts don't match, point here rather than "fixing" one to match the other.
+
+⚠️ **`PD` / `PI`'s actual filtering behaviour did not change** — `pendingInstall` was always a strict
+`pinCategory === 'pendingInstall'` match under `matchesPinStatusFilter` too (only `installed` had the
+"everything else" broadening), so `isMapPendingInstallOnly` produces identical results to the old
+`statusFilter === 'pendingInstall'` path. It moved to the new field anyway, for ONE reason the toggle
+writes to, not two independent mechanisms that happen to agree today by coincidence.
+
+**Part 2 — reorder.** `INS` moved from 5th position (just before `PI`) to 1st in `LeadMap.tsx`'s button
+array, which is top-to-bottom render order in the vertical stack. The other five keep their relative
+order; only `INS` was asked to move. ⚠️ **This is a REORDER WITHIN the existing bottom-right stack, not a
+relocation to a different part of the screen** — "top side" was read as "top of that list," matching how
+the ticket names one specific toggle rather than "the whole control area." If the intent was actually to
+move the entire six-switch stack to a different screen position, that is a one-line change to the
+`View`'s `style.bottom` in the "Right Side Vertical Controls" block — say so and it's quick to redo.
+
+No test change: `getPinCategory` / `matchesPinStatusFilter` (both covered by `sales-pins.test.ts`) are
+unmodified; the new predicate is inline `MapDetail`/React-Native screen code, which per this repo's
+testing rule (§6 of the root guide) cannot be loaded under jest, so it was verified by inspection against
+the already-tested `getPinCategory`.
+
+⚠️ `MapFiltersModal.tsx` is **CRLF** (not yet in the root guide's list — add it).
+
+⚠️ Needs a device check: `INS` now shows ONLY freshly-completed installs (fewer pins than before, and
+fewer than the legend's merged count); `PI` unchanged; the two stay mutually exclusive; `INS` renders as
+the FIRST (topmost) switch in the stack with the other five below it in their old relative order; the
+modal's "Installed" dropdown option still returns the old broader set.
+
+### Follow-up — `PI` grouped with `INS`, and the WHOLE stack moved from bottom-right to top-right
+
+Two more requests, same session. *"Pending install toggle also move from bottom to top"* — `PI` moved
+from 6th (last) to 2nd in `LeadMap.tsx`'s button array, right after `INS`, so the two pin-status toggles
+are grouped together at the top rather than split across the stack; `HM`/`MJ`/`RF`/`FV` keep their
+relative order, now 3rd-6th. Then *"change the toggle position from bottom to top"* — the container
+`View`'s positioning style changed from `bottom: Platform.OS === 'android' ? 120 + insets.bottom : 120`
+to `top: Platform.OS === 'android' ? 100 + insets.top : 100`, moving the entire six-switch stack (not
+just the two pin-status ones) to top-right.
+
+⚠️ **The `100` top offset is a reasonable guess, not measured against the screen's header overlay.**
+`MapDetail` claims `HeaderContext` actions (`onFilterPress` / `onListPress`, rendered by the globally-
+mounted `widgets/common/MainHeader.tsx` — the stack's navigator has `headerShown: false`, so this is the
+ONLY header any `MapDetail`-family screen gets) and `LeadMap.tsx` also renders its own back button at
+`top-5 left-5`. `100` was chosen to clear both plus the status bar via `insets.top`, but was not verified
+against `MainHeader`'s actual rendered height on device — this is the thing most likely to need a small
+number tweak after the device check below, not a redesign.
+
+No filtering, colour, or label change in this follow-up — purely two `View`/array positions.
+
+⚠️ Needs a device check: the whole stack sits clear of the back button and any header icons in both
+orientations; `INS` and `PI` render as the first two (topmost) switches with the other four below them.
+
+### Follow-up — legend label capitalised: "Pending install" → "Pending Install"
+
+Ticket: *"change the spell Pending install to Pending Install."* `PIN_CATEGORY_META.pendingInstall.label`
+(`utils/sales-pins.ts`) was `'Pending install'` — inconsistent with its own siblings `'Uploaded'` /
+`'Installed'` (both already capitalised) and with `PIN_STATUS_FILTER_LABELS.pendingInstall` (the modal
+dropdown's label), which was already correctly `'Pending Install'`. Now matches both.
+
+⚠️ **Do NOT also capitalise `getPinDateLabel`'s `'pending install'`** (the `Sold {date} · pending install`
+job-card caption, and its bare `'Pending install'` fallback with no sale date). That one is SENTENCE CASE
+— a lowercase word inside a longer phrase — not a standalone label, and `sales-pins.test.ts` asserts it
+lowercase. The two look similar in a `grep` but serve different roles; only the legend/toggle-family label
+was the ticket.
+
+### Follow-up — a pin-status badge on the tapped-pin card was tried, then reverted
+
+Ticket: *"when we click on the pin, these details open — at this point we do not show the pin status,
+either pending install, installed, or uploaded."* A small coloured pill (dot + `PIN_CATEGORY_META` label,
+same colour as the pin/legend/toggle) was added to `MapJobCard.tsx` under the Job# heading. Immediately
+reversed: *"I want to remove this highlighted status from the pin card."* `MapJobCard.tsx` is back to
+byte-identical with its pre-ticket committed state — no import, no derived value, no badge left behind.
+Noted here only so a future session doesn't re-add the same badge believing the request was never tried.
+
+⚠️ **That revert alone did NOT satisfy the request.** The next message, with a screenshot: *"still status
+is on the card — pending install — I want to remove the status from the card."* The "status" was never
+the badge (which by then didn't exist) — it was the PRE-EXISTING `· pending install` suffix on the date
+line (`"Sold 09/25/2026 · pending install"`), unrelated to anything built this session. Fixed in
+`getPinDateLabel` (`utils/sales-pins.ts`): the sold-date branch is now just `` `Sold ${sold}` ``, and the
+no-date-at-all fallback returns `''` instead of the bare word `'Pending install'`. The pin's status is
+still communicated — by COLOUR alone (the pin, the legend, `INS`/`PI`) — this line is a date and no longer
+also says the status in words.
+
+⚠️ **This function is SHARED** — `MapDetail/index.tsx`'s list-view row (`renderItem`'s `dateStr`) reads
+`getPinDateLabel` too, so the list view lost the same suffix for free, with no separate edit there.
+
+⚠️ **Do not reintroduce a status word on this line, in any form — text suffix or badge.** Two independent
+attempts at showing status IN WORDS on this card were both explicitly rejected in the same session. Colour
+is the established channel for it on this card.
+
+Test updated: `sales-pins.test.ts` › `'pending: scheduled install, else JUST the sold date, else empty —
+no status word'` now asserts `'Sold 09/20/2026'` (no suffix) and `''` (was `'Pending install'`).
+
+### Follow-up — installed pin now shares uploaded's DESIGN too, exactly as flagged above
+
+Ticket: *"make sure the installed pin design and the uploaded pin design [are not different] — we can use
+the uploaded pin design for both types."* This is precisely the follow-up flagged two sections up when
+`marker-pending*` was rebuilt from `marker-green*`'s artwork: installed and uploaded were colour-identical
+(`#4CBB17`, both) since the earlier colour-merge ticket, but installed still carried the OLD thin-ring-
+plus-checkmark shape while uploaded is a solid teardrop with a normal outline and no glyph — the same
+shape gap that pending had, now asked about installed too.
+
+Fixed the same way pending was — rebuild from `marker-green*` — except **no colour remap was needed at
+all**, since the two hexes were already equal: `assets/images/map/marker-installed{,@2x,@3x}.png` are now
+literally **byte-for-byte copies** of `marker-green{,@2x,@3x}.png` (verified: full-file byte comparison
+equal at all three sizes, not just the alpha silhouette). Installed and uploaded pins are now, for the
+first time, the exact same image.
+
+⚠️ **Still two separate FILES, not one shared `require()`.** Same reasoning as the colour-merge ticket:
+independent files that happen to render identically are easier to diverge again later (a future "tell them
+apart" ticket touches one clearly-named file) than untangling a shared image reference used by two
+different `iconImage` categories in both `LeadMap.tsx` and `SalesLeadPins.tsx`. Neither file needed any
+code change — both already resolve `installed` → `marker-installed.png` by name.
+
+⚠️ **`pendingInstall` is now the ONLY pin with its own distinct shape** (still the solid-teardrop design,
+just yellow — see the earlier follow-up). Uploaded and installed are visually and now byte-level identical;
+only the legend/toggle/dropdown-level distinction between them (documented in the follow-ups above) still
+exists in DATA, not in anything visible on the map itself.
+
+No code, colour constant, or test change — `PIN_CATEGORY_META.installed.color` was already `'#4CBB17'`.
+
+⚠️ Needs a device check: an Installed pin and an Uploaded pin, side by side, are visually indistinguishable
+on the map (which is now correct per this ticket) — confirm no stray thin-ring/checkmark artwork survives
+on any cached/bundled asset.

@@ -33,8 +33,33 @@ export interface FilterState {
   showRoute: boolean;
   showProduct: boolean;
   // Sold-job pin status (REVUIUX-439), applied on the device like web: pending =
-  // `pinCategory === 'pendingInstall'`, installed = everything else.
+  // `pinCategory === 'pendingInstall'`, installed = everything else. Drives ONLY this
+  // modal's dropdown — web parity, do not repoint the on-map toggles at this field.
   statusFilter: PinStatusFilter;
+  /**
+   * The Sales Map's on-map "INS" / "PI" quick toggles (`LeadMap.tsx`'s right-side
+   * stack) — NOT the same thing as `statusFilter` above, on purpose.
+   *
+   * Ticket: "in the installed toggle only installed pins [should] display, uploaded
+   * pins should not display in this toggle." `statusFilter === 'installed'` means
+   * "not pending" (uploaded counts as a historical install — web parity, see above),
+   * which is right for the dropdown but was also what the on-map toggle used at
+   * first, and that's the "uploaded is displayed" the ticket is against.
+   *
+   * ⚠️ **Deliberate divergence from web / from `statusFilter`'s own rule — do NOT
+   * "fix" this to reuse `statusFilter`.** These two are a STRICT `pinCategory` match
+   * (`getPinCategory(item) === 'installed'` / `'pendingInstall'`), independent of the
+   * modal's dropdown. A rep can therefore have the dropdown on "All Jobs" while the
+   * on-map toggle narrows further to a stricter set — that is correct, not a bug.
+   * Mutually exclusive with each other (enforced in `MapDetail`'s `onToggleFilter`
+   * handler, not by type), unrelated to `statusFilter`'s own value.
+   *
+   * Not counted in `countAppliedMapFilters` / not persisted via
+   * `savedFiltersToFilterState`, matching the other on-map-only toggles
+   * (`isHeatMap` / `myJobsOnly` / `isReferralOnly`) rather than `statusFilter`.
+   */
+  isMapInstalledOnly: boolean;
+  isMapPendingInstallOnly: boolean;
   centerCoords?: { latitude: number; longitude: number };
   // Persisted so a re-hydrated (saved) filter set restores the search mode and the
   // date-range label (web `savedFilters.searchType` / `savedFilters.rangeType`).

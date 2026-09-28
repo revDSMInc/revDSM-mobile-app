@@ -150,7 +150,8 @@ Full notes: **`docs/claude/deal-center.md`** (create flow) and **`docs/claude/de
   and after. Known CRLF: `dynamic-deal-diff.ts`, `drop-prices.ts`, `useDynamicCalculators.ts`,
   `RolloutView.tsx`, `EditCustomerModal.tsx`, `DynamicInspectionRenderer.tsx`, `InstallerJobCard.tsx`,
   `Installer/index.tsx`, `SummaryFinalizeCards.tsx`, `AppointmentSchedulerModal.tsx`, `InvestmentPanel.tsx`,
-  `useZoneCanvasser.ts`, `navigation/index.tsx`, `MapDetail/index.tsx`, `ThreadItems.tsx`, the iOS `Info.plist` /
+  `useZoneCanvasser.ts`, `navigation/index.tsx`, `MapDetail/index.tsx`, `ThreadItems.tsx`, `LeadMap.tsx`,
+  `MapFiltersModal.tsx`, the iOS `Info.plist` /
   `project.pbxproj` — and more; always check. `ChatThreads/index.tsx` is also **pure ASCII**.
 - ⚠️ **Write control characters as escape sequences** (`'\u0000'`, `'\u0002'`), never raw bytes — a raw one
   makes grep treat the file as binary.

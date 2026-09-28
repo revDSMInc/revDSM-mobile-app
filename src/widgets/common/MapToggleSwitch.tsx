@@ -7,13 +7,41 @@ interface MapToggleSwitchProps {
   onValueChange: (value: boolean) => void;
   activeLabel: string;
   inactiveLabel: string;
+  /**
+   * Track colour when ON. Default is the original hardcoded green, so every EXISTING
+   * caller (heatmap / my jobs / referral / favorite on the Sales Map) renders byte-
+   * identical to before this prop existed.
+   *
+   * Added for the pin-status toggles: "all the toggles [look] same, make it different
+   * for pending install and installed" — six switches sharing one colour meant a rep
+   * had to read the two-letter label to tell them apart at a glance. `IN` / `PD` now
+   * pass the SAME hex the Installed / Pending pins and legend dots already use
+   * (`PIN_CATEGORY_META` in `utils/sales-pins.ts`), so a toggle's colour identifies it
+   * the same way its pin does on the map.
+   */
+  activeColor?: string;
+  /** Inner thumb-dot colour when ON. Default matches the original hardcoded light green. */
+  activeDotColor?: string;
+  /**
+   * Active-label text colour. Default white, which is illegible on a bright/light
+   * `activeColor` (e.g. the pending-install yellow) — pass a dark colour alongside a
+   * light `activeColor` rather than leaving this at the default.
+   */
+  activeLabelColor?: string;
 }
+
+const DEFAULT_ACTIVE_COLOR = '#4CBB17';
+const DEFAULT_ACTIVE_DOT_COLOR = '#4ade80';
+const DEFAULT_ACTIVE_LABEL_COLOR = 'white';
 
 export const MapToggleSwitch = ({
   value,
   onValueChange,
   activeLabel,
   inactiveLabel,
+  activeColor = DEFAULT_ACTIVE_COLOR,
+  activeDotColor = DEFAULT_ACTIVE_DOT_COLOR,
+  activeLabelColor = DEFAULT_ACTIVE_LABEL_COLOR,
 }: MapToggleSwitchProps) => {
   const animatedValue = useRef(new Animated.Value(value ? 1 : 0)).current;
 
@@ -33,15 +61,21 @@ export const MapToggleSwitch = ({
 
   const backgroundColor = animatedValue.interpolate({
     inputRange: [0, 1],
-    outputRange: ['rgba(245, 245, 245, 0.8)', '#4CBB17'],
+    outputRange: ['rgba(245, 245, 245, 0.8)', activeColor],
   });
+
+  // Idle-track outline: the original literal was this exact green at 20% alpha
+  // (`#4CBB17` + `33`) — deriving it from `activeColor` the same way reproduces that
+  // literal exactly for every caller that doesn't pass a custom colour, and gives a
+  // custom-coloured toggle (pending install) a matching faint outline even while OFF.
+  const trackBorderColor = `${activeColor}33`;
 
   return (
     <View style={styles.container}>
       <TouchableOpacity
         activeOpacity={0.8}
         onPress={() => onValueChange(!value)}
-        style={styles.toggleContainer}
+        style={[styles.toggleContainer, { borderColor: trackBorderColor }]}
       >
         <Animated.View style={[styles.background, { backgroundColor }]}>
           <View style={styles.labelsContainer}>
@@ -52,12 +86,12 @@ export const MapToggleSwitch = ({
                 <Text style={styles.labelInactive}>{inactiveLabel}</Text>
               )
             )}
-            {value && <Text style={styles.labelActive}>{activeLabel}</Text>}
+            {value && <Text style={[styles.labelActive, { color: activeLabelColor }]}>{activeLabel}</Text>}
           </View>
 
           <Animated.View style={[styles.circle, { transform: [{ translateY }] }]}>
             <View
-              style={[styles.innerCircle, { backgroundColor: value ? '#4ade80' : '#cbd5e1' }]}
+              style={[styles.innerCircle, { backgroundColor: value ? activeDotColor : '#cbd5e1' }]}
             />
           </Animated.View>
         </Animated.View>
@@ -77,7 +111,6 @@ const styles = StyleSheet.create({
     height: 70,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#4CBB1733',
     overflow: 'hidden',
   },
   background: {
@@ -97,7 +130,6 @@ const styles = StyleSheet.create({
   labelActive: {
     fontSize: 9,
     fontWeight: '900',
-    color: 'white',
     position: 'absolute',
     top: 10,
   },

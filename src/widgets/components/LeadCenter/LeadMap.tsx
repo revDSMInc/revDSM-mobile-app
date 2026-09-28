@@ -45,11 +45,11 @@ import { JobImageUploadModal } from '../../modals/JobImageUploadModal';
 import { ReferralModal } from '../../modals/ReferralModal';
 import { MapLegendToggle } from '../ZoneCanvasser/MapLegend';
 import {
-  PIN_CATEGORIES,
   PIN_CATEGORY_META,
   countPinCategories,
   getPinCategory,
   jobNumberMatches,
+  legendRows,
   pinSortKeyExpression,
 } from '../../../utils/sales-pins';
 
@@ -135,7 +135,18 @@ interface LeadMapProps {
   isReferralFilter?: boolean;
   isMyJobsFilter?: boolean;
   isHeatMapFilter?: boolean;
-  onToggleFilter?: (filterType: 'heatmap' | 'myjobs' | 'referral' | 'favorite') => void;
+  // Pin-status quick filters (web has no analog — the map screen already carried
+  // MapFiltersModal's `statusFilter`; these mirror it with the SAME 4 on-map toggle
+  // switches heatmap/myjobs/referral/favorite already use). Ticket: "add a toggle
+  // button for the pending install pins and the installed pins ... the toggle should
+  // be same as already appended in the map." Booleans in, not the raw `statusFilter`
+  // string, so this component stays ignorant of `PinStatusFilter` — MapDetail owns
+  // that type and decides what "on" means.
+  isInstalledOnlyFilter?: boolean;
+  isPendingInstallOnlyFilter?: boolean;
+  onToggleFilter?: (
+    filterType: 'heatmap' | 'myjobs' | 'referral' | 'favorite' | 'installed' | 'pendingInstall'
+  ) => void;
   searchedJobNumber?: string;
   onFavoriteToggle?: (jobId: string, isFavorite: boolean) => void;
   showProduct?: boolean;
@@ -171,6 +182,8 @@ export const LeadMap = ({
   isReferralFilter,
   isMyJobsFilter,
   isHeatMapFilter,
+  isInstalledOnlyFilter,
+  isPendingInstallOnlyFilter,
   onToggleFilter,
   searchedJobNumber,
   onFavoriteToggle,
@@ -289,13 +302,15 @@ export const LeadMap = ({
     }
   }, [updatedJob, selectedLead]);
 
-  const { isHeatMapActive, isMyJobsOnly, isReferralOnly, isFavoriteOnly } = useMemo(() => {
+  const { isHeatMapActive, isMyJobsOnly, isReferralOnly, isFavoriteOnly, isInstalledOnly, isPendingOnly } = useMemo(() => {
     if (onToggleFilter) {
       return {
         isHeatMapActive: !!isHeatMapFilter,
         isMyJobsOnly: !!isMyJobsFilter,
         isReferralOnly: !!isReferralFilter,
         isFavoriteOnly: !!isFavoriteFilter,
+        isInstalledOnly: !!isInstalledOnlyFilter,
+        isPendingOnly: !!isPendingInstallOnlyFilter,
       };
     }
     return {
@@ -303,6 +318,11 @@ export const LeadMap = ({
       isMyJobsOnly: activeFilters.includes('MJ-1'),
       isReferralOnly: activeFilters.includes('RF-2'),
       isFavoriteOnly: activeFilters.includes('FV-3') || !!isFavoriteFilter,
+      // No local-mode (`activeFilters`) analog for these two — that fallback path
+      // only exists for a caller with no `leads` array to filter (the embedded
+      // preview in `OperationalSections.tsx`), where a pin-status filter is moot.
+      isInstalledOnly: false,
+      isPendingOnly: false,
     };
   }, [
     activeFilters,
@@ -310,6 +330,8 @@ export const LeadMap = ({
     isReferralFilter,
     isMyJobsFilter,
     isHeatMapFilter,
+    isInstalledOnlyFilter,
+    isPendingInstallOnlyFilter,
     onToggleFilter,
   ]);
 
@@ -1258,23 +1280,67 @@ export const LeadMap = ({
         <Icon name="arrow-left" size={24} color="white" />
       </TouchableOpacity>
 
-      {/* Right Side Vertical Controls (Toggles) */}
+      {/* Right Side Vertical Controls (Toggles) — TOP-right, not bottom.
+          Ticket: "change the toggle position from bottom to top." Offset clears the
+          status bar / notch via `insets.top` (same pattern the old `bottom` position
+          used with `insets.bottom`) plus enough margin for the screen's own header
+          overlay (back button top-left, list/filter icons from `HeaderContext` — see
+          `widgets/common/MainHeader.tsx`) so the stack doesn't start under it. */}
       <View 
         className="absolute right-5 gap-3 items-center" 
         style={{ 
           zIndex: 10,
-          bottom: Platform.OS === 'android' ? 120 + insets.bottom : 120,
+          top: Platform.OS === 'android' ? 100 + insets.top : 100,
         }}
       >
         <View className="gap-2">
-          {[
-            { active: 'HM', inactive: 'DEF', id: 'HT-0', type: 'heatmap' as const },
-            { active: 'MJ', inactive: 'AJ', id: 'MJ-1', type: 'myjobs' as const },
-            { active: 'RF', inactive: 'DEF', id: 'RF-2', type: 'referral' as const },
-            { active: 'FV', inactive: 'star', id: 'FV-3', type: 'favorite' as const }
-          ].map((btn) => {
+          {(
+            [
+              // Ticket: "move that toggle from very bottom to top ... in their
+              // position", then "pending install toggle also move from bottom to top" —
+              // BOTH pin-status toggles are now first/second in this array (render
+              // order top-to-bottom in the stack below), grouped together since they are
+              // a matched, mutually-exclusive pair. HM/MJ/RF/FV keep their relative
+              // order, now 3rd-6th instead of 1st-4th.
+              //
+              // ⚠️ Coloured to match their OWN pins (`PIN_CATEGORY_META`), unlike the
+              // four below which stay the switch's default green. "All the toggles
+              // [look] the same — make it different for pending install and installed":
+              // six identical green switches meant telling INS/PI apart from HM/MJ/RF/FV
+              // — and from each other — needed reading the two-letter label. PI's dark
+              // label keeps it legible on its yellow track (white-on-yellow is the
+              // switch's low-contrast default).
+              {
+                active: 'INS', inactive: 'DEF', id: 'IN-4', type: 'installed' as const,
+                activeColor: PIN_CATEGORY_META.installed.color,
+              },
+              {
+                active: 'PI', inactive: 'DEF', id: 'PD-5', type: 'pendingInstall' as const,
+                activeColor: PIN_CATEGORY_META.pendingInstall.color,
+                activeDotColor: '#FFF176',
+                activeLabelColor: '#1C252E',
+              },
+              { active: 'HM', inactive: 'DEF', id: 'HT-0', type: 'heatmap' as const },
+              { active: 'MJ', inactive: 'AJ', id: 'MJ-1', type: 'myjobs' as const },
+              { active: 'RF', inactive: 'DEF', id: 'RF-2', type: 'referral' as const },
+              { active: 'FV', inactive: 'star', id: 'FV-3', type: 'favorite' as const },
+            ] as Array<{
+              active: string;
+              inactive: string;
+              id: string;
+              type: 'heatmap' | 'myjobs' | 'referral' | 'favorite' | 'installed' | 'pendingInstall';
+              activeColor?: string;
+              activeDotColor?: string;
+              activeLabelColor?: string;
+            }>
+          ).map((btn) => {
             const isFilterActive = onToggleFilter
-              ? (btn.type === 'heatmap' ? isHeatMapActive : btn.type === 'myjobs' ? isMyJobsOnly : btn.type === 'referral' ? isReferralOnly : isFavoriteOnly)
+              ? (btn.type === 'heatmap' ? isHeatMapActive
+                : btn.type === 'myjobs' ? isMyJobsOnly
+                : btn.type === 'referral' ? isReferralOnly
+                : btn.type === 'favorite' ? isFavoriteOnly
+                : btn.type === 'installed' ? isInstalledOnly
+                : isPendingOnly)
               : activeFilters.includes(btn.id);
             return (
               <MapToggleSwitch
@@ -1292,6 +1358,9 @@ export const LeadMap = ({
                 }}
                 activeLabel={btn.active}
                 inactiveLabel={btn.inactive}
+                activeColor={btn.activeColor}
+                activeDotColor={btn.activeDotColor}
+                activeLabelColor={btn.activeLabelColor}
               />
             );
           })}
@@ -1332,14 +1401,17 @@ export const LeadMap = ({
                 elevation: 6,
               }}
             >
-              {PIN_CATEGORIES.map((c) => (
-                <View key={c} style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {/* Uploaded merged into Installed here — the two pins are colour- and
+                  shape-identical on the map now, so a separate "Uploaded" row was
+                  explaining a distinction the rep can no longer see. See `legendRows`. */}
+              {legendRows(pinCategoryCounts).map((row) => (
+                <View key={row.key} style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <View
                     style={{
                       width: 12,
                       height: 12,
                       borderRadius: 6,
-                      backgroundColor: PIN_CATEGORY_META[c].color,
+                      backgroundColor: row.color,
                       marginRight: 8,
                     }}
                   />
@@ -1347,10 +1419,10 @@ export const LeadMap = ({
                     numberOfLines={1}
                     style={{ flex: 1, fontSize: 12, fontWeight: '700', color: isDark ? '#e2e8f0' : '#334155' }}
                   >
-                    {PIN_CATEGORY_META[c].label}
+                    {row.label}
                   </Text>
                   <Text style={{ fontSize: 12, fontWeight: '800', color: isDark ? '#ffffff' : '#0f172a', marginLeft: 12 }}>
-                    {pinCategoryCounts[c]}
+                    {row.count}
                   </Text>
                 </View>
               ))}

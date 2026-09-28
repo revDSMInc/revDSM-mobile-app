@@ -961,3 +961,78 @@ painted over".
 `LeadMap.tsx`'s pin-colour legend is now a bottom-left palette button that opens the card and turns into a
 ✕ (footsteps pattern, `MapLegendToggle`). The temporary boundary-lock bypass has been removed again. Full
 notes and the Android touch trap: `maps-zone-canvasser.md` › "Sales Map pin legend: bottom-left…".
+
+### Follow-up — pending-install pin recoloured yellow, installed matched to uploaded's green
+
+`utils/sales-pins.ts`'s `PIN_CATEGORY_META` and the `marker-{pending,installed}{,@2x,@3x}.png` assets
+changed colour twice this pass: `pendingInstall` purple → `#FFD400` yellow, and `installed` moved off its
+signed-off spring-mint `#00FFA3` to match `uploaded`'s `#4CBB17` exactly (a deliberate reversal of the
+mint decision — the premise it was picked under no longer holds). Then `marker-pending*` was rebuilt
+entirely from `marker-green*`'s artwork (not just recoloured), because the pending pin's SHAPE — a thin
+ring with a white dot — never matched uploaded's solid teardrop even after the colour matched. Full notes,
+the ΔE history, the pixel-remap technique and its verification: `maps-zone-canvasser.md` › "Pending-install
+pin: purple → yellow…" and the two follow-ups after it. ⚠️ `installed`'s shape (thin ring + checkmark)
+was deliberately left as-is — only `pendingInstall`'s shape was rebuilt; see that file before assuming
+they now match in every respect.
+
+### Follow-up — legend merges Uploaded into Installed; two new on-map status toggles
+
+Two more changes, same session as the colour/shape work above. (1) The legend's `PIN_CATEGORIES.map`
+became `legendRows(pinCategoryCounts).map` — a new pure `legendRows()` in `utils/sales-pins.ts` collapses
+Uploaded and Installed into one "Installed" row (count = both, summed), since the two are now visually
+identical; `pendingInstall` is unaffected, and `PinCategory` itself stays three-valued everywhere else.
+(2) `LeadMap.tsx`'s right-side toggle stack gained two `MapToggleSwitch` buttons, `IN` / `PD`, wired
+through `onToggleFilter`'s widened union (`'installed' | 'pendingInstall'` added) to `MapDetail/index.tsx`,
+which flips the SAME `filters.statusFilter` the filters-modal dropdown already writes — no new filtering
+logic, and the two switches are mutually exclusive with each other only because `statusFilter` is one
+field. Full notes: `maps-zone-canvasser.md` › "Sales Map legend: Uploaded merged into Installed" and
+"On-map toggle switches for the pin-status filter".
+
+⚠️ `LeadMap.tsx` is **CRLF** (now in the root guide's list) — `newline=''` on both ends.
+
+### Follow-up — the `IN` / `PD` toggles now carry their OWN colour instead of the switch's default green
+
+Same session, one more pass on the two toggles just added. `LeadMap.tsx`'s button array now passes
+`activeColor: PIN_CATEGORY_META.installed.color` / `.pendingInstall.color` (plus a dark
+`activeLabelColor` on `PD`, for contrast on its yellow) into `MapToggleSwitch`'s three new optional colour
+props. Full notes and the "why the label colour isn't cosmetic" reasoning: `widgets/common` is app-wide,
+so the component-level write-up is in `docs/claude/app-wide.md` › "`MapToggleSwitch` gained per-instance
+colours…"; the ticket and the Sales-Map-specific side of it is in `maps-zone-canvasser.md` › "the two new
+toggles were both the switch's default green". No change to `matchesPinStatusFilter` or the filtering
+pipeline — this pass was presentational only.
+
+⚠️ **The `IN` / `PD` active labels used above are stale** — renamed to `INS` / `PI` in the same session
+(`maps-zone-canvasser.md` › "active-state labels renamed"). Trace this code by `type: 'installed'` /
+`'pendingInstall'`, not by the two-letter label.
+
+### Follow-up — `INS` no longer shares `statusFilter` with the modal dropdown; moved to top of its stack
+
+Same session, one more pass. The "reuses `statusFilter`" design described two follow-ups up is
+**superseded** — `INS` / `PI` now write two new independent `FilterState` booleans
+(`isMapInstalledOnly` / `isMapPendingInstallOnly`) so `INS` can be STRICT (`pinCategory === 'installed'`
+only, excluding uploaded), while the modal's own "Installed" dropdown option keeps its unrelated,
+unchanged "not pending" meaning. `INS` also moved to the top of `LeadMap.tsx`'s right-side stack (was
+5th, now 1st; the other five kept their order). Full reasoning, the three-way legend/dropdown/toggle
+split this creates, and the device-check list: `maps-zone-canvasser.md` › "the on-map toggle now
+STRICTLY excludes uploaded pins, and INS moved to the top of the stack".
+
+⚠️ `MapFiltersModal.tsx` is **CRLF** (now in the root guide's list) — `newline=''` on both ends.
+
+### Follow-up — stack repositioned top-right; `PI` grouped with `INS`; label capitalised; a status badge tried and reverted
+
+Same session, closing passes. `LeadMap.tsx`'s right-side toggle stack moved from `bottom` to `top`
+positioning (whole six-switch stack, not just the two pin-status ones), and `PI` joined `INS` at the top
+of the array so the pair renders together. `sales-pins.ts`'s `PIN_CATEGORY_META.pendingInstall.label`
+was capitalised to `'Pending Install'`, matching its siblings. A coloured status badge was added to
+`MapJobCard.tsx` then immediately reverted — that file is back to byte-identical with its pre-session
+state. Full notes, including the un-verified `top` offset guess and why the badge came back out:
+`maps-zone-canvasser.md` › the three follow-ups after "the on-map toggle now STRICTLY excludes uploaded
+pins…".
+
+### Follow-up — the "· pending install" TEXT on the date line is gone; the badge revert alone wasn't the fix
+
+The badge revert above didn't actually satisfy the "remove the status" request — the status the rep meant
+was the pre-existing `getPinDateLabel` suffix (`"Sold {date} · pending install"`), not the badge. Fixed in
+`utils/sales-pins.ts`, shared by both `MapJobCard.tsx` and `MapDetail`'s list-view row. Full notes and the
+"do not reintroduce a status word here, colour is the channel" rule: `maps-zone-canvasser.md` › "still
+status is on the card" follow-up, right after the badge-revert note.
