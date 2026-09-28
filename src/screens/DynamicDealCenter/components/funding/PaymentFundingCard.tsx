@@ -11,9 +11,11 @@ import {
   doneFor,
   formatStamp,
   isApplicationClosed,
+  isFinancingBypassed,
   lastSendNote,
   openShort,
   ownerOf,
+  shortMethod,
   type FundingPayment,
 } from '../../utils/funding';
 
@@ -113,6 +115,28 @@ function Banner({ tone, children }: { tone: 'warn' | 'bad'; children: React.Reac
   );
 }
 
+/**
+ * Stands in for the progress rail + rep actions on a bypassed financing row
+ * (see `isFinancingBypassed`) — replaces "what step is this at" with "how this
+ * amount is being paid", since there is no step to report yet. Reads as a
+ * statement about the payment method, never as an apology for a missing
+ * feature — this is the ONLY copy a rep sees for a bypassed row, so it must
+ * stand on its own.
+ */
+function FinancingBypassNotice({ method }: { method: string }) {
+  const label = shortMethod(method) || 'financing';
+  return (
+    <View style={{ borderRadius: 12, paddingHorizontal: 13, paddingVertical: 12, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE }}>
+      <Text style={{ fontSize: FS.BODY, fontFamily: PS.extrabold, color: FUND.TEXT, lineHeight: 17 }}>
+        Financed through {label}
+      </Text>
+      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, lineHeight: 17, marginTop: 4 }}>
+        Approval and funding for this amount are confirmed directly between the lender and the customer.
+      </Text>
+    </View>
+  );
+}
+
 export function PaymentFundingCard({
   payment: p,
   title,
@@ -130,6 +154,10 @@ export function PaymentFundingCard({
   onReactivate,
 }: Props) {
   const steps = FLOW[p.type] || [];
+  /** Financing bypass — see `isFinancingBypassed`. Swaps the whole rail + rep
+   * actions below for one message; remove this line and its branch together
+   * with the flag once real lender decisions arrive. */
+  const bypassed = isFinancingBypassed(p);
   /** Where the last send went — see the resend block below. */
   const sendNote = lastSendNote(p);
   const finished = doneFor(p, covered);
@@ -176,7 +204,9 @@ export function PaymentFundingCard({
   // A balance payment's LAST step is always somebody else's — say who, so the
   // unchecked dot doesn't read as an outstanding rep task.
   let note = '';
-  if (p.type === 'check' && p.kind === 'down' && !finished) {
+  if (bypassed) {
+    // FinancingBypassNotice says everything this row needs to say.
+  } else if (p.type === 'check' && p.kind === 'down' && !finished) {
     note = 'Deposited is posted by the bank. It is not a rep step and never checks off here.';
   } else if (p.kind === 'bal' && !finished) {
     note =
@@ -206,193 +236,199 @@ export function PaymentFundingCard({
         </View>
       </View>
 
-      <FundingStepper payment={p} covered={covered} />
+      {bypassed ? (
+        <FinancingBypassNotice method={p.method} />
+      ) : (
+        <>
+        <FundingStepper payment={p} covered={covered} />
 
-      {/* ── rep actions ──
-          Each is gated on the SERVER's own flag, never on a local guess: only the
-          rep's own steps appear, and each disappears the moment the record comes
-          back with it done. */}
-      {p.type === 'check' && p.kind === 'down' && !p.collected && (
-        <ActionButton label="Mark collected" onPress={onMarkCollected} busy={isBusy} />
-      )}
+        {/* ── rep actions ──
+            Each is gated on the SERVER's own flag, never on a local guess: only the
+            rep's own steps appear, and each disappears the moment the record comes
+            back with it done. */}
+        {p.type === 'check' && p.kind === 'down' && !p.collected && (
+          <ActionButton label="Mark collected" onPress={onMarkCollected} busy={isBusy} />
+        )}
 
-      {/* ⚠️ Sits ABOVE the send button so the rep reads why they are sending again
-          before the button that does it — the row is back at `linkSent: false`, so
-          without this the card is indistinguishable from one never sent. */}
-      {!!closedNote && !bankDeclined && <Banner tone="warn">{closedNote}</Banner>}
+        {/* ⚠️ Sits ABOVE the send button so the rep reads why they are sending again
+            before the button that does it — the row is back at `linkSent: false`, so
+            without this the card is indistinguishable from one never sent. */}
+        {!!closedNote && !bankDeclined && <Banner tone="warn">{closedNote}</Banner>}
 
-      {(p.type === 'cc' || p.type === 'bank') && !p.linkSent && !bankDeclined && (
-        <ActionButton
-          // "Send again" is the honest label once the homeowner has already had one.
-          label={
-            linkBlocked
-              ? 'Payments not set up — can’t send'
-              : `${closed ? 'Send a new' : 'Send'} ${p.type === 'bank' ? 'application' : 'payment'} link`
-          }
-          onPress={onSendLink}
-          busy={isBusy}
-          // Withdrawn rather than left live to fail: a 409 the rep cannot fix
-          // invites retry-until-support. The reason is on the banner above.
-          disabled={linkBlocked}
-        />
-      )}
-
-      {/* ── the link went to the wrong place ──
-          Once `linkSent` ticks, the send button above disappears — so a rep who
-          mistyped a digit was left on a card that says the link went out with no
-          way to correct it (REVDSM-1155 Item A).
-
-          ⚠️ **The destination is shown, not just the button.** `Link Sent` alone
-          cannot tell a rep that anything is wrong; reading `Texted to 443-878-4937`
-          back to them is what makes the typo visible. A resend button without it
-          would just be a second chance to send to the same wrong number.
-
-          ⚠️ Withdrawn once the card is on file / a lender has answered — see
-          `canResendLink`. Past that a resend has no legitimate use and the backend
-          intends to refuse it; the route for a different card is to remove the row
-          in the pricing panel and add a new one. */}
-      {canResendLink(p) && !bankDeclined && (
-        <View style={{ marginTop: 12, paddingHorizontal: 13, paddingVertical: 12, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Ionicons
-              name={p.sentChannel === 'email' ? 'mail-outline' : p.sentChannel === 'qr' ? 'qr-code-outline' : 'chatbubble-ellipses-outline'}
-              size={14}
-              color={FUND.SUBTEXT}
-            />
-            <Text style={{ flex: 1, fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT }} numberOfLines={2}>
-              {sendNote}
-            </Text>
-          </View>
-          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, lineHeight: 16, color: FUND.MUTED, marginTop: 6 }}>
-            {p.sentChannel === 'qr'
-              ? 'Didn’t go through? Send it to their phone or email instead.'
-              : 'Wrong number or address? Fix it and send the same link again.'}
-          </Text>
-          {/* Outlined, not green: the primary action on this card is still waiting
-              for the homeowner, and a filled button here would compete with it. */}
+        {(p.type === 'cc' || p.type === 'bank') && !p.linkSent && !bankDeclined && (
           <ActionButton
-            label={linkBlocked ? 'Payments not set up — can’t send' : 'Send again'}
-            alt
+            // "Send again" is the honest label once the homeowner has already had one.
+            label={
+              linkBlocked
+                ? 'Payments not set up — can’t send'
+                : `${closed ? 'Send a new' : 'Send'} ${p.type === 'bank' ? 'application' : 'payment'} link`
+            }
             onPress={onSendLink}
             busy={isBusy}
+            // Withdrawn rather than left live to fail: a 409 the rep cannot fix
+            // invites retry-until-support. The reason is on the banner above.
             disabled={linkBlocked}
           />
-        </View>
-      )}
+        )}
 
-      {/* Card on File is not a rep action — the processor reports it on Sync.
-          Charging is: a DOWN-payment card on file that has not been charged. A
-          balance card is charged by the processor after install and the endpoint
-          refuses it (spec §5.10). */}
-      {p.type === 'cc' && p.kind === 'down' && p.step >= 2 && !p.charged && (
-        <ActionButton label={`Charge $${p.amount.toLocaleString()}`} onPress={onChargeCard} busy={isBusy} />
-      )}
+        {/* ── the link went to the wrong place ──
+            Once `linkSent` ticks, the send button above disappears — so a rep who
+            mistyped a digit was left on a card that says the link went out with no
+            way to correct it (REVDSM-1155 Item A).
 
-      {/* ── drift ──
-          The lender is committed to `baseline`; the job now needs `liveUsage`. An
-          addendum that moves the contract price does this every time, so on the
-          deal-edit flow it is the normal case, not an edge one.
+            ⚠️ **The destination is shown, not just the button.** `Link Sent` alone
+            cannot tell a rep that anything is wrong; reading `Texted to 443-878-4937`
+            back to them is what makes the typo visible. A resend button without it
+            would just be a second chance to send to the same wrong number.
 
-          ⚠️ Shown as PRIOR → NEW rather than as the new figure alone: until the row
-          is re-settled the amount on this card is NOT what the lender agreed to, and
-          a single number cannot say that. The button is the only thing that closes
-          the gap — `reactivate` is refused on a declined row and 409s when the two
-          already match, so it is offered only while both are true here. */}
-      {drift && !bankDeclined && (
-        <View style={{ marginTop: 12, paddingHorizontal: 13, paddingVertical: 12, backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#F1F5F9', borderRadius: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: onReactivate ? 10 : 0 }}>
-            <View>
-              <Text style={{ fontSize: FS.TINY, fontFamily: PS.bold, letterSpacing: 0.3, color: '#94A3B8' }}>PRIOR</Text>
-              <Text style={{ fontSize: FS.LEAD, fontFamily: PS.extrabold, color: FUND.TEXT, marginTop: 2 }}>${drift.prior.toLocaleString()}</Text>
-            </View>
-            <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.regular, color: '#CBD5E1' }}>→</Text>
-            <View>
-              <Text style={{ fontSize: FS.TINY, fontFamily: PS.bold, letterSpacing: 0.3, color: '#94A3B8' }}>NEW</Text>
-              <Text style={{ fontSize: FS.LEAD, fontFamily: PS.extrabold, color: FUND.TEXT, marginTop: 2 }}>${drift.live.toLocaleString()}</Text>
-            </View>
-            <View style={{ marginLeft: 'auto', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: drift.up ? FUND.AMBER_BG : '#E0F2FE' }}>
-              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, color: drift.up ? '#B45309' : '#0369A1' }}>
-                {drift.up ? '+' : '−'}${Math.abs(drift.diff).toLocaleString()}
+            ⚠️ Withdrawn once the card is on file / a lender has answered — see
+            `canResendLink`. Past that a resend has no legitimate use and the backend
+            intends to refuse it; the route for a different card is to remove the row
+            in the pricing panel and add a new one. */}
+        {canResendLink(p) && !bankDeclined && (
+          <View style={{ marginTop: 12, paddingHorizontal: 13, paddingVertical: 12, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons
+                name={p.sentChannel === 'email' ? 'mail-outline' : p.sentChannel === 'qr' ? 'qr-code-outline' : 'chatbubble-ellipses-outline'}
+                size={14}
+                color={FUND.SUBTEXT}
+              />
+              <Text style={{ flex: 1, fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT }} numberOfLines={2}>
+                {sendNote}
               </Text>
             </View>
+            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, lineHeight: 16, color: FUND.MUTED, marginTop: 6 }}>
+              {p.sentChannel === 'qr'
+                ? 'Didn’t go through? Send it to their phone or email instead.'
+                : 'Wrong number or address? Fix it and send the same link again.'}
+            </Text>
+            {/* Outlined, not green: the primary action on this card is still waiting
+                for the homeowner, and a filled button here would compete with it. */}
+            <ActionButton
+              label={linkBlocked ? 'Payments not set up — can’t send' : 'Send again'}
+              alt
+              onPress={onSendLink}
+              busy={isBusy}
+              disabled={linkBlocked}
+            />
           </View>
-          {!!onReactivate && (
+        )}
+
+        {/* Card on File is not a rep action — the processor reports it on Sync.
+            Charging is: a DOWN-payment card on file that has not been charged. A
+            balance card is charged by the processor after install and the endpoint
+            refuses it (spec §5.10). */}
+        {p.type === 'cc' && p.kind === 'down' && p.step >= 2 && !p.charged && (
+          <ActionButton label={`Charge $${p.amount.toLocaleString()}`} onPress={onChargeCard} busy={isBusy} />
+        )}
+
+        {/* ── drift ──
+            The lender is committed to `baseline`; the job now needs `liveUsage`. An
+            addendum that moves the contract price does this every time, so on the
+            deal-edit flow it is the normal case, not an edge one.
+
+            ⚠️ Shown as PRIOR → NEW rather than as the new figure alone: until the row
+            is re-settled the amount on this card is NOT what the lender agreed to, and
+            a single number cannot say that. The button is the only thing that closes
+            the gap — `reactivate` is refused on a declined row and 409s when the two
+            already match, so it is offered only while both are true here. */}
+        {drift && !bankDeclined && (
+          <View style={{ marginTop: 12, paddingHorizontal: 13, paddingVertical: 12, backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#F1F5F9', borderRadius: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: onReactivate ? 10 : 0 }}>
+              <View>
+                <Text style={{ fontSize: FS.TINY, fontFamily: PS.bold, letterSpacing: 0.3, color: '#94A3B8' }}>PRIOR</Text>
+                <Text style={{ fontSize: FS.LEAD, fontFamily: PS.extrabold, color: FUND.TEXT, marginTop: 2 }}>${drift.prior.toLocaleString()}</Text>
+              </View>
+              <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.regular, color: '#CBD5E1' }}>→</Text>
+              <View>
+                <Text style={{ fontSize: FS.TINY, fontFamily: PS.bold, letterSpacing: 0.3, color: '#94A3B8' }}>NEW</Text>
+                <Text style={{ fontSize: FS.LEAD, fontFamily: PS.extrabold, color: FUND.TEXT, marginTop: 2 }}>${drift.live.toLocaleString()}</Text>
+              </View>
+              <View style={{ marginLeft: 'auto', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: drift.up ? FUND.AMBER_BG : '#E0F2FE' }}>
+                <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, color: drift.up ? '#B45309' : '#0369A1' }}>
+                  {drift.up ? '+' : '−'}${Math.abs(drift.diff).toLocaleString()}
+                </Text>
+              </View>
+            </View>
+            {!!onReactivate && (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={onReactivate}
+                disabled={isBusy}
+                style={{ borderRadius: 11, paddingVertical: 12, alignItems: 'center', backgroundColor: isBusy ? '#94A3B8' : '#0C2618' }}
+              >
+                <Text style={{ fontSize: FS.BODY, fontFamily: PS.extrabold, letterSpacing: 0.2, color: '#fff' }}>
+                  Reactivate loan for ${drift.live.toLocaleString()}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {p.type === 'bank' && !p.activated && (p.decision === 'full' || (p.decision === 'short' && !isOpenShort)) && (
+          <ActionButton
+            label={`Authorize & activate loan for $${(p.approvedAmt != null ? p.approvedAmt : p.amount).toLocaleString()}`}
+            onPress={onActivate}
+            busy={isBusy}
+          />
+        )}
+
+        {p.type === 'bank' && isOpenShort && (
+          <>
+            <Banner tone="warn">
+              Approved for ${(p.approvedAmt || 0).toLocaleString()} of ${(p.requested || p.amount).toLocaleString()} requested. $
+              {shortfall.toLocaleString()} needs a different payment method before this can be authorized.
+            </Banner>
+            <ActionButton label="Add another payment method" onPress={onEditPayments} alt disabled={isBusy} />
+          </>
+        )}
+
+        {p.type === 'bank' && p.decision === 'declined' && !bankDeclined && (
+          <>
+            <Banner tone="bad">
+              Declined. The full ${p.amount.toLocaleString()} needs a different payment method — or the job gets resulted as a
+              bank decline.
+            </Banner>
+            <ActionButton label="Add another payment method" onPress={onEditPayments} alt disabled={isBusy} />
+            <ActionButton label="Result as Bank Decline" onPress={onResultAsBankDecline} alt tone="danger" disabled={isBusy} />
+          </>
+        )}
+
+        {/* Status check — only while a third party still owes an answer. A check has
+            no external system to poll and `sync` refuses it (spec §5.8). */}
+        {canSync(p) && !finished && (
+          <View style={{ marginTop: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: FUND.MUTED }}>
+              {p.syncedAt ? `Synced ${formatStamp(p.syncedAt)}` : 'Awaiting response'}
+            </Text>
             <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={onReactivate}
+              activeOpacity={0.8}
+              onPress={onSync}
               disabled={isBusy}
-              style={{ borderRadius: 11, paddingVertical: 12, alignItems: 'center', backgroundColor: isBusy ? '#94A3B8' : '#0C2618' }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isBusy ? 0.55 : 1, backgroundColor: FUND.FILL, borderWidth: 1, borderColor: FUND.BORDER, borderRadius: 18, paddingHorizontal: 13, paddingVertical: 7 }}
             >
-              <Text style={{ fontSize: FS.BODY, fontFamily: PS.extrabold, letterSpacing: 0.2, color: '#fff' }}>
-                Reactivate loan for ${drift.live.toLocaleString()}
-              </Text>
+              {isBusy ? <ActivityIndicator size="small" color={FUND.SUBTEXT} /> : <Ionicons name="refresh" size={13} color={FUND.SUBTEXT} />}
+              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT }}>Sync</Text>
             </TouchableOpacity>
-          )}
-        </View>
-      )}
-
-      {p.type === 'bank' && !p.activated && (p.decision === 'full' || (p.decision === 'short' && !isOpenShort)) && (
-        <ActionButton
-          label={`Authorize & activate loan for $${(p.approvedAmt != null ? p.approvedAmt : p.amount).toLocaleString()}`}
-          onPress={onActivate}
-          busy={isBusy}
-        />
-      )}
-
-      {p.type === 'bank' && isOpenShort && (
-        <>
-          <Banner tone="warn">
-            Approved for ${(p.approvedAmt || 0).toLocaleString()} of ${(p.requested || p.amount).toLocaleString()} requested. $
-            {shortfall.toLocaleString()} needs a different payment method before this can be authorized.
-          </Banner>
-          <ActionButton label="Add another payment method" onPress={onEditPayments} alt disabled={isBusy} />
-        </>
-      )}
-
-      {p.type === 'bank' && p.decision === 'declined' && !bankDeclined && (
-        <>
-          <Banner tone="bad">
-            Declined. The full ${p.amount.toLocaleString()} needs a different payment method — or the job gets resulted as a
-            bank decline.
-          </Banner>
-          <ActionButton label="Add another payment method" onPress={onEditPayments} alt disabled={isBusy} />
-          <ActionButton label="Result as Bank Decline" onPress={onResultAsBankDecline} alt tone="danger" disabled={isBusy} />
-        </>
-      )}
-
-      {/* Status check — only while a third party still owes an answer. A check has
-          no external system to poll and `sync` refuses it (spec §5.8). */}
-      {canSync(p) && !finished && (
-        <View style={{ marginTop: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: FUND.MUTED }}>
-            {p.syncedAt ? `Synced ${formatStamp(p.syncedAt)}` : 'Awaiting response'}
-          </Text>
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={onSync}
-            disabled={isBusy}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isBusy ? 0.55 : 1, backgroundColor: FUND.FILL, borderWidth: 1, borderColor: FUND.BORDER, borderRadius: 18, paddingHorizontal: 13, paddingVertical: 7 }}
-          >
-            {isBusy ? <ActivityIndicator size="small" color={FUND.SUBTEXT} /> : <Ionicons name="refresh" size={13} color={FUND.SUBTEXT} />}
-            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT }}>Sync</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {!!finished && (
-        <View style={{ marginTop: 12, paddingTop: 11, borderTopWidth: 1, borderTopColor: '#D8EECD', flexDirection: 'row', gap: 7 }}>
-          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.GREEN_TEXT }}>✓</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.GREEN_TEXT, lineHeight: 17 }}>All set for now</Text>
-            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: '#5F7A55', lineHeight: 17, marginTop: 2 }}>{finished}</Text>
           </View>
-        </View>
-      )}
+        )}
 
-      {!!note && (
-        <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderStyle: 'dashed', borderTopColor: FUND.BORDER }}>
-          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, lineHeight: 17 }}>{note}</Text>
-        </View>
+        {!!finished && (
+          <View style={{ marginTop: 12, paddingTop: 11, borderTopWidth: 1, borderTopColor: '#D8EECD', flexDirection: 'row', gap: 7 }}>
+            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.GREEN_TEXT }}>✓</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.GREEN_TEXT, lineHeight: 17 }}>All set for now</Text>
+              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: '#5F7A55', lineHeight: 17, marginTop: 2 }}>{finished}</Text>
+            </View>
+          </View>
+        )}
+
+        {!!note && (
+          <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderStyle: 'dashed', borderTopColor: FUND.BORDER }}>
+            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, lineHeight: 17 }}>{note}</Text>
+          </View>
+        )}
+        </>
       )}
     </View>
   );

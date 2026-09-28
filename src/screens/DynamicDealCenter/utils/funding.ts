@@ -64,6 +64,38 @@ import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
 export const MULTI_METHOD_ENABLED = true;
 
 /**
+ * ── financing bypass (TEMPORARY) ────────────────────────────────────────────
+ *
+ * Ticket: a `bank` (financing — GreenSky, Wells Fargo, …) row can currently
+ * never leave "Link Sent": the lender integration behind `sync`/decision isn't
+ * live yet, so no decision ever arrives, `activated` never ticks, and — because
+ * `fundingBlockers` mirrors the server's real submit rule — the rep is stuck
+ * behind a step nobody can complete. Card and check are unaffected; both are
+ * fully live today.
+ *
+ * ⚠️ **Everything this flag guards is meant to come out the day real decisions
+ * start arriving.** Search the codebase for `FINANCING_BYPASS_ENABLED` /
+ * `isFinancingBypassed` to find every branch it touches (this file's
+ * `fundingBlockers`, and `PaymentFundingCard`'s stepper/action rendering) —
+ * flipping this back to `false` (or deleting it and the branches) restores the
+ * exact original behaviour, since nothing it guards was rewritten, only
+ * skipped.
+ *
+ * ⚠️ Deliberately does NOT touch `coverageOK` / `fundedAmount` / `stateOf` /
+ * `FLOW` — a bypassed row still counts its pledged amount toward the contract
+ * total exactly as before, and the server remains the one source of truth for
+ * whether a submit actually succeeds (spec rule 3: nothing here advances a
+ * payment). This only stops the CLIENT pre-emptively refusing to let the rep
+ * try, and stops drawing a progress rail for steps that can never move.
+ */
+export const FINANCING_BYPASS_ENABLED = true;
+
+/** Is this row a financing plan currently riding the bypass above? */
+export function isFinancingBypassed(payment: Pick<FundingPayment, 'type'>): boolean {
+  return FINANCING_BYPASS_ENABLED && payment?.type === 'bank';
+}
+
+/**
  * How the contract is being paid.
  *
  * `split`   — money now (Down Payment) + the rest financed/collected later (Balance).
@@ -1319,6 +1351,11 @@ export function fundingBlockers(
       // told a link they watched being opened was never sent.
       : isApplicationClosed(p)
         ? `— the application ${APPLICATION_CLOSED_SHORT[p.applicationClosed as FundingApplicationClosed] || 'closed'}; send a new link`
+      // ⚠️ Financing bypass (see `isFinancingBypassed`) — a real decision/decline
+      // still outranks it (both arms above), but a financing row that has simply
+      // never progressed no longer blocks Submit. Remove this arm together with
+      // the flag once real decisions arrive.
+      : isFinancingBypassed(p) ? null
       : (p.type === 'cc' || p.type === 'bank') && !p.linkSent ? '— link not sent yet'
       : p.type === 'bank' && !p.decision ? '— waiting on lender decision'
       : p.type === 'bank' && !p.activated ? '— loan not activated yet'

@@ -1,6 +1,6 @@
 # Dynamic Deal Center — calculator, rollout, result & Job Builder
 
-> Part of the repo guide — the index is the root `CLAUDE.md`. **Read this before changing:** `src/screens/DynamicDealCenter/**` (create flow), `src/utils/dynamic-job-builder/**`, `widgets/components/dynamic-job-builder/**`, `widgets/modals/job-builder/**`, `utils/drop-prices.ts`, `utils/activity-log/rollout-summary.ts`.
+> Part of the repo guide — the index is the root `CLAUDE.md`. **Read this before changing:** `src/screens/DynamicDealCenter/**` (create flow), `src/utils/dynamic-job-builder/**`, `widgets/components/dynamic-job-builder/**`, `widgets/modals/job-builder/**`, `utils/drop-prices.ts`, `utils/activity-log/rollout-summary.ts`, `hooks/useOutcomeLogging.ts`, `utils/activity-log/job-builder-auto-log.ts`, `services/api/leads.ts` (`jobBuilder`/`updateJobBuilder` endpoint).
 >
 > Each `##` section is one ticket: the ask, the root cause, the decision, and the ⚠️ traps that must not be
 > "fixed" back. Newest follow-ups sit under their original ticket. Add new notes for this area HERE, not in the root file.
@@ -1781,6 +1781,48 @@ deliberately advisory, for showing the ceiling beside the input. The server is t
 client-side cap that disagreed with it would either block a legal down payment or promise an illegal
 one. Surfacing the limit in the UI is unbuilt, not forgotten.
 
+## A `bank` (financing) row can never leave "Link Sent" — the client-side bypass
+
+Ticket: card and check "work perfectly", but picking a financing plan (GreenSky, Wells Fargo — any
+plan `methodTypeOf` resolves to `type: 'bank'`) got the rep stuck on the Funding screen: the lender
+integration behind `sync`/decision isn't live yet, so no decision ever arrives, `activated` never
+ticks, and — because `fundingBlockers` mirrors the server's own submit rule — **Submit Funding**
+(`ResultJobModal`) stays disabled forever on a step nobody can complete. Root cause is the missing
+backend/lender integration, not a client bug; the ask was a temporary, obviously-removable frontend
+workaround, not a fix to the real flow.
+
+- **`FINANCING_BYPASS_ENABLED` / `isFinancingBypassed(payment)`** (`utils/funding.ts`, beside
+  `MULTI_METHOD_ENABLED`) — the one flag. `true` for every `p.type === 'bank'` row while it's on.
+- **`fundingBlockers`**: a bypassed row contributes **no** blocker — inserted as its own arm, but
+  *after* the declined / open-short / application-closed checks, so a REAL signal (a decision did
+  come back some other way) still reports exactly as before. Only "never progressed" is swallowed.
+- **`PaymentFundingCard`**: a bypassed row renders `FinancingBypassNotice` (`Financed through {plan}` +
+  "Approval and funding for this amount are confirmed directly between the lender and the customer.")
+  **instead of** `FundingStepper` and every rep-action button/sync row — not layered on top of them.
+  The message is deliberately about *how the payment is being made*, never about a missing feature —
+  and deliberately does NOT say "nothing to do here"/"not needed", which reads as dismissive rather
+  than as a statement of who owns the next steps.
+- ⚠️ **Does NOT touch `coverageOK` / `fundedAmount` / `stateOf` / `FLOW` / the pricing-screen chip
+  (`PaymentRowsGroup`, `lenderState`)** — a bypassed row still pledges its full amount toward the
+  contract total exactly as before, and still reads "Pending lender decision" on the pricing screen.
+  Only the Funding-screen rail and the submit gate change.
+- ⚠️ **Does not, and cannot, change what the real `POST …/funding/submit` call does.** Removing the
+  CLIENT pre-check only lets the rep tap Submit; `funding.submit()` (`useFunding.ts`) is untouched, and
+  `handleBuild` still only proceeds past the sheet on `res.ok` (spec rule 3 — the server owns every
+  step). If the backend also refuses an unresolved financing row, `funding.serverBlockers` still
+  overrides the local list exactly as it already did before this ticket — this only removes an
+  over-eager CLIENT wall in front of a tap the rep should get to try.
+- **My Deals** (`DynamicDealEditScreen`) needed no separate change — it renders the same
+  `FundingView`/`PaymentFundingCard` and calls the same `fundingBlockers`, and its own "Next · Review"
+  was already non-blocking on funding completion (see the comment at its footer: *"Submitting an
+  addendum has never required funding to be complete"*). Confirms the "no second implementation" rule
+  this file's STEP 2 comment already states.
+
+⚠️ **This is the one thing to revert once real lender decisions start arriving** — search
+`FINANCING_BYPASS_ENABLED` / `isFinancingBypassed`. Flip the flag (or delete it and the two branches
+above) and the original stepper, actions and blockers come back exactly as they were; nothing they
+guard was rewritten, only skipped.
+
 ## Ticket 1063 — dropdowns become dependent fields (option rules, defaults, `disabled`)
 
 Portal `feature/ticket-1063` (`40f31a96`, 2026-08-11) turned the `dropdown` field type from a plain
@@ -2391,3 +2433,28 @@ numbers were never shifted — so 7" add → #3, then 6" add → **#2 again**.
 - **My Deals** (edit mode) uses the same numbering plus the colour filter: hidden combinations take no
   number, and an added combination is tagged `_addedInEdit` so it isn't hidden. See `deal-edit-addendums.md`,
   "Add Combination looked dead; chip numbers had gaps".
+
+## Opening the Result Lead sheet 404'd — `updateJobBuilder` was PUTting a POST-only route
+
+Ticket: opening `ResultJobModal` (the funding "Result Lead" sheet) logged a **404** —
+`PUT /lead/v1/:id/job-builder Cannot PUT /lead/v1/:id/job-builder`. Confirmed by backend
+(2026-09-28): `/job-builder` has no PUT handler, POST only, and POST upserts by lead id.
+
+Root cause: `useOutcomeLogging`'s mount effect (shared by `ResultJobModal`, the classic
+`OutcomeModal`, and the Lead Center `ResultLeadModal` — all three render the sheet this hook
+drives) auto-populates the `lead_result` field-entry rows, then calls
+`markAutoFieldsLogged(leadId, jobBuilder, 'lead_result')` (`utils/activity-log/job-builder-auto-log.ts`)
+to persist `jobBuilder.autoFieldsLogged.lead_result = true` so the same rows don't re-fire on
+the next open. That write went through `LeadService.updateJobBuilder`, which called
+`api.put(LeadEndpoints.jobBuilder(leadId), …)` — the one caller in the file using PUT where every
+other write to this route (`submitJobBuilder`, `AppointmentSchedulerModal`'s amendment-submit
+double-write) already used POST.
+
+- **Fix: `updateJobBuilder` now POSTs too** (`services/api/leads.ts`). It stays a separate
+  function from `submitJobBuilder` — same request, kept for call-site clarity (callers that mean
+  "update" vs. "submit") — not collapsed into one, since other call sites reference it by name.
+- ⚠️ **Don't "restore" a PUT here.** `/job-builder` never had a PUT handler; the original PUT was
+  the bug, not a divergence to re-sync.
+- `AppointmentSchedulerModal.handleAmendmentSubmit` calls `submitJobBuilder` then `updateJobBuilder`
+  back-to-back with the same payload — before this fix, the second call's 404 threw and skipped the
+  success flash / draft-accept, another symptom of the same root cause, now resolved by the same edit.
