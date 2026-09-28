@@ -32,6 +32,7 @@ import { BeforeAfterModal } from '../../widgets/modals/BeforeAfterModal';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { getOfflineImagesForJob } from '../../services/api/offlineUploadManager';
 import {
+  findPendingInstallPinForLead,
   getDisplayJobNumber,
   getPinDateLabel,
   getPinSortDate,
@@ -300,6 +301,12 @@ export default function MapDetailScreen() {
     },
     enabled: !!user?._id,
     staleTime: 1000 * 60 * 5, // 5 minutes
+    // ⚠️ Opening the map must ask the server again, whatever `staleTime` says. A lead marked
+    // Sale becomes a purple pending-install pin on the BACKEND, and nothing on this device
+    // invalidates `mapJobs` when that happens, so a 5-minute-old cache (also seeded by the
+    // Leads / Lead Center prefetch) hid a brand-new pin until it aged out. `'always'` still
+    // paints the cached pins instantly and only adds the fresh ones when the request lands.
+    refetchOnMount: 'always',
   });
 
   // Sync queryLeads to leads state
@@ -343,6 +350,14 @@ export default function MapDetailScreen() {
   useEffect(() => {
     setLoading(queryLoading);
   }, [queryLoading]);
+
+  // Coming back to a map that never unmounted (open a lead from it, make a sale, go back) is a
+  // focus change, not a mount, so `refetchOnMount` does not fire. Refetch on that transition too.
+  const wasFocusedRef = useRef(isFocused);
+  useEffect(() => {
+    if (isFocused && !wasFocusedRef.current && user?._id) refetchQuery();
+    wasFocusedRef.current = isFocused;
+  }, [isFocused, user?._id, refetchQuery]);
 
   const fetchLeads = async () => {
     refetchQuery();
@@ -517,6 +532,20 @@ export default function MapDetailScreen() {
     });
   }, [baseFilteredLeads, sortOption]);
 
+  // Opened FROM a lead (Lead Center -> Map / Expand Map) that has just been sold: its purple
+  // pending-install pin is what the rep came to see, so open on it instead of leaving the camera
+  // on their GPS fix. A map opened with no lead (header icon) still lands on the GPS as before
+  // (QA ticket 321). Looked up in `baseFilteredLeads`, so a pin the active filters hide is never
+  // jumped to.
+  const openedFromLead = (currentLead as any)?._id ? currentLead : null;
+  const leadPendingPin = useMemo(
+    () => (openedFromLead ? findPendingInstallPinForLead(baseFilteredLeads, openedFromLead) : null),
+    [openedFromLead, baseFilteredLeads],
+  );
+  // The lead id the map has already opened on. One-shot per lead: a later refetch hands back a new
+  // pin object, and re-jumping would snatch the camera back from wherever the rep has panned to.
+  const openedOnLeadPinRef = useRef<string | null>(null);
+
   // Automatic navigation to searched job or location (Web Parity)
   useEffect(() => {
     if (filters.centerCoords) {
@@ -538,11 +567,14 @@ export default function MapDetailScreen() {
         } else if (filteredLeads.length === 1) {
           setJumpLead(filteredLeads[0]);
         }
+      } else if (leadPendingPin && openedOnLeadPinRef.current !== String((openedFromLead as any)._id)) {
+        openedOnLeadPinRef.current = String((openedFromLead as any)._id);
+        setJumpLead(leadPendingPin);
       } else {
         setJumpLead(null);
       }
     }
-  }, [filters.jobNumber, filteredLeads, filters]);
+  }, [filters.jobNumber, filteredLeads, filters, leadPendingPin, openedFromLead]);
 
   useEffect(() => {
     // Distance result feedback for location-based radius searches only.

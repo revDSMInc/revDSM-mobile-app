@@ -25,6 +25,7 @@ import Geolocation from 'react-native-geolocation-service';
 import axios from 'axios';
 import { ENV } from '../../../config/env';
 import { formatUSPhoneNumber } from '../../../utils/phone-util';
+import { geocodeAddress } from '../../../utils/places';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import RNFlashMessage from 'react-native-flash-message';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -281,6 +282,13 @@ export default function LeadCreateModal({
 
   const handleAddressSearch = async (text: string) => {
     setForm({ ...form, address: text });
+    // ⚠️ The stored coordinates belong to the address they were captured for — the GPS
+    // fix that filled this box on open, or the suggestion that was picked. Once the rep
+    // types over it they describe a DIFFERENT place, and were being saved with the new
+    // address (a Davenport lead pinned on the rep's own GPS position, i.e. Lahore).
+    // Dropped here; `handleSelectSuggestion` sets the picked place's, and submit looks up
+    // the typed address when no suggestion was picked.
+    setLocation(null);
     if (text.length > 3) {
       // Places autocomplete is a network call whose failure is swallowed, so offline it leaves the
       // rep typing into a box that never responds. Suppress it outright and let them type the
@@ -431,6 +439,12 @@ export default function LeadCreateModal({
         reverseGeocoded,
       });
 
+      // The pin is placed from these coordinates, so they must match `submitAddress`. With none
+      // (the rep typed the address without picking a suggestion, and no GPS fix was captured)
+      // look the typed address up; if Google can't place it, send none rather than somebody
+      // else's location.
+      const leadLocation = location || (await geocodeAddress(form.address));
+
       payload = isLF
         ? {
           leadType: 'lfLead',
@@ -455,10 +469,10 @@ export default function LeadCreateModal({
           })(),
           lfLeadTime: form.lfLeadTime,
           fullAddress: submitAddress,
-          location: location
+          location: leadLocation
             ? {
               type: 'Point',
-              coordinates: [location.longitude, location.latitude],
+              coordinates: [leadLocation.longitude, leadLocation.latitude],
             }
             : undefined,
           customer: {
@@ -474,10 +488,10 @@ export default function LeadCreateModal({
           repId: user?._id || user?.id,
           fullAddress: submitAddress,
           lowesLead: form.lowesLead === true,
-          location: location
+          location: leadLocation
             ? {
               type: 'Point',
-              coordinates: [location.longitude, location.latitude],
+              coordinates: [leadLocation.longitude, leadLocation.latitude],
             }
             : undefined,
           customer: {
@@ -490,8 +504,8 @@ export default function LeadCreateModal({
           ...(fromZone && {
             zoneId,
             buildingId,
-            latitude: location?.latitude,
-            longitude: location?.longitude,
+            latitude: leadLocation?.latitude,
+            longitude: leadLocation?.longitude,
           }),
         };
       // With no signal, park the lead rather than failing. It carries the GPS fix taken at the
