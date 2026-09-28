@@ -1557,7 +1557,7 @@ export const SummarySection = ({
                     </Pressable>
                   ) : (
                     <View style={{ alignItems: 'center', padding: 8 }}>
-                      <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#ef4444', textAlign: 'center' }}>
+                      <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#ef4444', textAlign: 'center' }}>
                         Schedule an appointment to enable agreements
                       </Text>
                     </View>

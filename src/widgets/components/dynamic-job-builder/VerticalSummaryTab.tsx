@@ -59,7 +59,7 @@ function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: s
   if (!showLabel || !labelText) {
     return (
       <View className="py-1">
-        <Text className="text-sm font-medium" style={{ color: valueColor }}>{text}</Text>
+        <Text className="text-base font-medium" style={{ color: valueColor }}>{text}</Text>
       </View>
     );
   }
@@ -70,12 +70,12 @@ function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: s
   return (
     <View className="flex-row items-start py-1">
       <Text
-        className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider"
+        className="text-xs text-slate-500 font-semibold uppercase tracking-wider"
         style={{ width: '40%', paddingRight: 8, paddingTop: 2 }}
       >
         {labelText}
       </Text>
-      <Text className="text-sm font-medium flex-1" style={{ color: valueColor }}>{text}</Text>
+      <Text className="text-base font-medium flex-1" style={{ color: valueColor }}>{text}</Text>
     </View>
   );
 }
@@ -101,8 +101,8 @@ function LocationRowsDisplay({ locationRows }: { locationRows: any[] }) {
     <View className="mt-1 pl-1">
       {storyOrder.map((story) => (
         <View key={story} className="flex-row mb-0.5">
-          <Text className="text-[10px] text-slate-400 font-semibold w-16">{story}</Text>
-          <Text className="text-[10px] text-slate-600 flex-1">
+          <Text className="text-xs text-slate-400 font-semibold w-16">{story}</Text>
+          <Text className="text-xs text-slate-600 flex-1">
             {storyMap[story]
               .map((item) => `${item.location}: ${item.value}${item.unit}`)
               .join(', ')}
@@ -119,7 +119,7 @@ function ExtrasList({ label, items }: { label?: string; items: any[] }) {
   return (
     <View className="mt-2.5">
       {label && (
-        <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">{label}</Text>
+        <Text className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">{label}</Text>
       )}
       <View className="space-y-1">
         {items.map((item, index) => (
@@ -174,14 +174,14 @@ function CombinationSummaryItem({ entry, accentColor, isLast }: { entry: any; ac
       <View className="flex-row items-start">
         <View style={{ width: '40%', paddingRight: 8 }}>
           <View className="self-start px-2 py-0.5 rounded" style={{ backgroundColor: `${accentColor}1A` }}>
-            <Text className="text-[9px] font-bold" style={{ color: accentColor }}>
+            <Text className="text-xs font-bold" style={{ color: accentColor }}>
               Combination #{entry.displayNumber}
             </Text>
           </View>
         </View>
         <View className="flex-1">
           {entry.summaryLine && (
-            <Text className="text-sm font-semibold text-slate-800">{entry.summaryLine}</Text>
+            <Text className="text-base font-semibold text-slate-800">{entry.summaryLine}</Text>
           )}
           <LocationRowsDisplay locationRows={entry.locationRows} />
         </View>
@@ -285,12 +285,12 @@ export function VerticalSummaryTab({
     >
       <View className="mb-4">
         <Text className="text-xl font-extrabold text-slate-850">Job Builder Summary</Text>
-        <Text className="text-xs text-slate-500 mt-0.5">Review all configured job details before completing the job.</Text>
+        <Text className="text-sm text-slate-500 mt-0.5">Review all configured job details before completing the job.</Text>
       </View>
 
       {summarySections.length === 0 ? (
         <View className="bg-slate-50 rounded-lg p-5 items-center justify-center border border-slate-100">
-          <Text className="text-sm text-slate-400 italic">No tabs available to summarize.</Text>
+          <Text className="text-base text-slate-400 italic">No tabs available to summarize.</Text>
         </View>
       ) : (
         summarySections.map((section: any) => {
@@ -301,17 +301,17 @@ export function VerticalSummaryTab({
           return (
             <View key={section.tabId} className="bg-white rounded-xl mb-4 overflow-hidden border border-slate-100 shadow-sm">
               <View className="px-4 py-3" style={{ backgroundColor: section.accentColor }}>
-                <Text className="text-xs font-bold text-white uppercase tracking-wider">{section.tabLabel}</Text>
+                <Text className="text-sm font-bold text-white uppercase tracking-wider">{section.tabLabel}</Text>
               </View>
               <View className="p-4">
                 {section.isEmpty ? (
-                  <Text className="text-xs text-slate-400 italic">No data entered</Text>
+                  <Text className="text-sm text-slate-400 italic">No data entered</Text>
                 ) : (
                   <View className="space-y-4">
                     {hasCombinations && section.combinationSections.map((group: any, groupIdx: number) => (
                       <View key={group.sectionId}>
                         {group.sectionLabel && (
-                          <Text className="text-xs font-bold text-slate-700 mb-2">{group.sectionLabel}</Text>
+                          <Text className="text-sm font-bold text-slate-700 mb-2">{group.sectionLabel}</Text>
                         )}
                         {group.combinations?.length > 0 && group.combinations.map((entry: any, idx: number) => (
                           <CombinationSummaryItem
@@ -347,7 +347,7 @@ export function VerticalSummaryTab({
                         style={{ borderTopWidth: 1, borderTopColor: DIVIDER_HAIRLINE }}
                       >
                         {group.sectionLabel && (
-                          <Text className="text-xs font-bold text-slate-700 mb-2">{group.sectionLabel}</Text>
+                          <Text className="text-sm font-bold text-slate-700 mb-2">{group.sectionLabel}</Text>
                         )}
                         <View className="space-y-2">
                           {group.fields.map((field: any, idx: number) => (
