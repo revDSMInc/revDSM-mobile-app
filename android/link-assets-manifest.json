@@ -6,6 +6,10 @@
       "sha1": "96e0984b8d9cb2e75c217217eccbd2afaa0edebd"
     },
     {
+      "path": "src/assets/fonts/PublicSans-Bold_italic.ttf",
+      "sha1": "f683f6cd4a69957ad94d5e77fa93b2a8c73be4ac"
+    },
+    {
       "path": "src/assets/fonts/PublicSans-Bold.ttf",
       "sha1": "4506835afb7503686705d8b88490024addc0de58"
     },
@@ -24,6 +28,10 @@
     {
       "path": "src/assets/fonts/PublicSans-Medium.ttf",
       "sha1": "fdada24130ca900e0b6858bfe20d9bdb627536ba"
+    },
+    {
+      "path": "src/assets/fonts/PublicSans-Regular_italic.ttf",
+      "sha1": "2db9504951b00a08cc32b9838586ef7660e0defb"
     },
     {
       "path": "src/assets/fonts/PublicSans-Regular.ttf",
