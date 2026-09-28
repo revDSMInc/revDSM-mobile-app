@@ -14,11 +14,22 @@ export type PinStatusFilter = 'all' | 'pendingInstall' | 'installed';
 
 export const PIN_CATEGORIES: PinCategory[] = ['uploaded', 'installed', 'pendingInstall'];
 
-/** Web map colours. `uploaded` is the existing green pin. */
+/**
+ * Ticket: "change the pending-install pin from purple to yellow, and make the installed
+ * pin the same colour as the uploaded pin (green)." Reverses the earlier spring-mint
+ * decision on `installed` — see the "Installed pin colour" follow-up in
+ * `docs/claude/maps-zone-canvasser.md` for why that one was picked, and why it no longer
+ * applies now that the two are meant to read as one colour.
+ *
+ * ⚠️ `installed` and `uploaded` are now the SAME value on purpose — both the hex here and
+ * the marker PNGs (`marker-installed*.png` was recoloured to `#4CBB17` pixel-for-pixel,
+ * not re-pointed at `marker-green*.png`, so the two categories keep independent asset
+ * files that happen to render identically — easier to tell apart in a future diff).
+ */
 export const PIN_CATEGORY_META: Record<PinCategory, { label: string; color: string }> = {
   uploaded: { label: 'Uploaded', color: '#4CBB17' },
-  installed: { label: 'Installed', color: '#00FFA3' },
-  pendingInstall: { label: 'Pending install', color: '#7B2FF7' },
+  installed: { label: 'Installed', color: '#4CBB17' },
+  pendingInstall: { label: 'Pending install', color: '#FFD400' },
 };
 
 /**
@@ -82,7 +93,7 @@ export const countPinCategories = (jobs: any[]): Record<PinCategory, number> => 
 const idText = (v: any): string => (v == null ? '' : String(v).trim());
 
 /**
- * The purple pending-install pin that belongs to `lead`, or `null`.
+ * The yellow pending-install pin that belongs to `lead`, or `null`.
  *
  * Used when the Sales Map is opened FROM a lead (Lead Center -> Map): a lead that has just
  * been sold should open the map on its own pin, not only on the rep's GPS fix.

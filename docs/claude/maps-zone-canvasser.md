@@ -377,6 +377,60 @@ It now behaves like the footsteps map's building-status legend (`ZoneCanvasserMa
 - `MapLegendCard` (the footsteps card) is deliberately NOT reused: it renders building-status markers;
   this card is category dots + counts (`PIN_CATEGORY_META`, `countPinCategories`).
 
+### Follow-up — Pending-install pin: purple → yellow, and installed now MATCHES uploaded (reverses the mint decision above)
+
+Ticket: *"change the pin colour for Pending Install from purple to yellow — it should show up properly
+on the map — and the uploaded pin and the installed pin colour should be same, use the uploaded pin's
+green."* This is a deliberate reversal of the follow-up directly above: that one moved `installed` to
+mint specifically so it would NOT read as the same green as `uploaded`. The premise changed — the user
+now wants the two to look like the same pin colour — so the mint decision and its "don't re-litigate"
+warning no longer apply going forward; both are struck through above rather than deleted, so the reasoning
+that led to mint is still there if a future ticket asks to tell them apart again.
+
+- **`pendingInstall` is now `#FFD400`** (was `#7B2FF7`). A saturated, high-lightness yellow chosen to
+  read clearly next to the Favorite pin's dark goldenrod `#BB8C17` (same hue family, ~43° vs ~50°, but
+  far apart on lightness/saturation — `#BB8C17` is a muted, dark "gold", `#FFD400` a bright, fully
+  saturated "yellow") and to stay out of every other pin's hue (green `#4CBB17`, red `#BB1717`, the
+  heatmap ramp).
+- **`installed` is now `#4CBB17` — literally `PIN_CATEGORY_META.uploaded.color`'s value, not a
+  new "close" green.** The two constants happen to hold the same string; see the code comment on why they
+  are still two separate lines rather than one aliasing the other.
+
+Changed in the same four places the mint follow-up changed, mirrored:
+
+- `PIN_CATEGORY_META.pendingInstall.color` / `.installed.color` (`utils/sales-pins.ts`) — the legend dot
+  in `LeadMap`.
+- The six PNGs `assets/images/map/marker-{pending,installed}{,@2x,@3x}.png`, **recoloured in place, not
+  redrawn** — same technique as the mint follow-up: every pixel classified against the ORIGINAL fill as
+  pure fill / blended-toward-black (outline) / blended-toward-white (check), each class remapped by the
+  same proportion onto the new fill, so the black outline and white check are pixel-identical before and
+  after. Verified per file: total non-transparent pixel count unchanged at every size, the white check
+  pixel count exactly unchanged, and zero pixels left with a residual cast of the old hue.
+
+⚠️ **`marker-installed*.png` was recoloured, not re-pointed at `marker-green*.png`.** The two categories
+keep independent asset files that now happen to render identically. A future "make installed distinct
+again" ticket then touches one clearly-named asset rather than untangling a shared `require()` used by
+two different `iconImage` categories in both `LeadMap.tsx` and `SalesLeadPins.tsx`. Neither of those two
+files needed any change — both already resolve `installed` → `marker-installed.png` and `pendingInstall`
+→ `marker-pending.png` by name, so recolouring the file was the whole fix.
+
+⚠️ **`PIN_DRAW_ORDER` was left unchanged** (`pendingInstall: 2` still above `installed: 1`, `uploaded: 0`).
+Nothing about which pins can hide behind which changed — `installed` and `uploaded` just look the same
+now, and draw order between two identically-coloured layers is moot; `pendingInstall` staying on top still
+matters, since a handful of yellow pins can still sit inside a dense green cluster exactly as the purple
+ones once did.
+
+No test change: `sales-pins.test.ts`'s 22 tests assert behaviour (which pin is found, sort order), not
+hex values, so all pass unchanged. Two present-tense comments that said "purple" (the doc comment on
+`findPendingInstallPinForLead` and one test description) were reworded; the PAST-TENSE narrative in the
+`PIN_DRAW_ORDER` comment above (*"the handful of purple pending-install pins sat inside..."*) was left
+alone — it is describing the historical bug that justified the draw order, not the pin's current colour.
+
+⚠️ Needs a device check (this repo cannot render-test): the legend dot and map pins for both categories
+in Florida (dense clusters) and on an isolated sale, on satellite AND street map, at cluster and pin zoom;
+confirm the yellow doesn't get lost inside a favourite-heavy area and that installed truly reads as the
+same green as uploaded rather than "close but not quite" at a glance.
+
 ### Follow-up — Installed pin colour: dark green → spring-mint `#00FFA3`
 
 *"The installed pin and the uploaded pin colours are matched with each other — change the green shade of
@@ -389,14 +443,13 @@ uploaded pin (`#4CBB17`) at cluster zoom.
   backgrounds). It went through four colours; **`#00FFA3` is the one the user signed off** (*"the 2nd last
   colour shade is perfect"*), so treat it as final:
   `#0B6E4F` → `#00E676` → **`#00FFA3`** → magenta `#FF00C8` (reverted).
-- ⚠️ **Do NOT "fix" it back to magenta or another hue.** Magenta `#FF00C8` was built and measured as the
-  mathematically best option — the only hue no other layer uses (uploaded lime, searched red, favorite amber,
-  pending purple, the heatmap ramp, the Zone Canvasser building / appointment colours), ≥ 57 ΔE from every
-  other pin and ≥ 98 from every basemap background — and the user still rejected it for the mint. Don't
-  re-litigate it from the numbers. The trade-off they accepted: mint is only ΔE ≈ 42 from lime (the pin
-  colour it shares a hue family with), and the white check on it is soft (~1.4:1). If a future ticket says
-  the installed / uploaded pins are hard to tell apart again, the free hue is magenta, and `#00E5A0`
-  (43 / 46) is the same-family option with a crisper check.
+- ~~⚠️ **Do NOT "fix" it back to magenta or another hue.**~~ **SUPERSEDED below — the premise changed.**
+  Magenta `#FF00C8` was built and measured as the mathematically best option — the only hue no other layer
+  uses, ≥ 57 ΔE from every other pin and ≥ 98 from every basemap background — and the user rejected it for
+  the mint at the time. That warning assumed installed and uploaded had to stay distinguishable; the ticket
+  below asks for the opposite. If a future ticket wants them apart again, `#FF00C8` is still the free hue,
+  and `#00E5A0` the same-family option with a crisper check — see this file's git history for the full ΔE
+  table.
 - **Measured, not eyeballed** (CIELAB ΔE against nine basemap backgrounds — satellite forest / grass / brown /
   roof / water, street beige / park / water / road — and against the other pin colours): `#00FFA3` is **≈ 52
   from the nearest background, ≈ 42 from lime**; `#00E676` was 55 / 29 (too close to lime); the original
