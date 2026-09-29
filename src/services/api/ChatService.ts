@@ -380,7 +380,7 @@ class ChatService {
     return result;
   }
 
-  async sendFileMessage(chatId: string, file: any, message = '', replyTo?: string): Promise<void> {
+  async sendFileMessage(chatId: string, file: any, message = '', replyTo?: string): Promise<any> {
     let resolvedUri = file?.uri ?? '';
 
     // Android: copy content:// URIs to a local cache file so FormData can read them.
@@ -417,7 +417,11 @@ class ChatService {
     // uploads. This is the `main`-branch behavior that works; the boundary-less header
     // was the regression. (The web sets the header, but browsers rewrite it with the
     // boundary for FormData — React Native does not.)
-    await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
+    // Returned, not discarded: the response carries the STORED file rows (`filePath`,
+    // `bucketName`), which is the only place the S3 path exists for an upload — the caller
+    // needs it for the activity log. See `buildLogFiles` in `useChatLogic`.
+    const res = await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
+    return res?.data?.data?.message || res?.data?.message || res?.data || null;
   }
 
   // Send MULTIPLE local files in ONE message (multipart) — so a batch of gallery
@@ -429,7 +433,7 @@ class ChatService {
     files: Array<{ uri?: string; name?: string; fileName?: string; type?: string }>,
     message = '',
     replyTo?: string
-  ): Promise<void> {
+  ): Promise<any> {
     const formData = new FormData();
     formData.append('message', message || ' ');
     if (replyTo) formData.append('replyTo', replyTo);
@@ -471,7 +475,11 @@ class ChatService {
     // multipart boundary (same as sendFileMessage / the working `main` branch). A
     // boundary-less `multipart/form-data` header makes the backend fail to parse the
     // upload, so the image never sends.
-    await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
+    // Returned, not discarded: the response carries the STORED file rows (`filePath`,
+    // `bucketName`), which is the only place the S3 path exists for an upload — the caller
+    // needs it for the activity log. See `buildLogFiles` in `useChatLogic`.
+    const res = await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
+    return res?.data?.data?.message || res?.data?.message || res?.data || null;
   }
 
 
@@ -494,7 +502,7 @@ class ChatService {
     }>,
     message = ' ',
     replyTo?: string
-  ): Promise<void> {
+  ): Promise<any> {
     const payload: any = {
       chatId,
       message: message || ' ',
@@ -503,7 +511,10 @@ class ChatService {
     };
     if (replyTo) payload.replyTo = replyTo;
     // Plain JSON body (default Content-Type) — NOT multipart.
-    await api.post<any>(`/chat/v1/${chatId}/messages`, payload);
+    // Returned so the caller's activity log can read the STORED rows: these photos are S3
+    // references the device never downloaded, so their byte size is only known server-side.
+    const res = await api.post<any>(`/chat/v1/${chatId}/messages`, payload);
+    return res?.data?.data?.message || res?.data?.message || res?.data || null;
   }
 
   async sendMessageREST(payload: {

@@ -6,6 +6,7 @@ import ChatService from '../services/api/ChatService';
 import { useVoiceNote } from '../hooks/useVoiceNote';
 import * as DocumentPicker from '@react-native-documents/picker';
 import { logEvent } from '../services/api/LoggerService';
+import { buildChatLogFiles } from '../utils/activity-log/chat-log-files';
 import RNFS from 'react-native-fs';
 
 const getWebMessageType = (file?: { name?: string | null; type?: string | null }) => {
@@ -266,7 +267,9 @@ export const useChatLogic = (
         ...response.assets!.map((f, i) => ({
           id: `gal_${Date.now()}_${i}_${Math.random()}`,
           kind: 'gallery' as const,
-          asset: { uri: f.uri, fileName: f.fileName, type: f.type },
+          // ⚠️ `fileSize` is carried through to the activity log — the picker is the only
+          // place a gallery file's byte size is known before upload. Dropping it here logged 0.
+          asset: { uri: f.uri, fileName: f.fileName, type: f.type, fileSize: f.fileSize },
           previewUri: f.uri,
           isImage: !!f.type?.startsWith('image'),
         })),
@@ -280,29 +283,10 @@ export const useChatLogic = (
   // instantly from the local uris.
   const sendGalleryAssets = useCallback(
     async (
-      assets: Array<{ uri?: string; fileName?: string; type?: string }>,
+      assets: Array<{ uri?: string; fileName?: string; type?: string; fileSize?: number }>,
       reply?: any
     ) => {
       if (!assets?.length || !chatId) return;
-      if (user?._id) {
-        const first = assets[0];
-        logEvent('send', {
-          user_id: user._id,
-          module_type: isChannel ? 'team_channel' : 'chat',
-          created_by: user._id,
-          meta: {
-            leadId,
-            type: isChannel ? 'team_channel' : 'chat',
-            isEdit: false,
-            isReply: !!reply,
-            messageType: getWebMessageType({ name: first?.fileName, type: first?.type }),
-            fileName: assets.map((a) => a.fileName || 'Attachment').join(', '),
-            fileSize: assets.length,
-            message: '',
-            action: `sent ${assets.length} attachment(s)`,
-          },
-        });
-      }
       const tempId = `temp_${Date.now()}_${Math.random()}`;
       const files = assets.map((f, i) => {
         const isImg = f.type?.startsWith('image');
@@ -331,12 +315,40 @@ export const useChatLogic = (
       };
       setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
       try {
-        await ChatService.sendFilesMessage(
+        const stored = await ChatService.sendFilesMessage(
           chatId,
           assets.map((f) => ({ uri: f.uri, name: f.fileName, type: f.type })),
           '',
           reply?._id
         );
+        // ⚠️ Logged AFTER the upload, not before it. `filePath` is an S3 object path that does
+        // not exist until the server has stored the file — logging first could only have put a
+        // local `file://` uri in the record, which is useless to the portal. A send that fails
+        // now logs nothing, which is correct: nothing was sent.
+        if (user?._id) {
+          const first = assets[0];
+          const storedFiles = stored?.files?.length
+            ? stored.files
+            : assets.map((a) => ({ fileName: a.fileName, fileType: a.type, fileSize: a.fileSize }));
+          logEvent('send', {
+            user_id: user._id,
+            module_type: isChannel ? 'team_channel' : 'chat',
+            created_by: user._id,
+            meta: {
+              leadId,
+              type: isChannel ? 'team_channel' : 'chat',
+              isEdit: false,
+              isReply: !!reply,
+              messageType: getWebMessageType({ name: first?.fileName, type: first?.type }),
+              fileName: assets.map((a) => a.fileName || 'Attachment').join(', '),
+              fileSize: assets.length,
+              files: buildChatLogFiles(storedFiles),
+              message: ' ',
+              action: `sent ${assets.length} attachment(s)`,
+              resetCycle: 0,
+            },
+          });
+        }
       } catch (err: any) {
         console.warn('[Media] send failed:', err?.message || err);
         setMessages((prev: any[]) => prev.filter((m) => m._id !== tempId));
@@ -356,25 +368,6 @@ export const useChatLogic = (
       if (!uri || !chatId) return;
       const tempId = `temp_${Date.now()}_${Math.random()}`;
       const safeName = /\.(jpe?g|png|gif|webp)$/i.test(fileName) ? fileName : `${fileName}.jpg`;
-
-      if (user?._id) {
-        logEvent('send', {
-          user_id: user._id,
-          module_type: isChannel ? 'team_channel' : 'chat',
-          created_by: user._id,
-          meta: {
-            leadId,
-            type: isChannel ? 'team_channel' : 'chat',
-            isEdit: false,
-            isReply: false,
-            messageType: 'image',
-            fileName: safeName,
-            fileSize: 12000,
-            message: '',
-            action: 'sent an attachment',
-          },
-        });
-      }
 
       // Optimistic bubble uses the (remote) uri directly so it renders instantly.
       const optimistic = {
@@ -402,7 +395,47 @@ export const useChatLogic = (
             throw new Error(`Download failed with status ${statusCode}`);
           }
         }
-        await ChatService.sendFileMessage(chatId, { uri: uploadUri, name: safeName, type: 'image/jpeg' }, '');
+        const stored = await ChatService.sendFileMessage(
+          chatId,
+          { uri: uploadUri, name: safeName, type: 'image/jpeg' },
+          ''
+        );
+        // ⚠️ After the upload — see the note on the gallery send above. The S3 path is only
+        // known once the server has stored the file.
+        if (user?._id) {
+          // `uploadUri` is a LOCAL path by now (a remote image was downloaded above), so its
+          // size can be measured for the fallback row. Best-effort: a failed stat logs 0
+          // rather than failing a send that already succeeded.
+          let localSize = 0;
+          try {
+            localSize = (await RNFS.stat(uploadUri.replace('file://', ''))).size;
+          } catch {
+            // size stays 0
+          }
+          const storedFiles = stored?.files?.length
+            ? stored.files
+            : [{ fileName: safeName, fileType: 'image/jpeg', fileSize: localSize }];
+          logEvent('send', {
+            user_id: user._id,
+            module_type: isChannel ? 'team_channel' : 'chat',
+            created_by: user._id,
+            meta: {
+              leadId,
+              type: isChannel ? 'team_channel' : 'chat',
+              isEdit: false,
+              isReply: false,
+              messageType: 'image',
+              fileName: safeName,
+              // ⚠️ 1, not the hard-coded 12000 this used to send. Web sends the file COUNT
+              // here, not a byte size, and a fabricated 12000 read as a real measurement.
+              fileSize: 1,
+              files: buildChatLogFiles(storedFiles),
+              message: ' ',
+              action: 'sent an attachment',
+              resetCycle: 0,
+            },
+          });
+        }
       } catch (err: any) {
         console.warn('[Media] annotated photo send failed:', err?.message || err);
         setMessages((prev: any[]) => prev.filter((m) => m._id !== tempId));
@@ -449,25 +482,6 @@ export const useChatLogic = (
         };
       });
 
-      if (user?._id) {
-        logEvent('send', {
-          user_id: user._id,
-          module_type: isChannel ? 'team_channel' : 'chat',
-          created_by: user._id,
-          meta: {
-            leadId,
-            type: isChannel ? 'team_channel' : 'chat',
-            isEdit: false,
-            isReply: !!reply,
-            messageType: 'appointment_photo',
-            fileName: filesPayload.map((f) => f.fileName).join(', '),
-            fileSize: filesPayload.length,
-            message: '',
-            action: `sent ${filesPayload.length} appointment photo(s)`,
-          },
-        });
-      }
-
       // Optimistic bubble — all photos in one message. `previewUrl` carries the
       // already-signed URL so the grid shows instantly before the server echo.
       const optimistic = {
@@ -497,7 +511,32 @@ export const useChatLogic = (
       setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
 
       try {
-        await ChatService.sendAppointmentPhotos(chatId, filesPayload, ' ', reply?._id);
+        const stored = await ChatService.sendAppointmentPhotos(chatId, filesPayload, ' ', reply?._id);
+        // ⚠️ Logged AFTER the send even though the S3 PATH was known before it — the per-file
+        // BYTE SIZE is not. These are references to photos the device never downloaded, so the
+        // server's stored rows are the only place a real size exists. Falls back to the sent
+        // payload (path and category intact, size 0) if the response carries no rows.
+        if (user?._id) {
+          const storedFiles = stored?.files?.length ? stored.files : filesPayload;
+          logEvent('send', {
+            user_id: user._id,
+            module_type: isChannel ? 'team_channel' : 'chat',
+            created_by: user._id,
+            meta: {
+              leadId,
+              type: isChannel ? 'team_channel' : 'chat',
+              isEdit: false,
+              isReply: !!reply,
+              messageType: 'appointment_photo',
+              fileName: filesPayload.map((f) => f.fileName).join(', '),
+              fileSize: filesPayload.length,
+              files: buildChatLogFiles(storedFiles),
+              message: ' ',
+              action: `sent ${filesPayload.length} appointment photo(s)`,
+              resetCycle: 0,
+            },
+          });
+        }
       } catch (err: any) {
         console.warn('[Media] appointment photos send failed:', err?.message || err);
         setMessages((prev: any[]) => prev.filter((m) => m._id !== tempId));
@@ -637,28 +676,6 @@ export const useChatLogic = (
 
       if (results && chatId) {
         const docs = results;
-        if (user?._id) {
-          const firstDoc = docs[0];
-          logEvent('send', {
-            user_id: user._id,
-            module_type: isChannel ? 'team_channel' : 'chat',
-            created_by: user._id,
-            meta: {
-              leadId,
-              type: isChannel ? 'team_channel' : 'chat',
-              isEdit: false,
-              isReply: false,
-              messageType: getWebMessageType({
-                name: firstDoc?.name,
-                type: firstDoc?.type,
-              }),
-              fileName: firstDoc?.name || 'Document',
-              fileSize: firstDoc?.size || 12000,
-              message: '',
-              action: 'sent an attachment',
-            },
-          });
-        }
         const optimistics = docs.map((f) => ({
           _id: `temp_${Date.now()}_${Math.random()}`,
           text: f.name || 'Document',
@@ -672,9 +689,50 @@ export const useChatLogic = (
           received: false,
         }));
         setMessages((prev: any[]) => GiftedChat.append(prev, optimistics));
-        await Promise.all(docs.map((f) =>
+        const storedDocs = await Promise.all(docs.map((f) =>
           ChatService.sendFileMessage(chatId, { uri: f.uri, name: f.name, type: f.type }, '')
         ));
+        // ⚠️ After the uploads — see the note on the gallery send. A document's S3 path does not
+        // exist until the server has stored it.
+        if (user?._id) {
+          const firstDoc = docs[0];
+          // ⚠️ ONE row per document. Each doc is its own request, so the stored rows are
+          // gathered from every response; the picker's own list is the fallback. The previous
+          // log named only `docs[0]`, so a rep attaching three files logged one.
+          const storedFiles = storedDocs.flatMap((s: any, i: number) =>
+            s?.files?.length
+              ? s.files
+              : [{
+                  fileName: docs[i]?.name || 'Document',
+                  fileType: docs[i]?.type || '',
+                  // The document picker reports `size`; it is the real byte count.
+                  fileSize: docs[i]?.size ?? 0,
+                }]
+          );
+          logEvent('send', {
+            user_id: user._id,
+            module_type: isChannel ? 'team_channel' : 'chat',
+            created_by: user._id,
+            meta: {
+              leadId,
+              type: isChannel ? 'team_channel' : 'chat',
+              isEdit: false,
+              isReply: false,
+              messageType: getWebMessageType({
+                name: firstDoc?.name,
+                type: firstDoc?.type,
+              }),
+              fileName: docs.map((f) => f.name || 'Document').join(', '),
+              // ⚠️ The file COUNT, as web sends. This was the picker's BYTE size (142786 in the
+              // report), which reads as a measurement in a field the portal counts.
+              fileSize: docs.length,
+              files: buildChatLogFiles(storedFiles),
+              message: ' ',
+              action: `sent ${docs.length} attachment(s)`,
+              resetCycle: 0,
+            },
+          });
+        }
       }
     } catch (err: any) {
       if (DocumentPicker.isErrorWithCode(err) && err.code === DocumentPicker.errorCodes.OPERATION_CANCELED) {
@@ -690,6 +748,9 @@ export const useChatLogic = (
   const handleSendVoiceNote = async (uri: string) => {
     if (!uri || !chatId) return;
     console.log('[Media] Sending voice note:', uri);
+    // Computed inside the guard below, read by the post-send log — the `stat` is worth doing
+    // once, and only when there is a user to log for.
+    let voiceLogMeta: { fileName: string; fileSize: number } | null = null;
     if (user?._id) {
       const fileName = uri.split('/').pop() || `voice_${Date.now()}.m4a`;
       let fileSize = 12000;
@@ -701,21 +762,7 @@ export const useChatLogic = (
         console.warn('[Chat] Failed to stat voice note file:', e);
       }
 
-      logEvent('send', {
-        user_id: user._id,
-        module_type: isChannel ? 'team_channel' : 'chat',
-        created_by: user._id,
-        meta: {
-          leadId,
-          type: isChannel ? 'team_channel' : 'chat',
-          action: 'Sent voice memo',
-          messageType: 'voice',
-          isReply: replyingTo ? true : false,
-          duration: recordingTime,
-          fileName,
-          fileSize,
-        },
-      });
+      voiceLogMeta = { fileName, fileSize };
     }
     const tempId = `temp_${Date.now()}`;
     try {
@@ -741,7 +788,43 @@ export const useChatLogic = (
       setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
 
       // Execute the API send in the background
-      await ChatService.sendFileMessage(chatId, { uri, name: fileName, type: 'audio/m4a' }, '');
+      const stored = await ChatService.sendFileMessage(
+        chatId,
+        { uri, name: fileName, type: 'audio/m4a' },
+        ''
+      );
+      // ⚠️ After the send — the recording is uploaded by this request, so its S3 path does not
+      // exist before it. `duration` and the real byte size are kept: unlike the other sends, a
+      // voice note's size IS measured (`RNFS.stat`) rather than guessed, and the portal shows both.
+      if (user?._id && voiceLogMeta) {
+        const storedFiles = stored?.files?.length
+          ? stored.files
+          : [{
+              fileName: voiceLogMeta.fileName,
+              fileType: 'audio/m4a',
+              // Measured with `RNFS.stat` above — a real byte count, not a guess.
+              fileSize: voiceLogMeta.fileSize,
+            }];
+        logEvent('send', {
+          user_id: user._id,
+          module_type: isChannel ? 'team_channel' : 'chat',
+          created_by: user._id,
+          meta: {
+            leadId,
+            type: isChannel ? 'team_channel' : 'chat',
+            action: 'Sent voice memo',
+            messageType: 'voice',
+            isEdit: false,
+            isReply: replyingTo ? true : false,
+            duration: recordingTime,
+            fileName: voiceLogMeta.fileName,
+            fileSize: voiceLogMeta.fileSize,
+            files: buildChatLogFiles(storedFiles),
+            message: ' ',
+            resetCycle: 0,
+          },
+        });
+      }
     } catch (err) {
       console.warn('[Media] Failed to send voice note:', err);
       // Clean up the optimistic message from list on failure
