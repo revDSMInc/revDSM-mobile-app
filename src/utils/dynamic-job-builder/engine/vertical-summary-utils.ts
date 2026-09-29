@@ -33,7 +33,6 @@ const PALETTE_PRIMARY = '#4CBB17';
 const PRODUCT_PALETTE_COLORS = ['#22c55e', '#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899'];
 
 const SKIPPED_FIELD_TYPES = new Set(['sectionLabel', 'combinationSummary', 'allocation']);
-const LABELED_SELECTION_TYPES = new Set(['toggle', 'optionList', 'dropdown']);
 
 // ─── Color resolution ─────────────────────────────────────────────────────────
 
@@ -530,13 +529,29 @@ function processSummaryFields(fields: any[] = [], state: any = {}, ctx: any = {}
     if (!isDisplayableFieldSummary(field, formatted)) return;
 
     if (inCombination && !isContainerFieldType(field.type)) {
-      if (field.type === 'number' && field.label) {
-        result.parts.push(`${formatted.text} ${field.label}`);
-      } else if (LABELED_SELECTION_TYPES.has(field.type) && field.label) {
-        result.parts.push(`${field.label}: ${formatted.text}`);
-      } else {
-        result.parts.push(formatted.text);
-      }
+      // ⚠️ A combination's fields are ROWS, like every other field in the summary — not a
+      // run-on sentence. They used to be flattened into `parts` and joined with " · ", so a
+      // gutter combination rendered as `Gutter Type: 6" K-Style · Yes · 49 Longest Gutter Run
+      // · 6 # of Miters (Outside) · …` while the Downspout section directly beneath it showed
+      // tidy label/value rows. Reported as *"the right side for this whole summary should be
+      // rows, not a bounding text box"*, with the portal's own table as the reference.
+      //
+      // The label was always known here — each branch below was building it into the string.
+      // Emitting `{ label, text }` instead lets `SummaryFieldRow` lay it out in the same
+      // 40%/60% columns it already uses for `comboFieldRows`, so this needs no new component
+      // and no change to the renderer.
+      //
+      // ⚠️ A `number` field keeps its label as the ROW LABEL, dropping the
+      // `${value} ${label}` word order (`6 # of Miters (Outside)`). The label already reads
+      // as a noun (`# of Miters (Outside)`), which is what belongs in a label column.
+      //
+      // ⚠️ An unlabelled field still emits a row — `SummaryFieldRow` renders a blank label as
+      // a full-width value, so nothing is lost.
+      result.detailRows.push({
+        label: field.label || field.key || '',
+        text: formatted.text,
+        variant: formatted.variant,
+      });
       return;
     }
 

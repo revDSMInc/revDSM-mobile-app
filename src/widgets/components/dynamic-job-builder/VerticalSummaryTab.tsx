@@ -80,12 +80,26 @@ function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: s
   );
 }
 
-function LocationRowsDisplay({ locationRows }: { locationRows: any[] }) {
+/**
+ * The measurement grid, as ordinary summary ROWS — `1st Story | Left 63ft, Right 7ft, Front 50ft
+ * (120ft total)`.
+ *
+ * ⚠️ Rendered through `SummaryFieldRow`, like every other row, and placed AFTER the field rows.
+ * It used to have its own layout (a fixed `w-16` label in smaller, lighter type) and sat in the
+ * right-hand column BESIDE the "Combination #" chip, so the story line floated above the rows on a
+ * grid of its own — reported as *"3rd Story  Left Side: 22ft is not looking well, put it in the end
+ * of the row, like the client show it in the table"*. Sharing the row component is what keeps the
+ * label column aligned; do not give this its own widths again.
+ *
+ * The data arrives keyed by LOCATION (Left Side → per-story values); the table is keyed by STORY, so
+ * it is inverted here.
+ */
+function LocationSummaryRows({ locationRows }: { locationRows: any[] }) {
   if (!locationRows?.length) return null;
 
   const storyMap: Record<string, any[]> = {};
   locationRows.forEach((row) => {
-    row.entries.forEach((entry: any) => {
+    (row.entries || []).forEach((entry: any) => {
       if (!storyMap[entry.story]) storyMap[entry.story] = [];
       storyMap[entry.story].push({
         location: row.location,
@@ -95,21 +109,19 @@ function LocationRowsDisplay({ locationRows }: { locationRows: any[] }) {
     });
   });
 
-  const storyOrder = Object.keys(storyMap);
-
   return (
-    <View className="mt-1 pl-1">
-      {storyOrder.map((story) => (
-        <View key={story} className="flex-row mb-0.5">
-          <Text className="text-xs text-slate-400 font-semibold w-16">{story}</Text>
-          <Text className="text-xs text-slate-600 flex-1">
-            {storyMap[story]
-              .map((item) => `${item.location}: ${item.value}${item.unit}`)
-              .join(', ')}
-          </Text>
-        </View>
-      ))}
-    </View>
+    <>
+      {Object.keys(storyMap).map((story) => {
+        const items = storyMap[story];
+        const unit = items[0]?.unit || 'ft';
+        const sides = items.map((item) => `${item.location} ${item.value}${item.unit}`).join(', ');
+        // The portal's table carries the run total after the sides. Only worth showing when
+        // there is more than one side to add up — `Left 22ft (22ft total)` is noise.
+        const total = items.reduce((sum, item) => sum + (Number(item.value) || 0), 0);
+        const text = items.length > 1 ? `${sides} (${total}${unit} total)` : sides;
+        return <SummaryFieldRow key={story} label={story} text={text} />;
+      })}
+    </>
   );
 }
 
@@ -183,14 +195,16 @@ function CombinationSummaryItem({ entry, accentColor, isLast }: { entry: any; ac
           {entry.summaryLine && (
             <Text className="text-base font-semibold text-slate-800">{entry.summaryLine}</Text>
           )}
-          <LocationRowsDisplay locationRows={entry.locationRows} />
         </View>
       </View>
-      {entry.comboFieldRows?.length > 0 && (
+      {/* The field rows and the measurement rows are ONE list: the stories are ordinary rows and
+          belong at the end of it, after Color, as the portal's table has them. */}
+      {(entry.comboFieldRows?.length > 0 || entry.locationRows?.length > 0) && (
         <View className="mt-1 space-y-1">
-          {entry.comboFieldRows.map((row: any, idx: number) => (
+          {entry.comboFieldRows?.map((row: any, idx: number) => (
             <SummaryFieldRow key={idx} label={row.label} text={row.text} variant={row.variant} />
           ))}
+          <LocationSummaryRows locationRows={entry.locationRows} />
         </View>
       )}
       <ExtrasList items={entry.comboExtras} />
