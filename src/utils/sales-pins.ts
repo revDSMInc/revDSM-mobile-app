@@ -276,3 +276,94 @@ export const getPinDateLabel = (job: any): string => {
  */
 export const getPinSortDate = (job: any): any =>
   job?.installationDate || job?.saleDate || job?.createdAt || 0;
+
+// ─── Distance (Sales List ▸ "Filter by distance / results should also have distance") ──
+
+/** Earth's mean radius in miles. */
+const EARTH_RADIUS_MILES = 3958.8;
+
+const toRadians = (deg: number) => (deg * Math.PI) / 180;
+
+export interface Coords {
+  latitude: number;
+  longitude: number;
+}
+
+/**
+ * A job's position, or null when it has none.
+ *
+ * ⚠️ `location.coordinates` is GeoJSON: **[longitude, latitude]** — the opposite order from
+ * every `{ latitude, longitude }` object in the app. Reading it the obvious way round puts a
+ * Florida job (27.95, -82.46) at -82.46, 27.95, which is in the Southern Ocean; the distance
+ * would be wrong by thousands of miles rather than visibly broken. Same trap as
+ * `offline-lead-location.ts`.
+ */
+export const getJobCoords = (job: any): Coords | null => {
+  const raw = job?.location?.coordinates;
+  if (!Array.isArray(raw) || raw.length < 2) return null;
+  const longitude = Number(raw[0]);
+  const latitude = Number(raw[1]);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  // 0,0 is "Null Island" — what a zeroed struct looks like, never a real job site.
+  if (latitude === 0 && longitude === 0) return null;
+  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+  return { latitude, longitude };
+};
+
+/** Great-circle distance in miles (haversine). */
+export const distanceInMiles = (from: Coords, to: Coords): number => {
+  const dLat = toRadians(to.latitude - from.latitude);
+  const dLon = toRadians(to.longitude - from.longitude);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(from.latitude)) *
+      Math.cos(toRadians(to.latitude)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  return EARTH_RADIUS_MILES * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+/**
+ * Miles from `origin` to this job, or null when either side has no position.
+ *
+ * Null is a real answer and callers must honour it: a job with no coordinates is not
+ * "0 miles away", and showing 0 would put it at the top of a distance sort.
+ */
+export const getJobDistanceMiles = (job: any, origin: Coords | null | undefined): number | null => {
+  if (!origin || !Number.isFinite(origin.latitude) || !Number.isFinite(origin.longitude)) return null;
+  const coords = getJobCoords(job);
+  if (!coords) return null;
+  return distanceInMiles(origin, coords);
+};
+
+/**
+ * The distance label for a list card — `0.4 mi`, `12.7 mi`, `103 mi`.
+ *
+ * One decimal under 100 miles and none above it: a tenth of a mile matters when the rep is
+ * deciding which door to knock next, and reads as false precision at three digits.
+ */
+export const formatDistanceMiles = (miles: number | null | undefined): string => {
+  if (miles === null || miles === undefined || !Number.isFinite(miles)) return '—';
+  if (miles < 100) return `${miles.toFixed(1)} mi`;
+  return `${Math.round(miles)} mi`;
+};
+
+/**
+ * Order jobs nearest-first.
+ *
+ * ⚠️ Jobs with NO position sort to the END, whichever direction is asked for — they are
+ * unknown, not near. Returning them first (which a `null → 0` coercion would) puts the
+ * least useful rows at the top of the one sort that exists to surface the closest door.
+ */
+export const compareByDistance = (
+  a: any,
+  b: any,
+  origin: Coords | null | undefined
+): number => {
+  const da = getJobDistanceMiles(a, origin);
+  const db = getJobDistanceMiles(b, origin);
+  if (da === null && db === null) return 0;
+  if (da === null) return 1;
+  if (db === null) return -1;
+  return da - db;
+};

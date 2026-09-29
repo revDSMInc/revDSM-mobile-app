@@ -40,6 +40,9 @@ import {
   getRepDisplayName,
   jobNumberMatches,
   matchesPinStatusFilter,
+  compareByDistance,
+  formatDistanceMiles,
+  getJobDistanceMiles,
 } from '../../utils/sales-pins';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashMessage } from '../../config/message';
@@ -76,19 +79,6 @@ const isJobOwner = (item: any, user: any): boolean => {
   }
 
   return false;
-};
-
-const toRad = (deg: number) => (deg * Math.PI) / 180;
-const getDistanceInMiles = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-  const R = 3958.8; // Earth radius in miles
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
 };
 
 const EMPTY_LEADS: any[] = [];
@@ -238,7 +228,9 @@ export default function MapDetailScreen() {
     longitudeDelta?: number;
     _forceTimestamp?: number;
   } | null>(null);
-  const [sortOption, setSortOption] = useState<'price_asc' | 'price_desc' | 'date_asc' | 'date_desc'>('date_desc');
+  const [sortOption, setSortOption] = useState<
+    'price_asc' | 'price_desc' | 'date_asc' | 'date_desc' | 'distance'
+  >('date_desc');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const lastRadiusMessageKeyRef = useRef<string>('');
 
@@ -247,6 +239,7 @@ export default function MapDetailScreen() {
     price_desc: 'Price Descending',
     date_asc: 'Date Ascending',
     date_desc: 'Date Descending',
+    distance: 'Distance',
   };
 
   useEffect(() => {
@@ -478,17 +471,23 @@ export default function MapDetailScreen() {
       if (filters.minPrice && (item.price || 0) < parseFloat(filters.minPrice)) return false;
       if (filters.maxPrice && (item.price || 0) > parseFloat(filters.maxPrice)) return false;
 
-      // Location radius filter (from searched location)
-      if (filters.centerCoords && filters.radius > 0) {
-        const coords = item?.location?.coordinates;
-        if (!coords || coords.length < 2) return false;
-        const miles = getDistanceInMiles(
-          filters.centerCoords.latitude,
-          filters.centerCoords.longitude,
-          coords[1],
-          coords[0]
-        );
-        if (miles > filters.radius) return false;
+      // Distance filter. Centred on a SEARCHED location when there is one, otherwise on the
+      // rep's own GPS fix.
+      //
+      // ⚠️ That fallback is the ticket ("filter by distance"). The radius used to require
+      // `centerCoords`, so the modal's "Select Distance" picker did NOTHING unless the rep
+      // had also searched an address — a filter that silently no-ops is worse than one that
+      // is absent, because the rep believes the list is filtered.
+      //
+      // ⚠️ Skipped entirely when there is no origin at all (no search AND no fix yet):
+      // filtering against nothing would empty the list until the GPS lock lands.
+      if (filters.radius > 0) {
+        const origin = filters.centerCoords || userLocation;
+        if (origin) {
+          const miles = getJobDistanceMiles(item, origin);
+          // A job with no coordinates cannot be shown to be within the radius.
+          if (miles === null || miles > filters.radius) return false;
+        }
       }
 
       // Date Range — a pending job has no install date, so it is dated by its sale
@@ -527,6 +526,7 @@ export default function MapDetailScreen() {
     filters.endDate,
     filters.centerCoords,
     filters.radius,
+    userLocation,
     user
   ]);
 
@@ -535,6 +535,10 @@ export default function MapDetailScreen() {
     return [...baseFilteredLeads].sort((a, b) => {
       if (sortOption === 'price_asc') return (a.price || 0) - (b.price || 0);
       if (sortOption === 'price_desc') return (b.price || 0) - (a.price || 0);
+      // Nearest first, from the rep's own GPS fix. Jobs with no position sort to the END
+      // — see `compareByDistance`. With no fix yet every job is `null`, so the list keeps
+      // its incoming order rather than shuffling when the fix arrives.
+      if (sortOption === 'distance') return compareByDistance(a, b, userLocation);
 
       const timeA = a._timestamp || 0;
       const timeB = b._timestamp || 0;
@@ -542,7 +546,7 @@ export default function MapDetailScreen() {
       if (sortOption === 'date_asc') return timeA - timeB;
       return timeB - timeA; // date_desc
     });
-  }, [baseFilteredLeads, sortOption]);
+  }, [baseFilteredLeads, sortOption, userLocation]);
 
   // Opened FROM a lead (Lead Center -> Map / Expand Map) that has just been sold: its purple
   // pending-install pin is what the rep came to see, so open on it instead of leaving the camera
@@ -848,6 +852,9 @@ export default function MapDetailScreen() {
                     : 'N/A');
 
                  const isOwner = isJobOwner(job, user);
+                // Ticket: "results should also have distance". Null until the first GPS fix
+                // lands, or when the job has no coordinates — rendered as — rather than 0.
+                const distanceMiles = getJobDistanceMiles(job, userLocation);
 
                 return (
                   <TouchableOpacity
@@ -914,18 +921,33 @@ export default function MapDetailScreen() {
                         </View>
                       </View>
 
-                      {/* Rep Footer */}
-                      {isOwner && (
-                        <View>
-                          <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Rep</Text>
+                      {/* Rep + Distance — the same two-column grid as Price/Date above, so the
+                          card reads as one table. Distance keeps its column when the rep is not
+                          the owner (no Rep block), rather than jumping to the left edge. */}
+                      <View className="flex-row">
+                        <View className="flex-1">
+                          {isOwner && (
+                            <>
+                              <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Rep</Text>
+                              <View className="flex-row items-center">
+                                <Icon name="account-circle-outline" size={18} color="#2EDE56" />
+                                <Text className="text-[14px] font-bold text-slate-700 dark:text-zinc-300 ml-1">
+                                  {getRepDisplayName(job)}
+                                </Text>
+                              </View>
+                            </>
+                          )}
+                        </View>
+                        <View className="flex-1">
+                          <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Distance</Text>
                           <View className="flex-row items-center">
-                            <Icon name="account-circle-outline" size={18} color="#2EDE56" />
+                            <Icon name="map-marker-distance" size={16} color="#2EDE56" />
                             <Text className="text-[14px] font-bold text-slate-700 dark:text-zinc-300 ml-1">
-                              {getRepDisplayName(job)}
+                              {formatDistanceMiles(distanceMiles)}
                             </Text>
                           </View>
                         </View>
-                      )}
+                      </View>
                     </View>
                   </TouchableOpacity>
                 );
