@@ -86,8 +86,8 @@ android {
         applicationId "com.revdsm"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 5
+        versionName "1.5"
     }
     signingConfigs {
         debug {
@@ -96,15 +96,25 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            if (project.hasProperty('REVDSM_UPLOAD_STORE_FILE')) {
+                storeFile file(REVDSM_UPLOAD_STORE_FILE)
+                storePassword REVDSM_UPLOAD_STORE_PASSWORD
+                keyAlias REVDSM_UPLOAD_KEY_ALIAS
+                keyPassword REVDSM_UPLOAD_KEY_PASSWORD
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // Signed with the upload keystore (see gradle.properties / ~/.gradle/gradle.properties
+            // for REVDSM_UPLOAD_* values). Falls back to debug signing only if those properties
+            // are absent, so a misconfigured machine fails loudly on Play Console upload rather
+            // than silently shipping a debug-signed release.
+            signingConfig project.hasProperty('REVDSM_UPLOAD_STORE_FILE') ? signingConfigs.release : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             shrinkResources enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
