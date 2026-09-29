@@ -4,6 +4,7 @@ export * from './rollout-confirmed-at';
 export * from './rollout-summary';
 export * from './calculator-log';
 export * from './investment-center-log';
+export * from './funding-log';
 export * from './my-deal-log';
 export * from './job-builder-logs';
 export * from './job-builder-auto-log';

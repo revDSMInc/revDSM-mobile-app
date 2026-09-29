@@ -721,6 +721,30 @@ export function buildCalculatorDetails(
  * actual stored tiers; `next` = `previous + delta`, where the delta is the edited
  * build priced against the calculator SCHEMA minus the original build so priced.
  */
+/**
+ * The contract price, never below what the build COSTS.
+ *
+ * ⚠️ **Auto Adjust must not hand back a price this screen then refuses.** It sets the
+ * price by preserving the deal's ORIGINAL markup against the rebuilt tiers, and that
+ * markup can itself be below cost — a deal sold at `COST −5%` reproduces −5% against
+ * the new cost, which is faithful and invalid at once. The rep is then looking at a red
+ * *"Cannot be below the cost of $X"* under a figure a button just produced, with
+ * **Confirm** dead and nothing saying why. It shows up most on a REFUND, where pricing
+ * down is the whole point and the floor is the last thing between them and Confirm.
+ *
+ * ⚠️ **Clamp; never relax the floor for a refund.** Waiving it would sell the job below
+ * what it costs to build, which is the one thing the rule exists to stop. The floor is a
+ * business rule and Auto Adjust is a convenience, so the convenience yields.
+ *
+ * A missing or zero floor is a no-op: an unpriced build must not drag the price to 0.
+ */
+export function clampToCostFloor(price: number, cost: number): { price: number; clamped: boolean } {
+  const floor = Number(cost) || 0;
+  const value = Number(price) || 0;
+  if (floor > 0 && value < floor) return { price: floor, clamped: true };
+  return { price: value, clamped: false };
+}
+
 export function computeEditedTiers({
   calculatorData,
   dealCenterData,

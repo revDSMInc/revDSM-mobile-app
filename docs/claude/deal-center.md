@@ -1,6 +1,6 @@
 # Dynamic Deal Center — calculator, rollout, result & Job Builder
 
-> Part of the repo guide — the index is the root `CLAUDE.md`. **Read this before changing:** `src/screens/DynamicDealCenter/**` (create flow), `src/utils/dynamic-job-builder/**`, `widgets/components/dynamic-job-builder/**`, `widgets/modals/job-builder/**`, `utils/drop-prices.ts`, `utils/activity-log/rollout-summary.ts`.
+> Part of the repo guide — the index is the root `CLAUDE.md`. **Read this before changing:** `src/screens/DynamicDealCenter/**` (create flow), `src/utils/dynamic-job-builder/**`, `widgets/components/dynamic-job-builder/**`, `widgets/modals/job-builder/**`, `utils/drop-prices.ts`, `utils/activity-log/rollout-summary.ts`, `hooks/useOutcomeLogging.ts`, `utils/activity-log/job-builder-auto-log.ts`, `services/api/leads.ts` (`jobBuilder`/`updateJobBuilder` endpoint).
 >
 > Each `##` section is one ticket: the ask, the root cause, the decision, and the ⚠️ traps that must not be
 > "fixed" back. Newest follow-ups sit under their original ticket. Add new notes for this area HERE, not in the root file.
@@ -1745,6 +1745,84 @@ interaction gating inside a React Native component, and no pricing rule moved.
   Investment Center.
 - After Result / a submitted job, the tiles no longer respond.
 
+## The Result Lead sheet shows the funding server's refusal — in front of the sheet, and it stays
+
+Ticket: *"on the funding side we are getting the error from the backend and the error is hitting, but
+the error displays below the sheet."* Confirm with a $600 down payment on an $1100 contract →
+`PUT /lead/v1/:id/funding` `422 "Down payments total $600, above the 50% maximum ($550)"`. The call,
+the classification (`KIND_BY_STATUS[422] → 'rule'`) and the `FlashMessage.warning` were all correct;
+the banner was simply drawn behind the sheet, because `ResultJobModal` is a native `Modal` and the
+app's only `<FlashMessage />` is in `App.tsx`. Full mechanism and the trap list in
+[`app-wide.md`](app-wide.md) — "A flash raised from inside a `Modal` rendered BEHIND it".
+
+Two changes here:
+
+1. **`<ModalFlashHost active={visible} />` is the last child of the sheet's `KeyboardAvoidingView`.**
+   Every banner the sheet raises now lands inside it — its own (`'Not ready to confirm'`) *and* the
+   ones `useFunding` raises from inside an endpoint call, which know nothing about which sheet is up.
+   This covers the Funding screen too (card declined, link not sent, setup required): same Modal.
+2. **`saveError` — the server's sentence, kept above Confirm.** A `422` is a RULE the rep has to act
+   on, and a four-second banner is not where that belongs. `goFunding` writes `res.error?.message`
+   into state on a refused save and renders it in `FUND.RED_BG` directly above the `BlockerList`, so
+   the server's reason sits in the same column as the local ones.
+
+⚠️ **`saveError` is cleared by an effect keyed on `rows` / `contractPrice` / `payMode`, not inside each
+setter.** Every field on the pricing panel writes through one of those three; a per-setter clear is a
+list the next field added to the panel would quietly fall off, leaving a stale refusal above a deal it
+no longer describes. It is also reset in the sheet-open effect.
+
+⚠️ **The flash and the inline line are BOTH wanted — this is not a duplicate.** The banner is the
+"something just happened"; the inline copy is what the rep reads while fixing the split. Do not drop
+one for the other.
+
+⚠️ **The client still does NOT enforce the ceiling, and must not start.** `FundingService`
+`getDownPaymentLimit` (`GET /company/v1/down-payment-limit/sales`) exists and has **no consumer** —
+deliberately advisory, for showing the ceiling beside the input. The server is the enforcer; a
+client-side cap that disagreed with it would either block a legal down payment or promise an illegal
+one. Surfacing the limit in the UI is unbuilt, not forgotten.
+
+## A `bank` (financing) row can never leave "Link Sent" — the client-side bypass
+
+Ticket: card and check "work perfectly", but picking a financing plan (GreenSky, Wells Fargo — any
+plan `methodTypeOf` resolves to `type: 'bank'`) got the rep stuck on the Funding screen: the lender
+integration behind `sync`/decision isn't live yet, so no decision ever arrives, `activated` never
+ticks, and — because `fundingBlockers` mirrors the server's own submit rule — **Submit Funding**
+(`ResultJobModal`) stays disabled forever on a step nobody can complete. Root cause is the missing
+backend/lender integration, not a client bug; the ask was a temporary, obviously-removable frontend
+workaround, not a fix to the real flow.
+
+- **`FINANCING_BYPASS_ENABLED` / `isFinancingBypassed(payment)`** (`utils/funding.ts`, beside
+  `MULTI_METHOD_ENABLED`) — the one flag. `true` for every `p.type === 'bank'` row while it's on.
+- **`fundingBlockers`**: a bypassed row contributes **no** blocker — inserted as its own arm, but
+  *after* the declined / open-short / application-closed checks, so a REAL signal (a decision did
+  come back some other way) still reports exactly as before. Only "never progressed" is swallowed.
+- **`PaymentFundingCard`**: a bypassed row renders `FinancingBypassNotice` (`Financed through {plan}` +
+  "Approval and funding for this amount are confirmed directly between the lender and the customer.")
+  **instead of** `FundingStepper` and every rep-action button/sync row — not layered on top of them.
+  The message is deliberately about *how the payment is being made*, never about a missing feature —
+  and deliberately does NOT say "nothing to do here"/"not needed", which reads as dismissive rather
+  than as a statement of who owns the next steps.
+- ⚠️ **Does NOT touch `coverageOK` / `fundedAmount` / `stateOf` / `FLOW` / the pricing-screen chip
+  (`PaymentRowsGroup`, `lenderState`)** — a bypassed row still pledges its full amount toward the
+  contract total exactly as before, and still reads "Pending lender decision" on the pricing screen.
+  Only the Funding-screen rail and the submit gate change.
+- ⚠️ **Does not, and cannot, change what the real `POST …/funding/submit` call does.** Removing the
+  CLIENT pre-check only lets the rep tap Submit; `funding.submit()` (`useFunding.ts`) is untouched, and
+  `handleBuild` still only proceeds past the sheet on `res.ok` (spec rule 3 — the server owns every
+  step). If the backend also refuses an unresolved financing row, `funding.serverBlockers` still
+  overrides the local list exactly as it already did before this ticket — this only removes an
+  over-eager CLIENT wall in front of a tap the rep should get to try.
+- **My Deals** (`DynamicDealEditScreen`) needed no separate change — it renders the same
+  `FundingView`/`PaymentFundingCard` and calls the same `fundingBlockers`, and its own "Next · Review"
+  was already non-blocking on funding completion (see the comment at its footer: *"Submitting an
+  addendum has never required funding to be complete"*). Confirms the "no second implementation" rule
+  this file's STEP 2 comment already states.
+
+⚠️ **This is the one thing to revert once real lender decisions start arriving** — search
+`FINANCING_BYPASS_ENABLED` / `isFinancingBypassed`. Flip the flag (or delete it and the two branches
+above) and the original stepper, actions and blockers come back exactly as they were; nothing they
+guard was rewritten, only skipped.
+
 ## Ticket 1063 — dropdowns become dependent fields (option rules, defaults, `disabled`)
 
 Portal `feature/ticket-1063` (`40f31a96`, 2026-08-11) turned the `dropdown` field type from a plain
@@ -2372,3 +2450,128 @@ taking either side alone leaves a live call in the body whose dep is missing, i.
 resolution keeps both, and both calls are still present in the callback.
 
 ⚠️ If this line conflicts again, do not pick a side — reconcile it against what the body actually calls.
+
+**It conflicted again** when `dev-v1-funding` merged in, in the same callback and the same shape: funding
+added `const resultCalcId = calcIdOverride || currentCalculatorId` (the resume path reaches this in the
+same tick as its `setCurrentCalculatorId`, so the state id is a tick stale) while the offline branch added
+the down-payment write directly above it. Union again — and the reconciliation caught a real bug: the
+down-payment write was keyed on `currentCalculatorId`, which on the resume path is exactly the stale id
+funding introduced `resultCalcId` to avoid. It now writes against `resultCalcId`. Taking either side alone
+would have saved the rep's down payment onto the PREVIOUSLY selected calculator, silently, because both
+writes succeed.
+
+### Merge note: the outcome read answers TWO independent questions
+
+The same `dev-v1-funding` merge conflicted on the Job Builder's `['leadOutcome']` `queryFn`
+(`DynamicJobBuilderScreen.tsx`), where each branch had reworked the same two `return` statements for a
+different reason:
+
+- offline branch: `applySaved(…)` deserialization, plus **the device copy standing in on a failed read** —
+  answering `undefined` there is what blanked the builder on a flaky connection.
+- `dev-v1-funding`: an **`outcomeExists`** flag gating the DOCUMENTS query below, with `isMissingOutcome(e)`
+  separating a normal first-open 404 from a real failure.
+
+⚠️ **Neither side could simply be taken.** Funding's `return { initialJobState: jobState … }` names a
+variable that no longer exists on the offline branch (renamed to `savedState` + `applySaved`), so "theirs"
+does not compile; "ours" drops the flag and restores the duplicate 404 on every first open.
+
+The resolution keeps both because **they answer different questions**: "what build should the rep see?"
+(device copy vs server) and "does an outcome RECORD exist?" (gates the documents read). A 404 answers
+both — no record, no build. Any other error answers *neither*, so the device copy is offered AND the
+documents read still gets its own chance.
+
+⚠️ The **device-source early return** (`resolveJobBuildSource === 'device'`) now returns
+`outcomeExists: false` explicitly. It predates the flag, so it returned none — and `undefined !== false`
+reads as "unknown", which lets the documents query fire on exactly the offline path where its signed-URL
+round-trip cannot succeed and where `calcId` may be a client id the server has never seen. Documents
+re-resolve on the next online open, when that branch is no longer taken.
+
+## Opening the Result Lead sheet 404'd — `updateJobBuilder` was PUTting a POST-only route
+
+Ticket: opening `ResultJobModal` (the funding "Result Lead" sheet) logged a **404** —
+`PUT /lead/v1/:id/job-builder Cannot PUT /lead/v1/:id/job-builder`. Confirmed by backend
+(2026-09-28): `/job-builder` has no PUT handler, POST only, and POST upserts by lead id.
+
+Root cause: `useOutcomeLogging`'s mount effect (shared by `ResultJobModal`, the classic
+`OutcomeModal`, and the Lead Center `ResultLeadModal` — all three render the sheet this hook
+drives) auto-populates the `lead_result` field-entry rows, then calls
+`markAutoFieldsLogged(leadId, jobBuilder, 'lead_result')` (`utils/activity-log/job-builder-auto-log.ts`)
+to persist `jobBuilder.autoFieldsLogged.lead_result = true` so the same rows don't re-fire on
+the next open. That write went through `LeadService.updateJobBuilder`, which called
+`api.put(LeadEndpoints.jobBuilder(leadId), …)` — the one caller in the file using PUT where every
+other write to this route (`submitJobBuilder`, `AppointmentSchedulerModal`'s amendment-submit
+double-write) already used POST.
+
+- **Fix: `updateJobBuilder` now POSTs too** (`services/api/leads.ts`). It stays a separate
+  function from `submitJobBuilder` — same request, kept for call-site clarity (callers that mean
+  "update" vs. "submit") — not collapsed into one, since other call sites reference it by name.
+- ⚠️ **Don't "restore" a PUT here.** `/job-builder` never had a PUT handler; the original PUT was
+  the bug, not a divergence to re-sync.
+- `AppointmentSchedulerModal.handleAmendmentSubmit` calls `submitJobBuilder` then `updateJobBuilder`
+  back-to-back with the same payload — before this fix, the second call's 404 threw and skipped the
+  success flash / draft-accept, another symptom of the same root cause, now resolved by the same edit.
+
+### ✅ The Job Builder read the SAME outcome endpoint twice on every first open
+
+Ticket, with a devtools capture on opening the Job Builder for the first time:
+*"when first time this screen is open this end point is calling with the 404 not found error"* —
+`GET /lead/v1/{leadId}/outcome/{calculatorId}` → `{"code":404,"message":"Lead calculator outcome not found"}`,
+logged red from `outcome-documents.ts` as a failed document read.
+
+**The endpoint was not misbehaving.** That outcome record is created by the first **save**, so on a
+first open there is genuinely nothing to read and `404` is the correct answer. Two separate faults
+turned a normal state into an error in the console:
+
+1. ⚠️ **The same URL was requested TWICE.** The draft query (`['leadOutcome', leadId, calcId, startFresh]`)
+   calls `getLeadOutcomeByCalculator` and swallows its 404 silently; the documents query
+   (`['leadOutcomeDocs', leadId, calcId]` → `loadResolvedOutcomeDocuments` → `fetchOutcomeDocumentRows`)
+   then re-reads **the same endpoint** — a record the app had *already been told does not exist*. That
+   second call is the one in the log, and the capture shows both.
+2. **It reported the 404 as a failure.** `fetchOutcomeDocumentRows` already returned `null` (so behaviour
+   was correct), but it `console.warn`ed unconditionally.
+
+#### The fix
+
+- **New `isMissingOutcome(e)`** in `utils/outcome-documents.ts` — reads `response.status ?? httpStatus`.
+  The warn now fires only for a GENUINE failure. ⚠️ **Do not widen it to swallow everything**: an empty
+  document list on a lead that HAS documents is a real problem and must stay loud.
+- **The draft query returns `outcomeExists`** (`true` on success, `!isMissingOutcome(e)` in the catch) and
+  the documents query is gated `… && outcomeData?.outcomeExists !== false`. **Documents live ON the
+  outcome**, so no outcome means no documents and nothing to ask for — the request is not silenced, it is
+  not made.
+
+⚠️ **A non-404 failure keeps `outcomeExists: true` deliberately.** An unrelated 500 on the draft read must
+not suppress a document list that may well come back fine.
+
+⚠️ **`outcomeExists !== false`, not `=== true`.** `initialJobState: undefined` is normal — an outcome can
+exist with no saved build (Start Fresh on a rehash, or an empty one) — so only an *explicit* `false` gates.
+
+⚠️ **It re-enables itself, and every path was checked:** filing the first document creates the outcome and
+`commitUploaded` invalidates `['leadOutcome', leadId]` — a **prefix** of the draft query's key — so it
+refetches, `outcomeExists` flips true and the documents query runs. A **delete-only** Update invalidates
+only `['leadOutcomeDocs', leadId]`, which is safe because documents existing implies the outcome exists, so
+the query was already enabled. `handleUploadDocs` also returns its rows from its own direct
+`fetchOutcomeDocumentRows` call, so a just-uploaded document reaches the caller either way.
+
+Verified with 7 tests (`__tests__/screens/DynamicDealCenter/outcome-first-open.test.ts`) driving the real
+`isMissingOutcome` plus the query's exact `enabled` expression: the 404 recognised under both status
+spellings, a 500 / 403 / network error / `undefined` still reported, **the repro (no outcome → the
+documents query does not run)**, it running once an outcome exists, a non-404 failure still letting the
+read try, an outcome-less payload not mistaken for a missing outcome, and the `isEdit` / `isOutcomeFetched`
+/ id gates unchanged. tsc 44 (baseline unchanged); `outcome-documents.ts` is eslint-clean and
+`DynamicJobBuilderScreen.tsx` is at its exact HEAD baseline (49 problems: 2 errors / 47 warnings).
+22 suites / 390 tests pass and the iOS bundle builds. ⚠️ Both files are **CRLF**.
+
+⚠️ Needs a device check: open the Job Builder on a NEW lead and confirm the console shows **no**
+`GET …/outcome/{calcId}` at all; then file an agreement and confirm the documents list still populates.
+
+## My Deals no longer hides uncoloured LeafFilter combinations
+
+Ticket: *show combinations with values AND those with none — a free hand over the LeafFilter combination
+inputs.* `isComboHiddenInDealEdit` (`utils/dynamic-job-builder/engine/combination-color-filter.ts`) now always
+returns `false`, so the tab cards, Grand Total card, Summary step and combination numbering (Deal Center's
+`renumberTabCombinations` included) show and count every combination. Full note and restore recipe:
+`deal-edit-addendums.md`, "My Deals shows uncoloured LeafFilter combinations again".
+
+⚠️ Display only — the function stays as the single choke point; do not re-add per-surface filters. An
+untouched empty combination is still pruned on save, so no blank rows persist.

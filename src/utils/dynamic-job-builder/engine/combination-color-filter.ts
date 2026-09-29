@@ -104,11 +104,14 @@ export const ADDED_IN_EDIT_KEY = '_addedInEdit';
 
 /**
  * THE My Deals visibility rule, shared by every surface that renders a combination
- * (cards, Grand Total card, Summary step, numbering). Edit-mode only: an unfinished
- * SAVED combination — no colour picked — is hidden; one added this session is not.
+ * (cards, Grand Total card, Summary step, numbering).
+ *
+ * ⚠️ Nothing is hidden any more. The rep asked for a free hand: a combination with no
+ * colour picked stays visible next to the finished ones so they can fill it in. The
+ * function (and its three call sites) is kept as the single choke point, so the
+ * colour rule can be brought back by restoring the old body:
+ * `editMode && !combo[ADDED_IN_EDIT_KEY] && !comboHasSelectedColor(combo, fields)`.
  */
-export function isComboHiddenInDealEdit(combo: any, fields: any[] = [], editMode?: boolean): boolean {
-  if (!editMode) return false;
-  if (combo?.[ADDED_IN_EDIT_KEY]) return false;
-  return !comboHasSelectedColor(combo, fields);
+export function isComboHiddenInDealEdit(_combo: any, _fields: any[] = [], _editMode?: boolean): boolean {
+  return false;
 }

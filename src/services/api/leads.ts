@@ -287,8 +287,13 @@ export const LeadService = {
     api.get(LeadEndpoints.downloadOutcomeDocuments(leadId)),
   submitJobBuilder: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.post(LeadEndpoints.jobBuilder(leadId), payload),
+  // ⚠️ `/job-builder` is a POST-only route on the backend — there is no PUT
+  // handler (confirmed by backend, 2026-09-28: a PUT here 404s, e.g. from the
+  // Result Lead sheet's auto-field logging). Upserts by lead id, so POST also
+  // covers the "update" case; kept as a separate function for callers that
+  // mean update semantically.
   updateJobBuilder: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
-    api.put(LeadEndpoints.jobBuilder(leadId), payload),
+    api.post(LeadEndpoints.jobBuilder(leadId), payload),
   updateLeadOutcomeByCalculator: (leadId: string, calculatorId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.outcomeByCalculator(leadId, calculatorId), payload),
 

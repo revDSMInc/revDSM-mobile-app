@@ -32,6 +32,7 @@ import { isClientId } from '../../utils/offline-lead-work';
 import { useDynamicJobBuilderActivityLog } from './hooks/useDynamicJobBuilderActivityLog';
 import { buildCalculatorOutcomePayload } from './utils/build-outcome-payload';
 import {
+  isMissingOutcome,
   loadResolvedOutcomeDocuments,
   fetchOutcomeDocumentRows,
   resolveOutcomeDocRows,
@@ -292,7 +293,13 @@ function DynamicJobBuilderInner({
       const stored = offlineSavedJobBuildState(work);
       const offline = !isOnline() || isClientId(leadId) || isClientId(calcId);
       if (resolveJobBuildSource({ work, offline }) === 'device') {
-        return { initialJobState: applySaved(stored) };
+        // ⚠️ `outcomeExists: false` SUPPRESSES the documents query below, deliberately.
+        // This branch is the offline/device-owned path: its signed-URL round-trip cannot
+        // succeed without a connection, and `calcId` may be a client id the server has
+        // never seen. Leaving the flag undefined reads as "unknown" and lets that read
+        // fire anyway. Documents re-resolve on the next online open, when this branch is
+        // no longer taken.
+        return { initialJobState: applySaved(stored), outcomeExists: false };
       }
 
       try {
@@ -311,11 +318,28 @@ function DynamicJobBuilderInner({
         // the signed-URL round-trip, or `initialJobState` (the draft) can't reach the
         // session until the whole doc chain settles. That is the "reopen shows empty,
         // then fills in a moment later" the rep sees.
-        return { initialJobState: applySaved(savedState) };
-      } catch {
-        // A read that FAILED knows nothing. Answering `undefined` here is what blanked the
-        // builder on a flaky connection, so the device copy stands in when there is one.
-        return { initialJobState: applySaved(stored) };
+        //
+        // `outcomeExists` gates the DOCUMENTS query below, which re-reads this very
+        // endpoint. Without it that read fires on every first open and 404s a second
+        // time — see the note on it.
+        return { initialJobState: applySaved(savedState), outcomeExists: true };
+      } catch (e) {
+        /**
+         * ⚠️ A **404 means no outcome has been saved for this calculator yet**, which is
+         * the normal state on a first open — the record is created by the first save.
+         * Anything else is a real failure, and there `outcomeExists` stays TRUE so the
+         * documents read still gets its own chance rather than being suppressed by an
+         * unrelated error.
+         *
+         * ⚠️ The two answers are INDEPENDENT. A read that FAILED knows nothing about the
+         * build, so the device copy stands in when there is one — answering `undefined`
+         * here is what blanked the builder on a flaky connection. That is a separate
+         * question from whether an outcome RECORD exists, which is what gates the
+         * documents read. A 404 answers both (no record, no build); any other error
+         * answers neither, so the device copy is offered AND the documents read still
+         * gets its own chance.
+         */
+        return { initialJobState: applySaved(stored), outcomeExists: !isMissingOutcome(e) };
       }
     },
     // Edit mode supplies the (already-deserialized) state from the PortalJobBuilder
@@ -350,9 +374,22 @@ function DynamicJobBuilderInner({
   const { data: resolvedDocumentsData } = useQuery({
     queryKey: ['leadOutcomeDocs', leadId, calcId],
     queryFn: () => loadResolvedOutcomeDocuments(leadId, calcId),
-    // Runs once the draft's outcome GET has landed, and NEVER in edit mode — edit
-    // fetches docs lead-scoped via `editDocsData` below (web parity).
-    enabled: Boolean(leadId && calcId) && !isEdit && isOutcomeFetched,
+    /**
+     * Runs once the draft's outcome GET has landed, and NEVER in edit mode — edit
+     * fetches docs lead-scoped via `editDocsData` below (web parity).
+     *
+     * ⚠️ **And only when an outcome actually EXISTS.** This re-reads the SAME endpoint
+     * the query above just called, so on a first open — where there is no outcome yet —
+     * it fired a second `GET …/outcome/{calcId}` that 404'd and logged an error, for a
+     * record the app had already been told does not exist. Documents live ON the
+     * outcome, so no outcome means no documents and nothing to ask for.
+     *
+     * ⚠️ It re-enables on its own: filing the first document creates the outcome, and
+     * `commitUploaded` invalidates `['leadOutcome', leadId]` — a PREFIX of this query's
+     * key — so the read above refetches, `outcomeExists` flips true, and this runs.
+     */
+    enabled:
+      Boolean(leadId && calcId) && !isEdit && isOutcomeFetched && outcomeData?.outcomeExists !== false,
     staleTime: 0,
     gcTime: 0,
     refetchOnMount: 'always',

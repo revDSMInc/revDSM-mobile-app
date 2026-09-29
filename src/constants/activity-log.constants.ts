@@ -102,3 +102,82 @@ export const SYSTEM_MODULE = 'system';
  * `src/utils/activity-log/investment-center-log.ts`.
  */
 export const INVESTMENT_CENTER_MODULE = 'investment_center';
+
+/**
+ * Funding — how the contract actually gets paid, and how far each payment has got.
+ *
+ * A NEW grouped category for the Forever Record covering the Result Lead sheet's
+ * pricing panel (the payment rows) and the Funding screen behind it: the structure
+ * (down payment + balance vs upfront), every row added / removed / given a method,
+ * the save that files them, and then each payment's own life cycle — link sent,
+ * card on file, charged, check collected, lender decision, loan activated — through
+ * to the submit.
+ *
+ * Its own module rather than `calculator` / `job_builder` because this is the only
+ * place in the app where **money moves** (`POST …/charge`) and where a third party
+ * (a processor, a lender) decides the outcome. A portal filter on `funding` should
+ * read as the money trail for a job and nothing else — see
+ * `src/utils/activity-log/funding-log.ts`.
+ *
+ * First introduced on mobile (the web funding screen does not log yet), so the
+ * vocabulary is defined here.
+ */
+/**
+ * Result Lead — the sheet a rep results a job from, up to and including **Confirm**.
+ *
+ * ONE module for everything that happens on that screen: the sheet opening, the
+ * web-parity field rows (One Leg, Result, contract price, the payment-method
+ * scalars — see `useOutcomeLogging`), the payment structure choice, every payment
+ * line added / removed / given a method, and the Confirm that ends it.
+ *
+ * ⚠️ **It ends at Confirm, and `funding` begins there.** Before the rep confirms,
+ * the split is an unsaved local draft and nothing has been asked of a processor or
+ * a lender; after it, `PUT …/funding` has filed the rows and every subsequent row is
+ * about money actually moving. Splitting the two there is what lets a portal filter
+ * answer "how was this job resulted?" separately from "how did the money come in?" —
+ * previously the two were interleaved under `funding`.
+ *
+ * ⚠️ The module follows the SCREEN, not the deal's history: **Edit payments** returns
+ * to the pricing panel, so a re-price after a lender decision fires
+ * `result_lead_opened` again and files its edits here, not under `funding`.
+ *
+ * ⚠️ This is the Result Lead SHEET only. `DynamicDealEditScreen`'s Job Price step
+ * renders the same pricing components inside the My Deals wizard and deliberately
+ * keeps logging to `funding`: it is a different screen and is not a Result Lead.
+ *
+ * ⚠️ Distinct from `lead_result_field_entry`, the module the CLASSIC Outcome modal
+ * and the Lead Center Result Lead modal still emit into byte-identically to web.
+ * Only the DYNAMIC sheet opts in to this one — see `useOutcomeLogging`'s `moduleType`.
+ *
+ * Events are namespaced `result_lead_*` and carry the same flow prefix and
+ * `meta.fundingSource` the funding module does, so the portal badges both the same
+ * way — see `src/utils/activity-log/result-lead-log.ts`.
+ */
+export const RESULT_LEAD_MODULE = 'result_lead';
+
+export const FUNDING_MODULE = 'funding';
+
+/**
+ * WHICH FLOW the rep reached the funding module through.
+ *
+ * The funding screen itself is identical in all three, but the timeline is not:
+ * money collected while re-pitching a `rehash` lead, money on a fresh `sale`, and
+ * money touched from the `my_deals` deal-edit flow answer different questions, and
+ * the backend has to tell them apart to display them under the right heading.
+ *
+ * ⚠️ This does NOT become the `module_type` — that stays `funding` for every one of
+ * them, so a single filter still returns the whole money trail. It is composed onto
+ * `meta.action` instead (`rehash_funding_card_charged`) and carried alongside as
+ * `meta.fundingSource` — see `composeFundingAction` in
+ * `src/utils/activity-log/funding-log.ts`.
+ */
+export const FUNDING_SOURCES = {
+  /** A re-pitch of a lead that was already sold once (`lead.isRehashed`). */
+  REHASH: 'rehash',
+  /** The ordinary new-deal path: calculator → rollout → Result Lead → funding. */
+  SALE: 'sale',
+  /** Reached from My Deals / the deal-edit flow on an already-submitted job. */
+  MY_DEALS: 'my_deals',
+} as const;
+
+export type FundingSource = (typeof FUNDING_SOURCES)[keyof typeof FUNDING_SOURCES];

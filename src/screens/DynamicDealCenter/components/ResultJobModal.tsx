@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { BlurView } from '@react-native-community/blur';
@@ -6,21 +6,97 @@ import { MODAL_BLUR_AMOUNT, MODAL_SCRIM } from './modal-chrome';
 import { useTheme } from '../../../theme/ThemeProvider';
 import type { CalculatorEntry, CalculatorSchema } from '../types/calculator';
 import { buildCategoryMeta, styleForKey } from '../utils/icon-color';
-import { DealPricing, DealPlan, PayCategory, planBelowMin, belowMinMsg } from '../hooks/useDealPricing';
+import { DealPricing } from '../hooks/useDealPricing';
 import { FlashMessage } from '../../../config/message';
 import { unitSuffix, labelWithSection } from '../utils/item-format';
 import { describeFullPackage } from '../utils/tab-naming';
 import { FullPackageTitle, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
+import { useAuth } from '../../../hooks/useAuth';
+// Past Confirm only. Everything BEFORE it is the Result Lead module below.
+import {
+  logFundingEditPayments,
+  logFundingLinkCopied,
+  logFundingOpened,
+  type FundingSource,
+} from '../../../utils/activity-log/funding-log';
+// This screen, up to and including Confirm.
+// ⚠️ The four pricing emitters here have twins in `funding-log` that are STILL
+// LIVE: `DynamicDealEditScreen`s Job Price step renders the same pricing
+// components inside the My Deals wizard, which is not a Result Lead sheet and
+// deliberately keeps logging to `funding`.
+import {
+  logResultLeadBuildJob,
+  logResultLeadConfirmed,
+  logResultLeadMethodSelected,
+  logResultLeadOpened,
+  logResultLeadRowAdded,
+  logResultLeadRowRemoved,
+  logResultLeadStructureChanged,
+} from '../../../utils/activity-log/result-lead-log';
+import { RESULT_LEAD_MODULE } from '../../../constants/activity-log.constants';
+import { FS, FUND, PS } from './funding/funding-theme';
+import { ModalFlashHost } from '../../../widgets/common/ModalFlashHost';
+import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
+import { FundingView } from './funding/FundingView';
+import { SendLinkModal } from './funding/SendLinkModal';
+import { SegmentedChoice } from './funding/SegmentedChoice';
+import { CoverageBar } from './funding/CoverageBar';
+import { BlockerList } from './funding/BlockerList';
+import { useFunding } from '../hooks/useFunding';
+import { LeadService } from '../../../services/api/leads';
+import type {
+  FundingChannel,
+  FundingPaymentRow,
+  FundingRecord,
+  PaymentAllocation,
+} from '../../../services/api/FundingService';
+import {
+  applyDecisionsToRows,
+  assignedTotal,
+  attemptLog,
+  confirmBlockers,
+  coverageOK,
+  effectiveRowAmount,
+  formatStamp,
+  fundingBlockers,
+  hasDecline,
+  hydrateRowsFromRecord,
+  inferPayMode,
+  MULTI_METHOD_ENABLED,
+  needsAttentionRowId,
+  newPaymentId,
+  paymentAllocations,
+  structureHint,
+  structureLocked,
+  toUpsertRows,
+  type DecisionBanner,
+  type PaymentKind,
+  type PaymentRow,
+  type PayMode,
+} from '../utils/funding';
 
 /**
- * The full **Result Lead** outcome modal — a faithful port of the regular deal
- * center's `OutcomeModal` (`src/widgets/modals/DealCenter/OutcomeModal.tsx`): a
- * green-header sheet with a One Leg dropdown, a Result (Demo/Sale) dropdown, the
- * branch-specific fields (demo reason / sale contract-down-balance-payment), a Job
- * Summary card, Versatile/Pineapple toggles, and a "Build Job" action. Reached via
- * the small Sale/Demo chooser in the rollout; confirming proceeds to the job builder.
+ * The full **Result Lead** sheet.
+ *
+ * It is now TWO screens behind one header (mockup `screenResult` / `screenFunding`):
+ *
+ *  1. **Result Lead** — One Leg, Result, and a *Pricing* panel where the contract
+ *     price is split across as many payment methods as the deal needs (see
+ *     `funding/PaymentRowsGroup`). Job Summary and the Versatile/Pineapple toggles
+ *     are unchanged.
+ *  2. **Funding** — one card per payment, each driven to the end of its own life
+ *     cycle before the job can be submitted (see `funding/FundingView`).
+ *
+ * The two talk to each other in both directions: **Confirm** projects the pricing
+ * rows into funding payments, and coming back (Back / *Edit payments*) folds any
+ * lender decision onto the rows it came from — a declined row locks at $0 and the
+ * contract price unlocks, because a decision the lender made is a fact the rep now
+ * has to price around.
+ *
+ * The **Demo** branch is untouched: a demo has nothing to fund, so it keeps the
+ * original single-screen form and the Build Job button.
  */
 
 const ONE_LEG_OPTIONS = ['No', 'MR', 'MRS'];
@@ -39,11 +115,35 @@ const DEMO_REASONS = [
   'Other (Explain)',
 ];
 
+/** Amounts are money; compare with a cent of slack rather than exactly. */
+const EPS = 0.01;
+
+const PRICE_UNLOCK_HINT =
+  'Unlocked because a lender decision changed what this job can fund. Lower the price if you are rewriting the deal.';
+
 interface ResultJobModalProps {
   visible?: boolean;
   /** The lead — needed to fire the `lead_result_field_entry` outcome logs (web parity). */
   lead?: any;
   calculatorTitle?: string;
+  /**
+   * The calculator this sale is being resulted from. Display never uses it — it is
+   * carried so every funding log row links the money back to the quote it came
+   * from, which is otherwise unrecoverable once the sheet closes.
+   */
+  calculatorId?: string;
+  /**
+   * WHICH FLOW this sheet was opened through — `rehash` | `sale` | `my_deals`.
+   *
+   * Composed onto every funding `meta.action` so the backend can display the money
+   * trail under the right heading; `module_type` stays `funding` regardless.
+   * Resolve it with `resolveFundingSource`, never by hand.
+   *
+   * ⚠️ Left undefined the actions ship UN-prefixed, which reads as "origin unknown"
+   * in the data. That is deliberate — better than silently filing a rehash under
+   * `sale` because a mount site forgot to pass it.
+   */
+  fundingSource?: FundingSource;
   resultType?: 'sale' | 'demo' | null;
   /** prefill for the contract price (the rollout end / latest drop price) */
   initialPrice?: number;
@@ -71,40 +171,65 @@ interface ResultJobModalProps {
     balance?: number;
     downPaymentMethod?: string;
     balancePaymentMethod?: string;
+    /**
+     * The multi-method breakdown, persisted BESIDE the four scalars above (which
+     * stay written as a derived mirror — summed totals plus the first funded row's
+     * plan key).
+     *
+     * ⚠️ Additive on purpose. ~20 consumers read the four flat names, and the
+     * customer-facing agreement and amendment renderers would degrade *silently*
+     * rather than error if they were converted outright. A reader that has not been
+     * upgraded therefore sees a LOSSY view — one method named for a job that used
+     * three — never a wrong one.
+     *
+     * ⚠️ `method` here is a plan KEY, matching `paymentMethod` — NOT the catalogue
+     * label the funding API's own `payments[].method` carries.
+     */
+    downPayments?: PaymentAllocation[];
+    balancePayments?: PaymentAllocation[];
     demoReason?: string;
     reasonExplanation?: string;
     versatile?: boolean;
     pineapple?: boolean;
+    /**
+     * Sale only — the funding record as the SERVER holds it once Submit landed.
+     * `payments` is the full multi-method breakdown; the four fields above stay
+     * populated (first/summed) so every existing consumer of the outcome payload
+     * keeps working unchanged.
+     */
+    bankDecline?: boolean;
+    payments?: FundingPaymentRow[];
+    fundingAttempts?: FundingRecord['attemptHistory'];
   }) => void;
 }
 
 /** Floating-label helper shared by every field (notched-outline look, web parity). */
 function FloatingLabel({ text, error, bg = '#fff' }: { text: string; error?: boolean; bg?: string }) {
   return (
-    <Text style={{ position: 'absolute', top: -8, left: 12, zIndex: 10, paddingHorizontal: 4, backgroundColor: bg, fontSize: 10, fontWeight: '600', letterSpacing: 0.5, color: error ? '#EF4444' : '#000' }}>
+    <Text style={{ position: 'absolute', top: -8, left: 12, zIndex: 10, paddingHorizontal: 4, backgroundColor: bg, fontSize: FS.MICRO, fontFamily: PS.semibold, letterSpacing: 0.5, color: error ? '#EF4444' : '#000' }}>
       {text}
     </Text>
   );
 }
 
 /** Dropdown select — options render inline (in-flow) below the box, like the regular. */
-function SelectField({ label, value, placeholder, options, onSelect, disabled, capitalize, error }: {
+function SelectField({ label, value, placeholder, options, onSelect, disabled, capitalize, error, bg }: {
   label: string; value: string; placeholder: string;
   options: { value: string; label: string }[];
-  onSelect: (v: string) => void; disabled?: boolean; capitalize?: boolean; error?: boolean;
+  onSelect: (v: string) => void; disabled?: boolean; capitalize?: boolean; error?: boolean; bg?: string;
 }) {
   const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.value === value);
   return (
     <View style={{ marginBottom: 20, position: 'relative' }}>
-      <FloatingLabel text={label} error={error} />
+      <FloatingLabel text={label} error={error} bg={bg} />
       <TouchableOpacity
         activeOpacity={0.8}
         disabled={disabled}
         onPress={() => setOpen((v) => !v)}
-        style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, minHeight: 48, borderColor: error ? '#EF4444' : open ? '#1C252E' : '#919EAB33', backgroundColor: disabled ? '#F4F6F8' : '#fff' }}
+        style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 8, paddingHorizontal: 13, paddingVertical: 10, minHeight: 44, borderColor: error ? '#EF4444' : open ? '#1C252E' : '#919EAB33', backgroundColor: disabled ? '#F4F6F8' : '#fff' }}
       >
-        <Text style={{ flex: 1, fontSize: 13, fontWeight: '600', color: selected ? (disabled ? '#919EAB' : '#1C252E') : '#919EAB', textTransform: capitalize ? 'capitalize' : 'none' }}>
+        <Text style={{ flex: 1, fontSize: FS.BODY, fontFamily: PS.semibold, color: selected ? (disabled ? '#919EAB' : '#1C252E') : '#919EAB', textTransform: capitalize ? 'capitalize' : 'none' }}>
           {selected ? selected.label : placeholder}
         </Text>
         <Ionicons name={disabled ? 'lock-closed' : open ? 'chevron-up' : 'chevron-down'} size={18} color="#919EAB" />
@@ -119,7 +244,7 @@ function SelectField({ label, value, placeholder, options, onSelect, disabled, c
                 onPress={() => { onSelect(o.value); setOpen(false); }}
                 style={{ paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#919EAB14', backgroundColor: isSel ? '#F4F6F8' : 'transparent' }}
               >
-                <Text style={{ fontSize: 13, fontWeight: '600', color: isSel ? '#1C252E' : '#637381', textTransform: capitalize ? 'capitalize' : 'none' }}>{o.label}</Text>
+                <Text style={{ fontSize: FS.BODY, fontFamily: PS.semibold, color: isSel ? '#1C252E' : '#637381', textTransform: capitalize ? 'capitalize' : 'none' }}>{o.label}</Text>
                 {isSel && <Ionicons name="checkmark" size={16} color="#1C252E" />}
               </TouchableOpacity>
             );
@@ -130,74 +255,24 @@ function SelectField({ label, value, placeholder, options, onSelect, disabled, c
   );
 }
 
-/** Categorized balance-payment picker (grouped headers), like the regular outcome modal. */
-function BalancePaymentField({ label, value, price, plans, categories, onSelect }: {
-  label: string; value: string; price: number;
-  plans: Record<string, DealPlan>; categories: PayCategory[]; onSelect: (v: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const selectedLabel = plans[value]?.label;
-  return (
-    <View style={{ marginBottom: 20, position: 'relative' }}>
-      <FloatingLabel text={label} />
-      <TouchableOpacity
-        activeOpacity={0.8}
-        onPress={() => setOpen((v) => !v)}
-        style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, minHeight: 48, borderColor: open ? '#1C252E' : '#919EAB33', backgroundColor: '#fff' }}
-      >
-        <Text style={{ flex: 1, fontSize: 13, fontWeight: '600', color: selectedLabel ? '#1C252E' : '#919EAB' }} numberOfLines={1}>{selectedLabel || 'Select Payment Method'}</Text>
-        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color="#919EAB" />
-      </TouchableOpacity>
-      {open && (
-        <View style={{ borderWidth: 1, borderColor: '#1C252E', borderRadius: 8, backgroundColor: '#F8FAFC', marginTop: 4, overflow: 'hidden' }}>
-          {categories.map((cat) => (
-            <View key={cat.title || 'basic'}>
-              {!!cat.title && (
-                <View style={{ paddingHorizontal: 16, paddingVertical: 6, backgroundColor: cat.bg }}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', textTransform: 'uppercase', color: cat.text }}>{cat.title}</Text>
-                </View>
-              )}
-              {cat.plans.map((key) => {
-                const plan = plans[key];
-                if (!plan) return null;
-                const belowMin = planBelowMin(plans, key, price);
-                const isSel = key === value;
-                return (
-                  <TouchableOpacity
-                    key={key}
-                    onPress={() => {
-                      if (belowMin) { FlashMessage.warning('Payment plan', belowMinMsg(plans, key, price)); return; }
-                      onSelect(key); setOpen(false);
-                    }}
-                    style={{ paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#919EAB14', opacity: belowMin ? 0.5 : 1, backgroundColor: isSel ? '#F4F6F8' : 'transparent' }}
-                  >
-                    <View style={{ flex: 1, marginRight: 8 }}>
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: isSel ? '#1C252E' : '#637381' }} numberOfLines={1}>{plan.label}</Text>
-                      {belowMin && plan.minPrice ? <Text style={{ fontSize: 10, color: '#0F172A', marginTop: 2 }}>Requires ${plan.minPrice.toLocaleString()}+</Text> : null}
-                    </View>
-                    {isSel && <Ionicons name="checkmark" size={16} color="#1C252E" />}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          ))}
-        </View>
-      )}
-    </View>
-  );
-}
+/* NOTE: the old single-select `BalancePaymentField` lived here. The balance is now
+   one line per method inside `funding/PaymentRowsGroup`, which renders the same
+   provider-grouped catalog (and the same `planBelowMin` gating) per row. */
 
 /** $-prefixed money input with the floating-label look. */
-function MoneyField({ label, value, onChange, editable = true }: {
+function MoneyField({ label, value, onChange, editable = true, labelBg, trailing }: {
   label: string; value: string; onChange?: (v: string) => void; editable?: boolean;
+  /** Match the label's cut-out to whatever the field sits on (white, or the Pricing panel). */
+  labelBg?: string;
+  trailing?: React.ReactNode;
 }) {
   return (
     <View style={{ marginBottom: 20, position: 'relative' }}>
-      <FloatingLabel text={label} />
-      <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#919EAB33', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, minHeight: 48, backgroundColor: editable ? '#fff' : '#F4F6F8' }}>
-        <Text style={{ fontSize: 13, fontWeight: '700', marginRight: 4, color: editable ? '#1C252E' : '#919EAB' }}>$</Text>
+      <FloatingLabel text={label} bg={labelBg} />
+      <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#919EAB33', borderRadius: 8, paddingHorizontal: 13, paddingVertical: 10, minHeight: 44, backgroundColor: editable ? '#fff' : '#F4F6F8' }}>
+        <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, marginRight: 4, color: editable ? '#1C252E' : '#919EAB' }}>$</Text>
         <TextInput
-          style={{ flex: 1, fontSize: 13, fontWeight: '600', color: editable ? '#1C252E' : '#919EAB', padding: 0 }}
+          style={{ flex: 1, fontSize: FS.BODY, fontFamily: PS.semibold, color: editable ? '#1C252E' : '#919EAB', padding: 0 }}
           value={value}
           editable={editable}
           onChangeText={(t) => onChange?.(t.replace(/[^0-9.]/g, ''))}
@@ -206,6 +281,7 @@ function MoneyField({ label, value, onChange, editable = true }: {
           keyboardType={NUMERIC_KEYBOARD}
           returnKeyType="done"
         />
+        {trailing}
       </View>
     </View>
   );
@@ -215,6 +291,8 @@ export function ResultJobModal({
   visible = false,
   lead,
   calculatorTitle,
+  calculatorId,
+  fundingSource,
   resultType: initialResultType,
   initialPrice,
   initialPaymentMethod,
@@ -227,6 +305,9 @@ export function ResultJobModal({
   onConfirm,
 }: ResultJobModalProps) {
   const { isDark } = useTheme();
+  // The funding endpoints are company-scoped by a header (spec §1). The lead's own
+  // company wins over the signed-in rep's — same resolution `JobDocsSection` uses.
+  const { user } = useAuth();
   // Web `result-lead-modal.js:61`. See `Lead.isRehashed`.
   const isRehashed = lead?.isRehashed === true;
   const [oneLeg, setOneLeg] = useState('No');
@@ -234,41 +315,254 @@ export function ResultJobModal({
   const [demoReason, setDemoReason] = useState('');
   const [reasonExplanation, setReasonExplanation] = useState('');
   const [contractPrice, setContractPrice] = useState('');
-  const [downPayment, setDownPayment] = useState('');
-  const [downPaymentMethod, setDownPaymentMethod] = useState('');
-  const [balancePaymentMethod, setBalancePaymentMethod] = useState('');
   const [versatile, setVersatile] = useState(false);
   const [pineapple, setPineapple] = useState(false);
 
-  // Sync incoming result type + prefill the contract price each time it opens.
+  // ── funding state ────────────────────────────────────────────────────────
+  /**
+   * The Funding API. It owns the record; everything the funding screen renders
+   * comes from there and ⚠️ **no step is ever advanced locally** (spec rule 3).
+   * Only the PRICING rows below are local, because they are an unsaved draft until
+   * the rep taps Confirm.
+   */
+  const leadLogId = lead?._id || lead?.leadId || lead?.id;
+  const funding = useFunding(leadLogId, lead?.companyId || user?.companyId, {
+    userId: user?._id || user?.id,
+    calculatorId,
+    calculatorTitle,
+    source: fundingSource,
+    // ⚠️ The CUSTOMER document, not the lead — it is what a corrected phone or
+    // email is written back to when a rep fixes a mistyped destination.
+    customerId: lead?.customerDetails?._id || lead?.customerDetails?.id || undefined,
+  });
+
+  /**
+   * Identity for every event this component fires directly — the ones that are pure
+   * UI and never reach an endpoint (structure, rows, method picks, moving between
+   * the two screens). Everything endpoint-driven is logged inside `useFunding`,
+   * which is the only place the OUTCOME exists.
+   *
+   * ⚠️ ONE object feeds BOTH modules — `result_lead` before Confirm and `funding`
+   * after it — which is why `ResultLeadLogBase` is an alias of `FundingLogBase`
+   * rather than a second shape. A row has to identify the same lead, calculator and
+   * flow whichever side of the boundary it lands on.
+   */
+  const logCtx = useMemo(
+    () => ({
+      userId: user?._id || user?.id,
+      leadId: leadLogId,
+      calculatorId,
+      calculatorTitle,
+      source: fundingSource,
+    }),
+    [user?._id, user?.id, leadLogId, calculatorId, calculatorTitle, fundingSource]
+  );
+
+  /** Which half of the sheet is showing. A demo never leaves `result`. */
+  const [screen, setScreen] = useState<'result' | 'funding'>('result');
+  /** Down Payment + Balance, or the whole contract collected now. */
+  const [payMode, setPayMode] = useState<PayMode>('split');
+  /** The rep tried to switch structure after money started moving. */
+  const [structureNudge, setStructureNudge] = useState(false);
+  /** The editable pricing lines. One down row + one auto balance row to start. */
+  const [rows, setRows] = useState<PaymentRow[]>([]);
+  /** Messages a lender decision left above the Balance group. */
+  const [banners, setBanners] = useState<DecisionBanner[]>([]);
+  /** A decision changed what the job can fund, so the contract price opens up. */
+  const [priceUnlocked, setPriceUnlocked] = useState(false);
+  /** `bank_decline` is only reachable once a lender has actually declined. */
+  const [resultChoice, setResultChoice] = useState<'sale' | 'bank_decline'>('sale');
+  /** Payment pid whose share sheet is open, plus the url `POST …/link` returned. */
+  const [linkTarget, setLinkTarget] = useState<string | null>(null);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [isLoadingLink, setIsLoadingLink] = useState(false);
+  /**
+   * The server's reason for refusing the last Confirm, kept ON the sheet.
+   *
+   * ⚠️ The flash banner alone is not enough for this one. A `422` here is a RULE the
+   * rep has to act on ("Down payments total $600, above the 50% maximum ($550)") and
+   * the banner is gone in four seconds, so it is also written above the button that
+   * was refused — where the blockers for that same button already are. Cleared by
+   * the next edit, because any change to the rows or the price makes it a claim
+   * about a deal that no longer exists.
+   */
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const isSale = resultType === 'sale';
+  const payments = funding.payments;
+  const bankDeclined = isSale && resultChoice === 'bank_decline';
+
+  /**
+   * Down payments are cash/card only, so a plan carried in from the rollout is
+   * only a valid SEED if it is one of those — a financing key belongs to the
+   * balance. Same rule as the deal-edit wizard's `toDownPaymentKey`.
+   */
+  const seedDownMethod = useCallback(
+    (key?: string) => (key && pricing.outcomeDownPaymentMethods.some((o) => o.value === key) ? key : ''),
+    [pricing.outcomeDownPaymentMethods]
+  );
+
+  /**
+   * Open the sheet: reset the form, then load whatever funding this lead already
+   * has and seed the pricing rows from it.
+   *
+   * ⚠️ Hydrating rather than always re-seeding is what keeps `pid` STABLE across
+   * visits — it is the server's merge key, so inventing fresh ids on every open
+   * would create a second set of rows for the same deal on the next save.
+   */
   useEffect(() => {
     if (!visible) return;
+    let cancelled = false;
+
     setResultType(initialResultType || 'sale');
-    setContractPrice(initialPrice && initialPrice > 0 ? String(Math.round(initialPrice)) : '');
-    setDownPayment(initialDownPayment && initialDownPayment > 0 ? String(Math.round(initialDownPayment)) : '');
-    setDownPaymentMethod(initialPaymentMethod || '');
-    setBalancePaymentMethod(initialPaymentMethod || '');
     setDemoReason('');
     setReasonExplanation('');
-  }, [visible, initialResultType, initialPrice, initialPaymentMethod, initialDownPayment]);
+    setScreen('result');
+    setPayMode('split');
+    setStructureNudge(false);
+    setBanners([]);
+    setPriceUnlocked(false);
+    setResultChoice('sale');
+    setLinkTarget(null);
+    setLinkUrl('');
+    setSaveError(null);
+    funding.clearServerBlockers();
+
+    const seededPrice = initialPrice && initialPrice > 0 ? String(Math.round(initialPrice)) : '';
+    setContractPrice(seededPrice);
+    const freshRows: PaymentRow[] = [
+      {
+        pid: newPaymentId(),
+        kind: 'down',
+        amount: initialDownPayment && initialDownPayment > 0 ? String(Math.round(initialDownPayment)) : '',
+        method: seedDownMethod(initialPaymentMethod),
+      },
+      // The auto row absorbs whatever the down payment leaves, so the two halves
+      // always add up to the contract without the rep doing the subtraction.
+      { pid: newPaymentId(), kind: 'bal', amount: '', method: initialPaymentMethod || '', auto: true },
+    ];
+    setRows(freshRows);
+    // The Upfront group is seeded lazily, the first time the rep switches to it —
+    // see `switchPayMode`. Carrying an unused third row here would put it in
+    // `rows` where the split-mode totals would count it.
+
+    // A demo never funds anything, so don't fetch a record it will never use.
+    if ((initialResultType || 'sale') !== 'sale') return;
+
+    funding.load().then((record) => {
+      if (cancelled || !record) return;
+      const saved = hydrateRowsFromRecord(record, pricing.plans);
+      // The structure is not a stored field — it is read back off the saved rows
+      // (see `inferPayMode`), and BOTH reads come from that one function so the
+      // mode and the rows it produced can never describe different structures.
+      if (saved.length) {
+        setRows(saved);
+        setPayMode(inferPayMode(record));
+      }
+      // The stored contract price wins over the rollout's: it is what the saved
+      // rows were priced against, and a mismatch would misreport the remainder.
+      if (record.contractPrice > 0) setContractPrice(String(record.contractPrice));
+      if (record.result === 'bankDecline') setResultChoice('bank_decline');
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, initialResultType, initialPrice, initialPaymentMethod, initialDownPayment, seedDownMethod]);
 
   const contractNum = parseFloat(contractPrice) || 0;
-  const downNum = parseFloat(downPayment) || 0;
-  const balance = Math.max(0, contractNum - downNum);
+
+  /**
+   * Both structures' rows live in one list, so switching back and forth keeps
+   * whatever the rep already typed on the other side. ⚠️ **Every calculation runs
+   * on `activeRows`**, never on `rows` — the inactive structure's lines are still
+   * in state, and counting them would double the contract.
+   */
+  const activeRows = useMemo(
+    () => rows.filter((r) => (payMode === 'upfront' ? r.kind === 'up' : r.kind !== 'up')),
+    [rows, payMode]
+  );
+
+  const upRows = useMemo(() => activeRows.filter((r) => r.kind === 'up'), [activeRows]);
+  const downRows = useMemo(() => activeRows.filter((r) => r.kind === 'down'), [activeRows]);
+  const balRows = useMemo(() => activeRows.filter((r) => r.kind === 'bal'), [activeRows]);
+  /** Everything collected at the table: the down payment, or the whole upfront contract. */
+  const collectNowRows = useMemo(() => activeRows.filter((r) => r.kind !== 'bal'), [activeRows]);
+
+  const downTotal = useMemo(
+    () => collectNowRows.reduce((n, r) => n + effectiveRowAmount(r, activeRows, contractNum), 0),
+    [collectNowRows, activeRows, contractNum]
+  );
+  const balanceTotal = useMemo(
+    () => balRows.reduce((n, r) => n + effectiveRowAmount(r, activeRows, contractNum), 0),
+    [balRows, activeRows, contractNum]
+  );
+
+  /**
+   * The single-method fields every existing consumer of the outcome payload still
+   * reads (`buildCalculatorOutcomePayload`, the outcome logs, the deal-edit
+   * baseline). With a split contract there is no one method, so the FIRST funded
+   * row of each half stands in — and the summed totals stay exact. The full
+   * breakdown rides alongside in `downPayments` / `balancePayments`.
+   *
+   * ⚠️ **These hold a plan KEY, and must NEVER become a joined display string.**
+   * `getPaymentMethodLabel`, `coerceToPlanKey` and the server's own
+   * `resolvePaymentMethodLabel` all look the value up against the company's
+   * payment-plan catalogue, so a `"Check + AMEX"` resolves to nothing in every
+   * consumer at once. Worse, `resolveTierPaymentMethod`
+   * (`utils/dynamic-deal-pricing.ts:51`) SUBSTRING-SNIFFS this value to pick the
+   * fee that grosses up the whole contract price — a joined string containing
+   * `amex` would silently reprice a signed deal at AMEX's rate. Per-row gross-up
+   * is a pricing decision RevDSM has not made yet; until it does, the one-key
+   * mirror is what keeps that path honest.
+   */
+  const primaryDownMethod = useMemo(
+    () => collectNowRows.find((r) => r.method && effectiveRowAmount(r, activeRows, contractNum) > 0)?.method || '',
+    [collectNowRows, activeRows, contractNum]
+  );
+  const primaryBalanceMethod = useMemo(
+    () => balRows.find((r) => r.method && effectiveRowAmount(r, activeRows, contractNum) > 0)?.method || '',
+    [balRows, activeRows, contractNum]
+  );
+
+  /**
+   * The full allocation, persisted alongside those scalars so a split contract
+   * survives a reload as three rows rather than as one row of the summed total.
+   *
+   * ⚠️ Built from `activeRows` for the same reason `goFunding` saves from them: the
+   * inactive structure's lines are still in `rows`, and including them would file
+   * the contract twice over.
+   */
+  const allocations = useMemo(
+    () => paymentAllocations(activeRows, contractNum, pricing.plans),
+    [activeRows, contractNum, pricing.plans]
+  );
 
   // Web parity (result-lead-modal.js): fire the `lead_result_field_entry` outcome
-  // logs for this resulted lead. The regular result modals already do this via
-  // useOutcomeLogging; the DYNAMIC result modal did not, so the resulted-lead logs
-  // never fired in the dynamic flow.
+  // logs for this resulted lead.
+  //
+  // These are the rows a rep sees when they enter a down payment or switch a
+  // payment method, and they used to arrive with nothing saying WHICH flow they
+  // came from — indistinguishable between a rehash re-pitch, a fresh sale and a My
+  // Deals edit. `source` stamps them the same way every funding row is stamped.
+  // ⚠️ It is opt-in on the hook: the other two callers pass none and keep sending
+  // byte-identical payloads (web parity) — see `useOutcomeLogging`.
   useOutcomeLogging({
     visible,
     lead,
+    source: fundingSource,
+    // ⚠️ The override that makes this screen ONE module: without it these rows stay
+    // on `lead_result_field_entry` and the sheet goes on emitting two module types
+    // for a single flow. Opt-in on the hook, so the classic Outcome modal and the
+    // Lead Center Result Lead modal keep their web parity untouched.
+    moduleType: RESULT_LEAD_MODULE,
     outcomeStatus: resultType,
     outcomeForm: {
       oneLeg,
       result: resultType,
-      downPaymentMethod,
-      balancePaymentMethod,
+      downPaymentMethod: primaryDownMethod,
+      balancePaymentMethod: primaryBalanceMethod,
       originalContractPrice: contractNum || undefined,
       lastPriceQuoted: contractNum || undefined,
       reason: resultType === 'demo' ? demoReason : undefined,
@@ -309,36 +603,524 @@ export function ResultJobModal({
     return order.map((id) => ({ id, count: counts[id] }));
   }, [entries]);
 
-  // Web `isFormValid` (result-lead-modal.js): a Sale needs a contract price AND a
-  // balance payment method; a Demo needs a reason AND a last price quoted > 0.
-  const buildDisabled =
-    !resultType ||
-    (resultType === 'demo' &&
-      (!demoReason || (demoReason === 'Other (Explain)' && !reasonExplanation.trim()) || !(contractNum > 0))) ||
-    (resultType === 'sale' && (!(contractNum > 0) || !balancePaymentMethod));
+  // ── the Result Lead flow: start ──────────────────────────────────────────
 
-  const handleBuild = () => {
-    if (resultType === 'sale' && downNum > contractNum) {
-      FlashMessage.error('Invalid Down Payment', 'Down payment can’t be greater than the contract price.');
+  /**
+   * Has the rep been through to the funding screen on this visit? Only used to
+   * mark the re-entry, so a ref rather than state — nothing renders from it.
+   */
+  const wentToFundingRef = useRef(false);
+  /** Latches the `opened` row so re-renders do not repeat it. */
+  const openLoggedRef = useRef(false);
+
+  /**
+   * `result_lead_opened` — the START of the flow.
+   *
+   * ⚠️ Fires on ENTERING the pricing panel, not merely on the sheet becoming
+   * visible, and the latch is released whenever the rep leaves it. That is what
+   * makes **Edit payments** log a second `opened` (carrying `reopened`) rather
+   * than filing the re-price silently under a flow that had already been
+   * confirmed — the module follows the SCREEN.
+   *
+   * ⚠️ `contractNum` / `payMode` are read at fire time but the latch means a later
+   * change to either cannot re-log; they are in the dep list because the rule
+   * demands it, not because a change should re-fire.
+   */
+  useEffect(() => {
+    const onPricing = visible && screen === 'result';
+    if (!onPricing) {
+      openLoggedRef.current = false;
+      if (!visible) wentToFundingRef.current = false;
       return;
     }
+    if (openLoggedRef.current) return;
+    openLoggedRef.current = true;
+    logResultLeadOpened({
+      ...logCtx,
+      resultType,
+      payMode,
+      contractPrice: Math.round(contractNum) || undefined,
+      reopened: wentToFundingRef.current || undefined,
+    });
+  }, [visible, screen, resultType, payMode, contractNum, logCtx]);
+
+  // ── pricing-row editing ──────────────────────────────────────────────────
+
+  const updateRow = useCallback((pid: string, patch: Partial<PaymentRow>) => {
+    setRows((prev) => prev.map((r) => (r.pid === pid ? { ...r, ...patch } : r)));
+  }, []);
+
+  const removeRow = useCallback(
+    (pid: string) => {
+      // ⚠️ Read and logged BEFORE the state update, not inside the updater — React
+      // may invoke an updater more than once, which would double-log. After this
+      // the row is gone, and the event is the only record that money was ever
+      // assigned to that method.
+      const gone = rows.find((r) => r.pid === pid);
+      if (gone) {
+        logResultLeadRowRemoved({
+          ...logCtx,
+          kind: gone.kind,
+          amount: effectiveRowAmount(gone, activeRows, contractNum),
+          method: gone.method || undefined,
+          methodLabel: pricing.plans[gone.method]?.label || gone.methodLabel,
+        });
+      }
+      setRows((prev) => prev.filter((r) => r.pid !== pid));
+    },
+    [rows, activeRows, contractNum, pricing.plans, logCtx]
+  );
+
+  const addRow = useCallback(
+    (kind: PaymentKind) => {
+      // Same reason as `removeRow`: logged outside the updater, which React may run
+      // more than once. `rowCount` is the count AFTER this add, so the timeline
+      // reads "the contract is now split three ways".
+      logResultLeadRowAdded({
+        ...logCtx,
+        kind,
+        rowCount: activeRows.filter((r) => r.kind === kind).length + 1,
+      });
+      setRows((prev) => {
+        const next = [...prev];
+        // A new line goes AFTER the last row of its own half so the two groups stay
+        // contiguous — `rows` is one flat list and the groups render from filters.
+        let insertAt = next.length;
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          if (next[i].kind === kind) {
+            insertAt = i + 1;
+            break;
+          }
+        }
+        next.splice(insertAt, 0, { pid: newPaymentId(), kind, amount: '', method: '' });
+        return next;
+      });
+    },
+    [activeRows, logCtx]
+  );
+
+  /**
+   * A method was picked on one line.
+   *
+   * Amounts are deliberately NOT logged as they are typed — that would be a row per
+   * keystroke — so the method pick and the Confirm save (which carries every final
+   * amount) are the two events that describe the split.
+   */
+  const selectRowMethod = useCallback(
+    (pid: string, key: string) => {
+      const row = rows.find((r) => r.pid === pid);
+      // Only when it actually changes, matching how the Investment Center logs its
+      // payment-method selection — re-picking the same plan is not an event.
+      if (row && key && key !== row.method) {
+        logResultLeadMethodSelected({
+          ...logCtx,
+          kind: row.kind,
+          method: key,
+          methodLabel: pricing.plans[key]?.label,
+          amount: effectiveRowAmount(row, activeRows, contractNum),
+        });
+      }
+      updateRow(pid, { method: key });
+    },
+    [rows, activeRows, contractNum, pricing.plans, logCtx, updateRow]
+  );
+
+  /**
+   * Switch between Down Payment and Upfront.
+   *
+   * ⚠️ Refused once money has started moving (`structureLocked`): an upfront row
+   * the processor has already charged cannot be re-cast as a down payment against
+   * a balance that does not exist. The refusal is EXPLAINED rather than silent —
+   * a card that does nothing on tap reads as a bug.
+   *
+   * The other structure's rows are seeded on first use, not at mount, so they are
+   * never sitting in `rows` un-displayed while `activeRows` has to remember to
+   * exclude them.
+   */
+  const switchPayMode = useCallback(
+    (next: PayMode, allowed: boolean) => {
+      // Identity FIRST: when the structure is locked the selected card is disabled
+      // too, and tapping the option you are already on must not scold you for it.
+      if (next === payMode) return;
+      if (!allowed) {
+        setStructureNudge(true);
+        return;
+      }
+      setStructureNudge(false);
+      // Logged only once the switch is actually ALLOWED — a refused tap changed
+      // nothing about the deal, and recording it would put a structure change in the
+      // timeline that never happened.
+      logResultLeadStructureChanged({ ...logCtx, from: payMode, to: next });
+      setRows((prev) => {
+        const wantUpfront = next === 'upfront';
+        const already = prev.some((r) => (wantUpfront ? r.kind === 'up' : r.kind !== 'up'));
+        if (already) return prev;
+        return wantUpfront
+          ? // Upfront means the whole contract now, so it opens holding all of it.
+            [...prev, { pid: newPaymentId(), kind: 'up', amount: contractNum > 0 ? String(Math.round(contractNum)) : '', method: '' }]
+          : [
+              ...prev,
+              { pid: newPaymentId(), kind: 'down', amount: '', method: '' },
+              { pid: newPaymentId(), kind: 'bal', amount: '', method: '', auto: true },
+            ];
+      });
+      setPayMode(next);
+    },
+    [payMode, contractNum, logCtx]
+  );
+
+  /**
+   * Re-open the auto (remainder) row when money comes unassigned again.
+   *
+   * The rep can dismiss the auto row once it is holding $0, but lowering a down
+   * payment afterwards would leave the gap invisible. Rather than restoring a
+   * deleted row, the LAST balance row without a lender decision takes the auto
+   * flag back — which is where the remainder belongs anyway.
+   *
+   * Upfront has no remainder row by design — every amount there is typed, and the
+   * `CoverageBar` is what surfaces a gap — so this only runs in split mode.
+   */
+  useEffect(() => {
+    if (!isSale || contractNum <= 0 || payMode === 'upfront') return;
+    const hasAuto = activeRows.some((r) => r.auto);
+    const gap = contractNum - assignedTotal(activeRows, contractNum);
+    if (hasAuto || gap <= EPS) return;
+    const candidates = activeRows.filter((r) => r.kind === 'bal' && !r.decision);
+    const target = candidates[candidates.length - 1];
+    if (!target) return;
+    // Only reclaim a row the rep has not typed into — never overwrite an amount.
+    if (parseFloat(target.amount || '0') > 0) return;
+    updateRow(target.pid, { auto: true });
+  }, [activeRows, contractNum, isSale, payMode, updateRow]);
+
+  const needsRowId = useMemo(() => needsAttentionRowId(activeRows, banners, payMode), [activeRows, banners, payMode]);
+
+  /** Has money moved? Then the structure is settled — see `switchPayMode`. */
+  const structureIsLocked = useMemo(() => structureLocked(payments), [payments]);
+
+  /**
+   * Lender decisions, explained immediately above the group that carries the
+   * remainder — the Balance in split mode, the Upfront group in upfront mode.
+   *
+   * That is where the rep has to act, and it is the row `needsRowId` highlights
+   * amber. Floating the prose above both groups would put "assign the remaining
+   * $X below" above a Down Payment group that has nothing to do with it.
+   */
+  const decisionBanners = banners.map((b) => (
+    <View key={b.id} style={{ backgroundColor: b.tone === 'bad' ? FUND.RED_BG : FUND.AMBER_BG, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 12 }}>
+      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, lineHeight: 17, color: b.tone === 'bad' ? FUND.RED_TEXT : FUND.AMBER_TEXT }}>
+        {b.text}
+      </Text>
+    </View>
+  ));
+
+  /**
+   * Any edit retires the server's last refusal — it was about rows that no longer
+   * exist. ⚠️ Keyed on the three pieces of state the whole pricing panel writes
+   * through, rather than cleared inside each setter: a per-setter list is one the
+   * next field added to this panel would quietly fall off.
+   */
+  useEffect(() => {
+    setSaveError(null);
+  }, [rows, contractPrice, payMode]);
+
+  // ── gate into funding ────────────────────────────────────────────────────
+
+  const totalAssigned = useMemo(() => assignedTotal(activeRows, contractNum), [activeRows, contractNum]);
+  /**
+   * Why Confirm is off, listed above it. Same shape as the funding footer's
+   * blockers — the rep works a list rather than tapping a grey button and being
+   * told no. `goFunding` re-checks the same rules as a backstop.
+   */
+  const resultBlockers = useMemo(
+    () => confirmBlockers(activeRows, contractNum, payMode),
+    [activeRows, contractNum, payMode]
+  );
+  const saleReady = resultBlockers.length === 0;
+
+  /**
+   * Confirm — save the pricing rows, then move to Funding.
+   *
+   * The `PUT` is the save for the whole screen: `payments` is the COMPLETE list,
+   * so a row the rep deleted is deleted server-side too. Only advance on success —
+   * the funding screen renders the server's record, so opening it after a failed
+   * save would show the rep the previous state under the new price.
+   */
+  const goFunding = useCallback(async () => {
+    if (resultBlockers.length) {
+      FlashMessage.error('Not ready to confirm', resultBlockers[0]);
+      return;
+    }
+    // ⚠️ `activeRows`, not `rows`: the inactive structure's lines are still in
+    // state, and `payments` is the COMPLETE list — sending them would file the
+    // contract twice over.
+    const upsert = toUpsertRows(activeRows, contractNum, pricing.plans);
+    // ⚠️ The BOUNDARY. `result_lead` ends on the press and `funding` begins with the
+    // save below, so this fires FIRST and unconditionally: gating it on the save
+    // succeeding would leave a failed confirm as a flow with no terminal row, which
+    // reads worse than an end marker followed by the save's own
+    // `funding_payments_save_failed`.
+    logResultLeadConfirmed({
+      ...logCtx,
+      contractPrice: Math.round(contractNum),
+      payMode,
+      paymentCount: upsert.length,
+      payments: upsert.map((r) => ({ kind: r.kind, method: r.method, amount: r.amount })),
+    });
+    // `savePayments` logs the save itself (with the full breakdown) — it is the only
+    // place the server's answer exists.
+    const res = await funding.savePayments(Math.round(contractNum), upsert, payMode);
+    if (!res.ok) {
+      // `useFunding` already flashed it — into THIS sheet, via `ModalFlashHost`.
+      // This keeps the same sentence above Confirm after the banner goes, because a
+      // refused rule is something the rep has to fix, not something to acknowledge.
+      setSaveError(res.error?.message || 'The payments could not be saved.');
+      return;
+    }
+    setSaveError(null);
+    logFundingOpened({
+      ...logCtx,
+      contractPrice: Math.round(contractNum),
+      paymentCount: upsert.length,
+      payMode,
+    });
+
+    /**
+     * Confirm COMPLETES the portal's **Lead Resulted** milestone.
+     *
+     * The result itself is finished here — outcome, contract price and the whole
+     * payment split are saved — and everything past this point belongs to Funding,
+     * which the portal derives separately from the `JobFunding` document. The step
+     * was turned `'active'` when the sheet opened (`handleResultJob` → `openSheet`);
+     * this is its other end.
+     *
+     * ⚠️ `jobBuild` is deliberately NOT advanced. The rep has not started building,
+     * and Build Job sends `{ leadResulted: 'completed', jobBuild: 'active' }` of its
+     * own accord — repeating `leadResulted` there is a harmless no-op under the
+     * backend's forward-only `canAdvanceStatus` (`pending → active → completed`).
+     *
+     * ⚠️ Fired AFTER the save succeeds, unlike `result_lead_confirmed` above, and the
+     * difference is deliberate: that one is an EVENT (the rep pressed Confirm, which
+     * happened whatever the server said), this is a STATE CLAIM. A refused save leaves
+     * the rep on the pricing panel still able to change the result, so completing the
+     * milestone there would be a claim we cannot walk back — the guard is forward-only.
+     *
+     * ⚠️ Not awaited, matching every other timeline write: nothing on screen reads
+     * these flags, and a failed PATCH must never hold up the move to Funding.
+     */
+    if (leadLogId) {
+      LeadService.updateLeadTimelineProgress(leadLogId, {
+        salesProcess: 'completed',
+        leadResulted: 'completed',
+      }).catch((e: any) =>
+        console.warn('[ResultJobModal] timeline progress (confirm) failed:', e?.message || e)
+      );
+    }
+    // Set only once the rep has ACTUALLY left: a failed save keeps them on the
+    // pricing panel, and marking the trip there would make the next `opened` row
+    // claim a return that never happened.
+    wentToFundingRef.current = true;
+    setScreen('funding');
+  }, [resultBlockers, contractNum, activeRows, pricing.plans, payMode, funding, logCtx, leadLogId]);
+
+  /** Back / "Edit payments" — fold every lender decision onto the pricing rows. */
+  const goResult = useCallback(() => {
+    const applied = applyDecisionsToRows(activeRows, payments, contractNum, payMode);
+    // `reassigning` is the case worth telling apart: a lender decision opened a gap
+    // and the rep is going back to cover it, not just changing their mind.
+    logFundingEditPayments({ ...logCtx, reassigning: applied.banners.length > 0 });
+    // Decisions only ever touch the ACTIVE structure, so the other one's rows are
+    // carried through untouched rather than dropped.
+    const inactive = rows.filter((r) => !activeRows.includes(r));
+    setRows([...applied.rows, ...inactive]);
+    setBanners(applied.banners);
+    if (applied.banners.length) setPriceUnlocked(true);
+    funding.clearServerBlockers();
+    // The "void it first" nudge answered a tap that is now several screens back.
+    setStructureNudge(false);
+    setScreen('result');
+  }, [rows, activeRows, payments, contractNum, payMode, funding, logCtx]);
+
+  // ── funding actions ──────────────────────────────────────────────────────
+
+  const covered = useMemo(() => coverageOK(payments, contractNum), [payments, contractNum]);
+  /**
+   * The live checklist. The SERVER's list replaces it the moment a submit is
+   * refused (spec §5.12) — that one is authoritative and already ordered — but
+   * showing the local mirror beforehand means the rep works the list instead of
+   * discovering it by tapping a button that says no.
+   */
+  const localBlockers = useMemo(
+    // The `charges_enabled` gate joins the checklist as ONE line — it is why the
+    // link steps below it cannot be finished, and repeating it per card would say
+    // the same company-wide thing three times on a three-card job.
+    () => fundingBlockers(payments, contractNum, { setupBlocked: !!funding.paymentsSetupError }),
+    [payments, contractNum, funding.paymentsSetupError]
+  );
+  const blockers = funding.serverBlockers ?? localBlockers;
+  /** ⚠️ Read from the record: the server refuses `bankDecline` without a logged decline. */
+  const declineHappened = useMemo(() => hasDecline(funding.record), [funding.record]);
+  const attempts = useMemo(() => attemptLog(funding.record), [funding.record]);
+  /** The most recent status check across every row. */
+  const lastSyncedAt = useMemo(() => {
+    const stamps = payments.map((p) => p.syncedAt).filter(Boolean) as string[];
+    if (!stamps.length) return null;
+    return formatStamp(stamps.sort().slice(-1)[0]);
+  }, [payments]);
+
+  // A rep who reassigns a declined amount can end up with no live decline; the
+  // job must not stay resulted as a Bank Decline in that case.
+  useEffect(() => {
+    if (!declineHappened && resultChoice === 'bank_decline') setResultChoice('sale');
+  }, [declineHappened, resultChoice]);
+
+  /**
+   * Open the send sheet and fetch the hosted-page url.
+   *
+   * ⚠️ `POST …/link` marks NOTHING — merely opening the sheet must not tick Link
+   * Sent (spec §5.4). It is idempotent, so backing out and reopening returns the
+   * same page rather than minting a second live link.
+   */
+  const openSendSheet = useCallback(
+    async (pid: string) => {
+      setLinkTarget(pid);
+      setLinkUrl('');
+      setIsLoadingLink(true);
+      const res = await funding.fetchLink(pid);
+      setLinkUrl(res.ok ? res.data?.url || '' : '');
+      setIsLoadingLink(false);
+    },
+    [funding]
+  );
+
+  /** The rep confirmed a send happened. Resolves false if the server did not deliver. */
+  const handleSendLink = useCallback(
+    async (channel: FundingChannel, destination?: string): Promise<boolean> => {
+      if (!linkTarget) return false;
+      const res = await funding.markLinkSent(linkTarget, channel, destination);
+      /**
+       * ⚠️ A corrected destination RE-ISSUES the link: the server expires the open
+       * Checkout session and mints a new page, so the url this screen is still holding
+       * — the one behind the QR code and the Copy button — is dead. Re-fetch instead of
+       * trusting what we cached (REVDSM-1155).
+       *
+       * `reissued` comes back from the hook because it cannot be re-derived here: the
+       * row now carries the NEW destination, so comparing it would answer false.
+       */
+      if (res.ok && res.data?.reissued) {
+        const fresh = await funding.fetchLink(linkTarget);
+        setLinkUrl(fresh.ok ? fresh.data?.url || '' : '');
+      }
+      return res.ok;
+    },
+    [funding, linkTarget]
+  );
+
+  /**
+   * Bank Decline / back to Sale.
+   *
+   * ⚠️ Only mirrored locally once the SERVER accepts it — it refuses the switch
+   * without a logged lender decline, and refuses to undo one after submission.
+   */
+  const handleSetResult = useCallback(
+    async (next: 'sale' | 'bank_decline') => {
+      const res = await funding.setResult(next === 'bank_decline' ? 'bankDecline' : 'sale');
+      if (res.ok) setResultChoice(next);
+    },
+    [funding]
+  );
+
+  const linkPayment = useMemo(() => payments.find((p) => p.pid === linkTarget) || null, [payments, linkTarget]);
+
+  // ── submit ───────────────────────────────────────────────────────────────
+
+  // Web `isFormValid` (result-lead-modal.js): a Demo needs a reason AND a last
+  // price quoted > 0. The Sale gate now lives in `saleReady` — every funded line
+  // needs a method, which subsumes the old "balance method required" rule and also
+  // covers a paid-in-full deal that has no balance line at all.
+  const demoDisabled =
+    !demoReason || (demoReason === 'Other (Explain)' && !reasonExplanation.trim()) || !(contractNum > 0);
+  // The server is the real gate; this only keeps the rep from tapping into a
+  // rejection it can already see coming. A Bank Decline submits with no checks.
+  const submitDisabled = funding.isSubmitting || (!bankDeclined && localBlockers.length > 0);
+
+  /**
+   * Finish.
+   *
+   * A **demo** has nothing to fund, so it hands off immediately. A **sale** must
+   * submit the funding first and only proceeds if the server accepts — a refusal
+   * comes back as the itemised `blockers` list, which is rendered in place of the
+   * local one rather than dropping the rep into the job builder on an unfunded job.
+   */
+  const handleBuild = useCallback(async () => {
+    const isDemo = resultType === 'demo';
+
+    if (!isDemo) {
+      const res = await funding.submit();
+      if (!res.ok) return;
+    } else {
+      // The demo arm never reaches Confirm and never enters the funding module, so
+      // without this it would be the one path through this screen that starts and
+      // simply stops. ⚠️ A SALE is NOT logged here — by then the rep is on the
+      // funding screen and `funding_submitted` already records it with the server's
+      // answer.
+      logResultLeadBuildJob({
+        ...logCtx,
+        resultType,
+        contractPrice: Math.round(contractNum) || undefined,
+        reason: demoReason || undefined,
+      });
+    }
+
     onConfirm?.({
       resultType,
       oneLeg,
-      contractPrice: resultType === 'sale' ? contractNum || undefined : undefined,
+      contractPrice: isDemo ? undefined : contractNum || undefined,
       // Demo persists the last price quoted (web parity) — the read-only value shown
       // in the demo branch; previously dropped so the demo outcome saved an empty price.
-      lastPriceQuoted: resultType === 'demo' ? contractNum || undefined : undefined,
-      downPayment: resultType === 'sale' ? downNum || undefined : undefined,
-      balance: resultType === 'sale' ? balance : undefined,
-      downPaymentMethod: downPaymentMethod || undefined,
-      balancePaymentMethod: balancePaymentMethod || undefined,
-      demoReason: resultType === 'demo' ? demoReason : undefined,
-      reasonExplanation: resultType === 'demo' && demoReason === 'Other (Explain)' ? reasonExplanation : undefined,
+      lastPriceQuoted: isDemo ? contractNum || undefined : undefined,
+      downPayment: isDemo ? undefined : downTotal || undefined,
+      balance: isDemo ? undefined : balanceTotal,
+      downPaymentMethod: primaryDownMethod || undefined,
+      balancePaymentMethod: primaryBalanceMethod || undefined,
+      // A demo funds nothing, so it carries no allocation. Sent as `undefined`
+      // rather than `[]` — the backend's `default: undefined` is what distinguishes
+      // "predates multi-method" from "genuinely no rows", and an empty array on a
+      // demo would claim the latter about a record that never had payments.
+      downPayments: isDemo ? undefined : allocations.downPayments,
+      balancePayments: isDemo ? undefined : allocations.balancePayments,
+      demoReason: isDemo ? demoReason : undefined,
+      reasonExplanation: isDemo && demoReason === 'Other (Explain)' ? reasonExplanation : undefined,
       versatile,
       pineapple,
+      ...(isDemo
+        ? {}
+        : {
+            bankDecline: bankDeclined,
+            // The record as the server holds it after the submit landed.
+            payments,
+            fundingAttempts: funding.record?.attemptHistory || [],
+          }),
     });
-  };
+  }, [
+    resultType, oneLeg, contractNum, downTotal, balanceTotal, primaryDownMethod, primaryBalanceMethod,
+    allocations, demoReason, reasonExplanation, versatile, pineapple, bankDeclined, payments, funding, onConfirm,
+    logCtx,
+  ]);
+
+  // ── price lock ───────────────────────────────────────────────────────────
+
+  const priceEditable = isRehashed || priceUnlocked;
+  /** Money a lender has already committed to — the floor the price cannot go under. */
+  const lockedTotal = useMemo(
+    () => activeRows.filter((r) => r.decision).reduce((n, r) => n + effectiveRowAmount(r, activeRows, contractNum), 0),
+    [activeRows, contractNum]
+  );
+  const priceBelowLocked = priceUnlocked && contractNum < lockedTotal;
+
+  // ── render ───────────────────────────────────────────────────────────────
+
+  const onFunding = screen === 'funding';
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -357,190 +1139,428 @@ export function ResultJobModal({
               green header to the radius) sets clipsToBounds on iOS, which would
               clip the shadow away. The scrim above carries the separation. */}
           <View style={{ backgroundColor: '#fff', borderRadius: 16, maxHeight: '85%', overflow: 'hidden' }}>
-            {/* Header */}
+            {/* Header — one bar for both screens; the back chevron only exists on Funding. */}
             <View style={{ paddingHorizontal: 20, paddingVertical: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#4CBB17' }}>
-              <Text style={{ fontSize: 16, fontWeight: '600', color: '#fff' }}>Result Lead</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                {onFunding && (
+                  <TouchableOpacity onPress={goResult} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ marginRight: 10 }}>
+                    <Ionicons name="chevron-back" size={22} color="#fff" />
+                  </TouchableOpacity>
+                )}
+                <Text style={{ fontSize: FS.LEAD, fontFamily: PS.semibold, color: '#fff' }}>{onFunding ? 'Funding' : 'Result Lead'}</Text>
+              </View>
               <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
                 <Ionicons name="close" size={20} color="#fff" />
               </TouchableOpacity>
             </View>
 
             <ScrollView style={{ paddingHorizontal: 20, paddingTop: 24 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
-
-              <SelectField
-                label="One Leg"
-                value={oneLeg}
-                placeholder="Select One Leg"
-                options={ONE_LEG_OPTIONS.map((o) => ({ value: o, label: o }))}
-                onSelect={setOneLeg}
-              />
-
-              <SelectField
-                label="Result"
-                value={resultType}
-                placeholder="Select Result"
-                capitalize
-                options={[{ value: 'demo', label: 'Demo' }, { value: 'sale', label: 'Sale' }]}
-                onSelect={(v) => setResultType(v as 'sale' | 'demo')}
-              />
-
-              {resultType === 'demo' && (
+              {onFunding ? (
+                /* Every callback is an ENDPOINT — nothing here ticks a step
+                   locally; the screen redraws from the record each one returns. */
+                <FundingView
+                  payments={payments}
+                  payMode={payMode}
+                  contractTotal={contractNum}
+                  covered={covered}
+                  bankDeclined={bankDeclined}
+                  log={attempts}
+                  lastSyncedAt={lastSyncedAt}
+                  syncingAll={funding.syncingAll}
+                  busyPid={funding.busyPid}
+                  paymentsSetupError={funding.paymentsSetupError}
+                  onSyncAll={funding.syncAll}
+                  onSyncOne={funding.syncPayment}
+                  onSendLink={openSendSheet}
+                  onMarkCollected={funding.markCheckCollected}
+                  onChargeCard={funding.chargeCard}
+                  onActivate={funding.activateLoan}
+                  onReactivate={funding.reactivateLoan}
+                  onEditPayments={goResult}
+                  onResultAsBankDecline={() => handleSetResult('bank_decline')}
+                  onUndoBankDecline={() => handleSetResult('sale')}
+                />
+              ) : (
                 <>
                   <SelectField
-                    label="Reason for Demo"
-                    value={demoReason}
-                    placeholder="Select Reason for Demo"
-                    error={!demoReason}
-                    options={DEMO_REASONS.map((r) => ({ value: r, label: r }))}
-                    onSelect={setDemoReason}
+                    label="One Leg"
+                    value={oneLeg}
+                    placeholder="Select One Leg"
+                    options={ONE_LEG_OPTIONS.map((o) => ({ value: o, label: o }))}
+                    onSelect={setOneLeg}
                   />
-                  {demoReason === 'Other (Explain)' && (
-                    <View style={{ marginBottom: 20, position: 'relative' }}>
-                      <FloatingLabel text="Explain Reason" error={!reasonExplanation.trim()} />
-                      <View style={{ borderWidth: 1, borderColor: '#919EAB33', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, minHeight: 80, backgroundColor: '#fff' }}>
-                        <TextInput
-                          style={{ fontSize: 13, fontWeight: '600', color: '#1C252E', padding: 0, textAlignVertical: 'top' }}
-                          value={reasonExplanation}
-                          onChangeText={setReasonExplanation}
-                          placeholder="Enter details..."
-                          placeholderTextColor="#919EAB"
-                          multiline
-                          numberOfLines={3}
-                        />
-                      </View>
+
+                  {/* A DEMO keeps the original Demo/Sale switch — nothing has been
+                      funded, so there is nothing to protect. A SALE is locked: once
+                      the rep is pricing a deal the only other honest outcome is the
+                      one a lender forces, so Bank Decline appears only after one. */}
+                  {isSale ? (
+                    <>
+                      <SelectField
+                        label="Result"
+                        value={resultChoice}
+                        placeholder="Sale"
+                        disabled={!declineHappened}
+                        error={bankDeclined}
+                        options={[
+                          { value: 'sale', label: 'Sale' },
+                          { value: 'bank_decline', label: 'Bank Decline' },
+                        ]}
+                        onSelect={(v) => setResultChoice(v as 'sale' | 'bank_decline')}
+                      />
+                      {!declineHappened && (
+                        <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, marginTop: -14, marginBottom: 18, marginHorizontal: 4 }}>
+                          Locked to Sale unless a lender declines.
+                        </Text>
+                      )}
+                    </>
+                  ) : (
+                    <SelectField
+                      label="Result"
+                      value={resultType}
+                      placeholder="Select Result"
+                      capitalize
+                      options={[{ value: 'demo', label: 'Demo' }, { value: 'sale', label: 'Sale' }]}
+                      onSelect={(v) => setResultType(v as 'sale' | 'demo')}
+                    />
+                  )}
+
+                  {resultType === 'demo' && (
+                    <>
+                      <SelectField
+                        label="Reason for Demo"
+                        value={demoReason}
+                        placeholder="Select Reason for Demo"
+                        error={!demoReason}
+                        options={DEMO_REASONS.map((r) => ({ value: r, label: r }))}
+                        onSelect={setDemoReason}
+                      />
+                      {demoReason === 'Other (Explain)' && (
+                        <View style={{ marginBottom: 20, position: 'relative' }}>
+                          <FloatingLabel text="Explain Reason" error={!reasonExplanation.trim()} />
+                          <View style={{ borderWidth: 1, borderColor: '#919EAB33', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, minHeight: 80, backgroundColor: '#fff' }}>
+                            <TextInput
+                              style={{ fontSize: FS.BODY, fontFamily: PS.semibold, color: '#1C252E', padding: 0, textAlignVertical: 'top' }}
+                              value={reasonExplanation}
+                              onChangeText={setReasonExplanation}
+                              placeholder="Enter details..."
+                              placeholderTextColor="#919EAB"
+                              multiline
+                              numberOfLines={3}
+                            />
+                          </View>
+                        </View>
+                      )}
+                      <MoneyField label="Last Price Quoted" value={contractPrice} editable={false} />
+                    </>
+                  )}
+
+                  {isSale && (
+                    /* PRICING — the contract price and everything paying it, in one
+                       recessed panel so the split reads as a single figure broken up
+                       rather than three unrelated fields. */
+                    <View style={{ backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 22, paddingHorizontal: 14, paddingTop: 16, paddingBottom: 6, marginBottom: 22 }}>
+                      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 1.2, textTransform: 'uppercase', color: FUND.PANEL_LABEL, paddingHorizontal: 4, paddingBottom: 14 }}>
+                        Pricing
+                      </Text>
+
+                      {/* Web parity (result-lead-modal.js `disabled={!isRehashed}`): the
+                          contract price is locked to what the rollout quoted. A rehash
+                          may overwrite it — and so may a rep whose lender decision has
+                          just changed what this job can fund. */}
+                      <MoneyField
+                        label="Original Contract Price"
+                        value={contractPrice}
+                        editable={priceEditable}
+                        onChange={priceEditable ? setContractPrice : undefined}
+                        labelBg={FUND.PANEL}
+                        trailing={
+                          priceUnlocked ? (
+                            <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: FUND.AMBER_BG }}>
+                              <Text style={{ fontSize: FS.MICRO, fontFamily: PS.extrabold, letterSpacing: 0.4, textTransform: 'uppercase', color: FUND.AMBER_TEXT }}>Editable</Text>
+                            </View>
+                          ) : null
+                        }
+                      />
+                      {priceUnlocked && (
+                        <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, lineHeight: 16, marginTop: -12, marginBottom: 16, marginHorizontal: 4, color: priceBelowLocked ? FUND.RED_TEXT : FUND.AMBER_TEXT }}>
+                          {priceBelowLocked
+                            ? `Contract price is below the $${lockedTotal.toLocaleString()} already approved and locked. Void that application before going lower.`
+                            : PRICE_UNLOCK_HINT}
+                        </Text>
+                      )}
+
+                      {/* How the contract is being paid. Locked once a payment has
+                          started — see `switchPayMode`. */}
+                      <SegmentedChoice<PayMode>
+                        label="How is this being paid?"
+                        value={payMode}
+                        onSelect={switchPayMode}
+                        hint={structureHint(payMode, structureIsLocked, structureNudge)}
+                        hintTone={structureIsLocked ? 'warn' : 'muted'}
+                        options={[
+                          {
+                            value: 'split',
+                            title: 'Down Payment',
+                            subtitle: 'Money now, balance funds later',
+                            disabled: structureIsLocked,
+                          },
+                          {
+                            value: 'upfront',
+                            title: 'Upfront',
+                            subtitle: 'Full contract paid in one go',
+                            disabled: structureIsLocked,
+                          },
+                        ]}
+                      />
+
+                      {payMode === 'upfront' ? (
+                        <>
+                          {decisionBanners}
+                          <PaymentRowsGroup
+                            title="Upfront"
+                            total={downTotal}
+                            rows={upRows}
+                            allRows={activeRows}
+                            price={contractNum}
+                            plans={pricing.plans}
+                            // Paid in full now, so there is no balance to carry —
+                            // lender plans are not offered here, same as a deposit.
+                            options={pricing.outcomeDownPaymentMethods}
+                            needsRowId={needsRowId}
+                            canAdd={MULTI_METHOD_ENABLED}
+                            onChangeAmount={(id, t) => updateRow(id, { amount: t })}
+                            onChangeMethod={selectRowMethod}
+                            onRemove={removeRow}
+                            onAdd={() => addRow('up')}
+                            footer={
+                              <>
+                                {/* Upfront has no remainder row to hide a gap in, so
+                                    this is the only running total the rep gets. */}
+                                <CoverageBar assigned={totalAssigned} target={contractNum} />
+                                <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, lineHeight: 16, marginTop: 9, marginHorizontal: 4, color: FUND.MUTED }}>
+                                  Paid in full at the table, so there is no balance to finance. Lender plans are not offered here.
+                                </Text>
+                              </>
+                            }
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <PaymentRowsGroup
+                            title="Down Payment"
+                            total={downTotal}
+                            rows={downRows}
+                            allRows={activeRows}
+                            price={contractNum}
+                            plans={pricing.plans}
+                            // Financing carries a balance, never a deposit — the Down
+                            // Payment picker is cash/card only (see `useDealPricing`).
+                            options={pricing.outcomeDownPaymentMethods}
+                            needsRowId={needsRowId}
+                            canAdd={MULTI_METHOD_ENABLED}
+                            onChangeAmount={(id, t) => updateRow(id, { amount: t })}
+                            onChangeMethod={selectRowMethod}
+                            onRemove={removeRow}
+                            onAdd={() => addRow('down')}
+                          />
+
+                          {decisionBanners}
+
+                          <PaymentRowsGroup
+                            title="Balance"
+                            total={balanceTotal}
+                            rows={balRows}
+                            allRows={activeRows}
+                            price={contractNum}
+                            plans={pricing.plans}
+                            categories={pricing.categories}
+                            needsRowId={needsRowId}
+                            canAdd={MULTI_METHOD_ENABLED}
+                            onChangeAmount={(id, t) => updateRow(id, { amount: t })}
+                            onChangeMethod={selectRowMethod}
+                            onRemove={removeRow}
+                            onAdd={() => addRow('bal')}
+                          />
+                        </>
+                      )}
                     </View>
                   )}
-                  <MoneyField label="Last Price Quoted" value={contractPrice} editable={false} />
-                </>
-              )}
 
-              {resultType === 'sale' && (
-                <>
-                  {/* Web parity (result-lead-modal.js `disabled={!isRehashed}`): normally
-                      the contract price is locked to what the rollout quoted. On a rehash
-                      the price carried forward from the ORIGINAL appointment is a starting
-                      point, not a commitment, so the rep can overwrite it here.
-                      `balance` is derived from this value, so it follows automatically. */}
-                  <MoneyField
-                    label="Original Contract Price"
-                    value={contractPrice}
-                    editable={isRehashed}
-                    onChange={isRehashed ? setContractPrice : undefined}
-                  />
-                  <View style={{ borderWidth: 1, borderColor: '#919EAB33', borderRadius: 8, paddingHorizontal: 12, paddingTop: 12, marginBottom: 16 }}>
-                    <MoneyField label="Down Payment" value={downPayment} onChange={setDownPayment} />
-                    <SelectField
-                      label="Payment Method"
-                      value={downPaymentMethod}
-                      placeholder="Select Payment Method"
-                      options={pricing.outcomeDownPaymentMethods}
-                      onSelect={setDownPaymentMethod}
-                    />
-                  </View>
-                  <View style={{ borderWidth: 1, borderColor: '#919EAB33', borderRadius: 8, paddingHorizontal: 12, paddingTop: 12, marginBottom: 16 }}>
-                    <MoneyField label="Balance" value={String(balance)} editable={false} />
-                    <BalancePaymentField
-                      label="Payment Method"
-                      value={balancePaymentMethod}
-                      price={balance}
-                      plans={pricing.plans}
-                      categories={pricing.categories}
-                      onSelect={setBalancePaymentMethod}
-                    />
-                  </View>
-                </>
-              )}
-
-              {!!calculatorTitle && (
-                <View style={{ marginBottom: 20, padding: 12, backgroundColor: '#F4F6F8', borderRadius: 8 }}>
-                  <Text style={{ fontSize: 11, color: '#919EAB' }}>Calculator</Text>
-                  {/* A full package shows the icon + ⓘ here too, so this block matches the
-                      tab, the quote card and the Sale/Demo chooser the rep came through.
-                      Derived from the same `entries` the Job Summary below lists, so the
-                      two halves of this sheet can never describe different jobs. */}
-                  <FullPackageTitle
-                    {...packageInfo}
-                    title={calculatorTitle}
-                    size={13}
-                    weight="600"
-                    color="#1C252E"
-                    iconColor="#16A34A"
-                    onInfo={(rect) => { setPackageAnchor(rect); setShowPackageInfo(true); }}
-                  />
-                </View>
-              )}
-
-              {/* Job Summary */}
-              <View style={{ backgroundColor: '#F7F6FD', borderRadius: 16, padding: 16, marginTop: 4, marginBottom: 8, borderWidth: 1, borderColor: '#E8E6F8' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: '#F0EFFF', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-                      <Ionicons name="clipboard" size={16} color="#4CBB17" />
+                  {!!calculatorTitle && (
+                    <View style={{ marginBottom: 20, padding: 12, backgroundColor: '#F4F6F8', borderRadius: 8 }}>
+                      <Text style={{ fontSize: FS.TINY, fontFamily: PS.regular, color: '#919EAB' }}>Calculator</Text>
+                      {/* A full package shows the icon + ⓘ here too, so this block matches the
+                          tab, the quote card and the Sale/Demo chooser the rep came through.
+                          Derived from the same `entries` the Job Summary below lists, so the
+                          two halves of this sheet can never describe different jobs. */}
+                      <FullPackageTitle
+                        {...packageInfo}
+                        title={calculatorTitle}
+                        size={13}
+                        weight="600"
+                        color="#1C252E"
+                        iconColor="#16A34A"
+                        onInfo={(rect) => { setPackageAnchor(rect); setShowPackageInfo(true); }}
+                      />
                     </View>
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#1C252E' }}>Job Summary</Text>
-                  </View>
-                  <View style={{ backgroundColor: '#E5D9FF', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}>
-                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#6B46C1' }}>{items.length} Item{items.length === 1 ? '' : 's'}</Text>
-                  </View>
-                </View>
-                {items.length === 0 ? (
-                  <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '600', paddingVertical: 8 }}>No items</Text>
-                ) : (
-                  <>
-                    {/* Category pills (schema-driven icon + color) */}
-                    {categoryChips.length > 0 && (
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                        {categoryChips.map(({ id: catId, count }) => {
-                          const meta = categoryMeta[catId] || { label: catId, style: styleForKey(catId) };
-                          return (
-                            <View key={catId} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: meta.style.bg }}>
-                              <Ionicons name={meta.style.icon} size={11} color={meta.style.color} style={{ marginRight: 4 }} />
-                              <Text style={{ fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label} ({count})</Text>
-                            </View>
-                          );
-                        })}
+                  )}
+
+                  {/* Job Summary */}
+                  <View style={{ backgroundColor: '#F7F6FD', borderRadius: 16, padding: 16, marginTop: 4, marginBottom: 8, borderWidth: 1, borderColor: '#E8E6F8' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: '#F0EFFF', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                          <Ionicons name="clipboard" size={16} color="#4CBB17" />
+                        </View>
+                        <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: '#1C252E' }}>Job Summary</Text>
                       </View>
-                    )}
-                    <View style={{ gap: 8 }}>
-                      {items.map((item, i) => {
-                        const meta = categoryMeta[item.categoryId] || { label: item.categoryId, style: styleForKey(item.categoryId) };
-                        return (
-                          <View key={item.fieldId || i} style={{ backgroundColor: '#fff', borderRadius: 8, padding: 12, flexDirection: 'row', alignItems: 'center' }}>
-                            <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: meta.style.bg, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-                              <Ionicons name={meta.style.icon} size={14} color={meta.style.color} />
-                            </View>
-                            <Text style={{ fontSize: 13, fontWeight: '700', color: '#1C252E', flex: 1 }}>
-                              {item.inputValue}{unitSuffix(item)} {labelWithSection(item.label, item.sectionId, sectionLabelMap)}
-                            </Text>
-                          </View>
-                        );
-                      })}
+                      <View style={{ backgroundColor: '#E5D9FF', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}>
+                        <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, color: '#6B46C1' }}>{items.length} Item{items.length === 1 ? '' : 's'}</Text>
+                      </View>
                     </View>
-                  </>
-                )}
-              </View>
+                    {items.length === 0 ? (
+                      <Text style={{ fontSize: FS.SMALL, color: '#94A3B8', fontFamily: PS.semibold, paddingVertical: 8 }}>No items</Text>
+                    ) : (
+                      <>
+                        {/* Category pills (schema-driven icon + color) */}
+                        {categoryChips.length > 0 && (
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                            {categoryChips.map(({ id: catId, count }) => {
+                              const meta = categoryMeta[catId] || { label: catId, style: styleForKey(catId) };
+                              return (
+                                <View key={catId} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: meta.style.bg }}>
+                                  <Ionicons name={meta.style.icon} size={11} color={meta.style.color} style={{ marginRight: 4 }} />
+                                  <Text style={{ fontSize: FS.TINY, fontFamily: PS.black, color: meta.style.color }}>{meta.label} ({count})</Text>
+                                </View>
+                              );
+                            })}
+                          </View>
+                        )}
+                        <View style={{ gap: 8 }}>
+                          {items.map((item, i) => {
+                            const meta = categoryMeta[item.categoryId] || { label: item.categoryId, style: styleForKey(item.categoryId) };
+                            return (
+                              <View key={item.fieldId || i} style={{ backgroundColor: '#fff', borderRadius: 8, padding: 12, flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: meta.style.bg, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                                  <Ionicons name={meta.style.icon} size={14} color={meta.style.color} />
+                                </View>
+                                <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: '#1C252E', flex: 1 }}>
+                                  {item.inputValue}{unitSuffix(item)} {labelWithSection(item.label, item.sectionId, sectionLabelMap)}
+                                </Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      </>
+                    )}
+                  </View>
 
-              {/* Versatile / Pineapple */}
-              <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
-                <TouchableOpacity onPress={() => setVersatile((v) => !v)} style={{ flex: 1, height: 44, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFAB00', opacity: versatile ? 1 : 0.55 }}>
-                  <Text style={{ fontWeight: '700', fontSize: 11, color: '#212B36' }}>Versatile</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setPineapple((v) => !v)} style={{ flex: 1, height: 44, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFAB00', opacity: pineapple ? 1 : 0.55 }}>
-                  <Text style={{ fontWeight: '700', fontSize: 11, color: '#212B36' }}>Pineapple</Text>
-                </TouchableOpacity>
-              </View>
+                  {/* Versatile / Pineapple */}
+                  <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+                    <TouchableOpacity onPress={() => setVersatile((v) => !v)} style={{ flex: 1, height: 44, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFAB00', opacity: versatile ? 1 : 0.55 }}>
+                      <Text style={{ fontFamily: PS.bold, fontSize: FS.TINY, color: '#212B36' }}>Versatile</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setPineapple((v) => !v)} style={{ flex: 1, height: 44, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFAB00', opacity: pineapple ? 1 : 0.55 }}>
+                      <Text style={{ fontFamily: PS.bold, fontSize: FS.TINY, color: '#212B36' }}>Pineapple</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
             </ScrollView>
 
-            {/* Footer — Build Job */}
-            <View style={{ paddingHorizontal: 20, paddingBottom: 20, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#919EAB14' }}>
-              <TouchableOpacity
-                disabled={buildDisabled}
-                onPress={handleBuild}
-                style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: buildDisabled ? '#919EAB' : '#4CBB17' }}
-              >
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14, letterSpacing: 0.5 }}>Build Job</Text>
-              </TouchableOpacity>
+            {/* Footer */}
+            <View style={{ paddingHorizontal: 20, paddingBottom: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#919EAB14' }}>
+              {onFunding ? (
+                <>
+                  <BlockerList
+                    items={blockers}
+                    readyText="✓ Every payment is as far as you can take it. Ready to submit."
+                    override={
+                      bankDeclined
+                        ? { title: 'No funding to satisfy.', body: 'The job is closing as a bank decline.' }
+                        : undefined
+                    }
+                  />
+                  <TouchableOpacity
+                    onPress={goResult}
+                    style={{ height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', borderWidth: 1.6, borderColor: FUND.BORDER, marginBottom: 10 }}
+                  >
+                    <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: FUND.SUBTEXT }}>Edit payments</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    disabled={submitDisabled}
+                    onPress={handleBuild}
+                    style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: submitDisabled ? '#E9EBEE' : '#4CBB17' }}
+                  >
+                    <Text style={{ color: submitDisabled ? '#A8AEB6' : '#fff', fontFamily: PS.bold, fontSize: FS.BODY_LG, letterSpacing: 0.5 }}>
+                      {bankDeclined ? 'Submit Bank Decline' : 'Submit Funding'}
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              ) : isSale ? (
+                <>
+                  {/* The server's own refusal, in the same place as the local
+                      blockers — one column of reasons the button will not go. */}
+                  {!!saveError && (
+                    <View style={{ backgroundColor: FUND.RED_BG, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 11 }}>
+                      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, lineHeight: 17, color: FUND.RED_TEXT }}>
+                        {saveError}
+                      </Text>
+                    </View>
+                  )}
+                  {/* Same control as the Submit footer — the reasons are visible
+                      before the tap, not discovered by it. */}
+                  <BlockerList items={resultBlockers} title="Before you can confirm:" />
+                  <TouchableOpacity
+                    disabled={!saleReady}
+                    onPress={goFunding}
+                    style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: saleReady ? '#4CBB17' : '#E9EBEE' }}
+                  >
+                    <Text style={{ color: saleReady ? '#fff' : '#A8AEB6', fontFamily: PS.bold, fontSize: FS.BODY_LG, letterSpacing: 0.5 }}>
+                      Confirm
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity
+                  disabled={demoDisabled}
+                  onPress={handleBuild}
+                  style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: demoDisabled ? '#919EAB' : '#4CBB17' }}
+                >
+                  <Text style={{ color: '#fff', fontFamily: PS.bold, fontSize: FS.BODY_LG, letterSpacing: 0.5 }}>Build Job</Text>
+                </TouchableOpacity>
+              )}
             </View>
+
+            {/* Share sheet — an in-sheet overlay, not a nested Modal (see SendLinkModal).
+                It reports the send; the STEP comes back on the record, never from here. */}
+            {!!linkPayment && (
+              <SendLinkModal
+                payment={linkPayment}
+                link={linkUrl}
+                isLoadingLink={isLoadingLink}
+                isSending={funding.busyPid === linkPayment.pid}
+                blockedReason={funding.paymentsSetupError}
+                onSend={handleSendLink}
+                onCopyLink={() =>
+                  logFundingLinkCopied({
+                    ...logCtx,
+                    payment: {
+                      pid: linkPayment.pid,
+                      method: linkPayment.method,
+                      type: linkPayment.type,
+                      kind: linkPayment.kind,
+                      amount: linkPayment.amount,
+                    },
+                  })
+                }
+                onClose={() => {
+                  setLinkTarget(null);
+                  setLinkUrl('');
+                }}
+              />
+            )}
           </View>
 
           {/* Last child of this sheet's root so it covers the card. In-sheet, not a
@@ -549,6 +1569,12 @@ export function ResultJobModal({
             <FullPackageInfoOverlay anchorRect={packageAnchor} onClose={() => setShowPackageInfo(false)} />
           )}
         </View>
+
+        {/* Every banner this sheet raises — its own, and the ones `useFunding` raises
+            from inside an endpoint call — lands here rather than on the app-root
+            instance, which is OUTSIDE this Modal's view tree and therefore behind it.
+            Last child, so it draws over the card. */}
+        <ModalFlashHost active={visible} />
       </KeyboardAvoidingView>
     </Modal>
   );

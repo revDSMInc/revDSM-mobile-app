@@ -56,6 +56,11 @@ const getNativeModules = () => {
 // Subcomponents
 import { ContractDetailsCard } from './ContractDetailsCard';
 import { AddendumsCard } from './AddendumsCard';
+import { LeadApprovalsCard } from './LeadApprovalsCard';
+import { isLeadResulted } from '../../../utils/lead-result-status';
+import { useLeadApprovals } from '../../../hooks/useLeadApprovals';
+import { useLeadFunding } from '../../../hooks/useLeadFunding';
+import { buildContractRefundSummary, contractFromSaleParts } from '../../../utils/contract-refund-summary';
 import { AddendumRecipientCard } from './AddendumRecipientCard';
 import {
   DocumentRef,
@@ -158,6 +163,59 @@ export const JobDocsSection = ({
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const { user } = useAuth();
+
+  /**
+   * Refunds, for the contract card's own figures and the approvals card below it.
+   *
+   * ⚠️ **CHAINED, not parallel, and read ONCE for both cards.** The approvals list is
+   * gated on a resulted lead (an approval only exists against a refund, and a refund
+   * only against a deal that collected money and was re-priced), and the funding record
+   * is only asked for once that list comes back non-empty. So an ordinary lead makes no
+   * request at all, a resulted lead with no approvals makes one, and only a lead that
+   * actually has one makes two. Both hooks are keyed per lead, so `LeadApprovalsCard`
+   * re-reading them costs nothing and the two cards can never disagree.
+   */
+  const leadApprovals = useLeadApprovals(lead?._id, isLeadResulted(lead), lead?.companyId);
+  const leadFunding = useLeadFunding(
+    lead?._id,
+    isLeadResulted(lead) && leadApprovals.approvals.length > 0,
+    lead?.companyId
+  );
+  /**
+   * The contract card's refund figures — what the job was worth, what goes back, what it
+   * is worth now. `null` on any lead with nothing to say, so the card renders it
+   * unconditionally and an ordinary deal is untouched.
+   *
+   * ⚠️ **`before` is the fragile one**, and it is fed THREE candidates because no single
+   * source survives every deal: once the customer signs, the addendum's `current.pricing`
+   * has caught up to the new price, and a lead whose `originalContractPrice` was rewritten
+   * keeps no record of the old one either. `resolveBeforePrice` takes the largest that is
+   * genuinely ABOVE the price now and omits the row when none is — which is what stops the
+   * same number being labelled both "before" and "after".
+   *
+   * ⚠️ No draft is fetched for this. `downPayment + balance` is the last-resort record of
+   * the original sale and costs nothing, and it is what recovers the reported deal
+   * ($8,500 collected, re-priced to $8,065). Pass `draftSummary` here if a caller ever
+   * already holds one.
+   */
+  const refundSummary = React.useMemo(
+    () =>
+      buildContractRefundSummary({
+        payments: leadFunding.payments,
+        // `outcomeData` is a later alias of `lead`, so the lead is read directly here
+        // rather than moving this block below it.
+        currentContractPrice:
+          Number(
+            String(lead?.originalContractPrice ?? lead?.leadData?.originalContractPrice ?? 0).replace(/[^0-9.-]/g, '')
+          ) || 0,
+        fundingContractPrice: leadFunding.contractPrice,
+        saleTotal: contractFromSaleParts(
+          lead?.downPayment ?? lead?.leadData?.downPayment,
+          lead?.balance ?? lead?.leadData?.balance
+        ),
+      }),
+    [leadFunding.payments, leadFunding.contractPrice, lead]
+  );
 
   const submitJobMutation = useSubmitJobBuilderMutation();
   const resetLeadMutation = useResetLeadMutation();
@@ -1600,9 +1658,36 @@ export const JobDocsSection = ({
         onRecipientChanged={onDraftsChanged}
       />
 
+      {/* Outstanding approvals — `GET /lead/v1/:leadId/approvals`.
+
+          ⚠️ **ABOVE the contract card, not below the addendums**, on request. A refund
+          waiting on somebody is the most time-sensitive thing on this screen — it is the
+          only block reporting a person the rep may have to chase — and under the contract
+          card's Agreement / Order Sheets / Down Payment Receipt sections it sat below the
+          fold on most deals, which is exactly where a rep does not look for something
+          they are waiting on.
+
+          ⚠️ Gated on a RESULTED lead so an ordinary scheduled or self-gen lead makes no
+          extra request. An approval only ever exists against a refund, and a refund only
+          against a deal that has collected money and been re-priced — so an unresulted
+          lead cannot have one, and asking would be a round trip whose answer is always
+          empty. This screen is watched closely for request count (opening a Deal was cut
+          by three not long ago); keep it that way.
+
+          Renders null with nothing outstanding, so even a resulted lead shows nothing
+          until it has an approval. */}
+      <LeadApprovalsCard
+        leadId={lead?._id}
+        companyId={lead?.companyId}
+        // Handed down rather than re-fetched — one read serves both cards.
+        payments={leadFunding.payments}
+        enabled={isLeadResulted(lead)}
+      />
+
       {/* Result Card Details */}
       <ContractDetailsCard
         lead={lead}
+        refundSummary={refundSummary}
         outcomeData={outcomeData}
         leadDraft={leadDraft}
         isDark={isDark}

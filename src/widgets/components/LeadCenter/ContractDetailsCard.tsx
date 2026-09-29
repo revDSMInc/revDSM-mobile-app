@@ -8,8 +8,19 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
 import { DetailRow, DocumentItem } from './JobDocsUtils';
 
+import type { ContractRefundSummary } from '../../../utils/contract-refund-summary';
+
 interface ContractDetailsCardProps {
   lead: any;
+  /**
+   * The refund figures, or `null` when this lead has nothing to say — see
+   * `buildContractRefundSummary`.
+   *
+   * ⚠️ Passed in rather than read here: `JobDocsSection` chains the approvals and
+   * funding reads so this card and the approvals card above it share ONE request and
+   * cannot disagree about a lead.
+   */
+  refundSummary?: ContractRefundSummary | null;
   outcomeData: any;
   leadDraft: any;
   isDark: boolean;
@@ -35,6 +46,7 @@ const cleanNumber = (val: any): number => {
 
 export const ContractDetailsCard = ({
   lead,
+  refundSummary,
   outcomeData,
   leadDraft,
   isDark,
@@ -51,6 +63,19 @@ export const ContractDetailsCard = ({
   onAddDocument,
 }: ContractDetailsCardProps) => {
   const navigation = useNavigation<any>();
+
+  /**
+   * Does the refund block have the WHOLE story — the price before, what went back, and
+   * the price now?
+   *
+   * ⚠️ It needs `before`, and only then does it replace the stock Original Contract
+   * Price row. Without it the block could print only "Contract After Refund", which on
+   * this card equals the row above it — the same number twice under two labels, which is
+   * the shape of the duplicate that was reported in the first place. So when the
+   * original cannot be recovered (`resolveBeforePrice` trusted no candidate) the stock
+   * row stays and the refund rows are not drawn at all.
+   */
+  const showRefundBlock = !!refundSummary?.accepted && refundSummary.before !== null;
 
   // Web `sections/job/components/contract-details.js` splits these two cases, and mobile
   // used to collapse both into `return null`:
@@ -147,12 +172,61 @@ export const ContractDetailsCard = ({
             </>
           ) : (
             <>
-              <DetailRow
-                label="Original Contract Price"
-                value={`$${cleanNumber(outcomeData?.originalContractPrice || outcomeData?.leadData?.originalContractPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                color="#4CBB17"
-                isDark={isDark}
-              />
+              {/* ⚠️ SUPPRESSED once the refund block below can tell the whole story.
+                  The lead's `originalContractPrice` is REWRITTEN to the new figure when
+                  the addendum is accepted, so on a refunded deal this row showed the
+                  POST-refund price under a label reading "Original" — and sat directly
+                  above the refund block's own original, giving two rows with the same
+                  label and different values. That is the duplicate that was reported. */}
+              {!showRefundBlock && (
+                <DetailRow
+                  label="Original Contract Price"
+                  value={`$${cleanNumber(outcomeData?.originalContractPrice || outcomeData?.leadData?.originalContractPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  color="#4CBB17"
+                  isDark={isDark}
+                />
+              )}
+              {/* ── the refund ────────────────────────────────────────────────────
+                  ⚠️ Shown only once the CUSTOMER has signed (`accepted`), not merely
+                  when an approver has said yes. A request at `pendingApproval` or
+                  `pendingCustomer` may still be declined or unsigned, so reducing the
+                  contract value on the strength of one would misstate the job to
+                  whoever reads this card next — the rep, or ops.
+
+                  ⚠️ All three figures are reported INDEPENDENTLY: `before − after` is
+                  NOT the refund, because the contract price can move for reasons that
+                  have nothing to do with money going back. That is precisely why the
+                  card spells them out instead of showing one and letting the reader
+                  subtract.
+
+                  The `before` row is omitted whenever no candidate can be trusted —
+                  see `resolveBeforePrice`, which refuses anything not strictly above
+                  the price now. */}
+              {showRefundBlock && (
+                <>
+                  <DetailRow
+                    label="Original Contract Value"
+                    value={`$${refundSummary!.before!.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    isDark={isDark}
+                  />
+                  <DetailRow
+                    label="Refund Value"
+                    value={`−$${refundSummary!.refunded.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    color="#BE123C"
+                    isDark={isDark}
+                  />
+                  {/* ⚠️ `after` IS the post-refund figure — the lead's price is rewritten
+                      when the addendum is accepted — so it is printed AS IS. Subtracting
+                      the refund from it takes the money off twice: the reported card read
+                      $7,630 where $8,500 − $435 = $8,065. */}
+                  <DetailRow
+                    label="Contract After Refund"
+                    value={`$${refundSummary!.after.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    color="#4CBB17"
+                    isDark={isDark}
+                  />
+                </>
+              )}
               <DetailRow
                 label="Down Payment"
                 value={(() => {

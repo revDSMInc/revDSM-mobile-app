@@ -19,7 +19,10 @@ import { buildDealCenterData } from '../utils/build-deal-center-data';
 import { resolveSubmittedCalculatorId } from '../utils/job-builder-submission';
 import { FlashMessage } from '../../../config/message';
 import { buildSectionLabelMap } from '../utils/item-format';
+import { resolveFundingSource } from '../../../utils/activity-log/funding-log';
 import { LeadService, resolveLeadCalculatorId } from '../../../services/api/leads';
+import { FundingService } from '../../../services/api/FundingService';
+import { canResumeJobBuild, resumeOutcomeFromRecord } from '../utils/funding';
 import { useAuth } from '../../../hooks/useAuth';
 import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
 import { useQueryClient } from '@tanstack/react-query';
@@ -171,6 +174,26 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   // sectionId → label for the Result Lead Job Summary rows (web parity).
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
 
+  /**
+   * WHICH FLOW any funding activity on this screen belongs to.
+   *
+   * A plain const, not a `useMemo`: it resolves to a STRING, so there is no
+   * identity to stabilise, and every hook in this component sits after the
+   * edit-mode early return — adding one more would widen that compromise for
+   * nothing. Derived here rather than inside the sheet because the screen is the
+   * only thing that knows how it was entered.
+   * that knows how it was entered. `module_type` still goes up as `funding` — this
+   * only composes the flow onto `meta.action` (`rehash_funding_card_charged`) so
+   * the backend can display rehash, sale and my-deals money under their own
+   * headings. See `resolveFundingSource`.
+   *
+   * NOTE: `mode: 'edit'` never reaches this line — it returns `DynamicDealEditScreen`
+   * above — so in practice this resolves to `rehash` or `sale`. It is passed
+   * through the resolver anyway so all three flows answer the question identically
+   * if the deal-edit wizard ever grows a funding step.
+   */
+  const fundingSource = resolveFundingSource({ lead, mode: route?.params?.mode });
+
   // Header shows the LEAD (customer name + lead time), matching the regular
   // DealCenter header (`src/screens/DealCenter/index.tsx`). The active calculator
   // name lives in the bottom tab bar, not the header.
@@ -184,10 +207,113 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   const customerTabName = `${cd.firstName || ''} ${cd.lastName || ''}`.trim();
   const leadTime = lead?.leadTime || '';
 
-  const handleResultJob = useCallback((calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => {
-    setResultModal({ visible: true, calculatorId, resultType: result, price, paymentMethod, downPayment });
-    setCurrentCalculatorId(calculatorId);
-  }, []);
+  /**
+   * The resume path's two pieces of mutable state, in ONE ref.
+   *
+   * ⚠️ Combined for the reason on `rehashBuild`: every hook in this component sits
+   * after the edit-mode early return, so each additional one widens that compromise.
+   *
+   * `confirm` points at `handleResultConfirm`, which is defined further down and
+   * cannot be re-ordered above here — the result-opt-in effect already depends on
+   * `handleResultJob`, so moving that below would put the effect in its own temporal
+   * dead zone. Routing through the ONE function is also what stops the resume path
+   * drifting from the normal one on the timeline PATCH, the `build_job_initiated`
+   * log and the rehash "reuse the saved build?" prompt.
+   *
+   * `checking` guards a second Sale tap while the lookup is in flight. A ref rather
+   * than state because nothing renders from it, and a state flag would be read from
+   * whichever closure RolloutView is holding — the render before the flag flipped.
+   */
+  const resumeRef = useRef<{ confirm: (data: any, calcIdOverride?: string) => void; checking: boolean }>({
+    confirm: () => {},
+    checking: false,
+  });
+
+  const handleResultJob = useCallback(
+    async (calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => {
+      const openSheet = () => {
+        setResultModal({ visible: true, calculatorId, resultType: result, price, paymentMethod, downPayment });
+        setCurrentCalculatorId(calculatorId);
+
+        /**
+         * The portal's Forever Record turns the **Lead Resulted** step in-progress here.
+         *
+         * ⚠️ That step is the one sales-phase milestone with NO log-derived fallback —
+         * the backend reads `lead.timelineProgress[cycle].leadResulted` and nothing else
+         * (`SalesPhaseBuilder`), and the field is created `pending`. Its neighbours look
+         * alive without help (Sales Process is created `active`; Funding is derived from
+         * the `JobFunding` doc), so before this the dynamic flow left it reading
+         * "Pending… / Result: N/A" while Funding beside it showed green — on a lead that
+         * had plainly been resulted. It only ever jumped straight to `completed`, at
+         * Build Job.
+         *
+         * ⚠️ Web parity, and the same moment: `deal-center/components/ResultJobModal.js`
+         * sends this exact pair from the Sale **and** Demo buttons of the chooser, which
+         * is the press that lands here. Mobile's own static flow does it too
+         * (`useDealOutcome.handleStatusSelect`). Tapping **Result Lead** to open the
+         * chooser still changes nothing — only picking an outcome does.
+         *
+         * ⚠️ Safe to repeat: `canAdvanceStatus` is FORWARD-ONLY (`pending → active →
+         * completed`), so re-opening the sheet on an already-built lead cannot knock the
+         * step back, and the Build Job write below still wins.
+         *
+         * ⚠️ Deliberately NOT awaited, matching the Build Job site: nothing the rep is
+         * about to see reads these flags, and a failed PATCH must never block resulting
+         * a lead.
+         */
+        const progressLeadId = lead?._id || lead?.leadId || lead?.id;
+        if (progressLeadId) {
+          LeadService.updateLeadTimelineProgress(progressLeadId, {
+            salesProcess: 'completed',
+            leadResulted: 'active',
+          }).catch((e: any) =>
+            console.warn('[DynamicDealCenter] timeline progress (result opened) failed:', e?.message || e)
+          );
+        }
+      };
+
+      const resumeLeadId = lead?._id || lead?.leadId || lead?.id;
+      // A DEMO has nothing to fund, and a lead with no id has nothing to read.
+      if (result !== 'sale' || !resumeLeadId || resumeRef.current.checking) {
+        openSheet();
+        return;
+      }
+
+      /**
+       * The rep already submitted the funding on an earlier visit and only abandoned
+       * the BUILD — take them straight back to it.
+       *
+       * ⚠️ Any failure falls through to the sheet. A lookup problem must never block
+       * the rep from resulting a lead, which is the same rule the rehash
+       * `openJobBuilder` lookup below already follows.
+       */
+      resumeRef.current.checking = true;
+      try {
+        const res = await FundingService.getFunding(
+          resumeLeadId,
+          lead?.companyId || user?.companyId,
+          user?._id || user?.id
+        );
+        const record = res.data?.data?.funding ?? null;
+        const resumed = canResumeJobBuild(record) ? resumeOutcomeFromRecord(record, pricing.plans) : null;
+        if (resumed) {
+          // ⚠️ `calculatorId` is passed EXPLICITLY. `setCurrentCalculatorId` has not
+          // been called on this path, and even if it had, the state would not be
+          // readable inside the callback until the next render — so relying on it
+          // would attach the outcome to whichever calculator was resulted last.
+          setCurrentCalculatorId(calculatorId);
+          resumeRef.current.confirm(resumed, calculatorId);
+          return;
+        }
+      } catch (err) {
+        if (__DEV__) console.warn('[DynamicDealCenter] resume check failed:', err);
+      } finally {
+        resumeRef.current.checking = false;
+      }
+      openSheet();
+    },
+    [lead, user, pricing.plans]
+  );
 
   /**
    * Ticket 409 - the calculator this lead was already resulted from, or null.
@@ -357,8 +483,12 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     />
   );
 
-  const handleResultConfirm = useCallback((data: any) => {
+  const handleResultConfirm = useCallback((data: any, calcIdOverride?: string) => {
     setResultModal({ visible: false });
+    // ⚠️ `calcIdOverride` is for the RESUME path, which reaches this in the same tick
+    // as its `setCurrentCalculatorId` — the state is not readable yet, so the id has
+    // to travel as an argument. The sheet passes nothing and behaves exactly as before.
+    const resultCalcId = calcIdOverride || currentCalculatorId;
 
     // Persist the down payment the rep typed IN THIS MODAL back onto the calculator.
     //
@@ -369,17 +499,21 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     // `handleSetDownPayment` marks the tab dirty, so it rides the same debounced
     // `PUT /lfcalculators/{id}` as the rollout card's own down-payment input and hydrates
     // on the next load. A demo has no down payment, so only a sale writes.
-    if (currentCalculatorId && data?.resultType === 'sale') {
-      handleSetDownPayment(currentCalculatorId, Number(data?.downPayment) || 0);
+    //
+    // ⚠️ Keyed on `resultCalcId`, NOT `currentCalculatorId`: on the resume path the
+    // state id is a tick stale, so writing against it would save the down payment onto
+    // the PREVIOUSLY selected calculator — and silently, since both writes succeed.
+    if (resultCalcId && data?.resultType === 'sale') {
+      handleSetDownPayment(resultCalcId, Number(data?.downPayment) || 0);
     }
 
     // Attach the calculator snapshot + appointment so the outcome payload can send
     // `LFCalculator` and `selectedAppointmentId` (web parity — every outcome save
     // carries the associated calculator object; previously omitted on mobile).
-    const calc: any = tabs.find((t) => t.id === currentCalculatorId);
+    const calc: any = tabs.find((t) => t.id === resultCalcId);
     setCalculatorResultData({
       ...data,
-      calculatorId: currentCalculatorId,
+      calculatorId: resultCalcId,
       LFCalculator: calc || {},
       selectedAppointmentId: calc?.appointmentId,
     });
@@ -409,7 +543,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         userId: uId,
         leadId: leadIdForProgress,
         result: data?.resultType || data?.result || undefined,
-        calculatorId: currentCalculatorId || undefined,
+        calculatorId: resultCalcId || undefined,
         appointmentId: calc?.appointmentId || appointmentId || undefined,
         calculatorType: 'dynamic',
       }).catch(() => {});
@@ -448,12 +582,12 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
       setFlowStep('jobBuilder');
     };
 
-    if (lead?.isRehashed !== true || !currentCalculatorId || !leadIdForProgress) {
+    if (lead?.isRehashed !== true || !resultCalcId || !leadIdForProgress) {
       openJobBuilder(false);
       return;
     }
 
-    LeadService.getLeadOutcomeByCalculator(leadIdForProgress, currentCalculatorId)
+    LeadService.getLeadOutcomeByCalculator(leadIdForProgress, resultCalcId)
       .then((res: any) => {
         if (hasSavedJobBuild(extractCalculatorOutcome(res.data))) {
           setRehashBuild({ prompt: true, startFresh: false });
@@ -473,6 +607,11 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     // callback, so both belong here. They arrived from opposite sides of a merge and the
     // conflict resolution kept the union -- dropping either reintroduces a stale closure.
   }, [currentCalculatorId, tabs, lead, user, appointmentId, handleSetDownPayment, refetchJobBuilderConfig]);
+
+  // Assigned every render so the resume path always fires the CURRENT closure. A
+  // `useEffect` would land a render late, and this is invoked from an async handler
+  // that can resolve before an effect for the same render has run.
+  resumeRef.current.confirm = handleResultConfirm;
 
   const handleJobBuilderBack = useCallback(() => {
     setFlowStep('calculator');
@@ -660,6 +799,9 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           visible={resultModal.visible}
           lead={lead}
           calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
+          // Display never uses it — it links every funding log row back to the quote.
+          calculatorId={resultModal.calculatorId}
+          fundingSource={fundingSource}
           resultType={resultModal.resultType}
           initialPrice={resultModal.price}
           initialPaymentMethod={resultModal.paymentMethod}
@@ -841,6 +983,9 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           visible={resultModal.visible}
           lead={lead}
           calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
+          // Display never uses it — it links every funding log row back to the quote.
+          calculatorId={resultModal.calculatorId}
+          fundingSource={fundingSource}
           resultType={resultModal.resultType}
           initialPrice={resultModal.price}
           initialPaymentMethod={resultModal.paymentMethod}

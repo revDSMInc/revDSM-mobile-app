@@ -41,6 +41,23 @@ const unwrapOutcome = (body: any) =>
   body?.data?.outcome ?? body?.outcome ?? body?.data ?? body;
 
 /**
+ * Is this the server saying **"nothing has been saved for this calculator yet"**?
+ *
+ * ⚠️ **A 404 here is a normal STATE, not a failure.** `GET …/outcome/{calculatorId}`
+ * answers `404 "Lead calculator outcome not found"` on every FIRST open of the job
+ * builder, because the outcome record is created by the first save — there is simply
+ * nothing to read yet. Logging it as an error put a red `✗ 404` in the console of every
+ * new build and sent people looking for a bug that is not there.
+ *
+ * Told apart from a genuine failure (a 500, a dropped connection) so those are still
+ * reported: an empty document list on a lead that HAS documents is a real problem and
+ * must not be silenced with this.
+ */
+export function isMissingOutcome(e: any): boolean {
+  return (e?.response?.status ?? e?.httpStatus) === 404;
+}
+
+/**
  * Read the outcome's document rows for THIS CALCULATOR
  * (`GET /lead/v1/{leadId}/outcome/{calculatorId}`).
  *
@@ -64,7 +81,11 @@ export async function fetchOutcomeDocumentRows(
       orderSheets: docs.orderSheets || [],
     };
   } catch (e) {
-    console.warn('[outcome-documents] calculator-scoped document read failed:', e);
+    // ⚠️ Not an error on a first open — the outcome record does not exist until the
+    // first save. Only a genuine failure is worth reporting.
+    if (!isMissingOutcome(e)) {
+      console.warn('[outcome-documents] calculator-scoped document read failed:', e);
+    }
     return null;
   }
 }
