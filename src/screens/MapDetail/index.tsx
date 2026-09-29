@@ -229,7 +229,7 @@ export default function MapDetailScreen() {
     _forceTimestamp?: number;
   } | null>(null);
   const [sortOption, setSortOption] = useState<
-    'price_asc' | 'price_desc' | 'date_asc' | 'date_desc' | 'distance'
+    'price_asc' | 'price_desc' | 'date_asc' | 'date_desc' | 'distance_asc' | 'distance_desc'
   >('date_desc');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const lastRadiusMessageKeyRef = useRef<string>('');
@@ -239,7 +239,8 @@ export default function MapDetailScreen() {
     price_desc: 'Price Descending',
     date_asc: 'Date Ascending',
     date_desc: 'Date Descending',
-    distance: 'Distance',
+    distance_asc: 'Distance Ascending',
+    distance_desc: 'Distance Descending',
   };
 
   useEffect(() => {
@@ -535,10 +536,11 @@ export default function MapDetailScreen() {
     return [...baseFilteredLeads].sort((a, b) => {
       if (sortOption === 'price_asc') return (a.price || 0) - (b.price || 0);
       if (sortOption === 'price_desc') return (b.price || 0) - (a.price || 0);
-      // Nearest first, from the rep's own GPS fix. Jobs with no position sort to the END
-      // — see `compareByDistance`. With no fix yet every job is `null`, so the list keeps
-      // its incoming order rather than shuffling when the fix arrives.
-      if (sortOption === 'distance') return compareByDistance(a, b, userLocation);
+      // Nearest/farthest first, from the rep's own GPS fix. Jobs with no position sort to
+      // the END — see `compareByDistance`. With no fix yet every job is `null`, so the list
+      // keeps its incoming order rather than shuffling when the fix arrives.
+      if (sortOption === 'distance_asc') return compareByDistance(a, b, userLocation);
+      if (sortOption === 'distance_desc') return compareByDistance(a, b, userLocation, true);
 
       const timeA = a._timestamp || 0;
       const timeB = b._timestamp || 0;

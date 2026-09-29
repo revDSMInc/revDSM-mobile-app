@@ -349,21 +349,22 @@ export const formatDistanceMiles = (miles: number | null | undefined): string =>
 };
 
 /**
- * Order jobs nearest-first.
+ * Order jobs nearest-first (or farthest-first with `descending`).
  *
  * ⚠️ Jobs with NO position sort to the END, whichever direction is asked for — they are
- * unknown, not near. Returning them first (which a `null → 0` coercion would) puts the
+ * unknown, not near/far. Returning them first (which a `null → 0` coercion would) puts the
  * least useful rows at the top of the one sort that exists to surface the closest door.
  */
 export const compareByDistance = (
   a: any,
   b: any,
-  origin: Coords | null | undefined
+  origin: Coords | null | undefined,
+  descending = false,
 ): number => {
   const da = getJobDistanceMiles(a, origin);
   const db = getJobDistanceMiles(b, origin);
   if (da === null && db === null) return 0;
   if (da === null) return 1;
   if (db === null) return -1;
-  return da - db;
+  return descending ? db - da : da - db;
 };
