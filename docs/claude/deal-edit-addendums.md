@@ -1207,6 +1207,16 @@ into `describeCombo`, i.e. into the submitted addendum's text; it is a separator
 heavier" reasoning no longer strictly applies now that the card is always full, but widening it would
 re-card edits nobody reported — left alone deliberately.
 
+## My Deals shows uncoloured LeafFilter combinations again (supersedes the section below)
+
+Ticket: *show combinations that have values AND the ones with none — give the rep a free hand over the
+LeafFilter combination inputs.* `isComboHiddenInDealEdit` (`combination-color-filter.ts`) now always returns
+`false`; it stays as the single choke point for the three surfaces (cards, Grand Total, Summary step) and
+numbering, so nothing else changed. To restore the colour rule, put back
+`editMode && !combo[ADDED_IN_EDIT_KEY] && !comboHasSelectedColor(combo, fields)`. `ADDED_IN_EDIT_KEY` is
+still applied but is now inert for visibility. ⚠️ An untouched empty combination is still pruned on save
+(`dynamic-job-state-storage.ts` pruning), so showing it does not persist blank rows.
+
 ## My Deals hides a LeafFilter combination whose colour was never picked
 
 Ticket: *"inside My Deals make sure only that combination should be displayed in which the color value is

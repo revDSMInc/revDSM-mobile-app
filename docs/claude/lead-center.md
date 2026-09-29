@@ -941,6 +941,13 @@ The Map tab navigates to `MapDetail` rather than rendering a map inside this `Sc
 `job_docs` and `tools` render inline), so there is no gesture to conflict with. `stickyHeaderIndices`
 is unaffected — the control sits above the sticky child.
 
+## Pull-to-refresh / focus also refresh refund state
+
+Ticket: *a refund received on a deal kept showing until the rep left My Deals and came back.* The refund
+figures come from `['leadApprovals', leadId]` and `['leadApprovalsFunding', leadId]` (60 s `staleTime`), which
+`handlePullToRefresh` and the focus effect did not touch — they only refetched the lead. Both now invalidate
+these two keys; the pull awaits them so the spinner lasts until the new figures land.
+
 ## Map job card & pins: sold-job categories (REVUIUX-439), recorded in `maps-zone-canvasser.md`
 
 `LeadMap.tsx` and `MapJobCard.tsx` (under `widgets/components/LeadCenter/`) now colour pins by

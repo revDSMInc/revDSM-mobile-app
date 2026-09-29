@@ -21,6 +21,7 @@ import { LeadService } from '../../services/api/leads';
 import { useDynamicJobBuilderActivityLog } from './hooks/useDynamicJobBuilderActivityLog';
 import { buildCalculatorOutcomePayload } from './utils/build-outcome-payload';
 import {
+  isMissingOutcome,
   loadResolvedOutcomeDocuments,
   fetchOutcomeDocumentRows,
   resolveOutcomeDocRows,
@@ -281,9 +282,19 @@ function DynamicJobBuilderInner({
         // the signed-URL round-trip, or `initialJobState` (the draft) can't reach the
         // session until the whole doc chain settles. That is the "reopen shows empty,
         // then fills in a moment later" the rep sees.
-        return { initialJobState: jobState };
-      } catch {
-        return { initialJobState: undefined };
+        // `outcomeExists` gates the DOCUMENTS query below, which re-reads this very
+        // endpoint. Without it that read fires on every first open and 404s a second
+        // time — see the note on it.
+        return { initialJobState: jobState, outcomeExists: true };
+      } catch (e) {
+        /**
+         * ⚠️ A **404 means no outcome has been saved for this calculator yet**, which is
+         * the normal state on a first open — the record is created by the first save.
+         * Anything else is a real failure, and there `outcomeExists` stays TRUE so the
+         * documents read still gets its own chance rather than being suppressed by an
+         * unrelated error.
+         */
+        return { initialJobState: undefined, outcomeExists: !isMissingOutcome(e) };
       }
     },
     // Edit mode supplies the (already-deserialized) state from the PortalJobBuilder
@@ -318,9 +329,22 @@ function DynamicJobBuilderInner({
   const { data: resolvedDocumentsData } = useQuery({
     queryKey: ['leadOutcomeDocs', leadId, calcId],
     queryFn: () => loadResolvedOutcomeDocuments(leadId, calcId),
-    // Runs once the draft's outcome GET has landed, and NEVER in edit mode — edit
-    // fetches docs lead-scoped via `editDocsData` below (web parity).
-    enabled: Boolean(leadId && calcId) && !isEdit && isOutcomeFetched,
+    /**
+     * Runs once the draft's outcome GET has landed, and NEVER in edit mode — edit
+     * fetches docs lead-scoped via `editDocsData` below (web parity).
+     *
+     * ⚠️ **And only when an outcome actually EXISTS.** This re-reads the SAME endpoint
+     * the query above just called, so on a first open — where there is no outcome yet —
+     * it fired a second `GET …/outcome/{calcId}` that 404'd and logged an error, for a
+     * record the app had already been told does not exist. Documents live ON the
+     * outcome, so no outcome means no documents and nothing to ask for.
+     *
+     * ⚠️ It re-enables on its own: filing the first document creates the outcome, and
+     * `commitUploaded` invalidates `['leadOutcome', leadId]` — a PREFIX of this query's
+     * key — so the read above refetches, `outcomeExists` flips true, and this runs.
+     */
+    enabled:
+      Boolean(leadId && calcId) && !isEdit && isOutcomeFetched && outcomeData?.outcomeExists !== false,
     staleTime: 0,
     gcTime: 0,
     refetchOnMount: 'always',

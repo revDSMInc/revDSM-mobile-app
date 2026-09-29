@@ -521,6 +521,10 @@ export default function LeadCenterPage() {
         // this the banner only appears after leaving and re-opening the deal.
         // (Web solves the same problem with `useJobBuilderDrafts`'s `refetch`.)
         queryClient.invalidateQueries({ queryKey: ['lead-job-builder-drafts', lead._id] });
+        // Refund figures live in these two (60 s staleTime) — without this a refund
+        // issued while the rep was away kept showing until they left and re-opened.
+        queryClient.invalidateQueries({ queryKey: ['leadApprovals', lead._id] });
+        queryClient.invalidateQueries({ queryKey: ['leadApprovalsFunding', lead._id] });
         refetch(); // Ensure lead data is fresh when returning from other screens
       }
     }, [lead?._id, queryClient, refetch])
@@ -535,6 +539,14 @@ export default function LeadCenterPage() {
       if (lead?._id) {
         queryClient.invalidateQueries({ queryKey: ['revrender-runs', lead._id] });
         queryClient.invalidateQueries({ queryKey: ['lead-job-builder-drafts', lead._id] });
+        // Refund state (approvals card + contract card) — awaited so the spinner
+        // stays until the new figures have landed.
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['leadApprovals', lead._id] }),
+          queryClient.invalidateQueries({ queryKey: ['leadApprovalsFunding', lead._id] }),
+          refetch(),
+        ]);
+        return;
       }
       await refetch();
     } finally {

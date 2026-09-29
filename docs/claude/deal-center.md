@@ -2458,3 +2458,68 @@ double-write) already used POST.
 - `AppointmentSchedulerModal.handleAmendmentSubmit` calls `submitJobBuilder` then `updateJobBuilder`
   back-to-back with the same payload — before this fix, the second call's 404 threw and skipped the
   success flash / draft-accept, another symptom of the same root cause, now resolved by the same edit.
+
+### ✅ The Job Builder read the SAME outcome endpoint twice on every first open
+
+Ticket, with a devtools capture on opening the Job Builder for the first time:
+*"when first time this screen is open this end point is calling with the 404 not found error"* —
+`GET /lead/v1/{leadId}/outcome/{calculatorId}` → `{"code":404,"message":"Lead calculator outcome not found"}`,
+logged red from `outcome-documents.ts` as a failed document read.
+
+**The endpoint was not misbehaving.** That outcome record is created by the first **save**, so on a
+first open there is genuinely nothing to read and `404` is the correct answer. Two separate faults
+turned a normal state into an error in the console:
+
+1. ⚠️ **The same URL was requested TWICE.** The draft query (`['leadOutcome', leadId, calcId, startFresh]`)
+   calls `getLeadOutcomeByCalculator` and swallows its 404 silently; the documents query
+   (`['leadOutcomeDocs', leadId, calcId]` → `loadResolvedOutcomeDocuments` → `fetchOutcomeDocumentRows`)
+   then re-reads **the same endpoint** — a record the app had *already been told does not exist*. That
+   second call is the one in the log, and the capture shows both.
+2. **It reported the 404 as a failure.** `fetchOutcomeDocumentRows` already returned `null` (so behaviour
+   was correct), but it `console.warn`ed unconditionally.
+
+#### The fix
+
+- **New `isMissingOutcome(e)`** in `utils/outcome-documents.ts` — reads `response.status ?? httpStatus`.
+  The warn now fires only for a GENUINE failure. ⚠️ **Do not widen it to swallow everything**: an empty
+  document list on a lead that HAS documents is a real problem and must stay loud.
+- **The draft query returns `outcomeExists`** (`true` on success, `!isMissingOutcome(e)` in the catch) and
+  the documents query is gated `… && outcomeData?.outcomeExists !== false`. **Documents live ON the
+  outcome**, so no outcome means no documents and nothing to ask for — the request is not silenced, it is
+  not made.
+
+⚠️ **A non-404 failure keeps `outcomeExists: true` deliberately.** An unrelated 500 on the draft read must
+not suppress a document list that may well come back fine.
+
+⚠️ **`outcomeExists !== false`, not `=== true`.** `initialJobState: undefined` is normal — an outcome can
+exist with no saved build (Start Fresh on a rehash, or an empty one) — so only an *explicit* `false` gates.
+
+⚠️ **It re-enables itself, and every path was checked:** filing the first document creates the outcome and
+`commitUploaded` invalidates `['leadOutcome', leadId]` — a **prefix** of the draft query's key — so it
+refetches, `outcomeExists` flips true and the documents query runs. A **delete-only** Update invalidates
+only `['leadOutcomeDocs', leadId]`, which is safe because documents existing implies the outcome exists, so
+the query was already enabled. `handleUploadDocs` also returns its rows from its own direct
+`fetchOutcomeDocumentRows` call, so a just-uploaded document reaches the caller either way.
+
+Verified with 7 tests (`__tests__/screens/DynamicDealCenter/outcome-first-open.test.ts`) driving the real
+`isMissingOutcome` plus the query's exact `enabled` expression: the 404 recognised under both status
+spellings, a 500 / 403 / network error / `undefined` still reported, **the repro (no outcome → the
+documents query does not run)**, it running once an outcome exists, a non-404 failure still letting the
+read try, an outcome-less payload not mistaken for a missing outcome, and the `isEdit` / `isOutcomeFetched`
+/ id gates unchanged. tsc 44 (baseline unchanged); `outcome-documents.ts` is eslint-clean and
+`DynamicJobBuilderScreen.tsx` is at its exact HEAD baseline (49 problems: 2 errors / 47 warnings).
+22 suites / 390 tests pass and the iOS bundle builds. ⚠️ Both files are **CRLF**.
+
+⚠️ Needs a device check: open the Job Builder on a NEW lead and confirm the console shows **no**
+`GET …/outcome/{calcId}` at all; then file an agreement and confirm the documents list still populates.
+
+## My Deals no longer hides uncoloured LeafFilter combinations
+
+Ticket: *show combinations with values AND those with none — a free hand over the LeafFilter combination
+inputs.* `isComboHiddenInDealEdit` (`utils/dynamic-job-builder/engine/combination-color-filter.ts`) now always
+returns `false`, so the tab cards, Grand Total card, Summary step and combination numbering (Deal Center's
+`renumberTabCombinations` included) show and count every combination. Full note and restore recipe:
+`deal-edit-addendums.md`, "My Deals shows uncoloured LeafFilter combinations again".
+
+⚠️ Display only — the function stays as the single choke point; do not re-add per-surface filters. An
+untouched empty combination is still pruned on save, so no blank rows persist.
