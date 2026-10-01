@@ -23,6 +23,8 @@ export interface InspectionPhotosPanelProps {
   /** Raw `salesPhotos` off the lead — carries category/subcategory/deletedAt. */
   photos: any[];
   secureImages: SecureImageMap;
+  /** Optional analytics hook - reports every tap inside the panel. */
+  onAction?: (action: string, meta?: Record<string, unknown>) => void;
 }
 
 const THUMB_SIZE = 56;
@@ -33,6 +35,7 @@ interface ViewerProps {
   photos: SectionPhoto[];
   initialIndex: number;
   onClose: () => void;
+  onAction?: (action: string, meta?: Record<string, unknown>) => void;
 }
 
 /**
@@ -46,7 +49,7 @@ interface ViewerProps {
  * cases automatically — which is why each screen previously needed two duplicate
  * preview modals gated on `isFullscreen`.
  */
-function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose }: ViewerProps) {
+function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose, onAction }: ViewerProps) {
   const { width, height } = useWindowDimensions();
   const [index, setIndex] = useState(initialIndex);
   const pagerRef = useRef<FlatList<SectionPhoto>>(null);
@@ -57,12 +60,18 @@ function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose }: V
   const srcOf = (p: SectionPhoto) => warmed[p.uri] || p.uri;
 
   const goTo = useCallback(
-    (next: number) => {
+    (next: number, source: 'chevron' | 'thumbnail') => {
       const clamped = Math.max(0, Math.min(photos.length - 1, next));
+      onAction?.('inspection_viewer_photo_changed', {
+        section: sectionName,
+        toPhoto: clamped + 1,
+        totalPhotos: photos.length,
+        source,
+      });
       setIndex(clamped);
       pagerRef.current?.scrollToIndex({ index: clamped, animated: true });
     },
-    [photos.length]
+    [photos.length, sectionName, onAction]
   );
 
   // Keep the active thumbnail on screen when paging by swipe or chevron.
@@ -102,7 +111,10 @@ function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose }: V
             {index + 1} / {photos.length}
           </Text>
           <TouchableOpacity
-            onPress={onClose}
+            onPress={() => {
+              onAction?.('inspection_viewer_closed', { section: sectionName, photo: index + 1 });
+              onClose();
+            }}
             style={{
               width: 40,
               height: 40,
@@ -129,9 +141,18 @@ function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose }: V
             // Required for `initialScrollIndex` / `scrollToIndex` on a horizontal pager.
             getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
             keyExtractor={(item, i) => `${item.uri}-${i}`}
-            onMomentumScrollEnd={(e) =>
-              setIndex(Math.round(e.nativeEvent.contentOffset.x / width))
-            }
+            onMomentumScrollEnd={(e) => {
+              const next = Math.round(e.nativeEvent.contentOffset.x / width);
+              if (next !== index) {
+                onAction?.('inspection_viewer_photo_changed', {
+                  section: sectionName,
+                  toPhoto: next + 1,
+                  totalPhotos: photos.length,
+                  source: 'swipe',
+                });
+              }
+              setIndex(next);
+            }}
             renderItem={({ item }) => (
               <View
                 style={{
@@ -157,11 +178,11 @@ function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose }: V
 
         {photos.length > 1 && (
           <>
-            <ChevronButton side="left" disabled={index === 0} onPress={() => goTo(index - 1)} />
+            <ChevronButton side="left" disabled={index === 0} onPress={() => goTo(index - 1, 'chevron')} />
             <ChevronButton
               side="right"
               disabled={index === photos.length - 1}
-              onPress={() => goTo(index + 1)}
+              onPress={() => goTo(index + 1, 'chevron')}
             />
           </>
         )}
@@ -182,7 +203,7 @@ function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose }: V
               })}
               renderItem={({ item, index: i }) => (
                 <TouchableOpacity
-                  onPress={() => goTo(i)}
+                  onPress={() => goTo(i, 'thumbnail')}
                   style={{
                     width: THUMB_SIZE,
                     height: THUMB_SIZE,
@@ -248,7 +269,7 @@ function ChevronButton({
  * Pitchbook and Roofline Deck tool drawers. Grouping lives in
  * `utils/inspection-photos.ts`; this file is presentation only.
  */
-export function InspectionPhotosPanel({ photos, secureImages }: InspectionPhotosPanelProps) {
+export function InspectionPhotosPanel({ photos, secureImages, onAction }: InspectionPhotosPanelProps) {
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
   const [viewer, setViewer] = useState<{ sectionId: string; index: number } | null>(null);
   const sections = useMemo(() => buildInspectionSections(photos, secureImages), [photos, secureImages]);
@@ -290,7 +311,13 @@ export function InspectionPhotosPanel({ photos, secureImages }: InspectionPhotos
           >
             <View className="rounded-xl overflow-hidden bg-white">
               <TouchableOpacity
-                onPress={() => setExpandedCat(isExpanded ? null : section.id)}
+                onPress={() => {
+                  onAction?.(isExpanded ? 'inspection_section_collapsed' : 'inspection_section_expanded', {
+                    section: section.name,
+                    photoCount: count,
+                  });
+                  setExpandedCat(isExpanded ? null : section.id);
+                }}
                 className="flex-row items-center justify-between px-4 py-3"
               >
                 <Text className="text-base font-semibold text-[#1C252E]">{section.name}</Text>
@@ -323,7 +350,15 @@ export function InspectionPhotosPanel({ photos, secureImages }: InspectionPhotos
                         key={`${img.uri}-${i}`}
                         uri={img.uri}
                         label={`${section.name} - ${img.label}`}
-                        onPress={() => setViewer({ sectionId: section.id, index: i })}
+                        onPress={() => {
+                          onAction?.('inspection_photo_opened', {
+                            section: section.name,
+                            subcategory: img.label,
+                            photo: i + 1,
+                            totalPhotos: count,
+                          });
+                          setViewer({ sectionId: section.id, index: i });
+                        }}
                         className="rounded-xl overflow-hidden bg-slate-50"
                         style={{
                           // Two per row (web `xs={6}`) at web's 4/3 crop.
@@ -402,6 +437,7 @@ export function InspectionPhotosPanel({ photos, secureImages }: InspectionPhotos
           sectionName={viewerSection.name}
           photos={viewerSection.photos}
           initialIndex={viewer.index}
+          onAction={onAction}
           onClose={() => setViewer(null)}
         />
       )}
