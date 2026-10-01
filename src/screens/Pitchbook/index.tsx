@@ -61,6 +61,7 @@ import { useTabStripAutoScroll } from '../../hooks/useTabStripAutoScroll';
 import Feather from 'react-native-vector-icons/Feather';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
+import { reportDisplayName } from '../../utils/report-name';
 
 const { width } = Dimensions.get('window');
 
@@ -763,10 +764,10 @@ export default function PitchbookScreen() {
           !isDownload &&
           (url.toLowerCase().includes('.pdf') || report?.reportName?.toLowerCase().includes('.pdf'))
         ) {
-          setPdfPreviewData({ url, title: report.reportName || 'Report Preview' });
+          setPdfPreviewData({ url, title: reportDisplayName(report, 'Report Preview') });
           setShowPdfModal(true);
         } else {
-          downloadPdfToDevice(url, report.reportName || 'Risk Report');
+          downloadPdfToDevice(url, reportDisplayName(report, 'Risk Report'));
         }
       }
     } catch (error) {
@@ -1946,7 +1947,7 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
               </View>
               <View className="flex-1">
                 <Text className="font-bold text-sm" numberOfLines={1} style={{ color: t.body }}>
-                  {report.reportName}
+                  {reportDisplayName(report, 'Risk Report')}
                 </Text>
                 <Text className="text-[10px]" style={{ color: t.hint }}>
                   {new Date(report.createdAt).toLocaleDateString()}

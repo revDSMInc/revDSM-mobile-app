@@ -1043,3 +1043,14 @@ was the pre-existing `getPinDateLabel` suffix (`"Sold {date} · pending install"
 `utils/sales-pins.ts`, shared by both `MapJobCard.tsx` and `MapDetail`'s list-view row. Full notes and the
 "do not reintroduce a status word here, colour is the channel" rule: `maps-zone-canvasser.md` › "still
 status is on the card" follow-up, right after the badge-revert note.
+
+## Risk report title/filename comes from `displayName` (REVUIUX-466)
+
+Lead Center's `risk-preview` / `risk-download` (`hooks/useLeadCenterModals.ts`) hardcoded `'Risk Report'`; they now
+use `reportDisplayName` from `utils/report-name.ts` (backend `displayName` -> `reportName` -> `'Risk Report'`).
+`hooks/useLeadReports.ts` `handleDownloadRiskReport(url, report?)` takes an optional report (it has no callers today).
+Full notes live in `pitch-book.md` ("Risk report uses the backend `displayName`").
+
+- ⚠️ `findReport` returns the FIRST matching record, which may be an older report. When the url comes from a
+  just-finished job the title is taken from the newest non-reset risk report instead.
+- ⚠️ `reportName` is still the lookup key (`includes('risk')`) - do not read the title from it for matching.

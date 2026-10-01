@@ -1064,3 +1064,19 @@ Actions: `sheet_opened` / `sheet_closed` (with `source`: `interactive_tools_butt
 - `toggleTools` now takes a `source` string - do not pass it straight as an `onPress` (it would receive the event).
 
 - ⚠️ `logTool` stamps `activeToolTab` from the render-time state, which is the tab BEFORE a tab tap. `tab_selected` therefore overrides it with the tapped tab (`activeToolTab: id`); without that every tab log read one click behind (Risk logged as Inspection).
+
+## Risk report uses the backend `displayName` (REVUIUX-466)
+
+Backend now stores `displayName` ("Lead | Address | Date | Time") on risk `generatedReports`; `reportName` stays
+the type key (`risk_report`) and is STILL what every lookup matches on - never read the title from it for matching.
+Pure `utils/report-name.ts`: `reportDisplayName(report, fallback)` (displayName -> reportName -> fallback; older
+reports have no displayName) and `newestReport`. Used for the preview title / download name and the Generated History
+label in Pitchbook and RooflineDeck, and the Lead Center `risk-preview` / `risk-download` actions
+(`useLeadCenterModals`). `useLeadReports.handleDownloadRiskReport` (unused today) now takes an optional report.
+
+- ⚠️ When the url comes from a just-finished JOB, `findReport` returns the FIRST match (maybe an older report), so the
+  title is taken from the newest non-reset risk report instead.
+- ⚠️ The `|` is deliberately NOT allowed through the filename sanitizers (`download-utils.ts`, `PdfPreviewModal.tsx`):
+  `|` is invalid in Android MediaStore/FAT names, so it collapses to a space. Do not "preserve the pipes".
+- RooflineDeck's download branch is `Linking.openURL`, so only its preview title and history label change.
+- `PdfPreviewModal` header title is now 13pt, `numberOfLines={2}` with `adjustsFontSizeToFit` (min 0.8), because the `displayName` ("Lead | Address | Date | Time") was ellipsised at 16pt/1 line. The header is a fixed 60pt - two lines of 17 lineHeight fit; do not raise the font without raising the header.
