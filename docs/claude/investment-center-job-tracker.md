@@ -226,3 +226,15 @@ itself. The chip was a duplicate of that, minus the confirmation.
 ⚠️ `toggleStatus` is KEPT on the hook but now has zero consumers, and carries a note saying so. If
 a one-tap toggle is ever wanted back, put a confirm in front of it rather than re-attaching it to
 the chip.
+
+## `investment_down_payment_changed` now carries the already-selected plan
+
+Ticket: the down-payment log had no payment plan, so the portal could not tell which plan was chosen when the rep
+moved the down payment. `logInvestmentDownPaymentChanged` (`utils/activity-log/investment-center-log.ts`) takes an
+optional `selection` and adds the SAME fields as `investment_payment_method_selected`: financing ->
+`paymentPlan` / `planLabel` / `monthlyPayment`; basic CK/CC/AMEX -> `paymentMethod` / `methodLabel`; plus `isFinancing`.
+Built in `InvestmentPanel.logDownPaymentChange`: In-Home uses the shared `paymentChoice`, 1-Year uses `oneYearKey`.
+
+- ⚠️ `monthlyPayment` is recomputed for the NEW amount (`endPrice - min(amount, endPrice)`): the commit fires on
+  blur before the panel re-renders, so the rendered `inHomeMonthly` is still the OLD down payment's.
+- 1-Year's `monthlyPayment` is `oneYearMonthlyShown` - it does not depend on the 1-Year down payment today.
