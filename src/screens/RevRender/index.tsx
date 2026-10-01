@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -339,11 +339,49 @@ export default function RevRenderScreen() {
   // local state is a placeholder until the backend endpoint exists.
   const [guidanceSeen, setGuidanceSeen] = useState<Record<RenderMode, boolean>>({ core: false, lighting: false });
   const [guidanceFor, setGuidanceFor] = useState<RenderMode | null>(null);
+  // Raised-this-visit, so a dismissed tip stays dismissed without claiming the
+  // rep opted out. A ref, not state: it must not itself re-run the effect below.
+  const guidanceShown = useRef<Record<RenderMode, boolean>>({ core: false, lighting: false });
 
+  // The guidance is raised by the effect below, not here — a switch and a first
+  // landing are the same question ("is the rep now looking at a mode they have
+  // not been told about?"), and answering it in one place keeps them in step.
   const handleModeChange = (next: RenderMode) => {
     setMode(next);
-    if (!guidanceSeen[next]) setGuidanceFor(next);
   };
+
+  /**
+   * Show the guidance for whichever mode the rep is ACTUALLY looking at, including
+   * the one they land on.
+   *
+   * ⚠️ This used to hang off `handleModeChange` alone, so it only ever fired on a
+   * SWITCH. Configure opens in Core, which is not a switch — so the Core tip, the
+   * one every rep meets first, never appeared at all. Lighting's looked fine
+   * because you can only reach it by switching, which is why this read as working.
+   *
+   * Keyed on `status` too: the tip belongs to the configure screen, and firing it
+   * while the rep is still on the photo grid would raise it over the wrong screen.
+   */
+  useEffect(() => {
+    if (status !== 'config') return;
+    // ⚠️ Two different "seen"s, and they are not interchangeable.
+    // `guidanceSeen` is the PERSISTENT "don't show me again"; `guidanceShown` is
+    // this visit only, set when the tip is raised and cleared when the rep leaves
+    // configure. Without the second one, plain "Got it" leaves `guidanceSeen`
+    // false — correct, they did not opt out — and the next change to that object
+    // (opting out of the OTHER mode) re-runs this effect and re-raises a tip they
+    // already closed.
+    if (guidanceSeen[mode] || guidanceShown.current[mode]) return;
+    guidanceShown.current[mode] = true;
+    setGuidanceFor(mode);
+  }, [status, mode, guidanceSeen]);
+
+  // Leaving configure arms the tips again, so picking a different photo gets the
+  // guidance afresh — the advice is about the photo, so it is worth repeating on
+  // a new one until the rep opts out for good.
+  useEffect(() => {
+    if (status !== 'config') guidanceShown.current = { core: false, lighting: false };
+  }, [status]);
 
   const handleAddLighting = (looks: Look[]) => {
     // One look = one queue item = one render.
