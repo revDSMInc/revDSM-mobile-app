@@ -353,6 +353,32 @@ export const LeadService = {
     recipientEmail?: string;
   }): Promise<AxiosResponse<any>> => api.post('/rev-render/v1/shares', payload),
 
+  /**
+   * Favourites / recents for the signed-in rep (483 §3, §7).
+   *
+   * Per REP ACCOUNT, not per device — a rep who changes phone keeps their work.
+   * Returns `favouriteLookIds`, `recentLookIds`, `customLooks` and
+   * `guidanceDismissed`; ⚠️ the last two are ALWAYS EMPTY today — the fields
+   * exist but nothing writes to them, so do not treat an empty array as
+   * "the rep has none" and overwrite local data with it.
+   */
+  getRevRenderPreferences: (): Promise<AxiosResponse<any>> =>
+    api.get('/rev-render/v1/preferences'),
+
+  /**
+   * Toggle one favourite and get the whole new list back.
+   *
+   * ⚠️ A TOGGLE, deliberately — not a whole-list write. If two devices each
+   * sent their full list the later one would silently wipe the other's change.
+   * Use `setRevRenderFavourites` only to reconcile offline edits.
+   */
+  toggleRevRenderFavourite: (lookId: string): Promise<AxiosResponse<any>> =>
+    api.post('/rev-render/v1/preferences/favourites/toggle', { lookId }),
+
+  /** Replace the whole favourites list. Offline reconciliation only — see above. */
+  setRevRenderFavourites: (favouriteLookIds: string[]): Promise<AxiosResponse<any>> =>
+    api.put('/rev-render/v1/preferences/favourites', { favouriteLookIds }),
+
   /** Stop a share link working before it expires. */
   revokeRevRenderShare: (shareId: string): Promise<AxiosResponse<any>> =>
     api.post(`/rev-render/v1/shares/${shareId}/revoke`, {}),

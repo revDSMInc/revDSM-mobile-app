@@ -59,13 +59,38 @@ export function isFavourite(state: LightingState, lookId: string): boolean {
 }
 
 /**
- * Recorded when renders are GENERATED, not when they are added to the queue —
- * the label says "Recently Rendered", and 483 §13 recommends recording at
- * Generate. A look that was queued and then removed never rendered.
+ * ⚠️ `recordRendered()` USED TO LIVE HERE AND WAS DELETED. Do not add it back.
+ *
+ * "Recently Rendered" is now DERIVED SERVER-SIDE from the rep's actual run
+ * history (`renderType: 'look'`, newest first, distinct look ids). A run row
+ * only exists once a render completed, which settles 483 §13's open question
+ * ("record at Add or at Generate?") by construction.
+ *
+ * Writing recents from the client as well would be a second source of truth,
+ * and the two would disagree the first time a generate failed.
  */
-export function recordRendered(state: LightingState, lookIds: string[]): LightingState {
-  const recent = [...new Set([...lookIds, ...state.recent])];
-  return { ...state, recent };
+
+/**
+ * Apply the server's favourites + recents to local state.
+ *
+ * ⚠️ Does NOT touch `sel` or `customs`. Selection is this screen's working
+ * state and the server knows nothing about it; custom looks are device-local
+ * until the write endpoints exist, and the GET returns `customLooks: []`
+ * ALWAYS — so merging that empty array in would delete the rep's custom looks
+ * every time the screen mounted.
+ */
+export function applyServerPreferences(
+  state: LightingState,
+  prefs: { favouriteLookIds?: unknown; recentLookIds?: unknown },
+): LightingState {
+  const ids = (value: unknown): string[] | null =>
+    Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string' && v.length > 0) : null;
+
+  return {
+    ...state,
+    fav: ids(prefs.favouriteLookIds) ?? state.fav,
+    recent: ids(prefs.recentLookIds) ?? state.recent,
+  };
 }
 
 /**
@@ -84,7 +109,11 @@ export function canAdd(state: LightingState): boolean {
 
 export function addButtonLabel(state: LightingState): string {
   const n = state.sel.length;
-  return n === 1 ? '+ Add Render Combo' : `+ Add ${n} Render Combos`;
+  // ⚠️ Zero reads as the singular, NOT "+ Add 0 Render Combos". The button is
+  // disabled at zero, so the label is a name for the action, not a count of it —
+  // and a literal 0 in a disabled control reads as a bug.
+  if (n <= 1) return '+ Add Render Combo';
+  return `+ Add ${n} Render Combos`;
 }
 
 /**

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Text, TextInput, TouchableOpacity, useWindowDimensions, Vibration, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {
   categoriesForTab, findLook, looksForTab, looksInCategory, seasonsSections, tagForLook,
@@ -11,9 +11,10 @@ import {
 } from '../../../utils/revrender-lighting/selection';
 import { Look, LookTab } from '../../../utils/revrender-lighting/types';
 import { CategorySheet } from './CategorySheet';
+import { FavouritePopover, PopoverAnchor } from './FavouritePopover';
 import { CustomLookSheet } from './CustomLookSheet';
 import { LightStrip } from './LightStrip';
-import { LookTile } from './LookTile';
+import { LookTile, TILE_COLUMNS, TILE_WIDTH } from './LookTile';
 
 const GREEN = '#2EDE56';
 const TABS: { key: LookTab; label: string }[] = [
@@ -34,27 +35,42 @@ export function LightingPanel({
   state,
   setState,
   isDark,
-  onAdd,
   onOpenCustomBuilder,
+  onToggleFavourite,
 }: {
   state: LightingState;
   setState: (s: LightingState) => void;
   isDark: boolean;
-  onAdd: (looks: Look[]) => void;
+  // Adding is `LightingFooter`'s job, below — the panel only selects.
   onOpenCustomBuilder?: () => void;
+  /** Persists the favourite to the rep's account. Optimistic — see `favourite`. */
+  onToggleFavourite?: (lookId: string) => void;
 }) {
   const [tab, setTab] = useState<LookTab>('seasons');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Record<string, string>>({ teams: 'NFL', themes: 'Marvel' });
   const [sheetOpen, setSheetOpen] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [popover, setPopover] = useState<PopoverAnchor | null>(null);
+  const { width: screenWidth } = useWindowDimensions();
 
   const sub = isDark ? '#919EAB' : '#637381';
   const cardBg = isDark ? '#1E1E1E' : '#fff';
   const label = isDark ? '#fff' : '#212B36';
 
   const select = (id: string) => setState(toggleSelected(state, id));
-  const favourite = (id: string) => setState(toggleFavourite(state, id));
+
+  /**
+   * ⚠️ Optimistic, then the server's list wins.
+   *
+   * A favourite is one tap and has to feel instant — waiting on a round trip
+   * to fill the star reads as broken. `onToggleFavourite` is what reaches the
+   * backend; it reverts the local change itself if the call fails.
+   */
+  const favourite = (id: string) => {
+    setState(toggleFavourite(state, id));
+    onToggleFavourite?.(id);
+  };
 
   const tile = (look: Look, showTag = false) => (
     <LookTile
@@ -65,7 +81,11 @@ export function LightingPanel({
       favourite={isFavourite(state, look.id)}
       tag={showTag ? tagForLook(look) : null}
       onPress={() => select(look.id)}
-      onLongPress={() => favourite(look.id)}
+      onLongPress={(frame) => {
+        // Confirms the hold registered, before the bubble animates in.
+        Vibration.vibrate(18);
+        setPopover({ lookId: look.id, ...frame });
+      }}
     />
   );
 
@@ -75,22 +95,18 @@ export function LightingPanel({
    * Pad to a multiple of 4 with invisible tiles so every grid lines up.
    */
   const grid = (looks: Look[], render: (l: Look) => React.ReactNode) => {
-    const pad = (4 - (looks.length % 4)) % 4;
+    const pad = (TILE_COLUMNS - (looks.length % TILE_COLUMNS)) % TILE_COLUMNS;
     return (
       <View className="flex-row flex-wrap justify-between">
         {looks.map(render)}
         {Array.from({ length: pad }).map((_, i) => (
-          <View key={`sp${i}`} style={{ width: '23%' }} />
+          <View key={`sp${i}`} style={{ width: TILE_WIDTH }} />
         ))}
       </View>
     );
   };
 
   const { everyday, holidays } = useMemo(() => seasonsSections(), []);
-  const selectedLooks = useMemo(
-    () => state.sel.map((id) => findLook(id, state.customs)).filter((l): l is Look => Boolean(l)),
-    [state.sel, state.customs],
-  );
 
   const quickFavourites = state.fav.map((id) => findLook(id, state.customs)).filter((l): l is Look => Boolean(l));
   const quickRecents = recentsToShow(state).map((id) => findLook(id, state.customs)).filter((l): l is Look => Boolean(l));
@@ -229,28 +245,57 @@ export function LightingPanel({
 
       {tab === 'custom' && (
         <>
+          <View className="flex-row items-center justify-between mb-3">
+            <Text className="text-[11px] font-black tracking-widest uppercase" style={{ color: sub }}>
+              Your custom looks
+            </Text>
+            {/* Only once there is something to hold — a hint about editing looks
+                you have not made yet is noise. */}
+            {state.customs.length > 0 && (
+              <Text className="text-[11px]" style={{ color: sub }}>Hold one to edit</Text>
+            )}
+          </View>
+
+          {/*
+            ⚠️ The "New custom look" tile comes FIRST, before the saved looks,
+            as the mock has it. Appended last it drifts further away with every
+            look a rep saves, and making a new one is the reason this tab exists.
+          */}
           <View className="flex-row flex-wrap justify-between">
-            {state.customs.map((l) => tile(l))}
             <TouchableOpacity
               onPress={() => { setBuilderOpen(true); onOpenCustomBuilder?.(); }}
               accessibilityRole="button"
               accessibilityLabel="New custom look"
-              style={{ width: '23%', marginBottom: 14 }}
+              style={{ width: TILE_WIDTH, minHeight: 44, marginBottom: 14 }}
             >
               <View
                 className="items-center justify-center rounded-[14px] border-2"
-                style={{ height: 62, borderStyle: 'dashed', borderColor: GREEN }}
+                // Height tracks the strip in `LookTile`, so the dashed "new"
+                // tile sits level with the real looks beside it.
+                style={{ height: 64, borderStyle: 'dashed', borderColor: GREEN }}
               >
                 <Icon name="plus" size={22} color={GREEN} />
               </View>
-              <Text className="text-[11px] font-bold mt-1.5 text-center" style={{ color: sub }}>
+              <Text className="text-[11px] font-bold mt-1.5 text-center" style={{ color: GREEN }}>
                 New custom look
               </Text>
             </TouchableOpacity>
+
+            {state.customs.map((l) => tile(l))}
+
+            {/* The new tile occupies one column, so pad around IT too or a
+                single saved look spreads across the row. */}
+            {Array.from({
+              length: (TILE_COLUMNS - ((state.customs.length + 1) % TILE_COLUMNS)) % TILE_COLUMNS,
+            }).map((_, i) => (
+              <View key={`sp${i}`} style={{ width: TILE_WIDTH }} />
+            ))}
           </View>
+
           {state.customs.length === 0 && (
-            <Text className="text-[12px] mt-2" style={{ color: sub }}>
-              Build a one-off look — for a high school, or anything not in the lists.
+            <Text className="text-[13px] mt-4 text-center" style={{ color: sub }}>
+              Pick any colors for a high school, a business or a party. Presets stay locked so team
+              and holiday colors stay accurate.
             </Text>
           )}
         </>
@@ -261,6 +306,17 @@ export function LightingPanel({
         isDark={isDark}
         onClose={() => setBuilderOpen(false)}
         onSave={(look) => setState({ ...state, customs: [...state.customs, look] })}
+      />
+
+      <FavouritePopover
+        anchor={popover}
+        isFavourite={popover ? isFavourite(state, popover.lookId) : false}
+        screenWidth={screenWidth}
+        onToggle={() => {
+          if (popover) favourite(popover.lookId);
+          setPopover(null);
+        }}
+        onClose={() => setPopover(null)}
       />
 
       <CategorySheet
@@ -274,21 +330,70 @@ export function LightingPanel({
         onClose={() => setSheetOpen(false)}
       />
 
-      {/* ── Renders selected ─────────────────────────────────────────────── */}
+    </View>
+  );
+}
+
+/**
+ * Selected list + Add button.
+ *
+ * ⚠️ Deliberately NOT part of `LightingPanel`. The panel renders inside the
+ * green bordered card; this sits BELOW it on the page background, as the mock
+ * has it — the card frames "what you can pick", and the basket and its action
+ * are the step after. Folding them back into the panel is the obvious
+ * simplification and it is the thing that puts them back inside the border.
+ */
+export function LightingFooter({
+  state,
+  setState,
+  isDark,
+  onAdd,
+  onToggleFavourite,
+}: {
+  state: LightingState;
+  setState: (s: LightingState) => void;
+  isDark: boolean;
+  onAdd: (looks: Look[]) => void;
+  /** Same persistence path as the grid's hold gesture — both must reach the server. */
+  onToggleFavourite?: (lookId: string) => void;
+}) {
+  const sub = isDark ? '#919EAB' : '#637381';
+  const label = isDark ? '#fff' : '#212B36';
+  const favourite = (id: string) => {
+    setState(toggleFavourite(state, id));
+    onToggleFavourite?.(id);
+  };
+  const select = (id: string) => setState(toggleSelected(state, id));
+
+  const selectedLooks = state.sel
+    .map((id) => findLook(id, state.customs))
+    .filter((l): l is Look => Boolean(l));
+
+  return (
+    <View className="mb-6">
       {selectedLooks.length > 0 && (
-        <View className="rounded-[20px] p-4 mt-4" style={{ backgroundColor: cardBg, borderWidth: 1, borderColor: isDark ? '#2A2F36' : '#DFE3E8' }}>
-          <Text className="text-[13px] font-black mb-3" style={{ color: label }}>
+        <View
+          className="rounded-[20px] p-4 mb-3"
+          style={{ backgroundColor: isDark ? '#15191E' : '#F4F6F8' }}
+        >
+          <Text className="text-[15px] font-black mb-3" style={{ color: GREEN }}>
             {selectedLooks.length} render{selectedLooks.length === 1 ? '' : 's'} selected
           </Text>
 
           {selectedLooks.map((l) => (
-            <View key={l.id} className="flex-row items-center mb-2.5">
-              <View style={{ width: 44 }}>
-                <LightStrip colors={l.colors} pucks={3} rows={1} size={7} height={24} radius={6} />
+            <View
+              key={l.id}
+              className="flex-row items-center rounded-[14px] p-2 mb-2"
+              style={{ backgroundColor: isDark ? '#1E1E1E' : '#fff' }}
+            >
+              <View style={{ width: 56 }}>
+                <LightStrip colors={l.colors} pucks={3} rows={1} size={7} height={34} radius={8} />
               </View>
               <View className="flex-1 ml-3">
-                <Text className="text-[13px] font-bold" style={{ color: label }} numberOfLines={1}>{l.name}</Text>
-                <Text className="text-[11px]" style={{ color: sub }}>
+                <Text className="text-[14px] font-black" style={{ color: label }} numberOfLines={1}>
+                  {l.name}
+                </Text>
+                <Text className="text-[12px]" style={{ color: sub }}>
                   {l.pattern === 'single' ? 'Single color' : 'Alternating'}
                 </Text>
               </View>
@@ -299,21 +404,46 @@ export function LightingPanel({
                 accessibilityLabel={isFavourite(state, l.id) ? `Unfavorite ${l.name}` : `Favorite ${l.name}`}
                 style={{ padding: 8 }}
               >
-                <Icon name={isFavourite(state, l.id) ? 'star' : 'star-outline'} size={18} color={isFavourite(state, l.id) ? '#FFC94D' : sub} />
+                <Icon
+                  name={isFavourite(state, l.id) ? 'star' : 'star-outline'}
+                  size={20}
+                  color={isFavourite(state, l.id) ? '#FFC94D' : sub}
+                />
               </TouchableOpacity>
               <TouchableOpacity onPress={() => select(l.id)} accessibilityLabel={`Remove ${l.name}`} style={{ padding: 8 }}>
-                <Icon name="close" size={18} color={sub} />
+                <Icon name="close" size={20} color={sub} />
               </TouchableOpacity>
             </View>
           ))}
+        </View>
+      )}
 
-          <Text className="text-[11px] mt-1" style={{ color: sub }}>
-            {selectedLooks.length} look{selectedLooks.length === 1 ? '' : 's'} · matches existing trim
+      {/*
+        The empty state is a BOX in the same slot the selected list occupies,
+        not an absence. Without it the Add button floats under the grid with
+        nothing explaining why it is greyed out, and a disabled control with no
+        stated reason reads as broken rather than as "not yet".
+      */}
+      {selectedLooks.length === 0 && (
+        <View
+          className="rounded-[20px] p-4 mb-3"
+          style={{ backgroundColor: isDark ? '#15191E' : '#F4F6F8' }}
+        >
+          <Text className="text-[15px] font-black mb-1" style={{ color: sub }}>
+            Nothing selected yet
+          </Text>
+          <Text className="text-[13px]" style={{ color: sub }}>
+            Pick one or more looks above.
           </Text>
         </View>
       )}
 
-      {/* ── Add ──────────────────────────────────────────────────────────── */}
+      {selectedLooks.length > 0 && (
+        <Text className="text-[12px] text-center mb-3" style={{ color: sub }}>
+          {selectedLooks.length} look{selectedLooks.length === 1 ? '' : 's'} · matches existing trim
+        </Text>
+      )}
+
       <TouchableOpacity
         disabled={!canAdd(state)}
         onPress={() => {
@@ -323,10 +453,10 @@ export function LightingPanel({
         }}
         accessibilityRole="button"
         accessibilityState={{ disabled: !canAdd(state) }}
-        className="rounded-full items-center justify-center mt-5"
-        style={{ minHeight: 52, backgroundColor: canAdd(state) ? GREEN : isDark ? '#2A2F36' : '#DFE3E8' }}
+        className="rounded-full items-center justify-center"
+        style={{ minHeight: 56, backgroundColor: canAdd(state) ? GREEN : isDark ? '#2A2F36' : '#DFE3E8' }}
       >
-        <Text className="text-[15px] font-black" style={{ color: canAdd(state) ? '#fff' : sub }}>
+        <Text className="text-[16px] font-black" style={{ color: canAdd(state) ? '#fff' : sub }}>
           {addButtonLabel(state)}
         </Text>
       </TouchableOpacity>

@@ -19,11 +19,12 @@ import { RootStackParamList } from '../../navigation';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { LightStrip } from './lighting/LightStrip';
-import { LightingPanel } from './lighting/LightingPanel';
+import { LightingFooter, LightingPanel } from './lighting/LightingPanel';
 import { ModeSwitch, RenderMode } from './lighting/ModeSwitch';
 import { PhotoGuidanceModal } from './lighting/PhotoGuidanceModal';
 import { ResultsPanel } from './lighting/ResultsPanel';
-import { emptyState, LightingState, recordRendered } from '../../utils/revrender-lighting/selection';
+import { applyServerPreferences, emptyState, LightingState, toggleFavourite } from '../../utils/revrender-lighting/selection';
+import { LeadService } from '../../services/api/leads';
 import { toLookPayload } from '../../utils/revrender-lighting/payload';
 import { Look } from '../../utils/revrender-lighting/types';
 import { PhotoPeekPressable } from '../../widgets/common/PhotoPeekPressable';
@@ -335,6 +336,48 @@ export default function RevRenderScreen() {
   // so switching back and forth does not lose work (483 §1).
   const [mode, setMode] = useState<RenderMode>('core');
   const [lighting, setLighting] = useState<LightingState>(emptyState());
+
+  // Favourites and Recently Rendered are PER REP ACCOUNT, loaded once on mount.
+  // ⚠️ Only `fav` and `recent` come from the server — `applyServerPreferences`
+  // deliberately leaves `customs` alone, because the GET returns an empty
+  // `customLooks` ALWAYS (no write endpoint yet) and merging it in would wipe
+  // the rep's custom looks on every mount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await LeadService.getRevRenderPreferences();
+        if (cancelled || !data?.success) return;
+        setLighting((st) => applyServerPreferences(st, data));
+      } catch (e) {
+        // Non-fatal: the rep can still pick looks, they just start without
+        // their favourites. Failing the screen over this would be worse.
+        logEvent('revrender_preferences_load_failed', { message: (e as Error)?.message });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  /**
+   * Persist one favourite. Optimistic — the panel has already flipped the star.
+   *
+   * ⚠️ A TOGGLE call, not a whole-list write: two devices each sending
+   * their full list would have the later one silently wipe the other's change.
+   * The server returns the authoritative list and that is what we keep.
+   */
+  const handleToggleFavourite = useCallback(async (lookId: string) => {
+    try {
+      const { data } = await LeadService.toggleRevRenderFavourite(lookId);
+      if (!data?.success) throw new Error('toggle rejected');
+      setLighting((st) => applyServerPreferences(st, data));
+    } catch (e) {
+      // ⚠️ Revert, or the star stays filled against a list the server never
+      // took — the rep would believe the look was saved and lose it on reload.
+      setLighting((st) => toggleFavourite(st, lookId));
+      logEvent('revrender_favourite_toggle_failed', { lookId, message: (e as Error)?.message });
+    }
+  }, []);
+
   // First-time photo guidance per mode. Dismissal is PER REP ACCOUNT, so this
   // local state is a placeholder until the backend endpoint exists.
   const [guidanceSeen, setGuidanceSeen] = useState<Record<RenderMode, boolean>>({ core: false, lighting: false });
@@ -646,10 +689,10 @@ export default function RevRenderScreen() {
         };
       });
 
-      const renderedLookIds = renderQueue
-        .filter((i: any) => i.mode === 'lighting' && i.look?.id)
-        .map((i: any) => i.look.id);
-      if (renderedLookIds.length) setLighting((st) => recordRendered(st, renderedLookIds));
+      // ⚠️ Recently Rendered is NOT written from here any more. The server
+      // derives it from completed run rows, so recording it client-side too
+      // would be a second source of truth — and the two would disagree the
+      // first time a generate failed after the queue was built.
 
       // Wrap in the envelope format the API expects
       const requestBody = { payloads, leadId, jobId: leadId };
@@ -1306,12 +1349,33 @@ export default function RevRenderScreen() {
               area stay in place (483 §1). */}
           <ModeSwitch mode={mode} onChange={handleModeChange} isDark={isDark} />
 
+          {/* Same card as Core's below — green outline, 24px radius, 20pt pad.
+              The two modes swap inside one frame, so a differing frame would
+              read as a different screen rather than a different mode. */}
           {mode === 'lighting' && (
+            <View
+              className="rounded-[24px] border p-5 mb-6"
+              style={{ backgroundColor: isDark ? '#1E1E1E' : '#fff', borderColor: '#2EDE56' }}
+            >
             <LightingPanel
               state={lighting}
               setState={setLighting}
               isDark={isDark}
+              onToggleFavourite={handleToggleFavourite}
+            />
+            </View>
+          )}
+
+          {/* OUTSIDE the green card, on the page background — the card frames
+              what the rep can pick; the basket and its action are the step
+              after. See `LightingFooter`. */}
+          {mode === 'lighting' && (
+            <LightingFooter
+              state={lighting}
+              setState={setLighting}
+              isDark={isDark}
               onAdd={handleAddLighting}
+              onToggleFavourite={handleToggleFavourite}
             />
           )}
 

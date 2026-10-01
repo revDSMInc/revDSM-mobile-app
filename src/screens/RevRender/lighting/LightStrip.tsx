@@ -2,6 +2,20 @@ import React from 'react';
 import { View } from 'react-native';
 
 /**
+ * The glow, as three stacked translucent halos — widest and faintest first.
+ * Values from the handover; they read as a soft falloff rather than three rings.
+ */
+const HALOS = [
+  { scale: 3.2, opacity: 0.1 },
+  { scale: 2.2, opacity: 0.16 },
+  { scale: 1.5, opacity: 0.3 },
+];
+
+/** The channel track behind the pucks. */
+const CHANNEL_HEIGHT = 6;
+const CHANNEL_BLEED = 24;
+
+/**
  * The mini light strip on every look tile: a dark panel with LED pucks in the
  * look's colours, cycling in pattern order.
  *
@@ -31,31 +45,78 @@ export function LightStrip({
       style={{ backgroundColor: '#111827', borderRadius: radius, height, paddingVertical: 10 }}
     >
       {Array.from({ length: rows }).map((_, row) => (
-        <View key={row} className="flex-row justify-center" style={{ marginTop: row ? size + 2 : 0 }}>
-          {Array.from({ length: pucks }).map((_, i) => {
-            // Continue the sequence across rows so a 3-colour look does not
-            // repeat the same column twice — it should read as one long run.
-            const color = palette[(row * pucks + i) % palette.length];
-            return (
-              <View
-                key={i}
-                style={{
-                  width: size,
-                  height: size,
-                  borderRadius: size / 2,
-                  marginHorizontal: size / 3,
-                  backgroundColor: color,
-                  // Stands in for the glow. Pucks must still read as separate
-                  // points of light with dark gaps — never a continuous line.
-                  shadowColor: color,
-                  shadowOpacity: 0.9,
-                  shadowRadius: size / 1.5,
-                  shadowOffset: { width: 0, height: 0 },
-                  elevation: 4,
-                }}
-              />
-            );
-          })}
+        <View key={row} style={{ marginTop: row ? size + 2 : 0 }}>
+          {/*
+            The aluminium channel the pucks sit in: a faint track with a lit
+            top edge. Easy to leave out — the mock has it, and without it the
+            lights float in the dark instead of reading as a fitted product.
+            Absolutely positioned so it never affects the puck row's layout.
+          */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: -CHANNEL_BLEED,
+              right: -CHANNEL_BLEED,
+              top: size / 2 - CHANNEL_HEIGHT / 2,
+              height: CHANNEL_HEIGHT,
+              backgroundColor: 'rgba(255,255,255,0.05)',
+              borderTopWidth: 1,
+              borderTopColor: 'rgba(255,255,255,0.14)',
+            }}
+          />
+
+          <View className="flex-row justify-center">
+            {Array.from({ length: pucks }).map((_, i) => {
+              // Continue the sequence across rows so a 3-colour look does not
+              // repeat the same column twice — it should read as one long run.
+              const color = palette[(row * pucks + i) % palette.length];
+              return (
+                <View
+                  key={i}
+                  className="items-center justify-center"
+                  style={{ width: size, height: size, marginHorizontal: size / 3 }}
+                >
+                  {/*
+                    ⚠️ The glow is THREE translucent halos, not a shadow.
+                    `shadowColor` / `shadowOpacity` / `shadowRadius` are
+                    iOS-only; Android's `elevation` draws a grey drop shadow,
+                    so a coloured glow is simply not expressible that way and
+                    the strip looked flat and muddy on Android.
+
+                    ⚠️ They are absolutely positioned and `pointerEvents="none"`
+                    so they cannot affect layout. The dark gaps between pucks
+                    ARE the product — if the halos ever push the pucks apart or
+                    merge into a continuous line, the strip stops describing
+                    what is being sold.
+                  */}
+                  {HALOS.map((h) => (
+                    <View
+                      key={h.scale}
+                      pointerEvents="none"
+                      style={{
+                        position: 'absolute',
+                        width: size * h.scale,
+                        height: size * h.scale,
+                        borderRadius: (size * h.scale) / 2,
+                        backgroundColor: color,
+                        opacity: h.opacity,
+                      }}
+                    />
+                  ))}
+
+                  <View
+                    style={{
+                      width: size,
+                      height: size,
+                      borderRadius: size / 2,
+                      backgroundColor: color,
+                    }}
+                  />
+                </View>
+              );
+            })}
+          </View>
         </View>
       ))}
     </View>
