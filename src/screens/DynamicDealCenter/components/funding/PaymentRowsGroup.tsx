@@ -8,6 +8,7 @@ import {
   driftNote,
   effectiveRowAmount,
   isRemovableRow,
+  isMethodLockedRow,
   isSettledRow,
   lockedMethodNote,
   lenderState,
@@ -227,12 +228,16 @@ export function PaymentRowsGroup({
     // rows, so this used to leave a CHARGED down payment card — or a collected check —
     // fully editable: Remove and Swap were both offered on money already with the
     // processor, and a swap resets the row server-side. See `isSettledRow`.
-    const locked = isSettledRow(row);
+    // ⚠️ The METHOD lock is narrower than "settled": a lender decision alone leaves the
+    // financing plan swappable (see `isMethodLockedRow`). The AMOUNT of a decided row
+    // stays read-only — it is the lender's figure.
+    const locked = isMethodLockedRow(row);
+    const settled = isSettledRow(row);
     const needs = row.pid === needsRowId;
     const amount = effectiveRowAmount(row, allRows, price);
     const label = plans[row.method]?.label || row.methodLabel;
     const isOpen = openRowId === row.pid;
-    const readOnlyAmount = locked || !!row.auto;
+    const readOnlyAmount = settled || !!row.auto;
 
     // The auto row can only be dismissed once it has nothing left to hold; removing it
     // while money is unassigned would hide the shortfall. `isRemovableRow` adds the
@@ -343,7 +348,7 @@ export function PaymentRowsGroup({
         <Text style={{ flex: 1, fontSize: FS.BODY, fontFamily: label ? (plain ? PS.semibold : PS.bold) : PS.semibold, color: label ? '#374151' : FUND.MUTED }} numberOfLines={1}>
           {label || 'Select Payment Method'}
         </Text>
-        {locked && row.decision && !plain ? (
+        {row.decision && !plain ? (
           <StatusPill decision={row.decision} />
         ) : locked ? (
           /**

@@ -318,7 +318,10 @@ export function swapRowMethod(
     // Nothing to archive when the plan is unchanged, when the row never had one, or
     // when the change came from the plain dropdown rather than Swap.
     if (!nextKey || nextKey === r.method || !r.method || !showsChip(r)) {
-      return { ...r, method: nextKey };
+      // A decided row changing plan still starts unproven (the server resets it too).
+      return nextKey && nextKey !== r.method && r.decision
+        ? { ...r, method: nextKey, linkSent: false, activated: false, decision: null }
+        : { ...r, method: nextKey };
     }
     return {
       ...r,
@@ -415,20 +418,31 @@ export function isSettledRow(row: PaymentRow): boolean {
  * for an unlocked row, so the caller can gate on it.
  */
 export function lockedMethodNote(row: PaymentRow): string {
-  if (!isSettledRow(row)) return '';
-  if (row.decision === 'declined') {
-    return 'The lender declined this line, so its payment method is locked. Add another payment method for the balance.';
-  }
-  if (row.decision) {
-    return 'The lender has already answered this line, so its payment method is locked.';
-  }
+  if (!isMethodLockedRow(row)) return '';
   if (row.charged) {
     return 'This card has already been charged. Changing the method would reset the payment, so it is locked — a refund is the only way money goes back.';
   }
   if (row.collected) {
     return 'This payment has already been collected. Changing the method would reset it, so it is locked — a refund is the only way money goes back.';
   }
+  if (row.activated) {
+    return 'This financing has already been activated, so its method is locked.';
+  }
   return 'This payment has already started, so its method is locked.';
+}
+
+/**
+ * Is this line's payment METHOD frozen?
+ *
+ * ⚠️ Narrower than `isSettledRow` on purpose. Money that has MOVED (a charged card, a
+ * collected check) or a loan that has been ACTIVATED is a fact — its method is fixed. A
+ * lender's decision alone is not: the rep may still swap the financing plan (approved,
+ * short or declined), which resets that row's link and decision. The decided row's
+ * AMOUNT and its removal stay locked (`isSettledRow` / `isRemovableRow`) — only the
+ * method opens up.
+ */
+export function isMethodLockedRow(row: PaymentRow): boolean {
+  return Boolean(row.charged || row.collected || row.activated);
 }
 
 export function isRemovableRow(row: PaymentRow): boolean {

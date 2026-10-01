@@ -43,6 +43,8 @@ interface Props {
    * two-line card it always was.
    */
   note?: string;
+  /** Information only — a single acknowledge button, no cancel. */
+  hideCancel?: boolean;
   tone?: ConfirmTone;
   confirmLabel: string;
   cancelLabel?: string;
@@ -57,6 +59,7 @@ export function ConfirmDialog({
   title,
   message,
   note,
+  hideCancel,
   tone = 'danger',
   confirmLabel,
   cancelLabel = 'Go Back',
@@ -85,6 +88,7 @@ export function ConfirmDialog({
           )}
 
           <View style={{ flexDirection: 'row', gap: 12, marginTop: 20 }}>
+            {!hideCancel && (
             <TouchableOpacity
               onPress={onCancel}
               disabled={busy}
@@ -94,6 +98,7 @@ export function ConfirmDialog({
             >
               <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: '#3A4048' }}>{cancelLabel}</Text>
             </TouchableOpacity>
+            )}
             <TouchableOpacity
               onPress={onConfirm}
               disabled={busy}
