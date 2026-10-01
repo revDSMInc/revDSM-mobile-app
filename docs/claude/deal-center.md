@@ -2586,3 +2586,17 @@ rest of the ownership scheme; a lookup failure falls through to the sheet (never
 The native `Alert.alert` read as OS chrome. It is now `ConfirmDialog` (`tone="warn"`, new **`hideCancel`** prop for an
 information-only card with one OK button) rendered beside both `ResultJobModal`s in `DynamicDealCenterScreen`, driven by
 `fundingBlock` state. ⚠️ Both render branches (edit-mode early return and the main flow) carry the dialog — keep them in step.
+
+## Result Lead payment rows: one card per payment, amount and method in separate boxes
+
+Ticket: *two separate boxes — one for the amount, one for the payment method; several payments must not share a line; Down Payment,
+Balance and Upfront.* On the **panel** layout of `PaymentRowsGroup` (`DynamicDealCenter/components/funding/`) each payment is now its own
+bordered card — `PAYMENT n` header (with the ✕ remove) → **Amount** box → **Payment method** box, both full width. They used to share one
+line, which truncated both (`$2,8…`, `Check (Bank F…`). The three groups (Down Payment / Balance / Upfront) all render through it, so one
+change covers them. ⚠️ The **plain** layout (My Deals mockup) is deliberately untouched. ⚠️ `amountCell` / `methodCell`, the lock rules, the
+locked-note and archived block are the same objects as before — only the container changed, so don't fork the logic per layout.
+
+### Follow-up: the "PAYMENT n" title shows only with more than one payment in the group
+
+`PaymentRowsGroup` panel layout draws the card header title only when `rows.length > 1`. A lone removable row keeps just the ✕
+(right-aligned, no title); a lone locked row has no header at all.
