@@ -18,6 +18,14 @@ import { REV_RENDER_VIEW_GROUPS, REV_RENDER_COLORS, IMAGE_CATEGORIES } from '../
 import { RootStackParamList } from '../../navigation';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
+import { LightStrip } from './lighting/LightStrip';
+import { LightingPanel } from './lighting/LightingPanel';
+import { ModeSwitch, RenderMode } from './lighting/ModeSwitch';
+import { PhotoGuidanceModal } from './lighting/PhotoGuidanceModal';
+import { ResultsPanel } from './lighting/ResultsPanel';
+import { emptyState, LightingState, recordRendered } from '../../utils/revrender-lighting/selection';
+import { toLookPayload } from '../../utils/revrender-lighting/payload';
+import { Look } from '../../utils/revrender-lighting/types';
 import { PhotoPeekPressable } from '../../widgets/common/PhotoPeekPressable';
 import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../widgets/common/PhotoPeekScrollLock';
 import { ImageGalleryModal } from '../../widgets/modals/ImageGalleryModal';
@@ -313,7 +321,7 @@ export default function RevRenderScreen() {
   const { lead, sectionImages, onNavToDocs, onGenerate, onGenerateAll } = route.params;
 
   // ── Status & State ─────────────────────────────────────────────────────────
-  const [status, setStatus] = useState<'grid' | 'config' | 'queue'>('grid');
+  const [status, setStatus] = useState<'grid' | 'config' | 'queue' | 'results'>('grid');
   const [selectedPhoto, setSelectedPhoto] = useState<any>(null);
   // Full-screen viewer for the Configure Render photo — pinch-zoom + iMessage
   // swipe-down-to-dismiss (via the shared ImageGalleryModal).
@@ -321,6 +329,35 @@ export default function RevRenderScreen() {
   const [renderQueue, setRenderQueue] = useState<any[]>([]);
 
   const [config, setConfig] = useState<any>(INITIAL_CONFIG);
+
+  // ── Roofline Lighting (REVUIUX-483) ────────────────────────────────────────
+  // A render is Core OR Lighting, never both. Each mode keeps its own selection
+  // so switching back and forth does not lose work (483 §1).
+  const [mode, setMode] = useState<RenderMode>('core');
+  const [lighting, setLighting] = useState<LightingState>(emptyState());
+  // First-time photo guidance per mode. Dismissal is PER REP ACCOUNT, so this
+  // local state is a placeholder until the backend endpoint exists.
+  const [guidanceSeen, setGuidanceSeen] = useState<Record<RenderMode, boolean>>({ core: false, lighting: false });
+  const [guidanceFor, setGuidanceFor] = useState<RenderMode | null>(null);
+
+  const handleModeChange = (next: RenderMode) => {
+    setMode(next);
+    if (!guidanceSeen[next]) setGuidanceFor(next);
+  };
+
+  const handleAddLighting = (looks: Look[]) => {
+    // One look = one queue item = one render.
+    const items = looks.map((look) => ({
+      id: `${Date.now()}-${look.id}`,
+      mode: 'lighting' as const,
+      look,
+      photo: selectedPhoto,
+      viewId: selectedPhoto?.viewId,
+      viewLabel: selectedPhoto?.viewLabel,
+    }));
+    setRenderQueue([...renderQueue, ...items]);
+    setStatus('queue');
+  };
 
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
@@ -549,16 +586,32 @@ export default function RevRenderScreen() {
 
       const payloads = renderQueue.map(item => {
         const rawUrl = item.photo?.s3url || item.photo?.uri || '';
+        const viewLabel = item.viewLabel || item.photo?.label || '';
+
+        if (item.mode === 'lighting') {
+          // renderType 'look'. The backend fixes mount, channel colour, time of
+          // day and coverage, and REJECTS them if sent — so nothing else goes.
+          return {
+            ...toLookPayload(item.look, { houseImageUrl: extractS3Key(rawUrl), viewLabel, leadId }),
+            sourceFileName: getFilename(rawUrl),
+          };
+        }
+
         return {
           houseImageUrl: extractS3Key(rawUrl),
           houseMimeType: 'image/jpeg',
           selections: item.selections,
           textureImageUrls: item.textureImageUrls,
           sourceFileName: getFilename(rawUrl),
-          viewLabel: item.viewLabel || item.photo?.label || '',
+          viewLabel,
           leadId,
         };
       });
+
+      const renderedLookIds = renderQueue
+        .filter((i: any) => i.mode === 'lighting' && i.look?.id)
+        .map((i: any) => i.look.id);
+      if (renderedLookIds.length) setLighting((st) => recordRendered(st, renderedLookIds));
 
       // Wrap in the envelope format the API expects
       const requestBody = { payloads, leadId, jobId: leadId };
@@ -568,7 +621,8 @@ export default function RevRenderScreen() {
       } else {
         payloads.forEach(p => onGenerate(p));
       }
-      navigation.goBack();
+      setRenderQueue([]);
+      setStatus('results');
     } catch (err) {
       console.error('Generate All Error:', err);
     }
@@ -1209,6 +1263,21 @@ export default function RevRenderScreen() {
             </View>
           </View>
 
+          {/* Core Products | Roofline Lighting. Switching swaps only the
+              configuration area below — the photo, header and bottom action
+              area stay in place (483 §1). */}
+          <ModeSwitch mode={mode} onChange={handleModeChange} isDark={isDark} />
+
+          {mode === 'lighting' && (
+            <LightingPanel
+              state={lighting}
+              setState={setLighting}
+              isDark={isDark}
+              onAdd={handleAddLighting}
+            />
+          )}
+
+          {mode === 'core' && (<>
           <View
             className="rounded-[24px] border p-5 mb-6"
             style={{
@@ -1437,6 +1506,18 @@ export default function RevRenderScreen() {
           >
             <Text className="text-white font-black text-base">+ Add Render Combo</Text>
           </TouchableOpacity>
+          </>)}
+
+          <PhotoGuidanceModal
+            mode={guidanceFor ?? 'core'}
+            visible={guidanceFor !== null}
+            isDark={isDark}
+            onGotIt={() => setGuidanceFor(null)}
+            onNeverShowAgain={() => {
+              if (guidanceFor) setGuidanceSeen({ ...guidanceSeen, [guidanceFor]: true });
+              setGuidanceFor(null);
+            }}
+          />
         </View>
       </PeekAwareScrollView>
     );
@@ -1454,12 +1535,22 @@ export default function RevRenderScreen() {
               >
                 <Icon name="arrow-left" size={24} color="#637381" />
               </TouchableOpacity>
-              <View>
+              <View className="flex-1">
                 <Text className="text-xl font-bold" style={{ color: colors.text }}>Render Queue</Text>
                 <Text className="text-sm font-bold" style={{ color: '#919EAB' }}>
                   {renderQueue.length} {renderQueue.length === 1 ? 'render' : 'renders'} configured
                 </Text>
               </View>
+              <TouchableOpacity
+                onPress={() => setStatus('results')}
+                accessibilityRole="button"
+                accessibilityLabel="View finished renders"
+                className="flex-row items-center rounded-full px-3"
+                style={{ minHeight: 40, backgroundColor: isDark ? '#1E1E1E' : '#F4F6F8' }}
+              >
+                <Icon name="image-multiple-outline" size={16} color="#919EAB" />
+                <Text className="text-[12px] font-black ml-1.5" style={{ color: '#919EAB' }}>Results</Text>
+              </TouchableOpacity>
             </View>
 
             <View className="gap-y-6">
@@ -1480,6 +1571,20 @@ export default function RevRenderScreen() {
                       <Text className="text-[17px] font-black" style={{ color: colors.text }}>
                         {item.photo?.label || 'Selected Photo'}
                       </Text>
+                      <View
+                        className="ml-2 rounded-full px-2 py-0.5 flex-row items-center"
+                        style={{ backgroundColor: item.mode === 'lighting' ? '#1F2937' : (isDark ? '#2A2A2A' : '#F4F6F8') }}
+                      >
+                        {item.mode === 'lighting' && (
+                          <View className="rounded-full mr-1" style={{ width: 5, height: 5, backgroundColor: '#FFC94D' }} />
+                        )}
+                        <Text
+                          className="text-[10px] font-black tracking-wider"
+                          style={{ color: item.mode === 'lighting' ? '#FFC94D' : '#919EAB' }}
+                        >
+                          {item.mode === 'lighting' ? 'LIGHTING' : 'CORE'}
+                        </Text>
+                      </View>
                     </View>
                     <TouchableOpacity onPress={() => removeFromQueue(item.id)}>
                       <Icon name="delete-outline" size={22} color="#FF5630" />
@@ -1487,7 +1592,39 @@ export default function RevRenderScreen() {
                   </View>
 
                   <View className="gap-y-3">
-                    {item.summary.map((s: any, idx: number) => (
+                    {item.mode === 'lighting' ? (
+                      <>
+                        {/* Dashed, empty chip: no channel colour is ever chosen —
+                            it matches the home's existing trim (483 §7). */}
+                        <View
+                          className="p-3.5 rounded-xl flex-row items-center"
+                          style={{ backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8' }}
+                        >
+                          <View
+                            className="w-5 h-5 rounded-[4px] mr-3"
+                            style={{ borderWidth: 1, borderStyle: 'dashed', borderColor: '#919EAB' }}
+                          />
+                          <Text className="text-[13px] font-bold" style={{ color: colors.text }}>
+                            Channel: Matches existing trim
+                          </Text>
+                        </View>
+
+                        <View
+                          className="p-3.5 rounded-xl flex-row items-center"
+                          style={{ backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8' }}
+                        >
+                          <View className="mr-3" style={{ width: 20 }}>
+                            <LightStrip colors={item.look?.colors ?? []} pucks={3} rows={1} size={5} height={20} radius={4} />
+                          </View>
+                          <Text className="text-[13px] font-bold flex-1" style={{ color: colors.text }}>
+                            Lights: {item.look?.name}
+                            <Text style={{ color: '#919EAB' }}>
+                              {'  '}·{'  '}{item.look?.pattern === 'single' ? 'Single color' : 'Alternating'}
+                            </Text>
+                          </Text>
+                        </View>
+                      </>
+                    ) : (item.summary ?? []).map((s: any, idx: number) => (
                       <View
                         key={idx}
                         className="p-3.5 rounded-xl flex-row items-center"
@@ -1567,7 +1704,18 @@ export default function RevRenderScreen() {
               ? renderGrid()
               : status === 'config'
                 ? renderConfig()
-                : renderQueueView()}
+                : status === 'results'
+                  ? (
+                    <ResultsPanel
+                      leadId={lead?._id || lead?.leadId || ''}
+                      isDark={isDark}
+                      defaultName={[lead?.customerDetails?.firstName, lead?.customerDetails?.lastName].filter(Boolean).join(' ') || undefined}
+                      defaultPhone={lead?.customerDetails?.phone || lead?.phone || undefined}
+                      defaultEmail={lead?.customerDetails?.email || lead?.email || undefined}
+                      onBack={() => setStatus('grid')}
+                    />
+                  )
+                  : renderQueueView()}
         </View>
       </PhotoPeekScrollLockProvider>
 

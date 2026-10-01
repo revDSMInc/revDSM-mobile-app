@@ -336,6 +336,26 @@ export const LeadService = {
     api.get(`/rev-render/v1/runs?leadId=${leadId}`),
   getRevRenderBatchStatus: (batchId: string): Promise<AxiosResponse<any>> =>
     api.get(`/rev-render/v1/batches/${batchId}`),
+
+  /**
+   * Send renders to a homeowner by text or email (REVUIUX-483).
+   *
+   * Returns 200 with `sent: false` and a `deliveryError` when the link was
+   * created but delivery failed — the share exists and the link works, so offer
+   * retry or copy rather than treating it as a total failure.
+   */
+  shareRevRenders: (payload: {
+    leadId?: string;
+    runIds: string[];
+    channel: 'sms' | 'email';
+    recipientName?: string;
+    recipientPhone?: string;
+    recipientEmail?: string;
+  }): Promise<AxiosResponse<any>> => api.post('/rev-render/v1/shares', payload),
+
+  /** Stop a share link working before it expires. */
+  revokeRevRenderShare: (shareId: string): Promise<AxiosResponse<any>> =>
+    api.post(`/rev-render/v1/shares/${shareId}/revoke`, {}),
   createAppointment: (payload: any): Promise<AxiosResponse<any>> =>
     api.post('/appointments', payload),
   getAppointmentsByDate: (date: string): Promise<AxiosResponse<any>> =>
