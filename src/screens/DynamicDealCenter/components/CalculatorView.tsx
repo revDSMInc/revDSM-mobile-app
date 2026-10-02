@@ -21,6 +21,14 @@ import { describeFullPackage } from '../utils/tab-naming';
 import { FullPackageTitle, FullPackageInfoModal, type PackageAnchorRect } from './FullPackageBadge';
 import { useAuth } from '../../../hooks/useAuth';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
+import { FlashMessage } from '../../../config/message';
+import {
+  changeKind,
+  formatMessage,
+  normalizeAutoQuantity,
+  quantityForTotal,
+  sumSources,
+} from '../utils/auto-quantity';
 
 interface CalculatorTabLite {
   id: string;
@@ -679,6 +687,90 @@ export function CalculatorView({
     });
     return map;
   }, [entries]);
+
+  // ── Portal-driven automatic quantities (e.g. Booster Box from the lighting footage) ──
+  // Every field that carries an `autoQuantity` block, with where it lives so a write can build
+  // a complete entry. Empty (and so inert) until the portal publishes such a block.
+  const autoFields = useMemo(() => {
+    const out: { field: CalculatorField; config: NonNullable<ReturnType<typeof normalizeAutoQuantity>>; categoryId: string; sectionId: string }[] = [];
+    verticals.forEach((v) => (v.categories || []).forEach((c) => {
+      const add = (f: CalculatorField, sectionId: string) => {
+        const config = normalizeAutoQuantity((f as any).conditional);
+        if (config) out.push({ field: f, config, categoryId: c.id, sectionId });
+      };
+      getCategoryDirectFields(c).forEach((f) => add(f, directSectionId(c.id)));
+      (c.sections || []).forEach((s) => s.fields.forEach((f) => add(f, s.id)));
+    }));
+    return out;
+  }, [verticals]);
+
+  // Footage total per tab+field as last seen. The FIRST sight of a tab only records it, so
+  // opening a saved calculator (or switching tabs) never rewrites a quantity the rep chose.
+  const lastTotalsRef = useRef<Record<string, number>>({});
+  // Per field: the quantity when a burst of typing began and the latest one written, so one popup
+  // reports the net change instead of one per keystroke ("3", "35", "350").
+  const burstRef = useRef<Record<string, { start: number; latest: number; total: number; timer: ReturnType<typeof setTimeout> | null }>>({});
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+
+  useEffect(() => {
+    if (readOnly || !autoFields.length) return;
+    autoFields.forEach(({ field, config, categoryId, sectionId }) => {
+      const key = `${activeTabId || 'default'}:${field.id}`;
+      const total = sumSources(config, formState, allFields);
+      const prevTotal = lastTotalsRef.current[key];
+      lastTotalsRef.current[key] = total;
+      if (prevTotal === undefined || prevTotal === total) return;
+
+      const current = formState[field.id] || 0;
+      // The rep owns the value once it differs from what the rule would have set for the
+      // PREVIOUS footage (e.g. they ordered a booster at 220 ft) - never overwrite that.
+      if (current !== quantityForTotal(config, prevTotal)) return;
+      const next = quantityForTotal(config, total);
+      if (next === current) return;
+
+      const price = field.price || { cost: 0, par: 0, retail: 0 };
+      const existing: any = entriesRef.current[field.id];
+      onEntryChange(field.id, {
+        fieldId: field.id, categoryId, sectionId,
+        productName: existing?.productName ?? '',
+        name: field.name, label: field.label, unit: field.unit || '',
+        inputValue: next,
+        computed: { cost: next * price.cost, par: next * price.par, retail: next * price.retail },
+        pricingAtTimeOfEntry: { cost: String(price.cost), par: String(price.par), retail: String(price.retail) },
+      });
+
+      const burst = burstRef.current[key] || { start: current, latest: current, total, timer: null };
+      if (!burst.timer) burst.start = current;
+      burst.latest = next;
+      burst.total = total;
+      if (burst.timer) clearTimeout(burst.timer);
+      burst.timer = setTimeout(() => {
+        burst.timer = null;
+        const kind = changeKind(burst.start, burst.latest);
+        const template = !config.notify
+          ? undefined
+          : kind === 'added'
+            ? config.addedMessage
+            : kind === 'removed'
+              ? config.removedMessage
+              : kind === 'updated'
+                ? config.updatedMessage
+                : undefined;
+        if (template) {
+          FlashMessage.info(
+            field.label,
+            formatMessage(template, { value: burst.latest, total: burst.total, previous: burst.start, field: field.label })
+          );
+        }
+      }, 700);
+      burstRef.current[key] = burst;
+    });
+  }, [formState, autoFields, allFields, activeTabId, readOnly, onEntryChange]);
+
+  useEffect(() => () => {
+    Object.values(burstRef.current).forEach((b) => b.timer && clearTimeout(b.timer));
+  }, []);
 
   // Adapt the id-based tab model to the index-based draggable-tabs component.
   const tabCalcs = useMemo(() => tabs.map((t, idx) => {

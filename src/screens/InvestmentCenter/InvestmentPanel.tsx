@@ -869,11 +869,13 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     >
       {/* Company branding — dynamic logo + company name (web parity), else the
           Leaf Filter wordmark fallback. */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minHeight: 32, marginBottom: 12 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 32, marginBottom: 12 }}>
         {!!secureLogo && (
           <Image source={{ uri: secureLogo }} style={{ height: 32, width: 120 }} resizeMode="contain" />
         )}
-        {companyName ? (
+        {/* The logo stands alone; the company name is only the fallback when there is no logo
+            (the heading below already says "Your Investment With {company}"). */}
+        {secureLogo ? null : companyName ? (
           <Text style={{ fontSize: 15, fontWeight: '800', fontStyle: 'italic', color: '#15803D', textTransform: 'capitalize' }}>{companyName}</Text>
         ) : !secureLogo ? (
           <Text style={{ fontSize: 15, fontWeight: '800', fontStyle: 'italic', color: '#15803D' }}>
@@ -938,12 +940,12 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       <View style={{ marginBottom: 18 }}>
         <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', textAlign: 'center', marginBottom: 10 }}>Includes the Following:</Text>
         <View style={{ height: 2, backgroundColor: '#16324F', borderRadius: 1, marginBottom: 14 }} />
-        {packageInfo.isFullPackage ? (
-          /* A full package: the box + ⓘ stands in for the whole list, and the ⓘ
-             carries the breakdown (Gutter / Soffit / FWrap / (Versa OR VMax)).
-             Centred, at presentation size — this is the customer-facing surface,
-             so the glyphs are larger here than the 14pt tab strip. */
-          <View style={{ alignItems: 'center', paddingVertical: 4 }}>
+        {packageInfo.isFullPackage && (
+          /* A full package: the box + ⓘ (which carries the Gutter / Soffit / FWrap /
+             (Versa OR VMax) breakdown) sits ABOVE the job-scope list. It used to REPLACE
+             the list; the customer-facing screen now shows both, so the scope sentences
+             are readable without opening the ⓘ. Centred, at presentation size. */
+          <View style={{ alignItems: 'center', paddingVertical: 4, marginBottom: 14 }}>
             <FullPackageTitle
               isFullPackage
               extras={packageInfo.extras}
@@ -953,7 +955,8 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
               onInfo={openPackageInfo}
             />
           </View>
-        ) : inclusions.length === 0 ? (
+        )}
+        {inclusions.length === 0 ? (
           <Text style={{ fontSize: 12, color: '#94A3B8', textAlign: 'center', fontStyle: 'italic' }}>
             Job scope will appear once products are configured.
           </Text>

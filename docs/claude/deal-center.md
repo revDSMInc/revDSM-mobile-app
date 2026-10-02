@@ -2600,3 +2600,42 @@ locked-note and archived block are the same objects as before — only the conta
 
 `PaymentRowsGroup` panel layout draws the card header title only when `rows.length > 1`. A lone removable row keeps just the ✕
 (right-aligned, no title); a lone locked row has no header at all.
+
+## Portal-driven automatic quantity (Lighting -> Booster box)
+
+Ask: when the lighting footage adds up to a range, add booster boxes automatically (226-450 ft = 1, 451-675 = 2...), keep it
+rep-editable, and pop a message when one is added, updated or removed. ⚠️ **Nothing may be hardcoded; ranges AND messages come
+from the portal.**
+
+The portal publishes it on the field's `conditional` in `GET /calculator-form-schemas/deal-center` (Lighting ->
+`booster_box_over_225`), in a new **`valueMode: 'range'`**:
+
+```json
+"conditional": { "dependsOn": ["<1st>", "<2nd>", "<3rd>"], "matchMode": "any", "valueMode": "range", "aggregate": "sum",
+  "ranges": [{ "min": 226, "max": 450, "value": "1" }, { "min": 451, "max": 675, "value": "2" }],
+  "notifyRep": true, "addedMessage": "{field} was added automatically ({value}) because the total is now {total}",
+  "removedMessage": "...", "updatedMessage": "..." }
+```
+
+- Pure rules in `screens/DynamicDealCenter/utils/auto-quantity.ts` (tests: `__tests__/utils/auto-quantity.test.ts`); the effect is
+  in `CalculatorView` (`autoFields`). Placeholders: `{field}` `{value}` `{total}` `{previous}`. No message / `notifyRep` not true =
+  no popup (no copy lives in the app). `aggregate`: sum (default) | max | min.
+- ⚠️ **`range` is NOT `fixed`.** `field-dependency.ts` reads an unknown `valueMode` as `userInput`, so the field stays editable -
+  that is what lets a rep order one at 220 ft. Do not add `range` to the fixed/locked branch.
+- ⚠️ **The rep's value is protected without any flag**: the rule only writes when the field still equals what it would have
+  set for the PREVIOUS footage, so an override, or a quantity saved on a reopened calculator, is never overwritten.
+- ⚠️ **The first sight of a tab only records its footage**, so opening or switching tabs never rewrites a quantity.
+- One popup per burst of typing (700 ms), reporting the net change: added (0 -> n), removed (n -> 0), updated (n -> m).
+- Control Box (`control_box`) is a separate portal rule: `valueMode: 'fixed'`, value 1, locked. Unrelated to this feature.
+
+### Reversal: the Investment Center package tab shows the box + ⓘ AND the scope list
+
+The "REPLACES the list" decision recorded above (`InvestmentPanel` "Includes the Following") is **superseded**. QA: *"when the i icon is displayed, the details are missing here - I need the details"*. On a full package the centred box + ⓘ now sits ABOVE the same `inclusions` list a normal tab shows (job-scope sentences, else product names), per the calculator being presented. The ⓘ card still carries the package breakdown. ⚠️ Do not restore the replace-the-list branch.
+
+## Agreement signature pad: e-signature consent gates Save Mark
+
+`widgets/modals/job-builder/AgreementSignatureModal.tsx` (the "Sign to Finalize Order" capture overlay, used by the create flow; the edit-flow note is in `deal-edit-addendums.md`). An "I agree to electronic signature" checkbox sits above Clear / Save Mark; Save Mark is disabled until ticked and `savePad` returns early without it.
+
+- ⚠️ The tick resets on every pad open (`useEffect` on `activePad`), so initials and signature are each an explicit agreement.
+- ⚠️ Nothing is sent to `/agreement/{leadId}/sign` - the consent only gates capture.
+- ⚠️ Save Mark needs the tick AND ink: `canSavePad = agreedToESign && (live strokes > 0)`. Ticking alone used to enable it on an empty pad, so a blank mark could be saved. A stroke counts once the finger lifts (the live path array only grows on release).

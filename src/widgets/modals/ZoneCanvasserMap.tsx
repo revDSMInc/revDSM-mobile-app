@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
-import { Modal, View, Text, TouchableOpacity, StatusBar, Platform, Dimensions, type TextInput } from 'react-native';
+import { Modal, View, Text, TouchableOpacity, StatusBar, Platform, type TextInput } from 'react-native';
+import { useBottomInset } from '../../hooks/useBottomInset';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -28,20 +29,8 @@ export default function ZoneCanvasserMap({
 }: ZoneCanvasserMapProps) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  /**
-   * ⚠️ The bottom edge the map's controls must clear. This is a `statusBarTranslucent` Modal, so
-   * on Android it draws UNDER the system navigation bar - while the app-level `insets.bottom` can
-   * still read 0 - and the Cancel / Undo / Save Zone buttons and the zoom stack ended up behind
-   * the three-button bar. The screen-minus-window height is the bar's real height there (0 when the
-   * window already is edge-to-edge, where `insets.bottom` is right instead), so take the larger.
-   */
-  const bottomInset =
-    Platform.OS === 'android'
-      ? Math.max(
-          insets.bottom,
-          Math.round(Dimensions.get('screen').height - Dimensions.get('window').height),
-        )
-      : insets.bottom;
+  // The bottom edge the map's controls must clear (see the hook for the Android nav-bar trap).
+  const bottomInset = useBottomInset();
   const workMutation = useWorkLeadMutation();
   const z = useZoneCanvasser({ visible, user });
   const searchInputRef = useRef<TextInput>(null);

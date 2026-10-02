@@ -239,6 +239,20 @@ Built in `InvestmentPanel.logDownPaymentChange`: In-Home uses the shared `paymen
   blur before the panel re-renders, so the rendered `inHomeMonthly` is still the OLD down payment's.
 - 1-Year's `monthlyPayment` is `oneYearMonthlyShown` - it does not depend on the 1-Year down payment today.
 
+- Investment Center company branding row (logo + company name) is `justifyContent: 'center'`; it was `flex-end`, which pushed the LeafFilter logo to the right edge instead of under the screen's centred title and heading.
+
+## Investment Center: a full-package tab shows the box + ⓘ AND the scope list
+
+`screens/InvestmentCenter/InvestmentPanel.tsx`, "Includes the Following". On a full package the centred box + ⓘ used to
+REPLACE the whole `inclusions` list, so the job-scope sentences never appeared. QA: the details were missing next to the ⓘ.
+The `FullPackageTitle` now renders above the list (`marginBottom: 14`) and the list renders for every calculator, package or not.
+
+- ⚠️ This supersedes the "REPLACES the list" decision in `deal-center.md` (full-package section); do not restore the
+  replace branch. The ⓘ card still carries the package breakdown.
+- A long scope pushes Total Investment further down; a "Show details" collapse is the fallback if that bothers reps.
+
+- Investment Center branding row: with a logo it shows the LOGO ALONE, centred. The company-name text beside it duplicated the heading below ("Your Investment With {company}") and pulled the logo off-centre; the name now renders only as the fallback when there is no logo.
+
 ## REVUIUX-505 — the Forever Record's Investment Center section, end to end
 
 Ticket: the portal's Investment Center section in the Lead Details modal was redesigned around a new
