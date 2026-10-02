@@ -364,3 +364,13 @@ down-payment-to-zero. Do not add "corrective" events to tidy the record.
 
 ⚠️ **Nothing renders at Forever Record detail level Low.** The backend strips all activity logs there and
 keeps only milestones, so an empty-looking section is a permission level before it is a bug.
+
+## Job Tracker Overview table: one column config, everything centred
+
+`screens/JobTracker/index.tsx`. The header, the month rows and the Totals row were three copies of ten hand-written `<Text>` cells with mixed `w-24` / `w-28` widths and right alignment, so labels such as "Net Comm. per Job" wrapped into their neighbour and the numbers sat against each column's right edge, away from their centred-looking headers.
+
+Now a single `OVERVIEW_COLUMNS` list (`key`, `label`, `width`, `format`) drives all three; each cell uses its column's one width, `paddingHorizontal: 6` and `textAlign: 'center'`; the header wraps to at most two lines.
+
+- ⚠️ Add or reorder a column in `OVERVIEW_COLUMNS` only - never hand-write a cell in just one of the three rows, or the widths drift again.
+- The Month column is centred too (it was left-aligned).
+- The monthly jobs table (Job Number ... Calculator Name, under each "September 2026" group) is centred too: header and cell `Text`s are `text-center`, the date chips are `self-center` inside `items-center` wrappers (they were `self-start`), and the payment-method cell is `justify-center` so its (i) icon stays beside the text.
