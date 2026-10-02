@@ -323,6 +323,8 @@ export function LightingPanel({
       <CustomLookSheet
         visible={builderOpen}
         isDark={isDark}
+        // Numbers the next "Custom look N" off what the rep already has.
+        existing={state.customs}
         onClose={() => setBuilderOpen(false)}
         onSave={(look) => {
           // Optimistic: the tile appears immediately, then the server's list
@@ -371,12 +373,23 @@ export function LightingFooter({
   state,
   setState,
   isDark,
+  corePending = false,
   onAdd,
   onToggleFavourite,
 }: {
   state: LightingState;
   setState: (s: LightingState) => void;
   isDark: boolean;
+  /**
+   * The rep has Core components ticked on the other tab, so there is something
+   * to add even with no look selected.
+   *
+   * ⚠️ Without this the button stays disabled and the Core selection is
+   * stranded: the rep ticks Soffit, switches tab to compare lighting, decides
+   * against a look, and the only enabled Add button is on the tab they are no
+   * longer looking at.
+   */
+  corePending?: boolean;
   onAdd: (looks: Look[]) => void;
   /** Same persistence path as the grid's hold gesture — both must reach the server. */
   onToggleFavourite?: (lookId: string) => void;
@@ -392,6 +405,9 @@ export function LightingFooter({
   const selectedLooks = state.sel
     .map((id) => findLook(id, state.customs))
     .filter((l): l is Look => Boolean(l));
+
+  // A ticked Core selection is enough on its own — `onAdd` queues it.
+  const enabled = canAdd(state) || corePending;
 
   return (
     <View className="mb-6">
@@ -454,10 +470,12 @@ export function LightingFooter({
           style={{ backgroundColor: isDark ? '#15191E' : '#F4F6F8' }}
         >
           <Text className="text-[15px] font-black mb-1" style={{ color: sub }}>
-            Nothing selected yet
+            {corePending ? 'Core products ready' : 'Nothing selected yet'}
           </Text>
           <Text className="text-[13px]" style={{ color: sub }}>
-            Pick one or more looks above.
+            {corePending
+              ? 'Add now for the core render on its own, or pick a look to add both.'
+              : 'Pick one or more looks above.'}
           </Text>
         </View>
       )}
@@ -469,18 +487,18 @@ export function LightingFooter({
       )}
 
       <TouchableOpacity
-        disabled={!canAdd(state)}
+        disabled={!enabled}
         onPress={() => {
           const { looks, state: cleared } = takeSelection(state, (id) => findLook(id, state.customs));
           setState(cleared);
           onAdd(looks);
         }}
         accessibilityRole="button"
-        accessibilityState={{ disabled: !canAdd(state) }}
+        accessibilityState={{ disabled: !enabled }}
         className="rounded-full items-center justify-center"
-        style={{ minHeight: 56, backgroundColor: canAdd(state) ? GREEN : isDark ? '#2A2F36' : '#DFE3E8' }}
+        style={{ minHeight: 56, backgroundColor: enabled ? GREEN : isDark ? '#2A2F36' : '#DFE3E8' }}
       >
-        <Text className="text-[16px] font-black" style={{ color: canAdd(state) ? '#fff' : sub }}>
+        <Text className="text-[16px] font-black" style={{ color: enabled ? '#fff' : sub }}>
           {addButtonLabel(state)}
         </Text>
       </TouchableOpacity>

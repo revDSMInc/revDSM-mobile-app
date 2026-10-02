@@ -484,9 +484,62 @@ export default function RevRenderScreen() {
     if (status !== 'config') guidanceShown.current = { core: false, lighting: false };
   }, [status]);
 
+  /** True when the rep has ticked at least one Core component. */
+  const coreIsConfigured = useCallback(
+    () => MATERIAL_SECTIONS.some((s) => config[`${s.key}Checked`]),
+    [config],
+  );
+
+  /**
+   * The Core queue item for whatever is currently ticked.
+   *
+   * ⚠️ Extracted so BOTH add paths build it the same way. It used to live
+   * inline in `handleAddToQueue`, which only the Core tab's button calls — so
+   * adding from the Lighting tab queued the looks and silently threw the rep's
+   * Core selection away. They ticked Soffit and Fascia, switched tab, pressed
+   * Add, and only the lighting render reached the queue.
+   */
+  const buildCoreRender = useCallback(() => {
+    const selections: any = {};
+    const textureImageUrls: any = {};
+
+    MATERIAL_SECTIONS.forEach(s => {
+      const isChecked = config[`${s.key}Checked`];
+      const type = config[s.key];
+      const color = config[`${s.key}Color`];
+
+      if (isChecked) {
+        // API expects lowercase color name and snake_case type without section suffix
+        selections[s.key] = color?.name?.toLowerCase() || null;
+        selections[`${s.key}Type`] = toApiType(type, s.label);
+        textureImageUrls[s.key] = color?.hex || null;
+      } else {
+        // Always include all components; null for unchecked ones
+        selections[s.key] = null;
+        selections[`${s.key}Type`] = null;
+      }
+    });
+
+    return {
+      id: Date.now(),
+      mode: 'core' as const,
+      photo: selectedPhoto,
+      selections,
+      textureImageUrls,
+      viewId: selectedPhoto?.viewId,
+      viewLabel: selectedPhoto?.viewLabel,
+      summary: MATERIAL_SECTIONS.filter(s => config[`${s.key}Checked`]).map(s => ({
+        label: s.label,
+        type: config[s.key],
+        colorName: config[`${s.key}Color`]?.name,
+        colorHex: config[`${s.key}Color`]?.hex
+      }))
+    };
+  }, [config, selectedPhoto]);
+
   const handleAddLighting = (looks: Look[]) => {
     // One look = one queue item = one render.
-    const items = looks.map((look) => ({
+    const items: any[] = looks.map((look) => ({
       id: `${Date.now()}-${look.id}`,
       mode: 'lighting' as const,
       look,
@@ -494,6 +547,26 @@ export default function RevRenderScreen() {
       viewId: selectedPhoto?.viewId,
       viewLabel: selectedPhoto?.viewLabel,
     }));
+
+    /**
+     * ⚠️ The Core selection is queued HERE TOO, not just by Core's own button.
+     *
+     * The two modes share one photo, one Add button position and one queue, and
+     * each keeps its own selection so switching tabs does not lose work (483
+     * §1). But only the ACTIVE tab's button was wired, so a rep who ticked
+     * Soffit and Fascia, switched to Roofline Lighting, picked a look and
+     * pressed Add got the lighting render and nothing else — the Core work was
+     * discarded with no warning, and the queue showed one row where they
+     * expected two.
+     *
+     * A render is Core OR Lighting, never both, so this is a SECOND queue item
+     * rather than a merged one.
+     */
+    if (coreIsConfigured()) {
+      items.unshift(buildCoreRender());
+      setConfig(INITIAL_CONFIG);
+    }
+
     setRenderQueue([...renderQueue, ...items]);
     setStatus('queue');
   };
@@ -640,40 +713,8 @@ export default function RevRenderScreen() {
   // ── Handlers ───────────────────────────────────────────────────────────────
 
   const handleAddToQueue = () => {
-    const selections: any = {};
-    const textureImageUrls: any = {};
-
-    MATERIAL_SECTIONS.forEach(s => {
-      const isChecked = config[`${s.key}Checked`];
-      const type = config[s.key];
-      const color = config[`${s.key}Color`];
-
-      if (isChecked) {
-        // API expects lowercase color name and snake_case type without section suffix
-        selections[s.key] = color?.name?.toLowerCase() || null;
-        selections[`${s.key}Type`] = toApiType(type, s.label);
-        textureImageUrls[s.key] = color?.hex || null;
-      } else {
-        // Always include all components; null for unchecked ones
-        selections[s.key] = null;
-        selections[`${s.key}Type`] = null;
-      }
-    });
-
-    const newRender = {
-      id: Date.now(),
-      photo: selectedPhoto,
-      selections,
-      textureImageUrls,
-      viewId: selectedPhoto?.viewId,
-      viewLabel: selectedPhoto?.viewLabel,
-      summary: MATERIAL_SECTIONS.filter(s => config[`${s.key}Checked`]).map(s => ({
-        label: s.label,
-        type: config[s.key],
-        colorName: config[`${s.key}Color`]?.name,
-        colorHex: config[`${s.key}Color`]?.hex
-      }))
-    };
+    const newRender = buildCoreRender();
+    const { selections } = newRender;
 
     const userId = user?._id || user?.id;
     if (userId) {
@@ -694,6 +735,9 @@ export default function RevRenderScreen() {
     }
 
     setRenderQueue([...renderQueue, newRender]);
+    // Clear the ticks: they have been queued, and leaving them on makes the
+    // next add silently re-queue the same combo.
+    setConfig(INITIAL_CONFIG);
     setStatus('queue');
   };
 
@@ -1439,6 +1483,9 @@ export default function RevRenderScreen() {
               state={lighting}
               setState={setLighting}
               isDark={isDark}
+              // Core ticks are queued by `handleAddLighting` too, so the button
+              // must not sit disabled while they are waiting.
+              corePending={coreIsConfigured()}
               onAdd={handleAddLighting}
               onToggleFavourite={handleToggleFavourite}
             />

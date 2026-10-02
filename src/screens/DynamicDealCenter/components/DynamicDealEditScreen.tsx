@@ -29,6 +29,8 @@ import { useCalculatorSchema } from '../hooks/useCalculatorSchema';
 import { useDealPricing } from '../hooks/useDealPricing';
 import { DynamicJobBuilderScreen } from '../DynamicJobBuilderScreen';
 import { buildDealCenterData } from '../utils/build-deal-center-data';
+import { isDealEditLoading } from '../utils/deal-edit-gate';
+import { extractDynamicJobState } from '../utils/enrich-job-builder-data';
 import {
   serializeDynamicJobStateForStorage,
   deserializeDynamicJobStateFromStorage,
@@ -435,6 +437,23 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     staleTime: 30_000,
   });
 
+  // ── load the PORTAL job builder — the third place a build can live ──────
+  //
+  // ⚠️ REQUIRED, not an optimisation. `savedDynamicJobState` below used to read
+  // only the OUTCOME and `lead.jobBuilder`, and for a large class of deals the
+  // build is in neither — it is on `GET /portal-job-builder/{leadId}`. Those
+  // deals hit "This deal can't be edited here" every single time, with no race
+  // involved: the data the screen needed was never requested.
+  //
+  // `getPortalJobBuilder` swallows its own errors to `null`, so a lead with no
+  // portal record resolves cleanly rather than throwing.
+  const { data: portalRecord, isLoading: isPortalLoading } = useQuery({
+    queryKey: ['dealEditPortalJobBuilder', leadId],
+    queryFn: async () => (leadId ? LeadService.getPortalJobBuilder(leadId) : null),
+    enabled: Boolean(leadId),
+    staleTime: 30_000,
+  });
+
   // Seed schedule/price/method state from the lead once, on first load.
   useEffect(() => {
     if (seededRef.current) return;
@@ -463,13 +482,29 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   }, [lead]);
 
   // ── derive: saved dynamic state, calculator, dealCenterData, initial state ──
+  /**
+   * The saved build, from whichever of the THREE places holds it.
+   *
+   * ⚠️ The portal record is a real source, not a fallback of last resort —
+   * for many deals it is the ONLY one. Reading just the outcome and the lead is
+   * what made "This deal can't be edited here" appear on editable deals.
+   *
+   * ⚠️ `extractDynamicJobState` is used for the portal record rather than a
+   * hand-written `?.dynamicJobState` chain: a build can be ROOT-SERIALIZED
+   * (verticals at the top level beside `_storageVersion`, no wrapper key at
+   * all), and a property chain cannot see that shape. Same trap as the Lead
+   * Center pencil — see `lead-center.md`.
+   */
   const savedDynamicJobState = useMemo(
     () =>
       savedOutcome?.jobBuilder?.dynamicJobState ||
       savedOutcome?.dynamicJobState ||
       lead?.jobBuilder?.dynamicJobState ||
+      extractDynamicJobState(portalRecord?.portalJobBuilder) ||
+      extractDynamicJobState(savedOutcome?.jobBuilder) ||
+      extractDynamicJobState(lead?.jobBuilder) ||
       null,
-    [savedOutcome, lead]
+    [savedOutcome, lead, portalRecord]
   );
 
   const calculatorData = useMemo(
@@ -2283,7 +2318,22 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   // Wait on the calculator schemas too (web parity): the Step-2 tiers price the
   // edited build THROUGH those schemas, so rendering before they load would show
   // a zero-delta price. Mirrors web's `configLoading || schemasLoading || …` gate.
-  const isLoading = isConfigLoading || isSchemasLoading || !outcomeFetched;
+  //
+  // ⚠️ `isCalculatorLoading` IS PART OF THIS GATE. Leaving it out produced a
+  // race that showed "This deal can't be edited here" on a perfectly editable
+  // deal: open the wizard quickly and `outcomeFetched` could flip true while the
+  // calculator request was still in flight, so `isLoading` went false, the
+  // fallback below ran against a not-yet-resolved `savedDynamicJobState` /
+  // `initialState`, and the rep got the dead end. Going back and reopening
+  // "fixed" it only because the query cache was warm the second time — which is
+  // why it looked intermittent and worse on a slow connection.
+  const isLoading = isDealEditLoading({
+    configLoading: isConfigLoading,
+    schemasLoading: isSchemasLoading,
+    outcomeFetched,
+    calculatorLoading: isCalculatorLoading,
+    portalLoading: isPortalLoading,
+  });
   const builderReady = Boolean(jobBuilderConfig && initialState);
   const isDynamicDeal = Boolean(
     lead?.jobBuilder?.isDynamic || lead?.jobBuilder?.dynamicJobState || lead?.isDynamic || savedDynamicJobState

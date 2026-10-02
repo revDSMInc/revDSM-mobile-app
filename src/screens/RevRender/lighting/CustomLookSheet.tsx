@@ -1,10 +1,17 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { Modal, PanResponder, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Modal, PanResponder, Text, TextInput, TouchableOpacity, View } from 'react-native';
+// ⚠️ BOTH from `react-native-keyboard-controller`, not React Native's own.
+// `KeyboardProvider` (App.tsx) puts the app edge-to-edge, after which Android
+// stops resizing the window and RN's `KeyboardAvoidingView` has nothing to
+// react to. The controller reads the keyboard height directly and its context
+// crosses the Modal boundary, the same way `useSafeAreaInsets` does.
+import { KeyboardAvoidingView, KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Svg, { Defs, G, Path, RadialGradient, Stop, Circle } from 'react-native-svg';
 import {
   canGlow, clamp01, expandHex, hexToHsv, hsvToHex, MAX_CUSTOM_COLORS, patternFor, puckColors,
 } from '../../../utils/revrender-lighting/colors';
+import { defaultCustomLookName } from '../../../utils/revrender-lighting/selection';
 import { CustomLook } from '../../../utils/revrender-lighting/types';
 
 const GREEN = '#2EDE56';
@@ -136,11 +143,14 @@ function DuskPreview({ colors, pattern }: { colors: string[]; pattern: 'single' 
 export function CustomLookSheet({
   visible,
   isDark,
+  existing,
   onSave,
   onClose,
 }: {
   visible: boolean;
   isDark: boolean;
+  /** Looks the rep already has — only their names are read, to number the next auto-name. */
+  existing?: { name?: string }[];
   onSave: (look: CustomLook) => void;
   onClose: () => void;
 }) {
@@ -266,7 +276,15 @@ export function CustomLookSheet({
   };
 
   const usable = colors.filter(canGlow);
-  const canSave = name.trim().length > 0 && usable.length > 0;
+  /**
+   * ⚠️ The NAME is not required — only a usable colour is.
+   *
+   * Requiring it stalled the rep at a disabled Save after they had already done
+   * the real work of picking colours, with nothing on screen saying why. A
+   * blank name is now a request to be named automatically.
+   */
+  const canSave = usable.length > 0;
+  const autoName = defaultCustomLookName(existing ?? []);
   const pattern = patternFor(usable.length ? usable : colors);
 
   const reset = () => {
@@ -284,7 +302,24 @@ export function CustomLookSheet({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View className="flex-1 justify-end" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+      {/*
+        ⚠️ TWO layers of keyboard handling, and both are needed.
+
+        The sheet is pinned to the BOTTOM, so the keyboard covers it from the
+        bottom up — the Name field is the first thing in the sheet and was the
+        first thing buried, on both platforms. Scrolling alone cannot help,
+        because the space above the keyboard is outside the sheet.
+        `KeyboardAvoidingView` lifts the sheet into the space that is left;
+        `KeyboardAwareScrollView` then brings the focused field into it.
+      */}
+      {/* ⚠️ `style`, not `className`. NativeWind only maps `className` on the
+          components it registers, and this one comes from the keyboard
+          controller — a className here is silently dropped and the sheet loses
+          its bottom pinning. */}
+      <KeyboardAvoidingView
+        behavior="padding"
+        style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}
+      >
         <View
           className="rounded-t-[24px] pt-3"
           style={{ backgroundColor: isDark ? '#1E1E1E' : '#fff', maxHeight: '92%' }}
@@ -300,25 +335,33 @@ export function CustomLookSheet({
             could still steal a drag that started mostly vertical, so dragging
             down the wheel scrolled the sheet instead of changing the colour.
           */}
-          <ScrollView
+          <KeyboardAwareScrollView
             className="shrink px-5"
             scrollEnabled={!dragging}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            bottomOffset={24}
           >
             <Text className="text-[20px] font-black" style={{ color: label }}>New custom look</Text>
             <Text className="text-[13px] mb-4" style={{ color: sub }}>
               Any colors: a school, a business, a party.
             </Text>
 
-            <Text className="text-[11px] font-black tracking-widest mb-2 uppercase" style={{ color: sub }}>Name</Text>
+            <Text className="text-[11px] font-black tracking-widest mb-2 uppercase" style={{ color: sub }}>
+              Name · optional
+            </Text>
+            {/* The placeholder is the name it will actually be SAVED under, not an
+                example — so leaving the field alone has a visible, predictable
+                result rather than looking like an unfinished form. */}
             <TextInput
               value={name}
               onChangeText={setName}
-              placeholder="e.g. Plant City High"
+              placeholder={autoName}
               placeholderTextColor={sub}
               maxLength={28}
-              accessibilityLabel="Look name"
+              returnKeyType="done"
+              accessibilityLabel="Look name, optional"
               className="rounded-[14px] px-4 text-[14px]"
               style={{ minHeight: 48, color: label, backgroundColor: fill }}
             />
@@ -491,7 +534,7 @@ export function CustomLookSheet({
             )}
 
             <View style={{ height: 8 }} />
-          </ScrollView>
+          </KeyboardAwareScrollView>
 
           {/* Pinned: Save must be reachable without scrolling past an open picker. */}
           <View className="flex-row px-5 pt-3 pb-8" style={{ gap: 10 }}>
@@ -510,7 +553,8 @@ export function CustomLookSheet({
                   id: `custom-${Date.now()}`,
                   group: 'custom',
                   category: 'Custom',
-                  name: name.trim(),
+                  // Blank falls back to the auto-name the placeholder promised.
+                  name: name.trim() || autoName,
                   colors: usable,
                   pattern: patternFor(usable),
                   createdAt: Date.now(),
@@ -527,7 +571,7 @@ export function CustomLookSheet({
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

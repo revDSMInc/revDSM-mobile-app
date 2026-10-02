@@ -203,8 +203,8 @@ export default function LeadCenterPage() {
   // It used to branch on an `isDynamicDeal` computed from the `lead` object. That
   // CANNOT WORK, and the reason is structural rather than a matter of checking more
   // fields: the job build is not on the lead. It is fetched from its own endpoint
-  // (`getPortalJobBuilder`, with a calculator-outcome fallback) by
-  // `enrichJobBuilderProductData`, which is what the wizard runs on the way in.
+  // (`getPortalJobBuilder`, with a calculator-outcome fallback) by the wizard
+  // itself, which queries it on mount.
   // Lead Center never calls it, so every synchronous guess from `lead` answered
   // "not dynamic" for genuinely dynamic deals and dropped the rep into the inline
   // "Edit Contract Details" modal. Widening the predicate only moved which deals

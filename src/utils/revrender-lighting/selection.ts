@@ -183,3 +183,29 @@ export function takeSelection(state: LightingState, resolve: (id: string) => Loo
     .filter((l): l is Look => Boolean(l));
   return { looks, state: { ...state, sel: [] } };
 }
+
+/** Prefix for an auto-named custom look: "Custom look 1", "Custom look 2", … */
+export const DEFAULT_CUSTOM_NAME = 'Custom look';
+
+/**
+ * The name to save a custom look under when the rep left the field blank.
+ *
+ * ⚠️ The name is NOT a required field. Requiring it stalled the rep at a
+ * disabled Save after they had already picked their colours — the work was
+ * done and the app refused it over a label. Blank now means "name it for me".
+ *
+ * ⚠️ Numbered by the HIGHEST existing number, not by the count. Deleting
+ * "Custom look 2" out of three leaves 1 and 3, and counting would mint a second
+ * "Custom look 3" — which the save endpoint upserts on `lookId`, not name, so
+ * the rep ends up with two identically-named tiles and no way to tell them
+ * apart.
+ */
+export function defaultCustomLookName(existing: { name?: string }[]): string {
+  const re = new RegExp(`^${DEFAULT_CUSTOM_NAME} (\\d+)$`, 'i');
+  const highest = (existing || []).reduce((max, l) => {
+    const m = re.exec(String(l?.name ?? '').trim());
+    const n = m ? parseInt(m[1], 10) : 0;
+    return Number.isFinite(n) && n > max ? n : max;
+  }, 0);
+  return `${DEFAULT_CUSTOM_NAME} ${highest + 1}`;
+}
