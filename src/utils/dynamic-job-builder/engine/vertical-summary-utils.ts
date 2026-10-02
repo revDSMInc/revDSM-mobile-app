@@ -844,3 +844,32 @@ export function buildVerticalSummarySections(vertical: any, verticalState: any =
       buildTabSummarySection(tab, verticalState[tab.id] || {}, { ...ctx, vertical, tabIndex, lockedFieldIds })
     );
 }
+
+/**
+ * One story's measurement line for the summary table — `Left Side: 1ft, Front: 2ft (3ft total)`.
+ *
+ * ⚠️ The COLON after each location is required. Without it the line reads
+ * `Left Side 1ft, Front 2ft`, and at a glance "Side" and the number run together
+ * so the pairs are hard to separate — reported against both the Job Builder and
+ * the My Deals edit wizard, which render this through the same component.
+ *
+ * The run total is only appended when there is more than one side to add up:
+ * `Left Side: 22ft (22ft total)` restates itself.
+ *
+ * Pure, and here rather than in `VerticalSummaryTab`, so the string can be tested
+ * — that component pulls in React Native and cannot load under jest.
+ */
+export function formatStoryMeasurementLine(
+  items: { location?: string; value?: unknown; unit?: string }[],
+  fallbackUnit = 'ft',
+): string {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) return '';
+  const unit = list[0]?.unit || fallbackUnit;
+  const sides = list
+    .map((item) => `${item?.location ?? ''}: ${item?.value}${item?.unit || fallbackUnit}`)
+    .join(', ');
+  if (list.length <= 1) return sides;
+  const total = list.reduce((sum, item) => sum + (Number(item?.value) || 0), 0);
+  return `${sides} (${total}${unit} total)`;
+}

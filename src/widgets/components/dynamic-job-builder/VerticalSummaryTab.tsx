@@ -1,6 +1,9 @@
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, Platform } from 'react-native';
-import { buildVerticalSummarySections } from '../../../utils/dynamic-job-builder/engine/vertical-summary-utils';
+import {
+  buildVerticalSummarySections,
+  formatStoryMeasurementLine,
+} from '../../../utils/dynamic-job-builder/engine/vertical-summary-utils';
 import { SummaryFinalizeCards } from './agreement/SummaryFinalizeCards';
 import { useGetAgreementConfig } from '../../../screens/DynamicDealCenter/hooks/useAgreementConfig';
 import { useGetDescriptionSchema } from '../../../screens/DynamicDealCenter/hooks/useDescriptionSchema';
@@ -81,8 +84,8 @@ function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: s
 }
 
 /**
- * The measurement grid, as ordinary summary ROWS — `1st Story | Left 63ft, Right 7ft, Front 50ft
- * (120ft total)`.
+ * The measurement grid, as ordinary summary ROWS — `1st Story | Left: 63ft, Right: 7ft, Front: 50ft
+ * (120ft total)`. The line itself is built by `formatStoryMeasurementLine`.
  *
  * ⚠️ Rendered through `SummaryFieldRow`, like every other row, and placed AFTER the field rows.
  * It used to have its own layout (a fixed `w-16` label in smaller, lighter type) and sat in the
@@ -112,13 +115,10 @@ function LocationSummaryRows({ locationRows }: { locationRows: any[] }) {
   return (
     <>
       {Object.keys(storyMap).map((story) => {
-        const items = storyMap[story];
-        const unit = items[0]?.unit || 'ft';
-        const sides = items.map((item) => `${item.location} ${item.value}${item.unit}`).join(', ');
-        // The portal's table carries the run total after the sides. Only worth showing when
-        // there is more than one side to add up — `Left 22ft (22ft total)` is noise.
-        const total = items.reduce((sum, item) => sum + (Number(item.value) || 0), 0);
-        const text = items.length > 1 ? `${sides} (${total}${unit} total)` : sides;
+        // `Left Side: 1ft, Front: 2ft (3ft total)` — the colon and the
+        // only-when-it-adds-up total both live in the pure formatter, which is
+        // testable; this component cannot be loaded under jest.
+        const text = formatStoryMeasurementLine(storyMap[story]);
         return <SummaryFieldRow key={story} label={story} text={text} />;
       })}
     </>
