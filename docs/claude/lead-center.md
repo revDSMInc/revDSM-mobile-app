@@ -1083,3 +1083,13 @@ revRender's subtitle now matches the other tiles' (`text-[12px]`, `#919EAB`) wit
 - ⚠️ `ToolCard` right-side pills ("Already Generated", SOLD) overlapped the status line: a `Text` inside a `flex-row` does NOT shrink, so "Consent on file - present quote" ran under the pill. The status Text now has `shrink`, the text column `minWidth: 0`, and the pills are 11pt, `flexShrink: 0` and `maxFontSizeMultiplier={1.1}` so Android font scaling cannot blow them up.
 - ⚠️ `ToolCard` pills end flush with the card padding (`pillGap` is 0 unless a download button follows) so "Already Generated", the revRender "AI" badge and the Pitch Book chevron share one right edge. A fixed `mr-2` had pushed the pills 8pt short.
 - ⚠️ Every Tools tile shares `TOOL_CARD_MIN_HEIGHT` (68) with 12pt padding and a 16pt bottom margin, so one-line tiles (Roofline Deck) are no shorter than two-line ones; `ToolCard`, `PitchBookCard` and the revRender header (68 minus its 24 of padding) all read it. The pills are now vertically centred like the AI badge (`self-start` removed). New tiles must use the same constant.
+
+## RevRender history viewer: pinch zooms the PICTURE, not the whole card
+
+`widgets/modals/lead-center/RevRenderHistoryModal.tsx` (the "Render #N" Before/After slider). `imageAnimStyle` (translate + scale) was on `styles.sliderContainer` itself, so a pinch or drag scaled and moved the whole card across the screen - frame, Before/After labels and handle included - instead of zooming within it.
+
+The container is now a FIXED clip and a new inner `Reanimated.View` carries the transform around the images, mask and slider handle; the Before/After labels sit outside the zoom layer.
+
+- ⚠️ Do not put `imageAnimStyle` back on the container. The compare handle lives INSIDE the zoom layer on purpose: the mask is in image coordinates, so it must scale with the picture or the split would drift off the pixels it describes (the handle circle also grows when zoomed - accepted).
+- Pan is clamped to `(scale - 1) / 2` of the width and of the measured frame height (`boxHeight`, set in `onLayout`), so the picture cannot be flung out of the frame.
+- Device check (this repo cannot render-test): pinch to zoom, drag while zoomed, and that the slider handle still drags at 1x and when zoomed.
