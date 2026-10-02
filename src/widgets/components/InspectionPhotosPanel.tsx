@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBottomInset } from '../../hooks/useBottomInset';
 import {
   View,
   Text,
@@ -27,7 +28,7 @@ export interface InspectionPhotosPanelProps {
   onAction?: (action: string, meta?: Record<string, unknown>) => void;
 }
 
-const THUMB_SIZE = 56;
+const THUMB_SIZE = 72;
 const THUMB_STRIDE = THUMB_SIZE + 8;
 
 interface ViewerProps {
@@ -49,8 +50,16 @@ interface ViewerProps {
  * cases automatically — which is why each screen previously needed two duplicate
  * preview modals gated on `isFullscreen`.
  */
-function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose, onAction }: ViewerProps) {
+export function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose, onAction }: ViewerProps) {
   const { width, height } = useWindowDimensions();
+  const bottomInset = useBottomInset();
+  // Height of the area under the header, and each photo's height/width ratio (learned from its
+  // own load). Together they size the photo to what it actually displays at, so the thumbnails
+  // sit directly under the picture instead of far below it across a wide black gap.
+  const [slotHeight, setSlotHeight] = useState(0);
+  const [ratios, setRatios] = useState<Record<string, number>>({});
+  const hasStrip = photos.length > 1;
+  const maxPhotoHeight = Math.max(0, slotHeight || height * 0.6);
   const [index, setIndex] = useState(initialIndex);
   const pagerRef = useRef<FlatList<SectionPhoto>>(null);
   const stripRef = useRef<FlatList<SectionPhoto>>(null);
@@ -82,12 +91,13 @@ function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose, onA
   }, [index, photos.length]);
 
   const current = photos[index];
+  const photoHeight = Math.min(maxPhotoHeight, Math.round(width * (ratios[current?.uri] || 4 / 3)));
   const time = formatCaptureTime(current?.timestamp);
 
   return (
     <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
       <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' }}>
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
         {/* Header — title left, counter + close right (web parity). */}
         <View
           style={{
@@ -101,7 +111,7 @@ function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose, onA
         >
           <View style={{ flex: 1, paddingRight: 12 }}>
             <Text numberOfLines={1} style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
-              {sectionName} - {current?.label}
+              {sectionName ? `${sectionName} - ${current?.label ?? ''}` : current?.label}
             </Text>
             {!!time && (
               <Text style={{ color: '#fff', fontSize: 12, opacity: 0.7, marginTop: 2 }}>{time}</Text>
@@ -130,7 +140,13 @@ function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose, onA
 
         {/* Wrapper centres the pager between the header and the thumbnail strip; the
             pager itself keeps an explicit page height so layout is deterministic. */}
-        <View style={{ flex: 1, justifyContent: 'center' }}>
+        <View style={{ flex: 1, paddingBottom: bottomInset }}>
+          {/* The photo slot takes everything above the strip and centres the photo in it. */}
+          <View
+            style={{ flex: 1, justifyContent: 'center' }}
+            onLayout={(e) => setSlotHeight(Math.round(e.nativeEvent.layout.height))}
+          >
+          <View style={{ height: photoHeight }}>
           <FlatList
             ref={pagerRef}
             data={photos}
@@ -157,7 +173,10 @@ function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose, onA
               <View
                 style={{
                   width,
-                  height: height * 0.62,
+                  // ⚠️ Sized to the photo's own proportions, capped by the room left above the
+                  // strip - a fixed fraction of the window either overlapped the thumbnails
+                  // on short phones or left a huge black gap above them on tall ones.
+                  height: photoHeight,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
@@ -169,32 +188,42 @@ function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose, onA
                   source={{ uri: srcOf(item) }}
                   style={{ width, height: '100%' }}
                   resizeMode="contain"
+                  onLoad={(e) => {
+                    const src = e.nativeEvent.source;
+                    if (src?.width && src?.height) {
+                      setRatios((r) => (r[item.uri] ? r : { ...r, [item.uri]: src.height / src.width }));
+                    }
+                  }}
                 />
               </View>
             )}
             style={{ flexGrow: 0 }}
           />
-        </View>
+          {/* Inside the photo box so `top: 50%` centres on the PHOTO. */}
+          {hasStrip && (
+            <>
+              <ChevronButton side="left" disabled={index === 0} onPress={() => goTo(index - 1, 'chevron')} />
+              <ChevronButton
+                side="right"
+                disabled={index === photos.length - 1}
+                onPress={() => goTo(index + 1, 'chevron')}
+              />
+            </>
+          )}
+          </View>
+          </View>
 
-        {photos.length > 1 && (
-          <>
-            <ChevronButton side="left" disabled={index === 0} onPress={() => goTo(index - 1, 'chevron')} />
-            <ChevronButton
-              side="right"
-              disabled={index === photos.length - 1}
-              onPress={() => goTo(index + 1, 'chevron')}
-            />
-          </>
-        )}
-
-        {photos.length > 1 && (
-          <View style={{ position: 'absolute', left: 0, right: 0, bottom: 36 }}>
+        {hasStrip && (
+          // PINNED to the bottom of the black area, in flow under the photo slot, so it has
+          // its own band instead of floating over the picture. The area's bottom padding
+          // clears the Android nav bar. The row is centred when it is shorter than the screen.
+          <View style={{ paddingTop: 12, paddingBottom: 16 }}>
             <FlatList
               ref={stripRef}
               data={photos}
               horizontal
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: 16 }}
+              contentContainerStyle={{ minWidth: width, paddingHorizontal: 16, paddingRight: 8, justifyContent: 'center' }}
               keyExtractor={(item, i) => `thumb-${item.uri}-${i}`}
               getItemLayout={(_, i) => ({
                 length: THUMB_STRIDE,
@@ -225,6 +254,7 @@ function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose, onA
             />
           </View>
         )}
+        </View>
       </View>
     </Modal>
   );

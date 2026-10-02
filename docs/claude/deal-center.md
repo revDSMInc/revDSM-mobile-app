@@ -2652,3 +2652,30 @@ locked-note and archived block are the same objects as before — only the conta
 
 `PaymentRowsGroup` panel layout draws the card header title only when `rows.length > 1`. A lone removable row keeps just the ✕
 (right-aligned, no title); a lone locked row has no header at all.
+
+## Portal-driven automatic quantity (Lighting -> Booster box)
+
+Ask: when the lighting footage adds up to a range, add booster boxes automatically (226-450 ft = 1, 451-675 = 2...), keep it
+rep-editable, and pop a message when one is added, updated or removed. ⚠️ **Nothing may be hardcoded; ranges AND messages come
+from the portal.**
+
+The portal publishes it on the field's `conditional` in `GET /calculator-form-schemas/deal-center` (Lighting ->
+`booster_box_over_225`), in a new **`valueMode: 'range'`**:
+
+```json
+"conditional": { "dependsOn": ["<1st>", "<2nd>", "<3rd>"], "matchMode": "any", "valueMode": "range", "aggregate": "sum",
+  "ranges": [{ "min": 226, "max": 450, "value": "1" }, { "min": 451, "max": 675, "value": "2" }],
+  "notifyRep": true, "addedMessage": "{field} was added automatically ({value}) because the total is now {total}",
+  "removedMessage": "...", "updatedMessage": "..." }
+```
+
+- Pure rules in `screens/DynamicDealCenter/utils/auto-quantity.ts` (tests: `__tests__/utils/auto-quantity.test.ts`); the effect is
+  in `CalculatorView` (`autoFields`). Placeholders: `{field}` `{value}` `{total}` `{previous}`. No message / `notifyRep` not true =
+  no popup (no copy lives in the app). `aggregate`: sum (default) | max | min.
+- ⚠️ **`range` is NOT `fixed`.** `field-dependency.ts` reads an unknown `valueMode` as `userInput`, so the field stays editable -
+  that is what lets a rep order one at 220 ft. Do not add `range` to the fixed/locked branch.
+- ⚠️ **The rep's value is protected without any flag**: the rule only writes when the field still equals what it would have
+  set for the PREVIOUS footage, so an override, or a quantity saved on a reopened calculator, is never overwritten.
+- ⚠️ **The first sight of a tab only records its footage**, so opening or switching tabs never rewrites a quantity.
+- One popup per burst of typing (700 ms), reporting the net change: added (0 -> n), removed (n -> 0), updated (n -> m).
+- Control Box (`control_box`) is a separate portal rule: `valueMode: 'fixed'`, value 1, locked. Unrelated to this feature.
