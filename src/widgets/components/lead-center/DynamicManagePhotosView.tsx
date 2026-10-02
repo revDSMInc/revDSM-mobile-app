@@ -46,6 +46,8 @@ import { DynamicMovePhotoModal, type MoveState } from './DynamicMovePhotoModal';
 import { PhotoPeekPressable } from '../../common/PhotoPeekPressable';
 import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../common/PhotoPeekScrollLock';
 import { LoadingImage } from '../../common/LoadingImage';
+import { InspectionPhotoViewer } from '../InspectionPhotosPanel';
+import type { SectionPhoto } from '../../../utils/inspection-photos';
 import { useSecureUrls } from '../../../hooks/useSecureUrls';
 import { useWarmedImageUris } from '../../../hooks/useWarmedImageUris';
 import { resolveS3Url } from '../../../utils/s3-utils';
@@ -104,7 +106,8 @@ export function DynamicManagePhotosView({
     products.length ? (products[0].id as string) : null,
   );
   const [activeTab, setActiveTab] = useState(0);
-  const [preview, setPreview] = useState<{ uri: string; label: string } | null>(null);
+  // The pageable viewer: every photo on screen, opened at the tapped one.
+  const [preview, setPreview] = useState<{ photos: SectionPhoto[]; index: number } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [deleting, setDeleting] = useState(false);
   // Annotate select-mode (web: the header pencil). selectedMap is keyed by card
@@ -397,6 +400,25 @@ export function DynamicManagePhotosView({
     });
   };
 
+  // Every photo visible in the current view, in the order the grid shows them, so the viewer
+  // can page through them with the thumbnail strip. Uses the warmed local file where there is
+  // one, so paging does not re-download the full-size photos the tiles already fetched.
+  const openPreview = (tapped: PhotoCard) => {
+    const all = [
+      ...sections.flatMap((s) => s.cards),
+      ...extraCards,
+      ...annotated,
+      ...orphanCards,
+    ].filter((c) => c.photo.secureUrl);
+    const photos: SectionPhoto[] = all.map((c) => ({
+      uri: warmedUris[c.photo.secureUrl as string] || (c.photo.secureUrl as string),
+      label: c.label,
+      timestamp: c.photo.timestampTaken,
+    }));
+    const index = all.findIndex((c) => c.key === tapped.key);
+    setPreview({ photos, index: index >= 0 ? index : 0 });
+  };
+
   const renderCard = (
     card: PhotoCard,
     { showLabel = true, canMove = false, selectable = false }: { showLabel?: boolean; canMove?: boolean; selectable?: boolean } = {},
@@ -442,7 +464,7 @@ export function DynamicManagePhotosView({
               if (selectableNow) toggleSelect(card);
               // The preview opens on the warmed file, so a tap does not
               // re-download the full-size photo the tile just fetched.
-              else if (!selectMode) setPreview({ uri: localUri || uri, label: card.label });
+              else if (!selectMode) openPreview(card);
             }}
             style={{ width: '100%', aspectRatio: 1.6, alignItems: 'center', justifyContent: 'center' }}
           >
@@ -760,32 +782,15 @@ export function DynamicManagePhotosView({
         }}
       />
 
-      {/* Full-screen preview */}
-      <Modal visible={!!preview} transparent animationType="fade" onRequestClose={() => setPreview(null)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' }}>
-          {/* Inset the close row below the status bar — the preview Modal is
-              transparent with no SafeAreaView, so a fixed padding overlapped the
-              status bar on notched devices (esp. reopening a just-annotated photo). */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 16, paddingTop: insets.top + 12 }}>
-            <Text numberOfLines={1} style={{ flex: 1, color: '#fff', fontWeight: '700', fontSize: 14 }}>
-              {preview?.label}
-            </Text>
-            <TouchableOpacity onPress={() => setPreview(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Icon name="close" size={26} color="#fff" />
-            </TouchableOpacity>
-          </View>
-          {!!preview && (
-            <LoadingImage
-              uri={preview.uri}
-              containerStyle={{ flex: 1 }}
-              style={{ flex: 1 }}
-              resizeMode="contain"
-              spinnerColor="#fff"
-              spinnerSize="large"
-            />
-          )}
-        </View>
-      </Modal>
+      {/* Full-screen preview - swipe / arrows / thumbnail strip through every photo on screen */}
+      {!!preview && (
+        <InspectionPhotoViewer
+          sectionName=""
+          photos={preview.photos}
+          initialIndex={preview.index}
+          onClose={() => setPreview(null)}
+        />
+      )}
 
       {/* Delete confirmation — web never deletes straight from the card */}
       <Modal visible={!!pendingDelete} transparent animationType="fade" onRequestClose={() => setPendingDelete(null)}>
