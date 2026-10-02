@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -148,6 +148,12 @@ export const AgreementSignatureModal = ({
   const currentSignatureRef = useRef('');
 
   const [activePad, setActivePad] = useState<'initials' | 'signature' | null>(null);
+  // The e-signature consent box on the capture pad. Reset every time a pad opens, so each
+  // mark is an explicit agreement rather than one tick carried over from the last.
+  const [agreedToESign, setAgreedToESign] = useState(false);
+  useEffect(() => {
+    setAgreedToESign(false);
+  }, [activePad]);
   const [currentPage, setCurrentPage] = useState(1);
   const [containerLayout, setContainerLayout] = useState({ width: 0, height: 0 });
   const [padWidth, setPadWidth] = useState(0);
@@ -295,7 +301,14 @@ export const AgreementSignatureModal = ({
     }
   };
 
+  // Save Mark needs BOTH: the consent ticked AND something actually drawn on the open pad.
+  const padHasInk = activePad === 'initials' ? liveInitials.length > 0 : liveSignature.length > 0;
+  const canSavePad = agreedToESign && padHasInk;
+
   const savePad = () => {
+    // Belt and braces: the button is disabled until both are true, but the guard lives here so
+    // no other caller can save an empty mark or one without the consent.
+    if (!canSavePad) return;
     if (activePad === 'initials') {
       setInitialsPaths([...liveInitials]);
     } else if (activePad === 'signature') {
@@ -747,6 +760,34 @@ export const AgreementSignatureModal = ({
                     </View>
                   </View>
 
+                  {/* Consent sits ABOVE the buttons, and Save Mark stays disabled until it is ticked. */}
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => setAgreedToESign((v) => !v)}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: agreedToESign }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingTop: 4 }}
+                  >
+                    <View
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        borderWidth: 2,
+                        borderColor: agreedToESign ? '#0f172a' : '#94a3b8',
+                        backgroundColor: agreedToESign ? '#0f172a' : 'white',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginRight: 12,
+                      }}
+                    >
+                      {agreedToESign && <Icon name="check" size={16} color="white" />}
+                    </View>
+                    <Text style={{ flex: 1, fontSize: 14, fontWeight: '600', color: '#0f172a' }}>
+                      I agree to electronic signature
+                    </Text>
+                  </TouchableOpacity>
+
                   <View style={{ padding: 24, flexDirection: 'row', gap: 12 }}>
                     <TouchableOpacity
                       onPress={() => clearPad(activePad)}
@@ -756,7 +797,8 @@ export const AgreementSignatureModal = ({
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={savePad}
-                      style={{ flex: 2, height: 56, backgroundColor: '#0f172a', borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}
+                      disabled={!canSavePad}
+                      style={{ flex: 2, height: 56, backgroundColor: '#0f172a', borderRadius: 16, alignItems: 'center', justifyContent: 'center', opacity: canSavePad ? 1 : 0.4 }}
                     >
                       <Text style={{ fontWeight: '900', color: 'white', textTransform: 'uppercase', fontSize: 10 }}>Save Mark</Text>
                     </TouchableOpacity>

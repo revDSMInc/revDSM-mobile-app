@@ -2679,3 +2679,15 @@ The portal publishes it on the field's `conditional` in `GET /calculator-form-sc
 - ⚠️ **The first sight of a tab only records its footage**, so opening or switching tabs never rewrites a quantity.
 - One popup per burst of typing (700 ms), reporting the net change: added (0 -> n), removed (n -> 0), updated (n -> m).
 - Control Box (`control_box`) is a separate portal rule: `valueMode: 'fixed'`, value 1, locked. Unrelated to this feature.
+
+### Reversal: the Investment Center package tab shows the box + ⓘ AND the scope list
+
+The "REPLACES the list" decision recorded above (`InvestmentPanel` "Includes the Following") is **superseded**. QA: *"when the i icon is displayed, the details are missing here - I need the details"*. On a full package the centred box + ⓘ now sits ABOVE the same `inclusions` list a normal tab shows (job-scope sentences, else product names), per the calculator being presented. The ⓘ card still carries the package breakdown. ⚠️ Do not restore the replace-the-list branch.
+
+## Agreement signature pad: e-signature consent gates Save Mark
+
+`widgets/modals/job-builder/AgreementSignatureModal.tsx` (the "Sign to Finalize Order" capture overlay, used by the create flow; the edit-flow note is in `deal-edit-addendums.md`). An "I agree to electronic signature" checkbox sits above Clear / Save Mark; Save Mark is disabled until ticked and `savePad` returns early without it.
+
+- ⚠️ The tick resets on every pad open (`useEffect` on `activePad`), so initials and signature are each an explicit agreement.
+- ⚠️ Nothing is sent to `/agreement/{leadId}/sign` - the consent only gates capture.
+- ⚠️ Save Mark needs the tick AND ink: `canSavePad = agreedToESign && (live strokes > 0)`. Ticking alone used to enable it on an empty pad, so a blank mark could be saved. A stroke counts once the finger lifts (the live path array only grows on release).
