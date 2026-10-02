@@ -1042,3 +1042,42 @@ fully in, not so far the rep loses their place.
 ⚠️ Needs a device check (portrait especially): the selected tool's neighbours visible beside it; the right
 arrow present on first open and the left one absent; both arrows stepping the strip and disappearing at
 their ends; no arrows at all in landscape when every tab fits; and the category row reading the same size.
+
+## Interactive Tools sheet / dock: every click is logged
+
+Ticket: *"when the bottom sheet appears or the user interacts with it, no log is generated for any click."*
+
+One helper, **`logTool(action, meta, surface)`** in `screens/Pitchbook/index.tsx`, sends
+`logEvent(<view|close|click>, { module_type: 'interactive_tool', meta: { action: 'interactive_tool_<action>', surface, activeToolTab, slideTab, currentSlide, currentSlideName, totalSlides, ... } })`.
+`surface` is `sheet` (inline drawer) or `dock` (fullscreen) so the two UIs are distinguishable.
+
+Event type: opening the sheet/dock (`sheet_opened`, `dock_opened`) is a **`view`**, closing it (`sheet_closed`, `dock_closed`) is a **`close`**, everything else a **`click`**. The module is `interactive_tool`, NOT `pitch_book`.
+
+Actions: `sheet_opened` / `sheet_closed` (with `source`: `interactive_tools_button`, `close_button`, `backdrop`,
+`back_button`), `dock_opened` / `dock_closed`, `tab_selected` (`fromTab`/`toTab`, both surfaces),
+`inspection_section_expanded|collapsed`, `inspection_photo_opened`, `inspection_viewer_photo_changed`
+(`source`: chevron / thumbnail / swipe), `inspection_viewer_closed`, and the Risk tab's `risk_report_*`
+(expanded/collapsed, viewed, downloaded, reset, year_changed, generate_started, history_opened).
+
+- `InspectionPhotosPanel` and `RiskContent` take an optional **`onAction`** and stay logging-agnostic; both
+  surfaces pass `logTool`. RooflineDeck also uses the panel but passes no `onAction`, so it is not logged.
+- `toggleTools` now takes a `source` string - do not pass it straight as an `onPress` (it would receive the event).
+
+- ⚠️ `logTool` stamps `activeToolTab` from the render-time state, which is the tab BEFORE a tab tap. `tab_selected` therefore overrides it with the tapped tab (`activeToolTab: id`); without that every tab log read one click behind (Risk logged as Inspection).
+
+## Risk report uses the backend `displayName` (REVUIUX-466)
+
+Backend now stores `displayName` ("Lead | Address | Date | Time") on risk `generatedReports`; `reportName` stays
+the type key (`risk_report`) and is STILL what every lookup matches on - never read the title from it for matching.
+Pure `utils/report-name.ts`: `reportDisplayName(report, fallback)` (displayName -> reportName -> fallback; older
+reports have no displayName) and `newestReport`. Used for the preview title / download name and the Generated History
+label in Pitchbook and RooflineDeck, and the Lead Center `risk-preview` / `risk-download` actions
+(`useLeadCenterModals`). `useLeadReports.handleDownloadRiskReport` (unused today) now takes an optional report.
+
+- ⚠️ When the url comes from a just-finished JOB, `findReport` returns the FIRST match (maybe an older report), so the
+  title is taken from the newest non-reset risk report instead.
+- ⚠️ The `|` is deliberately NOT allowed through the filename sanitizers (`download-utils.ts`, `PdfPreviewModal.tsx`):
+  `|` is invalid in Android MediaStore/FAT names, so it collapses to a space. Do not "preserve the pipes".
+- RooflineDeck's download branch is `Linking.openURL`, so only its preview title and history label change.
+- `PdfPreviewModal` header title is now 13pt, `numberOfLines={2}` with `adjustsFontSizeToFit` (min 0.8), because the `displayName` ("Lead | Address | Date | Time") was ellipsised at 16pt/1 line. The header is a fixed 60pt - two lines of 17 lineHeight fit; do not raise the font without raising the header.
+- The Interactive Tool risk logs (`risk_report_viewed|downloaded|reset|history_opened`) carry `displayName` (via `reportDisplayName`) beside `reportName`, so the portal shows the readable report name. Old reports fall back to `reportName`.

@@ -22,7 +22,10 @@ import { buildSectionLabelMap } from '../utils/item-format';
 import { resolveFundingSource } from '../../../utils/activity-log/funding-log';
 import { LeadService, resolveLeadCalculatorId } from '../../../services/api/leads';
 import { FundingService } from '../../../services/api/FundingService';
-import { canResumeJobBuild, resumeOutcomeFromRecord } from '../utils/funding';
+import { ConfirmDialog } from './ConfirmDialog';
+import { canResumeJobBuild } from '../utils/funding';
+import { Storage } from '../../../utils/storage';
+import { fundingOwnerKey, shouldAdoptSavedFunding } from '../../../utils/funding-owner';
 import { useAuth } from '../../../hooks/useAuth';
 import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
 import { useQueryClient } from '@tanstack/react-query';
@@ -85,7 +88,9 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
 
   const lead = route?.params?.lead;
   const [flowStep, setFlowStep] = useState<FlowStep>('calculator');
-  const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number; paymentMethod?: string; downPayment?: number }>({ visible: false });
+  // Raised when a sibling calculator already has a submitted funding (see `handleResultJob`).
+  const [fundingBlock, setFundingBlock] = useState<{ ownerTitle: string } | null>(null);
+  const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number; paymentMethod?: string; downPayment?: number; startOnFunding?: boolean }>({ visible: false });
   const [calculatorResultData, setCalculatorResultData] = useState<any>(null);
   const [currentCalculatorId, setCurrentCalculatorId] = useState<string | undefined>();
   // Rehash only (web `pendingJobBuild` / `jobBuilderData.startFresh`): whether the
@@ -231,8 +236,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
 
   const handleResultJob = useCallback(
     async (calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => {
-      const openSheet = () => {
-        setResultModal({ visible: true, calculatorId, resultType: result, price, paymentMethod, downPayment });
+      const openSheet = (startOnFunding?: boolean) => {
+        setResultModal({ visible: true, calculatorId, resultType: result, price, paymentMethod, downPayment, startOnFunding });
         setCurrentCalculatorId(calculatorId);
 
         /**
@@ -295,14 +300,20 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           user?._id || user?.id
         );
         const record = res.data?.data?.funding ?? null;
-        const resumed = canResumeJobBuild(record) ? resumeOutcomeFromRecord(record, pricing.plans) : null;
-        if (resumed) {
-          // ⚠️ `calculatorId` is passed EXPLICITLY. `setCurrentCalculatorId` has not
-          // been called on this path, and even if it had, the state would not be
-          // readable inside the callback until the next render — so relying on it
-          // would attach the outcome to whichever calculator was resulted last.
-          setCurrentCalculatorId(calculatorId);
-          resumeRef.current.confirm(resumed, calculatorId);
+        // ⚠️ A submitted funding no longer jumps to the Job Builder: the rep lands on the
+        // FUNDING screen (collected money shown locked, financing still swappable) and
+        // continues to the build from there. `resumeOutcomeFromRecord` is now unused.
+        const owner = Storage.getItem(fundingOwnerKey(resumeLeadId));
+        // ⚠️ Funding already SUBMITTED against a DIFFERENT calculator: this one cannot be
+        // resulted until that job is refunded. Stop here — no sheet, no Job Builder.
+        if (record?.status === 'submitted' && owner && String(owner) !== String(calculatorId)) {
+          const ownerTitle = tabs.find((t) => String(t.id) === String(owner))?.title || 'another calculator';
+          setFundingBlock({ ownerTitle });
+          return;
+        }
+        if (canResumeJobBuild(record) && shouldAdoptSavedFunding(owner, calculatorId)) {
+          resumeRef.current.checking = false;
+          openSheet(true);
           return;
         }
       } catch (err) {
@@ -312,7 +323,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
       }
       openSheet();
     },
-    [lead, user, pricing.plans]
+    [lead, user, pricing.plans, tabs]
   );
 
   /**
@@ -806,6 +817,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           initialPrice={resultModal.price}
           initialPaymentMethod={resultModal.paymentMethod}
           initialDownPayment={resultModal.downPayment}
+          startOnFunding={resultModal.startOnFunding}
           entries={tabs.find((t) => t.id === resultModal.calculatorId)?.entries || {}}
           verticals={verticals}
           sectionLabelMap={sectionLabelMap}
@@ -815,6 +827,17 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onConfirm={handleResultConfirm}
         />
         {buildFromExistingPrompt}
+        <ConfirmDialog
+          visible={!!fundingBlock}
+          tone="warn"
+          hideCancel
+          title="Funding already submitted"
+          message={`You already submitted a funding against the calculator "${fundingBlock?.ownerTitle || ''}".`}
+          note="To submit another calculator against this lead, first run the refund process against that submitted job."
+          confirmLabel="OK"
+          onConfirm={() => setFundingBlock(null)}
+          onCancel={() => setFundingBlock(null)}
+        />
       </>
     );
   }
@@ -990,6 +1013,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           initialPrice={resultModal.price}
           initialPaymentMethod={resultModal.paymentMethod}
           initialDownPayment={resultModal.downPayment}
+          startOnFunding={resultModal.startOnFunding}
           entries={tabs.find((t) => t.id === resultModal.calculatorId)?.entries || {}}
           verticals={verticals}
           sectionLabelMap={sectionLabelMap}
@@ -999,6 +1023,17 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onConfirm={handleResultConfirm}
         />
         {buildFromExistingPrompt}
+        <ConfirmDialog
+          visible={!!fundingBlock}
+          tone="warn"
+          hideCancel
+          title="Funding already submitted"
+          message={`You already submitted a funding against the calculator "${fundingBlock?.ownerTitle || ''}".`}
+          note="To submit another calculator against this lead, first run the refund process against that submitted job."
+          confirmLabel="OK"
+          onConfirm={() => setFundingBlock(null)}
+          onCancel={() => setFundingBlock(null)}
+        />
     </SafeAreaView>
   );
 }

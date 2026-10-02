@@ -2575,3 +2575,80 @@ returns `false`, so the tab cards, Grand Total card, Summary step and combinatio
 
 ⚠️ Display only — the function stays as the single choke point; do not re-add per-surface filters. An
 untouched empty combination is still pruned on save, so no blank rows persist.
+
+## Funding: financing method stays changeable; funding rows are scoped to the calculator
+
+Ticket: *once a down payment is paid its field should lock, but the rep must still be able to change the
+financing method — and financing picked on one calculator must not affect the lead's other calculators.*
+
+**1. Method lock is narrower than "settled".** `isMethodLockedRow` (`DynamicDealCenter/utils/funding.ts`) =
+`charged || collected || activated`. `PaymentRowsGroup` locks the method on that; a lender **decision alone**
+(approved / short / declined) no longer does, so Swap / the dropdown stay live on a financing row.
+`lockedMethodNote` gates on it too (new "financing has been activated" line).
+⚠️ `isSettledRow` is unchanged and still drives **amount read-only** and **Remove** — a decided row's amount is
+the lender's figure and the server 409s its deletion; only the METHOD opens up. A paid down payment stays fully locked.
+⚠️ `swapRowMethod` now clears `linkSent/activated/decision` on ANY method change of a decided row (previously only the
+chip/Swap path did), matching the server reset; `ResultJobModal.selectRowMethod` now uses it (it used to just set `method`,
+leaving a stale decision). If the backend refuses a PUT that changes a decided row's method, `useFunding`'s existing
+error surface shows it — the client cannot verify that rule.
+
+**2. Funding is lead-scoped, so ownership is remembered per device.** `GET/PUT /lead/v1/:leadId/funding` has no
+calculator id; every Result Lead sheet hydrated the SAME rows, so calculator A's financing showed on B.
+`utils/funding-owner.ts` (`shouldAdoptSavedFunding`, key `funding-owner:<leadId>` in MMKV) records the calculator on a
+successful Confirm; `ResultJobModal`'s open-hydrate skips another calculator's rows (and its stored price / bank-decline flag).
+⚠️ It still adopts when **no owner** is stored (older data / other device) or when the rows have **started**
+(`structureLocked`: link sent, decision, charged…) — those are real, a PUT cannot drop them, hiding them would strand the rep.
+⚠️ Device-local, not a backend guarantee: a proper fix needs a `calculatorId` on the funding record.
+Tests: `__tests__/utils/funding-owner.test.ts` (gitignored dir).
+
+### Follow-up: tapping Sale on an already-submitted funding opens the Funding screen, not the Job Builder
+
+Ticket: *after funding is submitted and the rep comes back, Sale jumped straight to the Job Builder inputs; it
+should land on the funding screen (a collected down payment stays locked).* `handleResultJob`
+(`DynamicDealCenterScreen.tsx`, CRLF file) used to run `canResumeJobBuild` → `resumeRef.confirm(resumeOutcomeFromRecord(...))`.
+It now calls `openSheet(true)` → `resultModal.startOnFunding` → `ResultJobModal` prop `startOnFunding`, which, once
+`funding.load()` has hydrated the saved rows, does `setScreen('funding')` (and sets `wentToFundingRef`).
+⚠️ `resumeOutcomeFromRecord` is now unused (kept, still tested) — the build is reached from the funding screen's own
+Submit/continue. ⚠️ Only applies when the saved rows were adopted (`shouldAdoptSavedFunding`, see above) and exist.
+Locking on that screen is the existing rule: charged/collected rows locked, financing method swappable.
+
+### Follow-up: funding of one calculator still appeared on its sibling — the "started" exception is gone
+
+Ticket: *two calculators on one lead; funding entered on one populated the other.* The first isolation pass still
+adopted another calculator's rows when they had **started** (`structureLocked`) or when **no owner** was stored, and the
+Sale-tap resume ignored ownership entirely. Now `shouldAdoptSavedFunding(owner, calculatorId)` (`utils/funding-owner.ts`) is
+strict: another owner's rows are **never** adopted, and `handleResultJob`'s submitted-funding shortcut (open on Funding)
+requires the same match. An un-owned record is **claimed** by the first calculator that adopts it, so it can't leak later.
+⚠️ The backend record is still ONE per lead: a save from calculator B replaces A's rows, and the API 409s if A's rows have a
+sent link / decision — that refusal is surfaced as-is. Full isolation needs a `calculatorId` on the funding record.
+⚠️ Records saved before this change and never opened since have no owner and go to whichever calculator opens first.
+
+### Follow-up: Result Lead is refused on a sibling calculator once one calculator's funding is submitted
+
+Ticket: *submit funding on one calculator → the other calculators must not proceed; tell the rep to refund the submitted job first.*
+`handleResultJob` (`DynamicDealCenterScreen.tsx`, CRLF) reads the funding record on a Sale tap; if `status === 'submitted'` and
+the stored owner (`funding-owner:<leadId>`) is a DIFFERENT calculator, it shows an Alert — *"You already submitted a funding against
+the calculator "<title>". … first run the refund process against that submitted job."* — and returns: no sheet, no Job Builder.
+The owner's title comes from `tabs` (now in the callback deps). ⚠️ Needs a recorded owner (set at Confirm / first adoption); a
+submitted record with NO owner can't be attributed and is not blocked. ⚠️ Sale only — a Demo is not gated. ⚠️ Device-local, like the
+rest of the ownership scheme; a lookup failure falls through to the sheet (never blocks resulting on an error).
+
+### Follow-up: the "Funding already submitted" notice uses the app's own dialog
+
+The native `Alert.alert` read as OS chrome. It is now `ConfirmDialog` (`tone="warn"`, new **`hideCancel`** prop for an
+information-only card with one OK button) rendered beside both `ResultJobModal`s in `DynamicDealCenterScreen`, driven by
+`fundingBlock` state. ⚠️ Both render branches (edit-mode early return and the main flow) carry the dialog — keep them in step.
+
+## Result Lead payment rows: one card per payment, amount and method in separate boxes
+
+Ticket: *two separate boxes — one for the amount, one for the payment method; several payments must not share a line; Down Payment,
+Balance and Upfront.* On the **panel** layout of `PaymentRowsGroup` (`DynamicDealCenter/components/funding/`) each payment is now its own
+bordered card — `PAYMENT n` header (with the ✕ remove) → **Amount** box → **Payment method** box, both full width. They used to share one
+line, which truncated both (`$2,8…`, `Check (Bank F…`). The three groups (Down Payment / Balance / Upfront) all render through it, so one
+change covers them. ⚠️ The **plain** layout (My Deals mockup) is deliberately untouched. ⚠️ `amountCell` / `methodCell`, the lock rules, the
+locked-note and archived block are the same objects as before — only the container changed, so don't fork the logic per layout.
+
+### Follow-up: the "PAYMENT n" title shows only with more than one payment in the group
+
+`PaymentRowsGroup` panel layout draws the card header title only when `rows.length > 1`. A lone removable row keeps just the ✕
+(right-aligned, no title); a lone locked row has no header at all.

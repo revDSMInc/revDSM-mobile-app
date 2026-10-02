@@ -265,11 +265,35 @@ export const logInvestmentPaymentMethodSelected = async (
   });
 };
 
-/** A program's down payment was set / changed during the presentation. */
+/**
+ * A program's down payment was set / changed during the presentation. Carries the payment
+ * plan/method that is ALREADY selected on that card, with the SAME field names as
+ * `investment_payment_method_selected` (financing -> paymentPlan/planLabel/monthlyPayment,
+ * basic CK/CC/AMEX -> paymentMethod/methodLabel), so the portal can read what the rep had
+ * chosen when the down payment moved. `monthly` is the $/mo AFTER this down payment.
+ */
 export const logInvestmentDownPaymentChanged = async (
-  o: Base & { program: ProgramKey; amount: number },
+  o: Base & {
+    program: ProgramKey;
+    amount: number;
+    selection?: { key: string; label?: string; isFinancing: boolean; monthly?: number };
+  },
 ) => {
   if (!o.userId) return;
+  const sel = o.selection;
+  const selectionFields =
+    sel && sel.key
+      ? sel.isFinancing
+        ? {
+            paymentPlan: sel.key,
+            ...(sel.label ? { planLabel: sel.label } : {}),
+            ...(sel.monthly ? { monthlyPayment: sel.monthly } : {}),
+          }
+        : {
+            paymentMethod: sel.key,
+            ...(sel.label ? { methodLabel: sel.label } : {}),
+          }
+      : {};
   await logEvent('change', {
     user_id: o.userId,
     created_by: o.userId,
@@ -279,6 +303,8 @@ export const logInvestmentDownPaymentChanged = async (
       program: o.program,
       programLabel: programLabel(o.program),
       downPayment: o.amount,
+      ...selectionFields,
+      ...(sel ? { isFinancing: sel.isFinancing } : {}),
     }),
   });
 };

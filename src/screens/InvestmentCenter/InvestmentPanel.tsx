@@ -541,7 +541,23 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     if (isLeadSold || !logUserId) return;
     if (lastLoggedDownRef.current[program] === amount) return;
     lastLoggedDownRef.current[program] = amount;
-    logInvestmentDownPaymentChanged({ ...logBase, program, amount });
+    // The plan/method ALREADY selected on this card travels with the log. In-Home's is the
+    // shared choice (a financing plan or a CK/CC/AMEX badge) and its $/mo is recomputed
+    // for the NEW down payment (this runs before the state has re-rendered); 1-Year always
+    // shows its financing plan's monthly.
+    const key = program === 'inhome' ? paymentChoice : oneYearKey;
+    const fin = !!key && isFinancing(plans, key);
+    const monthly = !fin
+      ? undefined
+      : program === 'inhome'
+        ? calcMonthly(plans, Math.max(0, endPrice - (endPrice > 0 ? Math.min(amount, endPrice) : amount)), key)
+        : oneYearMonthlyShown;
+    logInvestmentDownPaymentChanged({
+      ...logBase,
+      program,
+      amount,
+      selection: key ? { key, label: methodLabelOf(key), isFinancing: fin, monthly } : undefined,
+    });
   };
 
   // Reusable editable down-payment control — In-Home and 1-Year each have their own

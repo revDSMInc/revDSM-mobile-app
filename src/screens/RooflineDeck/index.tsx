@@ -42,6 +42,7 @@ import { useSecureUrls } from '../../hooks/useSecureUrls';
 import Feather from 'react-native-vector-icons/Feather';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
+import { reportDisplayName } from '../../utils/report-name';
 
 
 const { width } = Dimensions.get('window');
@@ -313,7 +314,7 @@ export default function RooflineDeckScreen() {
           !isDownload &&
           (url.toLowerCase().includes('.pdf') || report?.reportName?.toLowerCase().includes('.pdf'))
         ) {
-          setPdfPreviewData({ url, title: report.reportName || 'Report Preview' });
+          setPdfPreviewData({ url, title: reportDisplayName(report, 'Report Preview') });
           setShowPdfModal(true);
         } else {
           Linking.openURL(url);
@@ -1415,7 +1416,7 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
               </View>
               <View className="flex-1">
                 <Text className="text-text-primary font-bold text-sm" numberOfLines={1}>
-                  {report.reportName}
+                  {reportDisplayName(report, 'Risk Report')}
                 </Text>
                 <Text className="text-text-secondary text-[10px]">
                   {new Date(report.createdAt).toLocaleDateString()}

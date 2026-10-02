@@ -471,3 +471,9 @@ drift into three slightly-different colours across separate tickets.
 
 No behaviour change for the four pre-existing callers (heatmap / my jobs / referral / favorite) — they
 pass no colour props and get the defaults, which are the old literals verbatim.
+
+## `CustomInput`: `fontSize` and `flushLabel` props
+
+`widgets/common/CustomInput.tsx` defaults to 12pt text and a label indented 4pt (`ml-1`). Both new props are opt-in, so
+existing screens are unchanged: `fontSize` is applied in render AND in the `setNativeProps` effect (which otherwise reset
+size to 12), and `flushLabel` drops the indent. Used by the Add New Lead form.

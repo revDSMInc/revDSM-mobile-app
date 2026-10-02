@@ -6,6 +6,7 @@ import { FlashMessage } from '../config/message';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import FileViewer from 'react-native-file-viewer';
 import { downloadPdfToDevice } from '../utils/download-utils';
+import { reportDisplayName } from '../utils/report-name';
 import { ENV } from '../config/env';
 import { useAuth } from './useAuth';
 import { logEvent } from '../services/api/LoggerService';
@@ -335,9 +336,12 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     }
   };
 
-  const handleDownloadRiskReport = async (url: string) => {
+  const handleDownloadRiskReport = async (url: string, report?: any) => {
     try {
-      await downloadPdfToDevice(url, `RiskReport_${lead?.leadId || 'lead'}`);
+      await downloadPdfToDevice(
+        url,
+        report ? reportDisplayName(report, 'Risk Report') : `RiskReport_${lead?.leadId || 'lead'}`
+      );
     } catch (err) {
       // Error handled in utility
     }

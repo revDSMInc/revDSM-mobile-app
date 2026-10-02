@@ -912,3 +912,20 @@ No code, colour constant, or test change — `PIN_CATEGORY_META.installed.color`
 ⚠️ Needs a device check: an Installed pin and an Uploaded pin, side by side, are visually indistinguishable
 on the map (which is now correct per this ticket) — confirm no stray thin-ring/checkmark artwork survives
 on any cached/bundled asset.
+
+## Add New Lead form: one type scale, and the address no longer cuts off
+
+`widgets/modals/LeadCreate/index.tsx`. The form mixed 12pt regular inputs (`CustomInput`) with a 14pt BOLD address
+box, a 4pt-indented label (`CustomInput` hardcodes `ml-1`) beside flush ones, and doubled gaps (`gap-5` on top of each
+input's own 16pt `marginBottom`).
+
+- Every input is 14pt via a new `INPUT_FONT_SIZE`; labels are `text-sm font-semibold` and flush (`flushLabel`).
+- The address field is now `multiline` and GROWS (`minHeight` 50, same box style as the other fields), because the
+  single-line 56pt box clipped the tail of a full Google address ("...FL 33880, USA"). `scrollEnabled={false}` +
+  `submitBehavior="blurAndSubmit"` so Return still dismisses instead of inserting a newline.
+- Spacing is now one 16pt rhythm: parent `gap-5` removed; the Lowe's, address and classification blocks carry `mb-4`.
+
+- ⚠️ `CustomInput` re-applies its style through `setNativeProps` in an effect, which replaced any `style` fontSize with
+  its own 12 after mount. It therefore got dedicated `fontSize` / `flushLabel` props (see `app-wide.md`); do not size
+  it through `style`.
+- Page rhythm: the scroll content carries the 24pt gutter (`contentContainerStyle`, matching the header's `p-6`; it was `px-6 py-6` on the ScrollView's own style, which shrinks the frame), the close button has `marginRight: -8` to cancel its own `p-2` so the x sits on the same right edge as the fields, every block is separated by 16pt, and the LF-lead box is `mb-4` (was `mb-6`) with the submit button's extra `marginTop: 12` removed.

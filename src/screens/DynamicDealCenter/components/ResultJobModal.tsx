@@ -40,6 +40,8 @@ import { FS, FUND, PS } from './funding/funding-theme';
 import { ModalFlashHost } from '../../../widgets/common/ModalFlashHost';
 import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
 import { FundingView } from './funding/FundingView';
+import { Storage } from '../../../utils/storage';
+import { fundingOwnerKey, shouldAdoptSavedFunding } from '../../../utils/funding-owner';
 import { SendLinkModal } from './funding/SendLinkModal';
 import { SegmentedChoice } from './funding/SegmentedChoice';
 import { CoverageBar } from './funding/CoverageBar';
@@ -70,6 +72,7 @@ import {
   paymentAllocations,
   structureHint,
   structureLocked,
+  swapRowMethod,
   toUpsertRows,
   type DecisionBanner,
   type PaymentKind,
@@ -132,6 +135,8 @@ interface ResultJobModalProps {
    * from, which is otherwise unrecoverable once the sheet closes.
    */
   calculatorId?: string;
+  /** Open straight on the Funding screen once the saved record loads (a resumed, already-submitted funding). */
+  startOnFunding?: boolean;
   /**
    * WHICH FLOW this sheet was opened through — `rehash` | `sale` | `my_deals`.
    *
@@ -292,6 +297,7 @@ export function ResultJobModal({
   lead,
   calculatorTitle,
   calculatorId,
+  startOnFunding,
   fundingSource,
   resultType: initialResultType,
   initialPrice,
@@ -451,6 +457,13 @@ export function ResultJobModal({
 
     funding.load().then((record) => {
       if (cancelled || !record) return;
+      // ⚠️ The record is lead-wide; another calculator's unstarted rows are not ours.
+      const owner = leadLogId ? Storage.getItem(fundingOwnerKey(leadLogId)) : null;
+      if (!shouldAdoptSavedFunding(owner, calculatorId)) return;
+      // First sight of an un-owned record claims it, so a sibling calculator never inherits it.
+      if (!owner && leadLogId && calculatorId && (record.payments || []).length) {
+        Storage.setItem(fundingOwnerKey(leadLogId), String(calculatorId));
+      }
       const saved = hydrateRowsFromRecord(record, pricing.plans);
       // The structure is not a stored field — it is read back off the saved rows
       // (see `inferPayMode`), and BOTH reads come from that one function so the
@@ -463,6 +476,10 @@ export function ResultJobModal({
       // rows were priced against, and a mismatch would misreport the remainder.
       if (record.contractPrice > 0) setContractPrice(String(record.contractPrice));
       if (record.result === 'bankDecline') setResultChoice('bank_decline');
+      if (startOnFunding && saved.length) {
+        wentToFundingRef.current = true;
+        setScreen('funding');
+      }
     });
 
     return () => {
@@ -720,9 +737,11 @@ export function ResultJobModal({
           amount: effectiveRowAmount(row, activeRows, contractNum),
         });
       }
-      updateRow(pid, { method: key });
+      // `swapRowMethod` also clears the lender state a decided financing row carried and
+      // shelves the plan it replaced — the same path the deal-edit wizard takes.
+      setRows((prev) => swapRowMethod(prev, pid, key, pricing.plans));
     },
-    [rows, activeRows, contractNum, pricing.plans, logCtx, updateRow]
+    [rows, activeRows, contractNum, pricing.plans, logCtx]
   );
 
   /**
@@ -878,6 +897,7 @@ export function ResultJobModal({
       return;
     }
     setSaveError(null);
+    if (leadLogId && calculatorId) Storage.setItem(fundingOwnerKey(leadLogId), String(calculatorId));
     logFundingOpened({
       ...logCtx,
       contractPrice: Math.round(contractNum),

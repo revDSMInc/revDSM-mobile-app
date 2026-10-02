@@ -8,6 +8,7 @@ import {
   driftNote,
   effectiveRowAmount,
   isRemovableRow,
+  isMethodLockedRow,
   isSettledRow,
   lockedMethodNote,
   lenderState,
@@ -222,17 +223,21 @@ export function PaymentRowsGroup({
     </View>
   );
 
-  const body = rows.map((row) => {
+  const body = rows.map((row, rowIndex) => {
     // ⚠️ SETTLED, not merely "a lender answered". `decision` exists only on financing
     // rows, so this used to leave a CHARGED down payment card — or a collected check —
     // fully editable: Remove and Swap were both offered on money already with the
     // processor, and a swap resets the row server-side. See `isSettledRow`.
-    const locked = isSettledRow(row);
+    // ⚠️ The METHOD lock is narrower than "settled": a lender decision alone leaves the
+    // financing plan swappable (see `isMethodLockedRow`). The AMOUNT of a decided row
+    // stays read-only — it is the lender's figure.
+    const locked = isMethodLockedRow(row);
+    const settled = isSettledRow(row);
     const needs = row.pid === needsRowId;
     const amount = effectiveRowAmount(row, allRows, price);
     const label = plans[row.method]?.label || row.methodLabel;
     const isOpen = openRowId === row.pid;
-    const readOnlyAmount = locked || !!row.auto;
+    const readOnlyAmount = settled || !!row.auto;
 
     // The auto row can only be dismissed once it has nothing left to hold; removing it
     // while money is unassigned would hide the shortfall. `isRemovableRow` adds the
@@ -343,7 +348,7 @@ export function PaymentRowsGroup({
         <Text style={{ flex: 1, fontSize: FS.BODY, fontFamily: label ? (plain ? PS.semibold : PS.bold) : PS.semibold, color: label ? '#374151' : FUND.MUTED }} numberOfLines={1}>
           {label || 'Select Payment Method'}
         </Text>
-        {locked && row.decision && !plain ? (
+        {row.decision && !plain ? (
           <StatusPill decision={row.decision} />
         ) : locked ? (
           /**
@@ -470,23 +475,38 @@ export function PaymentRowsGroup({
       );
     }
 
+    // ⚠️ PANEL layout: every payment is its OWN card with the amount and the method in
+    // SEPARATE full-width boxes. They used to share one line, which truncated both
+    // ("$2,8…", "Check (Bank F…") and made several payments read as one.
+    const fieldLabel = { fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT, marginBottom: 5 } as const;
     return (
-      <View key={row.pid} style={{ marginBottom: 8 }}>
-        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-          <View style={{ flexBasis: '30%', flexGrow: 0, flexShrink: 0, minHeight: 44, flexDirection: 'row', alignItems: 'center', borderWidth: 1.6, borderColor: fieldBorder, borderRadius: 12, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: fieldBg }}>
-            <View style={{ flex: 1 }}>{amountCell}</View>
-          </View>
-
-          {methodCell}
-
-          <View style={{ width: 22, alignItems: 'center', justifyContent: 'center' }}>
-            {removable && (
-              <TouchableOpacity onPress={() => onRemove(row.pid)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
-                <Ionicons name="close" size={17} color={FUND.MUTED} />
-              </TouchableOpacity>
-            )}
-          </View>
+      <View
+        key={row.pid}
+        style={{ marginBottom: 10, borderWidth: 1.4, borderColor: needs ? FUND.AMBER : FUND.BORDER, borderRadius: 13, padding: 10, backgroundColor: needs ? FUND.AMBER_BG : '#FCFCFD' }}
+      >
+        {/* The "PAYMENT n" title only appears once the group holds MORE THAN ONE line. */}
+        {(rows.length > 1 || removable) && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: rows.length > 1 ? 'space-between' : 'flex-end', marginBottom: 8 }}>
+          {rows.length > 1 && (
+            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 0.4, textTransform: 'uppercase', color: FUND.MUTED }}>
+              {`Payment ${rowIndex + 1}`}
+            </Text>
+          )}
+          {removable && (
+            <TouchableOpacity onPress={() => onRemove(row.pid)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close" size={18} color={FUND.MUTED} />
+            </TouchableOpacity>
+          )}
         </View>
+        )}
+
+        <Text style={fieldLabel}>Amount</Text>
+        <View style={{ minHeight: 46, flexDirection: 'row', alignItems: 'center', borderWidth: 1.6, borderColor: fieldBorder, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, backgroundColor: fieldBg, marginBottom: 10 }}>
+          <View style={{ flex: 1 }}>{amountCell}</View>
+        </View>
+
+        <Text style={fieldLabel}>Payment method</Text>
+        <View style={{ alignSelf: 'stretch' }}>{methodCell}</View>
 
         {/* Options render IN FLOW below the row, matching the sheet's other
             selects — an absolutely-positioned menu inside a ScrollView is

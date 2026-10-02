@@ -62,6 +62,7 @@ import { useTabStripAutoScroll } from '../../hooks/useTabStripAutoScroll';
 import Feather from 'react-native-vector-icons/Feather';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
+import { reportDisplayName } from '../../utils/report-name';
 
 const { width } = Dimensions.get('window');
 
@@ -358,7 +359,46 @@ export default function PitchbookScreen() {
   // Animation for tools drawer
   const toolsAnim = useRef(new Animated.Value(0)).current;
 
-  const toggleTools = () => {
+  /**
+   * One logger for the Interactive Tools sheet / dock panel. Logged under its own
+   * `interactive_tool` module (not `pitch_book`) with `interactive_tool_*` actions.
+   * Opening the sheet/dock is a `view`, closing it a `close`, everything else a `click`.
+   * `surface` says which UI the event came from.
+   */
+  const logTool = (
+    action: string,
+    meta: Record<string, unknown> = {},
+    surface: 'sheet' | 'dock' = isFullscreen ? 'dock' : 'sheet'
+  ) => {
+    const userId = user?._id || user?.id;
+    if (!userId) return;
+    const eventType =
+      action === 'sheet_opened' || action === 'dock_opened'
+        ? 'view'
+        : action === 'sheet_closed' || action === 'dock_closed'
+          ? 'close'
+          : 'click';
+    logEvent(eventType, {
+      user_id: userId,
+      module_type: 'interactive_tool',
+      created_by: userId,
+      meta: {
+        leadId,
+        bookId: bookId || null,
+        action: `interactive_tool_${action}`,
+        surface,
+        activeToolTab,
+        slideTab: activeCategory,
+        currentSlide: currentGlobalPageNumber,
+        currentSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+        totalSlides: totalGlobalPages,
+        ...meta,
+      },
+    });
+  };
+
+  const toggleTools = (source: string) => {
+    logTool(showTools ? 'sheet_closed' : 'sheet_opened', { source }, 'sheet');
     const toValue = showTools ? 0 : 1;
     Animated.spring(toolsAnim, {
       toValue,
@@ -449,20 +489,29 @@ export default function PitchbookScreen() {
     [keepChromeAlive, activeCategory, currentSlideIndex]
   );
 
+  const selectSheetTab = (id: string) => {
+    if (id !== activeToolTab) logTool('tab_selected', { fromTab: activeToolTab, toTab: id, activeToolTab: id }, 'sheet');
+    setActiveToolTab(id);
+  };
+
   const handleDockMode = useCallback(
     (mode: DockMode) => {
       keepChromeAlive();
+      logTool(mode === 'tools' ? 'dock_opened' : 'dock_closed', { toMode: mode, fromMode: dockMode }, 'dock');
       setDockMode(mode);
     },
-    [keepChromeAlive]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [keepChromeAlive, dockMode, activeToolTab, activeCategory, currentSlideIndex]
   );
 
   const handleDockTool = useCallback(
     (id: string) => {
       keepChromeAlive();
+      logTool('tab_selected', { fromTab: activeToolTab, toTab: id, activeToolTab: id }, 'dock');
       setActiveToolTab(id);
     },
-    [keepChromeAlive]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [keepChromeAlive, activeToolTab, activeCategory, currentSlideIndex]
   );
 
   /*
@@ -717,10 +766,10 @@ export default function PitchbookScreen() {
           !isDownload &&
           (url.toLowerCase().includes('.pdf') || report?.reportName?.toLowerCase().includes('.pdf'))
         ) {
-          setPdfPreviewData({ url, title: report.reportName || 'Report Preview' });
+          setPdfPreviewData({ url, title: reportDisplayName(report, 'Report Preview') });
           setShowPdfModal(true);
         } else {
-          downloadPdfToDevice(url, report.reportName || 'Risk Report');
+          downloadPdfToDevice(url, reportDisplayName(report, 'Risk Report'));
         }
       }
     } catch (error) {
@@ -907,7 +956,7 @@ export default function PitchbookScreen() {
           <View>
             <Text style={dockStyles.heading}>Property Inspection Photos</Text>
             {hasInspectionPhotos ? (
-              <InspectionPhotosPanel photos={activePhotos} secureImages={secureImages} />
+              <InspectionPhotosPanel photos={activePhotos} secureImages={secureImages} onAction={logTool} />
             ) : (
               <DockEmptyState
                 icon="image-off"
@@ -924,6 +973,7 @@ export default function PitchbookScreen() {
             refetch={refetch}
             reports={riskReports}
             onDownload={handleDownloadReport}
+            onAction={logTool}
             dark
           />
         )}
@@ -966,7 +1016,7 @@ export default function PitchbookScreen() {
         <TouchableOpacity
           style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' }}
           activeOpacity={1}
-          onPress={toggleTools}
+          onPress={() => toggleTools('backdrop')}
         />
         <Animated.View
           className="w-full bg-background rounded-t-[32px] shadow-2xl"
@@ -997,7 +1047,7 @@ export default function PitchbookScreen() {
           <View className="px-6 pt-4 pb-4 border-b border-border">
             <View className="flex-row items-center justify-between">
               <Text className="text-text-primary text-lg font-bold">Details</Text>
-              <TouchableOpacity onPress={toggleTools}>
+              <TouchableOpacity onPress={() => toggleTools('close_button')}>
                 <IonIcon name="close" size={24} color="#919EAB" />
               </TouchableOpacity>
             </View>
@@ -1007,25 +1057,25 @@ export default function PitchbookScreen() {
                 label="Inspection"
                 icon="camera"
                 active={activeToolTab === 'inspection'}
-                onPress={() => setActiveToolTab('inspection')}
+                onPress={() => selectSheetTab('inspection')}
               />
               <ToolTab
                 label="Risk"
                 icon="alert"
                 active={activeToolTab === 'risk'}
-                onPress={() => setActiveToolTab('risk')}
+                onPress={() => selectSheetTab('risk')}
               />
               <ToolTab
                 label="Videos"
                 icon="video"
                 active={activeToolTab === 'videos'}
-                onPress={() => setActiveToolTab('videos')}
+                onPress={() => selectSheetTab('videos')}
               />
               <ToolTab
                 label="Notes"
                 icon="file-document-outline"
                 active={activeToolTab === 'notes'}
-                onPress={() => setActiveToolTab('notes')}
+                onPress={() => selectSheetTab('notes')}
               />
             </View>
           </View>
@@ -1043,6 +1093,7 @@ export default function PitchbookScreen() {
                   <InspectionPhotosPanel
                     photos={activePhotos}
                     secureImages={secureImages}
+                    onAction={logTool}
                   />
                 </View>
               )}
@@ -1053,6 +1104,7 @@ export default function PitchbookScreen() {
                   refetch={refetch}
                   reports={riskReports}
                   onDownload={handleDownloadReport}
+                  onAction={logTool}
                 />
               )}
 
@@ -1097,7 +1149,7 @@ export default function PitchbookScreen() {
         transparent
         statusBarTranslucent
         animationType="none"
-        onRequestClose={toggleTools}
+        onRequestClose={() => toggleTools('back_button')}
         supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}
       >
         {drawer}
@@ -1430,7 +1482,7 @@ export default function PitchbookScreen() {
         {viewMode === 'rep' && (
           <View className="pt-4">
             <TouchableOpacity
-              onPress={toggleTools}
+              onPress={() => toggleTools('interactive_tools_button')}
               activeOpacity={0.9}
               className="flex-row items-center justify-center py-4"
               style={{
@@ -1709,7 +1761,7 @@ function ToolTab({ label, icon, active, onPress }: any) {
  * painted `colors.background`, i.e. WHITE in light theme, so a white slab sat in the
  * middle of the dark presentation panel in front of a customer.
  */
-const RiskContent = ({ lead, refetch, reports, onDownload, dark = false }: any) => {
+const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = false }: any) => {
   const { colors, isDark } = useTheme();
   const { riskJob, handleStartRiskReport, handleResetRiskReport } = useLeadReports(lead, refetch);
   const [selectedYear, setSelectedYear] = useState(3);
@@ -1753,7 +1805,12 @@ const RiskContent = ({ lead, refetch, reports, onDownload, dark = false }: any) 
         >
           Report
         </Text>
-        <TouchableOpacity onPress={() => setReportExpanded(!reportExpanded)}>
+        <TouchableOpacity
+          onPress={() => {
+            onAction?.(reportExpanded ? 'risk_report_collapsed' : 'risk_report_expanded');
+            setReportExpanded(!reportExpanded);
+          }}
+        >
           <IonIcon
             name={reportExpanded ? 'chevron-up' : 'chevron-down'}
             size={22}
@@ -1786,19 +1843,35 @@ const RiskContent = ({ lead, refetch, reports, onDownload, dark = false }: any) 
               {riskReport && !resetView && !riskJob ? (
                 <View className="flex-row items-center gap-2">
                   <TouchableOpacity
-                    onPress={() => onDownload(riskReport, 0)}
+                    onPress={() => {
+                      onAction?.('risk_report_viewed', {
+                        reportName: riskReport.reportName,
+                        displayName: reportDisplayName(riskReport, 'Risk Report'),
+                      });
+                      onDownload(riskReport, 0);
+                    }}
                     className="w-8 h-8 rounded-full items-center justify-center bg-violet-500"
                   >
                     <Icon name="eye" size={16} color={'#ffffff'} />
                   </TouchableOpacity>
                   <TouchableOpacity
-                    onPress={() => onDownload(riskReport, 0, true)}
+                    onPress={() => {
+                      onAction?.('risk_report_downloaded', {
+                        reportName: riskReport.reportName,
+                        displayName: reportDisplayName(riskReport, 'Risk Report'),
+                      });
+                      onDownload(riskReport, 0, true);
+                    }}
                     className="w-8 h-8 rounded-full items-center justify-center bg-emerald-500"
                   >
                     <Icon name="download" size={16} color={'#ffffff'} />
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => {
+                      onAction?.('risk_report_reset', {
+                        reportName: riskReport.reportName,
+                        displayName: reportDisplayName(riskReport, 'Risk Report'),
+                      });
                       setResetView(true);
                       handleResetRiskReport(riskReport._id);
                     }}
@@ -1815,10 +1888,14 @@ const RiskContent = ({ lead, refetch, reports, onDownload, dark = false }: any) 
                       min={1}
                       max={5}
                       dark={dark}
-                      onChange={(val: number) => setSelectedYear(val)}
+                      onChange={(val: number) => {
+                        onAction?.('risk_report_year_changed', { fromYear: selectedYear, toYear: val });
+                        setSelectedYear(val);
+                      }}
                     />
                     <TouchableOpacity
                       onPress={() => {
+                        onAction?.('risk_report_generate_started', { years: selectedYear });
                         handleStartRiskReport(selectedYear);
                         setResetView(false);
                       }}
@@ -1865,7 +1942,14 @@ const RiskContent = ({ lead, refetch, reports, onDownload, dark = false }: any) 
           {reports.map((report: any, idx: number) => (
             <TouchableOpacity
               key={idx}
-              onPress={() => onDownload(report, idx)}
+              onPress={() => {
+                onAction?.('risk_report_history_opened', {
+                  reportName: report.reportName,
+                  displayName: reportDisplayName(report, 'Risk Report'),
+                  historyIndex: idx,
+                });
+                onDownload(report, idx);
+              }}
               className="flex-row items-center p-4 rounded-xl border shadow-sm"
               style={{
                 backgroundColor: dark ? t.surface : '#FFFFFF',
@@ -1880,7 +1964,7 @@ const RiskContent = ({ lead, refetch, reports, onDownload, dark = false }: any) 
               </View>
               <View className="flex-1">
                 <Text className="font-bold text-sm" numberOfLines={1} style={{ color: t.body }}>
-                  {report.reportName}
+                  {reportDisplayName(report, 'Risk Report')}
                 </Text>
                 <Text className="text-[10px]" style={{ color: t.hint }}>
                   {new Date(report.createdAt).toLocaleDateString()}

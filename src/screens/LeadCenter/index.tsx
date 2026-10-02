@@ -1423,10 +1423,18 @@ export default function LeadCenterPage() {
           }
         >
           <View className="px-4">
-            <View className="flex-row gap-4 mb-4">
-              <View className="flex-1 flex-col gap-4">
+            {/*
+              ⚠️ ROW-based, not two independent columns. It was two `flex-col` stacks, so a long
+              email that wrapped to two lines made the right column taller and pushed its
+              clock row down while the left column's date stayed put - the pairs drifted out
+              of line. Each row is now a unit: cells are top-aligned (`items-start`) and the
+              next row starts below the TALLEST cell, so the date/time row stays level
+              whether the email is one line or three. Do not go back to per-column stacks.
+            */}
+            <View className="mb-4" style={{ gap: 16 }}>
+              <View className="flex-row items-start" style={{ gap: 16 }}>
                 <Text
-                  className="text-base font-semibold"
+                  className="flex-1 text-base font-semibold"
                   style={[{ color: '#72BD00' }, androidTextStyle(14)]}
                 >
                   Lead ID:
@@ -1434,73 +1442,8 @@ export default function LeadCenterPage() {
                     {lead.leadId}
                   </Text>
                 </Text>
-                <View className="flex-row items-center">
-                  <FontAwesome
-                    name="user"
-                    size={14}
-                    color="#72BD00"
-                  />
-                  <Text
-                    className="ml-1 shrink text-base font-semibold text-text-primary"
-                    style={androidTextStyle(16)}
-                  >
-                    {lead.customerDetails?.firstName} {lead.customerDetails?.lastName}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setShowEditCustomerModal(true);
-                      logCustomerDetailsEvent('view', 'edit customer details opened');
-                    }}
-                    style={{ marginLeft: 6, paddingHorizontal: 4 }}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  >
-                    <Feather
-                      name="edit-2"
-                      size={12}
-                      color="#72BD00"
-                    />
-                  </TouchableOpacity>
-                </View>
-                <TouchableOpacity
-                  className="flex-row items-center"
-                  onPress={() => setShowPhoneOptions(true)}
-                >
-                  <FontAwesome
-                    name="phone"
-                    size={14}
-                    color="#72BD00"
-                  />
-                  <Text
-                    className="ml-1 text-base font-semibold"
-                    style={[{ color: '#72BD00' }, androidTextStyle(14)]}
-                  >
-                    {/* The record stores the number RAW or E.164 (`18757575799`), which is
-                        what the header used to print. `EditCustomerModal` seeds its own
-                        field through this same formatter, so the two surfaces now read the
-                        same. DISPLAY ONLY — `handleCall` / `handleTextMessage` /
-                        `handleCopyPhone` still read `customerDetails.phone` and dial through
-                        `getRawPhoneNumber`, so the tel:/sms: links are unchanged. */}
-                    {formatUSPhoneNumber(lead.customerDetails?.phone || '')}
-                  </Text>
-                </TouchableOpacity>
-                <View className="flex-row items-center">
-                  <Ionicon
-                    name="calendar-clear"
-                    size={14}
-                    color="#72BD00"
-                  />
-                  <Text
-                    className="ml-1 text-base font-semibold text-text-primary"
-                    style={androidTextStyle(16)}
-                  >
-                    {formatDate(lead?.leadDatetime)}
-                  </Text>
-                </View>
-              </View>
-
-              <View className="flex-1 flex-col gap-4">
                 <Text
-                  className="text-base font-semibold"
+                  className="flex-1 text-base font-semibold"
                   style={[{ color: '#72BD00' }, androidTextStyle(14)]}
                 >
                   Lead Code:{' '}
@@ -1508,33 +1451,76 @@ export default function LeadCenterPage() {
                     {lead.leadCode || 'N/A'}
                   </Text>
                 </Text>
-                <View>
-                  <Text className="ml-1 text-base font-semibold text-[#1C252E]"></Text>
-                </View>
+              </View>
+
+              <View className="flex-row items-center">
+                <FontAwesome name="user" size={14} color="#72BD00" />
+                <Text
+                  className="ml-1 shrink text-base font-semibold text-text-primary"
+                  style={androidTextStyle(16)}
+                >
+                  {lead.customerDetails?.firstName} {lead.customerDetails?.lastName}
+                </Text>
                 <TouchableOpacity
-                  className="flex-row items-center"
+                  onPress={() => {
+                    setShowEditCustomerModal(true);
+                    logCustomerDetailsEvent('view', 'edit customer details opened');
+                  }}
+                  style={{ marginLeft: 6, paddingHorizontal: 4 }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Feather name="edit-2" size={12} color="#72BD00" />
+                </TouchableOpacity>
+              </View>
+
+              <View className="flex-row items-start" style={{ gap: 16 }}>
+                <TouchableOpacity
+                  className="flex-1 flex-row items-start"
+                  onPress={() => setShowPhoneOptions(true)}
+                >
+                  <FontAwesome name="phone" size={14} color="#72BD00" style={{ marginTop: 4 }} />
+                  <Text
+                    className="ml-1 shrink text-base font-semibold"
+                    style={[{ color: '#72BD00' }, androidTextStyle(14)]}
+                  >
+                    {/* The record stores the number RAW or E.164 (`18757575799`), which is
+                        what the header used to print. `EditCustomerModal` seeds its own
+                        field through this same formatter, so the two surfaces now read the
+                        same. DISPLAY ONLY - `handleCall` / `handleTextMessage` /
+                        `handleCopyPhone` still read `customerDetails.phone` and dial through
+                        `getRawPhoneNumber`, so the tel:/sms: links are unchanged. */}
+                    {formatUSPhoneNumber(lead.customerDetails?.phone || '')}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  className="flex-1 flex-row items-start"
                   onPress={() => setShowEmailOptions(true)}
                 >
-                  <Ionicon
-                    name="mail"
-                    size={14}
-                    color="#72BD00"
-                  />
+                  <Ionicon name="mail" size={14} color="#72BD00" style={{ marginTop: 4 }} />
+                  {/* `shrink` + no line cap: a long address wraps inside its own cell. */}
                   <Text
-                    className="ml-1 text-base font-semibold"
+                    className="ml-1 shrink text-base font-semibold"
                     style={[{ color: '#72BD00' }, androidTextStyle(14)]}
                   >
                     {lead?.customerDetails?.email || 'N/A'}
                   </Text>
                 </TouchableOpacity>
-                <View className="flex-row items-center">
-                  <MaterialIcon
-                    name="clock"
-                    size={14}
-                    color="#72BD00"
-                  />
+              </View>
+
+              <View className="flex-row items-start" style={{ gap: 16 }}>
+                <View className="flex-1 flex-row items-center">
+                  <Ionicon name="calendar-clear" size={14} color="#72BD00" />
                   <Text
-                    className="ml-1 text-base font-semibold  text-text-primary"
+                    className="ml-1 shrink text-base font-semibold text-text-primary"
+                    style={androidTextStyle(16)}
+                  >
+                    {formatDate(lead?.leadDatetime)}
+                  </Text>
+                </View>
+                <View className="flex-1 flex-row items-center">
+                  <MaterialIcon name="clock" size={14} color="#72BD00" />
+                  <Text
+                    className="ml-1 shrink text-base font-semibold text-text-primary"
                     style={androidTextStyle(16)}
                   >
                     {lead.leadTime}

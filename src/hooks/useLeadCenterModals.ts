@@ -3,6 +3,7 @@ import { useNavigation } from '@react-navigation/native';
 import { LeadService } from '../services/api/leads';
 import { FlashMessage } from '../config/message';
 import { downloadPdfToDevice } from '../utils/download-utils';
+import { newestReport, reportDisplayName } from '../utils/report-name';
 import { useAuth } from './useAuth';
 import { logEvent } from '../services/api/LoggerService';
 import { isOnline } from '../services/connectivity';
@@ -111,6 +112,20 @@ export const useLeadCenterModals = (
         );
       };
 
+      // Title/filename for the risk report. When the url comes from a just-finished job there
+      // is no record for it yet in `existing` (it is the FIRST match, possibly an older
+      // report), so use the newest non-reset one; otherwise the record the url came from.
+      const riskTitle = (existing: any, fromJob: boolean) => {
+        if (!fromJob) return reportDisplayName(existing, 'Risk Report');
+        const risk = [
+          ...(lead?.generatedReports || []),
+          ...(lead?.outcomeData?.generatedReports || []),
+          ...(lead?.leadData?.generatedReports || []),
+          ...(lead?.outcome?.generatedReports || []),
+        ].filter((r: any) => r?.reportName?.toLowerCase().includes('risk') && !r.isReset);
+        return reportDisplayName(newestReport(risk), 'Risk Report');
+      };
+
       if (toolId === 'consent') {
         // ⚠️ The QUEUED form is checked first and short-circuits, because there is no document to
         // open at all yet — the server renders the PDF from the submitted form, so until the queue
@@ -194,7 +209,10 @@ export const useLeadCenterModals = (
           riskJob?.status === 'completed' || riskJob?.progress === 100
             ? LeadService.getRiskDownloadUrl(riskJob.jobId)
             : null;
-        handleOpenPdf(jobUrl || secureUrls[existing?.reportPath || ''] || existing?.fileUrl || extra, 'Risk Report');
+        handleOpenPdf(
+          jobUrl || secureUrls[existing?.reportPath || ''] || existing?.fileUrl || extra,
+          riskTitle(existing, !!jobUrl)
+        );
       } else if (toolId === 'risk-download') {
         const existing = findReport('risk_report');
         const jobUrl =
@@ -202,7 +220,7 @@ export const useLeadCenterModals = (
             ? LeadService.getRiskDownloadUrl(riskJob.jobId)
             : null;
         const targetUrl = jobUrl || secureUrls[existing?.reportPath || ''] || existing?.fileUrl || extra;
-        downloadPdfToDevice(targetUrl, 'Risk Report');
+        downloadPdfToDevice(targetUrl, riskTitle(existing, !!jobUrl));
       } else if (toolId === 'risk-reset') {
         handlers.handleResetRiskReport?.(extra);
       } else if (toolId === 'revrender') {
