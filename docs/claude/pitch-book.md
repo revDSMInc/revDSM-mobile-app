@@ -1080,3 +1080,4 @@ label in Pitchbook and RooflineDeck, and the Lead Center `risk-preview` / `risk-
   `|` is invalid in Android MediaStore/FAT names, so it collapses to a space. Do not "preserve the pipes".
 - RooflineDeck's download branch is `Linking.openURL`, so only its preview title and history label change.
 - `PdfPreviewModal` header title is now 13pt, `numberOfLines={2}` with `adjustsFontSizeToFit` (min 0.8), because the `displayName` ("Lead | Address | Date | Time") was ellipsised at 16pt/1 line. The header is a fixed 60pt - two lines of 17 lineHeight fit; do not raise the font without raising the header.
+- The Interactive Tool risk logs (`risk_report_viewed|downloaded|reset|history_opened`) carry `displayName` (via `reportDisplayName`) beside `reportName`, so the portal shows the readable report name. Old reports fall back to `reportName`.

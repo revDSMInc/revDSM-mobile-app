@@ -1837,7 +1837,10 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
                 <View className="flex-row items-center gap-2">
                   <TouchableOpacity
                     onPress={() => {
-                      onAction?.('risk_report_viewed', { reportName: riskReport.reportName });
+                      onAction?.('risk_report_viewed', {
+                        reportName: riskReport.reportName,
+                        displayName: reportDisplayName(riskReport, 'Risk Report'),
+                      });
                       onDownload(riskReport, 0);
                     }}
                     className="w-8 h-8 rounded-full items-center justify-center bg-violet-500"
@@ -1846,7 +1849,10 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => {
-                      onAction?.('risk_report_downloaded', { reportName: riskReport.reportName });
+                      onAction?.('risk_report_downloaded', {
+                        reportName: riskReport.reportName,
+                        displayName: reportDisplayName(riskReport, 'Risk Report'),
+                      });
                       onDownload(riskReport, 0, true);
                     }}
                     className="w-8 h-8 rounded-full items-center justify-center bg-emerald-500"
@@ -1855,7 +1861,10 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => {
-                      onAction?.('risk_report_reset', { reportName: riskReport.reportName });
+                      onAction?.('risk_report_reset', {
+                        reportName: riskReport.reportName,
+                        displayName: reportDisplayName(riskReport, 'Risk Report'),
+                      });
                       setResetView(true);
                       handleResetRiskReport(riskReport._id);
                     }}
@@ -1929,6 +1938,7 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
               onPress={() => {
                 onAction?.('risk_report_history_opened', {
                   reportName: report.reportName,
+                  displayName: reportDisplayName(report, 'Risk Report'),
                   historyIndex: idx,
                 });
                 onDownload(report, idx);
