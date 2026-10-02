@@ -356,6 +356,8 @@ export const RevRenderHistoryModal = ({
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
+  // Measured height of the clipping frame (it is a % of the screen), for the pan bounds.
+  const boxHeight = useSharedValue(0);
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
 
@@ -388,8 +390,11 @@ export const RevRenderHistoryModal = ({
   const zoomPan = Gesture.Pan()
     .onUpdate((e) => {
       if (scale.value > 1) {
-        translateX.value = savedTranslateX.value + e.translationX;
-        translateY.value = savedTranslateY.value + e.translationY;
+        // Keep the picture covering the frame: at most half of the extra size on each side.
+        const maxX = ((scale.value - 1) * imageWidth) / 2;
+        const maxY = ((scale.value - 1) * boxHeight.value) / 2;
+        translateX.value = Math.max(-maxX, Math.min(maxX, savedTranslateX.value + e.translationX));
+        translateY.value = Math.max(-maxY, Math.min(maxY, savedTranslateY.value + e.translationY));
       }
     })
     .onEnd(() => {
@@ -512,10 +517,16 @@ export const RevRenderHistoryModal = ({
           )}
 
           {/* Comparison Slider — zoom wrapper */}
+          {/* ⚠️ The transform goes on an INNER layer, not the container. It used to sit on the
+              container itself, so pinching scaled and dragged the WHOLE card (frame, labels,
+              handle) across the screen instead of zooming the picture inside a fixed frame.
+              The container is now the clip: it never moves, and only the zoom layer does. */}
           <GestureDetector gesture={composedGesture}>
-            <Reanimated.View
-              style={[styles.sliderContainer, { width: imageWidth, height: imageHeight }, imageAnimStyle]}
+            <View
+              style={[styles.sliderContainer, { width: imageWidth, height: imageHeight }]}
+              onLayout={(e) => { boxHeight.value = e.nativeEvent.layout.height; }}
             >
+              <Reanimated.View style={[{ width: '100%', height: '100%' }, imageAnimStyle]}>
               <Reanimated.View style={[{ width: '100%', height: '100%' }, fadeAnimStyle]}>
                 {/* AFTER — background */}
                 {afterImage && (
@@ -590,14 +601,6 @@ export const RevRenderHistoryModal = ({
                   </Reanimated.View>
                 )}
 
-                {/* Labels */}
-                <View style={[styles.label, styles.labelBefore]}>
-                  <Text style={styles.labelText}>Before</Text>
-                </View>
-                <View style={[styles.label, styles.labelAfter]}>
-                  <Text style={styles.labelText}>After</Text>
-                </View>
-
                 {/* Draggable handle — uses its own RNGH Pan so it doesn't fight PanResponder */}
                 <GestureDetector gesture={sliderPan}>
                   <Reanimated.View style={[styles.handle, { height: "100%" }, handleAnimStyle]}>
@@ -608,6 +611,15 @@ export const RevRenderHistoryModal = ({
                   </Reanimated.View>
                 </GestureDetector>
               </Reanimated.View>
+              </Reanimated.View>
+
+              {/* Labels stay put while the picture zooms underneath them. */}
+              <View style={[styles.label, styles.labelBefore]} pointerEvents="none">
+                <Text style={styles.labelText}>Before</Text>
+              </View>
+              <View style={[styles.label, styles.labelAfter]} pointerEvents="none">
+                <Text style={styles.labelText}>After</Text>
+              </View>
 
               {/* Green loader overlay while images are loading */}
               {!isCurrentLoaded && (
@@ -615,7 +627,7 @@ export const RevRenderHistoryModal = ({
                   <ActivityIndicator size="large" color="#72BD00" />
                 </View>
               )}
-            </Reanimated.View>
+            </View>
           </GestureDetector>
 
           {/* Footer Navigation */}
