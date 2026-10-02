@@ -6,6 +6,18 @@ import { SendToHomeownerSheet, ShareableRender } from './SendToHomeownerSheet';
 
 const GREEN = '#2EDE56';
 
+/**
+ * Polling for renders that are still generating.
+ *
+ * ⚠️ The screen navigates here the MOMENT generation is requested, but the
+ * server takes roughly 30s per render. Without polling the panel loads an empty
+ * list, reports "0 ready" and only fills if the rep thinks to pull-to-refresh —
+ * which is how this was reported.
+ */
+const POLL_INTERVAL_MS = 5000;
+/** ⚠️ A ceiling, so a render that never lands cannot poll forever in the rep's pocket. */
+const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
 type Run = {
   runId: string;
   viewLabel?: string;
@@ -46,6 +58,8 @@ export function ResultsPanel({
   defaultPhone,
   defaultEmail,
   onBack,
+  expectedNewRenders = 0,
+  onRendersArrived,
 }: {
   leadId: string;
   isDark: boolean;
@@ -53,6 +67,10 @@ export function ResultsPanel({
   defaultPhone?: string;
   defaultEmail?: string;
   onBack: () => void;
+  /** How many renders were just submitted; poll until this many new ones appear. */
+  expectedNewRenders?: number;
+  /** Called once they have all landed, so the caller can clear its counter. */
+  onRendersArrived?: () => void;
 }) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,31 +78,87 @@ export function ResultsPanel({
   const [error, setError] = useState<string | null>(null);
   const [sendFor, setSendFor] = useState<ShareableRender[] | null>(null);
   const [sentIds, setSentIds] = useState<string[]>([]);
+  /** Runs still fetching their image — keyed by runId so cards are independent. */
+  const [imageLoading, setImageLoading] = useState<Record<string, boolean>>({});
+  /** True while we are still waiting on renders the server has not finished. */
+  const [awaitingRenders, setAwaitingRenders] = useState(expectedNewRenders > 0);
 
   const sub = isDark ? '#919EAB' : '#637381';
   const label = isDark ? '#fff' : '#212B36';
   const cardBg = isDark ? '#1E1E1E' : '#fff';
 
-  const load = useCallback(async () => {
+  /** Returns how many finished runs were found, so the poller can decide to stop. */
+  const load = useCallback(async (): Promise<number> => {
     setError(null);
     try {
       const res = await LeadService.getRevRenderRuns(leadId);
       const list: Run[] = res.data?.runs || res.data?.data?.runs || [];
       // Newest first, and only runs that actually produced an image.
-      setRuns(
-        list
-          .filter((r) => r.generatedUrl || r.s3UrlGenerated)
-          .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))),
-      );
+      const ready = list
+        .filter((r) => r.generatedUrl || r.s3UrlGenerated)
+        .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+      setRuns(ready);
+      return ready.length;
     } catch (e: any) {
       setError(e?.response?.data?.error || 'Could not load renders.');
+      // ⚠️ -1, not 0 — a failed request must not read as "no renders yet" and
+      // stop the poll on a baseline of zero.
+      return -1;
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, [leadId]);
 
-  useEffect(() => { load(); }, [load]);
+  /**
+   * Initial load, then poll while renders are still being generated.
+   *
+   * ⚠️ Keyed off the COUNT at mount, not off `expectedNewRenders` alone: the
+   * rep may already have renders from an earlier batch, so "done" is
+   * `baseline + expected`, never just "the list is non-empty".
+   */
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const startedAt = Date.now();
+
+    const run = async () => {
+      const baseline = await load();
+      if (cancelled) return;
+
+      if (expectedNewRenders <= 0 || baseline < 0) {
+        setAwaitingRenders(false);
+        return;
+      }
+
+      const target = baseline + expectedNewRenders;
+      setAwaitingRenders(true);
+
+      const tick = async () => {
+        if (cancelled) return;
+        if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+          setAwaitingRenders(false);
+          return;
+        }
+        const count = await load();
+        if (cancelled) return;
+        if (count >= target) {
+          setAwaitingRenders(false);
+          onRendersArrived?.();
+          return;
+        }
+        timer = setTimeout(tick, POLL_INTERVAL_MS);
+      };
+
+      timer = setTimeout(tick, POLL_INTERVAL_MS);
+    };
+
+    run();
+    // ⚠️ Clearing the timer is not optional: the panel unmounts when the rep
+    // taps Back, and a live timer would keep polling against a dead screen.
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load]);
 
   const shareable = (r: Run): ShareableRender => ({
     runId: r.runId,
@@ -120,11 +194,23 @@ export function ResultsPanel({
             >
               <Icon name="arrow-left" size={22} color={sub} />
             </TouchableOpacity>
-            <View>
+            <View className="flex-1">
               <Text className="text-xl font-bold" style={{ color: label }}>Your Renders</Text>
-              <Text className="text-sm font-bold" style={{ color: sub }}>
-                {runs.length} ready
-              </Text>
+              {/* While generating, say so rather than showing a count the rep can
+                  see is wrong — "0 ready" next to a render they just requested
+                  reads as a failure. */}
+              {awaitingRenders ? (
+                <View className="flex-row items-center">
+                  <ActivityIndicator size="small" color={GREEN} style={{ marginRight: 6 }} />
+                  <Text className="text-sm font-bold" style={{ color: sub }}>
+                    {runs.length} ready · generating…
+                  </Text>
+                </View>
+              ) : (
+                <Text className="text-sm font-bold" style={{ color: sub }}>
+                  {runs.length} ready
+                </Text>
+              )}
             </View>
           </View>
 
@@ -134,7 +220,20 @@ export function ResultsPanel({
             </View>
           )}
 
-          {runs.length === 0 && !error && (
+          {/* ⚠️ Two different empty states. "No renders yet" is wrong while a
+              generate is in flight — it tells the rep nothing is coming when
+              something is, seconds after they asked for it. */}
+          {runs.length === 0 && !error && awaitingRenders && (
+            <View className="items-center py-16">
+              <ActivityIndicator size="large" color={GREEN} />
+              <Text className="text-[14px] font-bold mt-3" style={{ color: label }}>Generating your renders…</Text>
+              <Text className="text-[12px] mt-1 text-center" style={{ color: sub }}>
+                This takes about 30 seconds each. They will appear here as they finish.
+              </Text>
+            </View>
+          )}
+
+          {runs.length === 0 && !error && !awaitingRenders && (
             <View className="items-center py-16">
               <Icon name="image-off-outline" size={36} color={sub} />
               <Text className="text-[14px] font-bold mt-3" style={{ color: label }}>No renders yet</Text>
@@ -154,7 +253,31 @@ export function ResultsPanel({
                 className="rounded-[20px] overflow-hidden mb-5"
                 style={{ backgroundColor: cardBg, borderWidth: 1, borderColor: isDark ? '#2A2F36' : '#F4F6F8' }}
               >
-                {uri && <Image source={{ uri }} style={{ width: '100%', height: 200 }} resizeMode="cover" />}
+                {/*
+                  ⚠️ The spinner sits BEHIND the image in a fixed-height box, not
+                  in place of it. Swapping the <Image> out for a spinner would
+                  restart the download every time the flag flipped, and the card
+                  would jump as the image replaced a differently-sized placeholder.
+                  These are full-size renders off S3 over a rep's cellular
+                  connection — a blank white panel for several seconds is what was
+                  reported.
+                */}
+                {!!uri && (
+                  <View style={{ width: '100%', height: 200, backgroundColor: isDark ? '#15191E' : '#F4F6F8' }}>
+                    {imageLoading[r.runId] !== false && (
+                      <View className="absolute inset-0 items-center justify-center">
+                        <ActivityIndicator color={GREEN} />
+                      </View>
+                    )}
+                    <Image
+                      source={{ uri }}
+                      style={{ width: '100%', height: 200 }}
+                      resizeMode="cover"
+                      onLoadStart={() => setImageLoading((p) => (r.runId in p ? p : { ...p, [r.runId]: true }))}
+                      onLoadEnd={() => setImageLoading((p) => ({ ...p, [r.runId]: false }))}
+                    />
+                  </View>
+                )}
 
                 <View className="p-4">
                   <View className="flex-row items-center mb-1">

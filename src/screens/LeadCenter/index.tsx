@@ -197,13 +197,27 @@ export default function LeadCenterPage() {
   // The pencil is rendered by `ContractDetailsCard` only past its `hasContract`
   // guard (sale / demo), so this is unreachable on a lead with no contract to edit.
   //
-  // ⚠️ A LEGACY (non-dynamic) deal keeps the inline modal, because the wizard cannot
-  // open a build that is not there. It replaced an "Edit on web" flash that left such
-  // a deal with no editor at all on device; the modal edits contract pricing and the
-  // schedule, which is exactly what that flash was refusing to do.
-  const isDynamicDeal = Boolean(
-    lead?.jobBuilder?.isDynamic || lead?.jobBuilder?.dynamicJobState || lead?.isDynamic
-  );
+  // ⚠️ THE PENCIL ALWAYS OPENS THE WIZARD. There is no dynamic-vs-legacy branch
+  // here any more, and re-adding one will reintroduce the bug below.
+  //
+  // It used to branch on an `isDynamicDeal` computed from the `lead` object. That
+  // CANNOT WORK, and the reason is structural rather than a matter of checking more
+  // fields: the job build is not on the lead. It is fetched from its own endpoint
+  // (`getPortalJobBuilder`, with a calculator-outcome fallback) by
+  // `enrichJobBuilderProductData`, which is what the wizard runs on the way in.
+  // Lead Center never calls it, so every synchronous guess from `lead` answered
+  // "not dynamic" for genuinely dynamic deals and dropped the rep into the inline
+  // "Edit Contract Details" modal. Widening the predicate only moved which deals
+  // guessed wrong.
+  //
+  // ⚠️ This matters beyond the wrong sheet appearing: ONLY the wizard raises an
+  // ADDENDUM, which is what a submitted deal's changes have to be. The inline modal
+  // edits the record directly, so the customer never gets a signing link — a
+  // contract changed with no signature against it.
+  //
+  // The wizard is the right destination for a legacy deal too: it resolves the build
+  // itself and can report honestly when there is nothing to edit, which is a thing
+  // this screen has no way to find out before navigating.
 
   const handleEditDeal = useCallback(() => {
     const leadId = lead?._id || lead?.id || lead?.leadId;
@@ -1575,11 +1589,15 @@ export default function LeadCenterPage() {
           </View>
 
           {/* Cancelled-job banner — under the tab bar and above EVERY tab, matching web
-              `lead-center-tabs.js`. Deal route only (`fromMyDeals` = web `isDeal`) and
-              null unless the job is cancelled, so the normal lead path is untouched.
-              The PENDING-signature status is NOT here — it is the Contract Details
-              card's own amber header. See the note in DealBanners.tsx. */}
-          {fromMyDeals && <DealBanners lead={lead} />}
+              `lead-center-tabs.js`. Null unless the job is cancelled, so the normal lead
+              path is untouched. The PENDING-signature status is NOT here — it is the
+              Contract Details card's own amber header. See the note in DealBanners.tsx.
+
+              ⚠️ NOT gated on `fromMyDeals`. It was, and a job cancelled from the Sold
+              Leads tab then showed NO cancelled state at all — same screen, same deal,
+              same record, banner only on one route in. Whether the job is cancelled is a
+              fact about the DEAL, not about the door the rep came through. */}
+          <DealBanners lead={lead} />
 
           <View style={{ flex: 1 }}>
             {activeTab === 'job_docs' && (
@@ -1591,7 +1609,9 @@ export default function LeadCenterPage() {
                 onOpenPdf={handleOpenPdf}
                 secureUrls={secureUrls}
                 isRefreshing={isRefreshing}
-                onEditContract={isDynamicDeal ? handleEditDeal : undefined}
+                // ⚠️ Unconditional. See the note on `handleEditDeal` — a conditional
+                // here is what sent dynamic deals to the inline modal.
+                onEditContract={handleEditDeal}
                 drafts={dealDrafts}
                 // Whether the drafts query has SETTLED (success or handled error).
                 // The pending-addendum card holds its first paint until it has, so a

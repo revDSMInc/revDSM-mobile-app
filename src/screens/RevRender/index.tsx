@@ -336,6 +336,8 @@ export default function RevRenderScreen() {
   // so switching back and forth does not lose work (483 §1).
   const [mode, setMode] = useState<RenderMode>('core');
   const [lighting, setLighting] = useState<LightingState>(emptyState());
+  // Renders submitted but not yet seen in the runs list — drives Results' polling.
+  const [pendingRenderCount, setPendingRenderCount] = useState(0);
 
   // Favourites and Recently Rendered are PER REP ACCOUNT, loaded once on mount.
   // ⚠️ Only `fav` and `recent` come from the server — `applyServerPreferences`
@@ -702,6 +704,10 @@ export default function RevRenderScreen() {
       } else {
         payloads.forEach(p => onGenerate(p));
       }
+      // How many renders Results should WAIT for. The server takes ~30s each and
+      // we navigate immediately, so without this the panel loads an empty list,
+      // reports "0 ready" and only fills if the rep happens to pull-to-refresh.
+      setPendingRenderCount(payloads.length);
       setRenderQueue([]);
       setStatus('results');
     } catch (err) {
@@ -1666,15 +1672,31 @@ export default function RevRenderScreen() {
                   }}
                 >
                   <View className="flex-row justify-between items-center mb-5">
-                    <View className="flex-row items-center">
+                    {/* `shrink` + `min-w-0`: this group yields its width to the badge
+                        and the delete button, so a long photo label ellipsizes
+                        instead of pushing them off the right edge. */}
+                    <View className="flex-row items-center shrink min-w-0">
                       <View className="w-8 h-8 rounded-full bg-[#2EDE56] items-center justify-center mr-3">
                         <Text className="text-white font-black text-sm">{index + 1}</Text>
                       </View>
-                      <Text className="text-[17px] font-black" style={{ color: colors.text }}>
+                      <Text
+                        className="text-[17px] font-black shrink"
+                        numberOfLines={1}
+                        style={{ color: colors.text }}
+                      >
                         {item.photo?.label || 'Selected Photo'}
                       </Text>
+                    </View>
+
+                    {/* ⚠️ The mode badge is a SIBLING of the title group, not a child.
+                        Inside it the badge trailed the label and sat wherever the
+                        text happened to end; the mock pins it to the right, beside
+                        the delete button, so the tag reads as a property of the ROW
+                        rather than a suffix on the photo's name. `shrink-0` keeps it
+                        intact when the label is long. */}
+                    <View className="flex-row items-center shrink-0">
                       <View
-                        className="ml-2 rounded-full px-2 py-0.5 flex-row items-center"
+                        className="rounded-full px-2 py-0.5 flex-row items-center mr-3"
                         style={{ backgroundColor: item.mode === 'lighting' ? '#1F2937' : (isDark ? '#2A2A2A' : '#F4F6F8') }}
                       >
                         {item.mode === 'lighting' && (
@@ -1687,10 +1709,10 @@ export default function RevRenderScreen() {
                           {item.mode === 'lighting' ? 'LIGHTING' : 'CORE'}
                         </Text>
                       </View>
+                      <TouchableOpacity onPress={() => removeFromQueue(item.id)}>
+                        <Icon name="delete-outline" size={22} color="#FF5630" />
+                      </TouchableOpacity>
                     </View>
-                    <TouchableOpacity onPress={() => removeFromQueue(item.id)}>
-                      <Icon name="delete-outline" size={22} color="#FF5630" />
-                    </TouchableOpacity>
                   </View>
 
                   <View className="gap-y-3">
@@ -1719,10 +1741,8 @@ export default function RevRenderScreen() {
                             <LightStrip colors={item.look?.colors ?? []} pucks={3} rows={1} size={5} height={20} radius={4} />
                           </View>
                           <Text className="text-[13px] font-bold flex-1" style={{ color: colors.text }}>
-                            Lights: {item.look?.name}
-                            <Text style={{ color: '#919EAB' }}>
-                              {'  '}·{'  '}{item.look?.pattern === 'single' ? 'Single color' : 'Alternating'}
-                            </Text>
+                            Lights: {item.look?.name} {'  '}·{'  '}{item.look?.pattern === 'single' ? 'Single color' : 'Alternating'}
+
                           </Text>
                         </View>
                       </>
@@ -1815,6 +1835,8 @@ export default function RevRenderScreen() {
                       defaultPhone={lead?.customerDetails?.phone || lead?.phone || undefined}
                       defaultEmail={lead?.customerDetails?.email || lead?.email || undefined}
                       onBack={() => setStatus('grid')}
+                      expectedNewRenders={pendingRenderCount}
+                      onRendersArrived={() => setPendingRenderCount(0)}
                     />
                   )
                   : renderQueueView()}
