@@ -21,7 +21,7 @@ export function MapControlsPanel({
   onZoomOut,
 }: Props) {
   return (
-    <View className="absolute bottom-6 right-4 items-end gap-3">
+    <View className="absolute bottom-6 right-4 items-end gap-2">
       <TouchableOpacity
         onPress={onLocate}
         className="w-11 h-11 rounded-full bg-[#4CBB17] items-center justify-center shadow-md"
