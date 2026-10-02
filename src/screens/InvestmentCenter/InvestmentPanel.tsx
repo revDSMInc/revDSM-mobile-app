@@ -240,6 +240,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   // selects it on both, and (b) badges and the monthly plan are mutually exclusive.
   const [paymentChoice, setPaymentChoice] = useState<string>(seedChoice);
   const [showAddPlan, setShowAddPlan] = useState(false);
+  const closeAddPlan = () => setShowAddPlan(false);
   const choiceIsFinancing = isFinancing(plans, paymentChoice);
   // Shortlist highlight + monthly/opt-in driver: the choice when it's a financing plan
   // (empty when a basic method is active — no monthly row is selected then).
@@ -375,7 +376,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     persistInHome(addedPlanKeys, key);
   };
   const handleAddPlan = (key: string) => {
-    setShowAddPlan(false);
+    closeAddPlan();
     const nextAdded = addedPlanKeys.includes(key) ? addedPlanKeys : [...addedPlanKeys, key];
     if (!addedPlanKeys.includes(key)) {
       // The shortlist is In-Home's (see `persistInHome`), so the row is tagged with it.
@@ -840,9 +841,8 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       selectedPlanKey={selectedPlanKey}
       onSelectPlan={isLeadSold ? undefined : selectPaymentChoice}
       onRemovePlan={isLeadSold ? undefined : handleRemovePlan}
-      // Opening a nested modal from the enlarged card: collapse the spotlight first so
-      // the picker/confirm isn't stacked behind the spotlight Modal.
-      onAddPlan={isLeadSold ? undefined : () => { setSpotlight(null); setShowAddPlan(true); }}
+      // The picker opens as an overlay INSIDE the spotlight Modal, so the enlarged card stays up.
+      onAddPlan={isLeadSold ? undefined : () => setShowAddPlan(true)}
       downPaymentSlot={isLeadSold ? undefined : inHomeDownEditor}
       downPayment={isLeadSold ? (calculator.downPayment || lead?.downPayment || 0) : downPay}
       selected={activeProgram === 'inhome'}
@@ -1048,13 +1048,13 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       {/* "+ Add Plan" financing picker for the In-Home Monthly shortlist. Gates on
           the current end price (− down payment) and adds financing plans only. */}
       <AddPlanModal
-        visible={showAddPlan}
+        visible={showAddPlan && !spotlight}
         price={inHomeMonthlyBase}
         plans={plans}
         categories={pricing.dropAddCategories}
         added={addedPlanKeys}
         onAdd={handleAddPlan}
-        onClose={() => setShowAddPlan(false)}
+        onClose={closeAddPlan}
       />
 
       {/* Lead details footer shown when lead is sold */}
@@ -1113,6 +1113,20 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         }}
         onPrev={() => stepSpotlight(-1)}
         onNext={() => stepSpotlight(1)}
+        overlay={
+          spotlight && showAddPlan ? (
+            <AddPlanModal
+              inline
+              visible
+              price={inHomeMonthlyBase}
+              plans={plans}
+              categories={pricing.dropAddCategories}
+              added={addedPlanKeys}
+              onAdd={handleAddPlan}
+              onClose={closeAddPlan}
+            />
+          ) : null
+        }
       >
         {spotlightCardEl}
       </SpotlightOverlay>

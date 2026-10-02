@@ -374,3 +374,10 @@ Now a single `OVERVIEW_COLUMNS` list (`key`, `label`, `width`, `format`) drives 
 - ⚠️ Add or reorder a column in `OVERVIEW_COLUMNS` only - never hand-write a cell in just one of the three rows, or the widths drift again.
 - The Month column is centred too (it was left-aligned).
 - The monthly jobs table (Job Number ... Calculator Name, under each "September 2026" group) is centred too: header and cell `Text`s are `text-center`, the date chips are `self-center` inside `items-center` wrappers (they were `self-start`), and the payment-method cell is `justify-center` so its (i) icon stays beside the text.
+
+## "+ Add Plan" from the enlarged card keeps the enlarged card open
+
+`InvestmentPanel`. Tapping "+ Add Plan" on the spotlight (enlarged) In-Home card no longer closes the spotlight. The picker renders as an in-modal overlay: `AddPlanModal` takes `inline` (absolute-fill `View`, no native Modal) and `SpotlightOverlay` takes an `overlay` slot rendered last inside its own Modal. The enlarged card closes only when the rep taps outside it.
+
+- ⚠️ Never stack native Modals: from the spotlight the picker MUST be the `inline` overlay. The ordinary `AddPlanModal` (Modal) is gated `showAddPlan && !spotlight` so only one of the two ever renders. An earlier version closed the spotlight and re-opened it after the picker; reps rejected the flicker. Do not restore it.
+- The enlarged card reads live panel state, so an added plan appears in its Monthly list as the overlay closes.
