@@ -37,6 +37,7 @@ export function LightingPanel({
   isDark,
   onOpenCustomBuilder,
   onToggleFavourite,
+  onSaveCustomLook,
 }: {
   state: LightingState;
   setState: (s: LightingState) => void;
@@ -45,6 +46,8 @@ export function LightingPanel({
   onOpenCustomBuilder?: () => void;
   /** Persists the favourite to the rep's account. Optimistic — see `favourite`. */
   onToggleFavourite?: (lookId: string) => void;
+  /** Persists a newly built custom look to the rep's account. */
+  onSaveCustomLook?: (look: Look) => void;
 }) {
   const [tab, setTab] = useState<LookTab>('seasons');
   const [query, setQuery] = useState('');
@@ -111,10 +114,21 @@ export function LightingPanel({
   const quickFavourites = state.fav.map((id) => findLook(id, state.customs)).filter((l): l is Look => Boolean(l));
   const quickRecents = recentsToShow(state).map((id) => findLook(id, state.customs)).filter((l): l is Look => Boolean(l));
 
-  const SectionLabel = ({ children }: { children: React.ReactNode }) => (
-    <Text className="text-[11px] font-black tracking-widest mb-3 uppercase" style={{ color: sub }}>
-      {children}
-    </Text>
+  /**
+   * A section heading, optionally with a right-aligned hint.
+   *
+   * ⚠️ The hint is NOT uppercased and NOT bold — it reads as a note about how
+   * the list is ordered, not as a second heading competing with the first.
+   */
+  const SectionLabel = ({ children, hint }: { children: React.ReactNode; hint?: string }) => (
+    <View className="flex-row items-baseline justify-between mb-3">
+      <Text className="text-[11px] font-black tracking-widest uppercase" style={{ color: sub }}>
+        {children}
+      </Text>
+      {hint ? (
+        <Text className="text-[11px]" style={{ color: sub }}>{hint}</Text>
+      ) : null}
+    </View>
   );
 
   return (
@@ -179,7 +193,12 @@ export function LightingPanel({
         <>
           <SectionLabel>Everyday</SectionLabel>
           <View className="mb-2">{grid(everyday, (l) => tile(l))}</View>
-          <SectionLabel>Holidays</SectionLabel>
+          {/* ⚠️ "SEASONS & HOLIDAYS", not "Holidays", with the "by month" hint —
+              both the handover (§4) and the plan (§5) specify it. The hint is not
+              decoration: this list is ordered by CALENDAR MONTH rather than
+              alphabetically, which is otherwise unexplained when a rep scrolls
+              past New Year's into Mardi Gras and Valentine's. */}
+          <SectionLabel hint="by month">Seasons &amp; Holidays</SectionLabel>
           {grid(holidays, (l) => tile(l, true))}
         </>
       )}
@@ -305,7 +324,12 @@ export function LightingPanel({
         visible={builderOpen}
         isDark={isDark}
         onClose={() => setBuilderOpen(false)}
-        onSave={(look) => setState({ ...state, customs: [...state.customs, look] })}
+        onSave={(look) => {
+          // Optimistic: the tile appears immediately, then the server's list
+          // (with its own minted `lookId`) replaces it.
+          setState({ ...state, customs: [...state.customs, look] });
+          onSaveCustomLook?.(look);
+        }}
       />
 
       <FavouritePopover

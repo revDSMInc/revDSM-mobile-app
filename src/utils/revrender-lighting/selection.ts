@@ -71,25 +71,79 @@ export function isFavourite(state: LightingState, lookId: string): boolean {
  */
 
 /**
- * Apply the server's favourites + recents to local state.
+ * Normalize one custom look from the server.
  *
- * ⚠️ Does NOT touch `sel` or `customs`. Selection is this screen's working
- * state and the server knows nothing about it; custom looks are device-local
- * until the write endpoints exist, and the GET returns `customLooks: []`
- * ALWAYS — so merging that empty array in would delete the rep's custom looks
- * every time the screen mounted.
+ * ⚠️ `lookId`, not `id` — same mapping the catalogue needs. A look without
+ * usable colours is dropped rather than rendered as an empty strip.
+ */
+function toCustomLook(raw: any): Look | null {
+  const id = raw?.lookId ?? raw?.id;
+  const colors = Array.isArray(raw?.colors)
+    ? raw.colors.filter((c: unknown): c is string => typeof c === 'string' && c.length > 0)
+    : [];
+  if (typeof id !== 'string' || !id || !colors.length) return null;
+  return {
+    id,
+    group: 'custom',
+    category: 'Custom',
+    name: typeof raw?.name === 'string' && raw.name ? raw.name : 'Custom look',
+    colors,
+    // Derived, never sent — the server owns it, but older rows may carry it.
+    pattern: raw?.pattern === 'single' || colors.length === 1 ? 'single' : 'alternating',
+  } as Look;
+}
+
+/**
+ * Apply the server's preferences to local state: favourites, recents, custom
+ * looks and guidance dismissal.
+ *
+ * ⚠️ Does NOT touch `sel`. Selection is this screen's working state and the
+ * server knows nothing about it.
+ *
+ * ⚠️ A MISSING or malformed field keeps what we had; an explicitly EMPTY
+ * array is a real value (the rep removed their last favourite). The difference
+ * matters most for `customs`: before the write endpoints shipped the GET always
+ * returned `customLooks: []`, and spreading the response wholesale would have
+ * deleted the rep's looks on every mount. Now the field is live, so `[]` is
+ * honest — but only when it IS an array.
  */
 export function applyServerPreferences(
   state: LightingState,
-  prefs: { favouriteLookIds?: unknown; recentLookIds?: unknown },
+  prefs: {
+    favouriteLookIds?: unknown;
+    recentLookIds?: unknown;
+    customLooks?: unknown;
+    guidanceDismissed?: unknown;
+  },
 ): LightingState {
   const ids = (value: unknown): string[] | null =>
     Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string' && v.length > 0) : null;
+
+  const customs = Array.isArray(prefs.customLooks)
+    ? (prefs.customLooks.map(toCustomLook).filter(Boolean) as Look[])
+    : null;
 
   return {
     ...state,
     fav: ids(prefs.favouriteLookIds) ?? state.fav,
     recent: ids(prefs.recentLookIds) ?? state.recent,
+    customs: customs ?? state.customs,
+  };
+}
+
+/**
+ * Which guidance popups the rep has permanently dismissed, from the same
+ * response. Kept separate from `LightingState` because the popups cover BOTH
+ * render modes and Core has no lighting state at all.
+ */
+export function guidanceDismissedFrom(prefs: { guidanceDismissed?: unknown }): {
+  core: boolean;
+  lighting: boolean;
+} {
+  const keys = Array.isArray(prefs.guidanceDismissed) ? prefs.guidanceDismissed : [];
+  return {
+    core: keys.includes('core'),
+    lighting: keys.includes('lighting'),
   };
 }
 

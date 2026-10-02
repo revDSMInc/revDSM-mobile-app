@@ -22,7 +22,10 @@ import { LightStrip } from './lighting/LightStrip';
 import { LightingFooter, LightingPanel } from './lighting/LightingPanel';
 import { ModeSwitch, RenderMode } from './lighting/ModeSwitch';
 import { PhotoGuidanceModal } from './lighting/PhotoGuidanceModal';
-import { applyServerPreferences, emptyState, LightingState, toggleFavourite } from '../../utils/revrender-lighting/selection';
+import {
+  applyServerPreferences, emptyState, guidanceDismissedFrom, LightingState, toggleFavourite,
+} from '../../utils/revrender-lighting/selection';
+import { hydrateFromCache, refreshCatalogue } from '../../utils/revrender-lighting/catalog';
 import { LeadService } from '../../services/api/leads';
 import { toLookPayload } from '../../utils/revrender-lighting/payload';
 import { Look } from '../../utils/revrender-lighting/types';
@@ -336,11 +339,15 @@ export default function RevRenderScreen() {
   const [mode, setMode] = useState<RenderMode>('core');
   const [lighting, setLighting] = useState<LightingState>(emptyState());
 
-  // Favourites and Recently Rendered are PER REP ACCOUNT, loaded once on mount.
-  // ⚠️ Only `fav` and `recent` come from the server — `applyServerPreferences`
-  // deliberately leaves `customs` alone, because the GET returns an empty
-  // `customLooks` ALWAYS (no write endpoint yet) and merging it in would wipe
-  // the rep's custom looks on every mount.
+  // First-time photo guidance per mode. Dismissal is PER REP ACCOUNT and is
+  // seeded from `GET /preferences` by the effect below, so it must be declared
+  // ahead of it.
+  const [guidanceSeen, setGuidanceSeen] = useState<Record<RenderMode, boolean>>({ core: false, lighting: false });
+
+  // Favourites, recents, CUSTOM LOOKS and guidance dismissal are all PER REP
+  // ACCOUNT, loaded once on mount. All four fields are live as of 2 Oct; the
+  // custom-look and guidance endpoints shipped after the first wiring, which
+  // only read `fav` and `recent`.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -348,6 +355,7 @@ export default function RevRenderScreen() {
         const { data } = await LeadService.getRevRenderPreferences();
         if (cancelled || !data?.success) return;
         setLighting((st) => applyServerPreferences(st, data));
+        setGuidanceSeen(guidanceDismissedFrom(data));
       } catch (e) {
         // Non-fatal: the rep can still pick looks, they just start without
         // their favourites. Failing the screen over this would be worse.
@@ -355,6 +363,60 @@ export default function RevRenderScreen() {
       }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  // The look catalogue is server-owned. Read the device cache FIRST so the grid
+  // paints corrected looks with no signal, then refresh in the background.
+  //
+  // ⚠️ `refreshCatalogue()` returns true only when the list actually changed
+  // (not on a 304, and never on an empty response — np currently returns
+  // `count: 0` on an unseeded database, and treating that as truth would blank
+  // the grid). The bump forces the one re-render the synchronous accessors
+  // cannot trigger themselves.
+  // Value is never read — the setter exists purely to re-render once the
+  // synchronous catalogue accessors return something new. Hence the `_` name.
+  const [, setCatalogueRev] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    if (hydrateFromCache() && !cancelled) setCatalogueRev((n) => n + 1);
+    refreshCatalogue().then((changed) => {
+      if (changed && !cancelled) setCatalogueRev((n) => n + 1);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  /**
+   * Persist a newly built custom look.
+   *
+   * ⚠️ `lookId` is OMITTED so the SERVER mints `custom-<24 hex>`. The sheet's
+   * local `custom-${Date.now()}` is fine as a temporary key for the optimistic
+   * tile, but two devices on one rep account can mint the same millisecond — and
+   * because the endpoint is an upsert keyed on `lookId`, a collision would have
+   * one look silently overwrite the other.
+   *
+   * ⚠️ `pattern` is not sent — the server derives it from the colour count.
+   */
+  const handleSaveCustomLook = useCallback(async (look: Look) => {
+    try {
+      const { data } = await LeadService.saveRevRenderCustomLook({
+        name: look.name,
+        colors: look.colors,
+      });
+      if (!data?.success) throw new Error('save rejected');
+      // The server's list replaces the optimistic one, so the tile picks up the
+      // real id and a look built on another device appears too.
+      setLighting((st) => applyServerPreferences(st, data));
+    } catch (e) {
+      // ⚠️ The optimistic tile is LEFT IN PLACE. The rep just built this
+      // palette by hand; removing it under them because a POST failed loses
+      // real work, and the look still renders — it just will not survive a
+      // reinstall until a later save succeeds.
+      FlashMessage.warning(
+        'Saved on this device only',
+        'We could not sync this custom look to your account.',
+      );
+      logEvent('revrender_custom_look_save_failed', { message: (e as Error)?.message });
+    }
   }, []);
 
   /**
@@ -377,9 +439,6 @@ export default function RevRenderScreen() {
     }
   }, []);
 
-  // First-time photo guidance per mode. Dismissal is PER REP ACCOUNT, so this
-  // local state is a placeholder until the backend endpoint exists.
-  const [guidanceSeen, setGuidanceSeen] = useState<Record<RenderMode, boolean>>({ core: false, lighting: false });
   const [guidanceFor, setGuidanceFor] = useState<RenderMode | null>(null);
   // Raised-this-visit, so a dismissed tip stays dismissed without claiming the
   // rep opted out. A ref, not state: it must not itself re-run the effect below.
@@ -1367,6 +1426,7 @@ export default function RevRenderScreen() {
               setState={setLighting}
               isDark={isDark}
               onToggleFavourite={handleToggleFavourite}
+              onSaveCustomLook={handleSaveCustomLook}
             />
             </View>
           )}
@@ -1621,7 +1681,20 @@ export default function RevRenderScreen() {
             isDark={isDark}
             onGotIt={() => setGuidanceFor(null)}
             onNeverShowAgain={() => {
-              if (guidanceFor) setGuidanceSeen({ ...guidanceSeen, [guidanceFor]: true });
+              if (guidanceFor) {
+                setGuidanceSeen({ ...guidanceSeen, [guidanceFor]: true });
+                // ⚠️ Fire-and-forget, and NOT reverted on failure. The endpoint is
+                // idempotent, so a retry costs nothing — but re-raising a tip the
+                // rep explicitly dismissed, because a background POST failed, is
+                // the one outcome worse than it not persisting. It re-syncs on the
+                // next mount from `GET /preferences`.
+                LeadService.dismissRevRenderGuidance(guidanceFor).catch((e) =>
+                  logEvent('revrender_guidance_dismiss_failed', {
+                    key: guidanceFor,
+                    message: (e as Error)?.message,
+                  }),
+                );
+              }
               setGuidanceFor(null);
             }}
           />
