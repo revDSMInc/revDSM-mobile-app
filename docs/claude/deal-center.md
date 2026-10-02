@@ -2627,3 +2627,7 @@ The portal publishes it on the field's `conditional` in `GET /calculator-form-sc
 - ⚠️ **The first sight of a tab only records its footage**, so opening or switching tabs never rewrites a quantity.
 - One popup per burst of typing (700 ms), reporting the net change: added (0 -> n), removed (n -> 0), updated (n -> m).
 - Control Box (`control_box`) is a separate portal rule: `valueMode: 'fixed'`, value 1, locked. Unrelated to this feature.
+
+### Reversal: the Investment Center package tab shows the box + ⓘ AND the scope list
+
+The "REPLACES the list" decision recorded above (`InvestmentPanel` "Includes the Following") is **superseded**. QA: *"when the i icon is displayed, the details are missing here - I need the details"*. On a full package the centred box + ⓘ now sits ABOVE the same `inclusions` list a normal tab shows (job-scope sentences, else product names), per the calculator being presented. The ⓘ card still carries the package breakdown. ⚠️ Do not restore the replace-the-list branch.
