@@ -4,7 +4,9 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FS, FUND, PS } from './funding-theme';
 import { FlashMessage } from '../../../../config/message';
 import { planBelowMin, belowMinMsg, type DealPlan, type PayCategory } from '../../hooks/useDealPricing';
+import { useIsOnline } from '../../../../hooks/useIsOnline';
 import {
+  blockedOfflineMsg,
   driftNote,
   effectiveRowAmount,
   isRemovableRow,
@@ -12,6 +14,7 @@ import {
   isSettledRow,
   lockedMethodNote,
   lenderState,
+  planBlockedOffline,
   showsChip,
   type LenderTone,
   type PaymentRow,
@@ -139,6 +142,12 @@ export function PaymentRowsGroup({
   onRestore,
   footer,
 }: Props) {
+  /**
+   * ⚠️ Reactive, not a one-shot `isOnline()` read. The signal can drop while the
+   * sheet is open — a rep walks from the kitchen table to the driveway — and a
+   * snapshot taken at mount would leave the card rows looking pickable.
+   */
+  const online = useIsOnline();
   const [openRowId, setOpenRowId] = useState<string | null>(null);
   /**
    * Which locked row is currently explaining itself. One at a time — two notes open at
@@ -163,16 +172,32 @@ export function PaymentRowsGroup({
     >
       {options?.map((o) => {
         const isSel = o.value === row.method;
+        // Cards cannot be collected with no signal — see `planBlockedOffline`.
+        const offBlocked = planBlockedOffline(plans, o.value, online);
         return (
           <TouchableOpacity
             key={o.value}
             onPress={() => {
+              // ⚠️ Still TAPPABLE, explaining itself — not `disabled`. A dead row
+              // with no reason reads as a broken app, and the rep is standing in
+              // front of a customer deciding how to pay.
+              if (offBlocked) {
+                FlashMessage.warning('Needs a connection', blockedOfflineMsg(plans, o.value));
+                return;
+              }
               onChangeMethod(row.pid, o.value);
               setOpenRowId(null);
             }}
-            style={{ paddingHorizontal: 13, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#EEF0F2', backgroundColor: isSel ? FUND.FILL : 'transparent' }}
+            style={{ paddingHorizontal: 13, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#EEF0F2', opacity: offBlocked ? 0.5 : 1, backgroundColor: isSel ? FUND.FILL : 'transparent' }}
           >
-            <Text style={{ flex: 1, fontSize: FS.BODY_LG, fontFamily: isSel ? PS.bold : PS.medium, color: isSel ? FUND.TEXT : FUND.SUBTEXT }}>{o.label}</Text>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Text style={{ fontSize: FS.BODY_LG, fontFamily: isSel ? PS.bold : PS.medium, color: isSel ? FUND.TEXT : FUND.SUBTEXT }}>{o.label}</Text>
+              {offBlocked && (
+                <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: FUND.MUTED, marginTop: 2 }}>
+                  Needs a connection
+                </Text>
+              )}
+            </View>
             {isSel && <Ionicons name="checkmark" size={15} color={FUND.TEXT} />}
           </TouchableOpacity>
         );
@@ -192,11 +217,21 @@ export function PaymentRowsGroup({
             // it actually carries, not to the whole contract.
             const gateAt = amount > 0 ? amount : price;
             const belowMin = planBelowMin(plans, key, gateAt);
+            // Card and lender rows both need the server to mint their link.
+            const offBlocked = planBlockedOffline(plans, key, online);
+            const dimmed = belowMin || offBlocked;
             const isSel = key === row.method;
             return (
               <TouchableOpacity
                 key={key}
                 onPress={() => {
+                  // ⚠️ Offline is checked FIRST. A plan can be both below its
+                  // minimum and unavailable offline, and "raise the price" is
+                  // useless advice when the method could not be used at any price.
+                  if (offBlocked) {
+                    FlashMessage.warning('Needs a connection', blockedOfflineMsg(plans, key));
+                    return;
+                  }
                   if (belowMin) {
                     FlashMessage.warning('Payment plan', belowMinMsg(plans, key, gateAt));
                     return;
@@ -204,15 +239,19 @@ export function PaymentRowsGroup({
                   onChangeMethod(row.pid, key);
                   setOpenRowId(null);
                 }}
-                style={{ paddingHorizontal: 13, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#EEF0F2', opacity: belowMin ? 0.5 : 1, backgroundColor: isSel ? FUND.FILL : 'transparent' }}
+                style={{ paddingHorizontal: 13, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#EEF0F2', opacity: dimmed ? 0.5 : 1, backgroundColor: isSel ? FUND.FILL : 'transparent' }}
               >
                 <View style={{ flex: 1, marginRight: 8 }}>
                   <Text style={{ fontSize: FS.BODY, fontFamily: isSel ? PS.bold : PS.medium, color: isSel ? FUND.TEXT : FUND.SUBTEXT }}>{plan.label}</Text>
-                  {belowMin && !!plan.minPrice && (
+                  {offBlocked ? (
+                    <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: FUND.MUTED, marginTop: 2 }}>
+                      Needs a connection
+                    </Text>
+                  ) : belowMin && !!plan.minPrice ? (
                     <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: FUND.MUTED, marginTop: 2 }}>
                       Requires ${plan.minPrice.toLocaleString()}+
                     </Text>
-                  )}
+                  ) : null}
                 </View>
                 {isSel && <Ionicons name="checkmark" size={15} color={FUND.TEXT} />}
               </TouchableOpacity>

@@ -14,6 +14,10 @@ import { FullPackageTitle, FullPackageInfoOverlay, type PackageAnchorRect } from
 import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 import { useAuth } from '../../../hooks/useAuth';
+import { useIsOnline } from '../../../hooks/useIsOnline';
+// ⚠️ The imperative read is for CALLBACKS (`goFunding`), where a render-time
+// value could be a tick stale; `useIsOnline` is for render. See `LeadCenter`.
+import { isOnline } from '../../../services/connectivity';
 // Past Confirm only. Everything BEFORE it is the Result Lead module below.
 import {
   logFundingEditPayments,
@@ -314,6 +318,12 @@ export function ResultJobModal({
   // The funding endpoints are company-scoped by a header (spec §1). The lead's own
   // company wins over the signed-in rep's — same resolution `JobDocsSection` uses.
   const { user } = useAuth();
+  /**
+   * ⚠️ The HOOK, not `isOnline()`. This is read during render (it feeds
+   * `resultBlockers`), and a one-shot read would not re-evaluate when the
+   * signal drops with the sheet already open.
+   */
+  const online = useIsOnline();
   // Web `result-lead-modal.js:61`. See `Lead.isRehashed`.
   const isRehashed = lead?.isRehashed === true;
   const [oneLeg, setOneLeg] = useState('No');
@@ -852,8 +862,13 @@ export function ResultJobModal({
    * told no. `goFunding` re-checks the same rules as a backstop.
    */
   const resultBlockers = useMemo(
-    () => confirmBlockers(activeRows, contractNum, payMode),
-    [activeRows, contractNum, payMode]
+    // ⚠️ `plans` + `online` so a card or loan row that can no longer be
+    // collected is listed as a reason BEFORE the tap. Without them a rep who
+    // picked AMEX on signal and then lost it taps Confirm and gets the server's
+    // generic "payments could not be saved" — which names neither the cause nor
+    // the fix.
+    () => confirmBlockers(activeRows, contractNum, payMode, { plans: pricing.plans, online }),
+    [activeRows, contractNum, payMode, pricing.plans, online]
   );
   const saleReady = resultBlockers.length === 0;
 
@@ -873,6 +888,29 @@ export function ResultJobModal({
     // ⚠️ `activeRows`, not `rows`: the inactive structure's lines are still in
     // state, and `payments` is the COMPLETE list — sending them would file the
     // contract twice over.
+    /**
+     * ⚠️ Confirm needs a connection, and says so in those words.
+     *
+     * `savePayments` is a live PUT with no offline queue, and the funding screen
+     * it opens RENDERS THE SERVER'S RECORD — so there is nothing honest to show
+     * past this point with no signal. Left ungated it still failed, just
+     * anonymously: the rep got "The payments could not be saved." in the red box,
+     * which names neither the cause nor the fix, and a rep in front of a customer
+     * taps that again.
+     *
+     * ⚠️ NOT an `offline-capability.ts` entry. That registry blocks whole
+     * features, and resulting a job offline is supported — the outcome and the
+     * job-builder draft are both queued (`saveOfflineJobBuilderDraft`). What
+     * cannot happen offline is this one server-owned step, so the message points
+     * at it rather than claiming the sheet is unavailable.
+     */
+    if (!isOnline()) {
+      FlashMessage.info(
+        'Confirm needs a connection',
+        'The payment split is saved on the server. Your pricing is kept — confirm this once you have signal.',
+      );
+      return;
+    }
     const upsert = toUpsertRows(activeRows, contractNum, pricing.plans);
     // ⚠️ The BOUNDARY. `result_lead` ends on the press and `funding` begins with the
     // save below, so this fires FIRST and unconditionally: gating it on the save
