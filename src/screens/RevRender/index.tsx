@@ -22,7 +22,6 @@ import { LightStrip } from './lighting/LightStrip';
 import { LightingFooter, LightingPanel } from './lighting/LightingPanel';
 import { ModeSwitch, RenderMode } from './lighting/ModeSwitch';
 import { PhotoGuidanceModal } from './lighting/PhotoGuidanceModal';
-import { ResultsPanel } from './lighting/ResultsPanel';
 import { applyServerPreferences, emptyState, LightingState, toggleFavourite } from '../../utils/revrender-lighting/selection';
 import { LeadService } from '../../services/api/leads';
 import { toLookPayload } from '../../utils/revrender-lighting/payload';
@@ -322,7 +321,7 @@ export default function RevRenderScreen() {
   const { lead, sectionImages, onNavToDocs, onGenerate, onGenerateAll } = route.params;
 
   // ── Status & State ─────────────────────────────────────────────────────────
-  const [status, setStatus] = useState<'grid' | 'config' | 'queue' | 'results'>('grid');
+  const [status, setStatus] = useState<'grid' | 'config' | 'queue'>('grid');
   const [selectedPhoto, setSelectedPhoto] = useState<any>(null);
   // Full-screen viewer for the Configure Render photo — pinch-zoom + iMessage
   // swipe-down-to-dismiss (via the shared ImageGalleryModal).
@@ -336,8 +335,6 @@ export default function RevRenderScreen() {
   // so switching back and forth does not lose work (483 §1).
   const [mode, setMode] = useState<RenderMode>('core');
   const [lighting, setLighting] = useState<LightingState>(emptyState());
-  // Renders submitted but not yet seen in the runs list — drives Results' polling.
-  const [pendingRenderCount, setPendingRenderCount] = useState(0);
 
   // Favourites and Recently Rendered are PER REP ACCOUNT, loaded once on mount.
   // ⚠️ Only `fav` and `recent` come from the server — `applyServerPreferences`
@@ -704,12 +701,14 @@ export default function RevRenderScreen() {
       } else {
         payloads.forEach(p => onGenerate(p));
       }
-      // How many renders Results should WAIT for. The server takes ~30s each and
-      // we navigate immediately, so without this the panel loads an empty list,
-      // reports "0 ready" and only fills if the rep happens to pull-to-refresh.
-      setPendingRenderCount(payloads.length);
       setRenderQueue([]);
-      setStatus('results');
+      // ⚠️ Straight back to Lead Center — do NOT add an in-screen results view.
+      // Lead Center OWNS this generation: `handleStartRevRenders` already raises the
+      // "Starting N render generation(s)…" flash, tracks per-render progress in
+      // `revRenderJobs` and persists it under `rev_render_jobs_<leadId>`, so the rep
+      // watches it finish there. A second results screen here duplicated that and
+      // polled the runs endpoint for state Lead Center was already holding.
+      navigation.goBack();
     } catch (err) {
       console.error('Generate All Error:', err);
     }
@@ -1649,16 +1648,6 @@ export default function RevRenderScreen() {
                   {renderQueue.length} {renderQueue.length === 1 ? 'render' : 'renders'} configured
                 </Text>
               </View>
-              <TouchableOpacity
-                onPress={() => setStatus('results')}
-                accessibilityRole="button"
-                accessibilityLabel="View finished renders"
-                className="flex-row items-center rounded-full px-3"
-                style={{ minHeight: 40, backgroundColor: isDark ? '#1E1E1E' : '#F4F6F8' }}
-              >
-                <Icon name="image-multiple-outline" size={16} color="#919EAB" />
-                <Text className="text-[12px] font-black ml-1.5" style={{ color: '#919EAB' }}>Results</Text>
-              </TouchableOpacity>
             </View>
 
             <View className="gap-y-6">
@@ -1826,20 +1815,7 @@ export default function RevRenderScreen() {
               ? renderGrid()
               : status === 'config'
                 ? renderConfig()
-                : status === 'results'
-                  ? (
-                    <ResultsPanel
-                      leadId={lead?._id || lead?.leadId || ''}
-                      isDark={isDark}
-                      defaultName={[lead?.customerDetails?.firstName, lead?.customerDetails?.lastName].filter(Boolean).join(' ') || undefined}
-                      defaultPhone={lead?.customerDetails?.phone || lead?.phone || undefined}
-                      defaultEmail={lead?.customerDetails?.email || lead?.email || undefined}
-                      onBack={() => setStatus('grid')}
-                      expectedNewRenders={pendingRenderCount}
-                      onRendersArrived={() => setPendingRenderCount(0)}
-                    />
-                  )
-                  : renderQueueView()}
+                : renderQueueView()}
         </View>
       </PhotoPeekScrollLockProvider>
 

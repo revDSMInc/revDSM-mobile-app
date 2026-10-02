@@ -50,6 +50,18 @@ function detailFor(r: Run): string {
  * The homeowner receives a LINK, not the images, so "Send" collects a recipient
  * and the backend mints and delivers it. Nothing here downloads or attaches an
  * image.
+ *
+ * ⚠️ NOT MOUNTED ANYWHERE RIGHT NOW. revRender used to land here after Generate;
+ * it now returns to Lead Center, which already owns generation progress
+ * (`useLeadReports.handleStartRevRenders`) and was showing the same thing twice.
+ *
+ * ⚠️ KEPT ON PURPOSE — do not delete it as dead code. It and
+ * `SendToHomeownerSheet` are the ONLY callers of `LeadService.shareRevRenders`,
+ * so deleting them silently removes send-to-homeowner (483 §9), which is a
+ * shipped requirement and not something the queue screen replaced. Whatever
+ * surfaces finished renders next (Lead Center's `RevRenderHistoryModal` is the
+ * natural home) should mount this panel or lift its send action, rather than
+ * rebuild the share call.
  */
 export function ResultsPanel({
   leadId,
