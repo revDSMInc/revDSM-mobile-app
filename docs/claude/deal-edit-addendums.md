@@ -1312,3 +1312,12 @@ combination".)
 - **The parent is the first SHOWN combination** (`isParentCombination(index, firstShownIndex)`). When a
   hidden saved combination comes first, the first visible one is the parent and has no Remove.
 - Tests: `__tests__/combination-numbering.test.ts`.
+
+## Signature pad: "I agree to electronic signature" must be ticked before Save Mark
+
+`widgets/modals/job-builder/AgreementSignatureModal.tsx`. A checkbox row sits ABOVE the Clear / Save Mark buttons on the capture overlay; **Save Mark is disabled (40% opacity) until it is ticked**, and `savePad` itself returns early without it.
+
+- ⚠️ The tick **resets every time a pad opens** (`useEffect` on `activePad`), so the initials and the signature are each an explicit agreement - one tick is not carried from the last mark. It applies to BOTH pads.
+- ⚠️ The guard is in `savePad`, not only on the button, so no other caller can save a mark without the consent.
+- The consent is not sent to the backend (no field for it); it only gates the capture. If compliance needs it recorded, it has to be added to `/agreement/{leadId}/sign` and the activity log.
+- ⚠️ Save Mark needs the tick AND drawn ink (`canSavePad`); ticking alone used to enable it on a blank pad.
