@@ -26,6 +26,26 @@ import Feather from 'react-native-vector-icons/Feather';
 import { Modal, Pressable } from 'react-native';
 
 const YEARS = [2026, 2025, 2024];
+
+const money = (n: unknown) => `$${(Number(n) || 0).toLocaleString()}`;
+
+/**
+ * The Overview table, one entry per column. The header and every row read the SAME `width`, so
+ * they cannot drift (the old copy-pasted JSX had w-24 / w-28 mixed, which wrapped "Net Comm. per
+ * Job" into its neighbour at larger font scales). All cells are centred.
+ */
+const OVERVIEW_COLUMNS: { key: string; label: string; width: number; format: (r: any) => string }[] = [
+  { key: 'month', label: 'Month ', width: 112, format: () => '' },
+  { key: 'netSales', label: 'Net Sales', width: 112, format: (r) => money(r.netSales) },
+  { key: 'netCommission', label: 'Net Commission', width: 128, format: (r) => money(r.netCommission) },
+  { key: 'netCommissionPercentage', label: 'Net Commission %', width: 128, format: (r) => `${r.netCommissionPercentage}%` },
+  { key: 'jobSold', label: 'Jobs Sold', width: 96, format: (r) => String(r.jobSold ?? 0) },
+  { key: 'netSalePricePerJobSold', label: 'Net Sale per Job', width: 128, format: (r) => money(r.netSalePricePerJobSold) },
+  { key: 'netCommissionPerJobSold', label: 'Net Comm. per Job', width: 128, format: (r) => money(r.netCommissionPerJobSold) },
+  { key: 'collectedCommission', label: 'Collected Comm.', width: 128, format: (r) => money(r.collectedCommission) },
+  { key: 'pendingCommission', label: 'Pending Comm.', width: 128, format: (r) => money(r.pendingCommission) },
+  { key: 'lostCommission', label: 'Lost Comm.', width: 112, format: (r) => money(r.lostCommission) },
+];
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 import { useJobTracker } from '../../hooks/useJobTracker';
@@ -333,79 +353,41 @@ export default function JobTrackerPage() {
             {showOverview && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 <View className="pb-4">
-                  {/* Overview Table Header */}
-                  <View className="flex-row px-5 py-6 bg-surface border-b border-t border-border">
-                    <Text className="w-24 text-xs font-bold text-text-secondary">
-                      Month <Icon name="arrow-up" size={12} />
-                    </Text>
-                    <Text className="w-24 text-xs font-bold text-text-secondary text-right">
-                      Net Sales
-                    </Text>
-                    <Text className="w-28 text-xs font-bold text-text-secondary text-right">
-                      Net Commission
-                    </Text>
-                    <Text className="w-28 text-xs font-bold text-text-secondary text-right">
-                      Net Commission %
-                    </Text>
-                    <Text className="w-24 text-xs font-bold text-text-secondary text-right">
-                      Jobs Sold
-                    </Text>
-                    <Text className="w-24 text-xs font-bold text-text-secondary text-right">
-                      Net Sale per Job
-                    </Text>
-                    <Text className="w-28 text-xs font-bold text-text-secondary text-right">
-                      Net Comm. per Job
-                    </Text>
-                    <Text className="w-28 text-xs font-bold text-text-secondary text-right">
-                      Collected Comm.
-                    </Text>
-                    <Text className="w-28 text-xs font-bold text-text-secondary text-right">
-                      Pending Comm.
-                    </Text>
-                    <Text className="w-28 text-xs font-bold text-text-secondary text-right">
-                      Lost Comm.
-                    </Text>
+                  {/* Overview Table Header — every column has ONE width shared by its header and its cells,
+                      and both are centred, so a column reads as a column. */}
+                  <View className="flex-row items-center px-3 py-4 bg-surface border-b border-t border-border">
+                    {OVERVIEW_COLUMNS.map((col, i) => (
+                      <Text
+                        key={col.key}
+                        numberOfLines={2}
+                        className="text-xs font-bold text-text-secondary"
+                        style={{ width: col.width, paddingHorizontal: 6, textAlign: 'center' }}
+                      >
+                        {col.label}
+                        {i === 0 && <Icon name="arrow-up" size={12} />}
+                      </Text>
+                    ))}
                   </View>
 
                   {/* Month Rows (Mapping real API data) */}
                   {monthlyStats.length > 0 ? (
-                    monthlyStats.map((stat, idx) => {
+                    monthlyStats.map((stat) => {
                       const monthName = format(new Date(2026, stat.month - 1, 1), 'MMMM');
                       return (
                         <View
                           key={stat.month}
-                          className="flex-row px-5 py-5 border-b border-border"
+                          className="flex-row items-center px-3 py-4 border-b border-border"
                         >
-                          <Text className="w-24 text-sm font-medium text-text-primary">
-                            {monthName}
-                          </Text>
-                          <Text className="w-24 text-sm font-medium text-text-primary text-right">
-                            ${stat.netSales.toLocaleString()}
-                          </Text>
-                          <Text className="w-28 text-sm font-medium text-text-primary text-right">
-                            ${stat.netCommission.toLocaleString()}
-                          </Text>
-                          <Text className="w-28 text-sm font-medium text-text-primary text-right">
-                            {stat.netCommissionPercentage}%
-                          </Text>
-                          <Text className="w-24 text-sm font-medium text-text-primary text-right">
-                            {stat.jobSold}
-                          </Text>
-                          <Text className="w-24 text-sm font-medium text-text-primary text-right">
-                            ${stat.netSalePricePerJobSold.toLocaleString()}
-                          </Text>
-                          <Text className="w-28 text-sm font-medium text-text-primary text-right">
-                            ${stat.netCommissionPerJobSold.toLocaleString()}
-                          </Text>
-                          <Text className="w-28 text-sm font-medium text-text-primary text-right">
-                            ${stat.collectedCommission.toLocaleString()}
-                          </Text>
-                          <Text className="w-28 text-sm font-medium text-text-primary text-right">
-                            ${stat.pendingCommission.toLocaleString()}
-                          </Text>
-                          <Text className="w-28 text-sm font-medium text-text-primary text-right">
-                            ${stat.lostCommission.toLocaleString()}
-                          </Text>
+                          {OVERVIEW_COLUMNS.map((col) => (
+                            <Text
+                              key={col.key}
+                              numberOfLines={1}
+                              className="text-sm font-medium text-text-primary"
+                              style={{ width: col.width, paddingHorizontal: 6, textAlign: 'center' }}
+                            >
+                              {col.key === 'month' ? monthName : col.format(stat)}
+                            </Text>
+                          ))}
                         </View>
                       );
                     })
@@ -419,35 +401,17 @@ export default function JobTrackerPage() {
 
                   {/* Totals Row */}
                   {totals && (
-                    <View className="flex-row px-5 py-6 bg-surface">
-                      <Text className="w-24 text-sm font-bold text-text-primary">Totals</Text>
-                      <Text className="w-24 text-sm font-bold text-text-primary text-right">
-                        ${totals.netSales.toLocaleString()}
-                      </Text>
-                      <Text className="w-28 text-sm font-bold text-text-primary text-right">
-                        ${totals.netCommission.toLocaleString()}
-                      </Text>
-                      <Text className="w-28 text-sm font-bold text-text-primary text-right">
-                        {totals.netCommissionPercentage}%
-                      </Text>
-                      <Text className="w-24 text-sm font-bold text-text-primary text-right">
-                        {totals.jobSold}
-                      </Text>
-                      <Text className="w-24 text-sm font-bold text-text-primary text-right">
-                        ${totals.netSalePricePerJobSold.toLocaleString()}
-                      </Text>
-                      <Text className="w-28 text-sm font-bold text-text-primary text-right">
-                        ${totals.netCommissionPerJobSold.toLocaleString()}
-                      </Text>
-                      <Text className="w-28 text-sm font-bold text-text-primary text-right">
-                        ${totals.collectedCommission.toLocaleString()}
-                      </Text>
-                      <Text className="w-28 text-sm font-bold text-text-primary text-right">
-                        ${totals.pendingCommission.toLocaleString()}
-                      </Text>
-                      <Text className="w-28 text-sm font-bold text-text-primary text-right">
-                        ${totals.lostCommission.toLocaleString()}
-                      </Text>
+                    <View className="flex-row items-center px-3 py-4 bg-surface">
+                      {OVERVIEW_COLUMNS.map((col) => (
+                        <Text
+                          key={col.key}
+                          numberOfLines={1}
+                          className="text-sm font-bold text-text-primary"
+                          style={{ width: col.width, paddingHorizontal: 6, textAlign: 'center' }}
+                        >
+                          {col.key === 'month' ? 'Totals' : col.format(totals)}
+                        </Text>
+                      ))}
                     </View>
                   )}
                 </View>
@@ -687,31 +651,31 @@ export default function JobTrackerPage() {
                           <View>
                             {/* Table Header */}
                             <View className="flex-row py-5 px-5 bg-surface">
-                              <Text className="w-24 text-[13px] font-bold text-text-secondary">
+                              <Text className="w-24 text-[13px] font-bold text-text-secondary text-center">
                                 Job Number
                               </Text>
-                              <Text className="w-28 text-[13px] font-bold text-text-secondary">
+                              <Text className="w-28 text-[13px] font-bold text-text-secondary text-center">
                                 Sale Price
                               </Text>
-                              <Text className="w-28 text-[13px] font-bold text-text-secondary">
+                              <Text className="w-28 text-[13px] font-bold text-text-secondary text-center">
                                 Commission
                               </Text>
-                              <Text className="w-28 text-[13px] font-bold text-text-secondary">
+                              <Text className="w-28 text-[13px] font-bold text-text-secondary text-center">
                                 Install Date
                               </Text>
-                              <Text className="w-28 text-[13px] font-bold text-text-secondary">
+                              <Text className="w-28 text-[13px] font-bold text-text-secondary text-center">
                                 Date Sold
                               </Text>
-                              <Text className="w-36 text-[13px] font-bold text-text-secondary">
+                              <Text className="w-36 text-[13px] font-bold text-text-secondary text-center">
                                 Expected Payout Date
                               </Text>
-                              <Text className="w-40 text-[13px] font-bold text-text-secondary">
+                              <Text className="w-40 text-[13px] font-bold text-text-secondary text-center">
                                 Payment Method
                               </Text>
-                              <Text className="w-40 text-[13px] font-bold text-text-secondary">
+                              <Text className="w-40 text-[13px] font-bold text-text-secondary text-center">
                                 Customer Name
                               </Text>
-                              <Text className="w-40 text-[13px] font-bold text-text-secondary">
+                              <Text className="w-40 text-[13px] font-bold text-text-secondary text-center">
                                 Calculator Name
                               </Text>
                               <Text className="w-24 text-[13px] font-bold text-text-secondary text-center">
@@ -727,48 +691,48 @@ export default function JobTrackerPage() {
                                 className="flex-row items-center py-6 px-5 border-b border-border"
                                 style={{ backgroundColor: getRowBackgroundColor(job.status) }}
                               >
-                                <Text className="w-24 text-[13px] font-medium text-text-primary">
+                                <Text className="w-24 text-[13px] font-medium text-text-primary text-center">
                                   {job.jobNumber}
                                 </Text>
-                                <Text className="w-28 text-[13px] font-medium text-text-primary">
+                                <Text className="w-28 text-[13px] font-medium text-text-primary text-center">
                                   ${job.salesPrice.toLocaleString()}
                                 </Text>
-                                <Text className="w-28 text-[13px] font-medium text-text-primary">
+                                <Text className="w-28 text-[13px] font-medium text-text-primary text-center">
                                   ${job.commission.toLocaleString()}
                                 </Text>
-                                <View className="w-28">
+                                <View className="w-28 items-center">
                                   {(() => {
                                     const style = getDateChipStyle(job.installDate, 'install');
                                     const dateStr = job.installDate ? format(parseSafeISO(job.installDate), 'MM/dd/yyyy') : 'TBD';
                                     if (style) {
                                       return (
-                                        <View className="px-2 py-0.5 rounded-full self-start" style={{ backgroundColor: style.bg }}>
+                                        <View className="px-2 py-0.5 rounded-full self-center" style={{ backgroundColor: style.bg }}>
                                           <Text className="text-[11px] font-bold" style={{ color: style.text }}>{dateStr}</Text>
                                         </View>
                                       );
                                     }
-                                    return <Text className="text-[13px] font-medium text-text-primary">{dateStr}</Text>;
+                                    return <Text className="text-[13px] font-medium text-text-primary text-center">{dateStr}</Text>;
                                   })()}
                                 </View>
-                                <Text className="w-28 text-[13px] font-medium text-text-primary">
+                                <Text className="w-28 text-[13px] font-medium text-text-primary text-center">
                                   {format(parseSafeISO(job.soldDate), 'MM/dd/yyyy')}
                                 </Text>
-                                <View className="w-36">
+                                <View className="w-36 items-center">
                                   {(() => {
                                     const payoutStr = calculateExpectedPayout(job);
                                     const style = getDateChipStyle(payoutStr, 'expectedPayout');
                                     if (style && payoutStr !== 'TBD' && payoutStr !== 'N/A') {
                                       return (
-                                        <View className="px-2 py-0.5 rounded-full self-start" style={{ backgroundColor: style.bg }}>
+                                        <View className="px-2 py-0.5 rounded-full self-center" style={{ backgroundColor: style.bg }}>
                                           <Text className="text-[11px] font-bold" style={{ color: style.text }}>{payoutStr}</Text>
                                         </View>
                                       );
                                     }
-                                    return <Text className="text-[13px] font-medium text-text-primary">{payoutStr}</Text>;
+                                    return <Text className="text-[13px] font-medium text-text-primary text-center">{payoutStr}</Text>;
                                   })()}
                                 </View>
-                                <View className="w-40 flex-row items-center gap-1">
-                                  <Text className="text-[13px] font-medium text-text-primary" numberOfLines={1} style={{ flexShrink: 1 }}>
+                                <View className="w-40 flex-row items-center justify-center gap-1">
+                                  <Text className="text-[13px] font-medium text-text-primary text-center" numberOfLines={1} style={{ flexShrink: 1 }}>
                                     {formatPaymentMethod(job.paymentMethod)}
                                   </Text>
                                   {job.paymentMethod && !['check', 'mcVisaDscvr', 'amex', 'lowes_ach', 'lowes_cc'].includes(job.paymentMethod) && (
@@ -780,10 +744,10 @@ export default function JobTrackerPage() {
                                     </TouchableOpacity>
                                   )}
                                 </View>
-                                <Text className="w-40 text-[13px] font-medium text-text-primary">
+                                <Text className="w-40 text-[13px] font-medium text-text-primary text-center">
                                   {(job as any).appointment?.title || job.customerName || 'N/A'}
                                 </Text>
-                                <Text className="w-40 text-[13px] font-medium text-text-primary">
+                                <Text className="w-40 text-[13px] font-medium text-text-primary text-center">
                                   {job.title || (job as any).calculator?.title || (job as any).calculator?.name || 'N/A'}
                                 </Text>
                                 {/* Status is READ-ONLY here. This cell used to be a
