@@ -52,6 +52,8 @@ interface Props {
   title: string;
   /** Fired once the collapse animation finishes — the parent clears `spotlight`. */
   onClosed: () => void;
+  /** Rendered above everything inside the spotlight Modal (e.g. an in-modal picker). */
+  overlay?: React.ReactNode;
   onPrev: () => void;
   onNext: () => void;
   /** The enlarged card, laid out at width = spotlight.rect.w (scale does the zoom). */
@@ -70,7 +72,7 @@ interface Props {
  * in-place width, so at scale 1 it exactly overlays the original card; it then
  * animates translate→center + scale→finalScale (and reverses on close).
  */
-export function SpotlightOverlay({ spotlight, title, onClosed, onPrev, onNext, children }: Props) {
+export function SpotlightOverlay({ spotlight, title, onClosed, onPrev, onNext, overlay, children }: Props) {
   const tx = useSharedValue(0);
   const ty = useSharedValue(0);
   const scale = useSharedValue(1);
@@ -241,6 +243,8 @@ export function SpotlightOverlay({ spotlight, title, onClosed, onPrev, onNext, c
           </Pressable>
         </View>
       </Animated.View>
+
+      {overlay}
     </Modal>
   );
 }
