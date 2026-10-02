@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Modal, Pressable, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, Modal, StyleSheet, Pressable, ScrollView, TouchableOpacity } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import {
   DealPlan,
@@ -30,11 +30,14 @@ interface Props {
   added: string[];
   onAdd: (key: string) => void;
   onClose: () => void;
+  /** Render as an absolute overlay instead of a native Modal — used from INSIDE the spotlight
+   *  Modal so the enlarged card stays open (never stack native Modals). */
+  inline?: boolean;
 }
 
-export function AddPlanModal({ visible, price, plans, categories, added, onAdd, onClose }: Props) {
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+export function AddPlanModal({ visible, price, plans, categories, added, onAdd, onClose, inline }: Props) {
+  const body = (
+    <>
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', paddingHorizontal: 24 }} onPress={onClose}>
         <Pressable style={{ backgroundColor: '#fff', borderRadius: 24, overflow: 'hidden', maxHeight: '72%' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', backgroundColor: '#F0FDF4' }}>
@@ -90,6 +93,10 @@ export function AddPlanModal({ visible, price, plans, categories, added, onAdd, 
           </ScrollView>
         </Pressable>
       </Pressable>
-    </Modal>
+    </>
+  );
+  if (inline) return visible ? <View style={StyleSheet.absoluteFill}>{body}</View> : null;
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>{body}</Modal>
   );
 }
