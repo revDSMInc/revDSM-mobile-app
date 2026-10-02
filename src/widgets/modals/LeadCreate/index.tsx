@@ -31,7 +31,7 @@ import RNFlashMessage from 'react-native-flash-message';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { format } from 'date-fns';
 import { logEvent } from '../../../services/api/LoggerService';
-import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
+import { NUMBER_PAD_KEYBOARD } from '../../../utils/keyboard-type';
 
 interface Props {
   visible: boolean;
@@ -539,7 +539,9 @@ export default function LeadCreateModal({
                   setForm({ ...form, phone: formatted });
                 }}
                 placeholder="+1 (123) 456-7890"
-                keyboardType="phone-pad"
+                // Same keyboard as the Lead ID: `phone-pad` is a DIFFERENT layout (letters, `* + #`) and
+                // the form showed two keyboards. The formatter adds the +1 ( ) - punctuation itself.
+                keyboardType={NUMBER_PAD_KEYBOARD}
                 maxLength={17}
               />
               <CustomInput
@@ -841,9 +843,12 @@ export default function LeadCreateModal({
                     flushLabel
                     label="Lead ID*"
                     value={form.lfLeadId}
-                    onChangeText={(t) => setForm({ ...form, lfLeadId: t })}
+                    // A Lead ID is whole digits only. `numeric` is the DECIMAL pad (Android
+                    // shows blank keys plus `. - ,`); `number-pad` is the clean 0-9 pad, and
+                    // the strip below also drops anything pasted in.
+                    onChangeText={(t) => setForm({ ...form, lfLeadId: t.replace(/\D/g, '') })}
                     placeholder="Enter ID"
-                    keyboardType={NUMERIC_KEYBOARD}
+                    keyboardType={NUMBER_PAD_KEYBOARD}
                     returnKeyType="done"
                     onFocus={() => {
                       scrollViewRef.current?.scrollTo({ y: lfSyncBoxY, animated: true });
