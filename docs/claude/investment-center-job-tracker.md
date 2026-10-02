@@ -238,3 +238,39 @@ Built in `InvestmentPanel.logDownPaymentChange`: In-Home uses the shared `paymen
 - ⚠️ `monthlyPayment` is recomputed for the NEW amount (`endPrice - min(amount, endPrice)`): the commit fires on
   blur before the panel re-renders, so the rendered `inHomeMonthly` is still the OLD down payment's.
 - 1-Year's `monthlyPayment` is `oneYearMonthlyShown` - it does not depend on the 1-Year down payment today.
+
+## REVUIUX-505 — the Forever Record's Investment Center section needs six more events
+
+Ticket: the portal's Investment Center section was redesigned (job scope -> visit -> event, a
+Foundation card and a Price Secured box). Six of the dev handoff's requirements could not be met
+from what the app logged, so the vocabulary in `utils/activity-log/investment-center-log.ts` grew.
+
+**What the panel now logs.** All of it carries the existing `module_type: 'investment_center'`, so
+nothing changed in the backend — both the grouping and the Forever Record permission filter key off
+the MODULE type, never `meta.action`.
+
+- `investment_program_enlarged` / `investment_program_minimized` — the spotlight IS the handoff's
+  enlarge. `programOfSection` maps `SpotlightSectionId` onto the program ('total' -> `'msrp'`), and
+  the minimize carries `enlargedSeconds`.
+- `investment_price_secured` — fired at `confirmInHome` AND at the 1-Year opt-in. Deliberately
+  separate from the opt-in: In-Home commits behind the "Secure This Price" modal while 1-Year is a
+  direct toggle, so the opt-in alone does not mean the same thing on the two cards.
+- `investment_calculator_left` — closes the visit, so its duration is the real time in the scope
+  rather than the span between the first and last tap.
+- `visitId` on every event, and `baseline` (MSRP / 1-Year / In-Home prices) on the scope-view event.
+- `program: 'inhome'` on plan add/remove, which previously carried none.
+- `planMonthlies` on the down payment: every plan in the program, with `old` -> `new`.
+
+⚠️ **`InvestmentPanel` owns the visit, not the screen.** The panel is keyed by tab id, so one mount
+IS one entry into a job scope: it logs the scope view (with the baseline) on mount and the scope
+exit on unmount. The duplicate `logInvestmentCalculatorViewed` effect was REMOVED from
+`screens/InvestmentCenter/index.tsx` — putting it back double-logs every visit.
+
+⚠️ **A card left enlarged still owes its minimize.** `flushEnlarged` runs when another card is
+enlarged, when the spotlight closes, AND from the unmount cleanup — the handoff's "if never
+minimized, close it at scope switch or exit". It is reached through `flushEnlargedRef` because the
+unmount cleanup closes over the first render.
+
+⚠️ **`planMonthlies` is In-Home only.** 1-Year's monthly is quoted off `oneYearGrandTotal` and does
+not subtract its own down payment (see the note above), so there is no before/after to report for
+it. Emitting one would print "$370 -> $370". Fixing that is a pricing change, not a logging one.

@@ -28,13 +28,35 @@ const MODULE = 'investment_center';
 
 type ProgramKey = 'inhome' | 'oneyear';
 
-const programLabel = (p: ProgramKey) => (p === 'inhome' ? 'In-Home Pre Order' : '1 Year Program');
+/**
+ * The programs a card can be ENLARGED on. Wider than `ProgramKey` because the
+ * MSRP / Total Investment card is spotlight-able but is not something a customer
+ * opts into, so it never appears on an opt-in or a down payment.
+ * Mirrors `SpotlightSectionId` in `screens/InvestmentCenter/InvestmentPanel.tsx`
+ * ('total' maps to 'msrp').
+ */
+export type DisplayProgramKey = ProgramKey | 'msrp';
+
+const PROGRAM_LABELS: Record<DisplayProgramKey, string> = {
+  inhome: 'In-Home Pre Order',
+  oneyear: '1 Year Program',
+  msrp: 'MSRP',
+};
+
+const programLabel = (p: DisplayProgramKey) => PROGRAM_LABELS[p] || String(p);
 
 interface Base {
   userId: string;
   leadId?: string;
   calculatorId?: string;
   calculatorTitle?: string;
+  /**
+   * The visit this event belongs to — one id per entry into a job scope, reused by
+   * every event until the rep switches scope or leaves (REVUIUX-505). The Forever
+   * Record groups a scope's events into VISIT blocks by this id; without it the
+   * portal has to infer a visit's end from the last event in it.
+   */
+  visitId?: string;
 }
 
 /** Shared meta shape — the calculator + lead the event belongs to, plus the specifics. */
@@ -42,6 +64,7 @@ const baseMeta = (o: Base, extra: Record<string, unknown>) => ({
   ...(o.calculatorId ? { calculatorId: o.calculatorId } : {}),
   ...(o.calculatorTitle ? { calculatorTitle: o.calculatorTitle } : {}),
   ...(o.leadId ? { leadId: o.leadId } : {}),
+  ...(o.visitId ? { visitId: o.visitId } : {}),
   ...extra,
 });
 
@@ -60,13 +83,36 @@ export const logInvestmentCenterOpened = async (o: Base & { calculatorCount?: nu
 };
 
 /** A priced calculator's presentation became active (once per calculator per session). */
-export const logInvestmentCalculatorViewed = async (o: Base) => {
+/**
+ * One program's baseline figures at the moment a job scope opened — what the
+ * Foundation card at the top of each scope block shows (REVUIUX-505).
+ */
+export interface ProgramBaseline {
+  price?: number;
+  monthly?: number;
+  planLabel?: string;
+}
+
+export interface ScopeBaseline {
+  msrp?: ProgramBaseline;
+  oneYear?: ProgramBaseline;
+  inHome?: ProgramBaseline;
+}
+
+export const logInvestmentCalculatorViewed = async (
+  o: Base & { baseline?: ScopeBaseline },
+) => {
   if (!o.userId || !o.calculatorId) return;
   await logEvent('view', {
     user_id: o.userId,
     created_by: o.userId,
     module_type: MODULE,
-    meta: baseMeta(o, { action: 'investment_calculator_viewed' }),
+    meta: baseMeta(o, {
+      action: 'investment_calculator_viewed',
+      // The prices on screen as the scope opened — the Foundation card's source.
+      // Stripped of discounts and payment chips, per the dev handoff.
+      ...(o.baseline ? { baseline: o.baseline } : {}),
+    }),
   });
 };
 
@@ -199,7 +245,14 @@ export const logInvestmentOptOut = async (
 
 /** A financing plan was added to the In-Home Monthly shortlist. */
 export const logInvestmentPlanAdded = async (
-  o: Base & { planKey: string; planLabel?: string; monthly?: number; isFinancing?: boolean },
+  o: Base & {
+    planKey: string;
+    planLabel?: string;
+    monthly?: number;
+    isFinancing?: boolean;
+    /** The program the plan belongs to — the Forever Record tags every program row. */
+    program?: ProgramKey;
+  },
 ) => {
   if (!o.userId || !o.planKey) return;
   await logEvent('add', {
@@ -209,6 +262,7 @@ export const logInvestmentPlanAdded = async (
     meta: baseMeta(o, {
       action: 'investment_plan_added',
       paymentPlan: o.planKey,
+      ...(o.program ? { program: o.program, programLabel: programLabel(o.program) } : {}),
       ...(o.planLabel ? { planLabel: o.planLabel } : {}),
       ...(o.monthly ? { monthlyPayment: o.monthly } : {}),
       // Mirror the `investment_payment_method_selected` meta shape so the portal
@@ -219,7 +273,9 @@ export const logInvestmentPlanAdded = async (
 };
 
 /** A financing plan was removed from the In-Home Monthly shortlist. */
-export const logInvestmentPlanRemoved = async (o: Base & { planKey: string; planLabel?: string }) => {
+export const logInvestmentPlanRemoved = async (
+  o: Base & { planKey: string; planLabel?: string; program?: ProgramKey },
+) => {
   if (!o.userId || !o.planKey) return;
   await logEvent('delete', {
     user_id: o.userId,
@@ -228,6 +284,7 @@ export const logInvestmentPlanRemoved = async (o: Base & { planKey: string; plan
     meta: baseMeta(o, {
       action: 'investment_plan_removed',
       paymentPlan: o.planKey,
+      ...(o.program ? { program: o.program, programLabel: programLabel(o.program) } : {}),
       ...(o.planLabel ? { planLabel: o.planLabel } : {}),
     }),
   });
@@ -272,11 +329,27 @@ export const logInvestmentPaymentMethodSelected = async (
  * basic CK/CC/AMEX -> paymentMethod/methodLabel), so the portal can read what the rep had
  * chosen when the down payment moved. `monthly` is the $/mo AFTER this down payment.
  */
+/** One plan's monthly before and after a down payment moved. */
+export interface PlanMonthlyChange {
+  planId: string;
+  planLabel?: string;
+  old?: number;
+  new?: number;
+}
+
 export const logInvestmentDownPaymentChanged = async (
   o: Base & {
     program: ProgramKey;
     amount: number;
     selection?: { key: string; label?: string; isFinancing: boolean; monthly?: number };
+    /**
+     * EVERY plan in this program, with its monthly before and after the change — a
+     * down payment is program-level and recalculates all of them, so the Forever
+     * Record lists them rather than only the one that happened to be selected.
+     */
+    planMonthlies?: PlanMonthlyChange[];
+    /** The down payment this replaced, so a removal can read as a restore. */
+    previousAmount?: number;
   },
 ) => {
   if (!o.userId) return;
@@ -305,6 +378,96 @@ export const logInvestmentDownPaymentChanged = async (
       downPayment: o.amount,
       ...selectionFields,
       ...(sel ? { isFinancing: sel.isFinancing } : {}),
+      ...(o.planMonthlies && o.planMonthlies.length ? { planMonthlies: o.planMonthlies } : {}),
+      ...(o.previousAmount !== undefined ? { previousDownPayment: o.previousAmount } : {}),
     }),
+  });
+};
+
+/**
+ * A program card was ENLARGED (spotlight zoom). Pairs with the minimize below, which
+ * carries how long it stayed open — the Forever Record prints
+ * "(time spent enlarged X min)" on the minimize row (REVUIUX-505).
+ */
+export const logInvestmentProgramEnlarged = async (
+  o: Base & { program: DisplayProgramKey; price?: number },
+) => {
+  if (!o.userId) return;
+  await logEvent('view', {
+    user_id: o.userId,
+    created_by: o.userId,
+    module_type: MODULE,
+    meta: baseMeta(o, {
+      action: 'investment_program_enlarged',
+      program: o.program,
+      programLabel: programLabel(o.program),
+      ...(o.price !== undefined ? { price: o.price } : {}),
+    }),
+  });
+};
+
+/**
+ * A program card was MINIMIZED. `enlargedSeconds` is minimize-ts minus enlarge-ts.
+ *
+ * MUST also fire when the card is still enlarged as the rep switches scope or leaves
+ * the screen — otherwise that viewing time is never recorded at all.
+ */
+export const logInvestmentProgramMinimized = async (
+  o: Base & { program: DisplayProgramKey; price?: number; enlargedSeconds?: number },
+) => {
+  if (!o.userId) return;
+  await logEvent('view', {
+    user_id: o.userId,
+    created_by: o.userId,
+    module_type: MODULE,
+    meta: baseMeta(o, {
+      action: 'investment_program_minimized',
+      program: o.program,
+      programLabel: programLabel(o.program),
+      ...(o.price !== undefined ? { price: o.price } : {}),
+      ...(o.enlargedSeconds !== undefined ? { enlargedSeconds: o.enlargedSeconds } : {}),
+    }),
+  });
+};
+
+/**
+ * The customer SECURED a price — the closing event of a job scope, shown as the
+ * Forever Record's cyan box.
+ *
+ * Distinct from the opt-in on purpose: In-Home commits through the "Secure This Price"
+ * confirmation modal while 1-Year is a direct toggle, so the opt-in alone does not mean
+ * the same thing on both cards. Both now emit this, so the two read alike.
+ */
+export const logInvestmentPriceSecured = async (
+  o: Base & { program: ProgramKey; price?: number; monthly?: number; planKey?: string },
+) => {
+  if (!o.userId) return;
+  await logEvent('select', {
+    user_id: o.userId,
+    created_by: o.userId,
+    module_type: MODULE,
+    meta: baseMeta(o, {
+      action: 'investment_price_secured',
+      program: o.program,
+      programLabel: programLabel(o.program),
+      ...(o.price !== undefined ? { price: o.price } : {}),
+      ...(o.monthly ? { monthlyPayment: o.monthly } : {}),
+      ...(o.planKey ? { paymentPlan: o.planKey } : {}),
+    }),
+  });
+};
+
+/**
+ * The rep LEFT a job scope — switched to another calculator or closed the screen.
+ * Closes the visit, so its duration is the real time in the scope rather than the
+ * span between its first and last tap.
+ */
+export const logInvestmentCalculatorLeft = async (o: Base) => {
+  if (!o.userId) return;
+  await logEvent('view', {
+    user_id: o.userId,
+    created_by: o.userId,
+    module_type: MODULE,
+    meta: baseMeta(o, { action: 'investment_calculator_left' }),
   });
 };

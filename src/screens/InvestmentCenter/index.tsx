@@ -23,7 +23,6 @@ import { queryClient } from '../../services/api/queryClient';
 import { useAuth } from '../../hooks/useAuth';
 import {
   logInvestmentCenterOpened,
-  logInvestmentCalculatorViewed,
   logInvestmentConsentPortalOpened,
   logInvestmentConsentFormSubmitted,
   logInvestmentConsentFormCreated,
@@ -293,22 +292,11 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
     logInvestmentCenterOpened({ userId: logUserId, leadId: logLeadId, calculatorCount: visible.length });
   }, [isLoading, consentSigned, logUserId, logLeadId, visible.length]);
 
-  // ── Forever Record: each priced calculator's presentation, logged EVERY time it
-  //    becomes the active tab (only while the panel is actually shown). Tracks the
-  //    LAST viewed tab id (not a viewed-once set) so re-opening a tab logs again,
-  //    while a re-render that leaves the same tab active does not re-fire. ───────
-  const lastViewedCalcIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (isLoading || !consentSigned || !logUserId || !active?.id) return;
-    if (lastViewedCalcIdRef.current === active.id) return;
-    lastViewedCalcIdRef.current = active.id;
-    logInvestmentCalculatorViewed({
-      userId: logUserId,
-      leadId: logLeadId,
-      calculatorId: active.id,
-      calculatorTitle: active.title,
-    });
-  }, [isLoading, consentSigned, logUserId, logLeadId, active?.id, active?.title]);
+  // ── Forever Record: a calculator's VISIT is owned by `InvestmentPanel` ───────
+  //    The panel is keyed by tab id, so one mount IS one entry into that job scope:
+  //    it opens the visit (scope-view + the Foundation card's baseline prices) and
+  //    closes it on unmount (REVUIUX-505). Logging the view here as well would double
+  //    every visit, so this screen no longer does.
 
   const Header = (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#fff' }}>
