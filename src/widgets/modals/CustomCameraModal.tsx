@@ -1,4 +1,3 @@
-import { launchImageLibrary } from 'react-native-image-picker';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -23,19 +22,19 @@ import { useSafeAreaInsets, SafeAreaView as SafeAreaViewContext } from 'react-na
 const ReanimatedCamera = Reanimated.createAnimatedComponent(Camera);
 
 /**
- * ⚠️ TEMPORARY — QA PHOTO IMPORT (REVUIUX-483)
+ * ⚠️ CAMERA ONLY. There is deliberately no gallery import here.
  *
- * The inspection flow is camera-only by design: it opens the camera immediately
- * so a rep shoots first and tags after. That makes it impossible to test a
- * render against a KNOWN photo — QA cannot supply the sample houses on the
- * ticket, and nobody can reproduce a bad render on the photo that caused it.
+ * A QA-only import button lived beside the shutter under an `ALLOW_GALLERY_IMPORT`
+ * flag so a render could be tested against a known sample house. It was removed
+ * before release, flag and all, rather than switched off — a disabled flag is one
+ * edit away from shipping, and this one reached a rep's device once already.
  *
- * This adds a gallery button beside the shutter. It funnels into the SAME
- * onCapture path as a real shot, so nothing downstream behaves differently.
- *
- * Set to false (or delete the button and this flag) before shipping to reps.
+ * ⚠️ Do not re-add it to this modal. The inspection flow is camera-only BY DESIGN:
+ * the photo has to be the house the rep is standing in front of, stamped with the
+ * location and time it was actually taken. An imported photo satisfies none of
+ * that and the record cannot tell the two apart afterwards. If QA needs a known
+ * photo again, give the harness its own entry point — not this one.
  */
-const ALLOW_GALLERY_IMPORT = true;
 
 interface CustomCameraModalProps {
   visible: boolean;
@@ -196,24 +195,6 @@ export const CustomCameraModal = ({
       if (prev === 'off') return 'on';
       if (prev === 'on') return 'auto';
       return 'off';
-    });
-  };
-
-  /**
-   * TEMPORARY (see ALLOW_GALLERY_IMPORT): import a photo instead of shooting one.
-   * Feeds the identical onCapture payload, so tagging, upload and EXIF handling
-   * downstream are unchanged — this is the same photo path, different source.
-   */
-  const pickFromGallery = async () => {
-    const res = await launchImageLibrary({ mediaType: 'photo', selectionLimit: 1, includeExtra: true });
-    const a = res.assets?.[0];
-    if (!a?.uri) return;
-    onCapture({
-      uri: a.uri,
-      fileName: a.fileName || `import-${Date.now()}.jpg`,
-      type: a.type || 'image/jpeg',
-      width: a.width || 0,
-      height: a.height || 0,
     });
   };
 
@@ -560,19 +541,10 @@ export const CustomCameraModal = ({
 
                   {/* SHUTTER & OTHER ACTIONS */}
                   <View style={styles.iosShutterRow}>
-                    {/* Left side: QA gallery import (temporary — see
-                        ALLOW_GALLERY_IMPORT at the top of this file) */}
-                    {ALLOW_GALLERY_IMPORT ? (
-                      <TouchableOpacity
-                        onPress={pickFromGallery}
-                        accessibilityLabel="Import photo from gallery"
-                        style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
-                      >
-                        <Icon name="image-multiple-outline" size={26} color="white" />
-                      </TouchableOpacity>
-                    ) : (
-                      <View style={{ width: 44 }} />
-                    )}
+                    {/* Left: empty placeholder. ⚠️ It MUST stay — the shutter is
+                        centred by the two 44pt spacers either side of it, so
+                        deleting this shifts the button off-centre. */}
+                    <View style={{ width: 44 }} />
 
                     {/* Center: iOS Shutter Button */}
                     <View style={styles.iosShutterOuterWrapper}>

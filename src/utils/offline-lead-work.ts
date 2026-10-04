@@ -91,6 +91,21 @@ export type UploadStep =
    * customer's number with no signal and the link goes out the moment there is one.
    */
   | 'remoteSignature'
+  /**
+   * `PUT funding/v1/{leadId}` — the contract price and the whole payment split, as saved by
+   * **Confirm** on the Result Lead sheet.
+   *
+   * ⚠️ Queueable because the body is the COMPLETE list, not a delta: `savePayments` is a full
+   * PUT, so sending it twice lands exactly the same record. That is what makes an ambiguous
+   * retry free and needs no guard read.
+   *
+   * ⚠️ CASH ROWS ONLY. A card or lender row cannot be queued, because collecting it means the
+   * SERVER minting a Stripe payment link or an application — there is no on-device card path to
+   * stand in for it. `ResultJobModal` blocks those rows before Confirm (see
+   * `planBlockedOffline`), so what reaches this step is a cheque sale, which the rep genuinely
+   * completed at the door.
+   */
+  | 'funding'
   /** `POST lead/v1/{leadId}/job-builder` — the submit. Only when the rep finished the job. */
   | 'submit'
   /**
@@ -152,6 +167,10 @@ export const UPLOAD_STEPS: readonly UploadStep[] = [
   'outcome',
   'documents',
   'remoteSignature',
+  // ⚠️ BEFORE the submit, and that is a dependency rather than a preference: the submit is
+  // validated against the funding record, so a job submitted before its payments exist is
+  // refused for money the rep has already collected.
+  'funding',
   'submit',
   // ⚠️ LAST, and it is failure isolation rather than an ordering preference. A step that fails
   // stops the whole record, so anything placed ahead of `submit` can hold the SALE behind it — and
@@ -198,6 +217,9 @@ export const stepReplaySafety = (step: UploadStep): ReplaySafety => {
   switch (step) {
     case 'calculatorState':
     case 'outcome':
+    // ⚠️ A full-state PUT of the whole payment list, exactly like `calculatorState`. Replaying it
+    // cannot double-charge anything: it files what the split IS, it does not append a payment.
+    case 'funding':
       return 'idempotent';
     case 'work':
     case 'customer':
@@ -424,6 +446,14 @@ export interface OfflineLeadWork {
    */
   customer?: { customerId: string; payload: Record<string, unknown> };
   /** The `POST .../job-builder` body. Present only once the rep completed the job. */
+  /**
+   * The Result Lead **Confirm** body — `{ contractPrice, payments, payMode }`.
+   *
+   * ⚠️ Replaced wholesale on each save rather than appended to, because the request itself is a
+   * full PUT. Two Confirms offline leave one record holding the later split, which is what the
+   * rep meant.
+   */
+  funding?: Record<string, unknown>;
   submit?: Record<string, unknown>;
   /** Steps already applied to the server. The resume pointer. */
   done: UploadStep[];
@@ -532,6 +562,8 @@ export const isStepApplicable = (work: OfflineLeadWork, step: UploadStep): boole
       return !!work.documents?.some((d) => !d.uploadedAt);
     case 'remoteSignature':
       return !!work.remoteSignature;
+    case 'funding':
+      return !!work.funding;
     case 'submit':
       return !!work.submit;
     case 'consent':

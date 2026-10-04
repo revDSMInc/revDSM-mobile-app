@@ -22,6 +22,7 @@ import { AppState } from 'react-native';
 import RNFS from 'react-native-fs';
 import { storage } from '../utils/storage';
 import { LeadService } from './api/leads';
+import { FundingService } from './api/FundingService';
 import { fetchOutcomeDocumentRows } from '../screens/DynamicDealCenter/utils/outcome-documents';
 import { buildDocumentPayloads } from '../screens/DynamicDealCenter/utils/document-payloads';
 import { isOnline, onReconnect } from './connectivity';
@@ -333,6 +334,23 @@ export const saveOfflineJobBuilderDraft = (
       'outcome'
     )
   );
+
+/**
+ * Queue the Result Lead **Confirm** — the contract price and the whole payment split.
+ *
+ * ⚠️ A full-state PUT, so this REPLACES whatever was held rather than adding to it, and the step
+ * is re-armed on every save. Two Confirms with no signal leave one record carrying the later
+ * split, which is what the rep meant by pressing it twice.
+ *
+ * ⚠️ Only ever called for a split the device can honour on its own — cheques. `ResultJobModal`
+ * refuses a card or lender row before Confirm, because collecting one means the server minting a
+ * Stripe link and nothing local can stand in for that.
+ */
+export const saveOfflineFunding = (
+  workClientId: string,
+  funding: Record<string, unknown>
+): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) => rearmStep({ ...w, funding }, 'funding'));
 
 /**
  * Queue a document captured at the door — a device-signed agreement, or a scanned order sheet.
@@ -1180,6 +1198,20 @@ const runStep = async (
         // forced, send the customer a second signing link for the same contract.
         if (!readIs409(err)) throw err;
       }
+      return {};
+    }
+
+    case 'funding': {
+      if (!leadId) throw new Error('no lead id for the funding');
+      const body = send(work.funding) as any;
+      // ⚠️ The SAME endpoint the online Confirm uses, with the same complete body. No guard read:
+      // a full PUT replayed lands the record we wanted, and a funding record is a statement of
+      // the split rather than a ledger of attempts.
+      await FundingService.savePayments(leadId, {
+        contractPrice: Number(body?.contractPrice) || 0,
+        payments: Array.isArray(body?.payments) ? body.payments : [],
+        payMode: body?.payMode === 'upfront' ? 'upfront' : 'split',
+      });
       return {};
     }
 
