@@ -91,7 +91,7 @@ import { UserPickerModal } from '../../../widgets/modals/UserPickerModal';
 import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
 import { FundingView } from './funding/FundingView';
 import { SendLinkModal } from './funding/SendLinkModal';
-import { SegmentedChoice } from './funding/SegmentedChoice';
+import { DropdownChoice } from './funding/DropdownChoice';
 import { CoverageBar } from './funding/CoverageBar';
 import { BlockerList } from './funding/BlockerList';
 import { RefundApproverRow, RefundStatusRail } from './funding/RefundApprovalStatus';
@@ -123,6 +123,8 @@ import {
   hasDecline,
   hydrateRowsFromRecord,
   inferPayMode,
+  inferNoDownPayment,
+  payStructureOf,
   isLocalArchive,
   MULTI_METHOD_ENABLED,
   needsAttentionRowId,
@@ -137,6 +139,7 @@ import {
   type PaymentKind,
   type PaymentRow,
   type PayMode,
+  type PayStructure,
 } from '../utils/funding';
 import {
   logFundingEditPayments,
@@ -326,6 +329,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const [priceScreen, setPriceScreen] = useState<'price' | 'funding'>('price');
   /** Down Payment + Balance, or the whole contract collected now. */
   const [payMode, setPayMode] = useState<PayMode>('split');
+  /** "No Down Payment": split with the Down Payment group hidden and unfunded. */
+  const [noDown, setNoDown] = useState(false);
   /** The rep tried to switch structure after money started moving. */
   const [structureNudge, setStructureNudge] = useState(false);
   /** The editable pricing lines. One down row + one auto balance row to start. */
@@ -815,6 +820,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       },
     ]);
 
+    setNoDown(false);
     let cancelled = false;
     funding.load().then((record) => {
       if (cancelled || !record) return;
@@ -825,6 +831,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       if (saved.length) {
         setRows(saved);
         setPayMode(inferPayMode(record));
+        setNoDown(inferNoDownPayment(record));
       }
       if (record.result === 'bankDecline') setResultChoice('bank_decline');
     });
@@ -989,6 +996,27 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       setPayMode(next);
     },
     [payMode, contractNum, fundingLog]
+  );
+
+  /** The dropdown's choice: `none` / `split` are both `payMode === 'split'`. */
+  const selectStructure = useCallback(
+    (next: PayStructure, allowed: boolean) => {
+      if (next === payStructureOf(payMode, noDown)) return;
+      if (!allowed) {
+        setStructureNudge(true);
+        return;
+      }
+      if (next === 'upfront') {
+        setNoDown(false);
+        switchPayMode('upfront', true);
+        return;
+      }
+      if (payMode === 'upfront') switchPayMode('split', true);
+      setStructureNudge(false);
+      if (next === 'none') setRows((prev) => prev.map((r) => (r.kind === 'down' ? { ...r, amount: '' } : r)));
+      setNoDown(next === 'none');
+    },
+    [payMode, noDown, switchPayMode]
   );
 
   /**
@@ -2655,25 +2683,16 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
               <View style={{ marginTop: 4, marginBottom: 4 }}>
                 {/* How the contract is being paid. Locked once a payment has started
                     — see switchPayMode. */}
-                <SegmentedChoice<PayMode>
+                <DropdownChoice<PayStructure>
                   label="How is this being paid?"
-                  value={payMode}
-                  onSelect={switchPayMode}
-                  hint={structureHint(payMode, structureIsLocked, structureNudge)}
+                  value={payStructureOf(payMode, noDown)}
+                  onSelect={selectStructure}
+                  hint={structureHint(payMode, structureIsLocked, structureNudge, noDown)}
                   hintTone={structureIsLocked ? 'warn' : 'muted'}
                   options={[
-                    {
-                      value: 'split',
-                      title: 'Down Payment',
-                      subtitle: 'Money now, balance funds later',
-                      disabled: structureIsLocked,
-                    },
-                    {
-                      value: 'upfront',
-                      title: 'Upfront',
-                      subtitle: 'Full contract paid in one go',
-                      disabled: structureIsLocked,
-                    },
+                    { value: 'none', title: 'No Down Payment', disabled: structureIsLocked },
+                    { value: 'split', title: 'Down Payment', disabled: structureIsLocked },
+                    { value: 'upfront', title: 'Paid in Full Upfront', disabled: structureIsLocked },
                   ]}
                 />
 
@@ -2789,6 +2808,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                       </View>
                     )}
 
+                    {!noDown && (
                     <PaymentRowsGroup
                       title="Down Payment"
                       layout="plain"
@@ -2808,6 +2828,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                       onRemove={removeRow}
                       onAdd={() => addRow('down')}
                     />
+                    )}
 
                     {/* ⚠️ Why the collected line above cannot be edited. The LOCK itself
                         is not new — `isSettledRow` already freezes any charged or

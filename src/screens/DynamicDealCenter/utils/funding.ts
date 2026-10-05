@@ -104,6 +104,27 @@ export function isFinancingBypassed(payment: Pick<FundingPayment, 'type'>): bool
 export type PayMode = 'split' | 'upfront';
 
 /**
+ * What the structure dropdown offers. `none` is NOT a third wire structure: it is `split`
+ * with the Down Payment group hidden and unfunded, so the balance carries the whole
+ * contract. Nothing downstream knows about it.
+ */
+export type PayStructure = 'none' | 'split' | 'upfront';
+
+export function payStructureOf(mode: PayMode, noDown: boolean): PayStructure {
+  return mode === 'upfront' ? 'upfront' : noDown ? 'none' : 'split';
+}
+
+/**
+ * Reopen a saved split deal as "No Down Payment" when none of its down rows carries money.
+ * Only a deal that actually saved payments qualifies — a fresh one keeps "Down Payment".
+ */
+export function inferNoDownPayment(record: FundingRecord | null | undefined): boolean {
+  const saved = record?.payments || [];
+  if (!saved.length || inferPayMode(record) !== 'split') return false;
+  return !saved.some((p) => p.kind === 'down' && Number(p.amount) > 0);
+}
+
+/**
  * A pricing row's group.
  *
  * ⚠️ `'up'` is **client-side only** — the wire enum is `'down' | 'bal'` and the
@@ -592,15 +613,14 @@ export function structureLocked(payments: FundingPayment[]): boolean {
 }
 
 /** The caption under the structure selector. `nudge` = the rep just tried to switch. */
-export function structureHint(mode: PayMode, locked: boolean, nudge?: boolean): string {
+export function structureHint(mode: PayMode, locked: boolean, nudge?: boolean, noDown?: boolean): string {
   if (locked) {
     return nudge
       ? 'A payment on this job has already started. Void it on the funding screen before switching structure.'
       : 'Structure is set — a payment on this job has already started.';
   }
-  return mode === 'upfront'
-    ? 'Upfront collects the whole contract now. No down payment or balance is created.'
-    : '';
+  if (mode === 'upfront') return 'Upfront collects the whole contract now. No down payment or balance is created.';
+  return noDown ? 'No money down. The whole contract is the balance.' : '';
 }
 
 export type CoverageTone = 'ok' | 'short' | 'over';

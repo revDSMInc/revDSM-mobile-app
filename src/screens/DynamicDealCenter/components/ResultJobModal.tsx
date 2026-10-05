@@ -43,7 +43,8 @@ import { FundingView } from './funding/FundingView';
 import { Storage } from '../../../utils/storage';
 import { fundingOwnerKey, shouldAdoptSavedFunding } from '../../../utils/funding-owner';
 import { SendLinkModal } from './funding/SendLinkModal';
-import { SegmentedChoice } from './funding/SegmentedChoice';
+import { DropdownChoice } from './funding/DropdownChoice';
+import { ConfirmDialog } from './ConfirmDialog';
 import { CoverageBar } from './funding/CoverageBar';
 import { BlockerList } from './funding/BlockerList';
 import { useFunding } from '../hooks/useFunding';
@@ -66,6 +67,8 @@ import {
   hasDecline,
   hydrateRowsFromRecord,
   inferPayMode,
+  inferNoDownPayment,
+  payStructureOf,
   MULTI_METHOD_ENABLED,
   needsAttentionRowId,
   newPaymentId,
@@ -78,6 +81,7 @@ import {
   type PaymentKind,
   type PaymentRow,
   type PayMode,
+  type PayStructure,
 } from '../utils/funding';
 
 /**
@@ -273,11 +277,12 @@ function MoneyField({ label, value, onChange, editable = true, labelBg, trailing
 }) {
   return (
     <View style={{ marginBottom: 20, position: 'relative' }}>
-      <FloatingLabel text={label} bg={labelBg} />
-      <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#919EAB33', borderRadius: 8, paddingHorizontal: 13, paddingVertical: 10, minHeight: 44, backgroundColor: editable ? '#fff' : '#F4F6F8' }}>
-        <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, marginRight: 4, color: editable ? '#1C252E' : '#919EAB' }}>$</Text>
+      {/* Title above the box, exactly like the payment rows' "Amount" label. */}
+      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT, marginBottom: 5 }}>{label}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.6, borderColor: FUND.BORDER, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, minHeight: 46, backgroundColor: editable ? '#fff' : FUND.FILL }}>
+        <Text style={{ fontSize: FS.LEAD, fontFamily: PS.bold, marginRight: 3, color: editable ? '#1C252E' : '#919EAB' }}>$</Text>
         <TextInput
-          style={{ flex: 1, fontSize: FS.BODY, fontFamily: PS.semibold, color: editable ? '#1C252E' : '#919EAB', padding: 0 }}
+          style={{ flex: 1, fontSize: FS.LEAD, fontFamily: PS.bold, color: editable ? '#1C252E' : '#919EAB', padding: 0 }}
           value={value}
           editable={editable}
           onChangeText={(t) => onChange?.(t.replace(/[^0-9.]/g, ''))}
@@ -368,6 +373,10 @@ export function ResultJobModal({
   const [screen, setScreen] = useState<'result' | 'funding'>('result');
   /** Down Payment + Balance, or the whole contract collected now. */
   const [payMode, setPayMode] = useState<PayMode>('split');
+  /** "No Down Payment": split with the Down Payment group hidden and unfunded. */
+  const [noDown, setNoDown] = useState(true);
+  /** The "you are financing the whole contract" confirmation, raised from Confirm. */
+  const [noDownWarn, setNoDownWarn] = useState(false);
   /** The rep tried to switch structure after money started moving. */
   const [structureNudge, setStructureNudge] = useState(false);
   /** The editable pricing lines. One down row + one auto balance row to start. */
@@ -425,6 +434,9 @@ export function ResultJobModal({
     setReasonExplanation('');
     setScreen('result');
     setPayMode('split');
+    // No down payment carried in from the rollout → open on "No Down Payment".
+    setNoDown(!(initialDownPayment && initialDownPayment > 0));
+    setNoDownWarn(false);
     setStructureNudge(false);
     setBanners([]);
     setPriceUnlocked(false);
@@ -471,6 +483,7 @@ export function ResultJobModal({
       if (saved.length) {
         setRows(saved);
         setPayMode(inferPayMode(record));
+        setNoDown(inferNoDownPayment(record));
       }
       // The stored contract price wins over the rollout's: it is what the saved
       // rows were priced against, and a mismatch would misreport the remainder.
@@ -788,6 +801,27 @@ export function ResultJobModal({
     [payMode, contractNum, logCtx]
   );
 
+  /** The dropdown's choice: `none` / `split` are both `payMode === 'split'`. */
+  const selectStructure = useCallback(
+    (next: PayStructure, allowed: boolean) => {
+      if (next === payStructureOf(payMode, noDown)) return;
+      if (!allowed) {
+        setStructureNudge(true);
+        return;
+      }
+      if (next === 'upfront') {
+        setNoDown(false);
+        switchPayMode('upfront', true);
+        return;
+      }
+      if (payMode === 'upfront') switchPayMode('split', true);
+      setStructureNudge(false);
+      if (next === 'none') setRows((prev) => prev.map((r) => (r.kind === 'down' ? { ...r, amount: '' } : r)));
+      setNoDown(next === 'none');
+    },
+    [payMode, noDown, switchPayMode]
+  );
+
   /**
    * Re-open the auto (remainder) row when money comes unassigned again.
    *
@@ -865,9 +899,15 @@ export function ResultJobModal({
    * the funding screen renders the server's record, so opening it after a failed
    * save would show the rep the previous state under the new price.
    */
-  const goFunding = useCallback(async () => {
+  const goFunding = useCallback(async (acknowledged = false) => {
     if (resultBlockers.length) {
       FlashMessage.error('Not ready to confirm', resultBlockers[0]);
+      return;
+    }
+    // No Down Payment: the rep must acknowledge that the WHOLE contract goes to financing.
+    // Down Payment / Upfront show nothing.
+    if (payMode === 'split' && noDown && !acknowledged) {
+      setNoDownWarn(true);
       return;
     }
     // ⚠️ `activeRows`, not `rows`: the inactive structure's lines are still in
@@ -941,7 +981,7 @@ export function ResultJobModal({
     // claim a return that never happened.
     wentToFundingRef.current = true;
     setScreen('funding');
-  }, [resultBlockers, contractNum, activeRows, pricing.plans, payMode, funding, logCtx, leadLogId]);
+  }, [resultBlockers, contractNum, activeRows, pricing.plans, payMode, noDown, funding, logCtx, leadLogId]);
 
   /** Back / "Edit payments" — fold every lender decision onto the pricing rows. */
   const goResult = useCallback(() => {
@@ -1312,25 +1352,16 @@ export function ResultJobModal({
 
                       {/* How the contract is being paid. Locked once a payment has
                           started — see `switchPayMode`. */}
-                      <SegmentedChoice<PayMode>
+                      <DropdownChoice<PayStructure>
                         label="How is this being paid?"
-                        value={payMode}
-                        onSelect={switchPayMode}
-                        hint={structureHint(payMode, structureIsLocked, structureNudge)}
+                        value={payStructureOf(payMode, noDown)}
+                        onSelect={selectStructure}
+                        hint={structureHint(payMode, structureIsLocked, structureNudge, noDown)}
                         hintTone={structureIsLocked ? 'warn' : 'muted'}
                         options={[
-                          {
-                            value: 'split',
-                            title: 'Down Payment',
-                            subtitle: 'Money now, balance funds later',
-                            disabled: structureIsLocked,
-                          },
-                          {
-                            value: 'upfront',
-                            title: 'Upfront',
-                            subtitle: 'Full contract paid in one go',
-                            disabled: structureIsLocked,
-                          },
+                          { value: 'none', title: 'No Down Payment', disabled: structureIsLocked },
+                          { value: 'split', title: 'Down Payment', disabled: structureIsLocked },
+                          { value: 'upfront', title: 'Paid in Full Upfront', disabled: structureIsLocked },
                         ]}
                       />
 
@@ -1367,6 +1398,7 @@ export function ResultJobModal({
                         </>
                       ) : (
                         <>
+                          {!noDown && (
                           <PaymentRowsGroup
                             title="Down Payment"
                             total={downTotal}
@@ -1384,6 +1416,7 @@ export function ResultJobModal({
                             onRemove={removeRow}
                             onAdd={() => addRow('down')}
                           />
+                          )}
 
                           {decisionBanners}
 
@@ -1534,7 +1567,7 @@ export function ResultJobModal({
                   <BlockerList items={resultBlockers} title="Before you can confirm:" />
                   <TouchableOpacity
                     disabled={!saleReady}
-                    onPress={goFunding}
+                    onPress={() => goFunding()}
                     style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: saleReady ? '#4CBB17' : '#E9EBEE' }}
                   >
                     <Text style={{ color: saleReady ? '#fff' : '#A8AEB6', fontFamily: PS.bold, fontSize: FS.BODY_LG, letterSpacing: 0.5 }}>
@@ -1594,6 +1627,23 @@ export function ResultJobModal({
             from inside an endpoint call — lands here rather than on the app-root
             instance, which is OUTSIDE this Modal's view tree and therefore behind it.
             Last child, so it draws over the card. */}
+        {/* The app's own ConfirmDialog, drawn inline: this sheet is already a native
+            Modal and a second one must never stack on it. */}
+        <ConfirmDialog
+          inline
+          visible={noDownWarn}
+          tone="warn"
+          title="No Down Payment"
+          message="You are going with financing for the whole payment. The full contract price will be the balance, with no money collected now."
+          confirmLabel="Continue"
+          cancelLabel="Go Back"
+          onCancel={() => setNoDownWarn(false)}
+          onConfirm={() => {
+            setNoDownWarn(false);
+            goFunding(true);
+          }}
+        />
+
         <ModalFlashHost active={visible} />
       </KeyboardAvoidingView>
     </Modal>

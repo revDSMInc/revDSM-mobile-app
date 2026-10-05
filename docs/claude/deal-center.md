@@ -2600,3 +2600,73 @@ locked-note and archived block are the same objects as before — only the conta
 
 `PaymentRowsGroup` panel layout draws the card header title only when `rows.length > 1`. A lone removable row keeps just the ✕
 (right-aligned, no title); a lone locked row has no header at all.
+
+## Portal-driven automatic quantity (Lighting -> Booster box)
+
+Ask: when the lighting footage adds up to a range, add booster boxes automatically (226-450 ft = 1, 451-675 = 2...), keep it
+rep-editable, and pop a message when one is added, updated or removed. ⚠️ **Nothing may be hardcoded; ranges AND messages come
+from the portal.**
+
+The portal publishes it on the field's `conditional` in `GET /calculator-form-schemas/deal-center` (Lighting ->
+`booster_box_over_225`), in a new **`valueMode: 'range'`**:
+
+```json
+"conditional": { "dependsOn": ["<1st>", "<2nd>", "<3rd>"], "matchMode": "any", "valueMode": "range", "aggregate": "sum",
+  "ranges": [{ "min": 226, "max": 450, "value": "1" }, { "min": 451, "max": 675, "value": "2" }],
+  "notifyRep": true, "addedMessage": "{field} was added automatically ({value}) because the total is now {total}",
+  "removedMessage": "...", "updatedMessage": "..." }
+```
+
+- Pure rules in `screens/DynamicDealCenter/utils/auto-quantity.ts` (tests: `__tests__/utils/auto-quantity.test.ts`); the effect is
+  in `CalculatorView` (`autoFields`). Placeholders: `{field}` `{value}` `{total}` `{previous}`. No message / `notifyRep` not true =
+  no popup (no copy lives in the app). `aggregate`: sum (default) | max | min.
+- ⚠️ **`range` is NOT `fixed`.** `field-dependency.ts` reads an unknown `valueMode` as `userInput`, so the field stays editable -
+  that is what lets a rep order one at 220 ft. Do not add `range` to the fixed/locked branch.
+- ⚠️ **The rep's value is protected without any flag**: the rule only writes when the field still equals what it would have
+  set for the PREVIOUS footage, so an override, or a quantity saved on a reopened calculator, is never overwritten.
+- ⚠️ **The first sight of a tab only records its footage**, so opening or switching tabs never rewrites a quantity.
+- One popup per burst of typing (700 ms), reporting the net change: added (0 -> n), removed (n -> 0), updated (n -> m).
+- Control Box (`control_box`) is a separate portal rule: `valueMode: 'fixed'`, value 1, locked. Unrelated to this feature.
+
+### Reversal: the Investment Center package tab shows the box + ⓘ AND the scope list
+
+The "REPLACES the list" decision recorded above (`InvestmentPanel` "Includes the Following") is **superseded**. QA: *"when the i icon is displayed, the details are missing here - I need the details"*. On a full package the centred box + ⓘ now sits ABOVE the same `inclusions` list a normal tab shows (job-scope sentences, else product names), per the calculator being presented. The ⓘ card still carries the package breakdown. ⚠️ Do not restore the replace-the-list branch.
+
+## Agreement signature pad: e-signature consent gates Save Mark
+
+`widgets/modals/job-builder/AgreementSignatureModal.tsx` (the "Sign to Finalize Order" capture overlay, used by the create flow; the edit-flow note is in `deal-edit-addendums.md`). An "I agree to electronic signature" checkbox sits above Clear / Save Mark; Save Mark is disabled until ticked and `savePad` returns early without it.
+
+- ⚠️ The tick resets on every pad open (`useEffect` on `activePad`), so initials and signature are each an explicit agreement.
+- ⚠️ Nothing is sent to `/agreement/{leadId}/sign` - the consent only gates capture.
+- ⚠️ Save Mark needs the tick AND ink: `canSavePad = agreedToESign && (live strokes > 0)`. Ticking alone used to enable it on an empty pad, so a blank mark could be saved. A stroke counts once the finger lifts (the live path array only grows on release).
+
+## Job Builder Extras ▸ Wedges showed the 5" gutter footage
+
+Ticket: Wedges = 5 and 5" Gutter/DS/E = 12 in the calculator, but the Job Builder's locked Extras ▸ Wedges read 12.
+
+`build-deal-center-data.ts` is the only map the locked, `dcField`-driven fields resolve from. It wrote every entry under its field id AND its legacy-name aliases in ONE pass, in the order the entries arrived (arbitrary for a saved calculator), and then let the result's top-level legacy columns overwrite whatever it had. Either could put one field's value under another field's key.
+
+- Now two passes: aliases first, each entry's own canonical field id LAST; an alias never overwrites another live entry's id; and a key supplied by the entries is not overridden by `resultData`.
+- ⚠️ **Unverified against the live schema** — the cause was deduced from the code, not reproduced. If Wedges still reads the gutter value, inspect the Wedges field's `dcField` in the portal job-builder config (it may name the gutter field) and the calculator schema's `name`/`pricingKey` for the two fields; the app cannot fix a mis-authored `dcField`.
+
+## "How is this being paid?" is a 3-option dropdown
+
+Ticket: the two radio cards truncated "Down Pay…". Now a `DropdownChoice` (`components/funding/DropdownChoice.tsx`, expands IN PLACE — never a nested Modal) with **No Down Payment / Down Payment / Paid in Full Upfront**, titles never truncated. Used by `ResultJobModal` and `DynamicDealEditScreen`; `SegmentedChoice` is no longer used by either.
+
+- ⚠️ **"No Down Payment" is not a third wire structure.** It is `payMode === 'split'` plus a UI-only `noDown` flag (`PayStructure`, `payStructureOf` in `utils/funding.ts`): the Down Payment group is hidden, down rows are cleared to `''`, and the balance carries the whole contract. An entirely unfunded down row is already exempt in `confirmBlockers`, and `toUpsertRows` drops zero rows — so nothing downstream changed.
+- On reopen, `inferNoDownPayment(record)` restores it for a saved split deal with no funded down row. The flag is not persisted.
+- Once money has moved (`structureLocked`) the other options are disabled and explain why, same as before.
+- `structureHint` takes a 4th `noDown` arg.
+
+### Result Lead opens on "No Down Payment" and warns on Confirm
+
+`ResultJobModal` defaults the dropdown to **No Down Payment** unless the rollout carried a down payment (`initialDownPayment > 0`); a saved deal still restores through `inferNoDownPayment`. Tapping **Confirm** on No Down Payment raises the app's own `ConfirmDialog` (tone `warn`) — "you are going with financing for the whole payment" — and only **Continue** runs `goFunding(true)`. Down Payment and Upfront show nothing.
+
+- ⚠️ The dialog is drawn with `ConfirmDialog`'s new `inline` prop (absolute layer, no native Modal): the Result Lead sheet is itself a Modal, and native Modals must never stack. A full-screen `<Modal>` dialog from here would be dropped on iOS.
+- Scope: Result Lead only. `DynamicDealEditScreen` keeps its own default (reopened deals restore from the saved record) and has no warning.
+- ⚠️ `goFunding` now takes an `acknowledged` flag and `noDown` is in its dependency list — a stale closure there would skip or repeat the warning. The Confirm button calls `goFunding()` through an arrow, never `onPress={goFunding}` (that would pass the press event as `acknowledged`).
+
+### Result Lead: Original Contract Price field matches the payment Amount field
+
+`MoneyField` (`ResultJobModal.tsx`) now uses the same type as `PaymentRowsGroup`'s Amount field: `FS.LEAD` + `PS.bold` for the `$` and the value, `minHeight: 46`, `borderWidth: 1.6`, `FUND.BORDER`, `borderRadius: 12`. It was `FS.BODY` + `PS.semibold` on a thin 8-radius box, so the two fields stacked on one sheet read as different sizes. ⚠️ Keep the two in step; the locked (non-editable) state keeps its grey fill and text.
+- Follow-up: `MoneyField`'s title is now a plain `FS.SMALL` / `PS.bold` / `FUND.SUBTEXT` line ABOVE the box (`marginBottom: 5`), like the payment rows' "Amount" label, instead of a floating cut-out label; locked fill is `FUND.FILL`. `labelBg` is now unused. Title and box therefore match the Amount field exactly.
