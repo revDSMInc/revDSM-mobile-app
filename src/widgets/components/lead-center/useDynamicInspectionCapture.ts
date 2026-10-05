@@ -29,6 +29,10 @@ import {
   mergePendingForSlot,
 } from '../../../utils/pending-inspection-photos';
 import { uploadQueueManager } from '../../../utils/uploadQueue';
+import { offlinePhotoDeleteQueue } from '../../../services/offlinePhotoDeleteQueue';
+import { resolveDeleteTarget } from '../../../utils/offline-photo-deletes';
+import { isOnline } from '../../../services/connectivity';
+import { useIsOnline } from '../../../hooks/useIsOnline';
 import { resolveS3Url } from '../../../utils/s3-utils';
 import { logEvent } from '../../../services/api/LoggerService';
 import {
@@ -88,6 +92,8 @@ const dedupeExtras = (...lists: (InspectionSlot | InspectionSlot[])[]): Inspecti
 export interface DynamicInspectionCapture {
   leadId: string | undefined;
   loading: boolean;
+  /** Live connectivity. Views use it to avoid claiming an upload is moving when nothing is. */
+  online: boolean;
   getPhotos: (label: string, subcategory: string) => CapturedPhoto[];
   countUnderLabel: (label: string) => number;
   totalPhotos: number;
@@ -157,6 +163,18 @@ export function useDynamicInspectionCapture({
   // this hook — and Manage Photos mounts its own. Offline there is nothing on the server yet, so
   // that screen rendered 0 photos and every tab 0/N for a lead the rep had just shot three times.
   // The MMKV upload queue is the source that survives the modal boundary and an app restart.
+  const online = useIsOnline();
+  // Deletes filed offline. Every read below subtracts them, or the server keeps returning a photo
+  // the rep has already removed and the delete appears to undo itself on the next refetch.
+  const [deletedUrls, setDeletedUrls] = useState<Set<string>>(() =>
+    offlinePhotoDeleteQueue.deletedUrls(leadId)
+  );
+  useEffect(() => {
+    const sync = () => setDeletedUrls(offlinePhotoDeleteQueue.deletedUrls(leadId));
+    sync();
+    return offlinePhotoDeleteQueue.addListener(sync);
+  }, [leadId]);
+
   const [pendingUploads, setPendingUploads] = useState(() => uploadQueueManager.getQueue());
   useEffect(() => {
     setPendingUploads([...uploadQueueManager.getQueue()]);
@@ -240,9 +258,16 @@ export function useDynamicInspectionCapture({
           if (!stillReturned.has(u)) pending.delete(u);
         });
       }
-      const photos = pending.size
-        ? rawPhotos.filter((p) => !pending.has(p?.s3url))
-        : rawPhotos;
+      // ⚠️ BOTH sets. `pendingDeletesRef` is in-memory and covers the online delete still
+      // settling; `deletedUrls` is the MMKV queue and is the only one that survives a remount,
+      // a screen change or an app restart — which is exactly the span an offline delete has to
+      // last. Subtracting only the first made a photo deleted offline reappear the moment the
+      // rep reopened Manage Photos.
+      const suppressed = deletedUrls;
+      const photos =
+        pending.size || suppressed.size
+          ? rawPhotos.filter((p) => !pending.has(p?.s3url) && !suppressed.has(p?.s3url))
+          : rawPhotos;
 
       const pfx = productKey ? `${productKey} — ` : '';
       const expectedCats = new Set(index.leafCategories.map((c) => norm(`${pfx}${c.label}`)));
@@ -375,7 +400,11 @@ export function useDynamicInspectionCapture({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [salesPhotosSignature, index, productKey]);
+    // ⚠️ `deletedUrls` is in the deps on purpose: filing an offline delete must re-run this
+    // effect, or the row the rep just removed stays on screen until something else happens to
+    // invalidate the lead — which offline is nothing at all.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [salesPhotosSignature, index, productKey, deletedUrls]);
 
   const getPhotos = useCallback(
     (label: string, subcategory: string): CapturedPhoto[] => {
@@ -547,9 +576,66 @@ export function useDynamicInspectionCapture({
       key: string;
       photo: CapturedPhoto;
     }) => {
-      if (!leadId || !photo?.s3url) return;
-      const url = photo.s3url;
+      if (!leadId) return;
+
+      // What this delete actually MEANS. A photo shot offline is only in the upload queue, so
+      // there is nothing on the server to remove — dropping the queue item IS the delete, and
+      // filing a server delete for it would address an s3url that does not exist.
+      const target = resolveDeleteTarget(photo as any);
+      if (target.kind === 'nothing') return;
+
+      if (target.kind === 'queued-upload') {
+        if (key) setDeletingKeys((prev) => ({ ...prev, [key]: true }));
+        try {
+          uploadQueueManager.dropQueuedItem(target.pendingId);
+          // No optimistic prune needed: the row came FROM the queue, so removing the item
+          // removes the card on the queue's own listener tick.
+        } finally {
+          if (key)
+            setDeletingKeys((prev) => {
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+        }
+        return;
+      }
+
+      const url = target.s3url;
       if (key) setDeletingKeys((prev) => ({ ...prev, [key]: true }));
+
+      // ── Offline: hide it now, file the delete for replay. ────────────────────────────────
+      // ⚠️ The local prune MUST happen for the offline arm too. The server still returns the
+      // photo until the replay lands, so without subtracting it the row reappears on the next
+      // read and the rep sees the delete "undo itself".
+      if (!isOnline()) {
+        pendingDeletesRef.current.add(url);
+        const dkOff = subKey(scopeCat(categoryLabel), subcategory);
+        knownPhotosRef.current = {
+          ...knownPhotosRef.current,
+          [dkOff]: (knownPhotosRef.current[dkOff] || []).filter((p) => p.s3url !== url),
+        };
+        setPhotosBySubcat((prev) => ({
+          ...prev,
+          [dkOff]: (prev[dkOff] || []).filter((p) => p.s3url !== url),
+        }));
+        offlinePhotoDeleteQueue.enqueue({
+          leadId,
+          s3url: url,
+          category: 'salesPhotos',
+          categoryName: photo.category || categoryLabel,
+          subcategory: photo.subcategory || subcategory,
+          userId,
+        });
+        if (key)
+          setDeletingKeys((prev) => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
+        return;
+      }
+
       try {
         await LeadService.deleteImage(leadId, { s3urls: [url], category: 'salesPhotos' });
 
@@ -764,6 +850,7 @@ export function useDynamicInspectionCapture({
     countUnderLabel,
     totalPhotos,
     capturedPreviews,
+    online,
     uploadingKeys,
     deletingKeys,
     movingKeys,

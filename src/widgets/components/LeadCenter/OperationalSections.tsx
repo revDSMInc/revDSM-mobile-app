@@ -68,6 +68,11 @@ export const ToolsSection = ({
             generatedUrl: typeof r?.generatedUrl === 'string' ? r.generatedUrl.trim() : '',
             createdAt: r?.createdAt || null,
             runId: r?.runId || r?._id || null,
+            // Keep the backend's own key names too (`RevRenderHistoryModal`'s view-logged
+            // event reads these) — this pair shape used to drop them, so that log's
+            // originalS3url/generatedS3url fields always came back null on this screen.
+            s3UrlOriginal: r?.s3UrlOriginal || null,
+            s3UrlGenerated: r?.s3UrlGenerated || null,
             originalS3url: r?.s3UrlOriginal || null,
             generatedS3url: r?.s3UrlGenerated || null,
             s3url: r?.s3url || null,

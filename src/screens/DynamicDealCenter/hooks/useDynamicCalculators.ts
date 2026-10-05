@@ -723,7 +723,12 @@ export function useDynamicCalculators(
             _id: t.id,
             // `buildPayload` omits drops (they have their own writer online); the snapshot is a
             // picture of the calculator, so it carries them.
-            dropPrice: t.dropPrice || [],
+            //
+        // ⚠️ Through the SAME two helpers the online writer applies at `:886`, so the queued
+        // body is byte-comparable with an online one. Storing the raw rows let the redundant
+        // `price` mirror reach the wire and skipped the single-accepted invariant, so an
+        // offline-built list could arrive in a shape no online save ever produces.
+        dropPrice: toDropPricePayload(normalizeSingleAcceptedDrop(t.dropPrice || [])),
           })),
         apptId
       );

@@ -260,8 +260,11 @@ export const RevRenderHistoryModal = ({
         totalRenders: runs.length,
         beforeImageUrl: run.originalUrl || run.s3UrlOriginal || null,
         afterImageUrl: run.generatedUrl || run.s3UrlGenerated || null,
-        originalS3url: run.s3UrlOriginal || null,
-        generatedS3url: run.s3UrlGenerated || null,
+        // `run` comes from different pair-builders depending on which screen opened this
+        // modal (Lead Center Tools vs Investment Center vs Deal Center), and they don't all
+        // use the same key name for the same value — read both so neither path logs null.
+        originalS3url: run.s3UrlOriginal || run.originalS3url || null,
+        generatedS3url: run.s3UrlGenerated || run.generatedS3url || null,
         s3url: run.s3url || null,
         bucketName: run.bucketName || null,
         category: run.category || null,

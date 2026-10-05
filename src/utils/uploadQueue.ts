@@ -8,6 +8,9 @@ import { isClientId } from './offline-lead-work';
 import { onReconnect } from '../services/connectivity';
 import { getSessionOwner, registerSessionResetHook } from '../services/sessionScope';
 import { isOwnedBy } from './session-scope';
+import { adoptLocalFileAsCached } from './imageFileCache';
+import { resolveS3Url } from './s3-utils';
+import { isCacheFile } from './image-cache-policy';
 
 export interface UploadQueueItem {
   id: string;
@@ -32,6 +35,8 @@ export interface UploadQueueItem {
 class UploadQueueManager {
   private queue: UploadQueueItem[] = [];
   private isProcessing = false;
+  /** Id of the item currently being uploaded; drives the per-tile status text. */
+  private activeUploadId: string | null = null;
   private onQueueChangeListeners: (() => void)[] = [];
 
   constructor() {
@@ -71,11 +76,46 @@ class UploadQueueManager {
     return this.queue.filter((i) => this.ownedByCurrentSession(i));
   }
 
+  /**
+   * The id of the item being uploaded right now, or null.
+   *
+   * Exposed so a photo tile can say "Uploading…" for the one in flight and "Saved on
+   * device" for the ones behind it, instead of every queued photo claiming to be
+   * uploading. A rep who can see which photo is moving does not assume the app is stuck.
+   */
+  public getActiveUploadId(): string | null {
+    return this.activeUploadId;
+  }
+
   /** Drop the in-memory copy when the session ends — the MMKV wipe alone would be re-persisted. */
   public resetForNewSession() {
     this.queue = [];
     this.isProcessing = false;
+    this.activeUploadId = null;
     this.notifyListeners();
+  }
+
+  /**
+   * Cancel a QUEUED photo the rep deleted before it ever uploaded.
+   *
+   * This is the offline delete for a photo shot with no signal: nothing exists on the server, so
+   * removing the queue item IS the delete. The durable copy under `upload_queue` is unlinked too,
+   * or a cancelled photo would keep occupying storage for the life of the install.
+   *
+   * ⚠️ Refuses to cancel the item currently UPLOADING. Its bytes are already on their way and the
+   * server may have accepted them; dropping the record here would lose the s3url that the
+   * deferred-delete queue needs to clean it up afterwards. The caller falls back to a normal
+   * delete once the upload lands.
+   */
+  public dropQueuedItem(id: string): boolean {
+    if (!id || id === this.activeUploadId) return false;
+    const item = this.queue.find((i) => i.id === id);
+    if (!item || !this.ownedByCurrentSession(item)) return false;
+    this.removeItem(id);
+    this.saveQueue();
+    this.cleanupPersistedFile(item);
+    this.notifyListeners();
+    return true;
   }
 
   /** Drop one item by id, wherever it currently sits. */
@@ -263,6 +303,8 @@ class UploadQueueManager {
     if (!(await this.checkOnline())) {
       console.log('[UploadQueue] Device is offline. Pausing queue processing.');
       this.isProcessing = false;
+      this.activeUploadId = null;
+      this.notifyListeners();
       setTimeout(() => this.processQueue(), 5000);
       return;
     }
@@ -282,6 +324,8 @@ class UploadQueueManager {
       );
       if (activeIndex === -1) break;
       const activeItem = this.queue[activeIndex];
+      this.activeUploadId = activeItem.id;
+      this.notifyListeners();
       try {
         console.log(`[UploadQueue] Uploading item: ${activeItem.id} for slot: ${activeItem.subcategory}`);
         await this.uploadItem(activeItem);
@@ -338,6 +382,9 @@ class UploadQueueManager {
     }
 
     this.isProcessing = false;
+    // Nothing is in flight any more — clear it so no tile is left reading "Uploading…".
+    this.activeUploadId = null;
+    this.notifyListeners();
     console.log('[UploadQueue] Processing finished.');
   }
 
@@ -417,6 +464,29 @@ class UploadQueueManager {
     // 3b. Log analytical event on upload success in the background (fire-and-forget)
     this.logUploadSuccessAsync(item, response, coords, existingUrls);
 
+    // 3b-i. HAND THE LOCAL FILE OVER TO THE IMAGE CACHE, under the url the server just
+    // minted for the same bytes. Until the refetch lands the grid is painting this photo
+    // from the queue's `file://` copy; a moment later the lead comes back carrying a
+    // pre-signed S3 url, the card swaps to it, and without this the tile would re-download
+    // a full-size photo it already had on disk — every tile at once, on the connection that
+    // just came back. That is the "after the network restores the pictures keep loading"
+    // report. Adopting first makes the swap free and invisible.
+    //
+    // ⚠️ Must run BEFORE step 4 unlinks the local file, and before the refetch in 3c.
+    // Awaited (a local copy, milliseconds) so the race cannot be lost; failure is
+    // non-fatal — the tile just falls back to downloading, which is today's behaviour.
+    try {
+      const uploaded = this.matchUploadedPhoto(response, item, existingUrls);
+      // The grid renders `secureUrl` when the lead carries one and otherwise a direct
+      // S3 url, and `getLocalCachePath` drops the query string — so a signed and an
+      // unsigned url for the same object share one cache path. Adopting under whichever
+      // the response gives therefore satisfies the warm either way.
+      const uploadedUrl = uploaded?.secureUrl || resolveS3Url(uploaded?.s3url);
+      if (uploadedUrl) await adoptLocalFileAsCached(item.uri, uploadedUrl);
+    } catch (adoptErr) {
+      console.warn('[UploadQueue] Could not adopt local file into image cache:', adoptErr);
+    }
+
     // 3c. Refresh React Query and WAIT for the lead to actually come back before
     // this item is retired from the queue (the caller shifts it as soon as we
     // return). Awaiting the refetch closes that gap so the optimistic item hands
@@ -428,15 +498,52 @@ class UploadQueueManager {
       console.warn('[UploadQueue] Failed to refresh queries:', qcErr);
     }
 
-    // 4. Cleanup local cache file if applicable
+    // 4. Cleanup the ORIGINAL camera scratch file, if that is what we uploaded.
+    //
+    // ⚠️ Never the image cache's own copy. Step 3b-i adopts these bytes into the image
+    // cache, whose files also live under CacheDir, and the previous `includes('Cache')`
+    // substring test would happily unlink one of them — deleting the very file the grid
+    // was about to render and sending the tile back to the network. `isCacheFile` keys
+    // on this cache's filename prefix, so an adopted copy is always skipped.
+    //
+    // The durable queue copy under `upload_queue` / `pending_uploads` is NOT touched here
+    // either; `cleanupPersistedFile` owns that one and runs after the item is retired.
     try {
-      if (item.uri.includes('Cache') || item.uri.includes('tmp')) {
-        const cleanPath = item.uri.replace('file://', '');
+      const cleanPath = item.uri.replace('file://', '');
+      const base = cleanPath.split('/').pop() || '';
+      const isScratch = /\/(Caches?|tmp)\//i.test(cleanPath);
+      const isOwnedByCache = isCacheFile(base);
+      const isDurableQueueCopy =
+        cleanPath.includes('/upload_queue/') || cleanPath.includes('/pending_uploads/');
+      if (isScratch && !isOwnedByCache && !isDurableQueueCopy) {
         await ReactNativeBlobUtil.fs.unlink(cleanPath);
       }
     } catch (cleanupError) {
       console.warn('[UploadQueue] Failed to delete temporary cache file:', cleanupError);
     }
+  }
+
+  /**
+   * The row in the upload response that IS the photo `item` just sent, or null.
+   *
+   * Shared by the image-cache handover and the analytics logger so the two can never
+   * disagree about which photo was uploaded. Matched on (category, subcategory) among
+   * rows that were NOT already on the lead before the upload — a queue item has no
+   * s3url of its own, so there is nothing to join on directly. Scanned newest-first
+   * because the server appends.
+   */
+  private matchUploadedPhoto(response: any, item: UploadQueueItem, existingUrls: Set<string>): any | null {
+    const rows = response?.data?.salesPhotos || response?.data?.data?.salesPhotos || [];
+    if (!Array.isArray(rows)) return null;
+    return (
+      [...rows].reverse().find(
+        (p: any) =>
+          p?.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
+          p?.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
+          p?.s3url &&
+          !existingUrls.has(p.s3url)
+      ) || null
+    );
   }
 
   private async logUploadSuccessAsync(
@@ -454,14 +561,7 @@ class UploadQueueManager {
       let bucketName = '';
 
       // Try to match the photo from the upload response first
-      const responseSalesPhotos = response.data?.salesPhotos || response.data?.data?.salesPhotos || [];
-      const immediateMatch = [...responseSalesPhotos].reverse().find(
-        (p: any) =>
-          p.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
-          p.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
-          p.s3url &&
-          !existingUrls.has(p.s3url)
-      );
+      const immediateMatch = this.matchUploadedPhoto(response, item, existingUrls);
 
       if (immediateMatch && immediateMatch.s3url) {
         s3url = immediateMatch.s3url;

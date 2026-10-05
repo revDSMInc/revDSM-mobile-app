@@ -42,6 +42,7 @@ import { useChatSession } from '../../hooks/useChatSession';
 import { useVoiceNote, formatTime, formatMs } from '../../hooks/useVoiceNote';
 import { useTeamChannelPermission } from '../../hooks/useTeamChannelPermission';
 import { useIsOnline } from '../../hooks/useIsOnline';
+import { isClientId } from '../../utils/offline-lead-work';
 import { offlineNoticeFor } from '../../utils/offline-capability';
 
 const GiftedChatAny = GiftedChat as any;
@@ -248,16 +249,41 @@ export default function ChatDetailScreen() {
    * whatever they typed, since nothing here queues a message.
    */
   const online = useIsOnline();
-  const offlineLocked = !online;
+
+  /**
+   * ⚠️ A lead created at the door has NO THREAD YET, and that is a second reason the
+   * composer cannot send — one that has nothing to do with the current signal.
+   *
+   * A thread is addressed by the lead's SERVER id. Until the queued lead create lands,
+   * the only id that exists is the client one (`lead-…`), `getChatByLeadId` finds
+   * nothing for it, and `chatId` stays null. `handleSend` then bails on
+   * `if (!chatId) return` — reported as **"I press send and nothing happens"**, on a
+   * device showing full 5G.
+   *
+   * Reusing the existing lock is the point: the composer already knows how to explain
+   * itself. What was missing was this reason, not the mechanism.
+   */
+  const threadNotCreatedYet = !isChannel && !chatId && isClientId(leadId);
+  const offlineLocked = !online || threadNotCreatedYet;
 
   const handleDisabledClick = useCallback(() => {
     Alert.alert('Info', 'You are not allowed to post in this channel.');
   }, []);
 
   const handleOfflineClick = useCallback(() => {
+    // ⚠️ Two different reasons, two different messages. Telling a rep on full signal
+    // that "messages need a connection" is wrong and unactionable — the thread is
+    // simply not on the server yet, and it will be shortly.
+    if (threadNotCreatedYet) {
+      FlashMessage.info(
+        'This lead is still uploading',
+        'Messages open once the lead reaches the office. Nothing you type now would be saved.',
+      );
+      return;
+    }
     const notice = offlineNoticeFor('chat-send');
     if (notice) FlashMessage.info(notice.title, notice.message);
-  }, []);
+  }, [threadNotCreatedYet]);
 
   const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
   const [showLeadImagePicker, setShowLeadImagePicker] = useState(false);

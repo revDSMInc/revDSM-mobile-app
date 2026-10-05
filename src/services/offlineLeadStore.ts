@@ -22,6 +22,8 @@ import { AppState } from 'react-native';
 import RNFS from 'react-native-fs';
 import { storage } from '../utils/storage';
 import { LeadService } from './api/leads';
+import ChatService from './api/ChatService';
+import { adoptServerDropIds, readServerDrops } from '../screens/DynamicDealCenter/utils/drop-prices';
 import { FundingService } from './api/FundingService';
 import { fetchOutcomeDocumentRows } from '../screens/DynamicDealCenter/utils/outcome-documents';
 import { buildDocumentPayloads } from '../screens/DynamicDealCenter/utils/document-payloads';
@@ -41,6 +43,7 @@ import {
 import { reverseGeocode } from '../utils/places';
 import { queryClient } from './api/queryClient';
 import { rekeyLeadWorkflow } from './offlineLeadStatus';
+import { offlinePhotoDeleteQueue } from './offlinePhotoDeleteQueue';
 import { leadDetailForCache } from '../utils/offline-lead-detail-cache';
 import { submitConsentForm, finalizeConsentUpload } from './api/consent-forms';
 import {
@@ -1067,6 +1070,11 @@ const runStep = async (
       // device minted. Until they are re-addressed they cannot be sent, and every later step of
       // this upload is a chance for the connection to drop again before they are.
       uploadQueueManager.rekeyLead(work.clientId, id);
+      // ⚠️ And the deferred photo DELETES, which are addressed by the same client id. A rep who
+      // shot and then removed a photo on a door-created lead has one of each queued; re-addressing
+      // the upload but not the delete leaves the delete pointing at an id the server will never
+      // know, where it retries and is dropped — quietly resurrecting a photo the rep deleted.
+      offlinePhotoDeleteQueue.rekeyLead(work.clientId, id);
       // ⚠️ And the CHECK-IN mark, for the same reason and in the same breath. It is keyed by the
       // id the card was drawn with — the client one — so without this the server row arrives under
       // a real `_id` the map has no entry for and the card regresses to **Start Appointment** on a
@@ -1136,7 +1144,21 @@ const runStep = async (
           out[calc.clientId] = adopted[i];
           continue;
         }
-        const res = await LeadService.createCalculator(apptId, send(calc.payload));
+        /**
+         * ⚠️ `dropPrice` is STRIPPED from the create.
+         *
+         * `calculatorState` runs straight after this and sends the whole payload again
+         * — including the drops — so filing them here as well files every round TWICE.
+         * The backend appends id-less rows rather than merging them (see
+         * `drop-prices.ts`), so the second write cannot correct the first.
+         *
+         * One writer for drops, and it is `calculatorState`, because that is the step
+         * that can read the assigned ids back. Nothing is lost by omitting them here:
+         * the two steps always run together in this drain.
+         */
+        const createBody: any = { ...(calc.payload || {}) };
+        delete createBody.dropPrice;
+        const res = await LeadService.createCalculator(apptId, send(createBody));
         const id = readCreatedId(res?.data);
         if (!id) throw new Error('calculator created but the response carried no _id');
         out[calc.clientId] = id;
@@ -1145,11 +1167,30 @@ const runStep = async (
     }
 
     case 'calculatorState': {
-      // A full-state PUT per calculator — idempotent, so a partial failure simply re-runs.
+      /**
+       * A full-state PUT per calculator.
+       *
+       * ⚠️ **Idempotent for every field EXCEPT `dropPrice`**, and that exception is the
+       * whole of the offline duplicate bug. The backend merges `dropPrice` by `_id` and
+       * **FILES AN ID-LESS ROW AS NEW** (see `drop-prices.ts` — the same contract that
+       * caused this bug on the online path). So re-sending a drop that has never been to
+       * the server appends another copy of it, every single time.
+       *
+       * One drop added offline used to come back as THREE: the `calculator` POST filed
+       * it once, this PUT filed it again, and reopening the Deal Center after sync
+       * re-armed this step and filed it a third time. It was unbounded, not capped at
+       * three — every later offline edit added another.
+       *
+       * The fix is the same one the online writer already makes (`adoptDropIds` in
+       * `useDynamicCalculators`): read the ids the server assigned and write them back
+       * onto the stored rows, so the NEXT replay updates those rows instead of
+       * duplicating them.
+       */
       for (const calc of work.calculators) {
         const id = calc.serverId || work.serverIds.calculators[calc.clientId];
         if (!id) throw new Error(`no server id for calculator ${calc.clientId}`);
-        await LeadService.updateCalculator(id, send(calc.payload));
+        const res = await LeadService.updateCalculator(id, send(calc.payload));
+        adoptDropIdsIntoWork(work.clientId, calc.clientId, calc.payload?.dropPrice, res);
       }
       return {};
     }
@@ -1225,6 +1266,24 @@ const runStep = async (
       const payload = send(work.submit) as Record<string, any>;
       const docs = await buildQueuedSubmitDocuments(work, payload);
       await LeadService.submitJobBuilder(leadId, { ...payload, ...docs });
+      return {};
+    }
+
+    case 'chat': {
+      if (!leadId) throw new Error('no lead id for the chat');
+      /**
+       * ⚠️ `getChatByLeadId` rather than `createChatForLead` directly, and that is the whole
+       * guard: it READS first and only creates on a 404. So a lead that already has a thread
+       * — worked online earlier, or opened by a rep before the drain ran — is not given a
+       * second one.
+       *
+       * Online this same call is made by `executeStartAppointmentFlow` right after `work`.
+       * The offline branch of that flow skipped it, which is why a lead created at a door
+       * synced fine and then had no thread at all.
+       */
+      await ChatService.getChatByLeadId(leadId);
+      // Flagged so the step never re-runs, even if the record is re-armed by a later edit.
+      patchOfflineWork(work.clientId, (w) => ({ ...w, chatCreated: true }));
       return {};
     }
 
@@ -1381,6 +1440,37 @@ const runStep = async (
  * exists to avoid. Any step that writes to the record mid-run depends on this.
  */
 const latest = (work: OfflineLeadWork): OfflineLeadWork => findOfflineWork(work.clientId) || work;
+
+/**
+ * Write the `_id`s the server assigned to a calculator's drops back onto the STORED
+ * offline payload.
+ *
+ * ⚠️ This is what makes `calculatorState` genuinely idempotent for drops. Without it the
+ * stored rows stay id-less forever, so every later replay — and the drain is re-armed
+ * every time the rep reopens the Deal Center — files another copy of every round.
+ *
+ * Mirrors `adoptDropIds` on the online path (`useDynamicCalculators.ts`). Failing to
+ * adopt is survivable and deliberately silent: `adoptServerDropIds` returns the rows
+ * unchanged when it cannot match one, and the next save tries again. A WRONG id would
+ * overwrite another round, so not adopting is always the safer miss.
+ */
+const adoptDropIdsIntoWork = (
+  workClientId: string,
+  calcClientId: string,
+  sentDrops: any,
+  response: any
+): void => {
+  if (!Array.isArray(sentDrops) || !sentDrops.length) return;
+  const adopted = adoptServerDropIds(sentDrops, readServerDrops(response));
+  // Same reference back means nothing matched — leave the record untouched.
+  if (adopted === sentDrops) return;
+  patchOfflineWork(workClientId, (w) => ({
+    ...w,
+    calculators: w.calculators.map((c) =>
+      c.clientId === calcClientId ? { ...c, payload: { ...c.payload, dropPrice: adopted } } : c
+    ),
+  }));
+};
 
 const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
   let work = putOfflineWork({ ...start, status: 'uploading' });

@@ -31,17 +31,35 @@ class ChatService {
       const chatData = res.data?.data?.chat || res.data?.data || res.data;
       return chatData?.id || chatData?._id || (typeof chatData === 'string' ? chatData : null);
     } catch (err: any) {
+      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
+      console.log('[ChatDiag] GET lead/%s failed status=%s', leadId, err?.response?.status);
       if (err.response?.status === 404) {
         const chatData = await this.createChatForLead(leadId);
-        return chatData?.id || chatData?._id || (typeof chatData === 'string' ? chatData : null);
+        const id = chatData?.id || chatData?._id || (typeof chatData === 'string' ? chatData : null);
+        // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
+        console.log('[ChatDiag] after create -> id=%s', id);
+        return id;
       }
       return null;
     }
   }
 
   async createChatForLead(leadId: string): Promise<any> {
-    const res = await api.post<any>('/chat/v1/create', { leadId });
-    return res.data?.data?.chat;
+    try {
+      const res = await api.post<any>('/chat/v1/create', { leadId });
+      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. The POST appears to run and the
+      // thread still does not exist afterwards, so we need its actual answer.
+      console.log('[ChatDiag] POST create leadId=%s status=%s body=%s',
+        leadId, res?.status, JSON.stringify(res?.data));
+      return res.data?.data?.chat;
+    } catch (e: any) {
+      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. This path was SILENT: the only
+      // caller `.catch`es it to a console.warn, so a REFUSED create looked identical to
+      // one that never ran.
+      console.log('[ChatDiag] POST create leadId=%s FAILED status=%s body=%s',
+        leadId, e?.response?.status, JSON.stringify(e?.response?.data));
+      throw e;
+    }
   }
 
   async getMessages(chatId: string, limit = 20): Promise<any[]> {

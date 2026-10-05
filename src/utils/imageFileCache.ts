@@ -308,6 +308,54 @@ export const enforceImageCacheBudget = async (
   }
 };
 
+/**
+ * Adopt an ALREADY-LOCAL file as `url`'s cached copy, by copying it to `url`'s cache
+ * path and memoising it — so the next `warmToLocalCache(url)` is an instant hit.
+ *
+ * This is the upload handover. A photo shot offline is rendered from the upload queue's
+ * own `file://` copy; when it finally uploads, the server answers with a pre-signed S3
+ * url for THE SAME BYTES, the queue retires its item and deletes that local file. With
+ * nothing adopting it, the grid swapped a file it already had on disk for a remote url
+ * it had never seen, and every tile re-downloaded the full-size photo it had been
+ * displaying a moment earlier — the "after restoring the network the pictures keep
+ * loading and take too much time" report. Adopting makes the swap free.
+ *
+ * Copies rather than moves: the queue still owns its file and deletes it on its own
+ * schedule, and a move would pull the image out from under a tile mid-render.
+ *
+ * Never throws and never overwrites an existing cache entry.
+ */
+export const adoptLocalFileAsCached = async (
+  localUri?: string | null,
+  url?: string | null
+): Promise<boolean> => {
+  if (!localUri || !isRemoteImageUrl(url)) return false;
+  const path = getLocalCachePath(url);
+  if (!path) return false;
+  // Already cached (or being written) — nothing to do, and overwriting could truncate
+  // a file a tile is decoding right now.
+  if (warmedPaths.has(path) || activeDownloads.has(path)) return true;
+  const src = localUri.replace(/^file:\/\//, '');
+  try {
+    if (!(await ReactNativeBlobUtil.fs.exists(src))) return false;
+    if (await ReactNativeBlobUtil.fs.exists(path)) {
+      warmedPaths.set(path, `file://${path}`);
+      return true;
+    }
+    // Copy via a temp name and move into place, so an interrupted copy cannot leave a
+    // truncated image at the real cache path (same rule as `downloadImage`).
+    const tempPath = `${path}.adopt`;
+    await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => {});
+    await ReactNativeBlobUtil.fs.cp(src, tempPath);
+    await ReactNativeBlobUtil.fs.mv(tempPath, path);
+    warmedPaths.set(path, `file://${path}`);
+    void enforceImageCacheBudget();
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /** Delete every cached photo. Backs the Profile "Clear" action. */
 export const clearImageCache = async (): Promise<number> => {
   let removed = 0;

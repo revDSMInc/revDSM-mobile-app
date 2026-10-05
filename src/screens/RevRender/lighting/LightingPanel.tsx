@@ -38,6 +38,7 @@ export function LightingPanel({
   onOpenCustomBuilder,
   onToggleFavourite,
   onSaveCustomLook,
+  onSelectLook,
 }: {
   state: LightingState;
   setState: (s: LightingState) => void;
@@ -48,6 +49,8 @@ export function LightingPanel({
   onToggleFavourite?: (lookId: string) => void;
   /** Persists a newly built custom look to the rep's account. */
   onSaveCustomLook?: (look: Look) => void;
+  /** Analytics hook — fires on every tap, with the look and its post-toggle selected state. */
+  onSelectLook?: (look: Look, nowSelected: boolean) => void;
 }) {
   const [tab, setTab] = useState<LookTab>('seasons');
   const [query, setQuery] = useState('');
@@ -61,7 +64,11 @@ export function LightingPanel({
   const cardBg = isDark ? '#1E1E1E' : '#fff';
   const label = isDark ? '#fff' : '#212B36';
 
-  const select = (id: string) => setState(toggleSelected(state, id));
+  const select = (look: Look) => {
+    const nextState = toggleSelected(state, look.id);
+    setState(nextState);
+    onSelectLook?.(look, isSelected(nextState, look.id));
+  };
 
   /**
    * ⚠️ Optimistic, then the server's list wins.
@@ -83,7 +90,7 @@ export function LightingPanel({
       selected={isSelected(state, look.id)}
       favourite={isFavourite(state, look.id)}
       tag={showTag ? tagForLook(look) : null}
-      onPress={() => select(look.id)}
+      onPress={() => select(look)}
       onLongPress={(frame) => {
         // Confirms the hold registered, before the bubble animates in.
         Vibration.vibrate(18);

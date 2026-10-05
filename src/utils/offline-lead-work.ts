@@ -129,6 +129,23 @@ export type UploadStep =
    */
   | 'work'
   /**
+   * `POST chat/v1/create` — open the lead's chat thread.
+   *
+   * ⚠️ Online this is a side-effect of starting the appointment
+   * (`executeStartAppointmentFlow` → `ChatService.createChatForLead`). The offline branch of
+   * that flow replicated the log, the card state and the `work` call but NOT this, so a lead
+   * created at a door synced perfectly and then had **no thread at all**: opening its chat
+   * 404'd with "Chat not found for this lead", and the rep could not message the office.
+   *
+   * ⚠️ It must be QUEUED rather than left to the lazy create in `getChatByLeadId`, because the
+   * backend SEEDS PARTICIPANTS when the thread is first created — rep, managers, installer.
+   * A thread conjured later by whoever happens to open it first is not the same thread: until
+   * then nobody is a participant, so the office cannot message the rep and no one is notified.
+   *
+   * Idempotent on the server, so a replay is free.
+   */
+  | 'chat'
+  /**
    * `PATCH lead/v1/customer/{customerId}` — the rep corrected the customer's own details at the
    * door: a name, a phone number, an email, the address, a co-buyer.
    *
@@ -182,6 +199,11 @@ export const UPLOAD_STEPS: readonly UploadStep[] = [
   // `isStepApplicable`, where a resulted lead skips this step outright. A check-in is the weaker
   // statement of the two; replaying it over a result would put a sold lead back in progress.
   'work',
+  // ⚠️ After `work`, mirroring the ONLINE order — there the thread is opened by the
+  // start-appointment flow, immediately after the same `work` call. Before the terminal
+  // actions for the usual failure-isolation reason: a missing thread is recoverable (the
+  // lazy create in `getChatByLeadId` still backstops it), so it must never hold a sale.
+  'chat',
   // ⚠️ After `work` and before the two terminal actions, for the same failure-isolation reason as
   // `consent`: a customer's spelling is not worth holding a sale behind. It depends on nothing but
   // the customer id, which is known the moment the rep presses Save, so the end costs it nothing.
@@ -220,6 +242,10 @@ export const stepReplaySafety = (step: UploadStep): ReplaySafety => {
     // ⚠️ A full-state PUT of the whole payment list, exactly like `calculatorState`. Replaying it
     // cannot double-charge anything: it files what the split IS, it does not append a payment.
     case 'funding':
+      return 'idempotent';
+    case 'chat':
+      // ⚠️ `POST chat/v1/create` is idempotent server-side — it returns the existing thread
+      // rather than opening a second one. The step also re-reads before it writes.
       return 'idempotent';
     case 'work':
     case 'customer':
@@ -455,6 +481,14 @@ export interface OfflineLeadWork {
    */
   funding?: Record<string, unknown>;
   submit?: Record<string, unknown>;
+  /**
+   * The lead's chat thread has been opened on the server.
+   *
+   * ⚠️ Separate from `done.includes('chat')` because the step is also satisfied by finding a
+   * thread that already exists — a lead worked both online and offline, or one the lazy create
+   * in `getChatByLeadId` got to first.
+   */
+  chatCreated?: boolean;
   /** Steps already applied to the server. The resume pointer. */
   done: UploadStep[];
   /** For the pending list, so a rep sees WHICH lead is waiting without opening it. */
@@ -573,6 +607,11 @@ export const isStepApplicable = (work: OfflineLeadWork, step: UploadStep): boole
       // where the lead got to, and flipping a sold door back to `resume` on the ops board is worse
       // than not recording the check-in — which the activity log has recorded anyway.
       return !!work.workStarted && !work.submit;
+    case 'chat':
+      // ⚠️ Gated on the same signal as `work`: the thread belongs to a door the rep actually
+      // ARRIVED at. Online, `shouldCreateChat` rides on the same plan — a lead merely reviewed
+      // off-site opens no thread, and queueing one here would diverge from that.
+      return !!work.workStarted && !work.chatCreated;
     case 'customer':
       return !!work.customer?.customerId;
     case 'archive':

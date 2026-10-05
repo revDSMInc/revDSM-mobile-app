@@ -77,7 +77,7 @@ function buildSchemaPickerCards(
     });
   });
   const cards: any[] = [];
-  (photos || []).forEach((img: any, idx: number) => {
+  (photos || []).forEach((img: any) => {
     const url = img?.secureUrl || img?.uri || img?.s3url;
     if (!url) return;
     if (isAnnotatedRR(img)) return;
@@ -94,7 +94,12 @@ function buildSchemaPickerCards(
       ...img,
       uri: url,
       label: displayLabel,
-      viewId: `dynamic-${idx}-${norm(img.subcategory)}`,
+      // Ticket: the logged viewId read "dynamic-1-back-right" — an index, not anything
+      // identifying the shot. `baseCategory` is the schema CATEGORY tab label (e.g.
+      // "HOME", matching the Manage Photos tab strip) — NOT `productKey`, which is a
+      // different, higher-level product name (e.g. "Gutters/Roofline") and produced
+      // "gutters/roofline-back-right" instead of the wanted "home-back-right".
+      viewId: `${norm(baseCategory)}-${norm(img.subcategory)}`,
       viewLabel: displayLabel,
     });
   });
@@ -449,6 +454,41 @@ export default function RevRenderScreen() {
   // not been told about?"), and answering it in one place keeps them in step.
   const handleModeChange = (next: RenderMode) => {
     setMode(next);
+  };
+
+  /**
+   * Analytics for a look tile tap — the Roofline Lighting counterpart to Core's
+   * `openPhoto` select log. Fired from `LightingPanel`'s shared tap handler, so
+   * every tab (Seasons/Teams/Themes/Custom) and the search result grid log the
+   * same way.
+   *
+   * ⚠️ `category`/`viewId` stay the PHOTO's (from `selectedPhoto`, same as every
+   * other event on this screen) — a look's own `category` is a catalogue taxonomy
+   * field (e.g. "NFL", "Marvel"), a different axis entirely, so it goes in its own
+   * `lookCategory` field rather than overloading the photo `category`/`viewId`
+   * meaning (this is the same mistake already made and fixed once on Core's
+   * `viewId` — see docs/claude/lead-center.md).
+   */
+  const handleSelectLook = (look: Look, nowSelected: boolean) => {
+    const userId = user?._id || user?.id;
+    if (!userId) return;
+    logEvent('select', {
+      user_id: userId,
+      module_type: 'rev_render',
+      created_by: userId,
+      meta: {
+        leadId: lead?._id || lead?.id || lead?.leadId || null,
+        jobId: lead?._id || lead?.id || lead?.leadId || null,
+        screen: 'before_configure',
+        viewId: selectedPhoto?.viewId,
+        viewLabel: selectedPhoto?.viewLabel,
+        lookId: look.id,
+        lookName: look.name,
+        lookGroup: look.group,
+        lookCategory: look.category,
+        selected: nowSelected,
+      },
+    });
   };
 
   /**
@@ -1471,6 +1511,7 @@ export default function RevRenderScreen() {
               isDark={isDark}
               onToggleFavourite={handleToggleFavourite}
               onSaveCustomLook={handleSaveCustomLook}
+              onSelectLook={handleSelectLook}
             />
             </View>
           )}

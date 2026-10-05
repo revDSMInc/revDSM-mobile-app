@@ -138,3 +138,86 @@ export const countWithPending = (
   }
   return total;
 };
+
+/**
+ * What a queued photo's tile should SAY, given whether it is the item in flight and
+ * whether the device has a connection.
+ *
+ * ⚠️ The honest states matter more than they look. Every queued tile previously read
+ * "Waiting to upload", including offline — which invites exactly the reading the client
+ * reported: the rep assumes something is stuck or lost. Offline the photo is not waiting
+ * on the app at all, it is safely on the handset, so the tile says so; online, only the
+ * one actually moving claims to be uploading.
+ *
+ * `online` is the app-wide connectivity value (`hooks/useIsOnline`), never a per-tile probe.
+ */
+export type PendingStatus = 'saved-offline' | 'uploading' | 'queued';
+
+export interface PendingStatusView {
+  status: PendingStatus;
+  /** Tile caption. Short enough for a half-width card. */
+  label: string;
+  /** MaterialCommunityIcons name. */
+  icon: string;
+  /** Caption + icon colour. */
+  color: string;
+  /** Whether to show a small activity spinner beside the caption. */
+  spinner: boolean;
+}
+
+export const pendingStatusFor = (
+  isActiveUpload: boolean,
+  online: boolean
+): PendingStatusView => {
+  if (!online) {
+    // Not an error and not a wait — the photo is on the device and will go up by itself.
+    return {
+      status: 'saved-offline',
+      label: 'Saved on device',
+      icon: 'cloud-off-outline',
+      color: '#9CA3AF',
+      spinner: false,
+    };
+  }
+  if (isActiveUpload) {
+    return { status: 'uploading', label: 'Uploading…', icon: 'cloud-upload', color: '#F59E0B', spinner: true };
+  }
+  return {
+    status: 'queued',
+    label: 'Waiting to upload',
+    icon: 'cloud-upload-outline',
+    color: '#F59E0B',
+    spinner: false,
+  };
+};
+
+/**
+ * Whether a photo tile can show anything at all right now.
+ *
+ * ⚠️ There are THREE states, not two, and the middle one is the bug this names. A photo that was
+ * uploaded ONLINE lives only as a pre-signed S3 url; if the rep never opened that screen while
+ * connected, its bytes were never warmed into the local file cache. Offline there is then nothing
+ * to draw AND no way to fetch it — so the tile sat on a spinner forever, which reads as "still
+ * loading" when the honest answer is "not on this device".
+ *
+ *   - `ready`        — a local file exists (warmed earlier, or the photo is a queued local shot)
+ *   - `unavailable`  — remote-only AND offline: nothing to show, and no way to get it
+ *   - `loading`      — remote-only but online: the warm is genuinely in flight
+ *
+ * `warmedUri` is the value from `hooks/useWarmedImageUris`, which resolves anything already on
+ * disk synchronously — so an `undefined` here really does mean "not cached", not "not yet checked".
+ */
+export type PhotoTileState = 'ready' | 'unavailable' | 'loading';
+
+export const photoTileState = (
+  uri: string | undefined | null,
+  warmedUri: string | undefined | null,
+  online: boolean
+): PhotoTileState => {
+  if (!uri) return 'unavailable';
+  if (warmedUri) return 'ready';
+  // A local uri is its own copy; `useWarmedImageUris` seeds it, but don't depend on that here —
+  // a `file://` photo must never read as unavailable just because the map has not been consulted.
+  if (!/^https?:\/\//i.test(uri)) return 'ready';
+  return online ? 'loading' : 'unavailable';
+};
