@@ -2639,3 +2639,12 @@ The "REPLACES the list" decision recorded above (`InvestmentPanel` "Includes the
 - ⚠️ The tick resets on every pad open (`useEffect` on `activePad`), so initials and signature are each an explicit agreement.
 - ⚠️ Nothing is sent to `/agreement/{leadId}/sign` - the consent only gates capture.
 - ⚠️ Save Mark needs the tick AND ink: `canSavePad = agreedToESign && (live strokes > 0)`. Ticking alone used to enable it on an empty pad, so a blank mark could be saved. A stroke counts once the finger lifts (the live path array only grows on release).
+
+## Job Builder Extras ▸ Wedges showed the 5" gutter footage
+
+Ticket: Wedges = 5 and 5" Gutter/DS/E = 12 in the calculator, but the Job Builder's locked Extras ▸ Wedges read 12.
+
+`build-deal-center-data.ts` is the only map the locked, `dcField`-driven fields resolve from. It wrote every entry under its field id AND its legacy-name aliases in ONE pass, in the order the entries arrived (arbitrary for a saved calculator), and then let the result's top-level legacy columns overwrite whatever it had. Either could put one field's value under another field's key.
+
+- Now two passes: aliases first, each entry's own canonical field id LAST; an alias never overwrites another live entry's id; and a key supplied by the entries is not overridden by `resultData`.
+- ⚠️ **Unverified against the live schema** — the cause was deduced from the code, not reproduced. If Wedges still reads the gutter value, inspect the Wedges field's `dcField` in the portal job-builder config (it may name the gutter field) and the calculator schema's `name`/`pricingKey` for the two fields; the app cannot fix a mis-authored `dcField`.
