@@ -10,6 +10,7 @@
  * without a new pattern.
  */
 
+import { AppState } from 'react-native';
 import { Storage } from '../utils/storage';
 import { LeadService } from './api/leads';
 import { queryClient } from './api/queryClient';
@@ -27,6 +28,9 @@ import {
 
 const STORAGE_KEY = 'offline-photo-deletes';
 
+/** Matches the photo upload queue and the lead store — all three sweep on the same cadence. */
+const DELETE_RETRY_SWEEP_MS = 60_000;
+
 class OfflinePhotoDeleteQueue {
   private queue: QueuedPhotoDelete[] = [];
   private draining = false;
@@ -34,8 +38,22 @@ class OfflinePhotoDeleteQueue {
 
   constructor() {
     this.load();
-    // Drain on the offline→online EDGE, which is the only moment this queue cares about.
     onReconnect(() => void this.drain());
+
+    // ⚠️ The reconnect edge alone is not enough — same gap the photo upload queue had. If signal
+    // returns while the app is backgrounded or killed there is no listener running to see the
+    // edge, and on reopen the device is already online so none fires then either. The foreground
+    // hook catches the reopen; the sweep catches a pass that failed while online throughout.
+    AppState.addEventListener('change', (next) => {
+      if (next === 'active') void this.drain();
+    });
+
+    setInterval(() => {
+      // Two in-memory reads on a session with nothing queued, which is most of them.
+      if (!isOnline()) return;
+      if (this.mine().length === 0) return;
+      void this.drain();
+    }, DELETE_RETRY_SWEEP_MS);
   }
 
   private load() {

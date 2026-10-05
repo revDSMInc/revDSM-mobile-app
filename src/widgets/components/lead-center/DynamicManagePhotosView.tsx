@@ -50,6 +50,7 @@ import { InspectionPhotoViewer } from '../InspectionPhotosPanel';
 import type { SectionPhoto } from '../../../utils/inspection-photos';
 import { useSecureUrls } from '../../../hooks/useSecureUrls';
 import { useWarmedImageUris } from '../../../hooks/useWarmedImageUris';
+import { forgetWarmedUri } from '../../../utils/imageFileCache';
 import { resolveS3Url } from '../../../utils/s3-utils';
 import { indexPendingBySlot, pendingStatusFor, photoTileState } from '../../../utils/pending-inspection-photos';
 import { offlinePhotoDeleteQueue } from '../../../services/offlinePhotoDeleteQueue';
@@ -543,19 +544,20 @@ export function DynamicManagePhotosView({
                 exists only as a pre-signed S3 url; if this screen was never opened with a
                 connection its bytes were never warmed, so offline there is nothing to draw and
                 no way to fetch it. That tile used to spin forever. It now says so. */}
-            {tileState === 'ready' ? (
+            {tileState === 'ready' || tileState === 'loading' ? (
               <LoadingImage
-                uri={localUri || uri!}
+                uri={(tileState === 'ready' ? localUri : undefined) || uri!}
                 style={{ width: '100%', height: '100%' }}
                 resizeMode="cover"
                 spinnerColor="#fff"
-              />
-            ) : tileState === 'loading' ? (
-              <LoadingImage
-                uri={uri!}
-                style={{ width: '100%', height: '100%' }}
-                resizeMode="cover"
-                spinnerColor="#fff"
+                unavailableLabel={online ? 'Tap to retry' : 'Needs a connection'}
+                // ⚠️ Drop the cached copy before retrying. A tile fails when the local file is
+                // gone (cache cleared) or the url is dead; re-rendering the same source would
+                // fail identically forever. `forgetWarmedUri` unlinks it and clears the memo, so
+                // the next warm actually downloads again.
+                onRetry={() => {
+                  void forgetWarmedUri(uri).then(() => refetch?.());
+                }}
               />
             ) : uri ? (
               <View style={{ alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 }}>

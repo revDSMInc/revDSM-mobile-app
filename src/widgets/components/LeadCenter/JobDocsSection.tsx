@@ -83,6 +83,7 @@ import {
 import { ImageSlideshowModal } from './ImageSlideshowModal';
 import { uploadQueueManager, UploadQueueItem } from '../../../utils/uploadQueue';
 import { offlinePhotoDeleteQueue } from '../../../services/offlinePhotoDeleteQueue';
+import { getCaptureCoords } from '../../../utils/capture-location';
 import { resolveS3Url } from '../../../utils/s3-utils';
 
 interface SectionImage {
@@ -564,14 +565,19 @@ export const JobDocsSection = ({
     });
 
     // --- Push to persistent MMKV-backed background upload queue ---
-    uploadQueueManager.addToQueue({
-      leadId: lead._id,
-      categoryName,
-      subcategory,
-      uri: asset.uri,
-      type: asset.type || 'image/jpeg',
-      name: asset.fileName || `photo_${Date.now()}.jpg`,
-      userId: user?._id || user?.id,
+    // ⚠️ Coordinates resolved HERE, not by the queue at upload time — offline that can be hours
+    // later and miles away. Same rule as the dynamic capture path; see `utils/capture-location.ts`.
+    void getCaptureCoords().then((coords) => {
+      uploadQueueManager.addToQueue({
+        leadId: lead._id,
+        categoryName,
+        subcategory,
+        uri: asset.uri,
+        type: asset.type || 'image/jpeg',
+        name: asset.fileName || `photo_${Date.now()}.jpg`,
+        userId: user?._id || user?.id,
+        ...(coords ? { coordinates: coords } : null),
+      });
     });
 
     // Clear the per-slot uploading spinner (queue handles the real upload)

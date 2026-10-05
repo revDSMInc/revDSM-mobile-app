@@ -140,6 +140,36 @@ export const writeOfflineCache = <T,>(name: string, data: T, userId?: string | n
   }
 };
 
+/**
+ * Clear every snapshot whose name starts with `prefix`.
+ *
+ * ⚠️ Exists for `SECURE_URLS`, which is NOT one key: it is keyed per photo SET
+ * (`secure-urls:<hash>-<n>`), so a lead with several categories writes several. Clearing by exact
+ * name misses all of them.
+ *
+ * Clearing these is only correct ALONGSIDE clearing the image files — see `clearImageCache`. A
+ * snapshot of presigned urls is deliberately kept past expiry because `getLocalCachePath` strips
+ * the query and it still names the right file on disk; once those files are gone it names
+ * nothing, and handing it out produces a dead url that can never resolve.
+ */
+export const clearOfflineCacheByPrefix = (prefix: string, userId?: string | null): number => {
+  let removed = 0;
+  try {
+    const owner = (typeof userId === 'string' && userId.trim()) || 'anon';
+    const match = `offline-cache:${prefix}`;
+    Storage.getAllKeys().forEach((key) => {
+      if (!key.startsWith(match)) return;
+      // Scoped to the signed-in rep, like every other read and write here.
+      if (!key.endsWith(`:${owner}`)) return;
+      Storage.removeItem(key);
+      removed += 1;
+    });
+  } catch (e) {
+    console.warn(`[offlineCache] prefix clear failed for ${prefix}:`, e);
+  }
+  return removed;
+};
+
 export const clearOfflineCache = (name: string, userId?: string | null): void => {
   try {
     Storage.removeItem(buildCacheKey(name, userId));

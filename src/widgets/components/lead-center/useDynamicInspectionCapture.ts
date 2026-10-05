@@ -32,6 +32,7 @@ import { uploadQueueManager } from '../../../utils/uploadQueue';
 import { offlinePhotoDeleteQueue } from '../../../services/offlinePhotoDeleteQueue';
 import { resolveDeleteTarget } from '../../../utils/offline-photo-deletes';
 import { isOnline } from '../../../services/connectivity';
+import { getCaptureCoords } from '../../../utils/capture-location';
 import { useIsOnline } from '../../../hooks/useIsOnline';
 import { resolveS3Url } from '../../../utils/s3-utils';
 import { logEvent } from '../../../services/api/LoggerService';
@@ -533,14 +534,22 @@ export function useDynamicInspectionCapture({
       // Push to the persistent, offline-capable MMKV upload queue. The queue
       // invalidates ['lead', leadId] on success, which refreshes the lead prop
       // and, via the load effect, clears the optimistic preview.
-      uploadQueueManager.addToQueue({
-        leadId,
-        categoryName: scopedCategory,
-        subcategory,
-        uri: asset.uri,
-        type: asset.type || 'image/jpeg',
-        name: asset.fileName || `photo_${Date.now()}.jpg`,
-        userId,
+      //
+      // ⚠️ The coordinates are resolved HERE, where the rep is standing — not by the queue at
+      // upload time, which offline can be hours later and miles away. `getCaptureCoords` reads a
+      // warm cache and never rejects, so this does not hold up the queue push; a photo with no
+      // fix is still queued, just without coordinates.
+      void getCaptureCoords().then((coords) => {
+        uploadQueueManager.addToQueue({
+          leadId,
+          categoryName: scopedCategory,
+          subcategory,
+          uri: asset.uri,
+          type: asset.type || 'image/jpeg',
+          name: asset.fileName || `photo_${Date.now()}.jpg`,
+          userId,
+          ...(coords ? { coordinates: coords } : null),
+        });
       });
     },
     [leadId, scopeCat, userId]
