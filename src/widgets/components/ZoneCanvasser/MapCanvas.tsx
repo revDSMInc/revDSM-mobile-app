@@ -312,8 +312,8 @@ export function MapCanvas({
           onPress={handleMapboxPress}
           onMapIdle={handleMapIdle}
           scaleBarEnabled={false}
-          logoEnabled={true}
-          attributionEnabled={true}
+          logoEnabled={false}
+          attributionEnabled={false}
           // Moved off the bottom-left (their default) so they stop colliding with the
           // draw toolbar / archive + legend buttons that live on the bottom line. Still
           // visible, as Mapbox's terms require: just under the back button.
