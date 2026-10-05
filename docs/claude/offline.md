@@ -62,6 +62,17 @@ reload.** Verify with `./gradlew :app:processDebugManifest` and check the merged
 `app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml` shows
 `foregroundServiceType="dataSync"` for `app.notifee.core.ForegroundService`.
 
+⚠️ **Never update the foreground-service notification with `asForegroundService: true`.** Second Android device
+test, after the manifest rebuild: uploads worked in the background (11 photos drained), but the app then crashed with
+`ForegroundServiceDidNotStartInTimeException` (logcat 19:53). notifee treats every `displayNotification` with
+`asForegroundService: true` as a fresh START, and every START re-invokes the registered runner. The progress callback was
+doing exactly that, so the service restarted itself in a tight loop (`drain started … drain done, pending=0` ×N within
+~100 ms) and a `stopForegroundService()` landed before the next START had called `startForeground`. Rules now in
+`androidUploadService.ts`: the service is started ONCE (`startAndroidUploadService`, `asService = true`, skipped when
+`serviceActive`); progress text goes out as a plain same-id update (`asService = false`) and only when the text changed;
+only the runner invocation that owns the service (`runnerOwned`) may stop it, then it also cancels the notification so a
+late update cannot leave an orphan. A JS-only change — no native rebuild needed for this one.
+
 **Related fix:** `uploadQueueManager.resetForNewSession()` now RELOADS the queue from MMKV instead of
 emptying it. `upload_photo_queue` is a session-keep key; emptying the memo made the next `saveQueue()`
 erase the earlier rep's unsent photos.
