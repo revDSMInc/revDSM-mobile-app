@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { Modal, View, Text, TouchableOpacity, StatusBar, Platform, type TextInput } from 'react-native';
+import { useBottomInset } from '../../hooks/useBottomInset';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -28,6 +29,8 @@ export default function ZoneCanvasserMap({
 }: ZoneCanvasserMapProps) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  // The bottom edge the map's controls must clear (see the hook for the Android nav-bar trap).
+  const bottomInset = useBottomInset();
   const workMutation = useWorkLeadMutation();
   const z = useZoneCanvasser({ visible, user });
   const searchInputRef = useRef<TextInput>(null);
@@ -127,7 +130,7 @@ export default function ZoneCanvasserMap({
               parent's bounds — Android drops touches on children drawn outside them. */}
           <View
             className="absolute flex-row items-start"
-            style={{ top: 20, left: 20, right: 16, zIndex: 30, elevation: 30, gap: 8 }}
+            style={{ top: 20, left: 16, right: 16, zIndex: 30, elevation: 30, gap: 8 }}
             pointerEvents="box-none"
           >
             <TouchableOpacity
@@ -219,7 +222,7 @@ export default function ZoneCanvasserMap({
           {/* Sales Map pins show/hide toggle — the only control for the pins overlay
               (no filter set, just visibility). Hidden while drawing a zone. */}
           {!z.isDrawingMode && (
-            <View className="absolute right-4 items-center" style={{ top: '60%', zIndex: 15 }}>
+            <View className="absolute right-4 items-center" style={{ top: '60%', zIndex: 15, width: 44 }}>
               <View className="bg-black/55 rounded-full px-2 py-[3px] mb-1.5">
                 <Text className="text-white text-[9px] font-black tracking-wider">PINS</Text>
               </View>
@@ -244,6 +247,10 @@ export default function ZoneCanvasserMap({
 
           <LoadingOverlay visible={z.isProcessing} />
         </View>
+
+        {/* Bottom safe-area spacer: ends the map ABOVE the system navigation bar / home
+            indicator, so every bottom control (draw toolbar, zoom stack, legend) clears it. */}
+        <View style={{ height: bottomInset, backgroundColor: isDark ? colors.background : '#0E2A1C' }} />
 
         <ZoneCanvasserModals
           user={user}

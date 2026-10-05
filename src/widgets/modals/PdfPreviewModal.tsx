@@ -281,7 +281,11 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
             <Icon name="close" size={24} color={isDark ? '#fff' : '#1e293b'} />
           </TouchableOpacity>
           <View style={styles.titleContainer}>
-            <Text style={[styles.title, { color: isDark ? '#fff' : '#1e293b' }]} numberOfLines={1}>
+            <Text style={[styles.title, { color: isDark ? '#fff' : '#1e293b' }]}
+              numberOfLines={2}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+            >
               {title || 'Document Preview'}
             </Text>
           </View>
@@ -402,9 +406,13 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: 'rgba(0,0,0,0.03)',
   },
+  // Report titles are long ("Lead | Address | Date | Time"): small enough to wrap onto two
+  // lines inside the fixed 60pt header rather than truncating with an ellipsis.
   title: {
-    fontSize: 16,
+    fontSize: 13,
+    lineHeight: 17,
     fontWeight: '700',
+    textAlign: 'center',
   },
   container: {
     flex: 1,

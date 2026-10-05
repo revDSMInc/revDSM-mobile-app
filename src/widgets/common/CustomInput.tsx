@@ -10,11 +10,15 @@ interface Props extends TextInputProps {
   onRightIconPress?: () => void;
   containerStyle?: ViewStyle;
   inputContainerStyle?: ViewStyle;
+  /** Overrides the default 12pt input text size (and the label indent is dropped with `flushLabel`). */
+  fontSize?: number;
+  /** Drop the label's 4pt left indent so it lines up with sibling section labels. */
+  flushLabel?: boolean;
 }
 
 export const CustomInput = memo(
   forwardRef<TextInput, Props>(
-    ({ label, error, style, rightIcon, onRightIconPress, secureTextEntry, containerStyle, inputContainerStyle, ...props }, ref) => {
+    ({ label, error, style, rightIcon, onRightIconPress, secureTextEntry, containerStyle, inputContainerStyle, fontSize, flushLabel, ...props }, ref) => {
       const { colors, isDark } = useTheme();
       const internalRef = useRef<TextInput>(null);
       const inputRef = (ref as React.RefObject<TextInput>) ?? internalRef;
@@ -22,9 +26,9 @@ export const CustomInput = memo(
 
       useEffect(() => {
         inputRef.current?.setNativeProps({
-          style: [styles.input, { color: colors.text }],
+          style: [styles.input, fontSize ? { fontSize } : null, { color: colors.text }],
         });
-      }, [colors.text]);
+      }, [colors.text, fontSize]);
 
       const iconColor = isDark ? 'rgba(255,255,255,0.45)' : '#637381';
       const hasRightIcon = Boolean(rightIcon);
@@ -32,7 +36,10 @@ export const CustomInput = memo(
       return (
         <View style={styles.container}>
           {label && (
-            <Text className="text-sm font-semibold mb-2 ml-1" style={{ color: colors.text }}>
+            <Text
+              className={flushLabel ? 'text-sm font-semibold mb-2' : 'text-sm font-semibold mb-2 ml-1'}
+              style={{ color: colors.text }}
+            >
               {label}
             </Text>
           )}
@@ -51,6 +58,7 @@ export const CustomInput = memo(
               ref={inputRef}
               style={[
                 styles.input,
+                fontSize ? { fontSize } : null,
                 { color: colors.text, paddingRight: hasRightIcon ? 4 : 16 },
                 style,
               ]}

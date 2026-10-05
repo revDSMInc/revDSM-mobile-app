@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Image, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, RefreshControl, Platform, Pressable, Dimensions } from 'react-native';
 import { format } from 'date-fns';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -41,6 +41,13 @@ import {
   logInvestmentPlanRemoved,
   logInvestmentPaymentMethodSelected,
   logInvestmentDownPaymentChanged,
+  logInvestmentCalculatorViewed,
+  logInvestmentCalculatorLeft,
+  logInvestmentProgramEnlarged,
+  logInvestmentProgramMinimized,
+  logInvestmentPriceSecured,
+  DisplayProgramKey,
+  PlanMonthlyChange,
 } from '../../utils/activity-log/investment-center-log';
 import { NUMERIC_KEYBOARD } from '../../utils/keyboard-type';
 
@@ -114,6 +121,39 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const refOfSection = (id: SpotlightSectionId) =>
     id === 'total' ? totalRef : id === 'oneyear' ? oneYearRef : inHomeRef;
   const [spotlight, setSpotlight] = useState<(SpotlightState & { id: SpotlightSectionId }) | null>(null);
+
+  // ── Forever Record: enlarge / minimize (REVUIUX-505) ─────────────────────────
+  // The spotlight IS the handoff's enlarge: 'total' is the MSRP card.
+  const programOfSection = (id: SpotlightSectionId): DisplayProgramKey =>
+    id === 'total' ? 'msrp' : id === 'oneyear' ? 'oneyear' : 'inhome';
+  const priceOfSection = (id: SpotlightSectionId) =>
+    id === 'total' ? msrp : id === 'oneyear' ? oneYearGrandTotal : inHomeGrandTotal;
+
+  // What is enlarged right now, and since when, so the minimize can report how long
+  // the customer looked at it.
+  const enlargedRef = useRef<{ program: DisplayProgramKey; price: number; at: number } | null>(null);
+
+  /**
+   * Close the open enlarge, if any. Called when another card is enlarged, when the
+   * spotlight closes, and on unmount — the handoff's "if never minimized, close it at
+   * scope switch or exit", without which that viewing time is never recorded.
+   */
+  const flushEnlarged = () => {
+    const open = enlargedRef.current;
+    if (!open) return;
+    enlargedRef.current = null;
+    logInvestmentProgramMinimized({
+      ...logBase,
+      program: open.program,
+      price: open.price,
+      enlargedSeconds: Math.max(0, Math.round((Date.now() - open.at) / 1000)),
+    });
+  };
+  // Unmount runs the cleanup from the FIRST render, so the flush is reached through a
+  // ref rather than that stale closure.
+  const flushEnlargedRef = useRef(flushEnlarged);
+  flushEnlargedRef.current = flushEnlarged;
+
   const openSpotlight = (id: SpotlightSectionId) => {
     const node = refOfSection(id).current;
     if (!node) return;
@@ -125,6 +165,13 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         Math.min(SPOTLIGHT_BASE_SCALE[id], (SPOT_SW * 0.94) / w, (SPOT_SH * 0.72) / h),
       );
       triggerHaptic('light');
+      // Stepping from one card to another minimizes the old one first, so the two
+      // never overlap in the record.
+      flushEnlarged();
+      const program = programOfSection(id);
+      const price = priceOfSection(id);
+      enlargedRef.current = { program, price, at: Date.now() };
+      logInvestmentProgramEnlarged({ ...logBase, program, price });
       setSpotlight({ id, rect, finalScale });
     });
   };
@@ -143,12 +190,22 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   // Forever Record (activity log) identity for this panel — every opt-in/out, plan
   // add/remove, payment-method and down-payment event carries this calculator + lead.
   const logUserId = user?._id || user?.id;
+  // One VISIT into this job scope (REVUIUX-505). The panel is keyed by tab id, so a
+  // mount IS an entry into the scope and this id lasts exactly as long as the visit —
+  // the Forever Record groups a scope's events into VISIT blocks by it, instead of
+  // inferring where one visit ends and the next begins.
+  const visitIdRef = useRef(
+    `${calculator.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+
   const logBase = {
     userId: logUserId,
     leadId: lead?._id || lead?.leadId || lead?.id,
     calculatorId: calculator.id,
     calculatorTitle: calculator.title,
+    visitId: visitIdRef.current,
   };
+  const logBaseOnMountRef = useRef(logBase);
 
   const plans = pricing.plans;
   const method = calculator.paymentMethod || pricing.defaultMethod || 'check';
@@ -182,6 +239,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   // selects it on both, and (b) badges and the monthly plan are mutually exclusive.
   const [paymentChoice, setPaymentChoice] = useState<string>(seedChoice);
   const [showAddPlan, setShowAddPlan] = useState(false);
+  const closeAddPlan = () => setShowAddPlan(false);
   const choiceIsFinancing = isFinancing(plans, paymentChoice);
   // Shortlist highlight + monthly/opt-in driver: the choice when it's a financing plan
   // (empty when a basic method is active — no monthly row is selected then).
@@ -317,10 +375,11 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     persistInHome(addedPlanKeys, key);
   };
   const handleAddPlan = (key: string) => {
-    setShowAddPlan(false);
+    closeAddPlan();
     const nextAdded = addedPlanKeys.includes(key) ? addedPlanKeys : [...addedPlanKeys, key];
     if (!addedPlanKeys.includes(key)) {
-      logInvestmentPlanAdded({ ...logBase, planKey: key, planLabel: compactPlanLabel(plans, key), monthly: calcMonthly(plans, inHomeMonthlyBase, key), isFinancing: isFinancing(plans, key) });
+      // The shortlist is In-Home's (see `persistInHome`), so the row is tagged with it.
+      logInvestmentPlanAdded({ ...logBase, program: 'inhome', planKey: key, planLabel: compactPlanLabel(plans, key), monthly: calcMonthly(plans, inHomeMonthlyBase, key), isFinancing: isFinancing(plans, key) });
     }
     setAddedPlanKeys(nextAdded);
     setPaymentChoice(key); // adding a plan also selects it (web parity)
@@ -328,7 +387,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   };
   const handleRemovePlan = (key: string) => {
     const nextAdded = addedPlanKeys.filter((k) => k !== key);
-    logInvestmentPlanRemoved({ ...logBase, planKey: key, planLabel: compactPlanLabel(plans, key) });
+    logInvestmentPlanRemoved({ ...logBase, program: 'inhome', planKey: key, planLabel: compactPlanLabel(plans, key) });
     // If the removed plan was the active choice, revert to the deal-center default
     // (empty when none) rather than leaving a dangling selection.
     const nextChoice = paymentChoice === key ? defaultChoice : paymentChoice;
@@ -368,6 +427,38 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   // (from `oneYearKey`, which stays on a valid financing plan even when a basic
   // cash/card badge is selected) is presented at all times.
   const oneYearMonthlyShown = oneYearMonthly;
+
+  // ── Forever Record: the VISIT into this job scope (REVUIUX-505) ──────────────
+  // Mount = the rep entered this scope; unmount = switched tab or left the screen.
+  // The scope-view event carries the BASELINE the Foundation card renders: the prices
+  // as the scope opened, before any discount or payment chip.
+  useEffect(() => {
+    // Pinned for the cleanup: the visit's identity cannot change while it is open.
+    const visitLogBase = logBaseOnMountRef.current;
+    logInvestmentCalculatorViewed({
+      ...visitLogBase,
+      baseline: {
+        msrp: { price: msrp },
+        oneYear: {
+          price: oneYearGrandTotal,
+          monthly: oneYearMonthlyShown,
+          planLabel: oneYearMonthlyShown > 0 ? compactPlanLabel(plans, oneYearKey) : undefined,
+        },
+        inHome: {
+          price: inHomeGrandTotal,
+          monthly: inHomeMonthly,
+          planLabel: inHomePlanKey ? compactPlanLabel(plans, inHomePlanKey) : undefined,
+        },
+      },
+    });
+    return () => {
+      // A card left enlarged still owes its minimize, and the visit still owes its end.
+      flushEnlargedRef.current();
+      logInvestmentCalculatorLeft(visitLogBase);
+    };
+    // Deliberately once per mount: one visit, one pair of events.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Dynamic per-product job-scope matrix (no footages/colors) — the corrected data.
   const jobScope = useMemo(
@@ -489,6 +580,8 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     // Forever Record: the In-Home opt-in is committed here (the card's Opt In only
     // opens the confirmation modal — this is the actual acceptance).
     logInvestmentOptIn({ ...logBase, program: 'inhome', price: inHomeGrandTotal, monthly: inHomeMonthly, planKey: inHomePlanKey, downPayment: downPay });
+    // The customer accepted a price here — the scope's closing event.
+    logInvestmentPriceSecured({ ...logBase, program: 'inhome', price: inHomeGrandTotal, monthly: inHomeMonthly, planKey: inHomePlanKey });
     onOptIn(calculator.id, { price: endPrice, paymentMethod: inHomePlanKey, downPayment: downPay });
   };
 
@@ -525,8 +618,47 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const logDownPaymentChange = (program: 'inhome' | 'oneyear', amount: number) => {
     if (isLeadSold || !logUserId) return;
     if (lastLoggedDownRef.current[program] === amount) return;
+    const previousAmount = lastLoggedDownRef.current[program];
     lastLoggedDownRef.current[program] = amount;
-    logInvestmentDownPaymentChanged({ ...logBase, program, amount });
+    // The plan/method ALREADY selected on this card travels with the log. In-Home's is the
+    // shared choice (a financing plan or a CK/CC/AMEX badge) and its $/mo is recomputed
+    // for the NEW down payment (this runs before the state has re-rendered); 1-Year always
+    // shows its financing plan's monthly.
+    const key = program === 'inhome' ? paymentChoice : oneYearKey;
+    const fin = !!key && isFinancing(plans, key);
+    const monthly = !fin
+      ? undefined
+      : program === 'inhome'
+        ? calcMonthly(plans, Math.max(0, endPrice - (endPrice > 0 ? Math.min(amount, endPrice) : amount)), key)
+        : oneYearMonthlyShown;
+    // A down payment is program-level: it re-prices EVERY plan in the program, so the
+    // Forever Record lists each one's monthly before and after (and, on a removal, the
+    // monthlies restored) rather than only the plan that happened to be selected.
+    //
+    // In-Home only: the 1-Year monthly is quoted off `oneYearGrandTotal` and does not
+    // subtract its down payment, so there is no before/after to report for it.
+    const inHomeBaseFor = (dp: number) =>
+      Math.max(0, endPrice - (endPrice > 0 ? Math.min(dp, endPrice) : dp));
+    const planMonthlies: PlanMonthlyChange[] =
+      program === 'inhome'
+        ? addedPlanKeys
+            .filter((k) => isFinancing(plans, k))
+            .map((k) => ({
+              planId: k,
+              planLabel: compactPlanLabel(plans, k),
+              old: calcMonthly(plans, inHomeBaseFor(previousAmount), k),
+              new: calcMonthly(plans, inHomeBaseFor(amount), k),
+            }))
+        : [];
+
+    logInvestmentDownPaymentChanged({
+      ...logBase,
+      program,
+      amount,
+      previousAmount,
+      planMonthlies,
+      selection: key ? { key, label: methodLabelOf(key), isFinancing: fin, monthly } : undefined,
+    });
   };
 
   // Reusable editable down-payment control — In-Home and 1-Year each have their own
@@ -668,6 +800,9 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         // Forever Record: 1-Year Opt In is a direct toggle (no confirm modal).
         if (next === 'oneyear') {
           logInvestmentOptIn({ ...logBase, program: 'oneyear', price: oneYearGrandTotal, monthly: oneYearMonthlyShown, planKey: oneYearKey });
+          // 1-Year has no confirmation modal, so the opt-in itself secures the price —
+          // logged explicitly so both programs close a scope the same way.
+          logInvestmentPriceSecured({ ...logBase, program: 'oneyear', price: oneYearGrandTotal, monthly: oneYearMonthlyShown, planKey: oneYearKey });
         } else {
           logInvestmentOptOut({ ...logBase, program: 'oneyear' });
         }
@@ -691,9 +826,8 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       selectedPlanKey={selectedPlanKey}
       onSelectPlan={isLeadSold ? undefined : selectPaymentChoice}
       onRemovePlan={isLeadSold ? undefined : handleRemovePlan}
-      // Opening a nested modal from the enlarged card: collapse the spotlight first so
-      // the picker/confirm isn't stacked behind the spotlight Modal.
-      onAddPlan={isLeadSold ? undefined : () => { setSpotlight(null); setShowAddPlan(true); }}
+      // The picker opens as an overlay INSIDE the spotlight Modal, so the enlarged card stays up.
+      onAddPlan={isLeadSold ? undefined : () => setShowAddPlan(true)}
       downPaymentSlot={isLeadSold ? undefined : inHomeDownEditor}
       downPayment={isLeadSold ? (calculator.downPayment || lead?.downPayment || 0) : downPay}
       selected={activeProgram === 'inhome'}
@@ -735,11 +869,13 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     >
       {/* Company branding — dynamic logo + company name (web parity), else the
           Leaf Filter wordmark fallback. */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minHeight: 32, marginBottom: 12 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 32, marginBottom: 12 }}>
         {!!secureLogo && (
           <Image source={{ uri: secureLogo }} style={{ height: 32, width: 120 }} resizeMode="contain" />
         )}
-        {companyName ? (
+        {/* The logo stands alone; the company name is only the fallback when there is no logo
+            (the heading below already says "Your Investment With {company}"). */}
+        {secureLogo ? null : companyName ? (
           <Text style={{ fontSize: 15, fontWeight: '800', fontStyle: 'italic', color: '#15803D', textTransform: 'capitalize' }}>{companyName}</Text>
         ) : !secureLogo ? (
           <Text style={{ fontSize: 15, fontWeight: '800', fontStyle: 'italic', color: '#15803D' }}>
@@ -804,12 +940,12 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       <View style={{ marginBottom: 18 }}>
         <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', textAlign: 'center', marginBottom: 10 }}>Includes the Following:</Text>
         <View style={{ height: 2, backgroundColor: '#16324F', borderRadius: 1, marginBottom: 14 }} />
-        {packageInfo.isFullPackage ? (
-          /* A full package: the box + ⓘ stands in for the whole list, and the ⓘ
-             carries the breakdown (Gutter / Soffit / FWrap / (Versa OR VMax)).
-             Centred, at presentation size — this is the customer-facing surface,
-             so the glyphs are larger here than the 14pt tab strip. */
-          <View style={{ alignItems: 'center', paddingVertical: 4 }}>
+        {packageInfo.isFullPackage && (
+          /* A full package: the box + ⓘ (which carries the Gutter / Soffit / FWrap /
+             (Versa OR VMax) breakdown) sits ABOVE the job-scope list. It used to REPLACE
+             the list; the customer-facing screen now shows both, so the scope sentences
+             are readable without opening the ⓘ. Centred, at presentation size. */
+          <View style={{ alignItems: 'center', paddingVertical: 4, marginBottom: 14 }}>
             <FullPackageTitle
               isFullPackage
               extras={packageInfo.extras}
@@ -819,7 +955,8 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
               onInfo={openPackageInfo}
             />
           </View>
-        ) : inclusions.length === 0 ? (
+        )}
+        {inclusions.length === 0 ? (
           <Text style={{ fontSize: 12, color: '#94A3B8', textAlign: 'center', fontStyle: 'italic' }}>
             Job scope will appear once products are configured.
           </Text>
@@ -896,13 +1033,13 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       {/* "+ Add Plan" financing picker for the In-Home Monthly shortlist. Gates on
           the current end price (− down payment) and adds financing plans only. */}
       <AddPlanModal
-        visible={showAddPlan}
+        visible={showAddPlan && !spotlight}
         price={inHomeMonthlyBase}
         plans={plans}
         categories={pricing.dropAddCategories}
         added={addedPlanKeys}
         onAdd={handleAddPlan}
-        onClose={() => setShowAddPlan(false)}
+        onClose={closeAddPlan}
       />
 
       {/* Lead details footer shown when lead is sold */}
@@ -955,9 +1092,26 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       <SpotlightOverlay
         spotlight={spotlight}
         title={spotlight ? SPOTLIGHT_TITLE[spotlight.id] : ''}
-        onClosed={() => setSpotlight(null)}
+        onClosed={() => {
+          flushEnlarged();
+          setSpotlight(null);
+        }}
         onPrev={() => stepSpotlight(-1)}
         onNext={() => stepSpotlight(1)}
+        overlay={
+          spotlight && showAddPlan ? (
+            <AddPlanModal
+              inline
+              visible
+              price={inHomeMonthlyBase}
+              plans={plans}
+              categories={pricing.dropAddCategories}
+              added={addedPlanKeys}
+              onAdd={handleAddPlan}
+              onClose={closeAddPlan}
+            />
+          ) : null
+        }
       >
         {spotlightCardEl}
       </SpotlightOverlay>

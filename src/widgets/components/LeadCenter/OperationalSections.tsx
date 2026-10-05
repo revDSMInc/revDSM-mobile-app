@@ -200,14 +200,11 @@ export const ToolsSection = ({
           backgroundColor: isDark ? colors.surface : '#919EAB14',
         }}
       >
-        <View className="flex-row justify-between mb-4">
-          <View
-            className="w-12 h-12 rounded-md items-center justify-center"
-            style={{ backgroundColor: '#FFFFFF' }}
-          >
-            <Ionicons name="image" size={16} color={'#637381'} />
-          </View>
-          <View className="flex-1 justify-between gap-2 ml-2">
+        <View className="flex-row items-center justify-between mb-4" style={{ minHeight: TOOL_CARD_MIN_HEIGHT - 24 }}>
+          <ToolIconCircle isDark={isDark} colors={colors}>
+            <Ionicons name="image" size={16} color={isDark ? colors.grey[0] : '#637381'} />
+          </ToolIconCircle>
+          <View className="flex-1 ml-4">
             <View className="flex-row items-center gap-3">
               <Text className="text-base font-semibold" style={{ color: '#1C252E' }}>
                 revRender
@@ -220,7 +217,9 @@ export const ToolsSection = ({
                 </View>
               )}
             </View>
-            <Text className="text-base">Select a photo to render</Text>
+            <Text className="text-[12px] mt-0.5" style={{ color: '#919EAB' }}>
+              Select a photo to render
+            </Text>
           </View>
           <View>
             <View className="rounded-md" style={{ backgroundColor: colors.primary.main }}>
@@ -510,6 +509,27 @@ const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
  * read — the tile behaves exactly as it did before: one tap opens the bundled deck.
  * The dynamic list is an addition, never a way to end up with no pitch book at all.
  */
+/**
+ * Every Tools tile is the same card: 12pt inner padding on all four sides, a 16pt gap
+ * below, and this minimum height so a one-line tile (Roofline Deck) is not shorter than
+ * a two-line one (Deal Center, Pitch Book). The content row inside is centred.
+ */
+const TOOL_CARD_MIN_HEIGHT = 68;
+
+/**
+ * The ONE icon badge every Tools tile uses (32pt grey circle). revRender used to draw its
+ * own 48pt white square, so it was the odd one out in the list - route every tile through
+ * this so the shape, size and colour cannot drift again.
+ */
+const ToolIconCircle = ({ isDark, colors, children }: any) => (
+  <View
+    className="w-8 h-8 rounded-full items-center justify-center"
+    style={{ backgroundColor: isDark ? colors.grey[800] : '#919EAB1F' }}
+  >
+    {children}
+  </View>
+);
+
 const PitchBookCard = ({ onOpen }: { onOpen: (book?: PitchBookSummary) => void }) => {
   const { colors, isDark } = useTheme();
   const [expanded, setExpanded] = useState(false);
@@ -531,6 +551,8 @@ const PitchBookCard = ({ onOpen }: { onOpen: (book?: PitchBookSummary) => void }
     <View
       className="mb-4 rounded-lg border"
       style={{
+        minHeight: TOOL_CARD_MIN_HEIGHT,
+        justifyContent: 'center',
         borderColor: '#919EAB33',
         backgroundColor: isDark ? colors.surface : colors.background,
       }}
@@ -539,16 +561,13 @@ const PitchBookCard = ({ onOpen }: { onOpen: (book?: PitchBookSummary) => void }
         onPress={() => (hasBooks ? setExpanded((v) => !v) : onOpen())}
         className="flex-row items-center p-3"
       >
-        <View
-          className="w-8 h-8 rounded-full items-center justify-center"
-          style={{ backgroundColor: isDark ? colors.grey[800] : '#919EAB1F' }}
-        >
+        <ToolIconCircle isDark={isDark} colors={colors}>
           <Icon
             name="book-open-page-variant"
             size={16}
             color={isDark ? colors.grey[0] : '#637381'}
           />
-        </View>
+        </ToolIconCircle>
         <View className="flex-1 ml-4">
           <Text className="text-base font-semibold" style={{ color: '#1C252E' }}>
             Pitch Book
@@ -634,27 +653,29 @@ const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, ba
   // A locked card stays tappable on purpose — the parent's onPress shows a toast
   // (web parity: tapping the locked Investment Center warns "build all jobs first").
   const disabled = isLoading;
+  // The pills sit flush with the card's right padding (the same edge the revRender "AI"
+  // badge and the Pitch Book chevron end on). The old fixed `mr-2` pushed them 8pt in; a gap
+  // is only needed when the download button follows.
+  const pillGap = onDownload ? 8 : 0;
   return (
     <View
       className="mb-4 flex-row items-center p-3 rounded-lg border"
       style={{
+        minHeight: TOOL_CARD_MIN_HEIGHT,
         borderColor: '#919EAB33',
         backgroundColor: isDark ? colors.surface : colors.background,
         opacity: isLoading ? 0.6 : locked ? 0.55 : 1,
       }}
     >
       <TouchableOpacity onPress={onPress} disabled={disabled} className="flex-1 flex-row items-center">
-        <View
-          className="w-8 h-8 rounded-full items-center justify-center"
-          style={{ backgroundColor: isDark ? colors.grey[800] : '#919EAB1F' }}
-        >
+        <ToolIconCircle isDark={isDark} colors={colors}>
           {isLoading ? (
             <ActivityIndicator size="small" color={colors.primary.main} />
           ) : (
             <Icon name={locked ? 'lock' : icon} size={16} color={isDark ? colors.grey[0] : '#637381'} />
           )}
-        </View>
-        <View className="flex-1 ml-4">
+        </ToolIconCircle>
+        <View className="flex-1 ml-4" style={{ minWidth: 0 }}>
           <Text
             className="text-base font-semibold"
             style={{ color: locked ? '#919EAB' : isGenerated ? colors.primary.main : '#1C252E' }}
@@ -664,9 +685,11 @@ const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, ba
           {/* Green status line (e.g. "Calculator created" / "Rollout confirmed") wins
               over the plain grey subtitle when present. */}
           {statusText ? (
-            <View className="flex-row items-center mt-0.5">
+            <View className="flex-row items-center mt-0.5 pr-1">
               <Icon name="check-circle" size={12} color={green} />
-              <Text className="text-[12px] font-semibold ml-1" style={{ color: green }}>{statusText}</Text>
+              {/* `shrink`: a Text in a row does NOT shrink by default, so a long status
+                  ("Consent on file - present quote") ran on under the right-side pill. */}
+              <Text className="shrink text-[12px] font-semibold ml-1" style={{ color: green }}>{statusText}</Text>
             </View>
           ) : desc ? (
             <Text className="text-[12px] mt-0.5" style={{ color: '#919EAB' }}>{desc}</Text>
@@ -690,18 +713,18 @@ const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, ba
           badgeVariant === 'violet' ? (
             // `self-start` aligns the pill with the title line (the row is
             // items-center, which would otherwise centre it against the 2-line block).
-            <View className="bg-violet-100 px-3 py-1.5 rounded-xl border border-violet-200 shadow-sm mr-2 self-start" style={{ bottom: 2 }}>
-              <Text className="text-[12px] font-semibold text-violet-700">{badgeText}</Text>
+            <View className="bg-violet-100 px-2.5 py-1 rounded-xl border border-violet-200 shadow-sm" style={{ flexShrink: 0, marginRight: pillGap }}>
+              <Text className="text-[11px] font-semibold text-violet-700" maxFontSizeMultiplier={1.1}>{badgeText}</Text>
             </View>
           ) : (
-            <View className="px-3 py-1.5 rounded-xl mr-2" style={{ backgroundColor: badgeBg || '#EBF9E1' }}>
-              <Text className="text-[12px] font-black tracking-wide" style={{ color: badgeColor || '#16A34A' }}>{badgeText}</Text>
+            <View className="px-2.5 py-1 rounded-xl" style={{ backgroundColor: badgeBg || '#EBF9E1', flexShrink: 0, marginRight: pillGap }}>
+              <Text className="text-[11px] font-black tracking-wide" maxFontSizeMultiplier={1.1} style={{ color: badgeColor || '#16A34A' }}>{badgeText}</Text>
             </View>
           )
         )}
         {isGenerated && !isLoading && (
-          <View className="bg-violet-100 px-3 py-1.5 rounded-xl border border-violet-200 shadow-sm mr-2">
-            <Text className="text-[12px] font-semibold text-violet-700">Already Generated</Text>
+          <View className="bg-violet-100 px-2.5 py-1 rounded-xl border border-violet-200 shadow-sm" style={{ flexShrink: 0, marginRight: pillGap }}>
+            <Text className="text-[11px] font-semibold text-violet-700" maxFontSizeMultiplier={1.1}>Already Generated</Text>
           </View>
         )}
       </TouchableOpacity>

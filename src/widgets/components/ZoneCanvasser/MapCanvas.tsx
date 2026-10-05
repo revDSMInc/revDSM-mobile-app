@@ -314,6 +314,11 @@ export function MapCanvas({
           scaleBarEnabled={false}
           logoEnabled={true}
           attributionEnabled={true}
+          // Moved off the bottom-left (their default) so they stop colliding with the
+          // draw toolbar / archive + legend buttons that live on the bottom line. Still
+          // visible, as Mapbox's terms require: just under the back button.
+          logoPosition={{ top: 72, left: 12 }}
+          attributionPosition={{ top: 78, left: 96 }}
           scrollEnabled={!rectangleDrawing}
           zoomEnabled={!rectangleDrawing}
           pitchEnabled={!rectangleDrawing}

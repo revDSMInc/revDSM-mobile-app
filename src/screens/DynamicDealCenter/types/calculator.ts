@@ -14,6 +14,13 @@ export interface CalculatorField {
     matchMode?: 'any' | 'all';
     valueMode?: string;
     fixedValue?: string | number;
+    /** `range` mode: the field's value follows the aggregate of `dependsOn` (see utils/auto-quantity.ts). */
+    aggregate?: string;
+    ranges?: { min: number; max?: number | null; value: string | number }[];
+    notifyRep?: boolean;
+    addedMessage?: string;
+    removedMessage?: string;
+    updatedMessage?: string;
     highlightColor?: string;
     behavior?: {
       mode?: string;

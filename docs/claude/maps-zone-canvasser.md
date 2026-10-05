@@ -912,3 +912,39 @@ No code, colour constant, or test change — `PIN_CATEGORY_META.installed.color`
 ⚠️ Needs a device check: an Installed pin and an Uploaded pin, side by side, are visually indistinguishable
 on the map (which is now correct per this ticket) — confirm no stray thin-ring/checkmark artwork survives
 on any cached/bundled asset.
+
+## Add New Lead form: one type scale, and the address no longer cuts off
+
+`widgets/modals/LeadCreate/index.tsx`. The form mixed 12pt regular inputs (`CustomInput`) with a 14pt BOLD address
+box, a 4pt-indented label (`CustomInput` hardcodes `ml-1`) beside flush ones, and doubled gaps (`gap-5` on top of each
+input's own 16pt `marginBottom`).
+
+- Every input is 14pt via a new `INPUT_FONT_SIZE`; labels are `text-sm font-semibold` and flush (`flushLabel`).
+- The address field is now `multiline` and GROWS (`minHeight` 50, same box style as the other fields), because the
+  single-line 56pt box clipped the tail of a full Google address ("...FL 33880, USA"). `scrollEnabled={false}` +
+  `submitBehavior="blurAndSubmit"` so Return still dismisses instead of inserting a newline.
+- Spacing is now one 16pt rhythm: parent `gap-5` removed; the Lowe's, address and classification blocks carry `mb-4`.
+
+- ⚠️ `CustomInput` re-applies its style through `setNativeProps` in an effect, which replaced any `style` fontSize with
+  its own 12 after mount. It therefore got dedicated `fontSize` / `flushLabel` props (see `app-wide.md`); do not size
+  it through `style`.
+- Page rhythm: the scroll content carries the 24pt gutter (`contentContainerStyle`, matching the header's `p-6`; it was `px-6 py-6` on the ScrollView's own style, which shrinks the frame), the close button has `marginRight: -8` to cancel its own `p-2` so the x sits on the same right edge as the fields, every block is separated by 16pt, and the LF-lead box is `mb-4` (was `mb-6`) with the submit button's extra `marginTop: 12` removed.
+
+## Zone Canvasser: draw toolbar hidden under the nav bar / zoom stack
+
+Ticket: Cancel / Undo / Save Zone were hidden on Android (behind the three-button navigation bar) and on iOS and
+Android alike "Save Zone" sat underneath the zoom buttons.
+
+- `widgets/modals/ZoneCanvasserMap.tsx`: a `bottomInset` spacer ends the map ABOVE the system bar. It is
+  `max(insets.bottom, screen height - window height)` on Android. ⚠️ The map is a `statusBarTranslucent` Modal, which
+  draws under the navigation bar while the app-level `insets.bottom` can still be 0; the screen-minus-window height is
+  the bar's real height in that case (and 0 when the window is already edge-to-edge, where `insets.bottom` is right).
+- `widgets/components/ZoneCanvasser/DrawingToolbar.tsx`: the three buttons share the width (`flex-1`) inside
+  `left: 16, right: 72`, so they stop short of the right control column (44pt + 16 margin). They were centred at full width.
+  `bottom: 48` clears the Mapbox logo/attribution, which is kept on (`logoEnabled`) - do not hide it.
+- ⚠️ If a new control is added to the right column, keep the toolbar's `right: 72` in step with its width.
+- Top-row alignment: the back button's left margin was 20 against 16 on the right-hand draw tools (and the bottom controls), so it is now 16 everywhere. While DRAWING the search bar is hidden, so `MapDrawTools` moves from `top: 76` to `top: 20` and lines up with the back button; the pentagon icon is 20pt like the rectangle.
+- ⚠️ The toolbar first used `bottom: 48` to clear the Mapbox logo, which left it floating ABOVE the zoom stack's bottom edge. The logo/attribution stay visible (Mapbox terms: `logoEnabled` / `attributionEnabled` must remain true) but live under the back button now, so the toolbar and the controls share one bottom line.
+- Right-hand column: every control is 44pt wide on the same `right-4` axis. The PINS toggle (32pt wide) sat on a narrower container, so its centre was ~5pt off the column; it now has a fixed `width: 44`. Draw buttons are `rounded-xl` like the zoom stack, and the stack's gaps are 8 (was 12) to match the draw buttons'.
+- Add New Lead, Issued Lead's **Lead ID** asked for `NUMERIC_KEYBOARD` (the DECIMAL pad), which on Android shows blank keys plus `. - ,` - the client's complaint. It is a whole-number field, so it uses `NUMBER_PAD_KEYBOARD` (clean 0-9) and `onChangeText` strips non-digits. iPad is unchanged (both constants resolve to `numbers-and-punctuation` there). The Appointment Date field stays a text keyboard because it needs `/`.
+- Add New Lead used TWO keyboards: Phone Number was `phone-pad` (letters + `* + #`) and Lead ID `number-pad`. Both digit fields now use `NUMBER_PAD_KEYBOARD`, so the form shows one layout; the phone formatter supplies the `+1 ( ) -` punctuation. Do not point a digit field here back at `phone-pad`.

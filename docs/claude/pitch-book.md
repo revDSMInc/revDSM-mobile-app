@@ -1042,3 +1042,47 @@ fully in, not so far the rep loses their place.
 ⚠️ Needs a device check (portrait especially): the selected tool's neighbours visible beside it; the right
 arrow present on first open and the left one absent; both arrows stepping the strip and disappearing at
 their ends; no arrows at all in landscape when every tab fits; and the category row reading the same size.
+
+## Interactive Tools sheet / dock: every click is logged
+
+Ticket: *"when the bottom sheet appears or the user interacts with it, no log is generated for any click."*
+
+One helper, **`logTool(action, meta, surface)`** in `screens/Pitchbook/index.tsx`, sends
+`logEvent(<view|close|click>, { module_type: 'interactive_tool', meta: { action: 'interactive_tool_<action>', surface, activeToolTab, slideTab, currentSlide, currentSlideName, totalSlides, ... } })`.
+`surface` is `sheet` (inline drawer) or `dock` (fullscreen) so the two UIs are distinguishable.
+
+Event type: opening the sheet/dock (`sheet_opened`, `dock_opened`) is a **`view`**, closing it (`sheet_closed`, `dock_closed`) is a **`close`**, everything else a **`click`**. The module is `interactive_tool`, NOT `pitch_book`.
+
+Actions: `sheet_opened` / `sheet_closed` (with `source`: `interactive_tools_button`, `close_button`, `backdrop`,
+`back_button`), `dock_opened` / `dock_closed`, `tab_selected` (`fromTab`/`toTab`, both surfaces),
+`inspection_section_expanded|collapsed`, `inspection_photo_opened`, `inspection_viewer_photo_changed`
+(`source`: chevron / thumbnail / swipe), `inspection_viewer_closed`, and the Risk tab's `risk_report_*`
+(expanded/collapsed, viewed, downloaded, reset, year_changed, generate_started, history_opened).
+
+- `InspectionPhotosPanel` and `RiskContent` take an optional **`onAction`** and stay logging-agnostic; both
+  surfaces pass `logTool`. RooflineDeck also uses the panel but passes no `onAction`, so it is not logged.
+- `toggleTools` now takes a `source` string - do not pass it straight as an `onPress` (it would receive the event).
+
+- ⚠️ `logTool` stamps `activeToolTab` from the render-time state, which is the tab BEFORE a tab tap. `tab_selected` therefore overrides it with the tapped tab (`activeToolTab: id`); without that every tab log read one click behind (Risk logged as Inspection).
+
+## Risk report uses the backend `displayName` (REVUIUX-466)
+
+Backend now stores `displayName` ("Lead | Address | Date | Time") on risk `generatedReports`; `reportName` stays
+the type key (`risk_report`) and is STILL what every lookup matches on - never read the title from it for matching.
+Pure `utils/report-name.ts`: `reportDisplayName(report, fallback)` (displayName -> reportName -> fallback; older
+reports have no displayName) and `newestReport`. Used for the preview title / download name and the Generated History
+label in Pitchbook and RooflineDeck, and the Lead Center `risk-preview` / `risk-download` actions
+(`useLeadCenterModals`). `useLeadReports.handleDownloadRiskReport` (unused today) now takes an optional report.
+
+- ⚠️ When the url comes from a just-finished JOB, `findReport` returns the FIRST match (maybe an older report), so the
+  title is taken from the newest non-reset risk report instead.
+- ⚠️ The `|` is deliberately NOT allowed through the filename sanitizers (`download-utils.ts`, `PdfPreviewModal.tsx`):
+  `|` is invalid in Android MediaStore/FAT names, so it collapses to a space. Do not "preserve the pipes".
+- RooflineDeck's download branch is `Linking.openURL`, so only its preview title and history label change.
+- `PdfPreviewModal` header title is now 13pt, `numberOfLines={2}` with `adjustsFontSizeToFit` (min 0.8), because the `displayName` ("Lead | Address | Date | Time") was ellipsised at 16pt/1 line. The header is a fixed 60pt - two lines of 17 lineHeight fit; do not raise the font without raising the header.
+- The Interactive Tool risk logs (`risk_report_viewed|downloaded|reset|history_opened`) carry `displayName` (via `reportDisplayName`) beside `reportName`, so the portal shows the readable report name. Old reports fall back to `reportName`.
+- `InspectionPhotoViewer`'s thumbnail strip (`bottom: 36`) was drawn UNDER Android's navigation bar: the viewer is a `statusBarTranslucent` Modal, and the app-level safe-area inset reads 0 inside it. It now adds `useBottomInset()` (new `hooks/useBottomInset.ts`: `max(insets.bottom, screen height - window height)` on Android). The Zone Canvasser map uses the same hook. Use it for any new bottom-anchored content in a full-screen Modal.
+- Follow-up: once the strip cleared the nav bar it OVERLAPPED the photo (the strip was `position: absolute` and the photo a fixed 62% of the window). The strip is now IN FLOW under the photo (`paddingBottom: 20 + bottomInset`), the photo height is MEASURED from the area left (`onLayout`), and the chevrons moved inside that area so they centre on the photo. Do not give the strip `position: absolute` again.
+- Follow-up ("the black area is very large"): the photo box was the WHOLE area under the header, so a photo that did not fill it left a wide black gap above the thumbnails. The photo box is now sized to the photo's own ratio (learned from `Image.onLoad`, default 4/3, capped by the room left above the strip) and the photo + thumbnails are centred as ONE group, so the strip hugs the picture. The backdrop is solid `#000` (was `rgba(0,0,0,0.95)`, which let the page behind ghost through as dark cards). The Android nav-bar clearance is `paddingBottom: bottomInset` on the area. ⚠️ Pages of different proportions share one height (the CURRENT photo's) and letterbox - acceptable, but do not size each page separately or the pager's offsets stop matching `getItemLayout`.
+- Follow-up (strip still looked lost in the black): thumbnails are 72pt (was 56) and CENTRED as a row (`minWidth: width` + `justifyContent: 'center'` on the strip's content), pinned to the bottom of the black area with 16pt below; the photo is centred in the slot ABOVE the strip (`slotHeight` is measured on that slot, not the whole area), so the black above and below the photo is equal. The cap on the photo is the slot, so it grows to use the room.
+- `InspectionPhotoViewer` is now EXPORTED and also serves the dynamic Manage Photos screen (`DynamicManagePhotosView`), whose preview was a single-image Modal with no paging and a translucent backdrop that let the page show through. A tap now opens the viewer on every photo in the current view (sections, extras, annotated, unsorted, in grid order, via the warmed local files), with swipe, arrows and the thumbnail strip. `sectionName=""` shows only the photo label. The static `ManagePhotosModal` already used `ImageSlideshowModal` with a strip and is untouched.

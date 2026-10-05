@@ -31,7 +31,7 @@ import RNFlashMessage from 'react-native-flash-message';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { format } from 'date-fns';
 import { logEvent } from '../../../services/api/LoggerService';
-import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
+import { NUMBER_PAD_KEYBOARD } from '../../../utils/keyboard-type';
 
 interface Props {
   visible: boolean;
@@ -488,7 +488,7 @@ export default function LeadCreateModal({
                 Fill in the customer details below
               </Text>
             </View>
-            <TouchableOpacity onPress={handleClose} className="p-2">
+            <TouchableOpacity onPress={handleClose} className="p-2" style={{ marginRight: -8 }}>
               <Text className="text-3xl font-light" style={{ color: colors.textSecondary }}>
                 ×
               </Text>
@@ -497,16 +497,20 @@ export default function LeadCreateModal({
 
           <ScrollView
             ref={scrollViewRef}
-            className="px-6 py-6"
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 80 }}
+            // 24pt gutter on every side - the same as the header's p-6 - so the title, the
+            // close button and the fields share one left/right edge. Padding lives HERE, not
+            // on the ScrollView's own style, where the vertical part shrinks the frame.
+            contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 24, paddingBottom: 80 }}
             scrollEnabled={!showSuggestions}
             keyboardShouldPersistTaps="handled"
           >
-            <View className="gap-5">
+            <View>
               <View className="flex-row gap-4">
                 <View className="flex-1">
                   <CustomInput
+                    fontSize={INPUT_FONT_SIZE}
+                    flushLabel
                     label="First Name*"
                     value={form.firstName}
                     onChangeText={(t) => setForm({ ...form, firstName: t })}
@@ -515,6 +519,8 @@ export default function LeadCreateModal({
                 </View>
                 <View className="flex-1">
                   <CustomInput
+                    fontSize={INPUT_FONT_SIZE}
+                    flushLabel
                     label="Last Name*"
                     value={form.lastName}
                     onChangeText={(t) => setForm({ ...form, lastName: t })}
@@ -524,6 +530,8 @@ export default function LeadCreateModal({
               </View>
 
               <CustomInput
+                    fontSize={INPUT_FONT_SIZE}
+                    flushLabel
                 label={fromZone ? 'Phone Number' : 'Phone Number*'}
                 value={form.phone}
                 onChangeText={(t) => {
@@ -531,10 +539,14 @@ export default function LeadCreateModal({
                   setForm({ ...form, phone: formatted });
                 }}
                 placeholder="+1 (123) 456-7890"
-                keyboardType="phone-pad"
+                // Same keyboard as the Lead ID: `phone-pad` is a DIFFERENT layout (letters, `* + #`) and
+                // the form showed two keyboards. The formatter adds the +1 ( ) - punctuation itself.
+                keyboardType={NUMBER_PAD_KEYBOARD}
                 maxLength={17}
               />
               <CustomInput
+                    fontSize={INPUT_FONT_SIZE}
+                    flushLabel
                 label="Email Address"
                 value={form.email}
                 onChangeText={(t) => setForm({ ...form, email: t })}
@@ -542,7 +554,7 @@ export default function LeadCreateModal({
                 keyboardType="email-address"
               />
 
-              <View style={{ marginTop: 4 }}>
+              <View style={{ marginBottom: 16 }}>
                 <Text
                   className="text-sm font-semibold mb-2"
                   style={{ color: colors.text }}
@@ -594,7 +606,7 @@ export default function LeadCreateModal({
               </View>
 
               {/* Address Section */}
-              <View onLayout={(e) => setAddressFieldY(e.nativeEvent.layout.y)}>
+              <View style={{ marginBottom: 16 }} onLayout={(e) => setAddressFieldY(e.nativeEvent.layout.y)}>
                 <Text className="text-sm font-semibold mb-2"
                   style={{ color: colors.text }}>
                   Full Address*
@@ -611,19 +623,33 @@ export default function LeadCreateModal({
                     placeholder={
                       isLocating ? 'Detecting your location...' : '123 Main St, City, State'
                     }
+                    // ⚠️ MULTILINE and growing, not a fixed 56pt single line: a full address
+                    // ("829 Old 9 Foot Rd, Winter Haven, FL 33880, USA") overflowed and the
+                    // tail was cut off. It now wraps and the box grows (min 50, same as the
+                    // other fields). `scrollEnabled={false}` keeps it from scrolling inside
+                    // itself; the Return key submits instead of inserting a newline.
+                    multiline
+                    scrollEnabled={false}
+                    submitBehavior="blurAndSubmit"
                     style={{
-                      height: 56,
-                      backgroundColor: isDark ? colors.surface : (fromZone ? '#E2E8F030' : '#F8FAFC'),
+                      minHeight: 50,
+                      backgroundColor: isDark
+                        ? 'rgba(255,255,255,0.05)'
+                        : fromZone
+                          ? '#EDEDED'
+                          : '#F5F5F5',
                       borderWidth: 1,
-                      borderColor: isDark ? colors.border : '#E2E8F0',
-                      borderRadius: 16,
-                      paddingHorizontal: 20,
-                      paddingRight: 48,
-                      fontWeight: '700',
+                      borderColor: isDark ? colors.border : '#919EAB33',
+                      borderRadius: 12,
+                      paddingLeft: 12,
+                      paddingRight: 44,
+                      paddingTop: 14,
+                      paddingBottom: 14,
+                      textAlignVertical: 'center',
                       color: colors.text,
-                      fontSize: 14,
+                      fontSize: INPUT_FONT_SIZE,
                     }}
-                    placeholderTextColor={colors.textSecondary + '60'}
+                    placeholderTextColor={isDark ? 'rgba(255,255,255,0.35)' : '#919EAB'}
                   />
                   <View
                     style={{
@@ -748,7 +774,7 @@ export default function LeadCreateModal({
 
               {/* Lead Type — hidden from zone canvasser (self-gen only, web parity) */}
               {!fromZone && (
-                <View className="mt-4 mb-6">
+                <View className="mb-4">
                   <Text
                     className="text-sm font-semibold mb-2"
                     style={{ color: colors.text }}
@@ -800,7 +826,7 @@ export default function LeadCreateModal({
               {form.leadType === 'lf_lead' && (
                 <View
                   onLayout={(e) => setLfSyncBoxY(e.nativeEvent.layout.y)}
-                  className="p-5 rounded-[24px] border mb-6"
+                  className="p-5 rounded-[24px] border mb-4"
                   style={{
                     backgroundColor: isDark ? colors.surface : '#fff',
                     borderColor: isDark ? colors.border : colors.grey[200],
@@ -813,17 +839,24 @@ export default function LeadCreateModal({
                 >
 
                   <CustomInput
+                    fontSize={INPUT_FONT_SIZE}
+                    flushLabel
                     label="Lead ID*"
                     value={form.lfLeadId}
-                    onChangeText={(t) => setForm({ ...form, lfLeadId: t })}
+                    // A Lead ID is whole digits only. `numeric` is the DECIMAL pad (Android
+                    // shows blank keys plus `. - ,`); `number-pad` is the clean 0-9 pad, and
+                    // the strip below also drops anything pasted in.
+                    onChangeText={(t) => setForm({ ...form, lfLeadId: t.replace(/\D/g, '') })}
                     placeholder="Enter ID"
-                    keyboardType={NUMERIC_KEYBOARD}
+                    keyboardType={NUMBER_PAD_KEYBOARD}
                     returnKeyType="done"
                     onFocus={() => {
                       scrollViewRef.current?.scrollTo({ y: lfSyncBoxY, animated: true });
                     }}
                   />
                   <CustomInput
+                    fontSize={INPUT_FONT_SIZE}
+                    flushLabel
                     label="Lead Code*"
                     value={form.leadCode}
                     onChangeText={(t) => setForm({ ...form, leadCode: t })}
@@ -885,6 +918,8 @@ export default function LeadCreateModal({
                     </ScrollView>
                   </View>
                   <CustomInput
+                    fontSize={INPUT_FONT_SIZE}
+                    flushLabel
                     label="Appointment Date (MM/DD/YYYY)*"
                     value={form.lfLeadDate ? form.lfLeadDate.replace(/-/g, '/') : ''}
                     onChangeText={(t) => setForm({ ...form, lfLeadDate: t })}
@@ -927,7 +962,6 @@ export default function LeadCreateModal({
                 title="Save & Submit Lead"
                 onPress={handleSubmit}
                 loading={createLeadMutation.isPending}
-                style={{ marginTop: 12 }}
               />
 
               {/* Spacer for Address Suggestions when Keyboard is open */}
@@ -940,6 +974,9 @@ export default function LeadCreateModal({
     </Modal>
   );
 }
+
+/** Every field on this form - label sizes live in the shared `text-sm font-semibold`. */
+const INPUT_FONT_SIZE = 14;
 
 const styles = StyleSheet.create({
   modalOverlay: {

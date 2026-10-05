@@ -1043,3 +1043,53 @@ was the pre-existing `getPinDateLabel` suffix (`"Sold {date} · pending install"
 `utils/sales-pins.ts`, shared by both `MapJobCard.tsx` and `MapDetail`'s list-view row. Full notes and the
 "do not reintroduce a status word here, colour is the channel" rule: `maps-zone-canvasser.md` › "still
 status is on the card" follow-up, right after the badge-revert note.
+
+## Risk report title/filename comes from `displayName` (REVUIUX-466)
+
+Lead Center's `risk-preview` / `risk-download` (`hooks/useLeadCenterModals.ts`) hardcoded `'Risk Report'`; they now
+use `reportDisplayName` from `utils/report-name.ts` (backend `displayName` -> `reportName` -> `'Risk Report'`).
+`hooks/useLeadReports.ts` `handleDownloadRiskReport(url, report?)` takes an optional report (it has no callers today).
+Full notes live in `pitch-book.md` ("Risk report uses the backend `displayName`").
+
+- ⚠️ `findReport` returns the FIRST matching record, which may be an older report. When the url comes from a
+  just-finished job the title is taken from the newest non-reset risk report instead.
+- ⚠️ `reportName` is still the lookup key (`includes('risk')`) - do not read the title from it for matching.
+
+## Lead Center header: ROWS, not two columns (long email broke the alignment)
+
+`screens/LeadCenter/index.tsx` header was two independent `flex-col` stacks (Lead ID / name / phone / date on the left;
+Lead Code / email / time on the right). A long email wrapped to 2-3 lines, made the right stack taller and pushed the
+clock down while the date stayed put, so the pairs drifted apart.
+
+It is now four rows (Lead ID | Lead Code, name, phone | email, date | time), each `flex-row items-start` with
+`flex-1` cells and a 16pt gap between rows.
+
+- ⚠️ Each row is a unit: the next row starts below the TALLEST cell, so date/time stay level however long the email is.
+  Do not go back to per-column stacks.
+- The email `Text` has `shrink` and NO `numberOfLines`, so the whole address stays readable (wraps inside its cell).
+  The phone/mail icons carry `marginTop: 4` to sit on the first text line when the text wraps.
+
+## Tools tab: every tile uses the same grey icon circle
+
+`widgets/components/LeadCenter/OperationalSections.tsx`. The revRender tile drew its own 48pt WHITE SQUARE icon and a
+16pt black subtitle, so it was the odd one out beside Deal Center / Investment Center / Pitch Book / Roofline Deck
+(32pt grey circle, 12pt grey subtitle, 16pt gap to the title).
+
+New local **`ToolIconCircle`** is the one badge; `ToolCard`, `PitchBookCard` and the revRender header all render it, and
+revRender's subtitle now matches the other tiles' (`text-[12px]`, `#919EAB`) with `items-center` rows.
+
+- ⚠️ Add any new tool tile through `ToolIconCircle` - do not hand-roll another icon box, that is how revRender drifted.
+
+- ⚠️ `ToolCard` right-side pills ("Already Generated", SOLD) overlapped the status line: a `Text` inside a `flex-row` does NOT shrink, so "Consent on file - present quote" ran under the pill. The status Text now has `shrink`, the text column `minWidth: 0`, and the pills are 11pt, `flexShrink: 0` and `maxFontSizeMultiplier={1.1}` so Android font scaling cannot blow them up.
+- ⚠️ `ToolCard` pills end flush with the card padding (`pillGap` is 0 unless a download button follows) so "Already Generated", the revRender "AI" badge and the Pitch Book chevron share one right edge. A fixed `mr-2` had pushed the pills 8pt short.
+- ⚠️ Every Tools tile shares `TOOL_CARD_MIN_HEIGHT` (68) with 12pt padding and a 16pt bottom margin, so one-line tiles (Roofline Deck) are no shorter than two-line ones; `ToolCard`, `PitchBookCard` and the revRender header (68 minus its 24 of padding) all read it. The pills are now vertically centred like the AI badge (`self-start` removed). New tiles must use the same constant.
+
+## RevRender history viewer: pinch zooms the PICTURE, not the whole card
+
+`widgets/modals/lead-center/RevRenderHistoryModal.tsx` (the "Render #N" Before/After slider). `imageAnimStyle` (translate + scale) was on `styles.sliderContainer` itself, so a pinch or drag scaled and moved the whole card across the screen - frame, Before/After labels and handle included - instead of zooming within it.
+
+The container is now a FIXED clip and a new inner `Reanimated.View` carries the transform around the images, mask and slider handle; the Before/After labels sit outside the zoom layer.
+
+- ⚠️ Do not put `imageAnimStyle` back on the container. The compare handle lives INSIDE the zoom layer on purpose: the mask is in image coordinates, so it must scale with the picture or the split would drift off the pixels it describes (the handle circle also grows when zoomed - accepted).
+- Pan is clamped to `(scale - 1) / 2` of the width and of the measured frame height (`boxHeight`, set in `onLayout`), so the picture cannot be flung out of the frame.
+- Device check (this repo cannot render-test): pinch to zoom, drag while zoomed, and that the slider handle still drags at 1x and when zoomed.

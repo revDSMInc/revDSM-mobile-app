@@ -226,3 +226,158 @@ itself. The chip was a duplicate of that, minus the confirmation.
 ⚠️ `toggleStatus` is KEPT on the hook but now has zero consumers, and carries a note saying so. If
 a one-tap toggle is ever wanted back, put a confirm in front of it rather than re-attaching it to
 the chip.
+
+## `investment_down_payment_changed` now carries the already-selected plan
+
+Ticket: the down-payment log had no payment plan, so the portal could not tell which plan was chosen when the rep
+moved the down payment. `logInvestmentDownPaymentChanged` (`utils/activity-log/investment-center-log.ts`) takes an
+optional `selection` and adds the SAME fields as `investment_payment_method_selected`: financing ->
+`paymentPlan` / `planLabel` / `monthlyPayment`; basic CK/CC/AMEX -> `paymentMethod` / `methodLabel`; plus `isFinancing`.
+Built in `InvestmentPanel.logDownPaymentChange`: In-Home uses the shared `paymentChoice`, 1-Year uses `oneYearKey`.
+
+- ⚠️ `monthlyPayment` is recomputed for the NEW amount (`endPrice - min(amount, endPrice)`): the commit fires on
+  blur before the panel re-renders, so the rendered `inHomeMonthly` is still the OLD down payment's.
+- 1-Year's `monthlyPayment` is `oneYearMonthlyShown` - it does not depend on the 1-Year down payment today.
+
+- Investment Center company branding row (logo + company name) is `justifyContent: 'center'`; it was `flex-end`, which pushed the LeafFilter logo to the right edge instead of under the screen's centred title and heading.
+
+## Investment Center: a full-package tab shows the box + ⓘ AND the scope list
+
+`screens/InvestmentCenter/InvestmentPanel.tsx`, "Includes the Following". On a full package the centred box + ⓘ used to
+REPLACE the whole `inclusions` list, so the job-scope sentences never appeared. QA: the details were missing next to the ⓘ.
+The `FullPackageTitle` now renders above the list (`marginBottom: 14`) and the list renders for every calculator, package or not.
+
+- ⚠️ This supersedes the "REPLACES the list" decision in `deal-center.md` (full-package section); do not restore the
+  replace branch. The ⓘ card still carries the package breakdown.
+- A long scope pushes Total Investment further down; a "Show details" collapse is the fallback if that bothers reps.
+
+- Investment Center branding row: with a logo it shows the LOGO ALONE, centred. The company-name text beside it duplicated the heading below ("Your Investment With {company}") and pulled the logo off-centre; the name now renders only as the fallback when there is no logo.
+
+## REVUIUX-505 — the Forever Record's Investment Center section, end to end
+
+Ticket: the portal's Investment Center section in the Lead Details modal was redesigned around a new
+hierarchy — **section -> job scope -> visit -> event** — with a Foundation card of baseline prices at
+the top of each scope and a cyan Price Secured box at the bottom. The dev handoff
+(`Forever_Record_Investment_Center_Dev_Handoff.md`, attached to the ticket) describes a record the app
+was not yet producing: six of its requirements had no event behind them. The portal UI is a rewrite,
+the app's logging vocabulary grew, and **the backend did not change at all**.
+
+### The chain
+
+1. **`InvestmentPanel`** emits the events through `utils/activity-log/investment-center-log.ts`, all of
+   them under `module_type: 'investment_center'` with the specifics in `meta`.
+2. **The backend stores and returns `meta` wholesale.** `UserActivityLogEntity` declares
+   `meta: { type: Schema.Types.Mixed }` — no whitelist — and `LeadLifetimeSummaryService` hands it out
+   as `metadata`. Grouping into calculators (`InvestmentCenterUtils`) and the Forever Record detail-level
+   filter both key off the **module type**, never off `meta.action`. So a new action is carried end to
+   end with no backend release.
+3. **The portal** groups and renders it in
+   `forever-record/sales-process/logs/investment-center/` (new folder; the old
+   `investment-center-log.js` / `-log-item.js` pair was deleted). `build-scopes.js` is the pure
+   derivation: calculator -> scope, `visitId` -> visit, `meta.action` -> row kind.
+
+A **job scope is a calculator** — the backend already groups a lead's `investment_center` logs by
+`meta.calculatorId`, and `calculatorTitle` is the scope's name. Nothing new was needed for that layer;
+`baseMeta` has always carried both.
+
+### What the panel now logs
+
+- **`investment_program_enlarged` / `investment_program_minimized`** — the spotlight IS the handoff's
+  enlarge. `programOfSection` maps `SpotlightSectionId` onto the program (`'total' -> 'msrp'`, which is
+  why `DisplayProgramKey` is wider than `ProgramKey`: the MSRP card can be zoomed but cannot be opted
+  into). `priceOfSection` carries the figure on screen. The minimize carries `enlargedSeconds`, which
+  the portal prints as "(time spent enlarged X min)".
+- **`investment_price_secured`** — fired at `confirmInHome` AND at the 1-Year opt-in toggle. Deliberately
+  separate from `investment_opt_in`: In-Home commits behind the "Secure This Price" confirmation modal
+  while 1-Year is a direct toggle, so the opt-in alone does not mean the same thing on the two cards.
+  Emitting a dedicated event at both commit points makes them read alike in the record.
+- **`investment_calculator_left`** — closes the visit, so its duration is the real time in the scope
+  rather than the span between the first and last tap. Without it a visit whose last event came early
+  reads as far shorter than it was.
+- **`visitId` on every event** (`baseMeta`), minted once per panel mount.
+- **`baseline`** (`ScopeBaseline`: MSRP / 1-Year / In-Home `{ price, monthly, planLabel }`) on the
+  scope-view event — the prices as the scope opened, which is exactly what the Foundation card shows.
+- **`program: 'inhome'`** on plan add/remove, which previously carried none, so those rows had no tag.
+- **`planMonthlies`** (`PlanMonthlyChange[]`: `planId`, `planLabel`, `old`, `new`) plus
+  `previousDownPayment` on the down payment, so the portal's gray panel can list every re-priced plan
+  as "$370 -> $343/mo" instead of only the selected one.
+
+### The visit lifecycle
+
+`InvestmentCenter/index.tsx` renders `<InvestmentPanel key={active.id} />`, so switching scope tab
+**unmounts and remounts** the panel. That makes one mount exactly one entry into one job scope, which is
+the handoff's definition of a visit — so the panel, not the screen, owns it:
+
+- `visitIdRef` is seeded once per mount (`${calculator.id}-${Date.now()}-${random}`) and goes into
+  `logBase.visitId`.
+- A `useEffect(..., [])` logs `investment_calculator_viewed` with the baseline on mount, and its cleanup
+  flushes any open enlarge then logs `investment_calculator_left`.
+- `logBaseOnMountRef` pins the identity for that cleanup: a visit's id cannot change while it is open,
+  and the cleanup closes over the first render.
+
+**Reproducing a second visit:** enter scope A, switch to scope B, switch back to A. The remount mints a
+new `visitId`, so the portal draws `VISIT 2` with its own duration and the section header's total time
+becomes the sum of both. On a single-calculator lead, leave the Investment Center screen and re-enter it.
+A visit with no events still renders if it has a start time, so entering and leaving is enough to see the
+divider.
+
+⚠️ **The duplicate `logInvestmentCalculatorViewed` effect was REMOVED from
+`screens/InvestmentCenter/index.tsx`.** It tracked `lastViewedCalcIdRef` and fired on tab change, which
+is the same moment the panel now mounts — putting it back double-logs every visit, and the second copy
+carries no `visitId` or baseline.
+
+⚠️ **A card left enlarged still owes its minimize.** `flushEnlarged` runs when another card is enlarged
+(so two enlarges never overlap in the record), when the spotlight closes (`onClosed`), AND from the
+unmount cleanup — the handoff's "if never minimized, close it at scope switch or exit". The unmount path
+goes through `flushEnlargedRef` rather than calling `flushEnlarged` directly, because that cleanup closes
+over the first render's copy.
+
+⚠️ **`planMonthlies` is In-Home only.** 1-Year's monthly is quoted off `oneYearGrandTotal` and does not
+subtract its own down payment (see the `investment_down_payment_changed` note above), so there is no
+before/after to report for it — emitting one would print "$370 -> $370". Fixing that is a pricing change,
+not a logging one. `inHomeBaseFor(dp)` recomputes the base at both the old and the new down payment and
+runs `calcMonthly` over the financing plans in `addedPlanKeys`.
+
+### What the portal does with it, and why every field is optional
+
+Every derivation in `build-scopes.js` degrades to the older shape, because a lead presented before this
+build must still render. That is the contract to keep in mind when changing anything above: **removing a
+field does not break the portal, it silently drops back to a worse inference.**
+
+| Missing | Portal falls back to |
+| --- | --- |
+| `visitId` | splits visits on each `investment_calculator_viewed` |
+| `investment_calculator_left` | the visit ends at its last event |
+| `baseline` | the first price seen per program inside the scope |
+| `investment_price_secured` | the last opt-in that was not cancelled afterwards |
+| `enlarged` / `minimized` | those rows simply do not appear |
+| `planMonthlies` | one row for the selected plan, with no "old ->" half |
+
+⚠️ **`calculatorId` is what makes a scope exist at all.** A log without it is not grouped into
+`investmentCalculators`, so it lands in the section-level list and renders as a bare row — no scope
+header, no visit divider, no duration. `baseMeta` omits the key when it is falsy, so a log fired before
+`calculator.id` is available produces exactly that.
+
+⚠️ **The portal never strikes a row through just because a later event supersedes it.** The log is
+append-only; a struck row means a real `investment_plan_removed` / `investment_opt_out` /
+down-payment-to-zero. Do not add "corrective" events to tidy the record.
+
+⚠️ **Nothing renders at Forever Record detail level Low.** The backend strips all activity logs there and
+keeps only milestones, so an empty-looking section is a permission level before it is a bug.
+
+## Job Tracker Overview table: one column config, everything centred
+
+`screens/JobTracker/index.tsx`. The header, the month rows and the Totals row were three copies of ten hand-written `<Text>` cells with mixed `w-24` / `w-28` widths and right alignment, so labels such as "Net Comm. per Job" wrapped into their neighbour and the numbers sat against each column's right edge, away from their centred-looking headers.
+
+Now a single `OVERVIEW_COLUMNS` list (`key`, `label`, `width`, `format`) drives all three; each cell uses its column's one width, `paddingHorizontal: 6` and `textAlign: 'center'`; the header wraps to at most two lines.
+
+- ⚠️ Add or reorder a column in `OVERVIEW_COLUMNS` only - never hand-write a cell in just one of the three rows, or the widths drift again.
+- The Month column is centred too (it was left-aligned).
+- The monthly jobs table (Job Number ... Calculator Name, under each "September 2026" group) is centred too: header and cell `Text`s are `text-center`, the date chips are `self-center` inside `items-center` wrappers (they were `self-start`), and the payment-method cell is `justify-center` so its (i) icon stays beside the text.
+
+## "+ Add Plan" from the enlarged card keeps the enlarged card open
+
+`InvestmentPanel`. Tapping "+ Add Plan" on the spotlight (enlarged) In-Home card no longer closes the spotlight. The picker renders as an in-modal overlay: `AddPlanModal` takes `inline` (absolute-fill `View`, no native Modal) and `SpotlightOverlay` takes an `overlay` slot rendered last inside its own Modal. The enlarged card closes only when the rep taps outside it.
+
+- ⚠️ Never stack native Modals: from the spotlight the picker MUST be the `inline` overlay. The ordinary `AddPlanModal` (Modal) is gated `showAddPlan && !spotlight` so only one of the two ever renders. An earlier version closed the spotlight and re-opened it after the picker; reps rejected the flicker. Do not restore it.
+- The enlarged card reads live panel state, so an added plan appears in its Monthly list as the overlay closes.
