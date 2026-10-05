@@ -5,6 +5,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useAuth } from '../../hooks/useAuth';
 import { useUserRole } from '../../hooks/useUserRole';
 import { useSecureLogo } from '../../hooks/useSecureLogo';
+import { OfflineBanner } from './OfflineBanner';
 import { useTheme } from '../../theme/ThemeProvider';
 import { AccountPopover } from '../components/AccountPopover';
 import { ChatThreadsManager } from './ChatThreadsManager';
@@ -166,6 +167,9 @@ export function Header({
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Directly under the header bar, above every screen's content. One indicator, app-wide. */}
+      <OfflineBanner />
 
       <AccountPopover
         visible={popoverVisible}

@@ -24,6 +24,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LeadService } from '../../../services/api/leads';
 import { queryClient } from '../../../services/api/queryClient';
+import {
+  indexPendingBySlot,
+  mergePendingForSlot,
+} from '../../../utils/pending-inspection-photos';
 import { uploadQueueManager } from '../../../utils/uploadQueue';
 import { resolveS3Url } from '../../../utils/s3-utils';
 import { logEvent } from '../../../services/api/LoggerService';
@@ -114,6 +118,15 @@ export interface DynamicInspectionCapture {
     toCategoryLabel: string;
     toSubcategory: string;
     key?: string;
+    /**
+     * The photo's REAL stored category, used verbatim instead of `scopeCat(fromCategoryLabel)`.
+     *
+     * ⚠️ For an ORPHAN ("+ UNSORTED") the stored category is not scoped to a product — it is a
+     * bare legacy name like `"Home"` — so scoping it would send a `currentPosition` that
+     * matches nothing and the move would silently fail. The TO side is always scoped, which is
+     * exactly what re-files the photo into the schema.
+     */
+    fromCategoryAbsolute?: string;
   }) => Promise<void>;
   getAnnotatedFor: (label: string) => { subcategory: string; photo: CapturedPhoto }[];
   progress: { total: number; filled: number; percent: number };
@@ -138,6 +151,39 @@ export function useDynamicInspectionCapture({
   );
 
   const [photosBySubcat, setPhotosBySubcat] = useState<Record<string, CapturedPhoto[]>>({});
+
+  // ── not-yet-uploaded photos ────────────────────────────────────────────────
+  // `capturedPreviews` below shows a just-shot photo instantly, but it is state on ONE mount of
+  // this hook — and Manage Photos mounts its own. Offline there is nothing on the server yet, so
+  // that screen rendered 0 photos and every tab 0/N for a lead the rep had just shot three times.
+  // The MMKV upload queue is the source that survives the modal boundary and an app restart.
+  const [pendingUploads, setPendingUploads] = useState(() => uploadQueueManager.getQueue());
+  useEffect(() => {
+    setPendingUploads([...uploadQueueManager.getQueue()]);
+    return uploadQueueManager.addListener(() => {
+      setPendingUploads([...uploadQueueManager.getQueue()]);
+    });
+  }, []);
+  const pendingBySlot = useMemo(
+    () => indexPendingBySlot(pendingUploads as any, leadId),
+    [pendingUploads, leadId]
+  );
+
+  /**
+   * The display source for every read below — server photos with any pending upload the server
+   * does not yet account for folded in, per slot.
+   *
+   * ⚠️ Reads only. `deletePhoto` / `movePhoto` still write through `setPhotosBySubcat`: a queued
+   * photo has no `_id` and no `s3url`, so there is nothing for those endpoints to address.
+   */
+  const displayPhotos = useMemo(() => {
+    if (pendingBySlot.size === 0) return photosBySubcat;
+    const next: Record<string, CapturedPhoto[]> = { ...photosBySubcat };
+    pendingBySlot.forEach((items, slot) => {
+      next[slot] = mergePendingForSlot(photosBySubcat[slot], items) as CapturedPhoto[];
+    });
+    return next;
+  }, [photosBySubcat, pendingBySlot]);
   const [localExtras, setLocalExtras] = useState<Record<string, InspectionSlot[]>>({});
   // Optimistic previews for a just-captured photo, keyed by subKey(scopedLabel, storage).
   const [capturedPreviews, setCapturedPreviews] = useState<Record<string, string>>({});
@@ -334,7 +380,7 @@ export function useDynamicInspectionCapture({
   const getPhotos = useCallback(
     (label: string, subcategory: string): CapturedPhoto[] => {
       const sk = subKey(scopeCat(label), subcategory);
-      const server = photosBySubcat[sk] || [];
+      const server = displayPhotos[sk] || [];
       if (server.length > 0) return server;
       // Surface the optimistic preview so the slot shows filled immediately.
       const preview = capturedPreviews[sk];
@@ -343,24 +389,24 @@ export function useDynamicInspectionCapture({
       }
       return [];
     },
-    [photosBySubcat, capturedPreviews, scopeCat]
+    [displayPhotos, capturedPreviews, scopeCat]
   );
 
   const countUnderLabel = useCallback(
     (label: string) => {
       const prefix = `${norm(scopeCat(label))}||`;
       let n = 0;
-      Object.entries(photosBySubcat).forEach(([k, arr]) => {
+      Object.entries(displayPhotos).forEach(([k, arr]) => {
         if (k.startsWith(prefix)) n += arr.length;
       });
       return n;
     },
-    [photosBySubcat, scopeCat]
+    [displayPhotos, scopeCat]
   );
 
   const totalPhotos = useMemo(
-    () => Object.values(photosBySubcat).reduce((n, arr) => n + arr.length, 0),
-    [photosBySubcat]
+    () => Object.values(displayPhotos).reduce((n, arr) => n + arr.length, 0),
+    [displayPhotos]
   );
 
   // Extras derived from the server merged with locally-added, photo-less ones.
@@ -369,10 +415,10 @@ export function useDynamicInspectionCapture({
       if (!category?.allowDynamicAdd) return [];
       const defined = index.definedNamesByLabel.get(norm(category.label)) || new Set<string>();
       const out: InspectionSlot[] = [];
-      Object.keys(photosBySubcat).forEach((k) => {
+      Object.keys(displayPhotos).forEach((k) => {
         const [labelPart] = k.split('||');
         if (labelPart !== norm(scopeCat(category.label))) return;
-        const sample = photosBySubcat[k]?.[0];
+        const sample = displayPhotos[k]?.[0];
         const subcat = sample?.subcategory;
         if (!subcat || defined.has(norm(subcat))) return;
         if (subcat.toLowerCase().includes('(annotated)')) return;
@@ -386,7 +432,7 @@ export function useDynamicInspectionCapture({
       });
       return out;
     },
-    [photosBySubcat, index, scopeCat]
+    [displayPhotos, index, scopeCat]
   );
 
   const extrasFor = useCallback(
@@ -589,6 +635,7 @@ export function useDynamicInspectionCapture({
       toCategoryLabel,
       toSubcategory,
       key,
+      fromCategoryAbsolute,
     }: {
       photo: CapturedPhoto;
       fromCategoryLabel: string;
@@ -596,6 +643,7 @@ export function useDynamicInspectionCapture({
       toCategoryLabel: string;
       toSubcategory: string;
       key?: string;
+      fromCategoryAbsolute?: string;
     }) => {
       // The endpoint is id-based. The salesPhoto identifier is inconsistent across
       // the API — some payloads expose `_id`, some `id` (the regular/static move in
@@ -604,8 +652,10 @@ export function useDynamicInspectionCapture({
       // move". Accept either.
       const photoId = photo?._id || (photo as any)?.id;
       if (!leadId || !photoId) return;
+      // An orphan's category is already absolute (and unscoped); a normal card's needs scoping.
+      const fromCatAbs = fromCategoryAbsolute || scopeCat(fromCategoryLabel);
       if (
-        norm(scopeCat(fromCategoryLabel)) === norm(scopeCat(toCategoryLabel)) &&
+        norm(fromCatAbs) === norm(scopeCat(toCategoryLabel)) &&
         norm(fromSubcategory) === norm(toSubcategory)
       ) {
         return; // same slot — nothing to do
@@ -617,7 +667,7 @@ export function useDynamicInspectionCapture({
       // without this the photo looked like it "didn't move"). The refetch below
       // reconciles to server truth; `pendingMovesRef` stops a stale replica read from
       // flashing it back to the old slot in the meantime.
-      const fromK = subKey(scopeCat(fromCategoryLabel), fromSubcategory);
+      const fromK = subKey(fromCatAbs, fromSubcategory);
       const toK = subKey(scopeCat(toCategoryLabel), toSubcategory);
       const movedPhoto = { ...photo, category: scopeCat(toCategoryLabel), subcategory: toSubcategory };
       const relocate = (m: Record<string, CapturedPhoto[]>): Record<string, CapturedPhoto[]> => {
@@ -638,7 +688,7 @@ export function useDynamicInspectionCapture({
         await LeadService.updateImagePosition(leadId, {
           photoId,
           currentPosition: {
-            category: scopeCat(fromCategoryLabel),
+            category: fromCatAbs,
             subcategory: fromSubcategory,
           },
           newPosition: {

@@ -1,8 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { AgreementSignatureModal } from '../../../modals/job-builder/AgreementSignatureModal';
+import { DynamicAgreementGenerator } from './DynamicAgreementGenerator';
+import { AgreementRemoteSignModal } from '../../../modals/job-builder/AgreementRemoteSignModal';
+import { useGetAgreementConfig } from '../../../../screens/DynamicDealCenter/hooks/useAgreementConfig';
+import { isOnline } from '../../../../services/connectivity';
+import { isClientId } from '../../../../utils/offline-lead-work';
+// ⚠️ The local `new Date(raw)` this replaced printed TBD on every scheduled job — Hermes cannot
+// parse the `M/d/yyyy` the scheduler writes. See `utils/install-date.ts`.
+import { formatInstallDate } from '../../../../utils/install-date';
 import { LeadService } from '../../../../services/api/leads';
 import { useGetDescriptionSchema } from '../../../../screens/DynamicDealCenter/hooks/useDescriptionSchema';
 import { evaluateDescriptionSchema } from '../../../../utils/dynamic-job-builder/agreement/description-schema-evaluator';
@@ -69,19 +78,6 @@ function toDisplayId(rawId: any): string {
   return str;
 }
 
-function formatInstallDate(raw: any): string {
-  if (!raw) return 'TBD';
-  if (raw === 'TBD') return 'TBD';
-  try {
-    const d = raw instanceof Date ? raw : new Date(raw);
-    if (Number.isNaN(d.getTime())) return 'TBD';
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${mm}/${dd}/${d.getFullYear()}`;
-  } catch {
-    return 'TBD';
-  }
-}
 
 // Grouped thousands so the agreement reads the same as the Contract Details card it
 // is generated from — was `$${v}`, which printed a contract price as "$22411".
@@ -129,6 +125,30 @@ export function DynamicAgreementDialog({
   // analog of web's AuthContext + useLead() context. Only fetch while visible.
   const { user } = useAuth();
   const { data: leadData, isLoading: leadLoading } = useLeadQuery(visible ? leadId || '' : '');
+
+  // ⚠️ Read HERE, outside the `Modal`, and painted as an explicit spacer below — a
+  // `SafeAreaView` rendered INSIDE a react-native `Modal` is a separate native view hierarchy
+  // that the app-root SafeAreaProvider does not reach, so its insets come back as ZERO and the
+  // header lands under the status bar with its title struck through by the clock. That is what
+  // QA hit, and it took the close button with it: the only way out of a full-screen dialog was
+  // half-hidden behind the system bar. `AgreementSignatureModal` already does exactly this, and
+  // it is why THAT screen never had the problem.
+  const insets = useSafeAreaInsets();
+
+  // ── Rendering the agreement at a door with no signal ────────────────────────
+  //
+  // Online the SERVER renders the PDF (`/preview`) and the customer signs on top of it. That is
+  // one request the rep cannot make at a door, and it is the whole reason the agreement blocked
+  // offline mode. So offline the DEVICE renders the same document, from the company's own
+  // agreement config — the layout, header and terms the server template is built from, cached
+  // while there was still signal.
+  //
+  // ⚠️ Decided by the CONNECTION, not by the lead: a lead created offline carries an id this
+  // device minted, so `POST pdf-reports/v1/agreement/lead-1773…/preview` is a request that cannot
+  // succeed however good the signal is.
+  const renderLocally = !isOnline() || isClientId(leadId);
+  const { agreementConfig, agreementConfigLoading } = useGetAgreementConfig(visible);
+  const [remoteOpen, setRemoteOpen] = useState(false);
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -332,10 +352,14 @@ export function DynamicAgreementDialog({
       return;
     }
     if (requestedRef.current) return;
+    // ⚠️ Never request the server preview offline. It is not merely doomed — the dialog would sit
+    // on "Generating agreement…" for the length of an axios timeout before showing an error, with
+    // the customer waiting, when the device could have rendered the document immediately.
+    if (renderLocally) return;
     if (leadLoading || descSchemaLoading) return;
     requestedRef.current = true;
     generatePreview();
-  }, [visible, leadLoading, descSchemaLoading, generatePreview]);
+  }, [visible, leadLoading, descSchemaLoading, generatePreview, renderLocally]);
 
   const handleRetry = () => {
     requestedRef.current = true;
@@ -366,6 +390,28 @@ export function DynamicAgreementDialog({
   // outcome-document row for the same agreement and (b) spiked the JS heap enough to
   // crash the app on submit. `isSystemGenerated` tells the caller this doc is already
   // stored and must not be re-uploaded.
+  /**
+   * The device-rendered agreement, signed at the door.
+   *
+   * ⚠️ It is emitted WITHOUT `isSystemGenerated`, and that single flag is the whole difference
+   * from the online path. `isSystemGenerated` means "the sign endpoint already filed this, never
+   * upload it" — true online, and false here in the way that matters most: nothing has filed this
+   * document, and marking it filed would leave the signed contract on the device forever, with the
+   * summary card showing it as though the office had it.
+   *
+   * Unmarked, it takes the same route a SCANNED agreement takes — which is already offline-aware,
+   * so the queueing needed no new path of its own.
+   */
+  const handleLocallySigned = (file: any) => {
+    onAgreementGenerated({
+      ...file,
+      documentType: 'agreement' as const,
+      type: 'agreement' as const,
+      isNew: true,
+      isSystemGenerated: false,
+    });
+  };
+
   const handleSigned = (signedPdfPath: string) => {
     const cleanPath = signedPdfPath.replace('file://', '');
     onAgreementGenerated({
@@ -382,9 +428,22 @@ export function DynamicAgreementDialog({
   const renderHeader = () => (
     <View style={styles.header}>
       <Text style={styles.headerTitle}>Generate Agreement</Text>
-      <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-        <Icon name="close" size={20} color="#1C252E" />
-      </TouchableOpacity>
+      <View style={styles.headerActions}>
+        {/* ⚠️ Offline the rep never reaches AgreementSignatureModal — the device-rendered
+            generator IS the signing screen — so Send Remotely has to live here or the option
+            simply disappears when there is no signal. That is exactly the door where a rep is
+            most likely to want it: the customer can sign later, on their own phone, once the
+            request goes out. */}
+        {renderLocally && !!leadId && (
+          <TouchableOpacity onPress={() => setRemoteOpen(true)} style={styles.remoteBtn}>
+            <Icon name="send-outline" size={16} color="#118D57" />
+            <Text style={styles.remoteBtnText}>SEND REMOTELY</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+          <Icon name="close" size={20} color="#1C252E" />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -392,9 +451,53 @@ export function DynamicAgreementDialog({
   // once `agreementData` arrives the signature modal takes over the screen.
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen">
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#F5F5F5' }} edges={['top', 'bottom']}>
+      {/* ⚠️ A `Modal` is its own native view tree, so the app-root GestureHandlerRootView does not
+          reach it. Without this one, Android never delivers the offline agreement's pinch / pan
+          (`DynamicAgreementGenerator`) — iOS happened to work, which hid it. */}
+      <GestureHandlerRootView style={styles.page}>
+        <View style={[styles.statusBarPad, { height: insets.top }]} />
         {renderHeader()}
 
+        {/* ── Offline: the device renders the agreement and the customer signs on it ──
+            The generator hosts its own signature and initials pads, so this IS the signing
+            screen — there is no second modal, which also means no stacked-modal teardown to
+            stage. `onSave` fires only once both marks are drawn (the generator's own gate). */}
+        {renderLocally ? (
+          agreementConfig ? (
+            <DynamicAgreementGenerator
+              agreementConfig={agreementConfig}
+              customerDetails={resolvedCustomerDetails}
+              jobDetails={jobDetails}
+              paymentDetails={paymentDetails}
+              jobScope={
+                computedJobScope.length > 0
+                  ? computedJobScope
+                  : ['Project completion per summary details']
+              }
+              contractorName={contractorName}
+              leadId={leadId}
+              user={user}
+              onSave={handleLocallySigned}
+            />
+          ) : (
+            <View style={styles.center}>
+              {agreementConfigLoading ? (
+                <>
+                  <ActivityIndicator />
+                  <Text style={styles.muted}>Preparing agreement...</Text>
+                </>
+              ) : (
+                // ⚠️ The one offline failure that cannot be worked around here. The config is
+                // company setup, and with no copy on the device there is no document to render —
+                // so say which thing is missing rather than "failed to generate".
+                <Text style={styles.errorText}>
+                  This agreement's layout hasn't been downloaded yet. Open a lead once while
+                  you're online, then try again.
+                </Text>
+              )}
+            </View>
+          )
+        ) : (
         <View style={styles.center}>
           {/* Only the loading/error shell — hidden once the signature modal exists
               (it covers this screen), so the brief reveal during the staged teardown
@@ -415,6 +518,33 @@ export function DynamicAgreementDialog({
             </>
           )}
         </View>
+        )}
+
+        {/* The offline twin of the sheet AgreementSignatureModal opens. Only ONE modal is stacked
+            on this dialog offline (there is no signature modal in between), so no staged teardown
+            is needed here — the sheet closes itself, then this dialog closes. */}
+        {renderLocally && (
+          <AgreementRemoteSignModal
+            visible={remoteOpen}
+            onClose={() => setRemoteOpen(false)}
+            leadId={leadId || ''}
+            customerDetails={leadData?.customerDetails}
+            onSent={(id) => {
+              setRemoteOpen(false);
+              setTimeout(() => {
+                onRemoteSent?.(id);
+                onClose();
+              }, 350);
+            }}
+            onComplete={() => {
+              setRemoteOpen(false);
+              setTimeout(() => {
+                onRemoteComplete?.();
+                onClose();
+              }, 350);
+            }}
+          />
+        )}
 
         {!!agreementData && (
           <AgreementSignatureModal
@@ -438,12 +568,16 @@ export function DynamicAgreementDialog({
             onRemoteSent={onRemoteSent}
           />
         )}
-      </SafeAreaView>
+        <View style={{ height: insets.bottom }} />
+      </GestureHandlerRootView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  page: { flex: 1, backgroundColor: '#F5F5F5' },
+  /** Paints the notch area in the header's own white so the two read as one bar. */
+  statusBarPad: { backgroundColor: '#fff' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -455,6 +589,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   headerTitle: { fontSize: 16, fontWeight: '800', color: '#1C252E' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  remoteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: '#118D57',
+  },
+  remoteBtnText: { color: '#118D57', fontWeight: '800', fontSize: 11, letterSpacing: 0.5 },
   closeBtn: {
     width: 36,
     height: 36,

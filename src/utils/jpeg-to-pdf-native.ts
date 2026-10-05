@@ -3,6 +3,7 @@ import {
   base64ByteLength,
   buildPdfParts,
   convertJpegToPdf,
+  readJpegSizeFromBase64,
   stripDataUriPrefix,
 } from './jpeg-to-pdf';
 
@@ -47,7 +48,14 @@ export async function convertJpegToPdfAsync(
     .slice(2)}.pdf`;
 
   try {
-    const { head, tail } = buildPdfParts(base64ByteLength(cleanBase64), width, height);
+    // Only the HEAD of the base64 is decoded here, for the frame header — the
+    // image itself still never reaches the JS thread.
+    const { head, tail } = buildPdfParts(
+      base64ByteLength(cleanBase64),
+      width,
+      height,
+      readJpegSizeFromBase64(cleanBase64)
+    );
 
     await ReactNativeBlobUtil.fs.writeFile(path, head, 'utf8');
     await ReactNativeBlobUtil.fs.appendFile(path, cleanBase64, 'base64');

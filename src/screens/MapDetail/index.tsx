@@ -44,6 +44,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashMessage } from '../../config/message';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { readMapLeadsCache, writeMapLeadsCache } from '../../utils/offline-map-leads-cache';
+import { offlineMapManager } from '../../services/offlineMapManager';
+import { isOnline, isOnWifi } from '../../services/connectivity';
 
 const { width, height } = Dimensions.get('window');
 
@@ -320,6 +323,31 @@ export default function MapDetailScreen() {
       }
     }
   }, [queryLeads]);
+
+  // Snapshot successful query results to MMKV so the map works offline.
+  // Runs after every successful fetch; writeMapLeadsCache silently no-ops on
+  // empty arrays or storage errors.
+  useEffect(() => {
+    if (Array.isArray(queryLeads) && queryLeads.length > 0) {
+      writeMapLeadsCache(queryLeads, filters as unknown as Record<string, unknown>, user?._id);
+      // Street detail for where these leads are — queued, one download at a time, Wi-Fi only.
+      // Idempotent: an area already downloaded is skipped, and a filtered view never evicts one
+      // unless the tile budget needs the room.
+      if (isOnWifi()) void offlineMapManager.syncLeads(queryLeads);
+    }
+  }, [queryLeads, filters, user?._id]);
+
+  // Seed leads from the offline cache on mount when the device is offline (or
+  // when the query returned nothing). This gives the map pins to show while
+  // the user waits for a reconnect.
+  useEffect(() => {
+    if (leads.length === 0 && !isOnline()) {
+      const cached = readMapLeadsCache(user?._id);
+      if (cached?.leads && cached.leads.length > 0) {
+        setLeads(cached.leads as any[]);
+      }
+    }
+  }, []); // mount-only — seed once
 
   // Maintain loading state compatible with the UI spinner
   useEffect(() => {

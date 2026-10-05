@@ -26,6 +26,44 @@ const CAPTURE_WIDTH = 850;
 // Rough first-paint height guess (corrected by onLayout) to avoid a 0-height flash.
 const INITIAL_DOC_HEIGHT = CAPTURE_WIDTH * 1.3;
 
+/**
+ * Pixels the rasterized agreement is captured at, as a multiple of the layout width.
+ *
+ * ⚠️ `captureRef`'s `width` option RESIZES the snapshot — "the width and height of the final
+ * image (resized from the View bound)". The native snapshot is already taken in REAL PIXELS
+ * (bounds × the device's pixel ratio, so 1700–2550px for an 850pt document), so passing
+ * `width: CAPTURE_WIDTH` was actively throwing 2–3× of the resolution away before it was ever
+ * written. At 850px an 8.5" page is ~100 DPI, which is why the document broke up into pixels the
+ * moment a customer zoomed the PDF.
+ *
+ * Written as an explicit multiple rather than dropped entirely so the output is the same size on
+ * every handset: a @3x phone would otherwise file a noticeably heavier document than a @2x one,
+ * and this image is re-encoded into the PDF and uploaded over the rep's own connection. 2× is
+ * ~200 DPI — comfortably readable zoomed, and never WORSE than before on any device.
+ */
+const CAPTURE_SCALE = 2;
+
+/**
+ * How far a pinch may magnify the document ON SCREEN.
+ *
+ * ⚠️ Nothing to do with `CAPTURE_SCALE` above, which is the resolution of the SAVED file. This is
+ * the preview, where the ceiling is the document's own layout width: it is laid out at
+ * `CAPTURE_WIDTH` and its type is rasterized at THOSE bounds, so a total scale of 1 shows every
+ * pixel there is and anything past `1 / fitScale` enlarges pixels that were never drawn.
+ *
+ * ⚠️ Clamping here is necessary and was NOT sufficient — see the single-transform note at the
+ * render. This clamp keeps the COMBINED scale at 1; what still broke the type up on iOS was that
+ * the combination was reached through two NESTED transforms, so the fit-scaled document was
+ * flattened at half size first and the pinch then magnified that flattened copy.
+ *
+ * ⚠️ The floor exists for TABLETS, and it is a deliberate trade. On an iPad `fitScale` is already
+ * ~1, so the resolution ceiling is ~1x and honouring it exactly would leave pinch doing visibly
+ * nothing. Such a device is already showing the document at natural size, so there is no further
+ * detail to reveal on any device — a magnifier there is a magnifier, and softens.
+ */
+const MIN_MAX_ZOOM = 2;
+const ABSOLUTE_MAX_ZOOM = 4;
+
 export interface DynamicAgreementGeneratorProps {
   agreementConfig: any;
   customerDetails?: any;
@@ -96,7 +134,7 @@ export const DynamicAgreementGenerator = forwardRef<
         format: 'jpg',
         quality: 0.95,
         result: 'data-uri',
-        width: CAPTURE_WIDTH,
+        width: CAPTURE_WIDTH * CAPTURE_SCALE,
       });
       const filename = `Agreement_${jobDetails.jobNumber || 'NA'}_${Date.now()}.jpg`;
       const file = {
@@ -163,6 +201,8 @@ export const DynamicAgreementGenerator = forwardRef<
   const availableWidth = Math.max(240, screenWidth - 32); // 16px page padding each side
   const fitScale = Math.min(1, availableWidth / CAPTURE_WIDTH);
   const fitHeight = docHeight * fitScale;
+  // The point past which a pinch stops revealing detail and starts enlarging pixels.
+  const maxZoom = Math.max(MIN_MAX_ZOOM, Math.min(ABSOLUTE_MAX_ZOOM, 1 / fitScale));
 
   // --- interactive pinch-zoom + pan over the fit-scaled document ---------------
   const zoom = useSharedValue(1);
@@ -184,7 +224,7 @@ export const DynamicAgreementGenerator = forwardRef<
 
   const pinch = Gesture.Pinch()
     .onUpdate((e) => {
-      zoom.value = Math.min(4, Math.max(1, zoomStart.value * e.scale));
+      zoom.value = Math.min(maxZoom, Math.max(1, zoomStart.value * e.scale));
     })
     .onEnd(() => {
       zoomStart.value = zoom.value;
@@ -214,8 +254,30 @@ export const DynamicAgreementGenerator = forwardRef<
 
   const composed = Gesture.Simultaneous(pinch, pan);
 
-  const zoomStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: tx.value }, { translateY: ty.value }, { scale: zoom.value }],
+  /**
+   * ⚠️ TRANSLATE ONLY, and that is the fix for "pinch zoom is still blurry".
+   *
+   * The zoom used to live here as a second `scale` wrapping the document's own `fitScale`, and
+   * that NESTING is what broke the type up however tightly `maxZoom` was clamped: a transformed
+   * subtree composites as one texture at the size it was rendered at, so the fit-scaled document
+   * (~0.47x on a phone) was flattened first and the pinch then magnified THAT — a 2x blow-up of a
+   * half-size bitmap. Collapsing the two into the single scale below means the document is only
+   * ever MINIFIED, and a minified layer is sharp whether it gets flattened or not.
+   *
+   * The compensating shift reproduces what the old centre-origin scale did: the combined transform
+   * grows the document from its top-left, so half the growth is taken back to keep it centred on
+   * the box — which is what the pan clamps above already assume.
+   */
+  const panStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: tx.value - ((zoom.value - 1) * contentW.value) / 2 },
+      { translateY: ty.value - ((zoom.value - 1) * contentH.value) / 2 },
+    ],
+  }));
+
+  /** Fit and zoom as ONE scale, so the combined factor never exceeds 1 on a phone. */
+  const docScaleStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: fitScale * zoom.value }],
   }));
 
   return (
@@ -228,8 +290,20 @@ export const DynamicAgreementGenerator = forwardRef<
         }}
       >
         <GestureDetector gesture={composed}>
-          <Animated.View style={[styles.viewport, zoomStyle]}>
-            <View style={{ width: availableWidth, height: fitHeight, overflow: 'hidden' }}>
+          <Animated.View style={[styles.viewport, panStyle]}>
+            {/* ⚠️ Deliberately NOT `overflow: 'hidden'`. It clipped nothing — the document is
+                scaled from its own top-left, so what it paints is exactly this box — but a
+                clipping view with children forces an offscreen composite, which flattens the
+                whole document into one texture at THIS box's size. The viewport above already
+                clips the zoomed content. */}
+            <View style={{ width: availableWidth, height: fitHeight }}>
+              {/* The ONE scale — fit x zoom. It sits on a WRAPPER rather than on the captured view
+                  below, so `captureRef` still snapshots a document carrying no transform at all:
+                  closer to the plain layout than before, and the saved file cannot be affected by
+                  whatever the rep happened to be zoomed to when they pressed Save. */}
+              <Animated.View
+                style={[{ width: CAPTURE_WIDTH, transformOrigin: '0% 0%' }, docScaleStyle]}
+              >
               <View
                 ref={containerRef}
                 collapsable={false}
@@ -237,10 +311,7 @@ export const DynamicAgreementGenerator = forwardRef<
                   const h = e.nativeEvent.layout.height;
                   if (h && Math.abs(h - docHeight) > 1) setDocHeight(h);
                 }}
-                style={[
-                  styles.doc,
-                  { width: CAPTURE_WIDTH, transform: [{ scale: fitScale }], transformOrigin: '0% 0%' },
-                ]}
+                style={[styles.doc, { width: CAPTURE_WIDTH }]}
               >
             {/* HEADER */}
             <View style={styles.headerRow}>
@@ -292,6 +363,7 @@ export const DynamicAgreementGenerator = forwardRef<
               })}
                 </View>
               </View>
+              </Animated.View>
             </View>
           </Animated.View>
         </GestureDetector>

@@ -13,6 +13,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
+import { isRemoteImageUrl, warmToLocalCache } from '../../utils/imageFileCache';
 import {
   SWIPE_ACTIVATE_DISTANCE,
   TAP_MAX_DISTANCE,
@@ -70,6 +71,48 @@ export interface ZoomableImageProps {
   onSwipe?: (translationX: number, translationY: number) => void;
 }
 
+/**
+ * Serve a slide from the on-disk cache once it has been downloaded once.
+ *
+ * ⚠️ This is what makes a pitch book and a roofline deck PRESENTABLE WITH NO SIGNAL, and it
+ * lives here rather than in each screen for the reason `PhotoPeekPressable` owns its own
+ * warming: a slide is painted at five sites across two screens (inline card, fullscreen
+ * portrait, fullscreen landscape, and the media viewer), and any one of them left on the
+ * network url is a blank frame in front of a customer. One component, every site.
+ *
+ * The url it is handed offline is an EXPIRED presigned link, and that is fine —
+ * `getLocalCachePath` strips the query, so the dead url still names the same file the live
+ * one downloaded. See the note on `OFFLINE_CACHE.PITCH_BOOK_DECK`.
+ *
+ * A bundled `require()` deck is a number, not a url, and is returned untouched.
+ */
+const useCachedSource = (source?: ImageSourcePropType): ImageSourcePropType | undefined => {
+  const uri =
+    source && typeof source === 'object' && !Array.isArray(source)
+      ? (source as { uri?: string }).uri
+      : undefined;
+  const [cached, setCached] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setCached(null);
+    if (!isRemoteImageUrl(uri)) return undefined;
+    warmToLocalCache(uri)
+      .then((file) => {
+        if (active && file) setCached(file);
+      })
+      .catch(() => {
+        /* Never worse than before: the caller's own url is still rendered below. */
+      });
+    return () => {
+      active = false;
+    };
+  }, [uri]);
+
+  if (!cached || !uri) return source;
+  return { ...(source as object), uri: cached } as ImageSourcePropType;
+};
+
 export const ZoomableImage: React.FC<ZoomableImageProps> = ({
   source,
   style,
@@ -80,6 +123,7 @@ export const ZoomableImage: React.FC<ZoomableImageProps> = ({
   onSingleTap,
   onSwipe,
 }) => {
+  const resolvedSource = useCachedSource(source);
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const tx = useSharedValue(0);
@@ -243,8 +287,8 @@ export const ZoomableImage: React.FC<ZoomableImageProps> = ({
           containerStyle,
         ]}
       >
-        {source != null && (
-          <Animated.Image source={source} style={[style, imageStyle]} resizeMode={resizeMode} />
+        {resolvedSource != null && (
+          <Animated.Image source={resolvedSource} style={[style, imageStyle]} resizeMode={resizeMode} />
         )}
       </Animated.View>
     </GestureDetector>

@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../redux/store';
 import { logout as logoutAction, setInitial } from '../redux/reducer/auth.reducer';
@@ -6,6 +6,7 @@ import { AuthService } from '../services/api/auth';
 import { setSessionHeader } from '../services/api';
 import SocketManager from '../services/SocketManager';
 import { queryClient } from '../services/api/queryClient';
+import { resetSessionStorage } from '../services/sessionScope';
 import { logLogout } from '../utils/activity-log/auth-log';
 import { clearPendingLogs } from '../services/api/LoggerService';
 import { clearActiveInstallerJob } from '../utils/activity-log/installer-log';
@@ -15,12 +16,35 @@ import { endInstallerWorkSession } from '../utils/installer-work-session';
 // inside a try/catch. It must stay that way — a static native import anywhere in
 // this chain makes SIGN-IN depend on the push modules being present.
 import PushNotificationService from '../services/PushNotificationService';
+import { applyPendingSettingsToUser } from '../utils/offline-settings';
+import {
+  getPendingCalculatorSettings,
+  subscribePendingCalculatorSettings,
+} from '../services/offlineSettings';
 
 
 export const useAuth = () => {
   const dispatch = useDispatch();
-  const { user, isAuthenticated, loading, isInitialized } = useSelector(
+  const { user: storedUser, isAuthenticated, loading, isInitialized } = useSelector(
     (state: RootState) => state.auth
+  );
+
+  // ⚠️ A default the rep set with NO SIGNAL has not reached the server, so `getMe` still reports
+  // the old one. Every "Set as Default" toggle in the app derives its on/off state from this user
+  // record, so without this overlay the switch cannot move offline at all — it snaps back, and the
+  // rep taps it again. Applied here rather than per screen so no surface can forget it.
+  const [pendingSettings, setPendingSettings] = useState(getPendingCalculatorSettings);
+  useEffect(
+    () =>
+      subscribePendingCalculatorSettings(() =>
+        setPendingSettings(getPendingCalculatorSettings())
+      ),
+    []
+  );
+  // Returns the SAME reference when nothing is pending, so identity is stable in the normal case.
+  const user = useMemo(
+    () => applyPendingSettingsToUser(storedUser, pendingSettings),
+    [storedUser, pendingSettings]
   );
 
   /**
@@ -67,6 +91,19 @@ export const useAuth = () => {
       //    the same reason — the next person to sign in on this device must not
       //    inherit it.
       clearPendingLogs();
+
+      // 10. And the same for EVERYTHING else on disk. `queryClient.clear()` above only
+      //     empties memory; the leads list, every lead's full record, the Deal Center
+      //     configs, the pitch books, the map packs and the photo cache all live in MMKV
+      //     and survived a sign-out untouched — so the next rep to use this handset
+      //     opened the app to the previous rep's customers.
+      //
+      //     ⚠️ What it deliberately KEEPS is the rep's own unsynced work (see
+      //     `utils/session-scope.ts`): a queued lead, a queued photo. Those are owner-locked
+      //     rather than deleted, so nobody else can see or upload them, and their owner
+      //     still has them when they sign back in. Destroying a morning's work at a door is
+      //     not something a Log Out button should do.
+      resetSessionStorage();
     } catch (err) {
       console.error('Logout failed', err);
     }

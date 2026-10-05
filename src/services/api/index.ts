@@ -12,6 +12,7 @@ import { store } from '../../redux/store';
 import { logout } from '../../redux/reducer/auth.reducer';
 import { queryClient } from './queryClient';
 import SocketManager from '../SocketManager';
+import { isConnectionStable } from '../connectivity';
 
 
 /**
@@ -60,6 +61,13 @@ axiosInstance.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+/**
+ * A parked 401 can repeat — several queued requests can fail on the same superseded token in one
+ * burst. One notice per minute, so the rep gets told once rather than a stack of banners.
+ */
+let parkedNoticeShownAt = 0;
+const PARKED_NOTICE_COOLDOWN_MS = 60_000;
+
 // Response Interceptor: Handle Global Errors (like 401 Expiry)
 axiosInstance.interceptors.response.use(
   (res) => {
@@ -90,6 +98,33 @@ axiosInstance.interceptors.response.use(
           errorMsg.toLowerCase().includes('only sales representative');
 
         if (!isUserNotFound) {
+          /**
+           * ⚠️ A 401 is only trusted while the connection has been up for a while.
+           *
+           * A 401 cannot arrive with no connectivity at all — it needs a response. But a BRIEF
+           * reconnect can produce one: a rep offline all day catches a few seconds of signal, a
+           * queued request goes out on a token the backend superseded when someone signed in on
+           * another device, and the naive reading of that 401 is a full sign-out. That drops them
+           * on a login screen they cannot pass — the exact failure REVUIUX-95 reports, reached by a
+           * path the ticket never described — and it discards the cached data and (once the outbox
+           * lands) the queued work with it.
+           *
+           * So an unstable-connection 401 PARKS the session instead: the token, the cached data and
+           * the Redux user all stay. Nothing is destroyed. The next 401 that arrives on a settled
+           * connection signs out for real, so a genuinely revoked session still ends — one request
+           * later.
+           */
+          if (!isConnectionStable()) {
+            if (!parkedNoticeShownAt || Date.now() - parkedNoticeShownAt > PARKED_NOTICE_COOLDOWN_MS) {
+              parkedNoticeShownAt = Date.now();
+              FlashMessage.warning(
+                'Reconnecting',
+                'Could not confirm your session. Your work is safe — we will retry when the connection settles.'
+              );
+            }
+            return Promise.reject(normalizeApiError(error));
+          }
+
           // Unified Flash Message before logout
           FlashMessage.error(
             'Session Expired',
@@ -118,6 +153,22 @@ axiosInstance.interceptors.response.use(
           queryClient.clear();
           SocketManager.disconnect();
           store.dispatch(logout());
+
+          // ⚠️ An expiring session must clean up exactly as the Log Out button does, and until
+          // now it did not: this path never touched MMKV, so the whole of the previous rep's
+          // cached data — their leads list, each lead's full record, the company configs — was
+          // still on disk for whoever signed in next. That is the harder half of the leak to
+          // notice, because nobody chose it.
+          //
+          // ⚠️ Lazily required, NOT imported at the top, for the same reason as the push teardown
+          // above: the offline stores register their reset hooks with this module, and several of
+          // them reach the axios wrapper, so a static import would close a cycle.
+          try {
+            const session = require('../sessionScope');
+            session?.resetSessionStorage?.();
+          } catch (sessionErr) {
+            console.warn('[session] reset on 401 failed:', sessionErr);
+          }
 
         }
       }

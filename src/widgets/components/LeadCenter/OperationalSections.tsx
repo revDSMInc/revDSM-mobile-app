@@ -7,10 +7,19 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useRevRenderRunsQuery } from '../../../hooks/useLeadQuery';
 import { useLeadCalculatorStatus } from '../../../hooks/useLeadCalculatorStatus';
 import { usePitchBooks } from '../../../hooks/usePitchBooks';
+import { useQueuedConsentForms } from '../../../hooks/useQueuedConsentForms';
 import type { PitchBookSummary } from '../../../utils/pitch-book';
 import { useFocusEffect } from '@react-navigation/native';
 import { FlashMessage } from '../../../config/message';
 import { RevRenderHistoryModal, prefetchToLocalCache } from '../../modals/lead-center/RevRenderHistoryModal';
+
+/**
+ * Stands in for a server report on a form this device is still holding.
+ *
+ * ⚠️ It carries NO `reportPath`, deliberately — there is no filed document to open yet, and the
+ * tool-action guard tells the rep so rather than handing a viewer an empty url.
+ */
+const QUEUED_FORM = { reportType: 'queued-offline', __queuedOffline: true } as const;
 
 export const ToolsSection = ({
   lead,
@@ -130,8 +139,16 @@ export const ToolsSection = ({
     );
   };
 
-  const consentReport = findReport('consent_form');
-  const waiverReport = findReport('waiver_form');
+  /**
+   * ⚠️ A form signed at a door counts as ON FILE here, exactly as it does for the Investment
+   * Center's own gate. `findReport` reads the SERVER's `generatedReports`, which offline says no
+   * however many forms are queued — so the rep signed a consent, walked back to Tools, and was
+   * shown an un-badged **Customer Consent Form** that re-opened blank when tapped. In front of
+   * the customer who had just signed it.
+   */
+  const queuedForms = useQueuedConsentForms(lead);
+  const consentReport = findReport('consent_form') || (queuedForms.consent ? QUEUED_FORM : undefined);
+  const waiverReport = findReport('waiver_form') || (queuedForms.waiver ? QUEUED_FORM : undefined);
   const inspectionReport = findReport('inspection_report');
   const riskReport = findReport('risk_report');
 

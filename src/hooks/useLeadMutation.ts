@@ -6,6 +6,7 @@ import { FlashMessage } from '../config/message';
 import { LeadService } from '../services/api/leads';
 import { ENV } from '../config/env';
 import { Platform } from 'react-native';
+import { submitConsentForm, finalizeConsentUpload } from '../services/api/consent-forms';
 
 export const useCreateLeadMutation = () => {
   const queryClient = useQueryClient();
@@ -108,83 +109,22 @@ export const useResetLeadMutation = () => {
 export const useSubmitDigitalConsentMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
+    // ⚠️ The multipart build lives in `services/api/consent-forms.ts`, NOT here, because the
+    // offline queue posts the very same body when the connection returns. Two copies of a legal
+    // form's payload builder drifting apart would file two different-shaped records for one act.
     mutationFn: async (data: any) => {
-      console.log('Starting Digital Consent Mutation with BlobUtil:', data);
-      const token = Storage.getItem('accessToken');
-      const url = `${ENV.API_URL}user/consent/v1/mobile/create`
-        .replace(/\/\//g, '/')
-        .replace('https:/', 'https://');
-
-      const normalizedData = data.payload ? { ...data.payload } : { ...data };
-
-      const body: any[] = [];
-      Object.keys(normalizedData).forEach((key) => {
-        if ((key === 'file' || key === 'signature') && normalizedData[key]?.uri) {
-          const cleanPath = normalizedData[key].uri.replace('file://', '');
-          body.push({
-            name: key,
-            filename: normalizedData[key].name || 'signature.svg',
-            type: normalizedData[key].type || 'image/svg+xml',
-            data: ReactNativeBlobUtil.wrap(cleanPath),
-          });
-        } else {
-          body.push({ name: key, data: String(normalizedData[key]) });
-        }
+      const payload = data?.payload ? { ...data.payload } : { ...data };
+      return submitConsentForm({
+        kind: 'consent',
+        leadId: String(data?.leadId || payload?.leadId || ''),
+        payload,
       });
-
-      const fetchConfig = {
-        fileCache: true,
-        appendExt: 'pdf',
-        timeout: 120000,
-        path: `${ReactNativeBlobUtil.fs.dirs.CacheDir}/consent_${Date.now()}.pdf`,
-      };
-
-      const res = await ReactNativeBlobUtil.config(fetchConfig).fetch(
-        'POST',
-        url,
-        {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data',
-          Accept: 'application/pdf',
-        },
-        body
-      );
-
-      const pdfPath = res.path() || fetchConfig.path;
-      const status = res.info().status;
-
-      if (status >= 400) {
-        const errorText = await ReactNativeBlobUtil.fs.readFile(pdfPath, 'utf8');
-        await ReactNativeBlobUtil.fs.unlink(pdfPath);
-        try {
-          const parsed = JSON.parse(errorText);
-          throw new Error(parsed.message || parsed.error || `Server Error: ${status}`);
-        } catch (e) {
-          throw new Error(`Server Error (${status}): ${errorText.substring(0, 100)}`);
-        }
-      }
-
-      const content = await ReactNativeBlobUtil.fs.readFile(pdfPath, 'base64');
-      if (!content.startsWith('JVBERi')) {
-        await ReactNativeBlobUtil.fs.unlink(pdfPath);
-        throw new Error('Generated file is not a valid PDF.');
-      }
-      return pdfPath;
     },
-    onSuccess: async (pdfPath: string) => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
-      // FlashMessage.success('Success', 'Digital document generated.');
-      // We will now handle the PDF path in the UI instead of auto-opening here
     },
     onError: (err: any) => {
       console.error('Digital Consent Mutation Error:', err);
-      if (err.config) {
-        console.log('Failed Request Config:', {
-          url: err.config.url,
-          method: err.config.method,
-          headers: err.config.headers,
-        });
-      }
       FlashMessage.error('Error', err?.message || 'Failed to submit consent');
     },
   });
@@ -193,70 +133,10 @@ export const useSubmitDigitalConsentMutation = () => {
 export const useSubmitRoofWaiverMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ leadId, payload }: { leadId: string; payload: any }) => {
-      console.log('Starting Roof Waiver Mutation with BlobUtil:', payload);
-      const token = Storage.getItem('accessToken');
-      const url = `${ENV.API_URL}/lead/v1/${leadId}/mobile/waiver-form`
-        .replace(/\/\//g, '/')
-        .replace('https:/', 'https://');
-
-      const body: any[] = [];
-      Object.keys(payload).forEach((key) => {
-        if ((key === 'file' || key === 'signature') && payload[key]?.uri) {
-          const cleanPath = payload[key].uri.replace('file://', '');
-          body.push({
-            name: key,
-            filename: payload[key].name || 'signature.svg',
-            type: payload[key].type || 'image/svg+xml',
-            data: ReactNativeBlobUtil.wrap(cleanPath),
-          });
-        } else {
-          body.push({ name: key, data: String(payload[key]) });
-        }
-      });
-
-      const fetchConfig = {
-        fileCache: true,
-        appendExt: 'pdf',
-        timeout: 120000,
-        path: `${ReactNativeBlobUtil.fs.dirs.CacheDir}/waiver_${Date.now()}.pdf`,
-      };
-
-      const res = await ReactNativeBlobUtil.config(fetchConfig).fetch(
-        'POST',
-        url,
-        {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data',
-          Accept: 'application/pdf',
-        },
-        body
-      );
-
-      const pdfPath = res.path() || fetchConfig.path;
-      const status = res.info().status;
-
-      if (status >= 400) {
-        const errorText = await ReactNativeBlobUtil.fs.readFile(pdfPath, 'utf8');
-        await ReactNativeBlobUtil.fs.unlink(pdfPath);
-        try {
-          const parsed = JSON.parse(errorText);
-          throw new Error(parsed.message || parsed.error || `Server Error: ${status}`);
-        } catch (e) {
-          throw new Error(`Server Error (${status}): ${errorText.substring(0, 100)}`);
-        }
-      }
-
-      const content = await ReactNativeBlobUtil.fs.readFile(pdfPath, 'base64');
-      if (!content.startsWith('JVBERi')) {
-        await ReactNativeBlobUtil.fs.unlink(pdfPath);
-        throw new Error('Generated file is not a valid PDF.');
-      }
-      return pdfPath;
-    },
-    onSuccess: (pdfPath: string) => {
+    mutationFn: async ({ leadId, payload }: { leadId: string; payload: any }) =>
+      submitConsentForm({ kind: 'waiver', leadId, payload }),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
-      // FlashMessage.success('Success', 'Waiver document generated.');
     },
     onError: (err: any) => {
       console.error('Roof Waiver Mutation Error:', err);
@@ -319,21 +199,11 @@ export const useFinalizeConsentUploadMutation = () => {
       pdfPath: string;
       reportType?: string;
     }) => {
-      const formData = new FormData();
-      formData.append('leadId', leadId);
-      formData.append('reportType', reportType);
-      formData.append('file', {
-        uri:
-          Platform.OS === 'android'
-            ? pdfPath.startsWith('file://')
-              ? pdfPath
-              : `file://${pdfPath}`
-            : pdfPath,
-        name: `${reportType}.pdf`,
-        type: 'application/pdf',
-      } as any);
-
-      return LeadService.uploadGeneratedReport(formData);
+      return finalizeConsentUpload({
+        leadId,
+        pdfPath,
+        kind: reportType === 'waiver_form' ? 'waiver' : 'consent',
+      });
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });

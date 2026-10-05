@@ -4,6 +4,10 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 import { LeadService } from '../services/api/leads';
 import { logEvent } from '../services/api/LoggerService';
 import { queryClient } from '../services/api/queryClient';
+import { isClientId } from './offline-lead-work';
+import { onReconnect } from '../services/connectivity';
+import { getSessionOwner, registerSessionResetHook } from '../services/sessionScope';
+import { isOwnedBy } from './session-scope';
 
 export interface UploadQueueItem {
   id: string;
@@ -15,6 +19,13 @@ export interface UploadQueueItem {
   name: string;
   timestamp: string;
   retryCount?: number;
+  /**
+   * The rep who took the photo — and, since this change, who OWNS it.
+   *
+   * It was already carried (the upload's `workLead` call and the activity log both read it); what
+   * is new is that the queue now FILTERS on it. Field crews share handsets, so without that a
+   * photo taken by one rep uploaded under the next rep's session and was logged as theirs.
+   */
   userId?: string;
 }
 
@@ -48,8 +59,78 @@ class UploadQueueManager {
     }
   }
 
+  /**
+   * ⚠️ Only the signed-in rep's photos. See `utils/session-scope.ts` — an item belonging to
+   * someone else, or to nobody (queued before ownership existed), is neither shown nor uploaded.
+   */
+  private ownedByCurrentSession(item: UploadQueueItem): boolean {
+    return isOwnedBy(item.userId, getSessionOwner());
+  }
+
   public getQueue() {
-    return this.queue;
+    return this.queue.filter((i) => this.ownedByCurrentSession(i));
+  }
+
+  /** Drop the in-memory copy when the session ends — the MMKV wipe alone would be re-persisted. */
+  public resetForNewSession() {
+    this.queue = [];
+    this.isProcessing = false;
+    this.notifyListeners();
+  }
+
+  /** Drop one item by id, wherever it currently sits. */
+  private removeItem(id: string) {
+    this.queue = this.queue.filter((i) => i.id !== id);
+  }
+
+  /**
+   * Re-address every held photo from the client id it was queued under to the `_id` the server
+   * issued for that lead.
+   *
+   * ⚠️ This is the piece that makes Manage Photos work on a lead created at the door. The photo
+   * queue and the offline lead store are two separate queues by design — photos are large binaries
+   * that must not sit in MMKV, and they upload one at a time against a different endpoint — but
+   * that means the photo queue holds an id only the OTHER queue can resolve. `offlineLeadStore`
+   * calls this the moment the lead create lands, before it walks any further step.
+   *
+   * Idempotent, and a no-op when the two ids are the same or either is missing.
+   */
+  public rekeyLead(fromLeadId: string, toLeadId: string) {
+    if (!fromLeadId || !toLeadId || fromLeadId === toLeadId) return;
+    let touched = 0;
+    this.queue = this.queue.map((item) => {
+      if (item.leadId !== fromLeadId) return item;
+      touched += 1;
+      // The retry count is reset with the id: every failure it accumulated was against an address
+      // that could not work, so counting them towards the give-up limit would drop a photo for
+      // failures it was never given a fair chance at.
+      return { ...item, leadId: toLeadId, retryCount: 0 };
+    });
+    if (!touched) return;
+    console.log(`[UploadQueue] Re-addressed ${touched} queued photo(s) ${fromLeadId} -> ${toLeadId}`);
+    this.saveQueue();
+    this.processQueue();
+  }
+
+  /**
+   * Discard every queued photo for a lead the rep has DELETED.
+   *
+   * ⚠️ Called by `offlineLeadStore` when a delete is queued, and it has to be: the two queues
+   * are separate by design, so nothing else would ever tell this one the door is gone. Left in
+   * place the photos keep retrying against a lead id that no longer resolves, burn their five
+   * attempts and are dropped anyway — having spent the rep's data on a house they removed.
+   *
+   * Returns how many were dropped, so a caller can log it.
+   */
+  public dropLead(leadId: string): number {
+    if (!leadId) return 0;
+    const before = this.queue.length;
+    this.queue = this.queue.filter((item) => item.leadId !== leadId);
+    const dropped = before - this.queue.length;
+    if (!dropped) return 0;
+    console.log(`[UploadQueue] Dropped ${dropped} queued photo(s) for deleted lead ${leadId}`);
+    this.saveQueue();
+    return dropped;
   }
 
   public addListener(listener: () => void) {
@@ -82,6 +163,9 @@ class UploadQueueManager {
       ...item,
       uri,
       id,
+      // Both call sites pass the rep's id; the fallback is what GUARANTEES the stamp, since an
+      // unowned photo can never be uploaded and would sit here invisibly forever.
+      userId: item.userId || getSessionOwner() || undefined,
       timestamp: new Date().toISOString(),
     };
     this.queue.push(newItem);
@@ -162,6 +246,10 @@ class UploadQueueManager {
 
   public async processQueue() {
     if (this.isProcessing) return;
+    // ⚠️ Nothing queued → do not even probe the network. The offline branch below re-schedules
+    // itself every 5 s, so without this the launch-time kick would leave a permanent timer running
+    // on the overwhelming majority of sessions, where the rep has no photos waiting at all.
+    if (this.queue.length === 0) return;
     this.isProcessing = true;
 
     console.log(`[UploadQueue] Processing started. Queue length: ${this.queue.length}`);
@@ -179,14 +267,27 @@ class UploadQueueManager {
       return;
     }
 
-    while (this.queue.length > 0) {
-      const activeItem = this.queue[0];
+    for (;;) {
+      // ⚠️ NOT `queue[0]`. A photo taken on a lead the rep created at the door is queued
+      // against the CLIENT id this device minted, and `PUT lead/v1/lead-1773…/images` can never
+      // succeed — it would 404 five times and then be DROPPED, which is how a rep who documented
+      // a whole house came back with no photos on it. Such an item is held until
+      // `rekeyLead` rewrites it with the id the create came back with, and the queue works
+      // around it in the meantime rather than stalling behind it.
+      // ⚠️ …and it must be OURS. A photo belonging to the rep who used this handset earlier would
+      // otherwise be PUT under the current rep's token, onto a lead of a company they may not even
+      // be in — silently, because the endpoint would accept it.
+      const activeIndex = this.queue.findIndex(
+        (i) => !isClientId(i.leadId) && this.ownedByCurrentSession(i)
+      );
+      if (activeIndex === -1) break;
+      const activeItem = this.queue[activeIndex];
       try {
         console.log(`[UploadQueue] Uploading item: ${activeItem.id} for slot: ${activeItem.subcategory}`);
         await this.uploadItem(activeItem);
 
         // Remove completed item from queue
-        this.queue.shift();
+        this.removeItem(activeItem.id);
         this.saveQueue();
         this.cleanupPersistedFile(activeItem); // fire-and-forget: delete the durable copy
         console.log(`[UploadQueue] Upload success: ${activeItem.id}`);
@@ -195,7 +296,7 @@ class UploadQueueManager {
         // never succeed, so drop it immediately — no 5× retry, no red error screen.
         if ((error as any)?.localFileMissing) {
           console.warn(`[UploadQueue] Local file missing for ${activeItem.id}; dropping (photo must be re-taken).`);
-          this.queue.shift();
+          this.removeItem(activeItem.id);
           this.saveQueue();
           this.cleanupPersistedFile(activeItem);
           continue;
@@ -220,12 +321,13 @@ class UploadQueueManager {
         if (retryCount >= 5) {
           // Permanent failure after 5 attempts while online (e.g. invalid file, server rejection) — drop this item
           console.warn(`[UploadQueue] Giving up on item ${activeItem.id} after ${retryCount} attempts. Dropping.`);
-          this.queue.shift();
+          this.removeItem(activeItem.id);
           this.saveQueue();
           this.cleanupPersistedFile(activeItem);
         } else {
           // Update retry count in place and persist
-          this.queue[0] = { ...activeItem, retryCount };
+          const at = this.queue.findIndex((i) => i.id === activeItem.id);
+          if (at !== -1) this.queue[at] = { ...activeItem, retryCount };
           this.saveQueue();
           // Wait before retrying (exponential backoff 3s, 6s, 12s...)
           const backoffMs = Math.min(3000 * retryCount, 15000);
@@ -429,3 +531,27 @@ class UploadQueueManager {
 }
 
 export const uploadQueueManager = new UploadQueueManager();
+
+// Signing out drops the parsed queue as well as the MMKV key — see `resetForNewSession`.
+registerSessionResetHook(() => uploadQueueManager.resetForNewSession());
+
+let photoSyncStarted = false;
+
+/**
+ * Drain queued photos on every reconnect, and once on a cold start.
+ *
+ * ⚠️ Without this the queue only ever ran because a screen happened to kick it — the
+ * constructor loads the saved items and starts nothing, and `JobDocsSection` is what called
+ * `processQueue` on mount. So photos taken offline, followed by the app being killed, sat on the
+ * device until the rep opened a Lead Center again. They were never lost, but they were invisible
+ * and unsent, which is the failure mode `utils/pending-inspection-photos.ts` already records as
+ * the worse one: a rep who cannot see them re-shoots the house.
+ *
+ * Idempotent, so a remount cannot double-subscribe it.
+ */
+export const startPhotoQueueSync = (): void => {
+  if (photoSyncStarted) return;
+  photoSyncStarted = true;
+  onReconnect(() => uploadQueueManager.processQueue());
+  uploadQueueManager.processQueue();
+};

@@ -16,7 +16,7 @@
 // grids, header controls stacked rather than inline).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -51,6 +51,8 @@ import type { SectionPhoto } from '../../../utils/inspection-photos';
 import { useSecureUrls } from '../../../hooks/useSecureUrls';
 import { useWarmedImageUris } from '../../../hooks/useWarmedImageUris';
 import { resolveS3Url } from '../../../utils/s3-utils';
+import { indexPendingBySlot } from '../../../utils/pending-inspection-photos';
+import { uploadQueueManager } from '../../../utils/uploadQueue';
 
 const GREEN = '#4CBB17';
 const RED = '#EF4444';
@@ -120,6 +122,17 @@ export function DynamicManagePhotosView({
   // copies — mirrors web's `managePhotosCount`, so the title matches the count on
   // the "Manage Photos (N)" button that opened this screen. Deliberately NOT
   // capture.totalPhotos, which is scoped to the selected product.
+  // ⚠️ Pending uploads are counted too. Offline there is nothing on the server yet, so this read
+  // 0 while the Lead Center button that opened it read 3 — the header folds the queue in and this
+  // did not. Two counts of the same thing disagreeing on one screen.
+  const [pendingUploads, setPendingUploads] = useState(() => uploadQueueManager.getQueue());
+  useEffect(() => {
+    setPendingUploads([...uploadQueueManager.getQueue()]);
+    return uploadQueueManager.addListener(() => {
+      setPendingUploads([...uploadQueueManager.getQueue()]);
+    });
+  }, []);
+
   const managePhotosCount = useMemo(() => {
     const photos = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
     const seen = new Set<string>();
@@ -127,8 +140,17 @@ export function DynamicManagePhotosView({
       if (!p?.s3url || seen.has(p.s3url)) return;
       seen.add(p.s3url);
     });
-    return seen.size;
-  }, [lead?.salesPhotos]);
+    // Only the surplus, per slot — the queue does not drop an item until its upload succeeds, and
+    // the lead refetch can land first, so for a moment a photo is in both lists.
+    let pending = 0;
+    indexPendingBySlot(pendingUploads as any, lead?._id || lead?.id).forEach((items, slot) => {
+      const onServer = photos.filter(
+        (p: any) => `${String(p?.category ?? '').trim().toLowerCase()}||${String(p?.subcategory ?? '').trim().toLowerCase()}` === slot
+      ).length;
+      pending += Math.max(0, items.length - onServer);
+    });
+    return seen.size + pending;
+  }, [lead?.salesPhotos, lead?._id, lead?.id, pendingUploads]);
 
   const exitSelectMode = () => {
     setSelectMode(false);
@@ -421,18 +443,36 @@ export function DynamicManagePhotosView({
 
   const renderCard = (
     card: PhotoCard,
-    { showLabel = true, canMove = false, selectable = false }: { showLabel?: boolean; canMove?: boolean; selectable?: boolean } = {},
+    {
+      showLabel = true,
+      canMove = false,
+      selectable = false,
+      absoluteCategory = false,
+    }: {
+      showLabel?: boolean;
+      canMove?: boolean;
+      selectable?: boolean;
+      /** See `MoveState.fromIsAbsoluteCategory` — set for orphan ("+ UNSORTED") cards. */
+      absoluteCategory?: boolean;
+    } = {},
   ) => {
     const uri = card.photo.secureUrl || undefined;
     // The local copy, once warm. Undefined means the download is still in flight.
     const localUri = uri ? warmedUris[uri] : undefined;
     const busy = !!capture.deletingKeys[card.key] || !!capture.movingKeys?.[card.key];
+    // ⚠️ Still in the upload queue: no `_id` and no `s3url`, so delete and move have nothing to
+    // address and would silently no-op. The row says what is happening instead of offering
+    // actions that cannot work. It becomes an ordinary card the moment the upload lands.
+    const isPending = (card.photo as any)?.isPending === true;
     const isSelected = selectedMap.has(card.key);
     // An original that already has an annotated copy can't be re-annotated.
     const alreadyAnnotated = annotatedBaseKeys.has(
       `${card.cat.id}::${card.label.trim().toLowerCase()}`,
     );
-    const lockedFromSelect = selectMode && selectable && alreadyAnnotated;
+    // ⚠️ A queued photo cannot be annotated either — the annotation screen round-trips through
+    // the server copy, which does not exist yet. Locked for the same reason as an already-
+    // annotated original rather than being silently pickable and failing later.
+    const lockedFromSelect = selectMode && selectable && (alreadyAnnotated || isPending);
     const selectableNow = selectMode && selectable && !lockedFromSelect;
 
     return (
@@ -508,8 +548,26 @@ export function DynamicManagePhotosView({
             )}
           </PhotoPeekPressable>
 
+          {/* A queued photo shows its state instead of actions. */}
+          {!selectMode && isPending && (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                padding: 8,
+              }}
+            >
+              <Icon name="cloud-upload-outline" size={14} color="#F59E0B" />
+              <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 11 }}>
+                Waiting to upload
+              </Text>
+            </View>
+          )}
+
           {/* Actions are hidden in select mode (web parity) */}
-          {!selectMode && (
+          {!selectMode && !isPending && (
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8, padding: 8 }}>
               {canMove && moveTargetCount > 1 ? (
                 <TouchableOpacity
@@ -522,6 +580,7 @@ export function DynamicManagePhotosView({
                       // rebuild uiKey(cat.id, slot.id) and highlight this as the FROM tile.
                       fromSlot: card.slot,
                       key: card.key,
+                      ...(absoluteCategory ? { fromIsAbsoluteCategory: true } : null),
                     })
                   }
                   style={{
@@ -753,7 +812,16 @@ export function DynamicManagePhotosView({
                     </Text>
                   </View>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GAP }}>
-                    {orphanCards.map((card) => renderCard(card))}
+                    {/* ⚠️ Movable, deliberately. These were display+delete only, which left a rep
+                        who captured while the inspection schema was unavailable (an offline cold
+                        start, before it was cached) with no way to re-file a correctly-shot photo
+                        except to delete it and shoot again. The move sends the photo's REAL stored
+                        category as `currentPosition` and a SCOPED one as the destination, which is
+                        precisely what adopts it into the schema — after which it counts towards
+                        its tab and stops being an orphan. */}
+                    {orphanCards.map((card) =>
+                      renderCard(card, { canMove: true, absoluteCategory: true }),
+                    )}
                   </View>
                 </View>
               )}

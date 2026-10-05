@@ -27,6 +27,17 @@ import {
   logInvestmentConsentFormSubmitted,
   logInvestmentConsentFormCreated,
 } from '../../utils/activity-log/investment-center-log';
+import { FlashMessage } from '../../config/message';
+import { isOnline } from '../../services/connectivity';
+import {
+  ensureOfflineWorkForLead,
+  getOfflineWork,
+  queueOfflineConsent,
+  runUpload,
+  subscribeOfflineWork,
+} from '../../services/offlineLeadStore';
+import { hasQueuedConsent, isClientId } from '../../utils/offline-lead-work';
+import { consentFormLabel, hasFiledConsentReport } from '../../utils/consent-forms';
 
 /**
  * Investment Center (web parity: `src/sections/job/components/investment-center/`).
@@ -41,22 +52,15 @@ interface Props {
   route?: { params?: { lead?: any } };
 }
 
-/** Web `generatedReports` consent check — mirror of OperationalSections.findReport. */
-function hasSignedConsent(lead: any): boolean {
-  const reports = [
-    ...(lead?.generatedReports || []),
-    ...(lead?.outcomeData?.generatedReports || []),
-    ...(lead?.leadData?.generatedReports || []),
-    ...(lead?.outcome?.generatedReports || []),
-  ];
-  return reports.some(
-    (r: any) =>
-      (r.reportType === 'consent_form' ||
-        r.reportName?.toLowerCase().includes('consent') ||
-        r.reportPath?.toLowerCase().includes('consent')) &&
-      !r.isReset,
-  );
-}
+/**
+ * Web `generatedReports` consent check.
+ *
+ * ⚠️ This WAS a local copy of the same rule the Lead Center's `findReport` applies. It now shares
+ * one implementation, because the offline queue added a second reader and three copies of "is the
+ * consent signed?" would eventually disagree — one screen letting the rep present while another
+ * asked the same customer to sign again.
+ */
+const hasSignedConsent = (lead: any): boolean => hasFiledConsentReport(lead, 'consent');
 
 export default function InvestmentCenterScreen({ navigation, route }: Props) {
   const lead = route?.params?.lead;
@@ -100,10 +104,56 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   const [tabScrollViewWidth, setTabScrollViewWidth] = useState(0);
   const [tabContentWidth, setTabContentWidth] = useState(0);
   const isLeadSold = lead?.status === 'sale';
-  const consentSigned = localConsentSigned || hasSignedConsent(lead) || isLeadSold;
+
+  // ⚠️ A form signed at the door but not yet uploaded counts as SIGNED, and this is the whole
+  // reason the queue keeps a record of it rather than just a request. `hasSignedConsent` reads the
+  // SERVER's `generatedReports`, which offline says no however many forms are waiting — and
+  // `localConsentSigned` dies with the screen. Without this the gate would slam shut on a relaunch
+  // and ask a customer who has already signed to sign again.
+  const [offlineWork, setOfflineWork] = useState(getOfflineWork);
+  useEffect(() => subscribeOfflineWork(() => setOfflineWork(getOfflineWork())), []);
+  const consentQueued = hasQueuedConsent(
+    offlineWork,
+    String(lead?._id || lead?.id || ''),
+    'consent',
+  );
+
+  const consentSigned = localConsentSigned || consentQueued || hasSignedConsent(lead) || isLeadSold;
 
   const handleConsentSubmit = useCallback(
     async (data: any) => {
+      // ⚠️ Two things stop this being postable, and the second is easy to miss: no connection, OR a
+      // lead whose id this device minted, which no consent endpoint can resolve however good the
+      // signal is. Either way the signed form is kept and the gate opens locally.
+      if (!isOnline() || isClientId(String(lead?._id || lead?.id || ''))) {
+        const work = ensureOfflineWorkForLead(lead);
+        const queued = work
+          ? await queueOfflineConsent(work.clientId, 'consent', data, {
+              knownFiledBefore: hasFiledConsentReport(lead, 'consent'),
+            })
+          : null;
+        if (!queued) {
+          FlashMessage.error(
+            'Not saved',
+            "Couldn't keep the consent form on this device — please try again.",
+          );
+          return null;
+        }
+        // ⚠️ Never "Submitted": the PDF is rendered by the SERVER, so nothing is filed and there is
+        // no document to hand the customer until this uploads.
+        FlashMessage.success(
+          'Saved on this device',
+          `${consentFormLabel('consent')} signed. It uploads on its own as soon as you have a connection.`,
+        );
+        setLocalConsentSigned(true);
+        setShowConsent(false);
+        setPrefilledOcrData(null);
+        // A no-op with no signal; it matters for the other reason a form queues — a lead whose id
+        // this device minted, where the connection is fine and nothing else would start the drain.
+        runUpload();
+        return null;
+      }
+
       try {
         const res = await consentMutation.mutateAsync({ leadId: lead?._id, payload: data });
         // Forever Record: consent SUBMIT — the SAME `{digital|paper}_consent_form_submitted`

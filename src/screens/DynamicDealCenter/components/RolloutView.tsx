@@ -16,7 +16,6 @@ import { autoSecureLastDrop, dropPriceOf } from '../utils/drop-prices';
 import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
-import { SettingsService } from '../../../services/api/SettingsService';
 import {
   DealPricing,
   DealPlan,
@@ -51,6 +50,11 @@ import { OneYearMonthlyPlan, type OneYearMonthlyValue } from './OneYearMonthlyPl
 import { scopeSignature } from '../utils/scope-signature';
 import type { CalculatorLockState } from '../utils/job-builder-submission';
 import { NUMERIC_KEYBOARD, NUMERIC_KEYBOARD_HAS_RETURN_KEY } from '../../../utils/keyboard-type';
+import {
+  flushCalculatorSettings,
+  queueCalculatorSetting,
+} from '../../../services/offlineSettings';
+import type { CalculatorSettingsPatch } from '../../../utils/offline-settings';
 
 /** Resolve the payment plan shown for a calculator (saved → user default → lead-aware fallback). */
 const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?: string) =>
@@ -1082,6 +1086,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     return rows.sort((a, b) => String(a.categoryId).localeCompare(String(b.categoryId)));
   }, [calculator.entries]);
 
+  // Web parity (`QuoteResultCard.js:106`): with no products entered COST/PAR/RETAIL are
+  // all $0, so a rollout price has nothing behind it and the end-price box stays locked
+  // until the rep adds one. Derived from the SAME `itemRows` the item list renders, so
+  // the input can never disagree with what is on screen above it.
+  const hasProducts = itemRows.length > 0;
+
   // sectionId → label so item rows read "5' 5" Gutter/DS/E (All Stories)" (web parity).
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
 
@@ -1166,15 +1176,34 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // (rehash) the breakdown would be stuck collapsed with nothing left to open it.
   const showResult = priceLocked ? showLockedDetails : (priceNum > 0 && !priceErr);
 
-  const toggleDefault = async (next: boolean) => {
-    try {
-      await SettingsService.updateCalculatorsSetting({ defaultPaymentMethod: next ? method : null });
+  /**
+   * Record a rep default, with or without a connection.
+   *
+   * ⚠️ The local record is written FIRST, always, and that is what makes the switch move. Its state
+   * is derived from `user.defaultPaymentMethod`, which only ever comes from the server — so before
+   * this, a tap offline sent a request that failed, left `user` untouched, and the toggle sprang
+   * back. The rep then tapped it again, which is exactly the three identical requests in the
+   * reported trace.
+   *
+   * ⚠️ Never an ERROR flash. A preference is not the rep's work; it is saved on the device and
+   * replayed on reconnect, so telling them it failed would be untrue.
+   */
+  const saveDefault = async (patch: CalculatorSettingsPatch, label: string) => {
+    queueCalculatorSetting(patch);
+    const applied = await flushCalculatorSettings();
+    if (applied) {
       await refreshUser?.();
-      FlashMessage.success(next ? 'Default payment method set' : 'Default payment method cleared');
-    } catch (e: any) {
-      FlashMessage.error('Could not update default', e?.message || 'Please try again.');
+      FlashMessage.success(label);
+      return;
     }
+    FlashMessage.success(label, "Saved on your device — it'll sync when you're back online.");
   };
+
+  const toggleDefault = (next: boolean) =>
+    saveDefault(
+      { defaultPaymentMethod: next ? method : null },
+      next ? 'Default payment method set' : 'Default payment method cleared'
+    );
 
   // A confirmed rollout locks Add Renders (and, via `priceLocked`, the end price).
   //
@@ -1188,15 +1217,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // submitted, the card-wide `pointerEvents` wrapper below locks the tiles with the rest.
   const isLocked = !!calculator.isRolloutConfirmed;
 
-  const toggleDefaultDiscount = async (next: boolean) => {
-    try {
-      await SettingsService.updateCalculatorsSetting({ defaultPercentage: next ? discountPct : null });
-      await refreshUser?.();
-      FlashMessage.success(next ? 'Default discount set' : 'Default discount cleared');
-    } catch (e: any) {
-      FlashMessage.error('Could not update default discount', e?.message || 'Please try again.');
-    }
-  };
+  // Through `saveDefault`, so the switch also holds with no signal (queued and replayed).
+  const toggleDefaultDiscount = (next: boolean) =>
+    saveDefault(
+      { defaultPercentage: next ? discountPct : null },
+      next ? 'Default discount set' : 'Default discount cleared'
+    );
 
   // Web parity (ViewAllCalculators onDownPaymentChange → queueRolloutLog): a `down
   // payment entered` rollout log, deduped on the same value so re-blurring doesn't
@@ -1688,16 +1714,27 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
               </View>
             </TouchableOpacity>
           ) : (
-            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderWidth: 2, borderColor: priceErr ? '#EF4444' : focused ? '#16A34A' : '#DFE3E8', borderRadius: 16, paddingHorizontal: 16, height: 64, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
-              <Text style={{ fontSize: 16, fontWeight: '900', color: focused ? '#16A34A' : '#637381', marginRight: 8, lineHeight: 20 }}>$</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: hasProducts ? '#fff' : '#F4F6F8', borderWidth: 2, borderColor: priceErr ? '#EF4444' : focused ? '#16A34A' : '#DFE3E8', borderRadius: 16, paddingHorizontal: 16, height: 64, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+              <Text style={{ fontSize: 16, fontWeight: '900', color: !hasProducts ? '#919EAB' : focused ? '#16A34A' : '#637381', marginRight: 8, lineHeight: 20 }}>$</Text>
               <TextInput
-                style={{ flex: 1, fontSize: 16, fontWeight: '900', color: focused ? '#16A34A' : '#212B36', padding: 0, margin: 0, height: '100%', lineHeight: 20, textAlignVertical: 'center' }}
+                style={{ flex: 1, fontSize: 16, fontWeight: '900', color: !hasProducts ? '#919EAB' : focused ? '#16A34A' : '#212B36', padding: 0, margin: 0, height: '100%', lineHeight: 20, textAlignVertical: 'center' }}
                 value={endPrice}
+                editable={hasProducts}
                 onChangeText={(t) => { const c = t.replace(/[^0-9.]/g, ''); setEndPrice(c); onPriceChange(calculator.id, parseFloat(c) || 0); }}
                 onFocus={() => setFocused(true)} onBlur={() => { setFocused(false); logEndPriceEntered(); }}
-                placeholder="Enter End Price" placeholderTextColor="#919EAB" keyboardType={NUMERIC_KEYBOARD}
+                placeholder={hasProducts ? 'Enter End Price' : 'Add products first'} placeholderTextColor="#919EAB" keyboardType={NUMERIC_KEYBOARD}
                 returnKeyType="done"
               />
+            </View>
+          )}
+          {/* Says WHY the box is dead. Without it a disabled input with no explanation
+              reads as the screen being broken, which is how this was reported. */}
+          {!priceLocked && !hasProducts && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, backgroundColor: 'rgba(255,179,0,0.1)', borderWidth: 1, borderColor: 'rgba(255,179,0,0.3)' }}>
+              <Ionicons name="information-circle" size={18} color="#F59E0B" />
+              <Text style={{ flex: 1, fontSize: 11, fontWeight: '600', color: '#B45309', marginLeft: 8, lineHeight: 16 }}>
+                Add products in the calculator to set a rollout price.
+              </Text>
             </View>
           )}
           {/* Only the validation error renders under the end price. Web shows NO

@@ -15,6 +15,25 @@ import {
 import { scopeSignature } from '../utils/scope-signature';
 import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logSectionCleared, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
 import { buildFieldLogLabel, findFieldStoryLabel } from '../utils/story-log-label';
+import { isOnline } from '../../../services/connectivity';
+import {
+  ensureOfflineWorkForLead,
+  runUpload,
+  saveOfflineDealCenter,
+} from '../../../services/offlineLeadStore';
+import {
+  hasUnsyncedDealCenter,
+  isClientId,
+  newWorkId,
+  type OfflineCalculatorWork,
+} from '../../../utils/offline-lead-work';
+import { readOfflineCache, writeOfflineCache } from '../../../utils/offline-query-cache';
+import {
+  cachedCalculatorsOf,
+  dealCenterCacheName,
+  resolveOfflineDealCenterSource,
+  type CachedDealCenter,
+} from '../../../utils/offline-deal-center';
 
 /**
  * Persistence hook for the Dynamic Deal Center calculators — the schema-driven
@@ -140,6 +159,78 @@ const SAVE_DEBOUNCE_MS = 1500;
 const ZERO: CalculatorTotals = { cost: 0, par: 0, retail: 0 };
 
 const isBackendId = (id?: string) => !!id && /^[a-f0-9]{24}$/i.test(id);
+
+/**
+ * Rebuild a tab from the body stored on the device.
+ *
+ * ⚠️ The stored payload IS the body its `PUT /lfcalculators/{id}` would have sent, so this is the
+ * exact inverse of `buildPayload`. Keeping the two in step is what lets one record serve both the
+ * screen the rep is looking at and the upload that files it later.
+ */
+function tabFromOfflinePayload(
+  calc: OfflineCalculatorWork,
+  schemas: CalculatorSchema[]
+): CalcTab {
+  const p = (calc.payload || {}) as any;
+  const entries = mergeFullEntries(parseEntries(p.entries), schemas);
+  return {
+    id: calc.serverId || calc.clientId,
+    title: p.title || '1',
+    entries,
+    totals: p.totals || computeTotals(entries),
+    isRolloutConfirmed: p.isRolloutConfirmed,
+    price: p.price,
+    pricemarkup: p.pricemarkup,
+    priceScopeSig: p.priceScopeSig || '',
+    paymentMethod: p.paymentMethod || undefined,
+    dropPrice: p.dropPrice || [],
+    downPayment: p.downPayment,
+    discountPercentage: p.discountPercentage,
+    selectedRenders: p.selectedRenders || [],
+    oneYearMonthlyPlan: p.oneYearMonthlyPlan ?? null,
+    inHome: p.inHome ?? null,
+    // ⚠️ NOT `persisted`. Nothing has reached the server, and the flag gates the unmount PUT.
+    persisted: false,
+  };
+}
+
+/**
+ * Rebuild a tab from a calculator row as the SERVER returns it.
+ *
+ * ⚠️ Hoisted out of the bootstrap because the OFFLINE hydrate reads the same rows out of the
+ * device snapshot. Two copies of this mapping would mean a lead's quote could look one way at a
+ * door and another way with signal, from the same bytes.
+ */
+function tabFromServerCalculator(c: any, schemas: CalculatorSchema[]): CalcTab {
+  // Back-fill the full schema field list so untouched fields are present
+  // and every subsequent save PUTs the complete entries array (web parity).
+  const entries = mergeFullEntries(parseEntries(c?.entries), schemas);
+  return {
+    id: String(c?._id || c?.id),
+    title: c?.title || '1',
+    entries,
+    totals: c?.totals || computeTotals(entries),
+    isRolloutConfirmed: c?.isRolloutConfirmed,
+    price: c?.price,
+    priceScopeSig: c?.priceScopeSig || '',
+    paymentMethod: c?.paymentMethod || undefined,
+    // The server's rows VERBATIM (web parity: its rollout lists `dropPrice`
+    // 1:1). Only the single-accepted repair runs, because it rewrites a status
+    // rather than removing a row — anything that collapsed rows here would
+    // make local state a subset of the server's, and the next save would then
+    // omit rows the rep can no longer see.
+    dropPrice: normalizeSingleAcceptedDrop(c?.dropPrice),
+    downPayment: c?.downPayment || 0,
+    discountPercentage: Number(c?.discountPercentage) || undefined,
+    selectedRenders: Array.isArray(c?.selectedRenders) ? c.selectedRenders : [],
+    oneYearMonthlyPlan: c?.oneYearMonthlyPlan || null,
+    inHome: c?.inHome ?? c?.in_home ?? null,
+    // Backend-computed job-scope sentences — surfaced verbatim in the
+    // Investment Center "Includes the Following" list (read-only, never re-sent).
+    descriptions: Array.isArray(c?.descriptions) ? c.descriptions : [],
+    persisted: true,
+  };
+}
 
 function computeTotals(entries: Record<string, CalculatorEntry>): CalculatorTotals {
   return Object.values(entries).reduce(
@@ -380,6 +471,14 @@ export function useDynamicCalculators(
   const [activeTabId, setActiveTabId] = useState('local-1');
   const [appointmentId, setAppointmentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  /**
+   * Opened with no signal, on a lead whose quote this device has never seen.
+   *
+   * ⚠️ A distinct state from "no calculators", and the screen must say so rather than showing an
+   * empty form. Anything the rep enters here would become a RIVAL calculator beside the ones the
+   * server is holding — which is what happened before the snapshot existed.
+   */
+  const [offlineUnavailable, setOfflineUnavailable] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastUpdated, setLastUpdated] = useState('');
 
@@ -404,6 +503,32 @@ export function useDynamicCalculators(
 
   // Always-current tabs snapshot so the debounced flush reads the LATEST state
   // (web reads `entriesRef.current`, not a stale closure value).
+  // ── Offline: the device record this Deal Center session writes into ────────
+  // `null` while online — every write below then takes its normal remote path.
+  const offlineWorkIdRef = useRef<string | null>(null);
+  /**
+   * Is THIS session writing to the device rather than to the server?
+   *
+   * ⚠️ Separate from `offlineWorkIdRef`, which is now set on every path so that a connection
+   * dropping mid-quote has somewhere to write. Without the second flag, opening the Deal Center
+   * online would mirror the whole session to the device on unmount and leave a permanent
+   * "1 lead not yet on the server" banner over a rep who never went offline.
+   */
+  const offlineModeRef = useRef(false);
+  const apptClientIdRef = useRef<string | null>(null);
+  const apptPayloadRef = useRef<Record<string, unknown> | null>(null);
+  /**
+   * The appointment's REAL id, when this lead already has one.
+   *
+   * ⚠️ Written into the offline record, and that is what stops a duplicate. `isStepApplicable`
+   * skips the `appointment` create only when `serverIds.appointmentId` is set — without it a lead
+   * hydrated from the snapshot would POST a SECOND appointment on the next drain and hang the
+   * rep's calculators off it.
+   */
+  const apptServerIdRef = useRef<string | null>(null);
+  const offlineTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistOfflineRef = useRef<((list?: CalcTab[]) => void) | null>(null);
+
   const tabsRef = useRef(tabs);
   useEffect(() => {
     tabsRef.current = tabs;
@@ -557,11 +682,120 @@ export function useDynamicCalculators(
     return changed ? next : list;
   }, [titleInputs]);
 
+  /**
+   * Keep a copy of what the SERVER holds for this lead, so the Deal Center can open with no signal.
+   *
+   * ⚠️ This is not the same thing as `persistOffline` below, and the difference is the whole
+   * point. That one records work the server has NOT got and arms an upload; this one records work
+   * the server HAS, and arms nothing. Confusing the two would announce every lead the rep merely
+   * looked at as pending, and re-PUT state that was already filed.
+   *
+   * Without it the offline bootstrap had no idea a lead had ever been quoted, so it minted an empty
+   * calculator — which the drain then filed as an EXTRA one beside the rep's real tabs.
+   */
+  const cacheDealCenterSnapshot = useCallback(
+    (rows: unknown[], apptId?: string | null) => {
+      const name = dealCenterCacheName(leadId);
+      if (!name) return;
+      writeOfflineCache<CachedDealCenter>(
+        name,
+        { appointmentId: apptId ?? apptServerIdRef.current ?? null, calculators: rows },
+        enteredBy || null
+      );
+    },
+    [leadId, enteredBy]
+  );
+
+  /**
+   * The same snapshot, built from the tabs on screen rather than from a fresh read.
+   *
+   * ⚠️ Only calculators with a real backend id. A tab that has not been created yet is not
+   * something the server holds, and writing it here would let the offline bootstrap hydrate it as
+   * though it were — losing the very `serverId` that decides POST vs PUT on the next drain.
+   */
+  const cacheTabsSnapshot = useCallback(
+    (list: CalcTab[], apptId?: string | null) => {
+      cacheDealCenterSnapshot(
+        list
+          .filter((t) => isBackendId(t.id))
+          .map((t) => ({
+            ...buildPayloadRef.current(t),
+            _id: t.id,
+            // `buildPayload` omits drops (they have their own writer online); the snapshot is a
+            // picture of the calculator, so it carries them.
+            dropPrice: t.dropPrice || [],
+          })),
+        apptId
+      );
+    },
+    [cacheDealCenterSnapshot]
+  );
+  const cacheDealCenterSnapshotRef = useRef(cacheDealCenterSnapshot);
+  cacheDealCenterSnapshotRef.current = cacheDealCenterSnapshot;
+  const cacheTabsSnapshotRef = useRef(cacheTabsSnapshot);
+  cacheTabsSnapshotRef.current = cacheTabsSnapshot;
+
+  /**
+   * Write the whole Deal Center to the device.
+   *
+   * Stores each tab under exactly the body its PUT would have carried, so the uploader replays the
+   * session as ~one request per calculator rather than one per edit.
+   */
+  const persistOffline = useCallback((explicit?: CalcTab[]) => {
+    const workId = offlineWorkIdRef.current;
+    if (!workId) return;
+    // ⚠️ Only a session that is actually working offline mirrors itself here. Online, every tab is
+    // already on the server and writing them again would arm an upload of state the server holds —
+    // announcing the lead as pending, and re-PUTting it on the next reconnect for nothing.
+    if (!offlineModeRef.current && isOnline()) return;
+    // ⚠️ `tabsRef` is synced by an effect, so it still holds the PREVIOUS list during the render
+    // that seeds the tabs. The bootstrap therefore passes its list in rather than reading the ref.
+    const calculators: OfflineCalculatorWork[] = (explicit || tabsRef.current).map((t) => ({
+      clientId: t.id,
+      serverId: isBackendId(t.id) ? t.id : undefined,
+      payload: {
+        ...buildPayloadRef.current(t),
+        // ⚠️ Added back deliberately. `buildPayload` omits `dropPrice` because online it has its
+        // own writer (`saveDropsNow`) — offline there is no second writer, so leaving it out would
+        // silently drop every negotiation round the rep walked the customer through.
+        dropPrice: t.dropPrice || [],
+      },
+    }));
+    saveOfflineDealCenter(workId, {
+      appointment: apptPayloadRef.current || undefined,
+      appointmentClientId: apptClientIdRef.current || undefined,
+      appointmentServerId: apptServerIdRef.current || undefined,
+      calculators,
+    });
+    // ⚠️ Signal can come back while the rep is still on this screen, and this session stays on the
+    // device (one writer). Without a kick the edit waited for the 60 s sweep or the next reconnect
+    // edge — which, with the rep already online, never comes. `runUpload` is a no-op offline and
+    // while a drain is running (that drain picks the record up on its own).
+    if (isOnline()) runUpload();
+  }, []);
+  persistOfflineRef.current = persistOffline;
+
   // ── Debounced save engine (ports web DealCenterContext.flushSave) ───────────
   const flushSaveRef = useRef<((tabId: string) => void) | null>(null);
 
   const scheduleSave = useCallback((tabId: string) => {
-    if (!isBackendId(tabId)) return; // local-only tabs are never saved remotely
+    // Offline, or a calculator with no server id yet: the state goes to the DEVICE on the same
+    // debounce and is uploaded later. One timer for the whole store, not one per tab — the record
+    // holds every calculator, so a per-tab timer would just rewrite the same blob N times.
+    // ⚠️ ONE writer per session. Once this session belongs to the device it stays there, even if
+    // signal returns mid-quote: the drain is what puts the work on the server, and letting a direct
+    // PUT race it would have the two disagreeing about which state is current.
+    if (offlineModeRef.current || !isBackendId(tabId) || !isOnline()) {
+      // From here on this session belongs to the device. The rep may have started online and lost
+      // signal mid-quote — that is the case that used to persist NOTHING, because the record was
+      // only ever wired up by the offline bootstrap branch.
+      offlineModeRef.current = true;
+      if (offlineWorkIdRef.current) {
+        if (offlineTimer.current) clearTimeout(offlineTimer.current);
+        offlineTimer.current = setTimeout(() => persistOfflineRef.current?.(), SAVE_DEBOUNCE_MS);
+      }
+      return;
+    }
     if (saveTimers.current[tabId]) clearTimeout(saveTimers.current[tabId]);
     saveTimers.current[tabId] = setTimeout(() => flushSaveRef.current?.(tabId), SAVE_DEBOUNCE_MS);
   }, []);
@@ -631,7 +865,14 @@ export function useDynamicCalculators(
    */
   const saveDropsNow = useCallback(
     async (tabId: string, drops: any[], attempt = 0) => {
-      if (!isBackendId(tabId)) return; // local-only tab: nothing to update yet
+      // Offline, or a calculator with no server id yet: drops are already on the tab, so write the
+      // whole record to the device. ⚠️ IMMEDIATELY, not on the debounce — a drop is a deliberate
+      // Secure/Decline, and `handleSetDrops` does not `markDirty`, so nothing else would ever
+      // persist it. `tabsRef` is updated synchronously by that handler, so this sees the new list.
+      if (!isBackendId(tabId) || !isOnline()) {
+        persistOfflineRef.current?.();
+        return;
+      }
       if (dropSaveInFlight.current[tabId]) {
         dropSavePending.current[tabId] = drops;
         return;
@@ -742,6 +983,11 @@ export function useDynamicCalculators(
         // Adopt the ids the server just assigned, so the NEXT save updates these rows
         // instead of filing second copies of them.
         adoptDropIds(tabId, res);
+        // The snapshot follows what actually landed, so a rep who quotes online and then walks out
+        // of signal re-opens on their real figures rather than on the state at screen-open.
+        // ⚠️ After the PUT resolves, never before it — a cache written on a save that failed
+        // would hand the door a quote the server does not have.
+        cacheTabsSnapshotRef.current?.(tabsRef.current);
         setLastUpdated(
           new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
         );
@@ -796,9 +1042,140 @@ export function useDynamicCalculators(
     let cancelled = false;
     (async () => {
       setLoading(true);
+
+      // ── Which copy of this Deal Center is the rep shown? ─────────────────────
+      //
+      // ⚠️ THE RECORD IS RESOLVED ON EVERY PATH, and that is the fix for "I did my whole quote and
+      // came back and it was all gone". It used to be resolved only when `isOnline()` was false at
+      // that instant, which loses a rep's work in two ordinary field situations:
+      //
+      //   1. They built the quote with no signal, walked back in with a bar of it, and re-opened
+      //      the Deal Center. The bootstrap took the ONLINE path, read the server — which has
+      //      nothing, because the queue has not drained — and painted an empty calculator over a
+      //      finished quote. (On a lead created at the door it was worse still: `resolveAppointmentId`
+      //      would POST a NEW appointment against a lead id the server has never seen, then create
+      //      a fresh empty calculator in it.)
+      //   2. They started online and lost signal mid-quote. `offlineWorkIdRef` was null, so
+      //      `scheduleSave`'s offline branch had nowhere to write and persisted NOTHING at all.
+      //
+      // So: the device record always exists while this screen is open, and the DEVICE wins whenever
+      // it holds calculator work the server has not got. It cannot be stale by definition — it IS
+      // the writes that have not arrived yet.
+      const work = ensureOfflineWorkForLead(lead);
+      if (work) offlineWorkIdRef.current = work.clientId;
+
+      // ⚠️ `isClientId` is as disqualifying as no signal. A lead created at a door is addressed by
+      // an id this device minted, so every request the online path makes is either a 404 or — for
+      // `POST /appointments` — an ORPHAN appointment filed against a lead that does not exist, which
+      // the queue then duplicates when the lead lands. Same rule the agreement dialog already uses.
+      const deviceIsAuthoritative =
+        !isOnline() || isClientId(String(leadId || '')) || hasUnsyncedDealCenter(work);
+
+      if (deviceIsAuthoritative) {
+        offlineModeRef.current = true;
+        if (work) {
+          offlineWorkIdRef.current = work.clientId;
+          const apptClientId = work.appointmentClientId || newWorkId('appt');
+          apptClientIdRef.current = apptClientId;
+          apptPayloadRef.current = {
+            title: customerTitleOf(lead),
+            address: lead?.fullAddress || lead?.address || '',
+            leadId: lead?.leadId,
+            selfGenLeadId: lead?._id || lead?.selfGenLeadId || lead?.id,
+          };
+
+          // What the server held the last time this lead's Deal Center was open with signal.
+          const cacheName = dealCenterCacheName(leadId);
+          const cached = cacheName
+            ? readOfflineCache<CachedDealCenter>(cacheName, { userId: enteredBy || undefined })?.data
+              || null
+            : null;
+
+          // ⚠️ The appointment's real id comes from the snapshot when the record has not got one.
+          // Skipping this files a SECOND appointment on the next drain — `isStepApplicable` only
+          // skips the create when `serverIds.appointmentId` is set.
+          apptServerIdRef.current = work.serverIds.appointmentId || cached?.appointmentId || null;
+          // An appointment already resolved online keeps its real id; otherwise the client one
+          // stands in until the upload creates it.
+          setAppointmentId(apptServerIdRef.current || apptClientId);
+
+          const stored = work.calculators || [];
+          const source = resolveOfflineDealCenterSource({
+            storedCalculators: stored.length,
+            cached,
+            // Nothing the server could be holding — it has never heard of this lead.
+            leadCreatedOffline:
+              work.origin === 'created-offline' || isClientId(String(leadId || '')),
+            storedDrained: !hasUnsyncedDealCenter(work),
+          });
+
+          // ⚠️ `'unavailable'` is NOT the same as "no calculators", and treating it as one is the
+          // bug this branch was reported for. A lead quoted online and then opened at a door showed
+          // a blank Deal Center — the rep's tabs were on the server, unread — and the empty
+          // calculator minted in their place was POSTed as an EXTRA one when the queue drained.
+          // With no snapshot we do not know what is out there, so we show nothing and say why.
+          if (source === 'unavailable') {
+            if (cancelled) return;
+            setTabs([]);
+            setOfflineUnavailable(true);
+            setLoading(false);
+            return;
+          }
+          setOfflineUnavailable(false);
+
+          const hydrated: CalcTab[] =
+            source === 'device'
+              ? stored.map((c) => tabFromOfflinePayload(c, schemasRef.current))
+              : source === 'cache'
+                // ⚠️ The SAME mapping the online path runs, so the quote reads identically at a
+                // door. Each tab keeps its real `_id`, which is what makes an edit here a PUT to
+                // the rep's own calculator rather than a second one filed beside it.
+                ? cachedCalculatorsOf(cached).map((c) =>
+                    tabFromServerCalculator(c, schemasRef.current)
+                  )
+                : [
+                    (() => {
+                      // Web parity: a new calculator is seeded with the FULL field list across every
+                      // vertical, so the eventual create sends the same entries array it would online.
+                      const seeded = mergeFullEntries({}, schemasRef.current);
+                      return {
+                        id: newWorkId('calc'),
+                        title: customerNameOf(lead) || '1',
+                        entries: seeded,
+                        totals: computeTotals(seeded),
+                      };
+                    })(),
+                  ];
+
+          if (cancelled) return;
+          setTabs(hydrated);
+          setActiveTabId(hydrated[0].id);
+          setLoading(false);
+          // ⚠️ Seeded ONLY when this device is the one holding the work. A hydrate from the
+          // snapshot is a picture of what the server already has; writing it into the record would
+          // announce an untouched lead as pending and re-PUT it on the next reconnect for nothing.
+          // The rep's first edit arms it through `scheduleSave`, which is the correct moment.
+          if (source !== 'cache') persistOfflineRef.current?.(hydrated);
+          return;
+        }
+        // No record could be opened (a lead with no id at all). Offline there is nothing else to
+        // try, so stop here rather than spending three doomed requests on the way to an empty
+        // screen. Online we fall through and read the server as before.
+        if (!isOnline()) {
+          setTabs([]);
+          setLoading(false);
+          return;
+        }
+        offlineModeRef.current = false;
+      }
+
       const apptId = await resolveAppointmentId(lead);
       if (cancelled) return;
       setAppointmentId(apptId);
+      // ⚠️ Recorded even though this is the ONLINE path: the rep may lose signal mid-quote, and
+      // from that moment `persistOffline` is what files the session. Without the real id the record
+      // would carry only a client one and the drain would create a duplicate appointment.
+      apptServerIdRef.current = apptId;
 
       if (!apptId) {
         setLoading(false); // local-only mode
@@ -811,36 +1188,13 @@ export function useDynamicCalculators(
         if (cancelled) return;
 
         if (Array.isArray(list) && list.length) {
-          const hydrated: CalcTab[] = list.map((c: any) => {
-            // Back-fill the full schema field list so untouched fields are present
-            // and every subsequent save PUTs the complete entries array (web parity).
-            const entries = mergeFullEntries(parseEntries(c.entries), schemasRef.current);
-            return {
-              id: String(c._id || c.id),
-              title: c.title || '1',
-              entries,
-              totals: c.totals || computeTotals(entries),
-              isRolloutConfirmed: c.isRolloutConfirmed,
-              price: c.price,
-              priceScopeSig: c.priceScopeSig || '',
-              paymentMethod: c.paymentMethod || undefined,
-              // The server's rows VERBATIM (web parity: its rollout lists `dropPrice`
-              // 1:1). Only the single-accepted repair runs, because it rewrites a status
-              // rather than removing a row — anything that collapsed rows here would
-              // make local state a subset of the server's, and the next save would then
-              // omit rows the rep can no longer see.
-              dropPrice: normalizeSingleAcceptedDrop(c.dropPrice),
-              downPayment: c.downPayment || 0,
-              discountPercentage: Number(c.discountPercentage) || undefined,
-              selectedRenders: Array.isArray(c.selectedRenders) ? c.selectedRenders : [],
-              oneYearMonthlyPlan: c.oneYearMonthlyPlan || null,
-              inHome: c.inHome ?? c.in_home ?? null,
-              // Backend-computed job-scope sentences — surfaced verbatim in the
-              // Investment Center "Includes the Following" list (read-only, never re-sent).
-              descriptions: Array.isArray(c.descriptions) ? c.descriptions : [],
-              persisted: true,
-            };
-          });
+          // Keep the server's own rows, so this lead's Deal Center opens at a door with the quote
+          // the rep actually built instead of a blank one. Written from the RAW response rather
+          // than from the tabs, so it is the truest picture available.
+          cacheDealCenterSnapshotRef.current?.(list, apptId);
+          const hydrated: CalcTab[] = list.map((c: any) =>
+            tabFromServerCalculator(c, schemasRef.current)
+          );
           // Baseline the persisted titles so an auto-rename after the first edit
           // is detected against the loaded name, not a lazily-set one.
           hydrated.forEach((t) => { lastSavedTitle.current[t.id] = t.title; });
@@ -863,6 +1217,10 @@ export function useDynamicCalculators(
             lastSavedTitle.current[created.id] = created.title;
             setTabs(retitle([created]));
             setActiveTabId(created.id);
+            // ⚠️ Snapshot it immediately. Without this the cache would say the server holds
+            // NOTHING for this lead, and the next offline open would mint a second first
+            // calculator on the strength of that.
+            cacheTabsSnapshotRef.current?.([created], apptId);
             // Web parity (tab-action-utils.js first-calc create): the auto-created
             // FIRST calculator logs `isFirstCalculator: true` / "Created new
             // calculator tab" (no calculatorPosition). Previously the mobile bootstrap
@@ -920,6 +1278,10 @@ export function useDynamicCalculators(
     const dirtyMap = dirty.current;
     return () => {
       Object.values(timers).forEach((t) => clearTimeout(t));
+      // The offline debounce may not have fired either — same reasoning as the PUT below, and it
+      // matters more here: there is no reconnect that would retry a write that never happened.
+      if (offlineTimer.current) clearTimeout(offlineTimer.current);
+      persistOfflineRef.current?.();
       // Fire a FINAL PUT for every dirty calculator with the latest state — even if a
       // save is in flight. On unmount there's no follow-up mechanism left, so skipping
       // an in-flight calc (as before) could drop a just-confirmed price when the rep
@@ -983,6 +1345,7 @@ export function useDynamicCalculators(
         lastSavedTitle.current[created.id] = created.title; // baseline for auto_rename
         setTabs((p) => retitle([...p, created]));
         setActiveTabId(created.id);
+        cacheTabsSnapshotRef.current?.([...tabsRef.current, created]);
         // Web parity (tab-action-utils.js:62): calculator_created activity event.
         if (enteredBy) {
           logCalculatorCreated({
@@ -1102,6 +1465,9 @@ export function useDynamicCalculators(
         if (activeTabId === tabId) setActiveTabId(next[0]?.id || '');
         return next;
       });
+      // ⚠️ Or the door would still offer a calculator that no longer exists, and an edit to it
+      // would PUT to a deleted id on the next drain.
+      cacheTabsSnapshotRef.current?.(tabs.filter((t) => t.id !== tabId));
     },
     [tabs, activeTabId, retitle]
   );
@@ -1403,6 +1769,7 @@ export function useDynamicCalculators(
     setActiveTabId,
     appointmentId,
     loading,
+    offlineUnavailable,
     isSaving,
     lastUpdated,
     handleEntryChange,

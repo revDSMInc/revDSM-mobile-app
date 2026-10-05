@@ -31,6 +31,9 @@ import {
   type InspectionCategory,
 } from '../../widgets/components/lead-center/dynamic-inspection-schema-utils';
 import { IconifyIcon } from '../../widgets/common/IconifyIcon';
+import { FlashMessage } from '../../config/message';
+import { isOnline } from '../../services/connectivity';
+import { offlineBlockFor } from '../../utils/offline-capability';
 
 // ─── Dynamic (schema-driven) product picker helpers — port of web before.js ─────
 // Photos captured via the dynamic inspection flow are stored under a PRODUCT-SCOPED
@@ -469,6 +472,15 @@ export default function RevRenderScreen() {
   };
 
   const handleGenerateAll = async () => {
+    // ⚠️ The Lead Center already refuses to OPEN revRender offline; this is the connection
+    // dropping while the rep is in here with a queue built. Without it the generate is fired
+    // into a dead link and nothing on this screen reports a failure at all — the queue just
+    // sits there, which reads as the render still working.
+    const blocked = offlineBlockFor('revrender', isOnline());
+    if (blocked) {
+      FlashMessage.info(blocked.title, blocked.message);
+      return;
+    }
     try {
       const userId = user?._id || user?.id;
       if (userId) {

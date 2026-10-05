@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,11 @@ import { store } from '../../redux/store';
 import { SettingsService } from '../../services/api/SettingsService';
 import { AuthService } from '../../services/api/auth';
 import { LeadService } from '../../services/api/leads';
+import { clearImageCache, getImageCacheUsage, type CacheUsage } from '../../utils/imageFileCache';
+import {
+  offlineMapManager,
+  type OfflinePackRecord,
+} from '../../services/offlineMapManager';
 import Clipboard from '@react-native-clipboard/clipboard';
 import RNFS from 'react-native-fs';
 import { ENV } from '../../config/env';
@@ -55,6 +60,158 @@ export default function ProfilePage() {
   const navigation = useNavigation<any>();
   const { isInstaller } = useUserRole();
   const [activeTab, setActiveTab] = useState<TabType>('profile');
+  // Offline photo storage — what the device is holding so a rep can see their leads with no
+  // signal, and a way to reclaim it. Without this the cache is invisible: it grows to its
+  // budget and the only lever a rep has is reinstalling the app.
+  const [offlineUsage, setOfflineUsage] = useState<CacheUsage | null>(null);
+  const [clearingCache, setClearingCache] = useState(false);
+
+  // ---------------------------------------------------------------------------
+  // Offline map packs
+  // ---------------------------------------------------------------------------
+  const [mapPacks, setMapPacks] = useState<OfflinePackRecord[]>([]);
+  const [downloadingMap, setDownloadingMap] = useState(false);
+  const [clearingMaps, setClearingMaps] = useState(false);
+
+  const loadMapPacks = useCallback(() => {
+    setMapPacks(offlineMapManager.getAllRecords());
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'profile') loadMapPacks();
+  }, [activeTab, loadMapPacks]);
+
+  // Subscribe to progress updates while the Profile is open so the UI refreshes.
+  const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (activeTab !== 'profile' || mapPacks.length === 0) return;
+
+    const unsub = offlineMapManager.onPackProgress(() => loadMapPacks());
+
+    // Also poll every 3 s in case a download finishes between events.
+    progressTimer.current = setInterval(loadMapPacks, 3_000);
+
+    return () => {
+      unsub();
+      if (progressTimer.current) {
+        clearInterval(progressTimer.current);
+        progressTimer.current = null;
+      }
+    };
+  }, [activeTab, mapPacks.length, loadMapPacks]);
+
+  const handleDeleteMapPack = useCallback(
+    (name: string) => {
+      Alert.alert(
+        'Delete offline map?',
+        'Tiles will be removed from this device. You can re-download them later with a connection.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              await offlineMapManager.deletePack(name);
+              loadMapPacks();
+            },
+          },
+        ],
+      );
+    },
+    [loadMapPacks],
+  );
+
+  // Street detail for every lead area in one go — the Profile shows them as ONE row, not a row per
+  // area, so this is the only delete that row needs.
+  const handleDeleteMapAreas = useCallback(() => {
+    Alert.alert(
+      'Delete lead area maps?',
+      'Street detail around your leads will be removed from this device. It downloads again on Wi-Fi.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await offlineMapManager.deleteAllAreas();
+            loadMapPacks();
+          },
+        },
+      ],
+    );
+  }, [loadMapPacks]);
+
+  const mapSummary = React.useMemo(
+    () => offlineMapManager.getSummary(),
+    // `mapPacks` is re-read on every progress tick; the summary is derived from the same registry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mapPacks],
+  );
+
+  const handleClearAllMaps = useCallback(() => {
+    if (mapPacks.length === 0) return;
+    Alert.alert(
+      'Delete all offline maps?',
+      `${mapPacks.length} pack${mapPacks.length === 1 ? '' : 's'} will be removed from this device.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All',
+          style: 'destructive',
+          onPress: async () => {
+            setClearingMaps(true);
+            try {
+              for (const p of mapPacks) {
+                await offlineMapManager.deletePack(p.name);
+              }
+            } finally {
+              setClearingMaps(false);
+              loadMapPacks();
+            }
+          },
+        },
+      ],
+    );
+  }, [mapPacks, loadMapPacks]);
+
+  const formatBytes = useCallback((bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }, []);
+
+  const loadOfflineUsage = useCallback(() => {
+    getImageCacheUsage()
+      .then(setOfflineUsage)
+      .catch(() => setOfflineUsage(null));
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'profile') loadOfflineUsage();
+  }, [activeTab, loadOfflineUsage]);
+
+  const handleClearOfflineData = useCallback(() => {
+    Alert.alert(
+      'Clear offline photos?',
+      'Photos will be downloaded again the next time you open a lead with a connection. Nothing is deleted from the server, and photos waiting to upload are not affected.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            setClearingCache(true);
+            try {
+              await clearImageCache();
+            } finally {
+              setClearingCache(false);
+              loadOfflineUsage();
+            }
+          },
+        },
+      ]
+    );
+  }, [loadOfflineUsage]);
 
   // This screen is shared by both dashboards, but the sales landing route is NOT
   // registered in the installer stack (`navigation/index.tsx`), so the hardcoded
@@ -816,6 +973,165 @@ export default function ProfilePage() {
                     </Text>
                   )}
                 </TouchableOpacity>
+              </View>
+
+              {/* Offline photo storage. Sits under the profile form rather than behind its own
+                  tab: it is a rarely-touched maintenance control, not a feature. */}
+              <View
+                className="p-6 rounded-[32px] border mt-6"
+                style={{
+                  backgroundColor: isDark ? colors.surface : colors.card,
+                  borderColor: colors.border,
+                }}
+              >
+                <View className="flex-row items-center mb-1">
+                  <Icon name="cloud-download-outline" size={18} color={colors.textSecondary} />
+                  <Text
+                    className="font-black tracking-widest text-[11px] ml-2"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    OFFLINE DATA
+                  </Text>
+                </View>
+
+                <Text className="text-[15px] font-bold mt-2" style={{ color: colors.text }}>
+                  {offlineUsage ? offlineUsage.label : '—'}
+                </Text>
+                <Text className="text-[11px] font-bold mt-1" style={{ color: colors.textSecondary }}>
+                  {offlineUsage
+                    ? `${offlineUsage.files} photo${offlineUsage.files === 1 ? '' : 's'} saved on this device so your leads open without a connection.`
+                    : 'Checking what is saved on this device…'}
+                </Text>
+
+                <TouchableOpacity
+                  onPress={handleClearOfflineData}
+                  disabled={clearingCache || !offlineUsage?.files}
+                  className="py-3.5 rounded-xl items-center mt-4 border"
+                  style={{
+                    borderColor: colors.border,
+                    opacity: clearingCache || !offlineUsage?.files ? 0.5 : 1,
+                  }}
+                >
+                  {clearingCache ? (
+                    <ActivityIndicator color={colors.textSecondary} />
+                  ) : (
+                    <Text
+                      className="font-black text-[11px] tracking-widest"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      CLEAR OFFLINE PHOTOS
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* Offline map packs */}
+              <View
+                className="p-6 rounded-[32px] border mt-6"
+                style={{
+                  backgroundColor: isDark ? colors.surface : colors.card,
+                  borderColor: colors.border,
+                }}
+              >
+                <View className="flex-row items-center mb-1">
+                  <Icon name="map-outline" size={18} color={colors.textSecondary} />
+                  <Text
+                    className="font-black tracking-widest text-[11px] ml-2"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    OFFLINE MAPS
+                  </Text>
+                </View>
+
+                <Text className="text-[11px] font-bold mt-2" style={{ color: colors.textSecondary }}>
+                  A Florida base map, plus street detail around your leads, downloads automatically on Wi-Fi.
+                </Text>
+
+                {mapPacks.length > 0 ? (
+                  <>
+                    <View className="mt-3">
+                      {[
+                        mapSummary.base && {
+                          key: 'base',
+                          title: mapSummary.base.label || 'Base map',
+                          bytes: mapSummary.base.completedResourceSize,
+                          status:
+                            mapSummary.base.status === 'active'
+                              ? ` · Downloading ${Math.round(mapSummary.base.percentage)}%`
+                              : mapSummary.base.status === 'error'
+                                ? ' · Error'
+                                : mapSummary.base.status === 'complete'
+                                  ? ''
+                                  : ' · Waiting for Wi-Fi',
+                          onDelete: () => handleDeleteMapPack(mapSummary.base!.name),
+                        },
+                        mapSummary.areas.count > 0 && {
+                          key: 'areas',
+                          title: `Lead areas · ${mapSummary.areas.count} area${mapSummary.areas.count === 1 ? '' : 's'}`,
+                          bytes: mapSummary.areas.bytes,
+                          status:
+                            (mapSummary.areas.downloading ? ' · Downloading…' : '') +
+                            (mapSummary.areas.queued ? ` · ${mapSummary.areas.queued} waiting` : '') +
+                            (mapSummary.areas.failed ? ` · ${mapSummary.areas.failed} failed` : ''),
+                          onDelete: handleDeleteMapAreas,
+                        },
+                      ]
+                        .filter(Boolean)
+                        .map((row: any) => (
+                          <View
+                            key={row.key}
+                            className="flex-row items-center justify-between py-2 border-b"
+                            style={{ borderColor: colors.border }}
+                          >
+                            <View className="flex-1 mr-3">
+                              <Text className="text-[13px] font-bold" style={{ color: colors.text }} numberOfLines={1}>
+                                {row.title}
+                              </Text>
+                              <Text className="text-[11px] font-bold mt-0.5" style={{ color: colors.textSecondary }}>
+                                {formatBytes(row.bytes || 0)}
+                                {row.status}
+                              </Text>
+                            </View>
+                            <TouchableOpacity
+                              onPress={row.onDelete}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              <Icon name="trash-outline" size={16} color={colors.error?.main || '#EF4444'} />
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                    </View>
+
+                    <Text className="text-[11px] font-bold mt-3" style={{ color: colors.textSecondary }}>
+                      Total: {formatBytes(offlineMapManager.totalDownloadedBytes())}
+                    </Text>
+
+                    <TouchableOpacity
+                      onPress={handleClearAllMaps}
+                      disabled={clearingMaps}
+                      className="py-3.5 rounded-xl items-center mt-4 border"
+                      style={{
+                        borderColor: colors.border,
+                        opacity: clearingMaps ? 0.5 : 1,
+                      }}
+                    >
+                      {clearingMaps ? (
+                        <ActivityIndicator color={colors.textSecondary} />
+                      ) : (
+                        <Text
+                          className="font-black text-[11px] tracking-widest"
+                          style={{ color: colors.textSecondary }}
+                        >
+                          CLEAR ALL MAPS
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <Text className="text-[13px] font-bold mt-3" style={{ color: colors.textSecondary }}>
+                    No offline maps downloaded yet.
+                  </Text>
+                )}
               </View>
             </View>
           ) : (

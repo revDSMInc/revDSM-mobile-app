@@ -2,8 +2,16 @@ import { useEffect, useState } from 'react';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import { useAuth } from './useAuth';
 import { LeadService } from '../services/api/leads';
+import { OFFLINE_CACHE, cachedFetch, readOfflineCache } from '../utils/offline-query-cache';
+import { isOnline } from '../services/connectivity';
 
 // ----------------------------------------------------------------------
+
+/**
+ * How long a stored logo is treated as current while ONLINE. Past it the logo is re-downloaded
+ * and the copy refreshed; offline, age is never a reason to drop it.
+ */
+const LOGO_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 /**
  * RN port of web `src/hooks/use-secure-logo.js` (useCompanyLogoBase64).
@@ -17,19 +25,25 @@ import { LeadService } from '../services/api/leads';
  *
  * `loading` lets callers show a spinner instead of flashing the "no logo"
  * fallback while the fetch is in flight.
+ *
+ * `enabled` exists so a screen can WARM the logo while there is still signal. The generator that
+ * renders it only ever mounts offline (online the dialog uses the server preview), so without a
+ * warm this cache could never be written on any device and every offline agreement went out
+ * unbranded. See the call in `VerticalSummaryTab`.
  */
-export function useCompanyLogoBase64() {
+export function useCompanyLogoBase64(enabled: boolean = true) {
   const { user } = useAuth();
   const source: any = user?.companyLogo || user?.profilePicture || null;
   const hasLogo = Boolean(source?.bucketName && source?.filePath);
+  const userId = user?._id || user?.id;
 
   const [logo, setLogo] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(hasLogo);
+  const [loading, setLoading] = useState<boolean>(enabled && hasLogo);
 
   useEffect(() => {
     let active = true;
 
-    if (!hasLogo) {
+    if (!enabled || !hasLogo) {
       setLogo(null);
       setLoading(false);
       return undefined;
@@ -37,13 +51,34 @@ export function useCompanyLogoBase64() {
 
     setLoading(true);
     (async () => {
+      // Keyed by the logo's own path, so a company that changes its logo does not keep showing
+      // the old one on offline agreements.
+      const key = `${OFFLINE_CACHE.COMPANY_LOGO}:${source.filePath}`;
       try {
-        const res = await LeadService.getSecureUrls([
-          { bucketName: source.bucketName, filePath: source.filePath },
-        ]);
-        const secureUrl =
-          res?.data?.data?.[0]?.secureUrl || res?.data?.[0]?.secureUrl || null;
-        const base64 = secureUrl ? await urlToBase64(secureUrl) : null;
+        // A RECENT copy is served without touching the network, which is what makes warming this
+        // on every Summary tab affordable.
+        //
+        // Bounded rather than trusted forever, because the path is `profile/{companyId}.jpeg` and
+        // does NOT change when the logo is replaced — so the key alone cannot tell a new logo from
+        // the old one. Offline the read below has no ceiling: any logo beats no logo.
+        const recent = readOfflineCache<string | null>(key, { userId, maxAgeMs: LOGO_REFRESH_MS })?.data;
+        if (recent) {
+          if (active) setLogo(recent);
+          return;
+        }
+
+        const base64 = await cachedFetch<string | null>(
+          key,
+          async () => {
+            const res = await LeadService.getSecureUrls([
+              { bucketName: source.bucketName, filePath: source.filePath },
+            ]);
+            const secureUrl =
+              res?.data?.data?.[0]?.secureUrl || res?.data?.[0]?.secureUrl || null;
+            return secureUrl ? await urlToBase64(secureUrl) : null;
+          },
+          { online: isOnline(), userId }
+        );
         if (active) setLogo(base64);
       } catch (error) {
         console.warn('[useCompanyLogoBase64] Error getting company logo base64:', error);
@@ -56,8 +91,7 @@ export function useCompanyLogoBase64() {
     return () => {
       active = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source?.bucketName, source?.filePath, hasLogo]);
+  }, [source?.bucketName, source?.filePath, hasLogo, enabled, userId]);
 
   return { logo, loading, hasLogo };
 }

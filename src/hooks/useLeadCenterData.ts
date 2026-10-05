@@ -1,4 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { applyOfflineResult, isClientId } from '../utils/offline-lead-work';
+import { getOfflineWork, subscribeOfflineWork } from '../services/offlineLeadStore';
+import { isOnline } from '../services/connectivity';
+import { OFFLINE_CACHE, readOfflineCache, writeOfflineCache } from '../utils/offline-query-cache';
+import { leadDetailForCache } from '../utils/offline-lead-detail-cache';
 import { AppState } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
@@ -39,6 +44,23 @@ let salesPortalDetailUnavailable = false;
  */
 const isRouteMissing = (err: any): boolean =>
   err?.httpStatus === 404 && typeof err?.body === 'string' && err.body.trim().startsWith('<');
+
+/** Per-lead snapshot name. Scoped by rep inside the envelope, by lead id here. */
+const detailCacheKey = (leadId: string) => `${OFFLINE_CACHE.LEAD_DETAIL}:${leadId}`;
+
+/**
+ * Keep this lead for the next open with no signal.
+ *
+ * ⚠️ Always through `leadDetailForCache`, never raw. A sales-portal lead embeds its documents
+ * as base64, and MMKV rewrites its whole store on every write — so one document-heavy lead cached
+ * verbatim would tax every unrelated write in the app. `null` means "too big to keep", and the
+ * right response is to keep nothing: the screen then hydrates over the network exactly as it did
+ * before this cache existed.
+ */
+const cacheLeadDetail = (leadId: string, record: any, userId?: string) => {
+  const slim = leadDetailForCache(record);
+  if (slim) writeOfflineCache(detailCacheKey(leadId), slim, userId);
+};
 
 export const useLeadCenterData = (
   initialLead: any,
@@ -99,6 +121,30 @@ export const useLeadCenterData = (
    */
   const refetch = useCallback(async () => {
     if (!user?._id || !lead?._id) return;
+    // ⚠️ A lead the rep created with no signal has no server record to hydrate FROM — its id is one
+    // this device minted, so the request is `…/sales-portal/work-1773…`, which 404s. The local
+    // record IS the truth until the uploader files it, so leave `lead` exactly as it was handed in.
+    // ⚠️ Tested on the ID ALONE, never on the lead object. This callback deliberately closes over
+    // `lead._id` and not `lead` (see the note on its dependency list) — reading another field here
+    // puts `lead` in the deps and re-runs the hydrate on every hydrate.
+    if (isClientId(lead._id)) return;
+
+    // Offline: there is no request to make, but there may well be a copy of this lead from the
+    // last time it was opened with signal — and without it the screen renders the SLIM summary row
+    // the list handed it, which carries `salesPhotos: []` and no `jobBuilder`. That is the "no data
+    // inside the lead" QA reported after killing the app: the lead opens, and everything in it is
+    // missing. Merged the same way a live response is, so the two paths cannot diverge.
+    if (!isOnline()) {
+      const saved = readOfflineCache<any>(detailCacheKey(lead._id), { userId: user._id })?.data;
+      if (saved) {
+        setLead((prev: any) => ({
+          ...prev,
+          ...saved,
+          generatedReports: saved.generatedReports || prev?.generatedReports || [],
+        }));
+      }
+      return;
+    }
     // Collapse the open-hydrate and the focus refresh into a single request when they
     // land together on mount, and stop a fast re-focus from stacking calls.
     if (hydrateInFlightRef.current === lead._id) return;
@@ -142,6 +188,11 @@ export const useLeadCenterData = (
       }
 
       if (full) {
+        // Keep it for the next open with no signal. Written from the RESPONSE, never from the
+        // merged state: `prev` may already carry an offline overlay of work this device has not
+        // uploaded yet, and storing that would make a local draft look like something the server
+        // had confirmed.
+        cacheLeadDetail(lead._id, full, user._id);
         setLead((prev: any) => ({
           ...prev,
           ...full,
@@ -155,6 +206,7 @@ export const useLeadCenterData = (
         const workRes = await LeadService.workLead(lead._id, user._id);
         const workData = workRes.data?.data || workRes.data;
         if (workData) {
+          cacheLeadDetail(lead._id, workData, user._id);
           setLead((prev: any) => ({ ...prev, ...workData }));
         }
       }
@@ -369,8 +421,22 @@ export const useLeadCenterData = (
     };
   }, [initialLead?._id, queryClient]);
 
+  // ── A job finished with no signal, shown as finished ──────────────────────────────
+  //
+  // The rep completes the job at the door and comes straight back here. The lead record still
+  // says nothing happened — it cannot, the submit is sitting in the upload store — so the screen
+  // offered No demo / Reset / Not hit on a job that was already sold. Overlaying the stored
+  // submit makes the Lead Center read the way it will once the upload lands, from the rep's own
+  // figures until the server has its own.
+  //
+  // ⚠️ Applied at the RETURN, not written into `lead` state. The overlay must never be a value
+  // `refetch` could merge over, cache as though it were the server's, or send back up.
+  const [offlineWork, setOfflineWork] = useState(getOfflineWork);
+  useEffect(() => subscribeOfflineWork(() => setOfflineWork(getOfflineWork())), []);
+  const displayLead = useMemo(() => applyOfflineResult(lead, offlineWork), [lead, offlineWork]);
+
   return {
-    lead,
+    lead: displayLead,
     setLead,
     isRefreshing,
     refetch,

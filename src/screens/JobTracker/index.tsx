@@ -51,6 +51,9 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 import { useJobTracker } from '../../hooks/useJobTracker';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
+import { useIsOnline } from '../../hooks/useIsOnline';
+import { offlineBlockFor } from '../../utils/offline-capability';
+import { FlashMessage } from '../../config/message';
 
 export default function JobTrackerPage() {
   const { colors, isDark } = useTheme();
@@ -203,7 +206,28 @@ export default function JobTrackerPage() {
     }
   }, [user?._id, user?.id]);
 
+  const online = useIsOnline();
+
+  /**
+   * Every Job Tracker WRITE goes through here.
+   *
+   * ⚠️ There is no offline path for these and there should not be one invented in passing: the
+   * tracker's rows are the office's record of a job's money, and a queued edit that lands hours
+   * later — over whatever the office has since changed — is worse than an edit that waited.
+   *
+   * What this replaces is the silent version. `JobService.updateStatus` failing offline showed
+   * "Failed to update status" (a fault the rep would retry), and the two modals opened, took a
+   * full form, and threw it away on Save.
+   */
+  const blockedOffline = (): boolean => {
+    const notice = offlineBlockFor('job-tracker-write', online);
+    if (!notice) return false;
+    FlashMessage.info(notice.title, notice.message);
+    return true;
+  };
+
   const handleDelete = (job: JobEntry) => {
+    if (blockedOffline()) return;
     Alert.alert('Delete Job', 'Are you sure you want to delete this job entry?', [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -427,6 +451,7 @@ export default function JobTrackerPage() {
             <View className="flex-row justify-end mb-6">
               <TouchableOpacity
                 onPress={() => {
+                  if (blockedOffline()) return;
                   setEditingJob({ isManual: true } as any);
                   setModalVisible(true);
                 }}
@@ -949,9 +974,10 @@ export default function JobTrackerPage() {
           >
             <TouchableOpacity
               onPress={() => {
+                setSelectedJobForMenu(null);
+                if (blockedOffline()) return;
                 setEditingJob(selectedJobForMenu);
                 setModalVisible(true);
-                setSelectedJobForMenu(null);
               }}
               className="flex-row items-center px-4 py-3"
             >
@@ -961,10 +987,11 @@ export default function JobTrackerPage() {
 
             <TouchableOpacity
               onPress={() => {
+                setSelectedJobForMenu(null);
+                if (blockedOffline()) return;
                 setJobToUpdateStatus(selectedJobForMenu);
                 setShowStatusUpdateModal(true);
                 setShowStatusDropdown(false);
-                setSelectedJobForMenu(null);
               }}
               className="flex-row items-center px-4 py-3"
             >

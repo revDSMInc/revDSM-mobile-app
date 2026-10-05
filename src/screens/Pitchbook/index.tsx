@@ -57,6 +57,7 @@ import { storage } from '../../utils/storage';
 import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
 import { usePitchBookDeck } from '../../hooks/usePitchBooks';
+import { useIsOnline } from '../../hooks/useIsOnline';
 import { useTabStripAutoScroll } from '../../hooks/useTabStripAutoScroll';
 import Feather from 'react-native-vector-icons/Feather';
 import { useAuth } from '../../hooks/useAuth';
@@ -110,6 +111,7 @@ export default function PitchbookScreen() {
     refetch: refetchDeck,
   } = usePitchBookDeck(bookId);
   const isRemoteDeck = !!bookId;
+  const isPitchbookOnline = useIsOnline();
 
   const CATEGORIES = useMemo(
     () =>
@@ -1202,7 +1204,12 @@ export default function PitchbookScreen() {
               </Text>
               <Text className="text-text-secondary text-sm mt-1 text-center">
                 {isDeckError
-                  ? 'Check your connection and try again.'
+                  ? isPitchbookOnline
+                    ? 'Check your connection and try again.'
+                    : // A book is kept for offline use the first time it is OPENED with signal, so
+                      // "no connection" is only half the story — this names the thing the rep can
+                      // actually act on, rather than leaving them tapping Try Again at a door.
+                      "You're offline and this book hasn't been downloaded yet. Open it once with a connection and it will be available here."
                   : 'This pitch book has no published slides. Ask your manager to publish it.'}
               </Text>
               {isDeckError && (

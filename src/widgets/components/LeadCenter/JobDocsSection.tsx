@@ -29,8 +29,7 @@ import { EditContractDetailsModal } from '../../modals/lead-center/EditContractD
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DocumentScannerModal } from '../../modals/job-builder/DocumentScannerModal';
 import RNFS from 'react-native-fs';
-// @ts-ignore
-import base64 from 'base-64';
+import { convertJpegToPdf as sharedConvertJpegToPdf } from '../../../utils/jpeg-to-pdf';
 import { useAuth } from '../../../hooks/useAuth';
 import SocketManager from '../../../services/SocketManager';
 import { logEvent } from '../../../services/api/LoggerService';
@@ -75,6 +74,7 @@ import { ManagePhotosModal } from './ManagePhotosModal';
 import { DynamicManagePhotosView } from '../lead-center/DynamicManagePhotosView';
 import { DynamicInspectionView } from '../lead-center/DynamicInspectionView';
 import { useInspectionSchema } from '../../../hooks/useInspectionSchema';
+import { useIsOnline } from '../../../hooks/useIsOnline';
 import {
   indexSchema,
   getCapturableSlots,
@@ -260,8 +260,29 @@ export const JobDocsSection = ({
   // photos captured statically are invisible to the dynamic manage view (they
   // fail its `expectedCats` filter), which is exactly the "count shows but no
   // images" bug. Fetched eagerly because the capture CTA also branches on it.
-  const { configuredProducts, productsLoading } = useInspectionSchema({ enabled: true });
+  const { configuredProducts, productsLoading, schemaResolved } = useInspectionSchema({ enabled: true });
   const isDynamicInspection = configuredProducts.length > 0;
+  const isOnline = useIsOnline();
+
+  // ⚠️ `configuredProducts.length === 0` answers TWO different questions and they must not be
+  // conflated — that conflation is exactly what produced the "+ UNSORTED" orphans.
+  //
+  //   schema resolved, zero products  → this company configured nothing. The legacy flow IS
+  //                                     the right answer. Carry on.
+  //   schema NOT resolved             → we never got to ask. Offline after a cold start, the
+  //                                     query cache is gone and there is nothing to fall back
+  //                                     on, so `isDynamicInspection` reads false and capture
+  //                                     drops to the LEGACY flow — which stores a photo's
+  //                                     category UNSCOPED (`"Home"`, not
+  //                                     `"Gutters/Roofline — HOME"`). Back online those photos
+  //                                     match no configured slot, land in "+ UNSORTED",
+  //                                     don't count towards the tab totals, and cannot be
+  //                                     re-filed. Silently writing the wrong format is worse
+  //                                     than declining, so decline.
+  //
+  // Only blocks when BOTH are true: unresolved AND offline. Online, an unresolved schema is a
+  // request still in flight or a server problem the rep can retry.
+  const inspectionSchemaUnavailable = !schemaResolved && !isOnline;
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -679,51 +700,14 @@ export const JobDocsSection = ({
     setScannerOpen(true);
   };
 
-  const convertJpegToPdf = (jpegBase64: string, width = 595, height = 842): string => {
-    const cleanBase64 = jpegBase64.replace(/^data:image\/[a-z]+;base64,/, '');
-    const binaryImg = base64.decode(cleanBase64);
-    const imgLength = binaryImg.length;
-
-    const obj1 = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
-    const obj2 = "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n";
-    const obj3 = `3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources 4 0 R /MediaBox [0 0 ${width} ${height}] /Contents 5 0 R >>\nendobj\n`;
-    const obj4 = "4 0 obj\n<< /ProcSet [/PDF /ImageC] /XObject << /Im1 6 0 R >> >>\nendobj\n";
-    const contentStream = `q\n${width} 0 0 ${height} 0 0 cm\n/Im1 Do\nQ\n`;
-    const obj5 = `5 0 obj\n<< /Length ${contentStream.length} >>\nstream\n${contentStream}endstream\nendobj\n`;
-    const obj6Header = `6 0 obj\n<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imgLength} >>\nstream\n`;
-    const obj6Footer = "\nendstream\nendobj\n";
-
-    const pdfHeader = "%PDF-1.3\n";
-    const offset1 = pdfHeader.length;
-    const offset2 = offset1 + obj1.length;
-    const offset3 = offset2 + obj2.length;
-    const offset4 = offset3 + obj3.length;
-    const offset5 = offset4 + obj4.length;
-    const offset6 = offset5 + obj5.length;
-
-    const obj6FullLength = obj6Header.length + imgLength + obj6Footer.length;
-    const offsetStartXref = offset6 + obj6FullLength;
-
-    const padOffset = (offset: number) => String(offset).padStart(10, '0');
-
-    const xref = `xref\n0 7\n0000000000 65535 f \n${padOffset(offset1)} 00000 n \n${padOffset(offset2)} 00000 n \n${padOffset(offset3)} 00000 n \n${padOffset(offset4)} 00000 n \n${padOffset(offset5)} 00000 n \n${padOffset(offset6)} 00000 n \n`;
-    const trailer = `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${offsetStartXref}\n%%EOF\n`;
-
-    const pdfBinaryString =
-      pdfHeader +
-      obj1 +
-      obj2 +
-      obj3 +
-      obj4 +
-      obj5 +
-      obj6Header +
-      binaryImg +
-      obj6Footer +
-      xref +
-      trailer;
-
-    return base64.encode(pdfBinaryString);
-  };
+  /**
+   * The one definition lives in `utils/jpeg-to-pdf`. Inlined copies of this used to
+   * sit in three screens, and all three declared the PAGE size as the image's pixel
+   * size — which Android's PDF renderer reads literally and Quartz ignores, so a
+   * converted scan opened as a giant top-left crop on Android only.
+   */
+  const convertJpegToPdf = (jpegBase64: string, width = 595, height = 842): string =>
+    sharedConvertJpegToPdf(jpegBase64, width, height);
 
   const handleSaveScannedDocument = async (pages: any[]) => {
     // Backend job-builder document category (matches web `submitJobBuilder`):
@@ -1037,6 +1021,16 @@ export const JobDocsSection = ({
   };
 
   const handleStartTakingPhotos = () => {
+    // See `inspectionSchemaUnavailable`. Capturing here would file the photos through the
+    // legacy flow under unscoped categories, and the rep would only find out days later when
+    // they turned up as un-refilable "+ UNSORTED" orphans.
+    if (inspectionSchemaUnavailable) {
+      Alert.alert(
+        'Photo tagging needs to sync first',
+        'Your photo categories have not been downloaded to this device yet. Connect once and reopen this lead — after that, taking photos works offline.'
+      );
+      return;
+    }
     // With a configured inspection schema the whole capture flow lives in the
     // dynamic view (photo-first: shoot, then tag into a schema slot), so capture
     // and Manage Photos write/read the same product-scoped categories.
@@ -1052,6 +1046,27 @@ export const JobDocsSection = ({
     setTaggingAsset(null);
     setShowTagModal(true);
   };
+
+  /**
+   * The LEGACY tag/capture flow's other door.
+   *
+   * `ManagePhotosModal` lets a rep shoot straight into an empty slot, which reaches the same
+   * unscoped-category write as the CTA — so it needs the same guard, or the block above is
+   * simply routed around. Passed to that modal in place of the raw `setShowTagModal`.
+   */
+  const openLegacyTagModal = useCallback(
+    (next: boolean) => {
+      if (next && inspectionSchemaUnavailable) {
+        Alert.alert(
+          'Photo tagging needs to sync first',
+          'Your photo categories have not been downloaded to this device yet. Connect once and reopen this lead — after that, taking photos works offline.'
+        );
+        return;
+      }
+      setShowTagModal(next);
+    },
+    [inspectionSchemaUnavailable]
+  );
 
   const getRequiredSlotsForActiveTab = useCallback(() => {
     const catIds = getCategoryIdsForTab(activeManageTab);
@@ -2052,7 +2067,7 @@ export const JobDocsSection = ({
         toggleSelectPhoto={toggleSelectPhoto}
         handleOpenPreviewTab={handleOpenPreviewTab}
         setMovingImage={setMovingImage}
-        setShowTagModal={setShowTagModal}
+        setShowTagModal={openLegacyTagModal}
         setShowManageModal={setShowManageModal}
         handleDelete={handleDelete}
         getSubcategoryLabel={getSubcategoryLabel}

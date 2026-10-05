@@ -1,5 +1,9 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { OFFLINE_CACHE, cachedFetch } from '../../../utils/offline-query-cache';
+import { isOnline } from '../../../services/connectivity';
+import { useAuth } from '../../../hooks/useAuth';
+
 import api from '../../../services/api';
 import { paymentPlans as STATIC_PLANS } from '../../../utils/calculator/payment-plans';
 import {
@@ -275,23 +279,39 @@ function normalizeDiscount(raw: any): DiscountShape {
  */
 export function useDealPricing(lead: any): DealPricing {
   const isLowesLead = lead?.lowesLead === true;
+  // Plans and discount tiers are company setup. Cached so the rollout can still price, pick a
+  // payment method and validate against a plan minimum with no signal — without them the fallback
+  // static lists apply, which are not this company's plans.
+  const { user } = useAuth();
+  const userId = user?._id || user?.id;
 
   const { data: plansData, isLoading: plansLoading } = useQuery<DealPlan[]>({
     queryKey: ['dealCenterProviderPlans'],
-    queryFn: async () => {
-      const res = await api.get<any>(PROVIDER_PLANS_URL);
-      return normalizePlanResponse(res.data);
-    },
+    queryFn: () =>
+      cachedFetch(
+        OFFLINE_CACHE.PAYMENT_PLANS,
+        async () => {
+          const res = await api.get<any>(PROVIDER_PLANS_URL);
+          return normalizePlanResponse(res.data);
+        },
+        { online: isOnline(), userId }
+      ),
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
 
   const { data: discountData, isLoading: discountLoading } = useQuery<DiscountShape>({
     queryKey: ['dealCenterDiscountConfig'],
-    queryFn: async () => {
-      const res = await api.get<any>(DISCOUNT_CONFIG_URL);
-      return normalizeDiscount(res.data);
-    },
+    queryFn: () =>
+      cachedFetch(
+        OFFLINE_CACHE.DISCOUNT_CONFIG,
+        async () => {
+          const res = await api.get<any>(DISCOUNT_CONFIG_URL);
+          return normalizeDiscount(res.data);
+        },
+        // ⚠️ A discount config legitimately has no plans array; "empty" here is no config at all.
+        { online: isOnline(), userId, isEmpty: (d: any) => !d }
+      ),
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });

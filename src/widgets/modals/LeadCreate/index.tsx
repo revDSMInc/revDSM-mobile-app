@@ -32,6 +32,23 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { format } from 'date-fns';
 import { logEvent } from '../../../services/api/LoggerService';
 import { NUMBER_PAD_KEYBOARD } from '../../../utils/keyboard-type';
+import { isOnline } from '../../../services/connectivity';
+import { useIsOnline } from '../../../hooks/useIsOnline';
+import { reverseGeocode } from '../../../utils/places';
+import {
+  formatCoordsPlaceholder,
+  geolocationOptions,
+  isValidCoords,
+  needsAddressResolution,
+  parseCoordsPlaceholder,
+  resolveSyncAddress,
+} from '../../../utils/offline-lead-location';
+import { enqueueOfflineLead } from '../../../services/offlineLeadStore';
+import {
+  classifyCreateOutcome,
+  messageOfError,
+  resolveRetryDecision,
+} from '../../../utils/offline-lead-queue';
 
 interface Props {
   visible: boolean;
@@ -60,6 +77,10 @@ export default function LeadCreateModal({
 }: Props) {
   const { colors, isDark } = useTheme();
   const createLeadMutation = useCreateLeadMutation();
+  // For RENDER only. Every imperative read inside an async callback calls `isOnline()` directly,
+  // so a connection that drops mid-fix is judged on what is true when the callback runs rather
+  // than on what was true when the closure was created.
+  const online = useIsOnline();
   const initialFormState: {
     firstName: string;
     lastName: string;
@@ -198,17 +219,42 @@ export default function LeadCreateModal({
     setIsLocating(true);
     Geolocation.getCurrentPosition(
       async (position) => {
+        const { latitude, longitude } = position.coords;
+        const coords = { latitude, longitude };
+        // Never overwrite an address the rep has already typed — theirs outranks anything we
+        // derive from a fix that is only accurate to within several metres.
+        const fillAddress = (text: string) =>
+          setForm((prev) => (prev.address.trim() ? prev : { ...prev, address: text }));
+
         try {
-          const { latitude, longitude } = position.coords;
+          // ⚠️ Store the fix BEFORE anything that can throw. This line used to sit inside the
+          // reverse-geocode's success branch, so with no signal the GPS lock succeeded, the axios
+          // call threw, and a perfectly good position was discarded — the lead then went up with
+          // `location: undefined`. The coordinates are the half that needs no network; nothing
+          // network-shaped may gate them.
+          if (isValidCoords(coords)) setLocation(coords);
+
+          // Offline there is no reverse-geocoder to reach: iOS CLGeocoder and Android Geocoder
+          // both call a web service. Show the coordinates so the rep can see the fix landed, and
+          // let them type the address off the door — `resolveSyncAddress` resolves it at submit.
+          if (!isOnline()) {
+            if (isValidCoords(coords)) fillAddress(formatCoordsPlaceholder(coords));
+            return;
+          }
+
           const res = await axios.get(
             `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${ENV.GOOGLE_MAPS_API_KEY}`
           );
           if (res.data.results?.[0]) {
-            setForm((prev) => ({ ...prev, address: res.data.results[0].formatted_address }));
-            setLocation({ latitude, longitude });
+            fillAddress(res.data.results[0].formatted_address);
+          } else if (isValidCoords(coords)) {
+            fillAddress(formatCoordsPlaceholder(coords));
           }
         } catch (e) {
+          // A geocode that fails on a live-looking connection is the same situation as offline:
+          // we hold a real fix and no address for it. Show the fix rather than an empty box.
           console.warn('Geocoding failed', e);
+          if (isValidCoords(coords)) fillAddress(formatCoordsPlaceholder(coords));
         } finally {
           setIsLocating(false);
         }
@@ -228,7 +274,9 @@ export default function LeadCreateModal({
           );
         }
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      // Offline the chip has no A-GPS almanac and no Wi-Fi triangulation to lean on, so a cold
+      // fix takes 30-60 s. The online 15 s timeout would abort nearly every one of them.
+      geolocationOptions(isOnline())
     );
   };
 
@@ -242,6 +290,14 @@ export default function LeadCreateModal({
     // the typed address when no suggestion was picked.
     setLocation(null);
     if (text.length > 3) {
+      // Places autocomplete is a network call whose failure is swallowed, so offline it leaves the
+      // rep typing into a box that never responds. Suppress it outright and let them type the
+      // address straight through; the GPS fix is already attached to the lead either way.
+      if (!isOnline()) {
+        setSuggestions([]);
+        setShowSuggestions(false);
+        return;
+      }
       try {
         const res = await axios.get(
           `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
@@ -356,13 +412,44 @@ export default function LeadCreateModal({
       }
     }
 
+    // Declared out here so the catch below can read it: whether a FAILED create may be safely
+    // queued for replay depends on the lead's own shape (see `resolveRetryDecision`).
+    let payload: Record<string, any> | null = null;
+
     try {
       Keyboard.dismiss();
-      // The pin is placed from these coordinates, so they must match `form.address`. With none
-      // (the rep typed the address without picking a suggestion) look the typed address up;
+
+      // The address box may still hold the coordinate placeholder from a fix taken with no signal.
+      // Resolving it HERE — at the moment of sending, not at capture — is the whole shape of the
+      // offline flow: the coordinates are captured the instant the rep is at the door, and the
+      // street address is derived later, whenever a connection exists to derive it with.
+      //
+      // ⚠️ `resolveSyncAddress` guarantees a rep-typed address is never replaced by the geocode.
+      // A fix is accurate to +/-5-20 m and a reverse-geocode snaps it to the nearest address it
+      // knows, which on an ordinary street is regularly the NEIGHBOUR. What the rep read off the
+      // mailbox is better data than anything we can infer from a scatter of metres.
+      let reverseGeocoded: string | null = null;
+      if (isOnline() && needsAddressResolution(form.address, location)) {
+        const fix = isValidCoords(location) ? location : parseCoordsPlaceholder(form.address);
+        if (fix) reverseGeocoded = await reverseGeocode(fix);
+      }
+      const { address: submitAddress } = resolveSyncAddress({
+        address: form.address,
+        coords: location,
+        reverseGeocoded,
+      });
+
+      // The pin is placed from these coordinates, so they must match the address filed. With
+      // none (the rep typed the address without picking a suggestion) look the typed address up;
       // if Google can't place it, send none rather than somebody else's location.
-      const leadLocation = location || (await geocodeAddress(form.address));
-      const payload = isLF
+      // ⚠️ The look-up is a network call: offline there is nothing to ask, so it is skipped and
+      // the lead goes up with the GPS fix alone (or none) rather than failing the submit.
+      const leadLocation =
+        (isValidCoords(location) ? location : null) ||
+        parseCoordsPlaceholder(form.address) ||
+        (isOnline() ? await geocodeAddress(submitAddress) : null);
+
+      payload = isLF
         ? {
           leadType: 'lfLead',
           lfLeadId: form.lfLeadId,
@@ -385,7 +472,7 @@ export default function LeadCreateModal({
             return date.toISOString();
           })(),
           lfLeadTime: form.lfLeadTime,
-          fullAddress: form.address,
+          fullAddress: submitAddress,
           location: leadLocation
             ? {
               type: 'Point',
@@ -397,13 +484,13 @@ export default function LeadCreateModal({
             lastName: form.lastName.trim(),
             phone: form.phone,
             email: form.email,
-            address: form.address,
+            address: submitAddress,
           },
         }
         : {
           leadType: 'selfGen',
           repId: user?._id || user?.id,
-          fullAddress: form.address,
+          fullAddress: submitAddress,
           lowesLead: form.lowesLead === true,
           location: leadLocation
             ? {
@@ -416,7 +503,7 @@ export default function LeadCreateModal({
             lastName: form.lastName.trim(),
             ...(form.phone ? { phone: form.phone } : {}),
             email: form.email,
-            address: form.address,
+            address: submitAddress,
           },
           ...(fromZone && {
             zoneId,
@@ -425,6 +512,20 @@ export default function LeadCreateModal({
             longitude: leadLocation?.longitude,
           }),
         };
+      // With no signal, park the lead rather than failing. It carries the GPS fix taken at the
+      // door and whatever address the rep typed; `resolveSyncAddress` above has already settled
+      // which of those gets filed, so the queued body is the exact one that would have been sent.
+      if (!isOnline()) {
+        enqueueOfflineLead(payload);
+        showSuccess(
+          'Saved offline',
+          "This lead is queued and will be created automatically when you're back online.",
+        );
+        onSuccess(null, form.leadType);
+        handleClose();
+        return;
+      }
+
       console.log(payload, 'lf lead creation');
       const response = await createLeadMutation.mutateAsync(payload);
       showSuccess('Success', 'Lead created successfully');
@@ -451,7 +552,46 @@ export default function LeadCreateModal({
       onSuccess(createdLead, form.leadType);
       handleClose();
     } catch (err: any) {
-      showError('Error', err?.message || 'Failed to create lead');
+      // A create can fail on a connection that LOOKED live — one bar at the door, a tunnel. Rather
+      // than losing the rep's work, run the failure through the same decision table the replay
+      // queue uses and act on its verdict.
+      const outcome = classifyCreateOutcome(err);
+      const decision = resolveRetryDecision(outcome, payload);
+
+      if (payload && decision === 'retry') {
+        // Provably never sent, or an Issued Lead whose `lfLeadId` the server would refuse a second
+        // time — either way a replay cannot duplicate it.
+        enqueueOfflineLead(payload);
+        showSuccess(
+          'Saved offline',
+          "We couldn't reach the server, so this lead is queued and will be created automatically.",
+        );
+        onSuccess(null, form.leadType);
+        handleClose();
+        return;
+      }
+
+      if (decision === 'done') {
+        // The server refused a duplicate lead id, which means an earlier attempt already landed.
+        showSuccess('Already created', 'This lead is already on the server.');
+        onSuccess(null, form.leadType);
+        handleClose();
+        return;
+      }
+
+      if (decision === 'needs-review') {
+        // ⚠️ The honest answer, and the reason this branch exists at all. The request may have been
+        // processed and may not have been, and a self-gen lead has NO unique field the server would
+        // refuse — so replaying it could file a second real lead. A human checking the list is
+        // slower than a guess and is never wrong.
+        showError(
+          "Couldn't confirm",
+          'The lead may or may not have saved. Check your Leads list before entering it again.',
+        );
+        return;
+      }
+
+      showError('Error', messageOfError(err) || 'Failed to create lead');
     }
   };
 
@@ -621,7 +761,11 @@ export default function LeadCreateModal({
                       scrollViewRef.current?.scrollTo({ y: addressFieldY, animated: true });
                     }}
                     placeholder={
-                      isLocating ? 'Detecting your location...' : '123 Main St, City, State'
+                      isLocating
+                        ? online
+                          ? 'Detecting your location...'
+                          : 'Locating by GPS — this can take a minute...'
+                        : '123 Main St, City, State'
                     }
                     // ⚠️ MULTILINE and growing, not a fixed 56pt single line: a full address
                     // ("829 Old 9 Foot Rd, Winter Haven, FL 33880, USA") overflowed and the
@@ -770,6 +914,41 @@ export default function LeadCreateModal({
                     </View>
                   )}
                 </View>
+
+                {/* Offline, the address box behaves differently in two visible ways — no
+                    suggestions, and a coordinate placeholder instead of a street address — and
+                    neither is self-explanatory. Without this line the rep sees autocomplete
+                    silently stop working and has no way to tell whether the lead has a position
+                    attached at all. */}
+                {!online && !fromZone && (
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'flex-start',
+                      marginTop: 8,
+                      gap: 6,
+                    }}
+                  >
+                    <Ionicons
+                      name={isValidCoords(location) ? 'navigate-circle-outline' : 'cloud-offline-outline'}
+                      size={14}
+                      color={colors.textSecondary}
+                      style={{ marginTop: 1 }}
+                    />
+                    <Text
+                      style={{
+                        flex: 1,
+                        fontSize: 11,
+                        lineHeight: 15,
+                        color: colors.textSecondary,
+                      }}
+                    >
+                      {isValidCoords(location)
+                        ? "Offline - GPS position saved. Type the address if you can read it; otherwise we'll fill it in when you're back online."
+                        : 'Offline - address suggestions are unavailable. Type the full address, or tap the pin to locate by GPS.'}
+                    </Text>
+                  </View>
+                )}
               </View>
 
               {/* Lead Type — hidden from zone canvasser (self-gen only, web parity) */}
