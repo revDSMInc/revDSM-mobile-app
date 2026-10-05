@@ -148,26 +148,45 @@ export function buildDealCenterData({
     if (resolvedName) data.customerName = resolvedName;
   }
 
-  // 2. Ingest every active calculator entry under all its known key aliases
-  Object.values(entries).forEach((entry: any) => {
-    if (!entry?.fieldId) return;
+  // 2. Ingest every active calculator entry under all its known key aliases.
+  //    ⚠️ Two passes, so the order the entries happen to arrive in can never decide a
+  //    value: pass A writes the legacy-name ALIASES, pass B writes each entry's own
+  //    canonical field id LAST. A saved calculator's entries come back from the server in
+  //    arbitrary order, and a single pass let one field's alias overwrite another field's
+  //    value (the Job Builder's locked Extras ▸ Wedges showed the 5" gutter footage).
+  const entryKeys = new Set<string>();
+  const live = Object.values(entries).filter((entry: any) => {
+    if (!entry?.fieldId) return false;
     const value = entry.inputValue;
     // Skip zero / null / empty — absence of key means "not entered", which is
     // what tab-lock rules check via hasDealCenterDataValue.
     // HOWEVER: we DO include 0-value fields because some allocation rules use
     // "anyNonZero" / numeric comparisons — we let the engine decide.
-    if (value === '' || value === null || value === undefined) return;
+    return !(value === '' || value === null || value === undefined);
+  }) as any[];
+  const ownIds = new Set(live.map((entry) => entry.fieldId));
 
-    const keys = collectKeysForEntry(entry, fieldOptions);
-    keys.forEach((key) => {
-      data[key] = value;
+  live.forEach((entry) => {
+    collectKeysForEntry(entry, fieldOptions).forEach((key) => {
+      // An alias never clobbers another field's own id.
+      if (key !== entry.fieldId && ownIds.has(key)) return;
+      data[key] = entry.inputValue;
+      entryKeys.add(key);
     });
+  });
+  live.forEach((entry) => {
+    data[entry.fieldId] = entry.inputValue;
+    entryKeys.add(entry.fieldId);
   });
 
   // 3. Ingest top-level result outcome data (contractPrice, versatile, etc.)
   //    These keys are used directly as dcField references in the job builder.
+  //    ⚠️ A key the rep's ENTRIES supplied is not overridden: the result's top-level
+  //    legacy columns (`wedges`, `gutter5DsE`, …) are derived/stale, the entries are the
+  //    source of truth.
   Object.entries(resultData || {}).forEach(([key, value]) => {
     if (value === null || value === undefined || value === '') return;
+    if (entryKeys.has(key)) return;
     data[key] = value;
   });
 
