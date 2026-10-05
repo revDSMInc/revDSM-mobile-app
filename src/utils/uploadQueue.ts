@@ -107,9 +107,24 @@ class UploadQueueManager {
     return this.queue.some((i) => !isClientId(i.leadId) && this.ownedByCurrentSession(i));
   }
 
-  /** Drop the in-memory copy when the session ends — the MMKV wipe alone would be re-persisted. */
+  /** How many photos are sendable right now — the background drain's progress measure. */
+  public uploadableCount(): number {
+    return this.queue.filter((i) => !isClientId(i.leadId) && this.ownedByCurrentSession(i)).length;
+  }
+
+  /**
+   * Re-read the queue from MMKV when the session changes.
+   *
+   * ⚠️ Reloads, never just empties. `upload_photo_queue` is in `SESSION_KEEP_KEYS`, so the saved
+   * copy SURVIVES a sign-out on purpose — a photo belongs to the rep who took it, not to the
+   * session. This used to set `queue = []` and never read it back, so the very next `saveQueue()`
+   * (any new photo, a rekey) overwrote MMKV with only the new items and silently erased every
+   * earlier rep's unsent photos, leaving their files orphaned in `upload_queue/`. The ownership
+   * filter already keeps another rep's items from being shown or sent.
+   */
   public resetForNewSession() {
     this.queue = [];
+    this.loadQueue();
     this.isProcessing = false;
     this.activeUploadId = null;
     this.notifyListeners();

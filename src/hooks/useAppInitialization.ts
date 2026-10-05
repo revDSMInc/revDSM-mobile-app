@@ -17,6 +17,7 @@ import { startOfflineWorkSync } from '../services/offlineLeadStore';
 import { adoptSessionOwner } from '../services/sessionScope';
 import { startPhotoQueueSync } from '../utils/uploadQueue';
 import { startActivityLogSync } from '../services/offlineActivityLog';
+import { startBackgroundUploadService } from '../services/background/backgroundUploadService';
 import { startCalculatorSettingsSync } from '../services/offlineSettings';
 import {
   startConnectivityMonitor,
@@ -245,6 +246,11 @@ export function useAppInitialization() {
     // Replay the arrival events the office reads — check in / resume / review / pause — that were
     // fired at a door with no signal. Same reconnect-driven, idempotent shape as the two above.
     startActivityLogSync();
+
+    // Keep draining all four queues after the app leaves the screen: an iOS grace period, or the
+    // Android foreground service. Subscribes to app-state only — the engines above own the
+    // foreground triggers, and every drain is single-flight, so the two cannot collide.
+    startBackgroundUploadService();
     // ⚠️ The local user is patched BEFORE the pending record clears. The other order drops the
     // override while redux still holds the older server value, and the rep's toggle flips back.
     startCalculatorSettingsSync((applied) => {

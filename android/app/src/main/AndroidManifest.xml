@@ -13,6 +13,10 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Android 13+ (API 33+). Without this the OS silently drops every notification. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Background upload: a foreground service keeps queued photos/leads draining after the app
+         leaves the screen. Android 14+ requires the specific type permission as well. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
       android:name=".MainApplication"
@@ -37,6 +41,13 @@
         android:name="com.google.firebase.messaging.default_notification_color"
         android:resource="@color/notification_accent"
         tools:replace="android:resource" />
+      <!-- notifee's foreground service, declared here so Android 14+ sees the dataSync type.
+           tools:replace because the library's own manifest entry carries no type. -->
+      <service
+        android:name="app.notifee.core.ForegroundService"
+        android:foregroundServiceType="dataSync"
+        android:exported="false"
+        tools:replace="android:foregroundServiceType" />
       <activity
         android:name=".MainActivity"
         android:label="@string/app_name"
