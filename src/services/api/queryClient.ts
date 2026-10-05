@@ -3,18 +3,6 @@ import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query'
 import { isOnline, subscribeConnectivity } from '../connectivity';
 
 /**
- * Teach React Query what the rest of the app already knows.
- *
- * Without this, `onlineManager` falls back to its own web-oriented default and effectively believes
- * the app is always online: retries burn through their budget against a dead link, and — the part
- * that matters — nothing refetches when signal comes back, because nothing told it signal came back.
- */
-onlineManager.setEventListener((setOnline) => {
-  setOnline(isOnline());
-  return subscribeConnectivity(setOnline);
-});
-
-/**
  * React Query's "window focus" concept is a browser idea; on RN nothing drives it
  * unless `focusManager` is told about `AppState`. Without this a query that opts
  * into `refetchOnWindowFocus` never revalidates when the app returns from the
@@ -33,6 +21,18 @@ onlineManager.setEventListener((setOnline) => {
  */
 AppState.addEventListener('change', (status: AppStateStatus) => {
   focusManager.setFocused(status === 'active');
+});
+
+/**
+ * Teach React Query what the rest of the app already knows.
+ *
+ * Without this, `onlineManager` falls back to its own web-oriented default and effectively believes
+ * the app is always online: retries burn through their budget against a dead link, and — the part
+ * that matters — nothing refetches when signal comes back, because nothing told it signal came back.
+ */
+onlineManager.setEventListener((setOnline) => {
+  setOnline(isOnline());
+  return subscribeConnectivity(setOnline);
 });
 
 export const queryClient = new QueryClient({

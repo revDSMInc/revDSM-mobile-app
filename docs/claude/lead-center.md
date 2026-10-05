@@ -1113,3 +1113,9 @@ The container is now a FIXED clip and a new inner `Reanimated.View` carries the 
 - ⚠️ Do not put `imageAnimStyle` back on the container. The compare handle lives INSIDE the zoom layer on purpose: the mask is in image coordinates, so it must scale with the picture or the split would drift off the pixels it describes (the handle circle also grows when zoomed - accepted).
 - Pan is clamped to `(scale - 1) / 2` of the width and of the measured frame height (`boxHeight`, set in `onLayout`), so the picture cannot be flung out of the frame.
 - Device check (this repo cannot render-test): pinch to zoom, drag while zoomed, and that the slider handle still drags at 1x and when zoomed.
+
+## Tools tab: Pitch Book tile drops the "No pitch books published" line
+
+Ticket: *remove the words under Pitch Book.* In `OperationalSections.tsx` the pitch-book tile subtitle is now empty (and the `<Text>` not rendered) when no books are published; the row still opens the bundled standard deck.
+
+- ⚠️ Only the empty-state copy was removed. "N pitch books available", "Loading pitch books…" and the "Couldn't load — tap ↻ to retry" line stay, because a failed list read must not look like an empty one.

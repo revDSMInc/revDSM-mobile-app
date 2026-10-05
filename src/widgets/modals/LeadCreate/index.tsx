@@ -444,17 +444,15 @@ export default function LeadCreateModal({
         reverseGeocoded,
       });
 
-      // The pin is placed from these coordinates, so they must match `submitAddress`. With none
-      // (the rep typed the address without picking a suggestion, and no GPS fix was captured)
-      // recover a coords placeholder if the text still carries one, else look the typed address
-      // up ONLINE ONLY — every other network call in this handler is `isOnline()`-gated, and an
-      // offline attempt here would just add latency to the queue-and-park path below for a call
-      // `geocodeAddress` will swallow into `null` anyway. If Google can't place it, send none
-      // rather than somebody else's location.
+      // The pin is placed from these coordinates, so they must match the address filed. With
+      // none (the rep typed the address without picking a suggestion) look the typed address up;
+      // if Google can't place it, send none rather than somebody else's location.
+      // ⚠️ The look-up is a network call: offline there is nothing to ask, so it is skipped and
+      // the lead goes up with the GPS fix alone (or none) rather than failing the submit.
       const leadLocation =
-        location ||
+        (isValidCoords(location) ? location : null) ||
         parseCoordsPlaceholder(form.address) ||
-        (isOnline() ? await geocodeAddress(form.address) : null);
+        (isOnline() ? await geocodeAddress(submitAddress) : null);
 
       payload = isLF
         ? {

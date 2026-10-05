@@ -122,6 +122,9 @@ export const drainActivityLogs = async (): Promise<void> => {
   }
 };
 
+/** Whether a drain is mid-flight. Lets the background loop tell "stuck" from "busy". */
+export const isActivityLogDraining = (): boolean => draining;
+
 export const runActivityLogDrain = (): void => {
   drainActivityLogs().catch((e) => console.warn('[activityLogQueue] drain failed', e));
 };

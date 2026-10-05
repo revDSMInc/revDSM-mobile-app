@@ -97,3 +97,4 @@ __tests__/
 !.yarn/versions
 yarn.lock
 branch_structure.json
+config.bat

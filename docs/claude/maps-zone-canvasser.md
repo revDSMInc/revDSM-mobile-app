@@ -948,3 +948,17 @@ Android alike "Save Zone" sat underneath the zoom buttons.
 - Right-hand column: every control is 44pt wide on the same `right-4` axis. The PINS toggle (32pt wide) sat on a narrower container, so its centre was ~5pt off the column; it now has a fixed `width: 44`. Draw buttons are `rounded-xl` like the zoom stack, and the stack's gaps are 8 (was 12) to match the draw buttons'.
 - Add New Lead, Issued Lead's **Lead ID** asked for `NUMERIC_KEYBOARD` (the DECIMAL pad), which on Android shows blank keys plus `. - ,` - the client's complaint. It is a whole-number field, so it uses `NUMBER_PAD_KEYBOARD` (clean 0-9) and `onChangeText` strips non-digits. iPad is unchanged (both constants resolve to `numbers-and-punctuation` there). The Appointment Date field stays a text keyboard because it needs `/`.
 - Add New Lead used TWO keyboards: Phone Number was `phone-pad` (letters + `* + #`) and Lead ID `number-pad`. Both digit fields now use `NUMBER_PAD_KEYBOARD`, so the form shows one layout; the phone formatter supplies the `+1 ( ) -` punctuation. Do not point a digit field here back at `phone-pad`.
+
+## Zone Canvasser: Mapbox logo and info (i) button removed
+
+Ticket: *remove the Mapbox logo and the information button from the footsteps map.* `MapCanvas.tsx` `<MapView>` now has `logoEnabled={false}` and `attributionEnabled={false}` (both were `true`).
+
+- ⚠️ Mapbox terms normally require the wordmark/attribution to stay visible; this was an explicit product request. If the attribution must come back, surface it elsewhere (e.g. a Profile/About screen) rather than re-enabling the on-map (i).
+
+### Merge note: Add Lead submit combines the pin-coordinate rule with the offline flow (`dev-qs-offline`)
+
+`widgets/modals/LeadCreate/index.tsx` had three conflicts. The merged submit does, in order: (1) `resolveSyncAddress` settles the filed address (`submitAddress`; a rep-typed address always wins over a reverse-geocode); (2) `leadLocation` = the stored GPS/picked-suggestion `location`, else the coordinates inside a `📍` placeholder address, else — ONLINE only — `geocodeAddress(submitAddress)`; (3) both payloads (`selfGen` and `lfLead`) use `submitAddress` and `leadLocation`. Offline it parks the payload via `enqueueOfflineLead`.
+
+- ⚠️ `leadLocation` must keep driving the pin (`location.coordinates` AND the zone `latitude`/`longitude`) — the earlier fix that stopped a typed address being saved on the rep's own GPS position (the Davenport-on-Lahore bug) still holds because `handleAddressSearch` clears `location` when the rep types.
+- ⚠️ `geocodeAddress` is a network call, so it is gated on `isOnline()`; ungated it would stall or fail an offline submit.
+- Keyboard: this branch's `NUMBER_PAD_KEYBOARD` stays; the offline branch's `NUMERIC_KEYBOARD` import was unused and dropped.

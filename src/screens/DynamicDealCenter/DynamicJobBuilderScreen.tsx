@@ -318,7 +318,6 @@ function DynamicJobBuilderInner({
         // the signed-URL round-trip, or `initialJobState` (the draft) can't reach the
         // session until the whole doc chain settles. That is the "reopen shows empty,
         // then fills in a moment later" the rep sees.
-        //
         // `outcomeExists` gates the DOCUMENTS query below, which re-reads this very
         // endpoint. Without it that read fires on every first open and 404s a second
         // time — see the note on it.
@@ -331,13 +330,8 @@ function DynamicJobBuilderInner({
          * documents read still gets its own chance rather than being suppressed by an
          * unrelated error.
          *
-         * ⚠️ The two answers are INDEPENDENT. A read that FAILED knows nothing about the
-         * build, so the device copy stands in when there is one — answering `undefined`
-         * here is what blanked the builder on a flaky connection. That is a separate
-         * question from whether an outcome RECORD exists, which is what gates the
-         * documents read. A 404 answers both (no record, no build); any other error
-         * answers neither, so the device copy is offered AND the documents read still
-         * gets its own chance.
+         * A read that FAILED knows nothing. Answering `undefined` here is what blanked the
+         * builder on a flaky connection, so the device copy stands in when there is one.
          */
         return { initialJobState: applySaved(stored), outcomeExists: !isMissingOutcome(e) };
       }

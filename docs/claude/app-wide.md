@@ -477,3 +477,20 @@ pass no colour props and get the defaults, which are the old literals verbatim.
 `widgets/common/CustomInput.tsx` defaults to 12pt text and a label indented 4pt (`ml-1`). Both new props are opt-in, so
 existing screens are unchanged: `fontSize` is applied in render AND in the `setNativeProps` effect (which otherwise reset
 size to 12), and `flushLabel` drops the indent. Used by the Add New Lead form.
+
+### Merge note: `queryClient.ts` carries BOTH the focus and the online listeners
+
+`dev-qs-offline` added `onlineManager.setEventListener` (fed by `services/connectivity`) and this branch had `focusManager` wired to `AppState`; they are independent, so the merged file keeps both at module scope above `new QueryClient`. ⚠️ Don't drop either: without the focus listener `refetchOnWindowFocus` opt-ins never fire on foreground, and without the online listener retries run against a dead link and nothing refetches on reconnect. The `offlineFirst` network mode and `refetchOnReconnect: true` defaults came from the offline branch and stay.
+
+## `index.js`: Android upload-service runner registered at module scope
+
+`index.js` now calls `registerAndroidUploadRunner()` (`src/services/background/androidUploadService.ts`) right after the FCM
+background handler. It tells notifee what the Android foreground service DOES — run the coordinator drain
+(`uploadCoordinator.runBackgroundDrain`) — so queued photos and leads keep uploading after the app leaves the screen. Full
+design, platform limits and the device test matrix are in **`docs/claude/offline.md`** (§ Background upload service).
+
+- ⚠️ **Module scope, before `AppRegistry.registerComponent`** — same rule as the FCM handler above it. notifee looks the
+  runner up when the service starts, and a process restarted headless has no React tree to register it from.
+- ⚠️ **Lazily required inside try/catch**, not imported at the top. notifee resolves its native module at import time and a JS
+  reload against a stale binary would otherwise take the whole bundle down.
+- A no-op on iOS, which uses `ios/revDSM_Sales/BackgroundUploadTask.m` (`beginBackgroundTask`) instead.

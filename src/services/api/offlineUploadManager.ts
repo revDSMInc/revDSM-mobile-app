@@ -146,6 +146,11 @@ export async function enqueueOfflineUpload(params: {
   console.log(`[OfflineUpload] Successfully enqueued upload item ${itemId} with ${files.length} images.`);
 }
 
+/** Whether a sync is mid-flight. Lets the background loop tell "stuck" from "busy". */
+export function isUploadQueueSyncing(): boolean {
+  return isSyncing;
+}
+
 // Process the queue sequential list
 export async function processUploadQueue(onItemProcessed?: (itemId: string, success: boolean) => void): Promise<void> {
   if (isSyncing) return;

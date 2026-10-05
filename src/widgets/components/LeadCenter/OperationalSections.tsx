@@ -614,7 +614,7 @@ const PitchBookCard = ({ onOpen }: { onOpen: (book?: PitchBookSummary) => void }
     ? 'Loading pitch books…'
     : isError
     ? "Couldn't load pitch books — tap ↻ to retry"
-    : 'No pitch books published — standard deck';
+    : '';
 
   return (
     <View
@@ -641,9 +641,11 @@ const PitchBookCard = ({ onOpen }: { onOpen: (book?: PitchBookSummary) => void }
           <Text className="text-base font-semibold" style={{ color: '#1C252E' }}>
             Pitch Book
           </Text>
-          <Text className="text-[12px] mt-0.5" style={{ color: '#919EAB' }}>
-            {subtitle}
-          </Text>
+          {!!subtitle && (
+            <Text className="text-[12px] mt-0.5" style={{ color: '#919EAB' }}>
+              {subtitle}
+            </Text>
+          )}
         </View>
         {(isLoading || isFetching) && !hasBooks ? (
           <ActivityIndicator size="small" color={colors.primary.main} />

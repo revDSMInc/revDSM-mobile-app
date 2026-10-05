@@ -42,6 +42,20 @@ try {
   console.warn('[Push] background handler not registered:', e?.message || e);
 }
 
+/**
+ * Android foreground service that keeps queued uploads draining after the app leaves the screen.
+ *
+ * ⚠️ MODULE SCOPE, for the same reason as the FCM handler above: notifee looks the runner up when
+ * the service starts, and a process restarted into a headless context has no React tree to
+ * register it from. Required lazily and guarded, so a stale native binary degrades to "no
+ * background service" instead of taking the bundle down. A no-op on iOS.
+ */
+try {
+  require('./src/services/background/androidUploadService').registerAndroidUploadRunner();
+} catch (e) {
+  console.warn('[background] upload service runner not registered:', e?.message || e);
+}
+
 // Detect tablet device dynamically
 const isTablet = () => {
   const { width, height } = Dimensions.get('window');

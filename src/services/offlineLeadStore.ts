@@ -1558,6 +1558,19 @@ export const drainOfflineWork = async (): Promise<void> => {
   }
 };
 
+/**
+ * How many records have work this device can send right now. The background drain
+ * (`services/background/uploadCoordinator`) uses it both to decide whether to start at all and to
+ * tell whether a pass made progress.
+ */
+export const pendingOfflineWorkCount = (): number => {
+  load();
+  return uploadableWork(mine()).length;
+};
+
+/** Whether a drain is mid-flight. Lets the background loop tell "stuck" from "busy". */
+export const isOfflineWorkDraining = (): boolean => draining;
+
 /** Fire-and-forget wrapper, so no caller has to hold an unhandled rejection. */
 export const runUpload = (): void => {
   drainOfflineWork().catch((e) => console.warn('[leadStore] upload failed', e));
