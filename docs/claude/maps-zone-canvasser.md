@@ -954,3 +954,11 @@ Android alike "Save Zone" sat underneath the zoom buttons.
 Ticket: *remove the Mapbox logo and the information button from the footsteps map.* `MapCanvas.tsx` `<MapView>` now has `logoEnabled={false}` and `attributionEnabled={false}` (both were `true`).
 
 - ⚠️ Mapbox terms normally require the wordmark/attribution to stay visible; this was an explicit product request. If the attribution must come back, surface it elsewhere (e.g. a Profile/About screen) rather than re-enabling the on-map (i).
+
+### Merge note: Add Lead submit combines the pin-coordinate rule with the offline flow (`dev-qs-offline`)
+
+`widgets/modals/LeadCreate/index.tsx` had three conflicts. The merged submit does, in order: (1) `resolveSyncAddress` settles the filed address (`submitAddress`; a rep-typed address always wins over a reverse-geocode); (2) `leadLocation` = the stored GPS/picked-suggestion `location`, else the coordinates inside a `📍` placeholder address, else — ONLINE only — `geocodeAddress(submitAddress)`; (3) both payloads (`selfGen` and `lfLead`) use `submitAddress` and `leadLocation`. Offline it parks the payload via `enqueueOfflineLead`.
+
+- ⚠️ `leadLocation` must keep driving the pin (`location.coordinates` AND the zone `latitude`/`longitude`) — the earlier fix that stopped a typed address being saved on the rep's own GPS position (the Davenport-on-Lahore bug) still holds because `handleAddressSearch` clears `location` when the rep types.
+- ⚠️ `geocodeAddress` is a network call, so it is gated on `isOnline()`; ungated it would stall or fail an offline submit.
+- Keyboard: this branch's `NUMBER_PAD_KEYBOARD` stays; the offline branch's `NUMERIC_KEYBOARD` import was unused and dropped.

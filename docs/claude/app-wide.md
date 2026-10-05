@@ -456,3 +456,7 @@ pass no colour props and get the defaults, which are the old literals verbatim.
 `widgets/common/CustomInput.tsx` defaults to 12pt text and a label indented 4pt (`ml-1`). Both new props are opt-in, so
 existing screens are unchanged: `fontSize` is applied in render AND in the `setNativeProps` effect (which otherwise reset
 size to 12), and `flushLabel` drops the indent. Used by the Add New Lead form.
+
+### Merge note: `queryClient.ts` carries BOTH the focus and the online listeners
+
+`dev-qs-offline` added `onlineManager.setEventListener` (fed by `services/connectivity`) and this branch had `focusManager` wired to `AppState`; they are independent, so the merged file keeps both at module scope above `new QueryClient`. ⚠️ Don't drop either: without the focus listener `refetchOnWindowFocus` opt-ins never fire on foreground, and without the online listener retries run against a dead link and nothing refetches on reconnect. The `offlineFirst` network mode and `refetchOnReconnect: true` defaults came from the offline branch and stay.

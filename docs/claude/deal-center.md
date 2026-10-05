@@ -2648,3 +2648,10 @@ Ticket: Wedges = 5 and 5" Gutter/DS/E = 12 in the calculator, but the Job Builde
 
 - Now two passes: aliases first, each entry's own canonical field id LAST; an alias never overwrites another live entry's id; and a key supplied by the entries is not overridden by `resultData`.
 - ⚠️ **Unverified against the live schema** — the cause was deduced from the code, not reproduced. If Wedges still reads the gutter value, inspect the Wedges field's `dcField` in the portal job-builder config (it may name the gutter field) and the calculator schema's `name`/`pricingKey` for the two fields; the app cannot fix a mis-authored `dcField`.
+
+### Merge note: `dev-qs-offline` into the draft read in `DynamicJobBuilderScreen`
+
+Both branches changed the `['leadOutcome', ...]` query. The merged read keeps BOTH: `dev-qs-offline`'s device-first source and `applySaved` (honours `startFresh`), and this branch's `outcomeExists` flag that gates the documents query. Success: `{ initialJobState: applySaved(savedState), outcomeExists: true }`. Failure: `{ initialJobState: applySaved(stored), outcomeExists: !isMissingOutcome(e) }`.
+
+- ⚠️ On a FAILED read the device copy stands in (no blank builder on a flaky connection), but a read that SUCCEEDS with no build is still an answer and does not fall back to the device copy (a job reset on the portal must not be resurrected).
+- ⚠️ `outcomeExists` is false only for a 404; any other failure leaves it true so the documents read still gets its chance. The device-first early return sets no flag, which the documents gate treats as "exists".
