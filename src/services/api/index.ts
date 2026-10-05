@@ -12,7 +12,11 @@ import { store } from '../../redux/store';
 import { logout } from '../../redux/reducer/auth.reducer';
 import { queryClient } from './queryClient';
 import SocketManager from '../SocketManager';
-import { isConnectionStable } from '../connectivity';
+import {
+  classifyRequestError,
+  isConnectionStable,
+  reportRequestSignal,
+} from '../connectivity';
 
 
 /**
@@ -71,10 +75,18 @@ const PARKED_NOTICE_COOLDOWN_MS = 60_000;
 // Response Interceptor: Handle Global Errors (like 401 Expiry)
 axiosInstance.interceptors.response.use(
   (res) => {
+    // A 2xx is the ONLY thing that promotes to `online` — it proves the API is not merely
+    // reachable but serving. See `utils/network-status.ts`.
+    reportRequestSignal('success');
     logTraffic(`← ${res.status} ${res.config.method?.toUpperCase()}`, res.config.url, res.data);
     return res;
   },
   async (error) => {
+    // ⚠️ Classify before anything else. Only a TRANSPORT failure is evidence about the link —
+    // a 5xx proves we reached the server, a 4xx proves the network delivered the request, and
+    // a slow-but-successful render says nothing at all. This is what stops a 30 s image
+    // generation being read as "the network is broken".
+    reportRequestSignal(classifyRequestError(error));
     logTraffic(
       `✗ ${error.response?.status ?? 'ERR'} ${error.config?.method?.toUpperCase()}`,
       error.config?.url,
