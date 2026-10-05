@@ -284,7 +284,12 @@ function SlotButton({
 }) {
   const key = slot.isExtra ? (slot.key as string) : uiKey(category.id, slot.id);
   const photos = capture.getPhotos(category.label, slot.storageName);
-  const uploading = !!capture.uploadingKeys[key];
+  // ⚠️ "Uploading" means an upload is actually MOVING, which can only be true online. Offline the
+  // photo is queued on the device and nothing is in flight, so a spinner here is a lie that reads
+  // as a stall — the rep sees a tagged slot spinning forever and assumes the shot was lost. The
+  // tick plus the filled colour already say the photo is held; `Manage Photos` carries the
+  // per-photo sync wording.
+  const uploading = capture.online !== false && !!capture.uploadingKeys[key];
   const deleting = !!capture.deletingKeys[key];
   const moving = !!capture.movingKeys?.[key];
   const filled = photos.length > 0;

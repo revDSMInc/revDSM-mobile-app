@@ -2434,6 +2434,58 @@ numbers were never shifted — so 7" add → #3, then 6" add → **#2 again**.
   number, and an added combination is tagged `_addedInEdit` so it isn't hidden. See `deal-edit-addendums.md`,
   "Add Combination looked dead; chip numbers had gaps".
 
+### Merge note: `handleResultConfirm` deps are a UNION of two branches
+
+`DynamicDealCenterScreen.tsx` conflicted on exactly one line when `dev-v1-multi-tenat` merged in — the
+`handleResultConfirm` `useCallback` dependency array. Each branch had appended a different dep to the
+same base list:
+
+- offline branch: `handleSetDownPayment` — the down-payment persistence fix (Result modal → Build Job →
+  back → the figure was gone, because it only ever lived in screen state).
+- `dev-v1-multi-tenat`: `refetchJobBuilderConfig` — re-reads the published job-builder config every time
+  the builder is opened, since this screen never unmounts and owns the only observer.
+
+**Both function bodies auto-merged cleanly; only the deps line collided.** That is the dangerous shape:
+taking either side alone leaves a live call in the body whose dep is missing, i.e. a stale closure. The
+resolution keeps both, and both calls are still present in the callback.
+
+⚠️ If this line conflicts again, do not pick a side — reconcile it against what the body actually calls.
+
+**It conflicted again** when `dev-v1-funding` merged in, in the same callback and the same shape: funding
+added `const resultCalcId = calcIdOverride || currentCalculatorId` (the resume path reaches this in the
+same tick as its `setCurrentCalculatorId`, so the state id is a tick stale) while the offline branch added
+the down-payment write directly above it. Union again — and the reconciliation caught a real bug: the
+down-payment write was keyed on `currentCalculatorId`, which on the resume path is exactly the stale id
+funding introduced `resultCalcId` to avoid. It now writes against `resultCalcId`. Taking either side alone
+would have saved the rep's down payment onto the PREVIOUSLY selected calculator, silently, because both
+writes succeed.
+
+### Merge note: the outcome read answers TWO independent questions
+
+The same `dev-v1-funding` merge conflicted on the Job Builder's `['leadOutcome']` `queryFn`
+(`DynamicJobBuilderScreen.tsx`), where each branch had reworked the same two `return` statements for a
+different reason:
+
+- offline branch: `applySaved(…)` deserialization, plus **the device copy standing in on a failed read** —
+  answering `undefined` there is what blanked the builder on a flaky connection.
+- `dev-v1-funding`: an **`outcomeExists`** flag gating the DOCUMENTS query below, with `isMissingOutcome(e)`
+  separating a normal first-open 404 from a real failure.
+
+⚠️ **Neither side could simply be taken.** Funding's `return { initialJobState: jobState … }` names a
+variable that no longer exists on the offline branch (renamed to `savedState` + `applySaved`), so "theirs"
+does not compile; "ours" drops the flag and restores the duplicate 404 on every first open.
+
+The resolution keeps both because **they answer different questions**: "what build should the rep see?"
+(device copy vs server) and "does an outcome RECORD exist?" (gates the documents read). A 404 answers
+both — no record, no build. Any other error answers *neither*, so the device copy is offered AND the
+documents read still gets its own chance.
+
+⚠️ The **device-source early return** (`resolveJobBuildSource === 'device'`) now returns
+`outcomeExists: false` explicitly. It predates the flag, so it returned none — and `undefined !== false`
+reads as "unknown", which lets the documents query fire on exactly the offline path where its signed-URL
+round-trip cannot succeed and where `calcId` may be a client id the server has never seen. Documents
+re-resolve on the next online open, when that branch is no longer taken.
+
 ## Opening the Result Lead sheet 404'd — `updateJobBuilder` was PUTting a POST-only route
 
 Ticket: opening `ResultJobModal` (the funding "Result Lead" sheet) logged a **404** —

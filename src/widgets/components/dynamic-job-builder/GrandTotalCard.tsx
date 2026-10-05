@@ -71,7 +71,7 @@ export function GrandTotalCard({
 
   return (
     <View className="bg-white rounded-[32px] p-6 border border-emerald-100 mx-3 mb-6">
-      <Text className="text-[12px] font-black mb-5" style={{ color: accentColor }}>
+      <Text className="text-[15px] font-black mb-5" style={{ color: accentColor }}>
         {title}
       </Text>
 
@@ -87,8 +87,8 @@ export function GrandTotalCard({
 
       {columns.some((field: any) => field.type === 'locationGrid' && !field.unmapped) && (
         <View className="mt-4 pt-4 border-t-2 flex-row justify-between items-center px-1" style={{ borderColor: accentColor }}>
-          <Text className="text-[14px] font-black" style={{ color: accentColor }}>{footerLabel}</Text>
-          <Text className="text-[20px] font-black" style={{ color: accentColor }}>{total} {totalUnit}</Text>
+          <Text className="text-base font-black" style={{ color: accentColor }}>{footerLabel}</Text>
+          <Text className="text-2xl font-black" style={{ color: accentColor }}>{total} {totalUnit}</Text>
         </View>
       )}
     </View>
@@ -121,7 +121,7 @@ function TabGrandTotalCard({
 
   return (
     <View className="bg-white rounded-[32px] p-6 border border-emerald-100 mx-3 mb-6">
-      <Text className="text-[12px] font-black mb-5" style={{ color: accentColor }}>
+      <Text className="text-[15px] font-black mb-5" style={{ color: accentColor }}>
         Grand Total - All Combinations
       </Text>
 
@@ -142,8 +142,8 @@ function TabGrandTotalCard({
 
       {hasGridTotal && (
         <View className="mt-4 pt-4 border-t-2 flex-row justify-between items-center px-1" style={{ borderColor: accentColor }}>
-          <Text className="text-[14px] font-black" style={{ color: accentColor }}>{footerLabel}</Text>
-          <Text className="text-[20px] font-black" style={{ color: accentColor }}>{total} {totalUnit}</Text>
+          <Text className="text-base font-black" style={{ color: accentColor }}>{footerLabel}</Text>
+          <Text className="text-2xl font-black" style={{ color: accentColor }}>{total} {totalUnit}</Text>
         </View>
       )}
     </View>
@@ -170,10 +170,10 @@ function ComboSummaryRow({
   return (
     <View className="mb-4 bg-slate-50/60 p-4 rounded-2xl border border-slate-100">
       <View className="self-start px-2 py-0.5 rounded-lg mb-3" style={{ backgroundColor: `${accentColor}20` }}>
-        <Text className="text-[10px] font-black" style={{ color: accentColor }}>#{displayNumber}</Text>
+        <Text className="text-xs font-black" style={{ color: accentColor }}>#{displayNumber}</Text>
       </View>
       {sectionLabel ? (
-        <Text className="text-[10px] font-bold text-slate-500 mb-2">{sectionLabel}</Text>
+        <Text className="text-xs font-bold text-slate-500 mb-2">{sectionLabel}</Text>
       ) : null}
       {/*
         Web parity (`ComboSummaryRow`): the columns sit in a FIXED-width grid —
@@ -192,9 +192,9 @@ function ComboSummaryRow({
               key={field.id || colIndex}
               style={{ width: '50%', paddingHorizontal: COL_GAP / 2, marginBottom: COL_GAP }}
             >
-              <Text className="text-[8px] font-bold text-slate-400 mb-0.5">{field.label || field.key}</Text>
+              <Text className="text-[11px] font-bold text-slate-400 mb-0.5">{field.label || field.key}</Text>
               <Text
-                className="text-[10px] font-black"
+                className="text-sm font-black"
                 style={{ color: variant === 'missing' ? '#EF4444' : variant === 'total' ? accentColor : '#1E293B' }}
               >
                 {text}

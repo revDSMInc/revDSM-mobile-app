@@ -50,6 +50,11 @@ import {
   resolveRetryDecision,
 } from '../../../utils/offline-lead-queue';
 
+/** Capitalize just the first character as the rep types — leaves the rest untouched so a
+ *  legitimately mixed-case name (McDonald, O'Brien) isn't forced to lowercase mid-entry. */
+const capitalizeFirst = (text: string): string =>
+  text.length ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+
 interface Props {
   visible: boolean;
   onClose: () => void;
@@ -653,7 +658,8 @@ export default function LeadCreateModal({
                     flushLabel
                     label="First Name*"
                     value={form.firstName}
-                    onChangeText={(t) => setForm({ ...form, firstName: t })}
+                    onChangeText={(t) => setForm({ ...form, firstName: capitalizeFirst(t) })}
+                    autoCapitalize="words"
                     placeholder="Enter First Name"
                   />
                 </View>
@@ -663,7 +669,8 @@ export default function LeadCreateModal({
                     flushLabel
                     label="Last Name*"
                     value={form.lastName}
-                    onChangeText={(t) => setForm({ ...form, lastName: t })}
+                    onChangeText={(t) => setForm({ ...form, lastName: capitalizeFirst(t) })}
+                    autoCapitalize="words"
                     placeholder="Enter Last Name"
                   />
                 </View>

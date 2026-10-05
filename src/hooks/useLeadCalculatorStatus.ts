@@ -1,5 +1,6 @@
 import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
+import { allRolloutsConfirmed } from '../utils/rollout-status';
 
 /**
  * Read-only calculator status for a lead, used by the Lead Center tools list to:
@@ -126,9 +127,15 @@ export function useLeadCalculatorStatus(lead: any) {
           const hasValue = Array.isArray(c?.entries) && c.entries.some((e: any) => Number(e?.inputValue) > 0);
           return named || hasValue;
         });
-        // web `allJobsConfirmed`: computed over the REAL calculators (an unbuilt
-        // bare-number placeholder is hidden from the rollout and must not block it).
-        const allConfirmed = real.length > 0 && real.every((c: any) => !!c?.isRolloutConfirmed);
+        // web `allJobsConfirmed` — ⚠️ over the calculators the ROLLOUT SCREEN can confirm,
+        // NOT over `real`. `real` counts a bare-number-titled calculator once it has any
+        // entered value, but `RolloutView` hides bare-number titles entirely, so such a
+        // calculator can never be confirmed there. Gating on it left the Investment
+        // Center tile reading "Please Fully Build ALL jobs first" forever on a lead whose
+        // Deal Center showed every rollout LOCKED. `hasCalculator` deliberately stays on
+        // the looser `real` rule: that answers "did the rep build anything", which is a
+        // different question.
+        const allConfirmed = allRolloutsConfirmed(arr);
         return resolve({ hasCalculator: real.length > 0, allConfirmed, count: real.length });
       } catch {
         return resolve(EMPTY);

@@ -6,7 +6,9 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  Animated,
 } from 'react-native';
+import { useCollapsingHeader } from '../../hooks/useCollapsingHeader';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useQuery } from '@tanstack/react-query';
@@ -291,7 +293,13 @@ function DynamicJobBuilderInner({
       const stored = offlineSavedJobBuildState(work);
       const offline = !isOnline() || isClientId(leadId) || isClientId(calcId);
       if (resolveJobBuildSource({ work, offline }) === 'device') {
-        return { initialJobState: applySaved(stored) };
+        // ⚠️ `outcomeExists: false` SUPPRESSES the documents query below, deliberately.
+        // This branch is the offline/device-owned path: its signed-URL round-trip cannot
+        // succeed without a connection, and `calcId` may be a client id the server has
+        // never seen. Leaving the flag undefined reads as "unknown" and lets that read
+        // fire anyway. Documents re-resolve on the next online open, when this branch is
+        // no longer taken.
+        return { initialJobState: applySaved(stored), outcomeExists: false };
       }
 
       try {
@@ -1909,6 +1917,17 @@ function DynamicJobBuilderInner({
     [leadId, calcId, worksOffline]
   );
 
+  /**
+   * Instagram-style collapsing step header (ticket: "have the header of steps timeline
+   * glide away when scrolling down but re-appear when scrolling up").
+   *
+   * ⚠️ Only THIS header collapses. The pinned footage/allocation tracker lives inside
+   * `DynamicTabRenderer`, ABOVE its ScrollView, and the ticket is explicit that it must
+   * stay put ("Keep allocation tracker always there") — so the handler is threaded down
+   * to that ScrollView and nothing else moves.
+   */
+  const collapsingHeader = useCollapsingHeader(true, currentTab?.id);
+
   const isLastStep = currentTabIndex === nonSummaryTabs.length;
   const isFirstStep = currentTabIndex <= 0;
   // Embedded (wizard) finalize point: the summary tab when present, else the last
@@ -1920,8 +1939,10 @@ function DynamicJobBuilderInner({
   return (
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
       <View style={{ flex: 1 }}>
-        <View
+        <Animated.View
+          onLayout={collapsingHeader.onHeaderLayout}
           style={{
+            ...collapsingHeader.headerStyle,
             paddingHorizontal: 24,
             paddingTop: 8,
             // Trimmed from 24 → 8: the stepper carried a tall empty white band below
@@ -1992,7 +2013,7 @@ function DynamicJobBuilderInner({
             // only via the bottom Next button, not by tapping Gutters/LeafFilter/etc.
             disableNavigation={isEdit}
           />
-        </View>
+        </Animated.View>
 
         {/* The renderer owns its own scroll now (fixed footage tracker + inner
             ScrollView, like the normal JB sections); the summary tab scrolls itself.
@@ -2024,6 +2045,8 @@ function DynamicJobBuilderInner({
               readOnly={false}
               applyConditions={applyConditions}
               hideAllocationTrackers={hideAllocationTrackers}
+              collapsingScrollProps={collapsingHeader.scrollProps}
+              collapsingUnderHeaderStyle={collapsingHeader.underHeaderStyle}
               verticalId={selectedVertical?.id}
               verticalColor={selectedVertical?.color || '#22c55e'}
               products={initialConfig?.products || []}

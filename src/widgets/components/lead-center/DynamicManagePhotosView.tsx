@@ -50,8 +50,11 @@ import { InspectionPhotoViewer } from '../InspectionPhotosPanel';
 import type { SectionPhoto } from '../../../utils/inspection-photos';
 import { useSecureUrls } from '../../../hooks/useSecureUrls';
 import { useWarmedImageUris } from '../../../hooks/useWarmedImageUris';
+import { forgetWarmedUri } from '../../../utils/imageFileCache';
 import { resolveS3Url } from '../../../utils/s3-utils';
-import { indexPendingBySlot } from '../../../utils/pending-inspection-photos';
+import { indexPendingBySlot, pendingStatusFor, photoTileState } from '../../../utils/pending-inspection-photos';
+import { offlinePhotoDeleteQueue } from '../../../services/offlinePhotoDeleteQueue';
+import { useIsOnline } from '../../../hooks/useIsOnline';
 import { uploadQueueManager } from '../../../utils/uploadQueue';
 
 const GREEN = '#4CBB17';
@@ -125,16 +128,37 @@ export function DynamicManagePhotosView({
   // ⚠️ Pending uploads are counted too. Offline there is nothing on the server yet, so this read
   // 0 while the Lead Center button that opened it read 3 — the header folds the queue in and this
   // did not. Two counts of the same thing disagreeing on one screen.
+  const online = useIsOnline();
   const [pendingUploads, setPendingUploads] = useState(() => uploadQueueManager.getQueue());
+  // Which queued photo is actually moving right now, so only that tile says "Uploading…".
+  const [activeUploadId, setActiveUploadId] = useState<string | null>(() =>
+    uploadQueueManager.getActiveUploadId(),
+  );
+  // Bumped whenever a delete is filed or drains, so the counts below recompute. A counter is a
+  // derived value, so it needs a reason to re-run — without this the card disappears and the
+  // header keeps the old number until something else happens to invalidate the lead.
+  const [deleteTick, setDeleteTick] = useState(0);
   useEffect(() => {
-    setPendingUploads([...uploadQueueManager.getQueue()]);
-    return uploadQueueManager.addListener(() => {
+    const sync = () => {
       setPendingUploads([...uploadQueueManager.getQueue()]);
-    });
+      setActiveUploadId(uploadQueueManager.getActiveUploadId());
+    };
+    sync();
+    const offUploads = uploadQueueManager.addListener(sync);
+    const offDeletes = offlinePhotoDeleteQueue.addListener(() => setDeleteTick((n) => n + 1));
+    return () => {
+      offUploads();
+      offDeletes();
+    };
   }, []);
 
   const managePhotosCount = useMemo(() => {
-    const photos = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
+    const all = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
+    // ⚠️ Photos deleted offline are still returned by the server until the queue drains, so the
+    // header must subtract them — otherwise the rep deletes a photo, watches the card go, and the
+    // title still reads the old number.
+    const removed = offlinePhotoDeleteQueue.deletedUrls(lead?._id || lead?.id);
+    const photos = removed.size ? all.filter((p: any) => !removed.has(p?.s3url)) : all;
     const seen = new Set<string>();
     photos.forEach((p: any) => {
       if (!p?.s3url || seen.has(p.s3url)) return;
@@ -150,7 +174,8 @@ export function DynamicManagePhotosView({
       pending += Math.max(0, items.length - onServer);
     });
     return seen.size + pending;
-  }, [lead?.salesPhotos, lead?._id, lead?.id, pendingUploads]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead?.salesPhotos, lead?._id, lead?.id, pendingUploads, deleteTick]);
 
   const exitSelectMode = () => {
     setSelectMode(false);
@@ -459,6 +484,8 @@ export function DynamicManagePhotosView({
     const uri = card.photo.secureUrl || undefined;
     // The local copy, once warm. Undefined means the download is still in flight.
     const localUri = uri ? warmedUris[uri] : undefined;
+    const tileState = photoTileState(uri, localUri, online);
+    const unavailableOffline = tileState === 'unavailable' && !!uri;
     const busy = !!capture.deletingKeys[card.key] || !!capture.movingKeys?.[card.key];
     // ⚠️ Still in the upload queue: no `_id` and no `s3url`, so delete and move have nothing to
     // address and would silently no-op. The row says what is happening instead of offering
@@ -497,23 +524,56 @@ export function DynamicManagePhotosView({
           <PhotoPeekPressable
             uri={localUri || uri}
             label={card.label}
-            disabled={!uri || lockedFromSelect}
-            peekDisabled={selectMode}
+            // ⚠️ Not peekable or openable when the bytes are not on the device: the viewer and
+            // the hold-to-peek both render the same url, so they would show the same blank box
+            // the tile is already explaining. Selecting it is still allowed — that is a
+            // decision about the photo, not a view of it.
+            disabled={!uri || lockedFromSelect || (unavailableOffline && !selectableNow)}
+            peekDisabled={selectMode || unavailableOffline}
             onPress={() => {
               if (!uri) return;
               if (selectableNow) toggleSelect(card);
+              else if (unavailableOffline) return;
               // The preview opens on the warmed file, so a tap does not
               // re-download the full-size photo the tile just fetched.
               else if (!selectMode) openPreview(card);
             }}
             style={{ width: '100%', aspectRatio: 1.6, alignItems: 'center', justifyContent: 'center' }}
           >
-            {uri ? (
-              localUri ? (
-                <LoadingImage uri={localUri} style={{ width: '100%', height: '100%' }} resizeMode="cover" spinnerColor="#fff" />
-              ) : (
-                <ActivityIndicator size="small" color="#fff" />
-              )
+            {/* ⚠️ THREE states, not two — see `photoTileState`. A photo uploaded while online
+                exists only as a pre-signed S3 url; if this screen was never opened with a
+                connection its bytes were never warmed, so offline there is nothing to draw and
+                no way to fetch it. That tile used to spin forever. It now says so. */}
+            {tileState === 'ready' || tileState === 'loading' ? (
+              <LoadingImage
+                uri={(tileState === 'ready' ? localUri : undefined) || uri!}
+                style={{ width: '100%', height: '100%' }}
+                resizeMode="cover"
+                spinnerColor="#fff"
+                unavailableLabel={online ? 'Tap to retry' : 'Needs a connection'}
+                // ⚠️ Drop the cached copy before retrying. A tile fails when the local file is
+                // gone (cache cleared) or the url is dead; re-rendering the same source would
+                // fail identically forever. `forgetWarmedUri` unlinks it and clears the memo, so
+                // the next warm actually downloads again.
+                onRetry={() => {
+                  void forgetWarmedUri(uri).then(() => refetch?.());
+                }}
+              />
+            ) : uri ? (
+              <View style={{ alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 }}>
+                <Icon name="cloud-off-outline" size={22} color="#9CA3AF" />
+                <Text
+                  style={{
+                    marginTop: 6,
+                    fontSize: 10,
+                    fontWeight: '700',
+                    color: '#9CA3AF',
+                    textAlign: 'center',
+                  }}
+                >
+                  Needs a connection{'\n'}to show this photo
+                </Text>
+              </View>
             ) : (
               <Icon name="image-outline" size={24} color="#C4CDD5" />
             )}
@@ -549,26 +609,64 @@ export function DynamicManagePhotosView({
           </PhotoPeekPressable>
 
           {/* A queued photo shows its state instead of actions. */}
-          {!selectMode && isPending && (
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                padding: 8,
-              }}
-            >
-              <Icon name="cloud-upload-outline" size={14} color="#F59E0B" />
-              <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 11 }}>
-                Waiting to upload
-              </Text>
-            </View>
-          )}
+          {!selectMode && isPending && (() => {
+            // Offline the photo is not waiting on anything — it is on the handset and will
+            // go up by itself, so the tile says that rather than implying a stall.
+            const isInFlight = (card.photo as any)?.pendingId === activeUploadId;
+            const st = pendingStatusFor(isInFlight, online);
+            return (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  paddingVertical: 8,
+                  paddingHorizontal: 6,
+                }}
+              >
+                {st.spinner ? (
+                  <ActivityIndicator size="small" color={st.color} />
+                ) : (
+                  <Icon name={st.icon} size={14} color={st.color} />
+                )}
+                <Text style={{ color: st.color, fontWeight: '700', fontSize: 11 }} numberOfLines={1}>
+                  {st.label}
+                </Text>
+                {/* ⚠️ A queued photo CAN be deleted — it is the wrong shot the rep wants gone, and
+                    making them wait for signal to remove it is the complaint this fixes. It
+                    cancels the upload rather than calling the server, because nothing has been
+                    sent yet (see `resolveDeleteTarget`). Hidden only while the bytes are actually
+                    in flight, where cancelling would lose the s3url needed to clean up after. */}
+                {!isInFlight && (
+                  <TouchableOpacity
+                    disabled={busy}
+                    onPress={() =>
+                      setPendingDelete({
+                        categoryLabel: card.cat.label as string,
+                        subcategory: card.storageName,
+                        key: card.key,
+                        photo: card.photo,
+                      })
+                    }
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={{ marginLeft: 2, opacity: busy ? 0.5 : 1 }}
+                  >
+                    {capture.deletingKeys[card.key] ? (
+                      <ActivityIndicator size="small" color={RED} />
+                    ) : (
+                      <Icon name="trash-can-outline" size={14} color={RED} />
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })()}
 
-          {/* Actions are hidden in select mode (web parity) */}
+          {/* Actions are hidden in select mode (web parity). Ticket: "Scale down Trash
+              and move icon" — both shrunk from the original 32px-tall row. */}
           {!selectMode && !isPending && (
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8, padding: 8 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 6, padding: 6 }}>
               {canMove && moveTargetCount > 1 ? (
                 <TouchableOpacity
                   disabled={busy}
@@ -585,12 +683,12 @@ export function DynamicManagePhotosView({
                   }
                   style={{
                     flex: 1,
-                    height: 32,
-                    borderRadius: 8,
+                    height: 26,
+                    borderRadius: 7,
                     flexDirection: 'row',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 4,
+                    gap: 3,
                     borderWidth: 1.5,
                     borderStyle: 'dashed',
                     borderColor: 'rgba(76,187,23,0.4)',
@@ -601,8 +699,8 @@ export function DynamicManagePhotosView({
                     <ActivityIndicator size="small" color={GREEN} />
                   ) : (
                     <>
-                      <Icon name="folder-move-outline" size={14} color={GREEN} />
-                      <Text style={{ color: GREEN, fontWeight: '700', fontSize: 11 }}>Move</Text>
+                      <Icon name="folder-move-outline" size={11} color={GREEN} />
+                      <Text style={{ color: GREEN, fontWeight: '700', fontSize: 10 }}>Move</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -620,9 +718,9 @@ export function DynamicManagePhotosView({
                   })
                 }
                 style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
+                  width: 26,
+                  height: 26,
+                  borderRadius: 7,
                   alignItems: 'center',
                   justifyContent: 'center',
                   borderWidth: 1.5,
@@ -634,7 +732,7 @@ export function DynamicManagePhotosView({
                 {capture.deletingKeys[card.key] ? (
                   <ActivityIndicator size="small" color={RED} />
                 ) : (
-                  <Icon name="trash-can-outline" size={18} color={RED} />
+                  <Icon name="trash-can-outline" size={14} color={RED} />
                 )}
               </TouchableOpacity>
             </View>
@@ -868,13 +966,26 @@ export function DynamicManagePhotosView({
               <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)', alignItems: 'center', justifyContent: 'center' }}>
                 <Icon name="delete-outline" size={24} color={RED} />
               </View>
-              {!!pendingDelete?.photo?.secureUrl && (
-                <Image
-                  source={{ uri: pendingDelete.photo.secureUrl as string }}
-                  style={{ width: 48, height: 48, borderRadius: 8 }}
-                  resizeMode="cover"
-                />
-              )}
+              {/* Only when the bytes are actually on the device. Offline a server photo's
+                  signed url resolves to nothing, and a blank 48pt square next to "Discard this
+                  photo?" is worse than no thumbnail at all — the rep cannot tell WHICH photo
+                  they are about to delete. */}
+              {!!pendingDelete?.photo?.secureUrl &&
+                photoTileState(
+                  pendingDelete.photo.secureUrl as string,
+                  warmedUris[pendingDelete.photo.secureUrl as string],
+                  online,
+                ) !== 'unavailable' && (
+                  <Image
+                    source={{
+                      uri:
+                        warmedUris[pendingDelete.photo.secureUrl as string] ||
+                        (pendingDelete.photo.secureUrl as string),
+                    }}
+                    style={{ width: 48, height: 48, borderRadius: 8 }}
+                    resizeMode="cover"
+                  />
+                )}
             </View>
             <Text style={{ fontWeight: '800', fontSize: 16, color: '#FFFFFF', marginBottom: 6 }}>
               Discard this photo?
@@ -882,6 +993,25 @@ export function DynamicManagePhotosView({
             <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 20 }}>
               This photo will be permanently deleted. You'll need to retake it to capture this shot.
             </Text>
+            {/* Say what actually happens offline. The photo leaves the screen now either way, but
+                a delete of a SYNCED photo is only filed until there is signal — and a rep who is
+                not told that may assume it failed and go looking for it on the portal. */}
+            {!online && !(pendingDelete?.photo as any)?.isPending && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  marginTop: -12,
+                  marginBottom: 18,
+                }}
+              >
+                <Icon name="cloud-off-outline" size={13} color="#9CA3AF" />
+                <Text style={{ flex: 1, fontSize: 11, color: '#9CA3AF' }}>
+                  You're offline — this will sync when you're back on a connection.
+                </Text>
+              </View>
+            )}
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity
                 disabled={deleting}

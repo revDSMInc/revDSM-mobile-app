@@ -14,12 +14,28 @@ import {
 } from 'react-native';
 import { Camera, useCameraDevice, useCameraFormat } from 'react-native-vision-camera';
 import ReactNativeBlobUtil from 'react-native-blob-util';
+import { warmCaptureCoords } from '../../utils/capture-location';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Reanimated, { useSharedValue, useAnimatedProps, runOnJS, withSpring } from 'react-native-reanimated';
 import { useSafeAreaInsets, SafeAreaView as SafeAreaViewContext } from 'react-native-safe-area-context';
 
 const ReanimatedCamera = Reanimated.createAnimatedComponent(Camera);
+
+/**
+ * ⚠️ CAMERA ONLY. There is deliberately no gallery import here.
+ *
+ * A QA-only import button lived beside the shutter under an `ALLOW_GALLERY_IMPORT`
+ * flag so a render could be tested against a known sample house. It was removed
+ * before release, flag and all, rather than switched off — a disabled flag is one
+ * edit away from shipping, and this one reached a rep's device once already.
+ *
+ * ⚠️ Do not re-add it to this modal. The inspection flow is camera-only BY DESIGN:
+ * the photo has to be the house the rep is standing in front of, stamped with the
+ * location and time it was actually taken. An imported photo satisfies none of
+ * that and the record cannot tell the two apart afterwards. If QA needs a known
+ * photo again, give the harness its own entry point — not this one.
+ */
 
 interface CustomCameraModalProps {
   visible: boolean;
@@ -119,6 +135,11 @@ export const CustomCameraModal = ({
   // Request permissions
   useEffect(() => {
     if (visible) {
+      // Warm the location fix while the rep is still framing the shot, so the coordinates
+      // recorded against the photo come from a cache at shutter time rather than making the
+      // capture wait on the GPS radio. See `utils/capture-location.ts` for why the fix must be
+      // taken here and not at upload.
+      warmCaptureCoords();
       (async () => {
         const cameraPermission = await Camera.getCameraPermissionStatus();
         if (cameraPermission === 'granted') {
@@ -322,7 +343,18 @@ export const CustomCameraModal = ({
                   photo={true}
                   animatedProps={animatedProps}
                   resizeMode="cover"
-                  outputOrientation="preview"
+                  // ⚠️ Ticket: a photo taken with the phone physically rotated to landscape
+                  // displayed SIDEWAYS everywhere (Manage Photos full-screen viewer, etc.) —
+                  // the rep had to rotate the phone back to see it upright. This screen's
+                  // viewfinder never itself rotates (it is a fixed portrait layout sized off
+                  // `screenWidth`), so with `outputOrientation="preview"` vision-camera tagged
+                  // every photo's EXIF orientation as "portrait" (matching the never-rotating
+                  // PREVIEW), regardless of which way the phone was actually held — wrong for
+                  // a landscape shot, even though the pixels themselves were captured fine.
+                  // `"device"` tags the EXIF from the PHONE'S physical rotation sensor instead,
+                  // independent of the preview UI, which is what every downstream `<Image>`
+                  // (which correctly honours EXIF orientation) needs to display it upright.
+                  outputOrientation="device"
                 />
               </View>
             </GestureDetector>
@@ -368,10 +400,22 @@ export const CustomCameraModal = ({
                   overflow: 'hidden',
                   backgroundColor: 'black',
                 }}>
+                  {/* ⚠️ Ticket: a photo taken with the phone rotated to landscape (now
+                      captured with a correct "device" EXIF orientation — see `outputOrientation`
+                      below) looked CROPPED here — most of the frame was outside this box, which
+                      is sized and positioned for a PORTRAIT photo (the live viewfinder is
+                      portrait-only by design). The captured file itself is never cropped
+                      (`takePhoto()` always returns the full sensor frame, independent of the
+                      live preview's size/resizeMode — confirmed from vision-camera's iOS source:
+                      AVCapturePhotoOutput and the preview's AVCaptureVideoPreviewLayer are
+                      separate outputs). `resizeMode="cover"` was fitting the WHOLE photo into a
+                      box shaped for the other orientation, hiding most of a wide photo off both
+                      edges. `"contain"` always shows the full photo, letterboxed inside this same
+                      box — do not go back to `cover` here. */}
                   <Image
                     source={{ uri: capturedAsset.uri }}
                     style={StyleSheet.absoluteFillObject}
-                    resizeMode="cover"
+                    resizeMode="contain"
                   />
                 </View>
 
@@ -526,7 +570,9 @@ export const CustomCameraModal = ({
 
                   {/* SHUTTER & OTHER ACTIONS */}
                   <View style={styles.iosShutterRow}>
-                    {/* Left side: Empty placeholder for centering */}
+                    {/* Left: empty placeholder. ⚠️ It MUST stay — the shutter is
+                        centred by the two 44pt spacers either side of it, so
+                        deleting this shifts the button off-centre. */}
                     <View style={{ width: 44 }} />
 
                     {/* Center: iOS Shutter Button */}

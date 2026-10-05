@@ -1,6 +1,9 @@
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, Platform } from 'react-native';
-import { buildVerticalSummarySections } from '../../../utils/dynamic-job-builder/engine/vertical-summary-utils';
+import {
+  buildVerticalSummarySections,
+  formatStoryMeasurementLine,
+} from '../../../utils/dynamic-job-builder/engine/vertical-summary-utils';
 import { SummaryFinalizeCards } from './agreement/SummaryFinalizeCards';
 import { useGetAgreementConfig } from '../../../screens/DynamicDealCenter/hooks/useAgreementConfig';
 import { useGetDescriptionSchema } from '../../../screens/DynamicDealCenter/hooks/useDescriptionSchema';
@@ -37,6 +40,14 @@ interface VerticalSummaryTabProps {
   onUploadDocs?: (cat: 'agreement' | 'orderSheet', payloads: any[]) => Promise<any[] | null>;
   /** Re-reads the lead's stored documents for a category (no upload). */
   onRefreshDocs?: (cat: 'agreement' | 'orderSheet') => Promise<any[] | null>;
+  /**
+   * Drives the Job Builder's collapsing step header. The Summary tab owns its OWN
+   * ScrollView (it returns before `DynamicTabRenderer`'s), so it has to be wired
+   * separately or the header would sit frozen on this one tab.
+   *
+   * ⚠️ Spread it whole — it carries touch/momentum handlers, not just `onScroll`.
+   */
+  collapsingScrollProps?: Record<string, any>;
 }
 
 function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: string; text: string; variant?: string; showLabel?: boolean }) {
@@ -51,7 +62,7 @@ function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: s
   if (!showLabel || !labelText) {
     return (
       <View className="py-1">
-        <Text className="text-sm font-medium" style={{ color: valueColor }}>{text}</Text>
+        <Text className="text-base font-medium" style={{ color: valueColor }}>{text}</Text>
       </View>
     );
   }
@@ -62,22 +73,36 @@ function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: s
   return (
     <View className="flex-row items-start py-1">
       <Text
-        className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider"
+        className="text-xs text-slate-500 font-semibold uppercase tracking-wider"
         style={{ width: '40%', paddingRight: 8, paddingTop: 2 }}
       >
         {labelText}
       </Text>
-      <Text className="text-sm font-medium flex-1" style={{ color: valueColor }}>{text}</Text>
+      <Text className="text-base font-medium flex-1" style={{ color: valueColor }}>{text}</Text>
     </View>
   );
 }
 
-function LocationRowsDisplay({ locationRows }: { locationRows: any[] }) {
+/**
+ * The measurement grid, as ordinary summary ROWS — `1st Story | Left: 63ft, Right: 7ft, Front: 50ft
+ * (120ft total)`. The line itself is built by `formatStoryMeasurementLine`.
+ *
+ * ⚠️ Rendered through `SummaryFieldRow`, like every other row, and placed AFTER the field rows.
+ * It used to have its own layout (a fixed `w-16` label in smaller, lighter type) and sat in the
+ * right-hand column BESIDE the "Combination #" chip, so the story line floated above the rows on a
+ * grid of its own — reported as *"3rd Story  Left Side: 22ft is not looking well, put it in the end
+ * of the row, like the client show it in the table"*. Sharing the row component is what keeps the
+ * label column aligned; do not give this its own widths again.
+ *
+ * The data arrives keyed by LOCATION (Left Side → per-story values); the table is keyed by STORY, so
+ * it is inverted here.
+ */
+function LocationSummaryRows({ locationRows }: { locationRows: any[] }) {
   if (!locationRows?.length) return null;
 
   const storyMap: Record<string, any[]> = {};
   locationRows.forEach((row) => {
-    row.entries.forEach((entry: any) => {
+    (row.entries || []).forEach((entry: any) => {
       if (!storyMap[entry.story]) storyMap[entry.story] = [];
       storyMap[entry.story].push({
         location: row.location,
@@ -87,21 +112,16 @@ function LocationRowsDisplay({ locationRows }: { locationRows: any[] }) {
     });
   });
 
-  const storyOrder = Object.keys(storyMap);
-
   return (
-    <View className="mt-1 pl-1">
-      {storyOrder.map((story) => (
-        <View key={story} className="flex-row mb-0.5">
-          <Text className="text-[10px] text-slate-400 font-semibold w-16">{story}</Text>
-          <Text className="text-[10px] text-slate-600 flex-1">
-            {storyMap[story]
-              .map((item) => `${item.location}: ${item.value}${item.unit}`)
-              .join(', ')}
-          </Text>
-        </View>
-      ))}
-    </View>
+    <>
+      {Object.keys(storyMap).map((story) => {
+        // `Left Side: 1ft, Front: 2ft (3ft total)` — the colon and the
+        // only-when-it-adds-up total both live in the pure formatter, which is
+        // testable; this component cannot be loaded under jest.
+        const text = formatStoryMeasurementLine(storyMap[story]);
+        return <SummaryFieldRow key={story} label={story} text={text} />;
+      })}
+    </>
   );
 }
 
@@ -111,7 +131,7 @@ function ExtrasList({ label, items }: { label?: string; items: any[] }) {
   return (
     <View className="mt-2.5">
       {label && (
-        <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">{label}</Text>
+        <Text className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">{label}</Text>
       )}
       <View className="space-y-1">
         {items.map((item, index) => (
@@ -166,23 +186,25 @@ function CombinationSummaryItem({ entry, accentColor, isLast }: { entry: any; ac
       <View className="flex-row items-start">
         <View style={{ width: '40%', paddingRight: 8 }}>
           <View className="self-start px-2 py-0.5 rounded" style={{ backgroundColor: `${accentColor}1A` }}>
-            <Text className="text-[9px] font-bold" style={{ color: accentColor }}>
+            <Text className="text-xs font-bold" style={{ color: accentColor }}>
               Combination #{entry.displayNumber}
             </Text>
           </View>
         </View>
         <View className="flex-1">
           {entry.summaryLine && (
-            <Text className="text-sm font-semibold text-slate-800">{entry.summaryLine}</Text>
+            <Text className="text-base font-semibold text-slate-800">{entry.summaryLine}</Text>
           )}
-          <LocationRowsDisplay locationRows={entry.locationRows} />
         </View>
       </View>
-      {entry.comboFieldRows?.length > 0 && (
+      {/* The field rows and the measurement rows are ONE list: the stories are ordinary rows and
+          belong at the end of it, after Color, as the portal's table has them. */}
+      {(entry.comboFieldRows?.length > 0 || entry.locationRows?.length > 0) && (
         <View className="mt-1 space-y-1">
-          {entry.comboFieldRows.map((row: any, idx: number) => (
+          {entry.comboFieldRows?.map((row: any, idx: number) => (
             <SummaryFieldRow key={idx} label={row.label} text={row.text} variant={row.variant} />
           ))}
+          <LocationSummaryRows locationRows={entry.locationRows} />
         </View>
       )}
       <ExtrasList items={entry.comboExtras} />
@@ -215,6 +237,7 @@ export function VerticalSummaryTab({
   isDocUploadingRef,
   onUploadDocs,
   onRefreshDocs,
+  collapsingScrollProps,
 }: VerticalSummaryTabProps) {
   // `products` + `schemas` feed `resolveTabAccentColor` (web parity): they carry the
   // per-tab category colour that gives each summary card its own header colour.
@@ -272,15 +295,16 @@ export function VerticalSummaryTab({
       // Keep a focused input (appointment / agreement fields) above the keyboard —
       // the screen no longer wraps this in a padding KeyboardAvoidingView.
       automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+      {...collapsingScrollProps}
     >
       <View className="mb-4">
         <Text className="text-xl font-extrabold text-slate-850">Job Builder Summary</Text>
-        <Text className="text-xs text-slate-500 mt-0.5">Review all configured job details before completing the job.</Text>
+        <Text className="text-sm text-slate-500 mt-0.5">Review all configured job details before completing the job.</Text>
       </View>
 
       {summarySections.length === 0 ? (
         <View className="bg-slate-50 rounded-lg p-5 items-center justify-center border border-slate-100">
-          <Text className="text-sm text-slate-400 italic">No tabs available to summarize.</Text>
+          <Text className="text-base text-slate-400 italic">No tabs available to summarize.</Text>
         </View>
       ) : (
         summarySections.map((section: any) => {
@@ -291,17 +315,17 @@ export function VerticalSummaryTab({
           return (
             <View key={section.tabId} className="bg-white rounded-xl mb-4 overflow-hidden border border-slate-100 shadow-sm">
               <View className="px-4 py-3" style={{ backgroundColor: section.accentColor }}>
-                <Text className="text-xs font-bold text-white uppercase tracking-wider">{section.tabLabel}</Text>
+                <Text className="text-sm font-bold text-white uppercase tracking-wider">{section.tabLabel}</Text>
               </View>
               <View className="p-4">
                 {section.isEmpty ? (
-                  <Text className="text-xs text-slate-400 italic">No data entered</Text>
+                  <Text className="text-sm text-slate-400 italic">No data entered</Text>
                 ) : (
                   <View className="space-y-4">
                     {hasCombinations && section.combinationSections.map((group: any, groupIdx: number) => (
                       <View key={group.sectionId}>
                         {group.sectionLabel && (
-                          <Text className="text-xs font-bold text-slate-700 mb-2">{group.sectionLabel}</Text>
+                          <Text className="text-sm font-bold text-slate-700 mb-2">{group.sectionLabel}</Text>
                         )}
                         {group.combinations?.length > 0 && group.combinations.map((entry: any, idx: number) => (
                           <CombinationSummaryItem
@@ -337,7 +361,7 @@ export function VerticalSummaryTab({
                         style={{ borderTopWidth: 1, borderTopColor: DIVIDER_HAIRLINE }}
                       >
                         {group.sectionLabel && (
-                          <Text className="text-xs font-bold text-slate-700 mb-2">{group.sectionLabel}</Text>
+                          <Text className="text-sm font-bold text-slate-700 mb-2">{group.sectionLabel}</Text>
                         )}
                         <View className="space-y-2">
                           {group.fields.map((field: any, idx: number) => (

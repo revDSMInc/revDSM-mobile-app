@@ -185,6 +185,12 @@ const formatCoBuyerPhone = (value: string): string => {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 };
 
+/** Capitalize just the first character as the rep types — leaves the rest untouched so a
+ *  legitimately mixed-case name (McDonald, O'Brien) isn't forced to lowercase mid-entry.
+ *  Same rule as `LeadCreate`'s First/Last Name fields. */
+const capitalizeFirst = (text: string): string =>
+  text.length ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+
 /**
  * ⚠️ `sameAsPrimary` is DERIVED, never stored. Persisting a second flag beside the
  * address would give the record two ways to disagree with itself — and the answer is
@@ -444,7 +450,12 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     coBuyer.sameAsPrimary ? address : coBuyer.address;
 
   const handleCoBuyerChange = (index: number, field: 'firstName' | 'lastName' | 'phone' | 'email' | 'address', value: string) => {
-    const nextValue = field === 'phone' ? formatCoBuyerPhone(value) : value;
+    const nextValue =
+      field === 'phone'
+        ? formatCoBuyerPhone(value)
+        : field === 'firstName' || field === 'lastName'
+        ? capitalizeFirst(value)
+        : value;
     if (field === 'address') setCoBuyerSearchIndex(index);
     setCoBuyers((prev) =>
       prev.map((coBuyer, i) => (i === index ? { ...coBuyer, [field]: nextValue } : coBuyer))
@@ -789,12 +800,18 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
         <TextInput
           value={value}
           onChangeText={(t) => {
-            const formatted = label.toLowerCase().includes('phone') ? formatUSPhoneNumber(t) : t;
+            const lowerLabel = label.toLowerCase();
+            const formatted = lowerLabel.includes('phone')
+              ? formatUSPhoneNumber(t)
+              : lowerLabel.includes('name')
+              ? capitalizeFirst(t)
+              : t;
             onChange(formatted);
           }}
           placeholder={label}
           placeholderTextColor="#919EAB"
           keyboardType={keyboardType}
+          autoCapitalize={label.toLowerCase().includes('name') ? 'words' : 'sentences'}
           style={styles.fieldInput}
           maxLength={label.toLowerCase().includes('phone') ? 17 : undefined}
           editable={!submitting}

@@ -22,7 +22,7 @@ import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/nativ
 import { Storage } from '../../utils/storage';
 import { logLeadSessionPause } from '../../utils/lead-activity-log';
 import { useLocationBroadcaster } from '../../hooks/useLocationBroadcaster';
-import { clearLeadWorkSession } from '../../utils/lead-work-session';
+import { beginLeadWorkSession, clearLeadWorkSession } from '../../utils/lead-work-session';
 import { androidTextStyle } from '../../utils/platform-font';
 import { ENV } from '../../config/env';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -197,13 +197,27 @@ export default function LeadCenterPage() {
   // The pencil is rendered by `ContractDetailsCard` only past its `hasContract`
   // guard (sale / demo), so this is unreachable on a lead with no contract to edit.
   //
-  // ⚠️ A LEGACY (non-dynamic) deal keeps the inline modal, because the wizard cannot
-  // open a build that is not there. It replaced an "Edit on web" flash that left such
-  // a deal with no editor at all on device; the modal edits contract pricing and the
-  // schedule, which is exactly what that flash was refusing to do.
-  const isDynamicDeal = Boolean(
-    lead?.jobBuilder?.isDynamic || lead?.jobBuilder?.dynamicJobState || lead?.isDynamic
-  );
+  // ⚠️ THE PENCIL ALWAYS OPENS THE WIZARD. There is no dynamic-vs-legacy branch
+  // here any more, and re-adding one will reintroduce the bug below.
+  //
+  // It used to branch on an `isDynamicDeal` computed from the `lead` object. That
+  // CANNOT WORK, and the reason is structural rather than a matter of checking more
+  // fields: the job build is not on the lead. It is fetched from its own endpoint
+  // (`getPortalJobBuilder`, with a calculator-outcome fallback) by the wizard
+  // itself, which queries it on mount.
+  // Lead Center never calls it, so every synchronous guess from `lead` answered
+  // "not dynamic" for genuinely dynamic deals and dropped the rep into the inline
+  // "Edit Contract Details" modal. Widening the predicate only moved which deals
+  // guessed wrong.
+  //
+  // ⚠️ This matters beyond the wrong sheet appearing: ONLY the wizard raises an
+  // ADDENDUM, which is what a submitted deal's changes have to be. The inline modal
+  // edits the record directly, so the customer never gets a signing link — a
+  // contract changed with no signature against it.
+  //
+  // The wizard is the right destination for a legacy deal too: it resolves the build
+  // itself and can report honestly when there is nothing to edit, which is a thing
+  // this screen has no way to find out before navigating.
 
   const handleEditDeal = useCallback(() => {
     const leadId = lead?._id || lead?.id || lead?.leadId;
@@ -268,11 +282,6 @@ export default function LeadCenterPage() {
    * unmount cleanup runs with whatever closure it was created with.
    */
   const pauseLeadSession = useCallback(() => {
-    // Web `job-capture-images-view.js`: a deal is opened to be read, not worked, so
-    // firing a pause would mark the rep as having worked a closed job in the ops
-    // session log. Every other route pauses the session check-in / resume started.
-    if (fromMyDeals) return Promise.resolve();
-
     /**
      * ⚠️ A pause means the REP LEFT THE LEAD — and they can only do that while the app
      * is the thing on screen.
@@ -296,11 +305,42 @@ export default function LeadCenterPage() {
      */
     if (AppState.currentState !== 'active') return Promise.resolve();
 
-    if (!leadRef.current?._id || hasLoggedPauseRef.current) return Promise.resolve();
+    const leadId = leadRef.current?._id;
+    if (!leadId || hasLoggedPauseRef.current) return Promise.resolve();
     hasLoggedPauseRef.current = true;
     // The rep left of their own accord, so the next launch must not treat this session
     // as one a kill left behind and file a second pause for it.
     clearLeadWorkSession();
+
+    /**
+     * RELEASE the work session here, beside the log that announces it.
+     *
+     * ⚠️ This used to live ONLY in `useLeadCenterData`'s unmount cleanup, so it was
+     * tied to the screen being DESTROYED rather than to the rep leaving. Observed on
+     * device: the screen's own back arrow sent `{ workStartedBy: null }`, and **no route
+     * through the green `MainHeader` did** — the logo included, even though it lands back
+     * on `Leads`. The pause log went out on all of them, so ops read the rep as having
+     * left while the server still had them as `workStartedBy: <them>`, which is a rep who
+     * looks like they are sitting in a customer's house they walked out of.
+     *
+     * The bell / chat / account buttons additionally PUSH their screen on top, so Lead
+     * Center is not even unmounted on those.
+     *
+     * Releasing from the one exit path every route already goes through is what makes
+     * the two halves inseparable: no route can now pause without releasing, whatever the
+     * navigator does to the screen afterwards. Do NOT move this back into an unmount.
+     */
+    LeadService.endWorkLead(leadId).catch((e) =>
+      console.warn('[LeadCenter] Work end failed:', e)
+    );
+
+    // Web `job-capture-images-view.js`: a deal is opened to be read, not worked, so
+    // firing a pause would mark the rep as having worked a closed job in the ops
+    // session log. ⚠️ The RELEASE above still runs for a deal — the Lead Center opens a
+    // work session on mount either way and it has to be given back. Only the LOG is
+    // suppressed.
+    if (fromMyDeals) return Promise.resolve();
+
     return logLeadSessionPause(userRef.current, leadRef.current).catch((err) => {
       console.warn('[LeadCenter] Session pause logging failed:', err);
     });
@@ -332,6 +372,42 @@ export default function LeadCenterPage() {
       });
       return () => setHeaderActions({ onNavigate: null });
     }, [setHeaderActions, navigation])
+  );
+
+  /**
+   * The other half of `pauseLeadSession`: coming BACK to a lead re-opens the session it
+   * released.
+   *
+   * ⚠️ Without this, making the pause release the work session would have created a
+   * worse bug than the one it fixed. The header's bell / chat / account buttons PUSH
+   * their screen on top, so Lead Center is never unmounted — it is only blurred. The
+   * mount effect in `useLeadCenterData` that calls `workLead` is keyed on
+   * `lead._id`/`user._id`, so it does not re-run on the way back, and the rep would
+   * return to a lead the server thinks nobody is working.
+   *
+   * Keyed on `hasLoggedPauseRef`, so this is a no-op on the FIRST focus — the mount
+   * effect has already opened the session, and re-sending `workLead` there would stamp a
+   * second check-in for one arrival.
+   *
+   * ⚠️ Runs for a deal too. `pauseLeadSession` releases a deal's session (it just files
+   * no log), so a deal has to be able to re-acquire it or the two stop matching.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasLoggedPauseRef.current) return;
+      const currentLead = leadRef.current;
+      const leadId = currentLead?._id;
+      const userId = userRef.current?._id || userRef.current?.id;
+      if (!leadId || !userId) return;
+
+      hasLoggedPauseRef.current = false;
+      // Re-arm the killed-app backstop as well — the pause cleared the stored record, so
+      // without this a kill from here on would leave the re-opened session dangling.
+      beginLeadWorkSession(currentLead, userRef.current, fromMyDeals);
+      LeadService.workLead(leadId, userId).catch((e) =>
+        console.warn('[LeadCenter] Work resume failed:', e)
+      );
+    }, [fromMyDeals])
   );
 
   useEffect(() => {
@@ -1513,11 +1589,15 @@ export default function LeadCenterPage() {
           </View>
 
           {/* Cancelled-job banner — under the tab bar and above EVERY tab, matching web
-              `lead-center-tabs.js`. Deal route only (`fromMyDeals` = web `isDeal`) and
-              null unless the job is cancelled, so the normal lead path is untouched.
-              The PENDING-signature status is NOT here — it is the Contract Details
-              card's own amber header. See the note in DealBanners.tsx. */}
-          {fromMyDeals && <DealBanners lead={lead} />}
+              `lead-center-tabs.js`. Null unless the job is cancelled, so the normal lead
+              path is untouched. The PENDING-signature status is NOT here — it is the
+              Contract Details card's own amber header. See the note in DealBanners.tsx.
+
+              ⚠️ NOT gated on `fromMyDeals`. It was, and a job cancelled from the Sold
+              Leads tab then showed NO cancelled state at all — same screen, same deal,
+              same record, banner only on one route in. Whether the job is cancelled is a
+              fact about the DEAL, not about the door the rep came through. */}
+          <DealBanners lead={lead} />
 
           <View style={{ flex: 1 }}>
             {activeTab === 'job_docs' && (
@@ -1529,7 +1609,9 @@ export default function LeadCenterPage() {
                 onOpenPdf={handleOpenPdf}
                 secureUrls={secureUrls}
                 isRefreshing={isRefreshing}
-                onEditContract={isDynamicDeal ? handleEditDeal : undefined}
+                // ⚠️ Unconditional. See the note on `handleEditDeal` — a conditional
+                // here is what sent dynamic deals to the inline modal.
+                onEditContract={handleEditDeal}
                 drafts={dealDrafts}
                 // Whether the drafts query has SETTLED (success or handled error).
                 // The pending-addendum card holds its first paint until it has, so a

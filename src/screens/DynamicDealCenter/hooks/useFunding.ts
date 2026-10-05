@@ -35,6 +35,7 @@ import {
 } from '../../../utils/activity-log/funding-log';
 import { isReissue } from '../utils/funding';
 import { LeadService } from '../../../services/api/leads';
+import { isOnline } from '../../../services/connectivity';
 import { getRawPhoneNumber } from '../../../utils/phone-util';
 
 /**
@@ -343,6 +344,24 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       opts: { pid?: string } = {}
     ): Promise<FundingActionResult<any>> => {
       if (!leadId) return { ok: false, error: { kind: 'bug', message: 'No lead id' } };
+      /**
+       * ⚠️ ONE offline gate for EVERY funding action, here rather than at the
+       * dozen call sites below it.
+       *
+       * Every one of them — save, send link, charge, collect, activate, sync,
+       * refund, submit — is a server-owned step on a record only the server
+       * holds, and none has an offline queue. A rule repeated at each call site
+       * is a rule that will be right at most of them.
+       *
+       * Left ungated these failed anonymously: axios threw, `report` turned it
+       * into a generic network error, and the rep saw a spinner resolve into
+       * nothing. The honest message names the action that did not happen.
+       */
+      if (!isOnline()) {
+        const message = `${context} needs a connection. Nothing was sent — try again once you have signal.`;
+        FlashMessage.info('Needs a connection', message);
+        return { ok: false, error: { kind: 'offline', message } };
+      }
       if (opts.pid) setBusyPid(opts.pid);
       try {
         const res = await call();

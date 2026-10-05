@@ -336,6 +336,105 @@ export const LeadService = {
     api.get(`/rev-render/v1/runs?leadId=${leadId}`),
   getRevRenderBatchStatus: (batchId: string): Promise<AxiosResponse<any>> =>
     api.get(`/rev-render/v1/batches/${batchId}`),
+
+  /**
+   * Send renders to a homeowner by text or email (REVUIUX-483).
+   *
+   * Returns 200 with `sent: false` and a `deliveryError` when the link was
+   * created but delivery failed — the share exists and the link works, so offer
+   * retry or copy rather than treating it as a total failure.
+   */
+  shareRevRenders: (payload: {
+    leadId?: string;
+    runIds: string[];
+    channel: 'sms' | 'email';
+    recipientName?: string;
+    recipientPhone?: string;
+    recipientEmail?: string;
+  }): Promise<AxiosResponse<any>> => api.post('/rev-render/v1/shares', payload),
+
+  /**
+   * Favourites / recents for the signed-in rep (483 §3, §7).
+   *
+   * Per REP ACCOUNT, not per device — a rep who changes phone keeps their work.
+   * Returns `favouriteLookIds`, `recentLookIds`, `customLooks` and
+   * `guidanceDismissed` — all four are live as of 2 Oct 2026. (They were
+   * documented as "always empty" before the custom-look and guidance endpoints
+   * shipped; that is no longer true, and `applyServerPreferences` now seeds all
+   * four.)
+   */
+  getRevRenderPreferences: (): Promise<AxiosResponse<any>> =>
+    api.get('/rev-render/v1/preferences'),
+
+  /**
+   * Toggle one favourite and get the whole new list back.
+   *
+   * ⚠️ A TOGGLE, deliberately — not a whole-list write. If two devices each
+   * sent their full list the later one would silently wipe the other's change.
+   * Use `setRevRenderFavourites` only to reconcile offline edits.
+   */
+  toggleRevRenderFavourite: (lookId: string): Promise<AxiosResponse<any>> =>
+    api.post('/rev-render/v1/preferences/favourites/toggle', { lookId }),
+
+  /** Replace the whole favourites list. Offline reconciliation only — see above. */
+  setRevRenderFavourites: (favouriteLookIds: string[]): Promise<AxiosResponse<any>> =>
+    api.put('/rev-render/v1/preferences/favourites', { favouriteLookIds }),
+
+  /**
+   * The look catalogue (357 looks), server-owned since 1 Oct.
+   *
+   * ⚠️ Pass the last known `version` and the server may answer **304 with an
+   * empty body**. `validateStatus` admits it so axios does not throw — the caller
+   * reads `res.status === 304` as "what you have is current".
+   *
+   * ⚠️ Each look carries `lookId`, NOT `id`. `catalog.ts` maps it.
+   */
+  getRevRenderLooks: (version?: string): Promise<AxiosResponse<any>> =>
+    api.get('/rev-render/v1/looks', {
+      params: version ? { version } : undefined,
+      validateStatus: (s) => (s >= 200 && s < 300) || s === 304,
+    }),
+
+  /**
+   * Save a custom look. Returns the rep's whole list, newest first.
+   *
+   * ⚠️ An UPSERT keyed on `lookId`, so re-sending never duplicates — that is
+   * what makes a look built offline safe to sync later.
+   * ⚠️ OMIT `lookId` on a first save and the server mints `custom-<24 hex>`.
+   * Prefer that: a client-side `custom-${Date.now()}` can collide across two
+   * devices belonging to the same rep.
+   * ⚠️ Never send `pattern` — the server derives it from the colour count.
+   */
+  saveRevRenderCustomLook: (look: {
+    lookId?: string;
+    name: string;
+    colors: string[];
+  }): Promise<AxiosResponse<any>> =>
+    api.post('/rev-render/v1/preferences/custom-looks', look),
+
+  /**
+   * Delete a custom look. Returns the remaining list.
+   *
+   * Deleting something already gone answers 200, so a retry is safe. It never
+   * touches renders that used the look — runs store their own colours, so
+   * history and already-sent share links stay intact.
+   */
+  deleteRevRenderCustomLook: (lookId: string): Promise<AxiosResponse<any>> =>
+    api.delete(`/rev-render/v1/preferences/custom-looks/${lookId}`),
+
+  /**
+   * Record that the rep dismissed a photo-guidance popup for one mode.
+   *
+   * Idempotent — fire on every "don't show me this again" without tracking
+   * whether it was already sent. ⚠️ Only 'core' and 'lighting' are accepted;
+   * anything else is a 400. The two modes are tracked separately.
+   */
+  dismissRevRenderGuidance: (key: 'core' | 'lighting'): Promise<AxiosResponse<any>> =>
+    api.post('/rev-render/v1/preferences/guidance/dismiss', { key }),
+
+  /** Stop a share link working before it expires. */
+  revokeRevRenderShare: (shareId: string): Promise<AxiosResponse<any>> =>
+    api.post(`/rev-render/v1/shares/${shareId}/revoke`, {}),
   createAppointment: (payload: any): Promise<AxiosResponse<any>> =>
     api.post('/appointments', payload),
   getAppointmentsByDate: (date: string): Promise<AxiosResponse<any>> =>

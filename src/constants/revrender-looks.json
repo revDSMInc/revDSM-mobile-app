@@ -1,0 +1,3972 @@
+[
+ {
+  "id": "warm-white",
+  "group": "everyday",
+  "category": "everyday",
+  "name": "Warm White",
+  "colors": [
+   "#FFD9A0"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "cool-white",
+  "group": "everyday",
+  "category": "everyday",
+  "name": "Cool White",
+  "colors": [
+   "#EAF3FF"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "multi",
+  "group": "everyday",
+  "category": "everyday",
+  "name": "Multicolor",
+  "colors": [
+   "#E4002B",
+   "#FF8C1A",
+   "#FFC94D",
+   "#00A650",
+   "#1E5BD8",
+   "#7B2FBE"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "jan",
+  "group": "season",
+  "category": "holiday",
+  "month": "Jan",
+  "name": "New Year's",
+  "colors": [
+   "#FFF4E0",
+   "#FFC94D"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "feb",
+  "group": "season",
+  "category": "holiday",
+  "month": "Feb",
+  "name": "Valentine's",
+  "colors": [
+   "#FF3D7F",
+   "#E0002B",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mar",
+  "group": "season",
+  "category": "holiday",
+  "month": "Mar",
+  "name": "St. Patrick's",
+  "colors": [
+   "#00B04F",
+   "#FFFFFF",
+   "#F2B632"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "apr",
+  "group": "season",
+  "category": "holiday",
+  "month": "Apr",
+  "name": "Easter",
+  "colors": [
+   "#FFB3D1",
+   "#A9D8FF",
+   "#FFF19A",
+   "#C9B4FF",
+   "#B2F0C6"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "may",
+  "group": "season",
+  "category": "holiday",
+  "month": "May",
+  "name": "Cinco de Mayo",
+  "colors": [
+   "#00A650",
+   "#FFFFFF",
+   "#E4002B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "jun",
+  "group": "season",
+  "category": "holiday",
+  "month": "Jun",
+  "name": "Patio Parties",
+  "colors": [
+   "#FFE3B8"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "jul",
+  "group": "season",
+  "category": "holiday",
+  "month": "Jul",
+  "name": "Fourth of July",
+  "colors": [
+   "#E4002B",
+   "#FFFFFF",
+   "#0038A8"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "aug",
+  "group": "season",
+  "category": "holiday",
+  "month": "Aug",
+  "name": "Purple Heart Day",
+  "colors": [
+   "#7A2BD6"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "sep",
+  "group": "season",
+  "category": "holiday",
+  "month": "Sep",
+  "name": "NFL Kickoff",
+  "colors": [
+   "#1E5BD8",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "oct",
+  "group": "season",
+  "category": "holiday",
+  "month": "Oct",
+  "name": "Halloween",
+  "colors": [
+   "#FF6A00",
+   "#7B2FBE"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nov",
+  "group": "season",
+  "category": "holiday",
+  "month": "Nov",
+  "name": "Thanksgiving",
+  "colors": [
+   "#FF8C1A",
+   "#C8511B",
+   "#F2B33D"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "dec",
+  "group": "season",
+  "category": "holiday",
+  "month": "Dec",
+  "name": "Christmas",
+  "colors": [
+   "#E4002B",
+   "#00A650",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mardi",
+  "group": "season",
+  "category": "holiday",
+  "month": "Feb",
+  "name": "Mardi Gras",
+  "colors": [
+   "#5B2C83",
+   "#00843D",
+   "#FFC72C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "memorial",
+  "group": "season",
+  "category": "holiday",
+  "month": "May",
+  "name": "Memorial Day",
+  "colors": [
+   "#E4002B",
+   "#FFFFFF",
+   "#0038A8"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "pride",
+  "group": "season",
+  "category": "holiday",
+  "month": "Jun",
+  "name": "Pride",
+  "colors": [
+   "#E40303",
+   "#FF8C00",
+   "#FFED00",
+   "#008026",
+   "#004DFF",
+   "#750787"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "bca",
+  "group": "season",
+  "category": "holiday",
+  "month": "Oct",
+  "name": "Breast Cancer Awareness",
+  "colors": [
+   "#FF69B4",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "veterans",
+  "group": "season",
+  "category": "holiday",
+  "month": "Nov",
+  "name": "Veterans Day",
+  "colors": [
+   "#E4002B",
+   "#FFFFFF",
+   "#0038A8"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hanukkah",
+  "group": "season",
+  "category": "holiday",
+  "month": "Dec",
+  "name": "Hanukkah",
+  "colors": [
+   "#0038A8",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-arizona-cardinals",
+  "group": "team",
+  "category": "NFL",
+  "name": "Arizona Cardinals",
+  "colors": [
+   "#97233F",
+   "#FFB612"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-atlanta-falcons",
+  "group": "team",
+  "category": "NFL",
+  "name": "Atlanta Falcons",
+  "colors": [
+   "#A71930",
+   "#A5ACAF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-baltimore-ravens",
+  "group": "team",
+  "category": "NFL",
+  "name": "Baltimore Ravens",
+  "colors": [
+   "#241773",
+   "#9E7C0C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-buffalo-bills",
+  "group": "team",
+  "category": "NFL",
+  "name": "Buffalo Bills",
+  "colors": [
+   "#00338D",
+   "#C60C30"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-carolina-panthers",
+  "group": "team",
+  "category": "NFL",
+  "name": "Carolina Panthers",
+  "colors": [
+   "#0085CA",
+   "#BFC0BF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-chicago-bears",
+  "group": "team",
+  "category": "NFL",
+  "name": "Chicago Bears",
+  "colors": [
+   "#0B162A",
+   "#C83803"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-cincinnati-bengals",
+  "group": "team",
+  "category": "NFL",
+  "name": "Cincinnati Bengals",
+  "colors": [
+   "#FB4F14"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nfl-cleveland-browns",
+  "group": "team",
+  "category": "NFL",
+  "name": "Cleveland Browns",
+  "colors": [
+   "#311D00",
+   "#FF3C00"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-dallas-cowboys",
+  "group": "team",
+  "category": "NFL",
+  "name": "Dallas Cowboys",
+  "colors": [
+   "#003594",
+   "#869397"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-denver-broncos",
+  "group": "team",
+  "category": "NFL",
+  "name": "Denver Broncos",
+  "colors": [
+   "#FB4F14",
+   "#002244"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-detroit-lions",
+  "group": "team",
+  "category": "NFL",
+  "name": "Detroit Lions",
+  "colors": [
+   "#0076B6",
+   "#B0B7BC"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-green-bay-packers",
+  "group": "team",
+  "category": "NFL",
+  "name": "Green Bay Packers",
+  "colors": [
+   "#203731",
+   "#FFB612"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-houston-texans",
+  "group": "team",
+  "category": "NFL",
+  "name": "Houston Texans",
+  "colors": [
+   "#03202F",
+   "#A71930"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-indianapolis-colts",
+  "group": "team",
+  "category": "NFL",
+  "name": "Indianapolis Colts",
+  "colors": [
+   "#002C5F",
+   "#A2AAAD"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-jacksonville-jaguars",
+  "group": "team",
+  "category": "NFL",
+  "name": "Jacksonville Jaguars",
+  "colors": [
+   "#006778",
+   "#D7A22A"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-kansas-city-chiefs",
+  "group": "team",
+  "category": "NFL",
+  "name": "Kansas City Chiefs",
+  "colors": [
+   "#E31837",
+   "#FFB81C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-las-vegas-raiders",
+  "group": "team",
+  "category": "NFL",
+  "name": "Las Vegas Raiders",
+  "colors": [
+   "#A5ACAF"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nfl-los-angeles-chargers",
+  "group": "team",
+  "category": "NFL",
+  "name": "Los Angeles Chargers",
+  "colors": [
+   "#0080C6",
+   "#FFC20E"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-los-angeles-rams",
+  "group": "team",
+  "category": "NFL",
+  "name": "Los Angeles Rams",
+  "colors": [
+   "#003594",
+   "#FFA300"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-miami-dolphins",
+  "group": "team",
+  "category": "NFL",
+  "name": "Miami Dolphins",
+  "colors": [
+   "#008E97",
+   "#FC4C02",
+   "#005778"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-minnesota-vikings",
+  "group": "team",
+  "category": "NFL",
+  "name": "Minnesota Vikings",
+  "colors": [
+   "#4F2683",
+   "#FFC62F"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-new-england-patriots",
+  "group": "team",
+  "category": "NFL",
+  "name": "New England Patriots",
+  "colors": [
+   "#002244",
+   "#C60C30",
+   "#B0B7BC"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-new-orleans-saints",
+  "group": "team",
+  "category": "NFL",
+  "name": "New Orleans Saints",
+  "colors": [
+   "#D3BC8D"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nfl-new-york-giants",
+  "group": "team",
+  "category": "NFL",
+  "name": "New York Giants",
+  "colors": [
+   "#0B2265",
+   "#A71930"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-new-york-jets",
+  "group": "team",
+  "category": "NFL",
+  "name": "New York Jets",
+  "colors": [
+   "#125740"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nfl-philadelphia-eagles",
+  "group": "team",
+  "category": "NFL",
+  "name": "Philadelphia Eagles",
+  "colors": [
+   "#004C54",
+   "#A5ACAF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-pittsburgh-steelers",
+  "group": "team",
+  "category": "NFL",
+  "name": "Pittsburgh Steelers",
+  "colors": [
+   "#FFB612"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nfl-san-francisco-49ers",
+  "group": "team",
+  "category": "NFL",
+  "name": "San Francisco 49ers",
+  "colors": [
+   "#AA0000",
+   "#B3995D"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-seattle-seahawks",
+  "group": "team",
+  "category": "NFL",
+  "name": "Seattle Seahawks",
+  "colors": [
+   "#002244",
+   "#69BE28",
+   "#A5ACAF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-tampa-bay-buccaneers",
+  "group": "team",
+  "category": "NFL",
+  "name": "Tampa Bay Buccaneers",
+  "colors": [
+   "#D50A0A",
+   "#FF7900",
+   "#34302B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-tennessee-titans",
+  "group": "team",
+  "category": "NFL",
+  "name": "Tennessee Titans",
+  "colors": [
+   "#0C2340",
+   "#4B92DB",
+   "#C8102E"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nfl-washington-commanders",
+  "group": "team",
+  "category": "NFL",
+  "name": "Washington Commanders",
+  "colors": [
+   "#5A1414",
+   "#FFB612"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-arizona-diamondbacks",
+  "group": "team",
+  "category": "MLB",
+  "name": "Arizona Diamondbacks",
+  "colors": [
+   "#A71930",
+   "#E3D4AD"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-athletics",
+  "group": "team",
+  "category": "MLB",
+  "name": "Athletics",
+  "colors": [
+   "#003831",
+   "#EFB21E"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-atlanta-braves",
+  "group": "team",
+  "category": "MLB",
+  "name": "Atlanta Braves",
+  "colors": [
+   "#CE1141",
+   "#13274F"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-baltimore-orioles",
+  "group": "team",
+  "category": "MLB",
+  "name": "Baltimore Orioles",
+  "colors": [
+   "#DF4601"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mlb-boston-red-sox",
+  "group": "team",
+  "category": "MLB",
+  "name": "Boston Red Sox",
+  "colors": [
+   "#BD3039",
+   "#0C2340"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-chicago-cubs",
+  "group": "team",
+  "category": "MLB",
+  "name": "Chicago Cubs",
+  "colors": [
+   "#0E3386",
+   "#CC3433"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-chicago-white-sox",
+  "group": "team",
+  "category": "MLB",
+  "name": "Chicago White Sox",
+  "colors": [
+   "#C4CED4"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mlb-cincinnati-reds",
+  "group": "team",
+  "category": "MLB",
+  "name": "Cincinnati Reds",
+  "colors": [
+   "#C6011F"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mlb-cleveland-guardians",
+  "group": "team",
+  "category": "MLB",
+  "name": "Cleveland Guardians",
+  "colors": [
+   "#00385D",
+   "#E50022"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-colorado-rockies",
+  "group": "team",
+  "category": "MLB",
+  "name": "Colorado Rockies",
+  "colors": [
+   "#33006F",
+   "#C4CED4"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-detroit-tigers",
+  "group": "team",
+  "category": "MLB",
+  "name": "Detroit Tigers",
+  "colors": [
+   "#0C2340",
+   "#FA4616"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-houston-astros",
+  "group": "team",
+  "category": "MLB",
+  "name": "Houston Astros",
+  "colors": [
+   "#002D62",
+   "#EB6E1F"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-kansas-city-royals",
+  "group": "team",
+  "category": "MLB",
+  "name": "Kansas City Royals",
+  "colors": [
+   "#004687",
+   "#BD9B60"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-los-angeles-angels",
+  "group": "team",
+  "category": "MLB",
+  "name": "Los Angeles Angels",
+  "colors": [
+   "#BA0021",
+   "#003263",
+   "#C4CED4"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-los-angeles-dodgers",
+  "group": "team",
+  "category": "MLB",
+  "name": "Los Angeles Dodgers",
+  "colors": [
+   "#005A9C",
+   "#EF3E42"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-miami-marlins",
+  "group": "team",
+  "category": "MLB",
+  "name": "Miami Marlins",
+  "colors": [
+   "#00A3E0",
+   "#EF3340"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-milwaukee-brewers",
+  "group": "team",
+  "category": "MLB",
+  "name": "Milwaukee Brewers",
+  "colors": [
+   "#12284B",
+   "#FFC52F"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-minnesota-twins",
+  "group": "team",
+  "category": "MLB",
+  "name": "Minnesota Twins",
+  "colors": [
+   "#002B5C",
+   "#D31145"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-new-york-mets",
+  "group": "team",
+  "category": "MLB",
+  "name": "New York Mets",
+  "colors": [
+   "#002D72",
+   "#FF5910"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-new-york-yankees",
+  "group": "team",
+  "category": "MLB",
+  "name": "New York Yankees",
+  "colors": [
+   "#0C2340",
+   "#C4CED3"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-philadelphia-phillies",
+  "group": "team",
+  "category": "MLB",
+  "name": "Philadelphia Phillies",
+  "colors": [
+   "#E81828",
+   "#002D72"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-pittsburgh-pirates",
+  "group": "team",
+  "category": "MLB",
+  "name": "Pittsburgh Pirates",
+  "colors": [
+   "#FDB827"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mlb-san-diego-padres",
+  "group": "team",
+  "category": "MLB",
+  "name": "San Diego Padres",
+  "colors": [
+   "#2F241D",
+   "#FFC425"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-san-francisco-giants",
+  "group": "team",
+  "category": "MLB",
+  "name": "San Francisco Giants",
+  "colors": [
+   "#FD5A1E"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mlb-seattle-mariners",
+  "group": "team",
+  "category": "MLB",
+  "name": "Seattle Mariners",
+  "colors": [
+   "#0C2C56",
+   "#005C5C",
+   "#C4CED4"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-st-louis-cardinals",
+  "group": "team",
+  "category": "MLB",
+  "name": "St. Louis Cardinals",
+  "colors": [
+   "#C41E3A",
+   "#0C2340",
+   "#FEDB00"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-tampa-bay-rays",
+  "group": "team",
+  "category": "MLB",
+  "name": "Tampa Bay Rays",
+  "colors": [
+   "#092C5C",
+   "#8FBCE6",
+   "#F5D130"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-texas-rangers",
+  "group": "team",
+  "category": "MLB",
+  "name": "Texas Rangers",
+  "colors": [
+   "#003278",
+   "#C0111F"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-toronto-blue-jays",
+  "group": "team",
+  "category": "MLB",
+  "name": "Toronto Blue Jays",
+  "colors": [
+   "#134A8E",
+   "#1D2D5C",
+   "#E8291C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mlb-washington-nationals",
+  "group": "team",
+  "category": "MLB",
+  "name": "Washington Nationals",
+  "colors": [
+   "#AB0003",
+   "#14225A"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-anaheim-ducks",
+  "group": "team",
+  "category": "NHL",
+  "name": "Anaheim Ducks",
+  "colors": [
+   "#F47A38",
+   "#B9975B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-boston-bruins",
+  "group": "team",
+  "category": "NHL",
+  "name": "Boston Bruins",
+  "colors": [
+   "#FFB81C"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nhl-buffalo-sabres",
+  "group": "team",
+  "category": "NHL",
+  "name": "Buffalo Sabres",
+  "colors": [
+   "#002654",
+   "#FCB514"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-calgary-flames",
+  "group": "team",
+  "category": "NHL",
+  "name": "Calgary Flames",
+  "colors": [
+   "#C8102E",
+   "#F1BE48"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-carolina-hurricanes",
+  "group": "team",
+  "category": "NHL",
+  "name": "Carolina Hurricanes",
+  "colors": [
+   "#CC0000",
+   "#A2AAAD"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-chicago-blackhawks",
+  "group": "team",
+  "category": "NHL",
+  "name": "Chicago Blackhawks",
+  "colors": [
+   "#CF0A2C"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nhl-colorado-avalanche",
+  "group": "team",
+  "category": "NHL",
+  "name": "Colorado Avalanche",
+  "colors": [
+   "#6F263D",
+   "#236192",
+   "#A2AAAD"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-columbus-blue-jackets",
+  "group": "team",
+  "category": "NHL",
+  "name": "Columbus Blue Jackets",
+  "colors": [
+   "#002654",
+   "#CE1126",
+   "#A4A9AD"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-dallas-stars",
+  "group": "team",
+  "category": "NHL",
+  "name": "Dallas Stars",
+  "colors": [
+   "#006847",
+   "#8F8F8C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-detroit-red-wings",
+  "group": "team",
+  "category": "NHL",
+  "name": "Detroit Red Wings",
+  "colors": [
+   "#CE1126",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-edmonton-oilers",
+  "group": "team",
+  "category": "NHL",
+  "name": "Edmonton Oilers",
+  "colors": [
+   "#041E42",
+   "#FF4C00"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-florida-panthers",
+  "group": "team",
+  "category": "NHL",
+  "name": "Florida Panthers",
+  "colors": [
+   "#041E42",
+   "#C8102E",
+   "#B9975B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-los-angeles-kings",
+  "group": "team",
+  "category": "NHL",
+  "name": "Los Angeles Kings",
+  "colors": [
+   "#A2AAAD"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nhl-minnesota-wild",
+  "group": "team",
+  "category": "NHL",
+  "name": "Minnesota Wild",
+  "colors": [
+   "#154734",
+   "#A6192E",
+   "#EAAA00"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-montreal-canadiens",
+  "group": "team",
+  "category": "NHL",
+  "name": "Montreal Canadiens",
+  "colors": [
+   "#AF1E2D",
+   "#192168"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-nashville-predators",
+  "group": "team",
+  "category": "NHL",
+  "name": "Nashville Predators",
+  "colors": [
+   "#FFB81C",
+   "#041E42"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-new-jersey-devils",
+  "group": "team",
+  "category": "NHL",
+  "name": "New Jersey Devils",
+  "colors": [
+   "#CE1126"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nhl-new-york-islanders",
+  "group": "team",
+  "category": "NHL",
+  "name": "New York Islanders",
+  "colors": [
+   "#00539B",
+   "#F47D30"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-new-york-rangers",
+  "group": "team",
+  "category": "NHL",
+  "name": "New York Rangers",
+  "colors": [
+   "#0038A8",
+   "#CE1126"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-ottawa-senators",
+  "group": "team",
+  "category": "NHL",
+  "name": "Ottawa Senators",
+  "colors": [
+   "#C52032",
+   "#C2912C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-philadelphia-flyers",
+  "group": "team",
+  "category": "NHL",
+  "name": "Philadelphia Flyers",
+  "colors": [
+   "#F74902"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nhl-pittsburgh-penguins",
+  "group": "team",
+  "category": "NHL",
+  "name": "Pittsburgh Penguins",
+  "colors": [
+   "#FCB514"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nhl-san-jose-sharks",
+  "group": "team",
+  "category": "NHL",
+  "name": "San Jose Sharks",
+  "colors": [
+   "#006D75",
+   "#EA7200"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-seattle-kraken",
+  "group": "team",
+  "category": "NHL",
+  "name": "Seattle Kraken",
+  "colors": [
+   "#001628",
+   "#99D9D9",
+   "#E9072B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-st-louis-blues",
+  "group": "team",
+  "category": "NHL",
+  "name": "St. Louis Blues",
+  "colors": [
+   "#002F87",
+   "#FCB514"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-tampa-bay-lightning",
+  "group": "team",
+  "category": "NHL",
+  "name": "Tampa Bay Lightning",
+  "colors": [
+   "#002868",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-toronto-maple-leafs",
+  "group": "team",
+  "category": "NHL",
+  "name": "Toronto Maple Leafs",
+  "colors": [
+   "#00205B",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-utah-mammoth",
+  "group": "team",
+  "category": "NHL",
+  "name": "Utah Mammoth",
+  "colors": [
+   "#6CACE4",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-vancouver-canucks",
+  "group": "team",
+  "category": "NHL",
+  "name": "Vancouver Canucks",
+  "colors": [
+   "#00205B",
+   "#00843D",
+   "#97999B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-vegas-golden-knights",
+  "group": "team",
+  "category": "NHL",
+  "name": "Vegas Golden Knights",
+  "colors": [
+   "#B4975A",
+   "#333F42",
+   "#C8102E"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-washington-capitals",
+  "group": "team",
+  "category": "NHL",
+  "name": "Washington Capitals",
+  "colors": [
+   "#C8102E",
+   "#041E42"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nhl-winnipeg-jets",
+  "group": "team",
+  "category": "NHL",
+  "name": "Winnipeg Jets",
+  "colors": [
+   "#041E42",
+   "#004C97",
+   "#AC162C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-atlanta-hawks",
+  "group": "team",
+  "category": "NBA",
+  "name": "Atlanta Hawks",
+  "colors": [
+   "#E03A3E",
+   "#C1D32F",
+   "#26282A"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-boston-celtics",
+  "group": "team",
+  "category": "NBA",
+  "name": "Boston Celtics",
+  "colors": [
+   "#007A33",
+   "#BA9653"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-brooklyn-nets",
+  "group": "team",
+  "category": "NBA",
+  "name": "Brooklyn Nets",
+  "colors": [
+   "#FFFFFF"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nba-charlotte-hornets",
+  "group": "team",
+  "category": "NBA",
+  "name": "Charlotte Hornets",
+  "colors": [
+   "#1D1160",
+   "#00788C",
+   "#A1A1A4"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-chicago-bulls",
+  "group": "team",
+  "category": "NBA",
+  "name": "Chicago Bulls",
+  "colors": [
+   "#CE1141"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nba-cleveland-cavaliers",
+  "group": "team",
+  "category": "NBA",
+  "name": "Cleveland Cavaliers",
+  "colors": [
+   "#860038",
+   "#041E42",
+   "#FDBB30"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-dallas-mavericks",
+  "group": "team",
+  "category": "NBA",
+  "name": "Dallas Mavericks",
+  "colors": [
+   "#00538C",
+   "#002B5E",
+   "#B8C4CA"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-denver-nuggets",
+  "group": "team",
+  "category": "NBA",
+  "name": "Denver Nuggets",
+  "colors": [
+   "#0E2240",
+   "#FEC524",
+   "#8B2131"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-detroit-pistons",
+  "group": "team",
+  "category": "NBA",
+  "name": "Detroit Pistons",
+  "colors": [
+   "#C8102E",
+   "#1D42BA",
+   "#BEC0C2"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-golden-state-warriors",
+  "group": "team",
+  "category": "NBA",
+  "name": "Golden State Warriors",
+  "colors": [
+   "#1D428A",
+   "#FFC72C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-houston-rockets",
+  "group": "team",
+  "category": "NBA",
+  "name": "Houston Rockets",
+  "colors": [
+   "#CE1141",
+   "#C4CED4"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-indiana-pacers",
+  "group": "team",
+  "category": "NBA",
+  "name": "Indiana Pacers",
+  "colors": [
+   "#002D62",
+   "#FDBB30",
+   "#BEC0C2"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-la-clippers",
+  "group": "team",
+  "category": "NBA",
+  "name": "LA Clippers",
+  "colors": [
+   "#C8102E",
+   "#1D428A",
+   "#BEC0C2"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-los-angeles-lakers",
+  "group": "team",
+  "category": "NBA",
+  "name": "Los Angeles Lakers",
+  "colors": [
+   "#552583",
+   "#FDB927"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-memphis-grizzlies",
+  "group": "team",
+  "category": "NBA",
+  "name": "Memphis Grizzlies",
+  "colors": [
+   "#5D76A9",
+   "#12173F",
+   "#F5B112"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-miami-heat",
+  "group": "team",
+  "category": "NBA",
+  "name": "Miami Heat",
+  "colors": [
+   "#98002E",
+   "#F9A01B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-milwaukee-bucks",
+  "group": "team",
+  "category": "NBA",
+  "name": "Milwaukee Bucks",
+  "colors": [
+   "#00471B",
+   "#EEE1C6",
+   "#0077C0"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-minnesota-timberwolves",
+  "group": "team",
+  "category": "NBA",
+  "name": "Minnesota Timberwolves",
+  "colors": [
+   "#0C2340",
+   "#236192",
+   "#9EA2A2"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-new-orleans-pelicans",
+  "group": "team",
+  "category": "NBA",
+  "name": "New Orleans Pelicans",
+  "colors": [
+   "#0C2340",
+   "#C8102E",
+   "#85714D"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-new-york-knicks",
+  "group": "team",
+  "category": "NBA",
+  "name": "New York Knicks",
+  "colors": [
+   "#006BB6",
+   "#F58426",
+   "#BEC0C2"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-oklahoma-city-thunder",
+  "group": "team",
+  "category": "NBA",
+  "name": "Oklahoma City Thunder",
+  "colors": [
+   "#007AC1",
+   "#EF3B24",
+   "#FDBB30"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-orlando-magic",
+  "group": "team",
+  "category": "NBA",
+  "name": "Orlando Magic",
+  "colors": [
+   "#0077C0",
+   "#C4CED4"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-philadelphia-76ers",
+  "group": "team",
+  "category": "NBA",
+  "name": "Philadelphia 76ers",
+  "colors": [
+   "#006BB6",
+   "#ED174C",
+   "#002B5C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-phoenix-suns",
+  "group": "team",
+  "category": "NBA",
+  "name": "Phoenix Suns",
+  "colors": [
+   "#1D1160",
+   "#E56020"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-portland-trail-blazers",
+  "group": "team",
+  "category": "NBA",
+  "name": "Portland Trail Blazers",
+  "colors": [
+   "#E03A3E",
+   "#B6BFBF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-sacramento-kings",
+  "group": "team",
+  "category": "NBA",
+  "name": "Sacramento Kings",
+  "colors": [
+   "#5A2D81",
+   "#63727A"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-san-antonio-spurs",
+  "group": "team",
+  "category": "NBA",
+  "name": "San Antonio Spurs",
+  "colors": [
+   "#C4CED4"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "nba-toronto-raptors",
+  "group": "team",
+  "category": "NBA",
+  "name": "Toronto Raptors",
+  "colors": [
+   "#CE1141",
+   "#A1A1A4"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-utah-jazz",
+  "group": "team",
+  "category": "NBA",
+  "name": "Utah Jazz",
+  "colors": [
+   "#002B5C",
+   "#F9A01B",
+   "#00471B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "nba-washington-wizards",
+  "group": "team",
+  "category": "NBA",
+  "name": "Washington Wizards",
+  "colors": [
+   "#002B5C",
+   "#E31837",
+   "#C4CED4"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-alabama",
+  "group": "team",
+  "category": "SEC",
+  "name": "Alabama",
+  "colors": [
+   "#9E1B32",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-arkansas",
+  "group": "team",
+  "category": "SEC",
+  "name": "Arkansas",
+  "colors": [
+   "#9D2235",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-auburn",
+  "group": "team",
+  "category": "SEC",
+  "name": "Auburn",
+  "colors": [
+   "#0C2340",
+   "#E87722"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-florida",
+  "group": "team",
+  "category": "SEC",
+  "name": "Florida",
+  "colors": [
+   "#0021A5",
+   "#FA4616"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-georgia",
+  "group": "team",
+  "category": "SEC",
+  "name": "Georgia",
+  "colors": [
+   "#BA0C2F"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "sec-kentucky",
+  "group": "team",
+  "category": "SEC",
+  "name": "Kentucky",
+  "colors": [
+   "#0033A0",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-lsu",
+  "group": "team",
+  "category": "SEC",
+  "name": "LSU",
+  "colors": [
+   "#461D7C",
+   "#FDD023"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-mississippi-state",
+  "group": "team",
+  "category": "SEC",
+  "name": "Mississippi State",
+  "colors": [
+   "#5D1725",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-missouri",
+  "group": "team",
+  "category": "SEC",
+  "name": "Missouri",
+  "colors": [
+   "#F1B82D"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "sec-oklahoma",
+  "group": "team",
+  "category": "SEC",
+  "name": "Oklahoma",
+  "colors": [
+   "#841617",
+   "#FDF9D8"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-ole-miss",
+  "group": "team",
+  "category": "SEC",
+  "name": "Ole Miss",
+  "colors": [
+   "#14213D",
+   "#CE1126"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-south-carolina",
+  "group": "team",
+  "category": "SEC",
+  "name": "South Carolina",
+  "colors": [
+   "#73000A"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "sec-tennessee",
+  "group": "team",
+  "category": "SEC",
+  "name": "Tennessee",
+  "colors": [
+   "#FF8200",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-texas",
+  "group": "team",
+  "category": "SEC",
+  "name": "Texas",
+  "colors": [
+   "#BF5700",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-texas-a-m",
+  "group": "team",
+  "category": "SEC",
+  "name": "Texas A&M",
+  "colors": [
+   "#500000",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "sec-vanderbilt",
+  "group": "team",
+  "category": "SEC",
+  "name": "Vanderbilt",
+  "colors": [
+   "#866D4B"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "big10-illinois",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Illinois",
+  "colors": [
+   "#E84A27",
+   "#13294B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-indiana",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Indiana",
+  "colors": [
+   "#990000",
+   "#EEEDEB"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-iowa",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Iowa",
+  "colors": [
+   "#FFCD00"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "big10-maryland",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Maryland",
+  "colors": [
+   "#E03A3E",
+   "#FFD520"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-michigan",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Michigan",
+  "colors": [
+   "#00274C",
+   "#FFCB05"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-michigan-state",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Michigan State",
+  "colors": [
+   "#18453B",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-minnesota",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Minnesota",
+  "colors": [
+   "#7A0019",
+   "#FFCC33"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-nebraska",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Nebraska",
+  "colors": [
+   "#E41C38",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-northwestern",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Northwestern",
+  "colors": [
+   "#4E2A84",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-ohio-state",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Ohio State",
+  "colors": [
+   "#BB0000",
+   "#666666"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-oregon",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Oregon",
+  "colors": [
+   "#154733",
+   "#FEE123"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-penn-state",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Penn State",
+  "colors": [
+   "#041E42",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-purdue",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Purdue",
+  "colors": [
+   "#CEB888"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "big10-rutgers",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Rutgers",
+  "colors": [
+   "#CC0033",
+   "#5F6A72"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-ucla",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "UCLA",
+  "colors": [
+   "#2774AE",
+   "#FFD100"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-usc",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "USC",
+  "colors": [
+   "#990000",
+   "#FFC72C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-washington",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Washington",
+  "colors": [
+   "#4B2E83",
+   "#B7A57A"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big10-wisconsin",
+  "group": "team",
+  "category": "Big Ten",
+  "name": "Wisconsin",
+  "colors": [
+   "#C5050C",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big12-arizona",
+  "group": "team",
+  "category": "Big 12",
+  "name": "Arizona",
+  "colors": [
+   "#CC0033",
+   "#003366"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big12-arizona-state",
+  "group": "team",
+  "category": "Big 12",
+  "name": "Arizona State",
+  "colors": [
+   "#8C1D40",
+   "#FFC627"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big12-baylor",
+  "group": "team",
+  "category": "Big 12",
+  "name": "Baylor",
+  "colors": [
+   "#154734",
+   "#FFB81C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big12-byu",
+  "group": "team",
+  "category": "Big 12",
+  "name": "BYU",
+  "colors": [
+   "#002E5D",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big12-cincinnati",
+  "group": "team",
+  "category": "Big 12",
+  "name": "Cincinnati",
+  "colors": [
+   "#E00122"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "big12-colorado",
+  "group": "team",
+  "category": "Big 12",
+  "name": "Colorado",
+  "colors": [
+   "#CFB87C"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "big12-houston",
+  "group": "team",
+  "category": "Big 12",
+  "name": "Houston",
+  "colors": [
+   "#C8102E",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big12-iowa-state",
+  "group": "team",
+  "category": "Big 12",
+  "name": "Iowa State",
+  "colors": [
+   "#C8102E",
+   "#F1BE48"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big12-kansas",
+  "group": "team",
+  "category": "Big 12",
+  "name": "Kansas",
+  "colors": [
+   "#0051BA",
+   "#E8000D",
+   "#FFC82D"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big12-kansas-state",
+  "group": "team",
+  "category": "Big 12",
+  "name": "Kansas State",
+  "colors": [
+   "#512888",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big12-oklahoma-state",
+  "group": "team",
+  "category": "Big 12",
+  "name": "Oklahoma State",
+  "colors": [
+   "#FF7300"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "big12-tcu",
+  "group": "team",
+  "category": "Big 12",
+  "name": "TCU",
+  "colors": [
+   "#4D1979",
+   "#A3A9AC"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big12-texas-tech",
+  "group": "team",
+  "category": "Big 12",
+  "name": "Texas Tech",
+  "colors": [
+   "#CC0000"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "big12-ucf",
+  "group": "team",
+  "category": "Big 12",
+  "name": "UCF",
+  "colors": [
+   "#FFC904"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "big12-utah",
+  "group": "team",
+  "category": "Big 12",
+  "name": "Utah",
+  "colors": [
+   "#CC0000",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "big12-west-virginia",
+  "group": "team",
+  "category": "Big 12",
+  "name": "West Virginia",
+  "colors": [
+   "#002855",
+   "#EAAA00"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-boston-college",
+  "group": "team",
+  "category": "ACC",
+  "name": "Boston College",
+  "colors": [
+   "#98002E",
+   "#BC9B6A"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-california",
+  "group": "team",
+  "category": "ACC",
+  "name": "California",
+  "colors": [
+   "#003262",
+   "#FDB515"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-clemson",
+  "group": "team",
+  "category": "ACC",
+  "name": "Clemson",
+  "colors": [
+   "#F56600",
+   "#522D80"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-duke",
+  "group": "team",
+  "category": "ACC",
+  "name": "Duke",
+  "colors": [
+   "#001A57",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-florida-state",
+  "group": "team",
+  "category": "ACC",
+  "name": "Florida State",
+  "colors": [
+   "#782F40",
+   "#CEB888"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-georgia-tech",
+  "group": "team",
+  "category": "ACC",
+  "name": "Georgia Tech",
+  "colors": [
+   "#B3A369",
+   "#003057"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-louisville",
+  "group": "team",
+  "category": "ACC",
+  "name": "Louisville",
+  "colors": [
+   "#AD0000"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "acc-miami",
+  "group": "team",
+  "category": "ACC",
+  "name": "Miami",
+  "colors": [
+   "#F47321",
+   "#005030"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-nc-state",
+  "group": "team",
+  "category": "ACC",
+  "name": "NC State",
+  "colors": [
+   "#CC0000"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "acc-north-carolina",
+  "group": "team",
+  "category": "ACC",
+  "name": "North Carolina",
+  "colors": [
+   "#7BAFD4",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-notre-dame",
+  "group": "team",
+  "category": "ACC",
+  "name": "Notre Dame",
+  "colors": [
+   "#0C2340",
+   "#C99700"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-pittsburgh",
+  "group": "team",
+  "category": "ACC",
+  "name": "Pittsburgh",
+  "colors": [
+   "#003594",
+   "#FFB81C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-smu",
+  "group": "team",
+  "category": "ACC",
+  "name": "SMU",
+  "colors": [
+   "#CC0035",
+   "#354CA1"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-stanford",
+  "group": "team",
+  "category": "ACC",
+  "name": "Stanford",
+  "colors": [
+   "#8C1515",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-syracuse",
+  "group": "team",
+  "category": "ACC",
+  "name": "Syracuse",
+  "colors": [
+   "#F76900",
+   "#000E54"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-virginia",
+  "group": "team",
+  "category": "ACC",
+  "name": "Virginia",
+  "colors": [
+   "#232D4B",
+   "#F84C1E"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-virginia-tech",
+  "group": "team",
+  "category": "ACC",
+  "name": "Virginia Tech",
+  "colors": [
+   "#630031",
+   "#CF4420"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "acc-wake-forest",
+  "group": "team",
+  "category": "ACC",
+  "name": "Wake Forest",
+  "colors": [
+   "#9E7E38"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mls-atlanta-united-fc",
+  "group": "team",
+  "category": "MLS",
+  "name": "Atlanta United FC",
+  "colors": [
+   "#80000A",
+   "#A19060"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-austin-fc",
+  "group": "team",
+  "category": "MLS",
+  "name": "Austin FC",
+  "colors": [
+   "#00B140"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mls-charlotte-fc",
+  "group": "team",
+  "category": "MLS",
+  "name": "Charlotte FC",
+  "colors": [
+   "#1A85C8"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mls-chicago-fire-fc",
+  "group": "team",
+  "category": "MLS",
+  "name": "Chicago Fire FC",
+  "colors": [
+   "#981E32",
+   "#7CCDEF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-cf-montr-al",
+  "group": "team",
+  "category": "MLS",
+  "name": "CF Montréal",
+  "colors": [
+   "#0033A1"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mls-colorado-rapids",
+  "group": "team",
+  "category": "MLS",
+  "name": "Colorado Rapids",
+  "colors": [
+   "#862633",
+   "#8BB8E8"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-columbus-crew",
+  "group": "team",
+  "category": "MLS",
+  "name": "Columbus Crew",
+  "colors": [
+   "#FEDD00"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mls-d-c-united",
+  "group": "team",
+  "category": "MLS",
+  "name": "D.C. United",
+  "colors": [
+   "#EF3E42"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mls-fc-cincinnati",
+  "group": "team",
+  "category": "MLS",
+  "name": "FC Cincinnati",
+  "colors": [
+   "#F05323",
+   "#003087"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-fc-dallas",
+  "group": "team",
+  "category": "MLS",
+  "name": "FC Dallas",
+  "colors": [
+   "#BF0D3E",
+   "#002B5C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-houston-dynamo-fc",
+  "group": "team",
+  "category": "MLS",
+  "name": "Houston Dynamo FC",
+  "colors": [
+   "#FF6B00"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mls-inter-miami-cf",
+  "group": "team",
+  "category": "MLS",
+  "name": "Inter Miami CF",
+  "colors": [
+   "#F7B5CD"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mls-la-galaxy",
+  "group": "team",
+  "category": "MLS",
+  "name": "LA Galaxy",
+  "colors": [
+   "#00245D",
+   "#FFD200"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-los-angeles-fc",
+  "group": "team",
+  "category": "MLS",
+  "name": "Los Angeles FC",
+  "colors": [
+   "#C39E6D"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mls-minnesota-united-fc",
+  "group": "team",
+  "category": "MLS",
+  "name": "Minnesota United FC",
+  "colors": [
+   "#8CD2F4",
+   "#E4E5E6"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-nashville-sc",
+  "group": "team",
+  "category": "MLS",
+  "name": "Nashville SC",
+  "colors": [
+   "#ECE83A",
+   "#1F1646"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-new-england-revolution",
+  "group": "team",
+  "category": "MLS",
+  "name": "New England Revolution",
+  "colors": [
+   "#0A2240",
+   "#C8102E"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-new-york-city-fc",
+  "group": "team",
+  "category": "MLS",
+  "name": "New York City FC",
+  "colors": [
+   "#6CACE4",
+   "#F15524",
+   "#041E42"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-new-york-red-bulls",
+  "group": "team",
+  "category": "MLS",
+  "name": "New York Red Bulls",
+  "colors": [
+   "#ED1E36",
+   "#23326A"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-orlando-city-sc",
+  "group": "team",
+  "category": "MLS",
+  "name": "Orlando City SC",
+  "colors": [
+   "#633492",
+   "#FDE192"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-philadelphia-union",
+  "group": "team",
+  "category": "MLS",
+  "name": "Philadelphia Union",
+  "colors": [
+   "#071B2C",
+   "#B18500"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-portland-timbers",
+  "group": "team",
+  "category": "MLS",
+  "name": "Portland Timbers",
+  "colors": [
+   "#004812",
+   "#EBE72B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-real-salt-lake",
+  "group": "team",
+  "category": "MLS",
+  "name": "Real Salt Lake",
+  "colors": [
+   "#B30838",
+   "#013A81"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-san-jose-earthquakes",
+  "group": "team",
+  "category": "MLS",
+  "name": "San Jose Earthquakes",
+  "colors": [
+   "#0067B1"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "mls-seattle-sounders-fc",
+  "group": "team",
+  "category": "MLS",
+  "name": "Seattle Sounders FC",
+  "colors": [
+   "#5D9741",
+   "#005595"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-sporting-kansas-city",
+  "group": "team",
+  "category": "MLS",
+  "name": "Sporting Kansas City",
+  "colors": [
+   "#93B1D7",
+   "#002F65"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-st-louis-city-sc",
+  "group": "team",
+  "category": "MLS",
+  "name": "St. Louis City SC",
+  "colors": [
+   "#E31837",
+   "#0B2A4A"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-toronto-fc",
+  "group": "team",
+  "category": "MLS",
+  "name": "Toronto FC",
+  "colors": [
+   "#B81137",
+   "#455560"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "mls-vancouver-whitecaps-fc",
+  "group": "team",
+  "category": "MLS",
+  "name": "Vancouver Whitecaps FC",
+  "colors": [
+   "#00245E",
+   "#9DC2EA"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "wnba-atlanta-dream",
+  "group": "team",
+  "category": "WNBA",
+  "name": "Atlanta Dream",
+  "colors": [
+   "#E31837",
+   "#418FDE"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "wnba-chicago-sky",
+  "group": "team",
+  "category": "WNBA",
+  "name": "Chicago Sky",
+  "colors": [
+   "#5091CD",
+   "#FFD520"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "wnba-connecticut-sun",
+  "group": "team",
+  "category": "WNBA",
+  "name": "Connecticut Sun",
+  "colors": [
+   "#F05023",
+   "#0A2240"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "wnba-dallas-wings",
+  "group": "team",
+  "category": "WNBA",
+  "name": "Dallas Wings",
+  "colors": [
+   "#002B5C",
+   "#C4D600"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "wnba-indiana-fever",
+  "group": "team",
+  "category": "WNBA",
+  "name": "Indiana Fever",
+  "colors": [
+   "#002D62",
+   "#E03A3E",
+   "#FDBB30"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "wnba-las-vegas-aces",
+  "group": "team",
+  "category": "WNBA",
+  "name": "Las Vegas Aces",
+  "colors": [
+   "#C8102E",
+   "#A7A8AA"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "wnba-los-angeles-sparks",
+  "group": "team",
+  "category": "WNBA",
+  "name": "Los Angeles Sparks",
+  "colors": [
+   "#552583",
+   "#FAA61A"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "wnba-minnesota-lynx",
+  "group": "team",
+  "category": "WNBA",
+  "name": "Minnesota Lynx",
+  "colors": [
+   "#236192",
+   "#78BE20"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "wnba-new-york-liberty",
+  "group": "team",
+  "category": "WNBA",
+  "name": "New York Liberty",
+  "colors": [
+   "#6ECEB2"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "wnba-phoenix-mercury",
+  "group": "team",
+  "category": "WNBA",
+  "name": "Phoenix Mercury",
+  "colors": [
+   "#3F2A56",
+   "#E56020"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "wnba-seattle-storm",
+  "group": "team",
+  "category": "WNBA",
+  "name": "Seattle Storm",
+  "colors": [
+   "#2C5234",
+   "#FEE11A"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "wnba-washington-mystics",
+  "group": "team",
+  "category": "WNBA",
+  "name": "Washington Mystics",
+  "colors": [
+   "#002B5C",
+   "#E03A3E",
+   "#B9C4C9"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-air-force",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Air Force",
+  "colors": [
+   "#003087",
+   "#8A8D8F"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-appalachian-state",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Appalachian State",
+  "colors": [
+   "#FFCC00"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "g5-army",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Army",
+  "colors": [
+   "#D4BF91"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "g5-boise-state",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Boise State",
+  "colors": [
+   "#0033A0",
+   "#D64309"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-coastal-carolina",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Coastal Carolina",
+  "colors": [
+   "#006F71",
+   "#A27752"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-east-carolina",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "East Carolina",
+  "colors": [
+   "#592A8A",
+   "#FDC82F"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-florida-atlantic-fau",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Florida Atlantic (FAU)",
+  "colors": [
+   "#003366",
+   "#CC0000"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-florida-international-fiu",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Florida International (FIU)",
+  "colors": [
+   "#081E3F",
+   "#B6862C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-james-madison",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "James Madison",
+  "colors": [
+   "#450084",
+   "#CBB677"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-jacksonville-state",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Jacksonville State",
+  "colors": [
+   "#CC0000",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-liberty",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Liberty",
+  "colors": [
+   "#002D62",
+   "#C41230"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-louisiana",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Louisiana",
+  "colors": [
+   "#CE181E",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-marshall",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Marshall",
+  "colors": [
+   "#00B140",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-memphis",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Memphis",
+  "colors": [
+   "#003087",
+   "#8A8D8F"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-navy",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Navy",
+  "colors": [
+   "#00205B",
+   "#C5B783"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-old-dominion",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Old Dominion",
+  "colors": [
+   "#003057",
+   "#7C878E"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-san-diego-state",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "San Diego State",
+  "colors": [
+   "#A6192E"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "g5-south-florida-usf",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "South Florida (USF)",
+  "colors": [
+   "#006747",
+   "#CFC493"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-tulane",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "Tulane",
+  "colors": [
+   "#006747",
+   "#418FDE"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "g5-unlv",
+  "group": "team",
+  "category": "Other FBS",
+  "name": "UNLV",
+  "colors": [
+   "#CF0A2C",
+   "#666666"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-alabama-state",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Alabama State",
+  "colors": [
+   "#C99700"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "hbcu-bethune-cookman",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Bethune-Cookman",
+  "colors": [
+   "#7A0019",
+   "#FFB81C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-florida-a-m",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Florida A&M",
+  "colors": [
+   "#F58025",
+   "#00674F"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-grambling-state",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Grambling State",
+  "colors": [
+   "#FFC72C"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "hbcu-hampton",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Hampton",
+  "colors": [
+   "#0054A6",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-howard",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Howard",
+  "colors": [
+   "#003A63",
+   "#E51937"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-jackson-state",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Jackson State",
+  "colors": [
+   "#002147",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-morehouse",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Morehouse",
+  "colors": [
+   "#7A0019",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-morgan-state",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Morgan State",
+  "colors": [
+   "#004B8D",
+   "#F58025"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-norfolk-state",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Norfolk State",
+  "colors": [
+   "#007A33",
+   "#FFC72C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-north-carolina-a-t",
+  "group": "team",
+  "category": "HBCU",
+  "name": "North Carolina A&T",
+  "colors": [
+   "#003087",
+   "#FFC72C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-prairie-view-a-m",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Prairie View A&M",
+  "colors": [
+   "#4F2D7F",
+   "#FFC72C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-southern",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Southern",
+  "colors": [
+   "#6CACE4",
+   "#FFC72C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-tennessee-state",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Tennessee State",
+  "colors": [
+   "#002F87",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "hbcu-tuskegee",
+  "group": "team",
+  "category": "HBCU",
+  "name": "Tuskegee",
+  "colors": [
+   "#7A0019",
+   "#FFC72C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-marvel-ant-man",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Ant-Man",
+  "colors": [
+   "#C8102E",
+   "#8A8A8A"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-marvel-black-panther",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Black Panther",
+  "colors": [
+   "#5B2C83",
+   "#C0C0C0"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-marvel-black-widow",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Black Widow",
+  "colors": [
+   "#E23636"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "theme-marvel-captain-america",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Captain America",
+  "colors": [
+   "#0A3161",
+   "#BF0A30",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-marvel-captain-marvel",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Captain Marvel",
+  "colors": [
+   "#1E4E9C",
+   "#C8102E",
+   "#F2B705"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-marvel-daredevil",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Daredevil",
+  "colors": [
+   "#C8102E"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "theme-marvel-deadpool",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Deadpool",
+  "colors": [
+   "#C8102E"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "theme-marvel-doctor-strange",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Doctor Strange",
+  "colors": [
+   "#9E1B1F",
+   "#1E4E9C",
+   "#D4A017"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-marvel-hawkeye",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Hawkeye",
+  "colors": [
+   "#5B2C83"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "theme-marvel-hulk",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Hulk",
+  "colors": [
+   "#4CAF50",
+   "#6A3FA0"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-marvel-iron-man",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Iron Man",
+  "colors": [
+   "#B71C1C",
+   "#F5B800"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-marvel-scarlet-witch",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Scarlet Witch",
+  "colors": [
+   "#B3122A"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "theme-marvel-spider-man",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Spider-Man",
+  "colors": [
+   "#E23636",
+   "#2B3784"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-marvel-thor",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Thor",
+  "colors": [
+   "#2E5AAC",
+   "#B8B8B8",
+   "#C9A227"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-marvel-wolverine",
+  "group": "theme",
+  "category": "Marvel",
+  "name": "Wolverine",
+  "colors": [
+   "#FFD100",
+   "#1E4E9C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-dc-aquaman",
+  "group": "theme",
+  "category": "DC",
+  "name": "Aquaman",
+  "colors": [
+   "#F28C28",
+   "#00A651"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-dc-batman",
+  "group": "theme",
+  "category": "DC",
+  "name": "Batman",
+  "colors": [
+   "#FFD100",
+   "#555B66"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-dc-blue-beetle",
+  "group": "theme",
+  "category": "DC",
+  "name": "Blue Beetle",
+  "colors": [
+   "#0057B8"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "theme-dc-flash",
+  "group": "theme",
+  "category": "DC",
+  "name": "Flash",
+  "colors": [
+   "#C8102E",
+   "#FFD100"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-dc-green-arrow",
+  "group": "theme",
+  "category": "DC",
+  "name": "Green Arrow",
+  "colors": [
+   "#1E8E3E"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "theme-dc-green-lantern",
+  "group": "theme",
+  "category": "DC",
+  "name": "Green Lantern",
+  "colors": [
+   "#00A651"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "theme-dc-martian-manhunter",
+  "group": "theme",
+  "category": "DC",
+  "name": "Martian Manhunter",
+  "colors": [
+   "#3E9B4F",
+   "#C8102E"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-dc-nightwing",
+  "group": "theme",
+  "category": "DC",
+  "name": "Nightwing",
+  "colors": [
+   "#0057B8"
+  ],
+  "pattern": "single"
+ },
+ {
+  "id": "theme-dc-robin",
+  "group": "theme",
+  "category": "DC",
+  "name": "Robin",
+  "colors": [
+   "#C8102E",
+   "#00A651",
+   "#FFD100"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-dc-shazam",
+  "group": "theme",
+  "category": "DC",
+  "name": "Shazam",
+  "colors": [
+   "#C8102E",
+   "#FFD100",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-dc-superman",
+  "group": "theme",
+  "category": "DC",
+  "name": "Superman",
+  "colors": [
+   "#0057B8",
+   "#C8102E",
+   "#FFD100"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-dc-supergirl",
+  "group": "theme",
+  "category": "DC",
+  "name": "Supergirl",
+  "colors": [
+   "#0057B8",
+   "#C8102E",
+   "#FFD100"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-dc-wonder-woman",
+  "group": "theme",
+  "category": "DC",
+  "name": "Wonder Woman",
+  "colors": [
+   "#C8102E",
+   "#0057B8",
+   "#FFD100"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-military-air-force",
+  "group": "theme",
+  "category": "Military",
+  "name": "Air Force",
+  "colors": [
+   "#00308F",
+   "#A5ACAF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-military-army",
+  "group": "theme",
+  "category": "Military",
+  "name": "Army",
+  "colors": [
+   "#FFC72C",
+   "#4B5320"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-military-coast-guard",
+  "group": "theme",
+  "category": "Military",
+  "name": "Coast Guard",
+  "colors": [
+   "#00477F",
+   "#C8102E",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-military-marine-corps",
+  "group": "theme",
+  "category": "Military",
+  "name": "Marine Corps",
+  "colors": [
+   "#C8102E",
+   "#FFC72C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-military-navy",
+  "group": "theme",
+  "category": "Military",
+  "name": "Navy",
+  "colors": [
+   "#00205B",
+   "#FFC72C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-military-space-force",
+  "group": "theme",
+  "category": "Military",
+  "name": "Space Force",
+  "colors": [
+   "#002F6C",
+   "#A5ACAF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-argentina",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Argentina",
+  "colors": [
+   "#74ACDF",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-australia",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Australia",
+  "colors": [
+   "#0A0A8B",
+   "#FFFFFF",
+   "#E4002B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-brazil",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Brazil",
+  "colors": [
+   "#009B3A",
+   "#FFDF00",
+   "#002776"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-canada",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Canada",
+  "colors": [
+   "#D80621",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-china",
+  "group": "theme",
+  "category": "Countries",
+  "name": "China",
+  "colors": [
+   "#DE2910",
+   "#FFDE00"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-colombia",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Colombia",
+  "colors": [
+   "#FCD116",
+   "#003893",
+   "#CE1126"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-cuba",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Cuba",
+  "colors": [
+   "#002A8F",
+   "#FFFFFF",
+   "#CF142B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-dominican-republic",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Dominican Republic",
+  "colors": [
+   "#002D62",
+   "#CE1126",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-france",
+  "group": "theme",
+  "category": "Countries",
+  "name": "France",
+  "colors": [
+   "#0055A4",
+   "#FFFFFF",
+   "#EF4135"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-germany",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Germany",
+  "colors": [
+   "#DD0000",
+   "#FFCE00"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-greece",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Greece",
+  "colors": [
+   "#0D5EAF",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-haiti",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Haiti",
+  "colors": [
+   "#00209F",
+   "#D21034"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-india",
+  "group": "theme",
+  "category": "Countries",
+  "name": "India",
+  "colors": [
+   "#FF9933",
+   "#FFFFFF",
+   "#138808"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-ireland",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Ireland",
+  "colors": [
+   "#169B62",
+   "#FFFFFF",
+   "#FF883E"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-israel",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Israel",
+  "colors": [
+   "#0038B8",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-italy",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Italy",
+  "colors": [
+   "#009246",
+   "#FFFFFF",
+   "#CE2B37"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-jamaica",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Jamaica",
+  "colors": [
+   "#009B3A",
+   "#FED100"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-japan",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Japan",
+  "colors": [
+   "#FFFFFF",
+   "#BC002D"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-mexico",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Mexico",
+  "colors": [
+   "#006847",
+   "#FFFFFF",
+   "#CE1126"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-netherlands",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Netherlands",
+  "colors": [
+   "#AE1C28",
+   "#FFFFFF",
+   "#21468B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-nigeria",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Nigeria",
+  "colors": [
+   "#008751",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-peru",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Peru",
+  "colors": [
+   "#D91023",
+   "#FFFFFF"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-philippines",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Philippines",
+  "colors": [
+   "#0038A8",
+   "#CE1126",
+   "#FCD116"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-poland",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Poland",
+  "colors": [
+   "#FFFFFF",
+   "#DC143C"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-portugal",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Portugal",
+  "colors": [
+   "#006600",
+   "#FF0000"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-puerto-rico",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Puerto Rico",
+  "colors": [
+   "#ED0000",
+   "#FFFFFF",
+   "#0050F0"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-south-korea",
+  "group": "theme",
+  "category": "Countries",
+  "name": "South Korea",
+  "colors": [
+   "#FFFFFF",
+   "#CD2E3A",
+   "#0047A0"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-spain",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Spain",
+  "colors": [
+   "#AA151B",
+   "#F1BF00"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-sweden",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Sweden",
+  "colors": [
+   "#006AA7",
+   "#FECC00"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-ukraine",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Ukraine",
+  "colors": [
+   "#0057B7",
+   "#FFD700"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-united-kingdom",
+  "group": "theme",
+  "category": "Countries",
+  "name": "United Kingdom",
+  "colors": [
+   "#012169",
+   "#FFFFFF",
+   "#C8102E"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-united-states",
+  "group": "theme",
+  "category": "Countries",
+  "name": "United States",
+  "colors": [
+   "#B22234",
+   "#FFFFFF",
+   "#3C3B6E"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-venezuela",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Venezuela",
+  "colors": [
+   "#FFCC00",
+   "#00247D",
+   "#CF142B"
+  ],
+  "pattern": "alternating"
+ },
+ {
+  "id": "theme-countries-vietnam",
+  "group": "theme",
+  "category": "Countries",
+  "name": "Vietnam",
+  "colors": [
+   "#DA251D",
+   "#FFFF00"
+  ],
+  "pattern": "alternating"
+ }
+]

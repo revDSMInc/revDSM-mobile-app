@@ -19,7 +19,7 @@ import { LeadService } from '../../../services/api/leads';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
 import ReactNativeBlobUtil from 'react-native-blob-util';
-import { downloadImage, getLocalCachePath, prefetchToLocalCache } from '../../../utils/imageFileCache';
+import { forgetWarmedUri, getLocalCachePath, getWarmedLocalUri, prefetchToLocalCache, warmToLocalCache } from '../../../utils/imageFileCache';
 
 // The local-file image cache used to live here. It moved to `utils/imageFileCache`
 // so leaf widgets (PhotoPeekPressable) can warm images without importing this
@@ -29,7 +29,11 @@ export { getLocalCachePath, prefetchToLocalCache };
 
 // High-performance CachedImage component targeting pre-signed S3 URLs (atomic write)
 const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {
-  const [sourceUri, setSourceUri] = useState<string | null>(null);
+  // ⚠️ Seeded SYNCHRONOUSLY from the warmed-uri memo. This component renders `null` until
+  // it knows which uri to use, and it used to learn that only from an async
+  // `fs.exists` — so every open of the gallery, and every swipe back to a render already
+  // seen, went blank for a beat over a file sitting on disk the whole time.
+  const [sourceUri, setSourceUri] = useState<string | null>(() => getWarmedLocalUri(uri));
 
   useEffect(() => {
     if (!uri) {
@@ -37,35 +41,23 @@ const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {
       return;
     }
 
-    const localPath = getLocalCachePath(uri);
-    if (!localPath) {
+    const known = getWarmedLocalUri(uri);
+    if (known) {
+      setSourceUri(known);
+      return;
+    }
+
+    if (!getLocalCachePath(uri)) {
       setSourceUri(uri);
       return;
     }
 
-    let isMounted = true;
-
-    ReactNativeBlobUtil.fs.exists(localPath)
-      .then((exists) => {
-        if (!isMounted) return;
-        if (exists) {
-          setSourceUri(`file://${localPath}`);
-        } else {
-          // Use S3 network URL
-          setSourceUri(uri);
-
-          // Cache in the background for subsequent visits, but do NOT change
-          // the active sourceUri mid-load to prevent native React Native image loader bugs/hangs.
-          downloadImage(uri, localPath);
-        }
-      })
-      .catch(() => {
-        if (isMounted) setSourceUri(uri);
-      });
-
-    return () => {
-      isMounted = false;
-    };
+    // Paint the network url NOW and warm the file underneath it. ⚠️ Deliberately does not
+    // swap `sourceUri` when the download lands — changing the source mid-load trips native
+    // image-loader hangs. The next mount picks the file up from the memo instead, which is
+    // also why nothing here needs an unmount guard any more.
+    setSourceUri(uri);
+    warmToLocalCache(uri).catch(() => {});
   }, [uri]);
 
   if (!sourceUri) return null;
@@ -77,10 +69,12 @@ const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {
       resizeMode={resizeMode}
       onLoad={onLoad}
       onError={() => {
-        // If loading from local file fails, delete it and fallback to network URL
+        // A local copy that won't decode: bin the FILE and the memo entry together, then
+        // fall back to the network. ⚠️ Unlinking without `forgetWarmedUri` would leave the
+        // memo pointing at a path that no longer exists, and every later reader would be
+        // handed a dead `file://`.
         if (sourceUri.startsWith('file://')) {
-          const rawPath = sourceUri.replace('file://', '');
-          ReactNativeBlobUtil.fs.unlink(rawPath).catch(() => { });
+          forgetWarmedUri(uri).catch(() => {});
           setSourceUri(uri);
         }
         if (onError) onError();
@@ -266,8 +260,11 @@ export const RevRenderHistoryModal = ({
         totalRenders: runs.length,
         beforeImageUrl: run.originalUrl || run.s3UrlOriginal || null,
         afterImageUrl: run.generatedUrl || run.s3UrlGenerated || null,
-        originalS3url: run.s3UrlOriginal || null,
-        generatedS3url: run.s3UrlGenerated || null,
+        // `run` comes from different pair-builders depending on which screen opened this
+        // modal (Lead Center Tools vs Investment Center vs Deal Center), and they don't all
+        // use the same key name for the same value — read both so neither path logs null.
+        originalS3url: run.s3UrlOriginal || run.originalS3url || null,
+        generatedS3url: run.s3UrlGenerated || run.generatedS3url || null,
         s3url: run.s3url || null,
         bucketName: run.bucketName || null,
         category: run.category || null,

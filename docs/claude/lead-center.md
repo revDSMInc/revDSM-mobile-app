@@ -948,6 +948,26 @@ figures come from `['leadApprovals', leadId]` and `['leadApprovalsFunding', lead
 `handlePullToRefresh` and the focus effect did not touch — they only refetched the lead. Both now invalidate
 these two keys; the pull awaits them so the spinner lasts until the new figures land.
 
+## Funding / approvals surfaces arrived via the `dev-v1-funding` merge
+
+`useLeadFunding.ts`, `useLeadApprovals.ts`, `LeadApprovalsCard.tsx`, `UserPickerModal.tsx` and the
+`ContractDetailsCard` / `JobDocsSection` changes came in whole from `dev-v1-funding`; the offline branch
+never touched them, so the merge took them wholesale rather than reconciling anything. Their behaviour is
+documented where the feature lives — the funding stepper, coverage bar and refund approvals in
+**`deal-center.md`**, the in-sheet flash host (`ModalFlashHost.tsx`) in **`app-wide.md`**. This note exists
+so the next reader does not go looking for a missing ticket section here.
+
+⚠️ **`react-native-qrcode-svg` is a NEW native dependency** (funding's `SendLinkModal`). It reached
+`package.json` through the merge, but **`yarn.lock` is gitignored in this repo**, so it does not reach
+another machine through a lockfile — a pull of this merge typechecks as `Cannot find module` until
+`yarn install` runs, and iOS additionally needs `bundle exec pod install` (from `ios/`, never bare
+`pod install`).
+
+⚠️ **The two merge conflicts that were NOT one-sided are recorded in `deal-center.md`** — the Job
+Builder outcome read (`outcomeExists` vs the device-copy fallback) and `handleResultConfirm`'s
+`resultCalcId`. Both needed a union, and neither side compiled or behaved correctly alone. Read those two
+merge notes before touching either site.
+
 ## Map job card & pins: sold-job categories (REVUIUX-439), recorded in `maps-zone-canvasser.md`
 
 `LeadMap.tsx` and `MapJobCard.tsx` (under `widgets/components/LeadCenter/`) now colour pins by

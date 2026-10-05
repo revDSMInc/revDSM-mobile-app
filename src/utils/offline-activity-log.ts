@@ -42,6 +42,23 @@ export interface QueuedActivityLog {
  * keystroke, and the edits it records are now queued for upload, so dropping the log would leave
  * the portal timeline blank for a correction that really did reach the record.
  *
+ * ⚠️ THE TEST FOR ADDING ONE, and it is a rate test, not an importance test: does this module fire
+ * a HANDFUL of times per lead, and does the WORK it describes get queued for upload? Both must
+ * hold. A module that fires per field fails the first; a module whose work is dropped offline
+ * fails the second, and queuing its log would file a timeline row for something that never
+ * happened.
+ *
+ * The second group below was added after a rep worked a whole lead offline — created it, priced
+ * it, dropped it, built the job, resulted it — and the portal timeline showed almost none of it.
+ * Every one of those actions IS queued and does reach the server, so the work landed while the
+ * record of it did not. Each fires on a milestone (a drop secured, a job submitted, a sale
+ * resulted), not per keystroke.
+ *
+ * ⚠️ `calculator_field_entry` and `lead_result_field_entry` are deliberately NOT here and must
+ * not be added. They fire PER FIELD — one offline quote is hundreds of rows, MMKV rewrites its
+ * whole store on every write, and the replay would bury the events above in telemetry. That is
+ * the specific failure this allow-list exists to prevent.
+ *
  * Everything else is still fire-and-forget and is still dropped offline, as before.
  */
 export const QUEUEABLE_LOG_MODULES: readonly string[] = [
@@ -50,6 +67,23 @@ export const QUEUEABLE_LOG_MODULES: readonly string[] = [
   'lead_review',
   'lead_session',
   'customer_details',
+  // ── Work a rep can complete at a door, all of which uploads ──────────────────
+  /** The lead itself, created with no signal. */
+  'self_gen_lead',
+  /** Quote milestones — a calculator opened, named, duplicated, deleted. Not field entries. */
+  'calculator',
+  /** A drop secured or declined: the negotiation record the office reads. */
+  'rollout_and_drop',
+  /** The job build — steps completed and the submit. */
+  'job_builder',
+  /** Result Lead ▸ Confirm and the payment split. */
+  'funding',
+  /** The agreement signed at the door. */
+  'agreement',
+  /** Consent form and roof waiver, both captured offline and queued. */
+  'consent_form',
+  'roof_waiver',
+  'roof_waiver_form',
 ];
 
 export const isQueueableLog = (moduleType: unknown): boolean =>

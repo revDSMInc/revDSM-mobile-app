@@ -643,7 +643,20 @@ export function confirmBlockers(
    *
    * The overage IS the refund. It is only still a blocker for whatever exceeds it.
    */
-  opts?: { refundDue?: number }
+  opts?: {
+    refundDue?: number;
+    /**
+     * The plan catalogue and the live connection, so a row whose method cannot
+     * be collected offline is caught before Confirm.
+     *
+     * ⚠️ OPTIONAL, and omitting it skips the rule entirely. Most callers of this
+     * function are pure tests and the My Deals wizard, which have no catalogue
+     * to hand — defaulting to "blocked" there would disable Confirm for reasons
+     * the rep could not act on.
+     */
+    plans?: Record<string, DealPlan>;
+    online?: boolean;
+  }
 ): string[] {
   if (!(price > 0)) return ['Enter the contract price'];
 
@@ -658,6 +671,34 @@ export function confirmBlockers(
         ? 'Pick a payment method for every upfront amount'
         : 'Pick a payment method for every amount entered'
     );
+  }
+
+  /**
+   * ⚠️ A row whose method cannot be collected with no signal.
+   *
+   * The picker already greys these out, but the picker is not the only way to
+   * get here: the rep can choose AMEX on full signal, walk outside, and lose it
+   * before pressing Confirm — or re-open a sheet hydrated from a save made
+   * online. Confirming then files a row whose Stripe link or lender application
+   * can never be minted, and the failure surfaces later as a payment that will
+   * not advance.
+   *
+   * ⚠️ Scoped to rows that are NOT already settled. Money a processor has
+   * genuinely taken is a fact; re-litigating it offline would dead-end a sheet
+   * the rep cannot fix, which is the same trap the refund exemption above
+   * exists to avoid.
+   */
+  if (opts?.plans && opts?.online === false) {
+    const stranded = funded.filter(
+      (r) => !isSettledRow(r) && !r.decision && planBlockedOffline(opts.plans!, r.method || '', false)
+    );
+    if (stranded.length) {
+      out.push(
+        stranded.length === 1
+          ? 'One payment uses a card or loan, which needs a connection — switch it to a check or reconnect'
+          : `${stranded.length} payments use a card or loan, which needs a connection — switch them to a check or reconnect`
+      );
+    }
   }
 
   /**
@@ -744,6 +785,62 @@ export function methodTypeOf(plans: Record<string, DealPlan>, key?: string): Met
   if (plan.type === 'financing') return 'bank';
   if (plan.type === 'card') return 'cc';
   return 'check';
+}
+
+/**
+ * Can this payment method be PICKED with no signal?
+ *
+ * ⚠️ The dividing line is **who collects the money**, not what the record says.
+ *
+ *  - `cash` (Check) — the rep takes a cheque at the table. Nothing leaves the
+ *    device, the row is a note of what was handed over, and the funding record
+ *    syncs later like any other offline write. **Always available.**
+ *  - `card` (MC/VISA/DSCVR, AMEX) and `financing` (GreenSky, Wells Fargo, …) —
+ *    collection runs through a Stripe payment link or a lender application, and
+ *    BOTH are minted server-side. There is no on-device card SDK: the app only
+ *    ever asks the backend for a link. With no signal there is nothing to send
+ *    and no link to send it with.
+ *
+ * ⚠️ This mirrors the company-wide `charges_enabled` gate already on this screen
+ * ("Card and loan links can't be sent until then; checks are unaffected"). Same
+ * rule, different cause — so the two must not disagree about which methods
+ * survive.
+ *
+ * ⚠️ Deliberately NOT routed through `offline-capability.ts`. That registry
+ * blocks whole FEATURES; resulting a job offline is explicitly supported and
+ * must stay supported. What is unavailable here is a subset of one dropdown.
+ */
+export function methodAvailableOffline(plan?: DealPlan | null): boolean {
+  if (!plan) return true;
+  return plan.type === 'cash';
+}
+
+/**
+ * Is this plan key unpickable right now? `online` is passed in so the rule stays
+ * pure — same shape as `planBelowMin`, which this sits beside in the picker.
+ */
+export function planBlockedOffline(
+  plans: Record<string, DealPlan>,
+  key: string,
+  online: boolean,
+): boolean {
+  if (online) return false;
+  const plan = plans[key];
+  // ⚠️ An UNKNOWN key falls through to available, never to blocked. Failing
+  // closed would strand a rep on a catalogue the device has not cached yet —
+  // offline, which is exactly when they cannot tell anyone.
+  if (!plan) return false;
+  return !methodAvailableOffline(plan);
+}
+
+/**
+ * Why that plan is greyed out. Says what still works, because a rep reading only
+ * "unavailable" will keep tapping it.
+ */
+export function blockedOfflineMsg(plans: Record<string, DealPlan>, key: string): string {
+  const plan = plans[key];
+  const what = plan?.type === 'financing' ? 'A loan application' : 'A card payment';
+  return `${what} needs a connection — the link is created on the server. Take a check now, or add this once you have signal.`;
 }
 
 /** Catalog label for a plan key — this is what `method` is sent AS (spec §3). */

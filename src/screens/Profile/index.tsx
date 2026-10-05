@@ -22,6 +22,8 @@ import { SettingsService } from '../../services/api/SettingsService';
 import { AuthService } from '../../services/api/auth';
 import { LeadService } from '../../services/api/leads';
 import { clearImageCache, getImageCacheUsage, type CacheUsage } from '../../utils/imageFileCache';
+import { clearOfflineCacheByPrefix, OFFLINE_CACHE } from '../../utils/offline-query-cache';
+import { queryClient } from '../../services/api/queryClient';
 import {
   offlineMapManager,
   type OfflinePackRecord,
@@ -203,6 +205,16 @@ export default function ProfilePage() {
             setClearingCache(true);
             try {
               await clearImageCache();
+              // ⚠️ The presigned-url snapshots must go WITH the files, not survive them.
+              // `useSecureUrls` keeps them deliberately past their 1 h expiry because
+              // `getLocalCachePath` strips the query, so an expired url still names the right
+              // file on disk. Once the files are deleted it names nothing — and the grid was
+              // handed a dead url it could neither render nor refetch, so every tile sat on a
+              // spinner until the query happened to refetch. Keyed per photo SET, hence the
+              // prefix clear.
+              clearOfflineCacheByPrefix(OFFLINE_CACHE.SECURE_URLS, user?._id || user?.id);
+              // Drop the in-memory copies too, or React Query re-serves the map it already has.
+              queryClient.removeQueries({ queryKey: ['secureUrls'] });
             } finally {
               setClearingCache(false);
               loadOfflineUsage();
@@ -211,7 +223,7 @@ export default function ProfilePage() {
         },
       ]
     );
-  }, [loadOfflineUsage]);
+  }, [loadOfflineUsage, user?._id, user?.id]);
 
   // This screen is shared by both dashboards, but the sales landing route is NOT
   // registered in the installer stack (`navigation/index.tsx`), so the hardcoded

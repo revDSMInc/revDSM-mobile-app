@@ -82,6 +82,8 @@ import {
 } from '../lead-center/dynamic-inspection-schema-utils';
 import { ImageSlideshowModal } from './ImageSlideshowModal';
 import { uploadQueueManager, UploadQueueItem } from '../../../utils/uploadQueue';
+import { offlinePhotoDeleteQueue } from '../../../services/offlinePhotoDeleteQueue';
+import { getCaptureCoords } from '../../../utils/capture-location';
 import { resolveS3Url } from '../../../utils/s3-utils';
 
 interface SectionImage {
@@ -247,6 +249,17 @@ export const JobDocsSection = ({
 
   // Upload queue state — persisted to MMKV
   const [queueItems, setQueueItems] = useState<UploadQueueItem[]>(() => uploadQueueManager.getQueue());
+  // Photos deleted offline. The server still returns them until the queue drains, so both the
+  // slot progress and the "Manage Photos (N)" button must subtract them — or the rep deletes a
+  // photo inside and comes back to a Lead Center that still counts it.
+  const [deletedUrls, setDeletedUrls] = useState<Set<string>>(() =>
+    offlinePhotoDeleteQueue.deletedUrls(lead?._id)
+  );
+  useEffect(() => {
+    const sync = () => setDeletedUrls(offlinePhotoDeleteQueue.deletedUrls(lead?._id));
+    sync();
+    return offlinePhotoDeleteQueue.addListener(sync);
+  }, [lead?._id]);
 
   const [taggingAsset, setTaggingAsset] = useState<any>(null);
   const [showTagModal, setShowTagModal] = useState(false);
@@ -552,14 +565,19 @@ export const JobDocsSection = ({
     });
 
     // --- Push to persistent MMKV-backed background upload queue ---
-    uploadQueueManager.addToQueue({
-      leadId: lead._id,
-      categoryName,
-      subcategory,
-      uri: asset.uri,
-      type: asset.type || 'image/jpeg',
-      name: asset.fileName || `photo_${Date.now()}.jpg`,
-      userId: user?._id || user?.id,
+    // ⚠️ Coordinates resolved HERE, not by the queue at upload time — offline that can be hours
+    // later and miles away. Same rule as the dynamic capture path; see `utils/capture-location.ts`.
+    void getCaptureCoords().then((coords) => {
+      uploadQueueManager.addToQueue({
+        leadId: lead._id,
+        categoryName,
+        subcategory,
+        uri: asset.uri,
+        type: asset.type || 'image/jpeg',
+        name: asset.fileName || `photo_${Date.now()}.jpg`,
+        userId: user?._id || user?.id,
+        ...(coords ? { coordinates: coords } : null),
+      });
     });
 
     // Clear the per-slot uploading spinner (queue handles the real upload)
@@ -1558,7 +1576,9 @@ export const JobDocsSection = ({
   // the lead's salesPhotos, exactly the way the dynamic capture/manage views do.
   const dynamicCounts = useMemo(() => {
     if (!isDynamicInspection) return null;
-    const photos = (Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : []).filter(Boolean);
+    const photos = (Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [])
+      .filter(Boolean)
+      .filter((p: any) => !deletedUrls.has(p?.s3url));
 
     // scopedSubKey (`norm(category)||norm(subcategory)`) → deduped photo count.
     const seen = new Set<string>();
@@ -1613,7 +1633,7 @@ export const JobDocsSection = ({
     });
 
     return { totalPhotos, totalSlots, filledSlots };
-  }, [isDynamicInspection, configuredProducts, lead?.salesPhotos, queueItems, lead?._id]);
+  }, [isDynamicInspection, configuredProducts, lead?.salesPhotos, queueItems, lead?._id, deletedUrls]);
 
   const displayTotal = useMemo(() => {
     if (dynamicCounts) return dynamicCounts.totalSlots;

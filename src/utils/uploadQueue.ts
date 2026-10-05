@@ -1,13 +1,16 @@
 import { storage } from './storage';
-import Geolocation from 'react-native-geolocation-service';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import { LeadService } from '../services/api/leads';
 import { logEvent } from '../services/api/LoggerService';
 import { queryClient } from '../services/api/queryClient';
 import { isClientId } from './offline-lead-work';
-import { onReconnect } from '../services/connectivity';
+import { AppState } from 'react-native';
+import { isOnline, onReconnect } from '../services/connectivity';
 import { getSessionOwner, registerSessionResetHook } from '../services/sessionScope';
 import { isOwnedBy } from './session-scope';
+import { adoptLocalFileAsCached } from './imageFileCache';
+import { resolveS3Url } from './s3-utils';
+import { isCacheFile } from './image-cache-policy';
 
 export interface UploadQueueItem {
   id: string;
@@ -18,6 +21,15 @@ export interface UploadQueueItem {
   type: string;
   name: string;
   timestamp: string;
+  /**
+   * Where the rep STOOD when the shutter fired.
+   *
+   * ⚠️ Captured at capture time and carried, never re-read at upload. A photo shot at a house
+   * and uploaded hours later from the office would otherwise be stamped with the office's
+   * coordinates — see `utils/capture-location.ts`. Optional because a photo must still be
+   * takeable with location denied or no fix.
+   */
+  coordinates?: { latitude: number; longitude: number };
   retryCount?: number;
   /**
    * The rep who took the photo — and, since this change, who OWNS it.
@@ -32,6 +44,8 @@ export interface UploadQueueItem {
 class UploadQueueManager {
   private queue: UploadQueueItem[] = [];
   private isProcessing = false;
+  /** Id of the item currently being uploaded; drives the per-tile status text. */
+  private activeUploadId: string | null = null;
   private onQueueChangeListeners: (() => void)[] = [];
 
   constructor() {
@@ -71,11 +85,57 @@ class UploadQueueManager {
     return this.queue.filter((i) => this.ownedByCurrentSession(i));
   }
 
+  /**
+   * The id of the item being uploaded right now, or null.
+   *
+   * Exposed so a photo tile can say "Uploading…" for the one in flight and "Saved on
+   * device" for the ones behind it, instead of every queued photo claiming to be
+   * uploading. A rep who can see which photo is moving does not assume the app is stuck.
+   */
+  public getActiveUploadId(): string | null {
+    return this.activeUploadId;
+  }
+
+  /**
+   * Whether anything is actually SENDABLE right now — ours, and not still waiting on a real lead
+   * id. Same predicate the drain loop picks its next item with, so the two cannot disagree.
+   *
+   * Exists so the retry sweep can skip in two in-memory reads on the overwhelming majority of
+   * ticks, where the rep has no photos waiting at all.
+   */
+  public hasUploadableWork(): boolean {
+    return this.queue.some((i) => !isClientId(i.leadId) && this.ownedByCurrentSession(i));
+  }
+
   /** Drop the in-memory copy when the session ends — the MMKV wipe alone would be re-persisted. */
   public resetForNewSession() {
     this.queue = [];
     this.isProcessing = false;
+    this.activeUploadId = null;
     this.notifyListeners();
+  }
+
+  /**
+   * Cancel a QUEUED photo the rep deleted before it ever uploaded.
+   *
+   * This is the offline delete for a photo shot with no signal: nothing exists on the server, so
+   * removing the queue item IS the delete. The durable copy under `upload_queue` is unlinked too,
+   * or a cancelled photo would keep occupying storage for the life of the install.
+   *
+   * ⚠️ Refuses to cancel the item currently UPLOADING. Its bytes are already on their way and the
+   * server may have accepted them; dropping the record here would lose the s3url that the
+   * deferred-delete queue needs to clean it up afterwards. The caller falls back to a normal
+   * delete once the upload lands.
+   */
+  public dropQueuedItem(id: string): boolean {
+    if (!id || id === this.activeUploadId) return false;
+    const item = this.queue.find((i) => i.id === id);
+    if (!item || !this.ownedByCurrentSession(item)) return false;
+    this.removeItem(id);
+    this.saveQueue();
+    this.cleanupPersistedFile(item);
+    this.notifyListeners();
+    return true;
   }
 
   /** Drop one item by id, wherever it currently sits. */
@@ -228,20 +288,18 @@ class UploadQueueManager {
     }
   }
 
-  private async checkOnline(): Promise<boolean> {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-      await fetch('https://www.google.com', {
-        method: 'HEAD',
-        signal: controller.signal,
-        headers: { 'Cache-Control': 'no-cache' },
-      });
-      clearTimeout(timeoutId);
-      return true;
-    } catch {
-      return false;
-    }
+  /**
+   * ⚠️ Reads `services/connectivity`, which is the app's single source of truth — it does NOT
+   * probe the network. This used to `fetch('https://www.google.com')` with a 3 s timeout before
+   * every drain, which `connectivity.ts`'s own header already records as the thing it replaced:
+   * it asks a third party whether OUR api is reachable, it costs a round trip on every pass, and
+   * on a weak connection it is 3 s of nothing before the first byte of a photo moves.
+   *
+   * Kept as a method rather than inlined so the drain has one place to ask, and so a future
+   * reachability refinement lands here instead of at each call site.
+   */
+  private checkOnline(): boolean {
+    return isOnline();
   }
 
   public async processQueue() {
@@ -260,10 +318,15 @@ class UploadQueueManager {
     // Now: one pre-flight check, then all queued items upload back-to-back; any
     // connectivity loss mid-burst is caught by the per-item catch below (which
     // re-checks and pauses without burning a retry).
-    if (!(await this.checkOnline())) {
+    if (!this.checkOnline()) {
       console.log('[UploadQueue] Device is offline. Pausing queue processing.');
       this.isProcessing = false;
-      setTimeout(() => this.processQueue(), 5000);
+      this.activeUploadId = null;
+      this.notifyListeners();
+      // ⚠️ No self-rescheduling timer. `startPhotoQueueSync` owns every retrigger now — the
+      // reconnect edge, the foreground hook and the 60 s sweep. The old `setTimeout(…, 5000)`
+      // here predates all three: each offline pass armed another timer, and a kick from a
+      // screen mount while one was already pending left two loops polling in parallel.
       return;
     }
 
@@ -282,6 +345,8 @@ class UploadQueueManager {
       );
       if (activeIndex === -1) break;
       const activeItem = this.queue[activeIndex];
+      this.activeUploadId = activeItem.id;
+      this.notifyListeners();
       try {
         console.log(`[UploadQueue] Uploading item: ${activeItem.id} for slot: ${activeItem.subcategory}`);
         await this.uploadItem(activeItem);
@@ -301,12 +366,10 @@ class UploadQueueManager {
           this.cleanupPersistedFile(activeItem);
           continue;
         }
-        // Double-check if we became offline during the upload attempt
-        const stillOnline = await this.checkOnline();
-        if (!stillOnline) {
-          console.log('[UploadQueue] Connection lost during upload. Retrying without incrementing retry count.');
-          // Schedule next check in 5 seconds
-          setTimeout(() => this.processQueue(), 5000);
+        // Lost the connection mid-upload: stop the drain WITHOUT burning a retry, and leave the
+        // item exactly where it is. The reconnect hook picks it up the moment signal returns.
+        if (!this.checkOnline()) {
+          console.log('[UploadQueue] Connection lost during upload. Will resume on reconnect.');
           break;
         }
 
@@ -338,28 +401,25 @@ class UploadQueueManager {
     }
 
     this.isProcessing = false;
+    // Nothing is in flight any more — clear it so no tile is left reading "Uploading…".
+    this.activeUploadId = null;
+    this.notifyListeners();
     console.log('[UploadQueue] Processing finished.');
   }
 
 
   private async uploadItem(item: UploadQueueItem): Promise<void> {
-    // 1. Get location with 5 mins cache
-    let coords = { latitude: 0, longitude: 0 };
-    try {
-      const position = await new Promise<any>((resolve, reject) => {
-        Geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 5000,
-          maximumAge: 300000, // 5 minutes cache
-        });
-      });
-      coords = {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-      };
-    } catch (e) {
-      console.warn('[UploadQueue] Could not get location for queue upload:', e);
-    }
+    // 1. Location — the one recorded WHEN THE PHOTO WAS TAKEN.
+    //
+    // ⚠️ Deliberately not a fresh fix. This used to call `getCurrentPosition` here, which is
+    // correct only when the upload happens where the photo did. Offline it does not: a house
+    // shot at 9am and synced from the office at 6pm was filed at the office, on a record that
+    // can end up in a claim. An item queued before this field existed has no coordinates, and
+    // 0,0 is the same honest "unknown" the old catch-block already fell back to.
+    //
+    // A fresh fix here would also be a background-upload hazard — `getCurrentPosition` in a
+    // woken-but-not-open app is unreliable and can hang.
+    const coords = item.coordinates || { latitude: 0, longitude: 0 };
 
     // 2. Prepare Form Data
     // Guard: a local file that no longer exists (tmp purged before this upload ran,
@@ -417,6 +477,29 @@ class UploadQueueManager {
     // 3b. Log analytical event on upload success in the background (fire-and-forget)
     this.logUploadSuccessAsync(item, response, coords, existingUrls);
 
+    // 3b-i. HAND THE LOCAL FILE OVER TO THE IMAGE CACHE, under the url the server just
+    // minted for the same bytes. Until the refetch lands the grid is painting this photo
+    // from the queue's `file://` copy; a moment later the lead comes back carrying a
+    // pre-signed S3 url, the card swaps to it, and without this the tile would re-download
+    // a full-size photo it already had on disk — every tile at once, on the connection that
+    // just came back. That is the "after the network restores the pictures keep loading"
+    // report. Adopting first makes the swap free and invisible.
+    //
+    // ⚠️ Must run BEFORE step 4 unlinks the local file, and before the refetch in 3c.
+    // Awaited (a local copy, milliseconds) so the race cannot be lost; failure is
+    // non-fatal — the tile just falls back to downloading, which is today's behaviour.
+    try {
+      const uploaded = this.matchUploadedPhoto(response, item, existingUrls);
+      // The grid renders `secureUrl` when the lead carries one and otherwise a direct
+      // S3 url, and `getLocalCachePath` drops the query string — so a signed and an
+      // unsigned url for the same object share one cache path. Adopting under whichever
+      // the response gives therefore satisfies the warm either way.
+      const uploadedUrl = uploaded?.secureUrl || resolveS3Url(uploaded?.s3url);
+      if (uploadedUrl) await adoptLocalFileAsCached(item.uri, uploadedUrl);
+    } catch (adoptErr) {
+      console.warn('[UploadQueue] Could not adopt local file into image cache:', adoptErr);
+    }
+
     // 3c. Refresh React Query and WAIT for the lead to actually come back before
     // this item is retired from the queue (the caller shifts it as soon as we
     // return). Awaiting the refetch closes that gap so the optimistic item hands
@@ -428,15 +511,52 @@ class UploadQueueManager {
       console.warn('[UploadQueue] Failed to refresh queries:', qcErr);
     }
 
-    // 4. Cleanup local cache file if applicable
+    // 4. Cleanup the ORIGINAL camera scratch file, if that is what we uploaded.
+    //
+    // ⚠️ Never the image cache's own copy. Step 3b-i adopts these bytes into the image
+    // cache, whose files also live under CacheDir, and the previous `includes('Cache')`
+    // substring test would happily unlink one of them — deleting the very file the grid
+    // was about to render and sending the tile back to the network. `isCacheFile` keys
+    // on this cache's filename prefix, so an adopted copy is always skipped.
+    //
+    // The durable queue copy under `upload_queue` / `pending_uploads` is NOT touched here
+    // either; `cleanupPersistedFile` owns that one and runs after the item is retired.
     try {
-      if (item.uri.includes('Cache') || item.uri.includes('tmp')) {
-        const cleanPath = item.uri.replace('file://', '');
+      const cleanPath = item.uri.replace('file://', '');
+      const base = cleanPath.split('/').pop() || '';
+      const isScratch = /\/(Caches?|tmp)\//i.test(cleanPath);
+      const isOwnedByCache = isCacheFile(base);
+      const isDurableQueueCopy =
+        cleanPath.includes('/upload_queue/') || cleanPath.includes('/pending_uploads/');
+      if (isScratch && !isOwnedByCache && !isDurableQueueCopy) {
         await ReactNativeBlobUtil.fs.unlink(cleanPath);
       }
     } catch (cleanupError) {
       console.warn('[UploadQueue] Failed to delete temporary cache file:', cleanupError);
     }
+  }
+
+  /**
+   * The row in the upload response that IS the photo `item` just sent, or null.
+   *
+   * Shared by the image-cache handover and the analytics logger so the two can never
+   * disagree about which photo was uploaded. Matched on (category, subcategory) among
+   * rows that were NOT already on the lead before the upload — a queue item has no
+   * s3url of its own, so there is nothing to join on directly. Scanned newest-first
+   * because the server appends.
+   */
+  private matchUploadedPhoto(response: any, item: UploadQueueItem, existingUrls: Set<string>): any | null {
+    const rows = response?.data?.salesPhotos || response?.data?.data?.salesPhotos || [];
+    if (!Array.isArray(rows)) return null;
+    return (
+      [...rows].reverse().find(
+        (p: any) =>
+          p?.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
+          p?.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
+          p?.s3url &&
+          !existingUrls.has(p.s3url)
+      ) || null
+    );
   }
 
   private async logUploadSuccessAsync(
@@ -454,14 +574,7 @@ class UploadQueueManager {
       let bucketName = '';
 
       // Try to match the photo from the upload response first
-      const responseSalesPhotos = response.data?.salesPhotos || response.data?.data?.salesPhotos || [];
-      const immediateMatch = [...responseSalesPhotos].reverse().find(
-        (p: any) =>
-          p.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
-          p.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
-          p.s3url &&
-          !existingUrls.has(p.s3url)
-      );
+      const immediateMatch = this.matchUploadedPhoto(response, item, existingUrls);
 
       if (immediateMatch && immediateMatch.s3url) {
         s3url = immediateMatch.s3url;
@@ -538,7 +651,14 @@ registerSessionResetHook(() => uploadQueueManager.resetForNewSession());
 let photoSyncStarted = false;
 
 /**
- * Drain queued photos on every reconnect, and once on a cold start.
+ * The slow retry sweep. See the identical constant in `services/offlineLeadStore.ts` — these two
+ * queues now have the same four triggers on purpose.
+ */
+const PHOTO_RETRY_SWEEP_MS = 60_000;
+
+/**
+ * Drain queued photos on every reconnect, on every return to the foreground, once on a cold start,
+ * and on a slow sweep while anything is still outstanding.
  *
  * ⚠️ Without this the queue only ever ran because a screen happened to kick it — the
  * constructor loads the saved items and starts nothing, and `JobDocsSection` is what called
@@ -547,11 +667,38 @@ let photoSyncStarted = false;
  * and unsent, which is the failure mode `utils/pending-inspection-photos.ts` already records as
  * the worse one: a rep who cannot see them re-shoots the house.
  *
+ * ⚠️ The reconnect hook alone is NOT enough, and this is the gap that produced "rep rendered at
+ * 8am, manager still cannot see it at 7pm". `onReconnect` fires on the offline→online EDGE — but
+ * if signal returns while the app is BACKGROUNDED OR KILLED there is no running listener to
+ * observe that edge, and when the rep reopens the app it is already online so no edge fires then
+ * either. Nothing was scheduled to try again. The foreground hook catches the reopen; the sweep
+ * catches a pass that simply failed (weak signal on the first attempt) while online throughout.
+ *
+ * Deliberately mirrors `startOfflineWorkSync`. The lead store had all four from the start and the
+ * photo queue had two, which is why lead data synced and its photos did not — the two halves of
+ * one offline session, on different schedules.
+ *
  * Idempotent, so a remount cannot double-subscribe it.
  */
 export const startPhotoQueueSync = (): void => {
   if (photoSyncStarted) return;
   photoSyncStarted = true;
+
   onReconnect(() => uploadQueueManager.processQueue());
+
+  // Coming back to the app is the moment the rep expects to see progress, and it is also when a
+  // connection that recovered while backgrounded first becomes usable.
+  AppState.addEventListener('change', (next) => {
+    if (next === 'active') uploadQueueManager.processQueue();
+  });
+
+  setInterval(() => {
+    // Cheap to skip: both guards are in-memory reads, so a session with nothing queued — which is
+    // most of them — does no work at all and makes no request.
+    if (!isOnline()) return;
+    if (!uploadQueueManager.hasUploadableWork()) return;
+    uploadQueueManager.processQueue();
+  }, PHOTO_RETRY_SWEEP_MS);
+
   uploadQueueManager.processQueue();
 };

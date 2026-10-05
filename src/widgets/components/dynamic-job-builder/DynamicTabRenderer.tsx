@@ -1,5 +1,6 @@
 import React, { useMemo, Fragment } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Animated } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import {
   getTabSections,
   getCombinationSectionRowFields,
@@ -317,6 +318,31 @@ interface DynamicTabRendererProps {
   // allocation grid + accordion tracker. Field sections already render without
   // their own allocation UI, so this is the only allocation chrome to suppress.
   hideAllocationTrackers?: boolean;
+  /**
+   * Spread onto this tab's `ScrollView` so the SCREEN's step header can collapse as the
+   * rep scrolls (`hooks/useCollapsingHeader`). The scroll that drives it lives here, two
+   * components below the header it moves, so it has to be handed down.
+   *
+   * Every tab wires it: the field ScrollView below, and `VerticalSummaryTab`, which owns
+   * its own and returns before that one.
+   *
+   * ⚠️ SPREAD it whole. It carries the touch/momentum handlers as well as `onScroll`,
+   * and without them the header blinks — see `userDriven` in `utils/collapsing-header.ts`.
+   *
+   * ⚠️ The pinned allocation trackers sit ABOVE the field ScrollView and must NOT take
+   * it — that is the half of the ticket that says the tracker always stays.
+   */
+  collapsingScrollProps?: Record<string, any>;
+  /**
+   * Animated top padding for the PINNED allocation tracker, from
+   * `useCollapsingHeader().underHeaderStyle`.
+   *
+   * ⚠️ The tracker sits directly under the collapsing header and does not move with it.
+   * With a fixed `paddingTop` the gap above the tracker stayed at its full open size once
+   * the header had gone, leaving the cards stranded below a band of white. This closes it
+   * over the same travel, so header + tracker read as one block.
+   */
+  collapsingUnderHeaderStyle?: Record<string, any>;
   verticalId?: string;
   verticalColor?: string;
   products?: any[];
@@ -1220,26 +1246,44 @@ function renderField(
         ? <StackFieldGrid columns={stackCols}>{renderedChildren}</StackFieldGrid>
         : renderedChildren;
 
-      if (!showContainer) {
-        return (
-          <View key={field.id} className={showStackLabel ? 'mb-4' : ''}>
-            {labelNode}
-            {stackContent}
-          </View>
-        );
-      }
-
+      /**
+       * ⚠️ ONE container, styled conditionally — NOT two different JSX trees, and the
+       * children must keep FIXED POSITIONS.
+       *
+       * This branch used to return a bare `<View>` when there was no warning and a
+       * bordered one when there was, with `warningNode` inserted between the label and
+       * the fields only in the second. React reconciles unkeyed children BY INDEX, so
+       * the moment a warning cleared, `stackContent` moved from index 1 to index 2 and
+       * React tore the whole subtree down and rebuilt it.
+       *
+       * What that looked like: in Lighting ▸ Measurements, typing the FIRST digit takes
+       * the grid total from 0 to non-zero, which satisfies "Allocate remaining footage",
+       * so the warning cleared, the grid remounted, the `TextInput` was destroyed
+       * mid-edit and the keyboard dismissed. Every keystroke after that was
+       * warning-off → warning-off, nothing moved, and it behaved — which is exactly the
+       * "only the first time" the ticket describes.
+       *
+       * `labelNode` and `warningNode` are rendered unconditionally (they are `null` when
+       * absent). A `null` child still OCCUPIES its slot in the children array, so
+       * `stackContent` now sits at index 2 whatever the warning does, and the grid is
+       * never remounted. Do not collapse these back into `&&` short-circuits or move
+       * them behind an early return.
+       */
       return (
         <View
           key={field.id}
-          className="mb-4"
-          style={{
-            borderWidth: 2,
-            borderColor: effectiveBorderColor || 'rgba(0,0,0,0.08)',
-            borderRadius: 8,
-            padding: 12,
-            backgroundColor: showWarning && effectiveBorderColor ? `${effectiveBorderColor}08` : '#fff',
-          }}
+          className={showContainer || showStackLabel ? 'mb-4' : ''}
+          style={
+            showContainer
+              ? {
+                borderWidth: 2,
+                borderColor: effectiveBorderColor || 'rgba(0,0,0,0.08)',
+                borderRadius: 8,
+                padding: 12,
+                backgroundColor: showWarning && effectiveBorderColor ? `${effectiveBorderColor}08` : '#fff',
+              }
+              : undefined
+          }
         >
           {labelNode}
           {warningNode}
@@ -1599,6 +1643,8 @@ export function DynamicTabRenderer({
   repDetails,
   editMode,
   hideAllocationTrackers = false,
+  collapsingScrollProps,
+  collapsingUnderHeaderStyle,
   leadId,
   calculatorResultData,
   customerName,
@@ -1642,6 +1688,7 @@ export function DynamicTabRenderer({
         isDocUploadingRef={isDocUploadingRef}
         onUploadDocs={onUploadDocs}
         onRefreshDocs={onRefreshDocs}
+        collapsingScrollProps={collapsingScrollProps}
       />
     );
   }
@@ -1934,9 +1981,14 @@ export function DynamicTabRenderer({
           (no header bar, no collapse); 3 per row, wrapping. Each card shows its own
           Avail / Used / Left + status banner, matching the normal JB. */}
       {!hideAllocationTrackers && showAllocationGrid && (
-        <View
+        <Animated.View
           className="bg-white border-b border-slate-100"
-          style={{ zIndex: 50, paddingHorizontal: 8, paddingTop: 8, paddingBottom: 2 }}
+          // ⚠️ `paddingTop` comes LAST so the animated value wins over the static one.
+          // Spreading the style first would pin the gap open again.
+          style={[
+            { zIndex: 50, paddingHorizontal: 8, paddingTop: 8, paddingBottom: 2 },
+            collapsingUnderHeaderStyle,
+          ]}
         >
           <View className="flex-row flex-wrap">
             {trackerCards.map((card) => (
@@ -1955,7 +2007,7 @@ export function DynamicTabRenderer({
               </View>
             ))}
           </View>
-        </View>
+        </Animated.View>
       )}
 
       {/* FIXED footage accordion tracker — pinned below the allocation grid, same
@@ -2011,16 +2063,22 @@ export function DynamicTabRenderer({
         </View>
       )}
 
-      <ScrollView
+      <KeyboardAwareScrollView
         className="flex-1"
-        // Bottom padding + iOS keyboard-inset auto-adjust so a focused input (e.g.
-        // Roofing → Flashing measurements) scrolls clear of the keyboard instead of
-        // being hidden behind it. Android relies on the manifest `adjustResize`.
+        // `KeyboardAwareScrollView` (not a plain `ScrollView` + `adjustResize`) so the
+        // FOCUSED field stays scrolled into view both while typing AND after the keyboard
+        // is dismissed. Ticket: on Android, tapping "Done" closed the keyboard and the
+        // scroll offset stayed put, so a field entered near the bottom (e.g. "# of End
+        // Caps (Lefts)") scrolled out from under the fold the instant the window resized
+        // back to full height — the rep had no way to see what they'd just typed.
+        // `bottomOffset` matches the pattern already used for this in
+        // `DynamicDealEditScreen`'s Job Price / Addendum steps.
         contentContainerStyle={{ padding: 12, paddingBottom: 160 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
-        automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+        bottomOffset={24}
+        {...collapsingScrollProps}
       >
       {!hasAllocationOnly && hasTabFields && (() => {
         const nonAllocFields = filterFields(
@@ -2107,7 +2165,7 @@ export function DynamicTabRenderer({
           </Fragment>
         );
       })}
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </View>
   );
 }

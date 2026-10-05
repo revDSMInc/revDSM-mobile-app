@@ -30,6 +30,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
 import { useQueryClient } from '@tanstack/react-query';
 import { markLeadRolloutsConfirmed } from '../../../hooks/useLeadCalculatorStatus';
+import { allRolloutsConfirmed } from '../../../utils/rollout-status';
 import { isOnline } from '../../../services/connectivity';
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
@@ -499,6 +500,24 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     // as its `setCurrentCalculatorId` — the state is not readable yet, so the id has
     // to travel as an argument. The sheet passes nothing and behaves exactly as before.
     const resultCalcId = calcIdOverride || currentCalculatorId;
+
+    // Persist the down payment the rep typed IN THIS MODAL back onto the calculator.
+    //
+    // ⚠️ Without this the figure lives only in `calculatorResultData`, which is screen
+    // state: Build Job → back → reopen Result Lead and the field reads $0.00 again,
+    // because `initialDownPayment` comes from the SAVED calculator and nothing ever wrote
+    // it there. Reported as "down payment not saved when entered in lead result modal".
+    // `handleSetDownPayment` marks the tab dirty, so it rides the same debounced
+    // `PUT /lfcalculators/{id}` as the rollout card's own down-payment input and hydrates
+    // on the next load. A demo has no down payment, so only a sale writes.
+    //
+    // ⚠️ Keyed on `resultCalcId`, NOT `currentCalculatorId`: on the resume path the
+    // state id is a tick stale, so writing against it would save the down payment onto
+    // the PREVIOUSLY selected calculator — and silently, since both writes succeed.
+    if (resultCalcId && data?.resultType === 'sale') {
+      handleSetDownPayment(resultCalcId, Number(data?.downPayment) || 0);
+    }
+
     // Attach the calculator snapshot + appointment so the outcome payload can send
     // `LFCalculator` and `selectedAppointmentId` (web parity — every outcome save
     // carries the associated calculator object; previously omitted on mobile).
@@ -594,7 +613,11 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         }
         openJobBuilder(false);
       });
-  }, [currentCalculatorId, tabs, lead, user, appointmentId, refetchJobBuilderConfig]);
+    // Both `handleSetDownPayment` (the down-payment write above) and
+    // `refetchJobBuilderConfig` (the config re-read in `openJobBuilder`) are called by this
+    // callback, so both belong here. They arrived from opposite sides of a merge and the
+    // conflict resolution kept the union -- dropping either reintroduces a stale closure.
+  }, [currentCalculatorId, tabs, lead, user, appointmentId, handleSetDownPayment, refetchJobBuilderConfig]);
 
   // Assigned every render so the resume path always fires the CURRENT closure. A
   // `useEffect` would land a render late, and this is invoked from an async handler
@@ -731,6 +754,33 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
             // noted on `rehashBuild`.
             releaseRehashDrafts(rehashLatchRef.current, confirmed.map((c) => c.id));
             handleConfirmRollouts(confirmed);
+
+            // ⚠️ Arm the tools list's local-confirmation grace HERE, at the moment of
+            // confirmation — not only on "Jobs Built — Back to Tools" below.
+            //
+            // The confirmation is written by the DEBOUNCED save engine
+            // (`SAVE_DEBOUNCE_MS = 1500` plus the round trip), and the Investment Center
+            // tile reads the server on focus. `markLeadRolloutsConfirmed` is what bridges
+            // that gap, but it used to fire only on that one button — so every other way
+            // out of here raced the PUT: the header back arrow, hardware back, and the
+            // 10-minute AUTO-confirm (`checkAndAutoConfirm`, which the rep never sees).
+            // Win the race on a fast connection and the tile is open; lose it on weak LTE
+            // and it reads "Please Fully Build ALL jobs first". That is the intermittent
+            // "confirmed rollouts but Investment Center not ready" report — it is a
+            // timing bug, which is exactly why it reproduces on some devices and not
+            // others.
+            //
+            // Guarded on the confirm completing the WHOLE set, because the override
+            // asserts `allConfirmed` outright; confirming one of three must not unlock
+            // anything. `handleConfirmRollouts`' state update hasn't landed yet, so the
+            // set is projected from `confirmed` rather than re-read from `tabs`.
+            const justConfirmed = new Set(confirmed.map((c) => c.id));
+            const afterConfirm = tabs.map((t) =>
+              justConfirmed.has(t.id) ? { ...t, isRolloutConfirmed: true } : t
+            );
+            if (allRolloutsConfirmed(afterConfirm)) {
+              markLeadRolloutsConfirmed(queryClient, lead);
+            }
           }}
           onResultJob={handleResultJob}
           // Persist the entered end price live (survives back-to-calculator edits) and

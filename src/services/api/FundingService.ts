@@ -553,6 +553,16 @@ export type FundingErrorKind =
   | 'delivery'
   /** 503 — no payment provider configured. NOTHING WAS WRITTEN; environment problem. */
   | 'noProvider'
+  /**
+   * The device has no connection, so the request was never sent.
+   *
+   * ⚠️ Not a server answer at all — it is raised CLIENT-SIDE by `useFunding`'s
+   * `run()` before any call is made. Kept as its own kind rather than folded
+   * into `unknown` because NOTHING WAS WRITTEN and retrying is exactly the
+   * right thing to do once there is signal, which is the opposite of the advice
+   * every other terminal kind carries.
+   */
+  | 'offline'
   | 'unknown';
 
 export interface FundingError {

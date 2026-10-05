@@ -893,7 +893,7 @@ export function SummaryFinalizeCards({
                       <Text style={{ color: '#059669', fontWeight: '900', fontSize: 10 }}>Generate</Text>
                     </TouchableOpacity>
                     {!isAppointmentSet && (
-                      <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#ef4444', textAlign: 'center' }}>
+                      <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#ef4444', textAlign: 'center' }}>
                         Schedule an appointment to enable agreements
                       </Text>
                     )}

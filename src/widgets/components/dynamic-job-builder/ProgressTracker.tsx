@@ -63,12 +63,17 @@ export function ProgressTracker({ steps = [], activeStepId, onStepPress, disable
         {steps.map((step, index) => {
           const isActive = step.id === activeStepId || step.active;
 
+          // ⚠️ Locked is a NEUTRAL state (a step this deal simply hasn't configured), not
+          // an error — ticket: "Red means wrong" reported against Lighting / Additional
+          // Services reading red on a deal that never used those verticals. Grey, matching
+          // the same "not reached yet" tone already used for an un-complete numbered step
+          // (`#94a3b8` label / `#e2e8f0` border), not a new colour of its own.
           const bgColor = isActive
             ? '#0EA5E9'
             : step.complete
               ? '#10b981'
               : step.locked
-                ? '#FAD9D3'
+                ? '#F1F5F9'
                 : 'white';
 
           const borderColor = isActive
@@ -76,7 +81,7 @@ export function ProgressTracker({ steps = [], activeStepId, onStepPress, disable
             : step.complete
               ? '#10b981'
               : step.locked
-                ? '#FE6644'
+                ? '#CBD5E1'
                 : '#e2e8f0';
 
           const labelColor = isActive
@@ -84,7 +89,7 @@ export function ProgressTracker({ steps = [], activeStepId, onStepPress, disable
             : step.complete
               ? '#10b981'
               : step.locked
-                ? '#FE6644'
+                ? '#94a3b8'
                 : '#94a3b8';
 
           const handlePress = () => {
@@ -126,7 +131,7 @@ export function ProgressTracker({ steps = [], activeStepId, onStepPress, disable
                   }}
                 >
                   {step.locked ? (
-                    <Icon name="lock" size={16} color="#FE6644" />
+                    <Icon name="lock" size={16} color="#94a3b8" />
                   ) : step.complete ? (
                     <Icon name="check" size={18} color="white" />
                   ) : (

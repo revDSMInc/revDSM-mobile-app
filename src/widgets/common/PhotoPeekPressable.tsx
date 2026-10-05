@@ -21,7 +21,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { triggerHaptic } from '../../utils/haptics';
 import { usePhotoPeekScrollLock } from './PhotoPeekScrollLock';
-import { isRemoteImageUrl, warmToLocalCache } from '../../utils/imageFileCache';
+import { getWarmedLocalUri, isRemoteImageUrl, warmToLocalCache } from '../../utils/imageFileCache';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const PREVIEW_W = SW * 0.86;
@@ -67,11 +67,15 @@ interface PhotoPeekPressableProps {
  * `imageFileCache`, so a 20+ thumbnail grid doesn't starve the visible images.
  */
 function usePeekCachedUri(uri?: string | null): string | null {
-  const [localUri, setLocalUri] = useState<string | null>(null);
+  // Seeded from the cache synchronously: a grid remount (navigating back to a photo
+  // screen) would otherwise drop every card to null and re-await, so the peek is
+  // briefly cold again on a photo that never left the disk.
+  const [localUri, setLocalUri] = useState<string | null>(() => getWarmedLocalUri(uri));
 
   useEffect(() => {
-    setLocalUri(null);
-    if (!isRemoteImageUrl(uri)) return undefined;
+    const known = getWarmedLocalUri(uri);
+    setLocalUri(known);
+    if (known || !isRemoteImageUrl(uri)) return undefined;
     let cancelled = false;
     warmToLocalCache(uri)
       .then((file) => {

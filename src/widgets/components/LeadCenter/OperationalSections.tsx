@@ -11,7 +11,8 @@ import { useQueuedConsentForms } from '../../../hooks/useQueuedConsentForms';
 import type { PitchBookSummary } from '../../../utils/pitch-book';
 import { useFocusEffect } from '@react-navigation/native';
 import { FlashMessage } from '../../../config/message';
-import { RevRenderHistoryModal, prefetchToLocalCache } from '../../modals/lead-center/RevRenderHistoryModal';
+import { RevRenderHistoryModal } from '../../modals/lead-center/RevRenderHistoryModal';
+import { getWarmedLocalUri, warmToLocalCache } from '../../../utils/imageFileCache';
 
 /**
  * Stands in for a server report on a form this device is still holding.
@@ -67,6 +68,11 @@ export const ToolsSection = ({
             generatedUrl: typeof r?.generatedUrl === 'string' ? r.generatedUrl.trim() : '',
             createdAt: r?.createdAt || null,
             runId: r?.runId || r?._id || null,
+            // Keep the backend's own key names too (`RevRenderHistoryModal`'s view-logged
+            // event reads these) — this pair shape used to drop them, so that log's
+            // originalS3url/generatedS3url fields always came back null on this screen.
+            s3UrlOriginal: r?.s3UrlOriginal || null,
+            s3UrlGenerated: r?.s3UrlGenerated || null,
             originalS3url: r?.s3UrlOriginal || null,
             generatedS3url: r?.s3UrlGenerated || null,
             s3url: r?.s3url || null,
@@ -100,17 +106,23 @@ export const ToolsSection = ({
     return [...pairs].reverse();
   }, [runs]);
 
-  // Pre-fetch all images into persistent filesystem cache early when lead is loaded
+  // Pre-fetch all images into the persistent filesystem cache early when the lead loads.
+  //
+  // ⚠️ `warmToLocalCache`, NOT `prefetchToLocalCache`. Both write the same file, but only
+  // this one records it in the warmed-uri memo, which is what lets `ImageWithLoader` name
+  // the local copy SYNCHRONOUSLY on a remount. With the bare prefetch the strip still had
+  // to rediscover the file asynchronously every time, so it re-armed its spinners on every
+  // tab switch — the "the renders load again each time I come into Tools" report.
   React.useEffect(() => {
     if (orderedRuns && orderedRuns.length > 0) {
       orderedRuns.forEach((run: any) => {
         const before = run.originalUrl || run.originalS3url;
         const after = run.generatedUrl || run.generatedS3url;
         if (before) {
-          prefetchToLocalCache(before);
+          warmToLocalCache(before).catch(() => {});
         }
         if (after) {
-          prefetchToLocalCache(after);
+          warmToLocalCache(after).catch(() => {});
         }
       });
     }
@@ -486,17 +498,57 @@ const PulsingSkeleton = ({ isDark, label = 'AI\nRendering' }: { isDark: boolean;
   );
 };
 
+/**
+ * A render thumbnail in the revRender strip, served from the local file cache.
+ *
+ * ⚠️ It must NOT render the `uri` it is handed. Render urls are pre-signed S3 links with
+ * no cache headers, so the OS image cache refuses to store them and every mount
+ * re-downloads — and the Tools tab unmounts entirely on a switch to Job docs
+ * (`activeTab === 'tools' && <ToolsSection/>`), so coming back re-downloaded every
+ * render. Worse, the runs query re-signs the urls, so even RN's in-memory cache misses
+ * on the way back. The file cache keys on the url with the query stripped, which is what
+ * makes the second visit a hit.
+ *
+ * ⚠️ No `onLoadStart={() => setLoading(true)}` either. It re-armed the spinner on every
+ * remount over an image that was about to paint from disk, which is most of what the rep
+ * actually saw.
+ */
 const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
-  const [loading, setLoading] = useState(true);
+  // Seeded synchronously: a warmed render paints on the first frame, with no spinner.
+  const seeded = getWarmedLocalUri(uri);
+  const [localUri, setLocalUri] = useState<string | null>(seeded);
+  const [loading, setLoading] = useState(!seeded);
+
+  useEffect(() => {
+    if (!uri) return;
+    const known = getWarmedLocalUri(uri);
+    if (known) {
+      setLocalUri(known);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    warmToLocalCache(uri)
+      .then((file) => {
+        if (!cancelled) setLocalUri(file || uri);
+      })
+      .catch(() => {
+        if (!cancelled) setLocalUri(uri);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [uri]);
 
   return (
     <View style={{ width: '100%', height: '100%', backgroundColor: '#f1f5f9' }}>
-      {uri ? (
+      {localUri ? (
         <Image
-          source={{ uri }}
+          source={{ uri: localUri }}
           className="w-full h-full"
           resizeMode="cover"
-          onLoadStart={() => setLoading(true)}
+          fadeDuration={0}
           onLoadEnd={() => setLoading(false)}
           onError={() => setLoading(false)}
         />

@@ -417,6 +417,27 @@ to a heavy or paginated query.
 ⚠️ The listener is module-scope, registered once when `queryClient.ts` is first imported, and
 deliberately never removed — the client lives for the process.
 
+### Merge note: `onlineManager` and `focusManager` are BOTH wired, independently
+
+When `dev-v1-multi-tenat` merged into the offline branch, `queryClient.ts` conflicted: the offline work
+had added the `onlineManager` wiring (+ `networkMode: 'offlineFirst'`, `refetchOnReconnect`) and the
+other branch had added the `focusManager` wiring, both at the top of the same file. **The resolution is
+the union — neither replaces the other.**
+
+They answer different questions and React Query gates a refetch on BOTH:
+
+| Manager | Question | Fed by |
+|---|---|---|
+| `onlineManager` | Is there a link? | `subscribeConnectivity` (`services/connectivity.ts`) |
+| `focusManager` | Is the app in front of the rep? | `AppState` `change` |
+
+⚠️ **Deleting either one silently disables refetching the other appears to provide.** Drop
+`focusManager` and the config never revalidates on foreground however good the signal; drop
+`onlineManager` and nothing resumes on reconnect. A future conflict here must keep both blocks.
+
+⚠️ **`offlineFirst` does NOT defeat the focus refetch.** It defers only the RETRIES, so a query
+returning to the foreground still issues its first request. The two settings are compatible; this was
+checked when resolving, because it is the non-obvious way the union could have been wrong.
 ## `MapToggleSwitch` gained per-instance colours — its ON state was hardcoded green for every caller
 
 Ticket (Sales Map): *"all the toggles [look] the same, make it different for pending install and

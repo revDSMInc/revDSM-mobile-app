@@ -13,6 +13,11 @@ import { isOnline, subscribeConnectivity } from '../connectivity';
  * ⚠️ This only ENABLES focus refetching; it does not turn it on anywhere. The
  * default below stays `refetchOnWindowFocus: false`, so a query refetches on
  * foreground only if it opts in explicitly (today: `jobBuilderProductsConfig`).
+ *
+ * ⚠️ Independent of the `onlineManager` wiring above — the two answer different
+ * questions ("is the app in front of the rep?" vs "is there a link?") and React Query
+ * gates a refetch on BOTH. Removing either one silently disables refetching that the
+ * other appears to provide, so keep them together.
  */
 AppState.addEventListener('change', (status: AppStateStatus) => {
   focusManager.setFocused(status === 'active');
@@ -48,6 +53,9 @@ export const queryClient = new QueryClient({
        * `offlineFirst` always attempts the FIRST request — so today's behaviour is preserved
        * exactly, error handling included — and only pauses the RETRIES until connectivity returns.
        * That is the gain with none of the regression.
+       *
+       * ⚠️ This does NOT defeat the focus refetch wired above: `offlineFirst` defers only the
+       * RETRIES, so a query returning to the foreground still issues its first request.
        */
       networkMode: 'offlineFirst',
     },

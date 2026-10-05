@@ -14,6 +14,11 @@ import { FullPackageTitle, FullPackageInfoOverlay, type PackageAnchorRect } from
 import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 import { useAuth } from '../../../hooks/useAuth';
+import { useIsOnline } from '../../../hooks/useIsOnline';
+// ⚠️ The imperative read is for CALLBACKS (`goFunding`), where a render-time
+// value could be a tick stale; `useIsOnline` is for render. See `LeadCenter`.
+import { isOnline } from '../../../services/connectivity';
+import { ensureOfflineWorkForLead, saveOfflineFunding } from '../../../services/offlineLeadStore';
 // Past Confirm only. Everything BEFORE it is the Result Lead module below.
 import {
   logFundingEditPayments,
@@ -314,6 +319,19 @@ export function ResultJobModal({
   // The funding endpoints are company-scoped by a header (spec §1). The lead's own
   // company wins over the signed-in rep's — same resolution `JobDocsSection` uses.
   const { user } = useAuth();
+  /**
+   * ⚠️ The HOOK, not `isOnline()`. This is read during render (it feeds
+   * `resultBlockers`), and a one-shot read would not re-evaluate when the
+   * signal drops with the sheet already open.
+   */
+  const online = useIsOnline();
+  /**
+   * `handleBuild` is declared AFTER `goFunding` but the offline arm of `goFunding`
+   * has to call it. A ref rather than a reorder: both are large callbacks with
+   * their own dependency lists, and moving either one past the state it closes
+   * over is how a stale-capture bug gets introduced quietly.
+   */
+  const handleBuildRef = useRef<(() => void) | null>(null);
   // Web `result-lead-modal.js:61`. See `Lead.isRehashed`.
   const isRehashed = lead?.isRehashed === true;
   const [oneLeg, setOneLeg] = useState('No');
@@ -852,8 +870,13 @@ export function ResultJobModal({
    * told no. `goFunding` re-checks the same rules as a backstop.
    */
   const resultBlockers = useMemo(
-    () => confirmBlockers(activeRows, contractNum, payMode),
-    [activeRows, contractNum, payMode]
+    // ⚠️ `plans` + `online` so a card or loan row that can no longer be
+    // collected is listed as a reason BEFORE the tap. Without them a rep who
+    // picked AMEX on signal and then lost it taps Confirm and gets the server's
+    // generic "payments could not be saved" — which names neither the cause nor
+    // the fix.
+    () => confirmBlockers(activeRows, contractNum, payMode, { plans: pricing.plans, online }),
+    [activeRows, contractNum, payMode, pricing.plans, online]
   );
   const saleReady = resultBlockers.length === 0;
 
@@ -874,6 +897,56 @@ export function ResultJobModal({
     // state, and `payments` is the COMPLETE list — sending them would file the
     // contract twice over.
     const upsert = toUpsertRows(activeRows, contractNum, pricing.plans);
+
+    /**
+     * ⚠️ OFFLINE: the split is QUEUED and the rep carries on. It is not refused.
+     *
+     * This used to block, on the reasoning that `savePayments` is a live PUT and
+     * the funding screen renders the SERVER's record. Both facts are still true —
+     * but they argue for skipping that screen, not for stopping the sale. A cheque
+     * taken at a door is a complete transaction: the rep has the cheque, and
+     * nothing about filing the paperwork later changes that. Refusing Confirm
+     * stranded them mid-sale with no way forward, which is worse than the
+     * anonymous failure it replaced.
+     *
+     * ⚠️ Safe to queue because the request is a FULL PUT of the whole list, so a
+     * replay lands the same record — and because a card or lender row never
+     * reaches here: `resultBlockers` refuses those offline (`planBlockedOffline`),
+     * since collecting one needs the server to mint a Stripe link. What is queued
+     * is always a split the device could honour by itself.
+     *
+     * ⚠️ Goes STRAIGHT to the job build, skipping the funding screen. That screen
+     * is a view onto the server's record; with no signal it has nothing to draw,
+     * and showing an empty one would read as the split having been lost.
+     */
+    if (!isOnline()) {
+      const work = ensureOfflineWorkForLead(lead || { _id: leadLogId });
+      if (!work?.clientId) {
+        setSaveError('This sale could not be saved on the device. Reconnect and confirm again.');
+        return;
+      }
+      saveOfflineFunding(work.clientId, {
+        contractPrice: Math.round(contractNum),
+        payments: upsert,
+        payMode,
+      });
+      logResultLeadConfirmed({
+        ...logCtx,
+        contractPrice: Math.round(contractNum),
+        payMode,
+        paymentCount: upsert.length,
+        payments: upsert.map((r) => ({ kind: r.kind, method: r.method, amount: r.amount })),
+      });
+      setSaveError(null);
+      FlashMessage.info(
+        'Saved on this device',
+        'The payment split uploads automatically when you have signal. Carry on and build the job.',
+      );
+      // The funding MODULE is server-owned, so the rep goes to the build instead of
+      // a screen that cannot render. `handleBuild` has its own offline arm.
+      handleBuildRef.current?.();
+      return;
+    }
     // ⚠️ The BOUNDARY. `result_lead` ends on the press and `funding` begins with the
     // save below, so this fires FIRST and unconditionally: gating it on the save
     // succeeding would leave a failed confirm as a flow with no terminal row, which
@@ -941,7 +1014,7 @@ export function ResultJobModal({
     // claim a return that never happened.
     wentToFundingRef.current = true;
     setScreen('funding');
-  }, [resultBlockers, contractNum, activeRows, pricing.plans, payMode, funding, logCtx, leadLogId]);
+  }, [resultBlockers, contractNum, activeRows, pricing.plans, payMode, funding, logCtx, leadLogId, lead, calculatorId]);
 
   /** Back / "Edit payments" — fold every lender decision onto the pricing rows. */
   const goResult = useCallback(() => {
@@ -1076,8 +1149,30 @@ export function ResultJobModal({
     const isDemo = resultType === 'demo';
 
     if (!isDemo) {
-      const res = await funding.submit();
-      if (!res.ok) return;
+      /**
+       * ⚠️ The funding SUBMIT is skipped offline, not failed.
+       *
+       * `submit` is the server marking the funding record complete, and it is
+       * validated against payments the server does not have yet — the split is
+       * still in the upload queue. So there is nothing for it to answer, and
+       * `useFunding.run()` refuses it offline anyway.
+       *
+       * The sale is NOT lost by skipping it: the queued `funding` step files the
+       * split when signal returns, and the job build the rep is about to do is
+       * queued by its own screen. What this costs is the funding record being
+       * marked submitted at the door, which is a server-side state nobody reads
+       * from the device.
+       */
+      if (isOnline()) {
+        const res = await funding.submit();
+        if (!res.ok) return;
+      } else {
+        logResultLeadBuildJob({
+          ...logCtx,
+          resultType,
+          contractPrice: Math.round(contractNum) || undefined,
+        });
+      }
     } else {
       // The demo arm never reaches Confirm and never enters the funding module, so
       // without this it would be the one path through this screen that starts and
@@ -1127,6 +1222,12 @@ export function ResultJobModal({
     allocations, demoReason, reasonExplanation, versatile, pineapple, bankDeclined, payments, funding, onConfirm,
     logCtx,
   ]);
+
+  // See `handleBuildRef` — `goFunding`'s offline arm hands off to this, and it is
+  // declared below `goFunding`, so the ref is what bridges them.
+  useEffect(() => {
+    handleBuildRef.current = handleBuild;
+  }, [handleBuild]);
 
   // ── price lock ───────────────────────────────────────────────────────────
 

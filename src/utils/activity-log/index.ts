@@ -9,3 +9,4 @@ export * from './my-deal-log';
 export * from './job-builder-logs';
 export * from './job-builder-auto-log';
 export * from './installer-log';
+export * from './chat-log-files';

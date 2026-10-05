@@ -15,6 +15,7 @@ import { describeFullPackage } from '../utils/tab-naming';
 import { autoSecureLastDrop, dropPriceOf } from '../utils/drop-prices';
 import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { FlashMessage } from '../../../config/message';
+import { allRolloutsConfirmed, rolloutCalculators } from '../../../utils/rollout-status';
 import { useAuth } from '../../../hooks/useAuth';
 import {
   DealPricing,
@@ -45,7 +46,8 @@ import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-uti
 import { logRolloutChange } from '../../../utils/activity-log/rollout-log-meta';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 import { RevRenderSlots, type RenderPair } from './RevRenderSlots';
-import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../../widgets/common/PhotoPeekScrollLock';
+import { PhotoPeekScrollLockProvider } from '../../../widgets/common/PhotoPeekScrollLock';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { OneYearMonthlyPlan, type OneYearMonthlyValue } from './OneYearMonthlyPlan';
 import { scopeSignature } from '../utils/scope-signature';
 import type { CalculatorLockState } from '../utils/job-builder-submission';
@@ -910,6 +912,16 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const acceptedDrop = drops.find((d) => d.status === 'accepted');
   const activeMethod = acceptedDrop?.paymentMethod || method;
   const activeDownPayment = Number(acceptedDrop?.downPayment) || 0;
+  /**
+   * What the Result Lead modal should OPEN with.
+   *
+   * ⚠️ Not `activeDownPayment`. That one is the accepted DROP's figure, so on the plain
+   * Result Lead path — no drops, which is the common case — it is always 0 and the modal
+   * opened at $0.00 even when a down payment was already saved on this calculator. The
+   * drop's value still wins when one is accepted: the deal is being resulted at the drop,
+   * and the drop carries its own down payment.
+   */
+  const resultDownPayment = acceptedDrop ? activeDownPayment : (Number(calculator.downPayment) || 0);
 
   // ── Rollout activity logs the portal timeline renders (web parity) ──────────
   const logCalculator = { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId };
@@ -1484,10 +1496,11 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     const secured = autoSecureLastDrop(drops);
     // Seeded from the CURRENT state; overridden below by the row just secured, whose
     // own plan and down payment are what the deal is being resulted at. `activeMethod`
-    // / `activeDownPayment` derive from an ALREADY-accepted drop, so on this path they
-    // are still the pre-secure values.
+    // derives from an ALREADY-accepted drop, so on this path it is still the pre-secure
+    // value; `resultDownPayment` falls back to the calculator's own saved down payment
+    // for the same reason (see its definition).
     let chooseAt = finalPrice;
-    let chooseDown = activeDownPayment;
+    let chooseDown = resultDownPayment;
     if (secured !== drops) {
       onDropChange(calculator.id, secured);
       const idx = secured.length - 1;
@@ -1533,7 +1546,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     const lastDrop = drops.length
       ? Number(drops[drops.length - 1]?.price ?? drops[drops.length - 1]?.dropedPrice) || 0
       : Number(calculator.price) || 0;
-    onResult(calculator.id, 'demo', lastDrop, activeMethod, activeDownPayment);
+    onResult(calculator.id, 'demo', lastDrop, activeMethod, resultDownPayment);
   };
 
   // The resolved `method` can be a key that ISN'T offered for this lead/company —
@@ -2160,10 +2173,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   // is still a bare number is empty (no entries → derived name is just its
   // position) and must NOT appear in the rollout — only real, named calculators
   // can be priced/confirmed.
-  const visibleCalculators = useMemo(
-    () => calculators.filter((c) => !/^\d+$/.test((c.title || '').trim())),
-    [calculators]
-  );
+  const visibleCalculators = useMemo(() => rolloutCalculators(calculators), [calculators]);
   /**
    * Calculators that are a FULL PACKAGE — their tab in the strip above shows the
    * package icon + ⓘ instead of the `G+VMax+Versa+S+FWrap` letters, matching the
@@ -2186,7 +2196,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
     setPackageAnchor(rect);
     setPackageInfoVisible(true);
   }, []);
-  const allConfirmed = visibleCalculators.length > 0 && visibleCalculators.every((c) => c.isRolloutConfirmed);
+  const allConfirmed = allRolloutsConfirmed(visibleCalculators);
   const allHavePrices = visibleCalculators.length > 0 && visibleCalculators.every((c) => effectivePrice(c) > 0);
   // Progress tracks calculators with an END PRICE ENTERED (web `ConfirmRolloutPrices`
   // counts `price > 0`, not confirmations), so the bar fills as the rep prices each
@@ -2287,11 +2297,15 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
 
   return (
     <PhotoPeekScrollLockProvider>
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: '#fff' }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 120 : 24}
-    >
+    {/* `View`, not `KeyboardAvoidingView` — its `behavior="padding"` shrank this whole
+        column whenever the keyboard opened, which is what let the footer below the
+        `KeyboardAwareScrollView` visually land on top of a just-focused field (ticket:
+        "the button is looking up and hiding the drop price field"). The library's
+        `KeyboardAwareScrollView` already keeps the focused input above the keyboard on
+        its own; stacking a padding `KeyboardAvoidingView` around it double-compensates
+        instead of helping. Same deliberate choice `DynamicDealEditScreen` documents at
+        its own `KeyboardAwareScrollView`s. */}
+    <View style={{ flex: 1, backgroundColor: '#fff' }}>
       <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#DFE3E8', backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center' }}>
         <TouchableOpacity onPress={onBack} style={{ padding: 8, marginRight: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#DFE3E8', borderRadius: 12, backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
           <Ionicons name="arrow-back" size={18} color="#212B36" />
@@ -2395,7 +2409,15 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
         </View>
       </View>
 
-      <PeekAwareScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+      {/* `KeyboardAwareScrollView`, not `PeekAwareScrollView` — this content never renders a
+          `PhotoPeekPressable` (no photos in the quote card), so the peek-lock machinery was
+          dead weight here, and swapping it out locally avoids touching the shared component
+          other screens rely on. Ticket: "the button is looking up and hiding the drop price
+          field" — Rollout End Price, Add Down Payment and the inline drop-price input all
+          live in this one scroll view with no way to bring a focused field above the keyboard;
+          `KeyboardAwareScrollView` does that automatically for whichever one is focused,
+          instead of a hand-rolled `scrollToEnd` that only helped the bottom-most field. */}
+      <KeyboardAwareScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled" bottomOffset={24}>
         <View style={{ maxWidth: 600, alignSelf: 'center', width: '100%' }}>
           {selectedCalc ? (
             <PremiumQuoteCard key={selectedCalc.id} calculator={selectedCalc}
@@ -2440,7 +2462,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
             </View>
           )}
         </View>
-      </PeekAwareScrollView>
+      </KeyboardAwareScrollView>
 
       {visibleCalculators.length > 0 && !allConfirmed && (
         <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16 }}>
@@ -2533,7 +2555,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
         onClose={() => setPackageInfoVisible(false)}
         anchorRect={packageAnchor}
       />
-    </KeyboardAvoidingView>
+    </View>
     </PhotoPeekScrollLockProvider>
   );
 }
