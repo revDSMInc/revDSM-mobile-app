@@ -101,6 +101,10 @@ export const LeadEndpoints = {
     remoteSigner: (agreementId: string, signerId: string) =>
       `pdf-reports/v1/agreement/remote/${agreementId}/signer/${signerId}`,
     remoteCancel: (agreementId: string) => `pdf-reports/v1/agreement/remote/${agreementId}/cancel`,
+    // REVUIUX-391: how the homeowner wants the SIGNED copy. Stored on the lead; the backend reads
+    // it from both the in-person and the remote send path.
+    deliveryPreference: (leadId: string) =>
+      `pdf-reports/v1/agreement/${leadId}/delivery-preference`,
   },
   leadDraft: {
     upsert: (leadId: string) => `lead/v1/${leadId}/drafts`,
@@ -689,6 +693,12 @@ export const LeadService = {
   //     signedAt, sendCount, ... } ] } }`. There is no push — poll every 10–15s.
   getAgreementRemoteStatus: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.agreement.remoteStatus(leadId)),
+  // REVUIUX-391. GET -> `{ preference: {channel,phone,email,setAt} | null, prefill: {phone,email,name} }`.
+  // PUT body `{ channel: 'email'|'text'|'both', phone?, email? }`; 400 carries a rep-readable `message`.
+  getAgreementDeliveryPreference: (leadId: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.agreement.deliveryPreference(leadId)),
+  saveAgreementDeliveryPreference: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.put(LeadEndpoints.agreement.deliveryPreference(leadId), payload),
   // Resend a signer's link (rotates their token — the old link dies).
   resendAgreementRemoteSigner: (agreementId: string, signerId: string): Promise<AxiosResponse<any>> =>
     api.post(LeadEndpoints.agreement.remoteSignerResend(agreementId, signerId)),

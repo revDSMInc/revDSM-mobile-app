@@ -22,6 +22,9 @@ import { AgreementDialogModal } from '../../modals/job-builder/AgreementDialogMo
 import { AgreementSignatureModal } from '../../modals/job-builder/AgreementSignatureModal';
 import { PdfPreviewModal } from '../../modals/PdfPreviewModal';
 import { LeadService } from '../../../services/api/leads';
+import { AgreementDeliveryPrompt } from '../../modals/job-builder/AgreementDeliveryPrompt';
+import { isOnline } from '../../../services/connectivity';
+import { isClientId } from '../../../utils/offline-lead-work';
 import { useAuth } from '../../../hooks/useAuth';
 import { useLeadQuery } from '../../../hooks/useLeadQuery';
 import { resolveS3Url } from '../../../utils/s3-utils';
@@ -79,6 +82,9 @@ export const SummarySection = ({
   const [agreementData, setAgreementData] = useState<any>(null);
   const [scannerType, setScannerType] = useState<'agreement' | 'orderSheet'>('agreement');
   const [isGenerating, setIsGenerating] = useState(false);
+  // REVUIUX-391: the delivery-preference prompt that precedes every Generate Agreement.
+  const [deliveryPromptOpen, setDeliveryPromptOpen] = useState(false);
+  const pendingGenerateOverride = useRef<any>(undefined);
   const [outcomeData, setOutcomeData] = useState<any>(null);
   const [previewImage, setPreviewImage] = useState<{ uri: string; name: string } | null>(null);
   const [pdfPreview, setPdfPreview] = useState({ visible: false, uri: '', title: '' });
@@ -647,7 +653,36 @@ export const SummarySection = ({
     return sections;
   }, [jobState, calculatorData]);
 
-  const handleGenerateAgreement = async (scheduleTimeOverride?: any) => {
+  // REVUIUX-391: every Generate Agreement first asks how the homeowner wants the SIGNED copy
+  // (email / text), in person and remote alike. The answer is saved on the lead, so the later
+  // finalize path — whichever it is — already knows. Generation is gated on that save.
+  // ⚠️ Skipped offline / for an offline-minted lead: the PUT cannot succeed, and the backend's
+  // no-answer default (phone AND email) is the existing behaviour.
+  const handleGenerateAgreement = (scheduleTimeOverride?: any) => {
+    if (!leadId) return;
+    // `onPress` handlers pass a press event here; only a real schedule override is kept.
+    const override =
+      scheduleTimeOverride && (scheduleTimeOverride.date || scheduleTimeOverride.reason)
+        ? scheduleTimeOverride
+        : undefined;
+    const installDate = override?.date || jobState.scheduleTime?.date;
+    if (!installDate) {
+      // Same gate `runGenerateAgreement` applies; asked BEFORE the prompt so the rep is not
+      // made to pick a channel for a document that cannot be generated yet.
+      return runGenerateAgreement(override);
+    }
+    if (!isOnline() || isClientId(leadId)) return runGenerateAgreement(override);
+    pendingGenerateOverride.current = override;
+    // Never stack native Modals — let the method dialog finish dismissing first.
+    if (agreementDialogOpen) {
+      setAgreementDialogOpen(false);
+      setTimeout(() => setDeliveryPromptOpen(true), 350);
+    } else {
+      setDeliveryPromptOpen(true);
+    }
+  };
+
+  const runGenerateAgreement = async (scheduleTimeOverride?: any) => {
     if (!leadId) return;
 
     const installDate = scheduleTimeOverride?.date || jobState.scheduleTime?.date;
@@ -1879,6 +1914,18 @@ export const SummarySection = ({
             setIsGenerating(false);
             if (isDocUploadingRef) isDocUploadingRef.current = false;
           }
+        }}
+      />
+
+      <AgreementDeliveryPrompt
+        visible={deliveryPromptOpen}
+        leadId={leadId || ''}
+        customerDetails={leadData?.customerDetails}
+        onCancel={() => setDeliveryPromptOpen(false)}
+        onConfirmed={() => {
+          setDeliveryPromptOpen(false);
+          // Let the prompt finish dismissing before the signature modal presents.
+          setTimeout(() => runGenerateAgreement(pendingGenerateOverride.current), 400);
         }}
       />
 

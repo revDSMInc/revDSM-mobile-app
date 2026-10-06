@@ -2708,6 +2708,24 @@ Both branches changed the `['leadOutcome', ...]` query. The merged read keeps BO
 - ⚠️ On a FAILED read the device copy stands in (no blank builder on a flaky connection), but a read that SUCCEEDS with no build is still an answer and does not fall back to the device copy (a job reset on the portal must not be resurrected).
 - ⚠️ `outcomeExists` is false only for a 404; any other failure leaves it true so the documents read still gets its chance. The device-first early return sets no flag, which the documents gate treats as "exists".
 
+## REVUIUX-391: "How would the homeowner like the signed copy?" prompt before Generate Agreement
+
+Ticket: the signed agreement went only to the rep's email although the lead had a phone and email. Asked for a screen (Email / Text, editable, pre-populated from the lead) shown at **Generate Agreement**, in person and remote alike.
+
+- `AgreementDeliveryPrompt` (`widgets/modals/job-builder/`) reads `GET pdf-reports/v1/agreement/:leadId/delivery-preference`, and on **Send via Email/Text** PUTs the answer **to the lead**. Generation is gated on that save. The backend reads it at send time from both finalize paths (`PUT outcome` in person, `RemoteAgreementService` remote), so nothing is re-sent at signing.
+- Rules are in pure `utils/agreement-delivery.ts` (reuses `remote-signer-contact` validators, so the prompt and Send Remotely agree on what is deliverable). A stored answer wins over lead data on a second Generate.
+- Classic JB: `SummarySection.handleGenerateAgreement` now opens the prompt and the old body is `runGenerateAgreement`. Dynamic JB: `DynamicAgreementDialog` holds the preview request until `deliveryReady`.
+- ⚠️ In the dynamic dialog the prompt is `inline` (absolute overlay), NOT a second native `Modal` - the dialog is already one. In `SummarySection` the method dialog is dismissed first (350 ms) before the prompt shows.
+- ⚠️ Skipped offline / for an offline-minted lead (the PUT cannot succeed); the backend default (phone AND email) applies. Not queued - decide with product if that matters.
+- ⚠️ The unused channel's contact is sent too (server fallback), but only if itself valid - the server 400s on a partial number even for the channel not chosen.
+- No "Both" option (matches the design; backend question still open with the reporter). `agreementSent.fellBackToOtherChannel` is NOT surfaced: this app has no feedback screen reading `agreementSent`.
+- ⚠️ Item 1 of the ticket (junk folder) is a comms-service SPF/DKIM/DMARC matter; nothing in the app fixes it.
+
+### Follow-up: prompt restyled to the signing sheets; keyboard no longer covers the field
+
+- Type scale/colours now match `AgreementRemoteSignModal` (green `#4CBB17`, ink `#1C252E`, 10px uppercase labels, 50px inputs, 54px buttons). ⚠️ The typed value is `fontWeight: 'normal'` (not bold) - do not "match" the sheet's 600 here.
+- ⚠️ Keyboard: `KeyboardAvoidingView` with `behavior` undefined did nothing on Android, and a `Modal` is its own window so `adjustResize` does not reach it. The backdrop is padded by the `Keyboard` event height instead (works for both the Modal and the `inline` overlay).
+
 ## "How is this being paid?" is a 3-option dropdown
 
 Ticket: the two radio cards truncated "Down Pay…". Now a `DropdownChoice` (`components/funding/DropdownChoice.tsx`, expands IN PLACE — never a nested Modal) with **No Down Payment / Down Payment / Paid in Full Upfront**, titles never truncated. Used by `ResultJobModal` and `DynamicDealEditScreen`; `SegmentedChoice` is no longer used by either.
