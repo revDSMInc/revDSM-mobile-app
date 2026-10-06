@@ -2707,3 +2707,25 @@ Both branches changed the `['leadOutcome', ...]` query. The merged read keeps BO
 
 - ⚠️ On a FAILED read the device copy stands in (no blank builder on a flaky connection), but a read that SUCCEEDS with no build is still an answer and does not fall back to the device copy (a job reset on the portal must not be resurrected).
 - ⚠️ `outcomeExists` is false only for a 404; any other failure leaves it true so the documents read still gets its chance. The device-first early return sets no flag, which the documents gate treats as "exists".
+
+## "How is this being paid?" is a 3-option dropdown
+
+Ticket: the two radio cards truncated "Down Pay…". Now a `DropdownChoice` (`components/funding/DropdownChoice.tsx`, expands IN PLACE — never a nested Modal) with **No Down Payment / Down Payment / Paid in Full Upfront**, titles never truncated. Used by `ResultJobModal` and `DynamicDealEditScreen`; `SegmentedChoice` is no longer used by either.
+
+- ⚠️ **"No Down Payment" is not a third wire structure.** It is `payMode === 'split'` plus a UI-only `noDown` flag (`PayStructure`, `payStructureOf` in `utils/funding.ts`): the Down Payment group is hidden, down rows are cleared to `''`, and the balance carries the whole contract. An entirely unfunded down row is already exempt in `confirmBlockers`, and `toUpsertRows` drops zero rows — so nothing downstream changed.
+- On reopen, `inferNoDownPayment(record)` restores it for a saved split deal with no funded down row. The flag is not persisted.
+- Once money has moved (`structureLocked`) the other options are disabled and explain why, same as before.
+- `structureHint` takes a 4th `noDown` arg.
+
+### Result Lead opens on "No Down Payment" and warns on Confirm
+
+`ResultJobModal` defaults the dropdown to **No Down Payment** unless the rollout carried a down payment (`initialDownPayment > 0`); a saved deal still restores through `inferNoDownPayment`. Tapping **Confirm** on No Down Payment raises the app's own `ConfirmDialog` (tone `warn`) — "you are going with financing for the whole payment" — and only **Continue** runs `goFunding(true)`. Down Payment and Upfront show nothing.
+
+- ⚠️ The dialog is drawn with `ConfirmDialog`'s new `inline` prop (absolute layer, no native Modal): the Result Lead sheet is itself a Modal, and native Modals must never stack. A full-screen `<Modal>` dialog from here would be dropped on iOS.
+- Scope: Result Lead only. `DynamicDealEditScreen` keeps its own default (reopened deals restore from the saved record) and has no warning.
+- ⚠️ `goFunding` now takes an `acknowledged` flag and `noDown` is in its dependency list — a stale closure there would skip or repeat the warning. The Confirm button calls `goFunding()` through an arrow, never `onPress={goFunding}` (that would pass the press event as `acknowledged`).
+
+### Result Lead: Original Contract Price field matches the payment Amount field
+
+`MoneyField` (`ResultJobModal.tsx`) now uses the same type as `PaymentRowsGroup`'s Amount field: `FS.LEAD` + `PS.bold` for the `$` and the value, `minHeight: 46`, `borderWidth: 1.6`, `FUND.BORDER`, `borderRadius: 12`. It was `FS.BODY` + `PS.semibold` on a thin 8-radius box, so the two fields stacked on one sheet read as different sizes. ⚠️ Keep the two in step; the locked (non-editable) state keeps its grey fill and text.
+- Follow-up: `MoneyField`'s title is now a plain `FS.SMALL` / `PS.bold` / `FUND.SUBTEXT` line ABOVE the box (`marginBottom: 5`), like the payment rows' "Amount" label, instead of a floating cut-out label; locked fill is `FUND.FILL`. `labelBg` is now unused. Title and box therefore match the Amount field exactly.
