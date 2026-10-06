@@ -19,6 +19,7 @@ import { LeadService } from '../../../services/api/leads';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
 import ReactNativeBlobUtil from 'react-native-blob-util';
+import { findLook } from '../../../utils/revrender-lighting/catalog';
 import { forgetWarmedUri, getLocalCachePath, getWarmedLocalUri, prefetchToLocalCache, warmToLocalCache } from '../../../utils/imageFileCache';
 
 // The local-file image cache used to live here. It moved to `utils/imageFileCache`
@@ -28,6 +29,8 @@ export { getLocalCachePath, prefetchToLocalCache };
 
 
 // High-performance CachedImage component targeting pre-signed S3 URLs (atomic write)
+type RenderChip = { label: string; colorName: string; colorHex: string; swatches?: string[] };
+
 const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {
   // ⚠️ Seeded SYNCHRONOUSLY from the warmed-uri memo. This component renders `null` until
   // it knows which uri to use, and it used to learn that only from an async
@@ -153,7 +156,22 @@ export const RevRenderHistoryModal = ({
   // `summary`/`components` array, or the raw `selections` + `textureImageUrls` maps.
   const renderColors = useMemo(() => {
     const run = currentRun;
-    if (!run) return [] as { label: string; colorName: string; colorHex: string }[];
+    if (!run) return [] as RenderChip[];
+    // Roofline Lighting runs carry a LOOK (`selections.lookName` + `colors`), not
+    // components. Show it as one chip — the look's name with its colours — the same
+    // way core products show "Soffit: <colour>", so the rep sees what was rendered.
+    const lookSel = run.selections && typeof run.selections === 'object' ? run.selections : null;
+    const lookName = lookSel?.lookName || run.lookName;
+    if (typeof lookName === 'string' && lookName.trim()) {
+      const lookColors = (Array.isArray(lookSel?.colors) ? lookSel.colors : run.colors) as unknown;
+      const swatches = Array.isArray(lookColors)
+        ? lookColors.filter((h): h is string => typeof h === 'string' && h.startsWith('#'))
+        : [];
+      // The server does not echo the month, so read it off the catalogue by id
+      // (seasonal looks only — Everyday / team / theme looks have none).
+      const month = findLook(String(lookSel?.lookId || run.lookId || ''))?.month;
+      return [{ label: '', colorName: month ? `${lookName.trim()} · ${month}` : lookName.trim(), colorHex: swatches[0] || '', swatches }];
+    }
     const arr = Array.isArray(run.summary)
       ? run.summary
       : Array.isArray(run.components)
@@ -189,6 +207,15 @@ export const RevRenderHistoryModal = ({
         .filter((c) => c.colorName || c.colorHex);
     }
     return [];
+  }, [currentRun]);
+
+  // ⚠️ ISO date read as TEXT (YYYY-MM-DD), never through `new Date()` — a timezone
+  // offset would shift the calendar day.
+  const renderedOn = useMemo(() => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(currentRun?.createdAt || ''));
+    if (!m) return '';
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${MONTHS[Number(m[2]) - 1] ?? ''} ${Number(m[3])}, ${m[1]}`;
   }, [currentRun]);
 
   // Track if current slide is fully loaded (prioritizing persistent cache)
@@ -485,7 +512,9 @@ export const RevRenderHistoryModal = ({
               </View>
               <View style={styles.statusRow}>
                 <Icon name="check-circle" size={14} color="#72BD00" />
-                <Text style={styles.statusText}>Rendered</Text>
+                <Text style={styles.statusText}>
+                  Rendered{renderedOn ? ` · ${renderedOn}` : ''}
+                </Text>
               </View>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -497,14 +526,17 @@ export const RevRenderHistoryModal = ({
               this render, shown as swatch chips (color dot + component + color name). */}
           {renderColors.length > 0 && (
             <View style={styles.colorsRow}>
-              {renderColors.map((c: { label: string; colorName: string; colorHex: string }, i: number) => (
+              {renderColors.map((c: RenderChip, i: number) => (
                 <View key={`${c.label}-${i}`} style={styles.colorChip}>
-                  <View
-                    style={[
-                      styles.colorSwatch,
-                      { backgroundColor: c.colorHex && c.colorHex.startsWith('#') ? c.colorHex : '#B0B0B0' },
-                    ]}
-                  />
+                  {(c.swatches?.length ? c.swatches : [c.colorHex]).map((hex, si) => (
+                    <View
+                      key={si}
+                      style={[
+                        styles.colorSwatch,
+                        { backgroundColor: hex && hex.startsWith('#') ? hex : '#B0B0B0' },
+                      ]}
+                    />
+                  ))}
                   <Text style={styles.colorChipText} numberOfLines={1}>
                     {c.label ? `${c.label}: ` : ''}{c.colorName || '—'}
                   </Text>

@@ -29,6 +29,7 @@ export function LightStrip({
   size = 8,
   radius = 12,
   height,
+  glow = true,
 }: {
   colors: string[];
   pucks?: number;
@@ -36,6 +37,8 @@ export function LightStrip({
   size?: number;
   radius?: number;
   height?: number;
+  /** false = solid pucks, no halos (picker tiles). */
+  glow?: boolean;
 }) {
   const palette = colors.length ? colors : ['#FFD9A0'];
 
@@ -90,7 +93,7 @@ export function LightStrip({
                     merge into a continuous line, the strip stops describing
                     what is being sold.
                   */}
-                  {HALOS.map((h) => (
+                  {glow && HALOS.map((h) => (
                     <View
                       key={h.scale}
                       pointerEvents="none"

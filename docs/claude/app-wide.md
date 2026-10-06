@@ -494,3 +494,23 @@ design, platform limits and the device test matrix are in **`docs/claude/offline
 - ⚠️ **Lazily required inside try/catch**, not imported at the top. notifee resolves its native module at import time and a JS
   reload against a stale binary would otherwise take the whole bundle down.
 - A no-op on iOS, which uses `ios/revDSM_Sales/BackgroundUploadTask.m` (`beginBackgroundTask`) instead.
+
+---
+
+## RevRender lighting picker — no outer glow on tiles
+
+Ticket: picker tiles (presets, Recently Rendered, Teams) must show solid pucks with no outer glow.
+- `LightStrip` gained a `glow` prop (default `true`); `LookTile` passes `glow={false}`, which skips the three
+  translucent halos. Pucks stay at their normal size.
+- ⚠️ The selected-renders list in `LightingPanel` and the RevRender history row still glow (the ticket's
+  "preview cards should match" was optional). Pass `glow={false}` there too if the client wants parity.
+
+## RevRender gallery — lighting renders show their look
+
+Ticket: a Roofline Lighting render must say what was rendered ("Christmas" + colour dots), the way core
+renders show "Soffit: <colour>" chips under the header.
+- `RevRenderHistoryModal.renderColors` has a first branch for runs carrying `selections.lookName` (or
+  `run.lookName`): one chip, the look name plus one dot per entry of `selections.colors`. Core-product runs
+  take the old branches unchanged.
+- ⚠️ The field names mirror the request payload (`toLookPayload`); not verified against a real history response.
+  If the chip is missing on a lighting render, log the run and check where the server echoes `selections`.

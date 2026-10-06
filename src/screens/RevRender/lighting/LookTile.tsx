@@ -83,7 +83,7 @@ export function LookTile({
           rows misdescribe the product, and in a tile this wide they also
           crowd the panel until the colours stop being readable at a glance.
         */}
-        <LightStrip colors={look.colors} rows={1} pucks={7} height={64} radius={12} />
+        <LightStrip colors={look.colors} rows={1} pucks={7} height={64} radius={12} glow={false} />
 
         {/*
           ⚠️ INSIDE the corner, not hanging off it. Floating the tick outside

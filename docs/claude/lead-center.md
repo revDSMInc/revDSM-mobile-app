@@ -1119,3 +1119,20 @@ The container is now a FIXED clip and a new inner `Reanimated.View` carries the 
 Ticket: *remove the words under Pitch Book.* In `OperationalSections.tsx` the pitch-book tile subtitle is now empty (and the `<Text>` not rendered) when no books are published; the row still opens the bundled standard deck.
 
 - ⚠️ Only the empty-state copy was removed. "N pitch books available", "Loading pitch books…" and the "Couldn't load — tap ↻ to retry" line stay, because a failed list read must not look like an empty one.
+
+## RevRender gallery — lighting renders show their look
+
+Ticket: a Roofline Lighting render must say what was rendered ("Christmas" + colour dots), like the
+"Soffit: <colour>" chips on core renders. Component: `widgets/modals/lead-center/RevRenderHistoryModal.tsx`.
+- `renderColors` has a first branch for runs carrying `selections.lookName` (or `run.lookName`): one chip,
+  the look name plus one dot per entry of `selections.colors`. Core-product runs take the old branches unchanged.
+- ⚠️ Field names mirror the request payload (`utils/revrender-lighting/payload.ts`); they are not verified
+  against a real history response. If the chip is missing on a lighting render, log the run and check where
+  the server echoes `selections`.
+- ⚠️ The file is CRLF — edit with `newline=''`.
+
+### Follow-up — gallery shows the look's month and the render date
+- The chip reads `Name · Dec` for seasonal looks: the server does not echo `month`, so it is looked up with
+  `findLook(selections.lookId)` from the catalogue. Everyday / team / theme looks have no month and show the name only.
+- The "Rendered" line gains ` · Oct 6, 2026` from `run.createdAt`, parsed as TEXT (YYYY-MM-DD) — ⚠️ never
+  `new Date()`, which shifts the day across timezones. Hidden when `createdAt` is absent.
