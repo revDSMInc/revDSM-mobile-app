@@ -41,8 +41,8 @@
 		526A0DF12FE94DB6001CFA8C /* RNHapticFeedback.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RNHapticFeedback.m; sourceTree = "<group>"; };
 		52CA88BA2FD6D3890054DEBF /* UITextField+DoneButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "UITextField+DoneButton.m"; sourceTree = "<group>"; };
 		52CA88BB2FD6D3890054DEBF /* UITextView+DoneButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "UITextView+DoneButton.m"; sourceTree = "<group>"; };
-		5B7A0D012FF0A001001CFA8C /* BackgroundUploadTask.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BackgroundUploadTask.h; sourceTree = "<group>"; };
-		5B7A0D022FF0A001001CFA8C /* BackgroundUploadTask.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BackgroundUploadTask.m; sourceTree = "<group>"; };
+		5B7A0D012FF0A001001CFA8C /* BackgroundUploadTask.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = revDSM_Sales/BackgroundUploadTask.h; sourceTree = "<group>"; };
+		5B7A0D022FF0A001001CFA8C /* BackgroundUploadTask.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = revDSM_Sales/BackgroundUploadTask.m; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = revDSM_Sales/AppDelegate.swift; sourceTree = "<group>"; };
 		7D2FCED0DAF301DB3F3BA8EF /* libPods-revDSM_Sales.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-revDSM_Sales.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = revDSM_Sales/LaunchScreen.storyboard; sourceTree = "<group>"; };

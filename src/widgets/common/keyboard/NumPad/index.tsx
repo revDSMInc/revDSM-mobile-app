@@ -41,7 +41,9 @@ import {
  *   - Lead Create mounts its own `mode="inflow"` provider (pad under the ScrollView).
  * Outside any provider nothing changes.
  *
- * `mode="pan"` (default) is layout-agnostic: the pad is an overlay and the host slides its
+ * `mode="inflow"` (default) keeps the page where it is: the pad takes its own strip at the bottom and the
+ * screen above shrinks, exactly like the system keyboard did - header and footer never move.
+ * `mode="pan"` is layout-agnostic: the pad is an overlay and the host slides its
  * content up just far enough to keep the focused field clear of it - so it works for any
  * screen/modal without knowing its layout, and animates on the native thread (no layout pass
  * per frame). `mode="inflow"` puts the pad in the column and the form above shrinks.
@@ -80,9 +82,15 @@ const DETACH_GRACE_MS = 60;
 export const NumPadProvider: React.FC<{
   children: React.ReactNode;
   mode?: 'pan' | 'inflow';
+  /** inflow only: tween the pad's HEIGHT too (form above resizes smoothly, JS driver). Default
+   *  false: the space is reserved at once and only the pad slides (native driver). */
+  layoutAnimated?: boolean;
+  /** inflow only: wrap children + pad in a `flex: 1` View. For hosts that fill their parent (app root,
+   *  Modal). ⚠️ Off for Lead Create: its parent is content-sized (`maxHeight`), where a flex child collapses. */
+  fill?: boolean;
   /** Lets a host turn its own KeyboardAvoidingView off while the pad is up (Lead Create). */
   onActiveChange?: (active: boolean) => void;
-}> = ({ children, mode = 'pan', onActiveChange }) => {
+}> = ({ children, mode = 'inflow', layoutAnimated = false, fill = false, onActiveChange }) => {
   const [target, setTarget] = useState<NumPadTarget | null>(null);
   const targetRef = useRef<NumPadTarget | null>(null);
   // Kept after `target` clears so the pad can finish sliding OUT before it unmounts.
@@ -154,15 +162,30 @@ export const NumPadProvider: React.FC<{
   const ctx = useMemo(() => ({ attach, detach }), [attach, detach]);
 
   const panel = shown ? (
-    <NumPadPanel target={shown} open={padUp} onClosed={handleClosed} overlay={mode === 'pan'} />
+    <NumPadPanel
+      target={shown}
+      open={padUp}
+      onClosed={handleClosed}
+      overlay={mode === 'pan'}
+      layoutAnimated={layoutAnimated}
+    />
   ) : null;
 
   if (mode === 'inflow') {
     return (
       <NumPadContext.Provider value={ctx}>
         <NumPadActiveContext.Provider value={padUp}>
-          {children}
-          {panel}
+          {fill ? (
+            <View style={styles.host}>
+              {children}
+              {panel}
+            </View>
+          ) : (
+            <>
+              {children}
+              {panel}
+            </>
+          )}
         </NumPadActiveContext.Provider>
       </NumPadContext.Provider>
     );
@@ -324,7 +347,8 @@ const NumPadPanel: React.FC<{
   onClosed: () => void;
   /** Absolute pad over the host (pan mode) vs. in the column (inflow). */
   overlay: boolean;
-}> = ({ target, open, onClosed, overlay }) => {
+  layoutAnimated: boolean;
+}> = ({ target, open, onClosed, overlay, layoutAnimated }) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -348,13 +372,13 @@ const NumPadPanel: React.FC<{
       toValue: open ? 1 : 0,
       duration: open ? SLIDE_MS : SLIDE_MS - 40,
       easing: open ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
-      useNativeDriver: overlay,
+      useNativeDriver: !layoutAnimated,
     });
     anim.start(({ finished }) => {
       if (finished && !open) onClosed();
     });
     return () => anim.stop();
-  }, [open, progress, onClosed, overlay]);
+  }, [open, progress, onClosed, layoutAnimated]);
 
   const press = useCallback(
     (key: NumPadKey) => {
@@ -430,7 +454,9 @@ const NumPadPanel: React.FC<{
         overlay
           ? [styles.overlay, { height: panelHeight, backgroundColor: bg }, slide]
           : {
-              height: progress.interpolate({ inputRange: [0, 1], outputRange: [0, panelHeight] }),
+              height: layoutAnimated
+                ? progress.interpolate({ inputRange: [0, 1], outputRange: [0, panelHeight] })
+                : panelHeight,
               overflow: 'hidden',
               backgroundColor: bg,
             }

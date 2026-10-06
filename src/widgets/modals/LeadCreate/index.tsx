@@ -622,7 +622,7 @@ export default function LeadCreateModal({
           style={[styles.modalContainer, { backgroundColor: isDark ? colors.surface : '#fff' }]}
         >
           {/* Custom number pad: Lead ID + Phone use it; Email/Name/Code/Address keep the system keyboard. */}
-          <NumPadProvider mode="inflow" onActiveChange={setNumPadActive}>
+          <NumPadProvider layoutAnimated onActiveChange={setNumPadActive}>
           {/* Header */}
           <View
             className="p-6 flex-row justify-between items-center border-b"

@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
-import { View, Text, ScrollView, Platform } from 'react-native';
+import { View, Text, Platform } from 'react-native';
+import Reanimated from 'react-native-reanimated';
 import {
   buildVerticalSummarySections,
   formatStoryMeasurementLine,
@@ -48,6 +49,8 @@ interface VerticalSummaryTabProps {
    * ⚠️ Spread it whole — it carries touch/momentum handlers, not just `onScroll`.
    */
   collapsingScrollProps?: Record<string, any>;
+  /** Height of the collapsing header floating over the top of this list (overlay mode). */
+  collapsingTopInset?: number;
 }
 
 function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: string; text: string; variant?: string; showLabel?: boolean }) {
@@ -238,6 +241,7 @@ export function VerticalSummaryTab({
   onUploadDocs,
   onRefreshDocs,
   collapsingScrollProps,
+  collapsingTopInset = 0,
 }: VerticalSummaryTabProps) {
   // `products` + `schemas` feed `resolveTabAccentColor` (web parity): they carry the
   // per-tab category colour that gives each summary card its own header colour.
@@ -285,11 +289,13 @@ export function VerticalSummaryTab({
   useCompanyLogoBase64(showFinalize);
 
   return (
-    <ScrollView
+    // ⚠️ Reanimated.ScrollView, not RN's: `collapsingScrollProps.onScroll` is a UI-thread worklet
+    // handler (useCollapsingHeader) and only a Reanimated scroll view can host one. NativeWind
+    // `className` does not reach it, so the old `p-4` is an explicit 16pt contentContainerStyle.
+    <Reanimated.ScrollView
       style={{ flex: 1 }}
-      className="p-4"
       showsVerticalScrollIndicator={false}
-      contentContainerStyle={{ paddingBottom: 160 }}
+      contentContainerStyle={{ padding: 16, paddingTop: 16 + collapsingTopInset, paddingBottom: 160 }}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive"
       // Keep a focused input (appointment / agreement fields) above the keyboard —
@@ -417,6 +423,6 @@ export function VerticalSummaryTab({
       )}
 
       <View style={{ height: 24 }} />
-    </ScrollView>
+    </Reanimated.ScrollView>
   );
 }

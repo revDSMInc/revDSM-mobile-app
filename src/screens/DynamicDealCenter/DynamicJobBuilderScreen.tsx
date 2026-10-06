@@ -66,6 +66,7 @@ import {
   offlineSavedJobBuildState,
   resolveJobBuildSource,
 } from './utils/saved-job-build';
+import Reanimated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 
@@ -1939,10 +1940,87 @@ function DynamicJobBuilderInner({
   return (
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
       <View style={{ flex: 1 }}>
-        <Animated.View
+      {/* Clips the header as it slides up. The header + the pinned trackers are OVERLAYS on top of the
+          list, which never moves: see `useCollapsingHeader` for why (shaking while a finger is down). */}
+      <View style={{ flex: 1, overflow: 'hidden' }}>
+
+        {/* The renderer owns its own scroll now (fixed footage tracker + inner
+            ScrollView, like the normal JB sections); the summary tab scrolls itself.
+            So there is no outer ScrollView here — that keeps the tracker pinned.
+            Keyboard avoidance is handled by each inner ScrollView via
+            `automaticallyAdjustKeyboardInsets` (iOS) + Android `adjustResize`, so
+            the focused input scrolls above the keyboard. A padding-based
+            KeyboardAvoidingView here would instead just shrink the ScrollView above
+            the keyboard, leaving a low field below the fold and hidden (this ticket). */}
+        <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+          {currentTab && showEmptyGate ? (
+            // Deal-edit: this step has no rep-entered data. Prompt to add or skip
+            // instead of showing a blank form (web dynamic-job-builder.js:749).
+            <View style={{ flex: 1, paddingTop: collapsingHeader.topInset }}>
+            <EmptyStepGate
+              stepLabel={currentTab.label || 'this step'}
+              onAddDetails={dismissGate}
+              onSkip={handleNext}
+            />
+            </View>
+          ) : currentTab ? (
+            <DynamicTabRenderer
+              key={currentTab.id}
+              tab={currentTab}
+              vertical={selectedVertical}
+              tabState={jobState?.[selectedVertical?.id]?.[currentTab.id] || {}}
+              verticalState={jobState?.[selectedVertical?.id] || {}}
+              lockedTabIds={currentVerticalLockedTabIds}
+              onStateChange={handleTabStateChange}
+              dealCenterData={dealCenterData}
+              readOnly={false}
+              applyConditions={applyConditions}
+              hideAllocationTrackers={hideAllocationTrackers}
+              collapsingScrollProps={collapsingHeader.scrollProps}
+              collapsingUnderHeaderStyle={collapsingHeader.underHeaderStyle}
+              collapsingTrackerStyle={collapsingHeader.trackerStyle}
+              collapsingTopInset={collapsingHeader.topInset}
+              verticalId={selectedVertical?.id}
+              verticalColor={selectedVertical?.color || '#22c55e'}
+              products={initialConfig?.products || []}
+              schemas={calculatorSchemas || initialConfig?.schemas || []}
+              // Web `useDealEditMode()`: drops the Required gates when editing an
+              // already-resulted deal.
+              editMode={isEdit}
+              repDetails={authUser}
+              leadId={leadId}
+              calculatorResultData={calculatorResultData}
+              customerName={dealCenterData?.customerName || dealCenterData?.customer?.name || ''}
+              isSale={isSale}
+              isDemo={isDemo}
+              scheduleTime={jobState?.scheduleTime}
+              agreements={jobState?.agreements || []}
+              orderSheets={jobState?.orderSheets || []}
+              rootJobState={jobState}
+              onUpdateRootState={updateRootState}
+              resolvedDocuments={resolvedDocuments}
+              setResolvedDocuments={setResolvedDocuments}
+              isDocUploadingRef={isDocUploadingRef}
+              onUploadDocs={handleUploadDocs}
+              onRefreshDocs={handleRefreshDocs}
+            />
+          ) : (
+            <View style={{ alignItems: 'center', paddingTop: 60 }}>
+              <Text style={{ color: '#94A3B8', fontSize: 14 }}>
+                Select a tab to begin
+              </Text>
+            </View>
+          )}
+        </View>
+        <Reanimated.View
           onLayout={collapsingHeader.onHeaderLayout}
-          style={{
-            ...collapsingHeader.headerStyle,
+          style={[{
+            // OVERLAY: floats over the top of the list and slides up (see `useCollapsingHeader`).
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 60,
             paddingHorizontal: 24,
             paddingTop: 8,
             // Trimmed from 24 → 8: the stepper carried a tall empty white band below
@@ -1952,7 +2030,7 @@ function DynamicJobBuilderInner({
             borderBottomWidth: 1,
             borderBottomColor: '#E2E8F0',
             backgroundColor: '#fff',
-          }}
+          }, collapsingHeader.headerStyle]}
         >
           {!embedded && (
             <View
@@ -2013,78 +2091,17 @@ function DynamicJobBuilderInner({
             // only via the bottom Next button, not by tapping Gutters/LeafFilter/etc.
             disableNavigation={isEdit}
           />
-        </Animated.View>
-
-        {/* The renderer owns its own scroll now (fixed footage tracker + inner
-            ScrollView, like the normal JB sections); the summary tab scrolls itself.
-            So there is no outer ScrollView here — that keeps the tracker pinned.
-            Keyboard avoidance is handled by each inner ScrollView via
-            `automaticallyAdjustKeyboardInsets` (iOS) + Android `adjustResize`, so
-            the focused input scrolls above the keyboard. A padding-based
-            KeyboardAvoidingView here would instead just shrink the ScrollView above
-            the keyboard, leaving a low field below the fold and hidden (this ticket). */}
-        <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
-          {currentTab && showEmptyGate ? (
-            // Deal-edit: this step has no rep-entered data. Prompt to add or skip
-            // instead of showing a blank form (web dynamic-job-builder.js:749).
-            <EmptyStepGate
-              stepLabel={currentTab.label || 'this step'}
-              onAddDetails={dismissGate}
-              onSkip={handleNext}
-            />
-          ) : currentTab ? (
-            <DynamicTabRenderer
-              key={currentTab.id}
-              tab={currentTab}
-              vertical={selectedVertical}
-              tabState={jobState?.[selectedVertical?.id]?.[currentTab.id] || {}}
-              verticalState={jobState?.[selectedVertical?.id] || {}}
-              lockedTabIds={currentVerticalLockedTabIds}
-              onStateChange={handleTabStateChange}
-              dealCenterData={dealCenterData}
-              readOnly={false}
-              applyConditions={applyConditions}
-              hideAllocationTrackers={hideAllocationTrackers}
-              collapsingScrollProps={collapsingHeader.scrollProps}
-              collapsingUnderHeaderStyle={collapsingHeader.underHeaderStyle}
-              verticalId={selectedVertical?.id}
-              verticalColor={selectedVertical?.color || '#22c55e'}
-              products={initialConfig?.products || []}
-              schemas={calculatorSchemas || initialConfig?.schemas || []}
-              // Web `useDealEditMode()`: drops the Required gates when editing an
-              // already-resulted deal.
-              editMode={isEdit}
-              repDetails={authUser}
-              leadId={leadId}
-              calculatorResultData={calculatorResultData}
-              customerName={dealCenterData?.customerName || dealCenterData?.customer?.name || ''}
-              isSale={isSale}
-              isDemo={isDemo}
-              scheduleTime={jobState?.scheduleTime}
-              agreements={jobState?.agreements || []}
-              orderSheets={jobState?.orderSheets || []}
-              rootJobState={jobState}
-              onUpdateRootState={updateRootState}
-              resolvedDocuments={resolvedDocuments}
-              setResolvedDocuments={setResolvedDocuments}
-              isDocUploadingRef={isDocUploadingRef}
-              onUploadDocs={handleUploadDocs}
-              onRefreshDocs={handleRefreshDocs}
-            />
-          ) : (
-            <View style={{ alignItems: 'center', paddingTop: 60 }}>
-              <Text style={{ color: '#94A3B8', fontSize: 14 }}>
-                Select a tab to begin
-              </Text>
-            </View>
-          )}
-        </View>
+        </Reanimated.View>
+      </View>
 
         <View
           style={{
             paddingHorizontal: 24,
             paddingTop: 12,
-            paddingBottom: Math.max(insets.bottom, 16),
+            // ⚠️ inset + a gap, NOT just the inset: with edge-to-edge the footer ends exactly where the
+            // system nav bar starts, so `max(inset, 16)` left the button flush against it. insets can
+            // read 0 (gesture nav), hence the gap is always added on top.
+            paddingBottom: insets.bottom + 16,
             borderTopWidth: 1,
             borderTopColor: '#E2E8F0',
             backgroundColor: '#fff',
@@ -2108,17 +2125,17 @@ function DynamicJobBuilderInner({
               <TouchableOpacity
                 onPress={handleBack}
                 style={{
-                  padding: 6,
-                  borderRadius: 8,
+                  height: 38,
+                  borderRadius: 10,
                   alignItems: 'center',
                   justifyContent: 'center',
                   borderWidth: 1,
                   backgroundColor: colors.surface,
                   borderColor: colors.border,
-                  width: 80
+                  width: 84
                 }}
               >
-                <Text style={{ fontWeight: '600', fontSize: 12, color: colors.text }}>
+                <Text style={{ fontWeight: '700', fontSize: 13, color: colors.text }}>
                   Back
                 </Text>
               </TouchableOpacity>
@@ -2127,31 +2144,31 @@ function DynamicJobBuilderInner({
               <TouchableOpacity
                 onPress={() => onEditBack?.()}
                 style={{
-                  padding: 6,
-                  borderRadius: 8,
+                  height: 38,
+                  borderRadius: 10,
                   alignItems: 'center',
                   justifyContent: 'center',
                   borderWidth: 1,
                   backgroundColor: colors.surface,
                   borderColor: colors.border,
-                  width: 80
+                  width: 84
                 }}
               >
-                <Text style={{ fontWeight: '600', fontSize: 12, color: colors.text }}>
+                <Text style={{ fontWeight: '700', fontSize: 13, color: colors.text }}>
                   Back
                 </Text>
               </TouchableOpacity>
             ) : (
-              <View style={{ width: 80 }} />
+              <View style={{ width: 84 }} />
             )}
             {showClearButton && (
               <TouchableOpacity
                 onPress={() => setClearConfirmOpen(true)}
                 accessibilityLabel="Clear this step"
                 style={{
-                  width: 40,
-                  height: 36,
-                  borderRadius: 8,
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
                   alignItems: 'center',
                   justifyContent: 'center',
                   borderWidth: 1,
@@ -2170,9 +2187,9 @@ function DynamicJobBuilderInner({
                 onPress={handleSkipAll}
                 accessibilityLabel="Skip to summary"
                 style={{
-                  width: 40,
-                  height: 36,
-                  borderRadius: 8,
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
                   alignItems: 'center',
                   justifyContent: 'center',
                   borderWidth: 1,
@@ -2192,7 +2209,7 @@ function DynamicJobBuilderInner({
                   style={{
                     paddingHorizontal: 24,
                     paddingVertical: 10,
-                    borderRadius: 12,
+                    borderRadius: 10,
                     alignItems: 'center',
                     justifyContent: 'center',
                     flexDirection: 'row',
@@ -2209,17 +2226,17 @@ function DynamicJobBuilderInner({
                   onPress={handleNext}
                   disabled={!canProceed}
                   style={{
-                    padding: 6,
+                    height: 38,
                     flexDirection: 'row',
-                    borderRadius: 8,
+                    borderRadius: 10,
                     alignItems: 'center',
                     justifyContent: 'center',
                     backgroundColor: canProceed ? '#000000' : '#CBD5E1',
                     opacity: canProceed ? 1 : 0.8,
-                    width: 80
+                    width: 84
                   }}
                 >
-                  <Text style={{ fontWeight: '600', fontSize: 12, color: 'white' }}>Next</Text>
+                  <Text style={{ fontWeight: '700', fontSize: 13, color: 'white' }}>Next</Text>
                 </TouchableOpacity>
               )
             ) : isLastStep && summaryTab ? (
@@ -2229,7 +2246,7 @@ function DynamicJobBuilderInner({
                 style={{
                   paddingHorizontal: 24,
                   paddingVertical: 10,
-                  borderRadius: 12,
+                  borderRadius: 10,
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexDirection: 'row',
@@ -2257,17 +2274,17 @@ function DynamicJobBuilderInner({
                 onPress={handleNext}
                 disabled={!canProceed}
                 style={{
-                  padding: 6,
+                  height: 38,
                   flexDirection: 'row',
-                  borderRadius: 8,
+                  borderRadius: 10,
                   alignItems: 'center',
                   justifyContent: 'center',
                   backgroundColor: canProceed ? '#000000' : '#CBD5E1',
                   opacity: canProceed ? 1 : 0.8,
-                  width: 80
+                  width: 84
                 }}
               >
-                <Text style={{ fontWeight: '600', fontSize: 12, color: 'white' }}>
+                <Text style={{ fontWeight: '700', fontSize: 13, color: 'white' }}>
                   Next
                 </Text>
               </TouchableOpacity>

@@ -1,4 +1,5 @@
-import React, { useMemo, Fragment } from 'react';
+import React, { useMemo, useState, Fragment } from 'react';
+import Reanimated from 'react-native-reanimated';
 import { View, Text, TouchableOpacity, Animated } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import {
@@ -343,6 +344,10 @@ interface DynamicTabRendererProps {
    * over the same travel, so header + tracker read as one block.
    */
   collapsingUnderHeaderStyle?: Record<string, any>;
+  /** Animated style (translateY) that slides the pinned trackers up with the header. Its presence turns on overlay mode. */
+  collapsingTrackerStyle?: any;
+  /** Height of the collapsing header the trackers/list sit below (overlay mode). */
+  collapsingTopInset?: number;
   verticalId?: string;
   verticalColor?: string;
   products?: any[];
@@ -1645,6 +1650,8 @@ export function DynamicTabRenderer({
   hideAllocationTrackers = false,
   collapsingScrollProps,
   collapsingUnderHeaderStyle,
+  collapsingTrackerStyle,
+  collapsingTopInset = 0,
   leadId,
   calculatorResultData,
   customerName,
@@ -1661,6 +1668,9 @@ export function DynamicTabRenderer({
   onUploadDocs,
   onRefreshDocs,
 }: DynamicTabRendererProps) {
+  // Measured height of the pinned trackers (overlay mode only) - the list pads itself by it.
+  const [trackerHeight, setTrackerHeight] = useState(0);
+
   if (tab.isSummary) {
     return (
       <VerticalSummaryTab
@@ -1689,6 +1699,7 @@ export function DynamicTabRenderer({
         onUploadDocs={onUploadDocs}
         onRefreshDocs={onRefreshDocs}
         collapsingScrollProps={collapsingScrollProps}
+        collapsingTopInset={collapsingTrackerStyle !== undefined ? collapsingTopInset : 0}
       />
     );
   }
@@ -1974,8 +1985,9 @@ export function DynamicTabRenderer({
     return items;
   }, [tab, tabState, sections, dealCenterData, applyConditions]);
 
-  return (
-    <View style={{ flex: 1 }}>
+  // Both pinned trackers, as ONE node so they can be positioned (and moved) together.
+  const trackerBlocks = (
+    <>
       {/* FIXED footage allocation tracker — pinned ABOVE the scroll so it does NOT
           move while the user scrolls the measurement fields. Just the tracker cards
           (no header bar, no collapse); 3 per row, wrapping. Each card shows its own
@@ -2063,6 +2075,32 @@ export function DynamicTabRenderer({
         </View>
       )}
 
+    </>
+  );
+
+  // Collapsing header: the header and these trackers are OVERLAYS that slide up while the ScrollView
+  // itself never moves or resizes. ⚠️ Moving the ScrollView under a held finger shakes: it measures the
+  // finger relative to itself, so each px it slides reads as extra finger travel, scrolls more and
+  // collapses more - a feedback loop that only exists while a finger is down. Content below is pushed
+  // down by padding instead (`collapsingTopInset` + the measured tracker height).
+  const collapsingOverlay = collapsingTrackerStyle !== undefined;
+
+  return (
+    <View style={{ flex: 1 }}>
+      {collapsingOverlay ? (
+        <Reanimated.View
+          onLayout={(e) => {
+            const h = Math.round(e.nativeEvent.layout.height);
+            setTrackerHeight((prev) => (prev === h ? prev : h));
+          }}
+          style={[{ position: 'absolute', top: collapsingTopInset, left: 0, right: 0, zIndex: 50 }, collapsingTrackerStyle]}
+        >
+          {trackerBlocks}
+        </Reanimated.View>
+      ) : (
+        trackerBlocks
+      )}
+
       <KeyboardAwareScrollView
         className="flex-1"
         // `KeyboardAwareScrollView` (not a plain `ScrollView` + `adjustResize`) so the
@@ -2073,7 +2111,12 @@ export function DynamicTabRenderer({
         // back to full height — the rep had no way to see what they'd just typed.
         // `bottomOffset` matches the pattern already used for this in
         // `DynamicDealEditScreen`'s Job Price / Addendum steps.
-        contentContainerStyle={{ padding: 12, paddingBottom: 160 }}
+        contentContainerStyle={{
+          padding: 12,
+          paddingBottom: 160,
+          // Overlay mode: the header + trackers float over the top of the list, so start below them.
+          ...(collapsingOverlay ? { paddingTop: 12 + collapsingTopInset + trackerHeight } : null),
+        }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"

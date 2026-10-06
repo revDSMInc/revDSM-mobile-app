@@ -974,3 +974,5 @@ Address keep the system keyboard.
   or turn it into an overlay.
 - ⚠️ The phone field's `formatUSPhoneNumber` + `maxLength={17}` is why the pad edits at the END of the text only.
 - ⚠️ Lead Create now passes `mode="inflow"` explicitly: the pad is app-wide (the patched `Modal` also mounts a default pan provider around it), and the NEAREST provider wins, so this one keeps the form-shrinks-above-the-pad layout. Its `GlobalKeyboardAvoidingView` is turned off via `onActiveChange` because it sits ABOVE this provider and cannot see it through `useNumPadActive`.
+- Follow-up: Lead Create's provider is now `<NumPadProvider layoutAnimated onActiveChange=...>` (the default mode became `inflow`, so `mode="inflow"` is implicit). ⚠️ It must NOT pass `fill`: its parent is the content-sized `modalContainer` (`maxHeight: '90%'`), where a `flex: 1` wrapper collapses. `layoutAnimated` keeps the smooth form resize this modal had before the app-wide rollout.
+- No further Lead Create change: `widgets/modals/LeadCreate/index.tsx` only had its provider props adjusted (`layoutAnimated`, no `fill`) when the pad's default mode became in-flow - see the follow-up above and `app-wide.md`.

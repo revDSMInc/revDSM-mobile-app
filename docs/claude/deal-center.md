@@ -2729,3 +2729,100 @@ Ticket: the two radio cards truncated "Down Pay…". Now a `DropdownChoice` (`co
 
 `MoneyField` (`ResultJobModal.tsx`) now uses the same type as `PaymentRowsGroup`'s Amount field: `FS.LEAD` + `PS.bold` for the `$` and the value, `minHeight: 46`, `borderWidth: 1.6`, `FUND.BORDER`, `borderRadius: 12`. It was `FS.BODY` + `PS.semibold` on a thin 8-radius box, so the two fields stacked on one sheet read as different sizes. ⚠️ Keep the two in step; the locked (non-editable) state keeps its grey fill and text.
 - Follow-up: `MoneyField`'s title is now a plain `FS.SMALL` / `PS.bold` / `FUND.SUBTEXT` line ABOVE the box (`marginBottom: 5`), like the payment rows' "Amount" label, instead of a floating cut-out label; locked fill is `FUND.FILL`. `labelBg` is now unused. Title and box therefore match the Amount field exactly.
+
+## Job Builder footer: Back/Next flush against the Android nav bar
+
+`DynamicJobBuilderScreen`'s bottom bar used `paddingBottom: Math.max(insets.bottom, 16)`. With
+`edgeToEdgeEnabled=true` the footer ends exactly where the system nav bar starts, so the 16 floor never
+showed and Next sat flush against the bar (small 80x~30 buttons made it worse).
+
+- Now `insets.bottom + 16`. ⚠️ Add the gap ON TOP of the inset, never `max()` it: insets read 0 under gesture
+  navigation and equal the bar height under 3-button nav - both need the extra space.
+- Back / Next / Clear / Skip-all are one size: 38pt tall, radius 10, Back/Next 84pt wide, 13pt labels (46pt/100pt was tried and judged too big).
+
+## Job Builder: the screen SHOOK while scrolling slowly (collapsing header)
+
+Ticket: *"when the user moves the screen up very slowly the screen shakes very fast - make it smooth at any speed."*
+
+⚠️ **Root cause: the collapsing header animated its HEIGHT** (`useCollapsingHeader`, JS driver). Every scroll
+frame resized the ScrollView below it, the resize moved `contentOffset` on its own, `onScroll` fired again and
+the content jittered against the finger - worst on a slow drag, where each frame's delta is under a pixel.
+The old `userDriven` guard only stopped the header re-opening; it could not stop a layout feedback loop.
+
+**Fix: no layout changes while scrolling.** `DynamicJobBuilderScreen` now renders
+`<View {...outerProps}>` (flex 1, clips) > `<Animated.View style={innerStyle}>` (header + pinned tracker +
+ScrollView, a FIXED `outer + headerHeight` tall) and the block slides up with `translateY = -collapsed`.
+The footer is a SIBLING of that block, not inside it. The settle animation and the opacity fade run on the
+native driver; the finger-tracking maths in `utils/collapsing-header.ts` is unchanged.
+
+- ⚠️ **Never go back to animating `height` / `paddingTop` from `onScroll`.** `underHeaderStyle` is now a static
+  8pt because the tracker rides up WITH the header instead of closing a gap.
+- ⚠️ **Do not mix drivers**: `collapsed` feeds native nodes (translate, opacity), so `settle()` must also be
+  `useNativeDriver: true` or RN throws.
+- The block is `H` taller than the visible area, so the ScrollViews' bottom `H` px sit under the clip while the
+  header is open. Both (`DynamicTabRenderer`, `VerticalSummaryTab`) already have `paddingBottom: 160`, which is
+  what keeps the last content reachable - keep it >= the header height if you ever shrink it.
+- Not verified on device from this session: slow drag, fast fling, and a tab change (the hook resets to open on
+  `resetKey`) on Android and iOS.
+
+### Follow-up: it still shook WHILE THE FINGER WAS DOWN (collapse now runs on the UI thread)
+
+After the translate fix the screen still shook while the rep HELD the screen as the header moved, and was
+calm once they let go. Cause: the scroll offset is native and instant, but the collapse was computed in a JS
+`onScroll` and pushed to the native transform a frame or two later, so scroll and translate fought each other
+for as long as the finger drove the scroll. Momentum after release is smooth enough to hide it.
+
+- `hooks/useCollapsingHeader.ts` is now **Reanimated**: `useAnimatedScrollHandler` (begin/end drag, momentum,
+  scroll) computes `collapsed` in a worklet in the SAME frame as the scroll; `useAnimatedStyle` drives the
+  block's `translateY` and the header's opacity; settle is `withTiming`. `utils/collapsing-header.ts` functions
+  are `'worklet'`s (pure, closure-free) - keep them that way.
+- ⚠️ **The scroll view must be a Reanimated one** to host the handler: `KeyboardAwareScrollView`
+  (`DynamicTabRenderer`) already is; `VerticalSummaryTab` was switched from RN `ScrollView` to
+  `Reanimated.ScrollView` (NativeWind `className="p-4"` does not reach it, so it is an explicit
+  `contentContainerStyle={{ padding: 16, ... }}`). A plain `ScrollView` given this `onScroll` silently
+  never collapses the header.
+- ⚠️ In `DynamicJobBuilderScreen` the block and the header are `Reanimated.View`s and the header's style is an
+  ARRAY (`[static, headerStyle]`) - an animated style cannot be spread into an object.
+- ⚠️ Never move the calculation back into a JS `onScroll` + `setValue`, even with `useNativeDriver`: the
+  value arrives late whatever the driver.
+- `hidden` on the hook is now always `false` (no caller read it; the state lives on the UI thread).
+
+### Follow-up 2 (the real root cause): the ScrollView must NEVER move - header + trackers are overlays
+
+It STILL shook while a finger was down (calm after release) even with the UI-thread worklet. So timing was
+not the cause. ⚠️ **A scroll view measures the finger relative to ITSELF.** Both the height animation and the
+translated block moved the scroll view, so every px it slid under a held finger read as extra finger travel:
+it scrolled more, which collapsed more - a feedback loop that exists ONLY while a finger is down.
+That is why nothing about the driver, thread or throttle could fix it.
+
+**Design now (supersedes the "fixed-size translated block" described above):**
+- `DynamicJobBuilderScreen`: a clipping `View` (`overflow: 'hidden'`) holds the content FIRST and the header
+  AFTER it as an `absolute` overlay (`top: 0`, `zIndex: 60`). The header slides up with `translateY` + fades.
+- `DynamicTabRenderer`: the two pinned trackers are wrapped in one `absolute` `Reanimated.View`
+  (`top: collapsingTopInset`, `zIndex: 50`) that slides up by the same amount. Its height is measured
+  (`trackerHeight`) and the ScrollView's `contentContainerStyle.paddingTop` = `12 + topInset + trackerHeight`,
+  so the list starts below them. `VerticalSummaryTab` takes `collapsingTopInset` for the same reason. The
+  empty-step gate is padded by `topInset`.
+- `useCollapsingHeader` returns `headerStyle`, `trackerStyle`, `topInset` (replaces `outerProps`/`innerStyle`).
+- Legacy path kept: with no `collapsingTrackerStyle` the renderer lays the trackers out in flow as before.
+- ⚠️ **Rule: nothing that CONTAINS a scroll view may be translated, resized or re-padded from scroll position.**
+  Overlays that float over it are fine. Re-padding on a TAB change or a tracker-height change is fine (not
+  scroll-driven).
+- Touches on the floating header/trackers do not scroll the list (same as before, they were outside it).
+- Not verified on device from this session: slow held drag up/down, fast fling, tab change while collapsed,
+  allocation banner changing the tracker height mid-scroll.
+- `DynamicTabRenderer.tsx` detail: the `trackerHeight` `useState` sits ABOVE the `tab.isSummary` early return (a hook after it trips rules-of-hooks). The pinned trackers are built once as `trackerBlocks` and rendered either inside the overlay `Reanimated.View` (when `collapsingTrackerStyle` is passed) or in flow (legacy). ⚠️ Keep both paths rendering the SAME `trackerBlocks`, or the two layouts drift.
+
+## Agreement signature modal: Cancel / Submit sat against the system bar
+
+`widgets/modals/job-builder/AgreementSignatureModal.tsx`'s footer used `paddingBottom: Math.max(insets.bottom, 16)`,
+so the buttons ended almost flush with the Android nav bar (and `insets.bottom` reads 0/stale inside a Modal).
+It now uses `footerBottomPadding(insets.bottom)` from `utils/installer-insets.ts` (inset floored at 16, PLUS a 16
+gap) and 12pt top padding - the same helper the installer sub-flows use.
+
+- ⚠️ Add the gap on top of the inset, never `max()` it (same trap as the Job Builder footer above).
+- The modal still declares only `statusBarTranslucent`; `EDGE_TO_EDGE_MODAL` was NOT adopted (it would put the sheet under
+  the nav bar and must travel with this padding as one change).
+- ⚠️ Follow-up: the buttons still sat under the nav bar because `insets` there is the APP ROOT's (bottom 0), while this Modal's window extends beneath the Android nav bar. The footer is now `ModalFooterBar`, a child of the modal's INNER `SafeAreaProvider`, so `useSafeAreaInsets()` reports the modal window's real bottom inset (padding = `footerBottomPadding(inner.bottom)`, top 16 so the row reads centred). Do not read the footer inset from the component that renders `<Modal>`. Not verified on device.
+- The footer also floors the inset at 32 on Android, so a window that reports 0 still clears a 3-button nav bar.
+- Header: the title block ran UNDER the Send Remotely button (it kept its one-line width). It is now `flex: 1, minWidth: 0` with a 12pt right margin and wraps (`numberOfLines={2}`); the button group is `flexShrink: 0`, 36pt tall, with a one-line 10.5pt label. ⚠️ A `flex: 1` sibling needs `minWidth: 0` to be allowed to shrink below its text width.

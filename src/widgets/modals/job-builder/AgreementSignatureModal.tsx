@@ -20,6 +20,7 @@ import { FlashMessage } from '../../../config/message';
 import { LeadService } from '../../../services/api/leads';
 import { AgreementRemoteSignModal } from './AgreementRemoteSignModal';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { footerBottomPadding } from '../../../utils/installer-insets';
 import { GestureHandlerRootView, Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -111,6 +112,36 @@ interface AgreementSignatureModalProps {
    */
   animationType?: 'none' | 'slide' | 'fade';
 }
+
+/**
+ * The footer row (Cancel / Submit), padded by the MODAL WINDOW's own bottom inset.
+ *
+ * ⚠️ Must be a child of the modal's inner `SafeAreaProvider`: the component that renders the
+ * Modal reads the app ROOT's insets, where the bottom inset is 0 - but this window extends under
+ * the Android nav bar, which then painted over the buttons ("still not centred"). The inner
+ * provider measures the actual modal window. Same helper as the installer sub-flows.
+ */
+const ModalFooterBar: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const inner = useSafeAreaInsets();
+  return (
+    <View
+      style={{
+        paddingHorizontal: 24,
+        paddingTop: 16,
+        // Android floor (32): if the window still reports no inset, a 3-button nav bar (~48dp) must
+        // not be able to sit over the buttons. A correct inset (48 / gesture ~24) wins when larger.
+        paddingBottom: footerBottomPadding(Math.max(inner.bottom, Platform.OS === 'android' ? 32 : 0)),
+        borderTopWidth: 1,
+        borderTopColor: '#f1f5f9',
+        backgroundColor: 'white',
+        flexDirection: 'row',
+        gap: 12,
+      }}
+    >
+      {children}
+    </View>
+  );
+};
 
 export const AgreementSignatureModal = ({
   visible,
@@ -437,30 +468,32 @@ export const AgreementSignatureModal = ({
             <View style={{ flex: 1, backgroundColor: 'white' }}>
               {/* Header */}
               <View style={{ paddingHorizontal: 24, paddingVertical: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 10, fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 2 }}>
+                {/* ⚠️ `flex: 1` + `minWidth: 0` + a right margin: without them the title kept its full
+                    one-line width and ran UNDER the Send Remotely button. It now wraps instead. */}
+                <View style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
+                  <Text numberOfLines={2} style={{ fontSize: 10, fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 1.5 }}>
                     Digital Agreement
                   </Text>
-                  <Text style={{ fontSize: 14, fontWeight: '900', color: '#0f172a' }}>Sign to Finalize Order</Text>
+                  <Text numberOfLines={2} style={{ fontSize: 14, fontWeight: '900', color: '#0f172a' }}>Sign to Finalize Order</Text>
                 </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={{ flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   {/* Send Remotely — homeowner (and each co-buyer) e-signs on their
                       own phone. Hidden when the caller can't supply recipients. */}
                   {!!customerDetails && (
                     <TouchableOpacity
                       onPress={() => setRemoteOpen(true)}
                       disabled={loading}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 40, paddingHorizontal: 14, borderRadius: 20, backgroundColor: '#ECFDF5', borderWidth: 1.5, borderColor: '#4CBB17' }}
+                      style={{ flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 36, paddingHorizontal: 12, borderRadius: 18, backgroundColor: '#ECFDF5', borderWidth: 1.5, borderColor: '#4CBB17' }}
                     >
-                      <Icon name="send-outline" size={16} color="#059669" />
-                      <Text style={{ fontSize: 11, fontWeight: '900', color: '#059669', textTransform: 'uppercase', letterSpacing: 1 }}>
+                      <Icon name="send-outline" size={15} color="#059669" />
+                      <Text numberOfLines={1} style={{ fontSize: 10.5, fontWeight: '900', color: '#059669', textTransform: 'uppercase', letterSpacing: 0.6 }}>
                         Send Remotely
                       </Text>
                     </TouchableOpacity>
                   )}
                   <TouchableOpacity
                     onPress={onClose}
-                    style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#f8fafc', alignItems: 'center', justifyContent: 'center' }}
+                    style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#f8fafc', alignItems: 'center', justifyContent: 'center' }}
                   >
                     <Icon name="close" size={20} color="#64748b" />
                   </TouchableOpacity>
@@ -664,7 +697,7 @@ export const AgreementSignatureModal = ({
 
 
               {/* Compact Footer Actions */}
-              <View style={{ paddingHorizontal: 24, paddingVertical: 10, paddingBottom: Math.max(insets.bottom, 16), borderTopWidth: 1, borderTopColor: '#f1f5f9', backgroundColor: 'white', flexDirection: 'row', gap: 12 }}>
+              <ModalFooterBar>
                 <TouchableOpacity
                   onPress={onClose}
                   style={{ flex: 1, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc' }}
@@ -699,7 +732,7 @@ export const AgreementSignatureModal = ({
                     </Text>
                   )}
                 </TouchableOpacity>
-              </View>
+              </ModalFooterBar>
             </View>
 
             {/* Signature Drawing Overlay — sits as sibling to the main content View, inside SafeAreaView */}

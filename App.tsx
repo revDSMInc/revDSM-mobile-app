@@ -117,7 +117,7 @@ function AppContent() {
         />
       )}
       {/* App-wide number pad for every screen; each Modal mounts its own (index.js). */}
-      <NumPadProvider>
+      <NumPadProvider fill>
       <NavigationContainer
         ref={navigationRef}
         onReady={() => {

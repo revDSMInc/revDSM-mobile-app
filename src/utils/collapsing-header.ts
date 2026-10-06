@@ -15,6 +15,10 @@
  * so scrolling down eats into the header and scrolling up gives it back, continuously.
  * On release the remainder settles to whichever end is nearer (`settleTarget`).
  *
+ * ⚠️ Every function here is a `'worklet'`: it runs on the UI THREAD from the Reanimated scroll handler
+ * in `hooks/useCollapsingHeader.ts`, in the same frame as the scroll itself. Keep them pure and
+ * closure-free (only module constants and arguments) or the worklets plugin cannot serialise them.
+ *
  * Kept free of React Native imports so it can be tested; the animation and the scroll
  * wiring live in `hooks/useCollapsingHeader.ts`.
  */
@@ -80,11 +84,14 @@ export interface CollapseInput {
  * changed, so a caller can skip the state update with a cheap identity check.
  */
 export function nextCollapseState(prev: CollapseState, input: CollapseInput): CollapseState {
+  'worklet';
   const { y, headerHeight = 0, contentHeight, layoutHeight } = input;
   const userDriven = input.userDriven !== false;
 
-  const follow = (collapsed: number): CollapseState =>
-    prev.collapsed === collapsed && prev.lastY === y ? prev : { collapsed, lastY: y };
+  const follow = (collapsed: number): CollapseState => {
+    'worklet';
+    return prev.collapsed === collapsed && prev.lastY === y ? prev : { collapsed, lastY: y };
+  };
 
   // Nothing to collapse yet (not laid out), or not enough content to scroll. ⚠️ A list
   // barely taller than its viewport must stay fully open: there is no travel left to
@@ -121,6 +128,7 @@ export function nextCollapseState(prev: CollapseState, input: CollapseInput): Co
  * `headerHeight` (fully closed). Never leaves it halfway.
  */
 export function settleTarget(collapsed: number, headerHeight: number): number {
+  'worklet';
   if (headerHeight <= 0) return 0;
   return collapsed >= headerHeight * SETTLE_CLOSED_FRACTION ? headerHeight : 0;
 }
@@ -134,6 +142,7 @@ export const SETTLE_MAX_MS = 220;
 export const SETTLE_MIN_MS = 90;
 
 export function settleDuration(collapsed: number, target: number, headerHeight: number): number {
+  'worklet';
   if (headerHeight <= 0) return SETTLE_MIN_MS;
   const fraction = Math.abs(target - collapsed) / headerHeight;
   return Math.round(SETTLE_MIN_MS + (SETTLE_MAX_MS - SETTLE_MIN_MS) * fraction);

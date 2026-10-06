@@ -187,7 +187,7 @@ const ScaledTextInput = React.forwardRef((props, ref) => {
 // rep could not type at all). Every modal therefore mounts its own host for the pad.
 const NumPadModal = React.forwardRef((props, ref) => (
   <OriginalModal ref={ref} {...props}>
-    <NumPadProvider>{props.children}</NumPadProvider>
+    <NumPadProvider fill>{props.children}</NumPadProvider>
   </OriginalModal>
 ));
 Object.assign(NumPadModal, OriginalModal);

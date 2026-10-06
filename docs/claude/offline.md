@@ -86,3 +86,10 @@ audit's remaining high items.
 platform); reboot with a non-empty queue; weak signal / captive portal; token expired mid-drain; low
 battery / Doze; two reps on one handset. Expect: iOS drains only within ~30 s of backgrounding, Android
 shows the "Uploading your work" / "Waiting for connection" notification.
+
+### iOS build: "Build input file cannot be found: ios/BackgroundUploadTask.m"
+The `revDSM_Sales` PBXGroup in `project.pbxproj` has a `name` but **no `path`**, so every file ref inside it must
+carry its own `path = revDSM_Sales/<file>` (as `Info.plist`, `AppDelegate.swift`, … do). The `BackgroundUploadTask.h/.m`
+refs had a bare `path = BackgroundUploadTask.m`, which resolved to `ios/` (the file lives in `ios/revDSM_Sales/`).
+Fixed the two refs. ⚠️ Any new native file added to that group by hand needs the `revDSM_Sales/` prefix too.
+(`RNHapticFeedback.*` builds only because a stray duplicate sits in `ios/` — don't rely on that.)
