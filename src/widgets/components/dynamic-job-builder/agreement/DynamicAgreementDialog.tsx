@@ -13,6 +13,7 @@ import { isClientId } from '../../../../utils/offline-lead-work';
 // parse the `M/d/yyyy` the scheduler writes. See `utils/install-date.ts`.
 import { formatInstallDate } from '../../../../utils/install-date';
 import { LeadService } from '../../../../services/api/leads';
+import { AgreementDeliveryPrompt } from '../../../modals/job-builder/AgreementDeliveryPrompt';
 import { useGetDescriptionSchema } from '../../../../screens/DynamicDealCenter/hooks/useDescriptionSchema';
 import { evaluateDescriptionSchema } from '../../../../utils/dynamic-job-builder/agreement/description-schema-evaluator';
 import { generateGutterRooflineDescriptions } from '../../../../utils/dynamic-job-builder/agreement/gutter-roofline-description-generator';
@@ -149,6 +150,10 @@ export function DynamicAgreementDialog({
   const renderLocally = !isOnline() || isClientId(leadId);
   const { agreementConfig, agreementConfigLoading } = useGetAgreementConfig(visible);
   const [remoteOpen, setRemoteOpen] = useState(false);
+  // REVUIUX-391: how the homeowner wants the signed copy is asked BEFORE the server renders the
+  // agreement, and the preview request below waits for the answer to be saved on the lead.
+  // Offline there is nothing to save to, so the device-rendered path skips it.
+  const [deliveryReady, setDeliveryReady] = useState(false);
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -349,6 +354,8 @@ export function DynamicAgreementDialog({
       setIsGenerating(false);
       // Re-arm the signature modal for the next open.
       setSignVisible(true);
+      // Ask again on the next open — the rep may have corrected the contact since.
+      setDeliveryReady(false);
       return;
     }
     if (requestedRef.current) return;
@@ -356,10 +363,11 @@ export function DynamicAgreementDialog({
     // on "Generating agreement…" for the length of an axios timeout before showing an error, with
     // the customer waiting, when the device could have rendered the document immediately.
     if (renderLocally) return;
+    if (!deliveryReady) return;
     if (leadLoading || descSchemaLoading) return;
     requestedRef.current = true;
     generatePreview();
-  }, [visible, leadLoading, descSchemaLoading, generatePreview, renderLocally]);
+  }, [visible, leadLoading, descSchemaLoading, generatePreview, renderLocally, deliveryReady]);
 
   const handleRetry = () => {
     requestedRef.current = true;
@@ -583,6 +591,16 @@ export function DynamicAgreementDialog({
           />
         )}
         <View style={{ height: insets.bottom }} />
+
+        {/* In-card overlay, NOT a second native Modal — this dialog is already one. */}
+        <AgreementDeliveryPrompt
+          inline
+          visible={visible && !renderLocally && !deliveryReady && !!leadId}
+          leadId={leadId || ''}
+          customerDetails={leadData?.customerDetails || customerDetails}
+          onCancel={onClose}
+          onConfirmed={() => setDeliveryReady(true)}
+        />
       </GestureHandlerRootView>
     </Modal>
   );
