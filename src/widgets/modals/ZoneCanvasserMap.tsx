@@ -18,7 +18,16 @@ import { DrawingInfoBanner } from '../components/ZoneCanvasser/DrawingInfoBanner
 import { LoadingOverlay } from '../components/ZoneCanvasser/LoadingOverlay';
 import { ZoneCanvasserModals } from '../components/ZoneCanvasser/ZoneCanvasserModals';
 import { ZoneSearchBar } from '../components/ZoneCanvasser/ZoneSearchBar';
-import { executeStartAppointmentFlow } from '../../utils/lead-activity-log';
+import {
+  executeStartAppointmentFlow,
+  logLeadActionClick,
+  persistActiveLeadId,
+  planZoneCanvasserStartAppointment,
+} from '../../utils/lead-activity-log';
+import { isOnline } from '../../services/connectivity';
+import { queueLeadWorkStart } from '../../services/offlineLeadStore';
+import { markLeadCheckedInOffline } from '../../services/offlineLeadStatus';
+import { isOfflineLead } from '../../utils/offline-lead-work';
 import type { ZoneCanvasserMapProps } from '../../types/zone-canvasser';
 
 export default function ZoneCanvasserMap({
@@ -51,6 +60,43 @@ export default function ZoneCanvasserMap({
     if (!leadId) return;
 
     let targetLead = lead;
+
+    // ⚠️ The offline branch of the SAME flow, and its absence was the bug. Online this call
+    // opens the lead's chat thread as a side-effect of `work`; offline `workMutation` can only
+    // time out, the catch below logged a warning, and the rep walked into a lead with no
+    // thread, no check-in log and a card still offering Start Appointment.
+    //
+    // Mirrors `Leads/index.tsx` exactly — same plan, same two halves (local card mark, queued
+    // server state), so the two entry points cannot drift.
+    if (isOfflineLead(lead) || !isOnline()) {
+      try {
+        await persistActiveLeadId(leadId);
+        const plan = planZoneCanvasserStartAppointment(lead, z.userLocation);
+        if (plan.shouldCallWork) {
+          if (plan.logModule) {
+            void logLeadActionClick(user, plan.logModule, lead);
+          }
+          // A REVIEW is off-site — the rep never arrived — so it opens no thread, matching
+          // `shouldCreateChat` on the online plan.
+          if (plan.logModule !== 'lead_review') {
+            markLeadCheckedInOffline(leadId);
+            queueLeadWorkStart(lead, String(user?._id || user?.id || ''));
+          }
+        }
+      } catch (e) {
+        console.warn('[ZoneCanvasser] offline check-in could not be recorded:', e);
+      }
+      await z.saveMapStateForAppointment();
+      z.setSubmittedLeadPopupOpen(false);
+      setTimeout(() => {
+        onClose();
+        setTimeout(() => {
+          navigation.navigate('LeadCenter', { lead, fromZoneCanvasser: true });
+        }, 400);
+      }, 100);
+      return;
+    }
+
     try {
       const result = await executeStartAppointmentFlow({
         lead,

@@ -330,9 +330,26 @@ export default function LeadCenterPage() {
      * the two halves inseparable: no route can now pause without releasing, whatever the
      * navigator does to the screen afterwards. Do NOT move this back into an unmount.
      */
-    LeadService.endWorkLead(leadId).catch((e) =>
-      console.warn('[LeadCenter] Work end failed:', e)
-    );
+    /**
+     * ⚠️ NOT for a lead this device is still holding, and this was a DATA-LOSS bug rather
+     * than a missing feature.
+     *
+     * `leadId` is the CLIENT id (`work-1773…`) until the create lands, so the PUT 404s —
+     * harmless on its own. The damage is the race on the way back: the rep checks in
+     * offline, backs out, signal returns, and the queue files `work` correctly. If this
+     * release then goes out — the rep re-opens and leaves the lead once online — it sends
+     * `{ workStartedBy: null }` and UNDOES the check-in that had just synced. The device
+     * still shows Resume Appointment (that mark is local), so the rep sees a worked door
+     * and the office, and any second device, sees one nobody ever started.
+     *
+     * Offline the request cannot leave the device either way, so skipping it loses
+     * nothing: a session that was never opened on the server needs no giving back.
+     */
+    if (!isClientId(leadId) && isOnline()) {
+      LeadService.endWorkLead(leadId).catch((e) =>
+        console.warn('[LeadCenter] Work end failed:', e)
+      );
+    }
 
     // Web `job-capture-images-view.js`: a deal is opened to be read, not worked, so
     // firing a pause would mark the rep as having worked a closed job in the ops
@@ -404,6 +421,11 @@ export default function LeadCenterPage() {
       // Re-arm the killed-app backstop as well — the pause cleared the stored record, so
       // without this a kill from here on would leave the re-opened session dangling.
       beginLeadWorkSession(currentLead, userRef.current, fromMyDeals);
+      // ⚠️ Same guard as the release it pairs with: a client id is not a route the server
+      // has, and offline the PUT cannot leave the device. The queued `work` step owns the
+      // check-in for an offline lead — re-sending it here would 404 and, worse, leave this
+      // path and `pauseLeadSession` disagreeing about who files the session.
+      if (isClientId(leadId) || !isOnline()) return;
       LeadService.workLead(leadId, userId).catch((e) =>
         console.warn('[LeadCenter] Work resume failed:', e)
       );

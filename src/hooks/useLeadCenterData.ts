@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { applyOfflineResult, isClientId } from '../utils/offline-lead-work';
+import { mergePendingIntoSections } from '../utils/pending-inspection-photos';
+import { uploadQueueManager } from '../utils/uploadQueue';
 import { getOfflineWork, subscribeOfflineWork } from '../services/offlineLeadStore';
 import { isOnline } from '../services/connectivity';
 import { OFFLINE_CACHE, readOfflineCache, writeOfflineCache } from '../utils/offline-query-cache';
@@ -302,6 +304,28 @@ export const useLeadCenterData = (
 
   const [sectionImages, setSectionImages] = useState<Record<string, any[]>>({});
 
+  /**
+   * ⚠️ `sectionImages` is NOT only this screen's. It is handed to RevRender as a nav param and
+   * read by the Pitch Book / Roofline Deck, and all of them build from `lead.salesPhotos` — so a
+   * photo shot with no signal was invisible on every one of them. The rep took an inspection
+   * photo at a door, opened RevRender to render it, and the picker said "No photos for this
+   * product yet" while the Lead Center beneath it showed the photo.
+   *
+   * Merged HERE rather than in each screen so the surfaces cannot drift again: this is the one
+   * place the map is built.
+   */
+  const [pendingUploads, setPendingUploads] = useState(() => uploadQueueManager.getQueue());
+  useEffect(() => {
+    setPendingUploads([...uploadQueueManager.getQueue()]);
+    return uploadQueueManager.addListener(() => {
+      setPendingUploads([...uploadQueueManager.getQueue()]);
+    });
+  }, []);
+  const sectionImagesWithPending = useMemo(
+    () => mergePendingIntoSections(sectionImages, pendingUploads as any, lead?._id),
+    [sectionImages, pendingUploads, lead?._id]
+  );
+
   useEffect(() => {
     const fetchSecureImages = async () => {
       if (lead?.salesPhotos?.length > 0) {
@@ -415,7 +439,16 @@ export const useLeadCenterData = (
     // the app being killed — can still be closed, on the next launch.
     beginLeadWorkSession(lead, user, options?.fromMyDeals);
 
-    if (!options?.appointmentStarted) {
+    // ⚠️ NOT for a lead that is still only on this device. `lead._id` is then the CLIENT id
+    // (`work-1773…`), which is not a route the server has — the PUT 404s, and the rep's arrival
+    // is recorded nowhere. The offline check-in is queued by `queueLeadWorkStart` instead, and
+    // the `work` upload step files it against the real id once the create lands.
+    //
+    // ⚠️ Guarded on `isOnline()` as well, because a SERVER lead opened with no signal has the
+    // same problem for a different reason: the request cannot leave the device, and nothing
+    // queues it. `Leads` has already queued the check-in for that case too.
+    const offlineLead = isClientId(String(lead._id)) || !isOnline();
+    if (!options?.appointmentStarted && !offlineLead) {
       LeadService.workLead(lead._id, user._id).catch((e) =>
         console.warn('[LeadCenter] Work start failed:', e)
       );
@@ -479,7 +512,7 @@ export const useLeadCenterData = (
     calculatorData,
     outcomeForm,
     isOutcomeLoading,
-    sectionImages,
+    sectionImages: sectionImagesWithPending,
     setSectionImages,
   };
 };

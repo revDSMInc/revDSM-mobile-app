@@ -15,6 +15,7 @@ import { getSessionOwner, registerSessionResetHook } from './sessionScope';
 import {
   appendQueuedLog,
   replayableLogs,
+  rekeyQueuedLogs,
   settleQueuedLog,
   type QueuedActivityLog,
 } from '../utils/offline-activity-log';
@@ -83,6 +84,32 @@ export const queueActivityLog = (
   persist();
 };
 
+/**
+ * Re-address this device's held logs once the lead they describe has a server id.
+ *
+ * ⚠️ Called from the `lead` upload step beside `uploadQueueManager.rekeyLead` and
+ * `rekeyLeadWorkflow`, and it is the same rule: anything addressed by the client id this device
+ * minted has to be moved on in the same breath, or it is filed against an id the server will
+ * never know. For a held log that means the row lands ORPHANED — the portal cannot attach it to
+ * the lead, so the Forever Record reads "Awaiting Check-In" on a door the rep worked.
+ */
+export const rekeyActivityLogs = (fromId: string, toId: string): void => {
+  load();
+  const next = rekeyQueuedLogs(store, fromId, toId);
+  // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. `matched=0` means the held log did not
+  // carry this client id, so the re-key could not help it.
+  console.log(
+    '[CheckInTrace] rekey logs %s -> %s held=%s matched=%s',
+    fromId,
+    toId,
+    store.length,
+    next === store ? 0 : 'some'
+  );
+  if (next === store) return;
+  store = next;
+  persist();
+};
+
 /** How many of this rep's rows are waiting — for a banner, or a device check. */
 export const queuedActivityLogCount = (): number => {
   load();
@@ -107,8 +134,18 @@ export const drainActivityLogs = async (): Promise<void> => {
       if (!next || !isOnline()) return;
       let outcome: 'sent' | 'failed' = 'sent';
       try {
+        // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. The id printed here is the one the
+        // portal will try to attach the row to; a `work-…` here means it lands ORPHANED.
+        console.log(
+          '[CheckInTrace] replay %s leadId=%s attempts=%s',
+          next.payload?.module_type || next.eventType,
+          next.payload?.meta?.leadId,
+          next.attempts
+        );
         await sender(next);
-      } catch {
+      } catch (e: any) {
+        // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
+        console.log('[CheckInTrace] replay FAILED status=%s', e?.response?.status);
         outcome = 'failed';
       }
       const before = store.length;

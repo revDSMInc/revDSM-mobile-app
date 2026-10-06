@@ -1379,3 +1379,32 @@ export const activeWork = (items: OfflineLeadWork[] | null | undefined): Offline
  */
 export const workLeadId = (work: OfflineLeadWork): string =>
   work.serverIds.leadId || work.clientId;
+
+// ─── Arrival evidence when there is no GPS fix ────────────────────────────────
+
+/**
+ * Is this lead's own existence proof the rep was standing at the door?
+ *
+ * ⚠️ This exists because the geofence gate silently swallowed the offline check-in, and with it
+ * the chat thread. `planStartAppointment` decides `shouldCallWork` from `isLeadInGeofence`, which
+ * needs BOTH a device fix and `lead.location.coordinates`. Offline neither is guaranteed:
+ * `geolocationOptions` disables the network provider (there is nothing to ask), so a cold GPS may
+ * never lock, and `LeadCreate` files `location: null` rather than guessing when it cannot place
+ * the address — it has no geocoder offline either.
+ *
+ * The result was a lead the rep created AT a door, opened AT that door, which queued no `work` and
+ * therefore no `chat` (both are gated on `workStarted`). It uploaded as a lead with no check-in and
+ * no thread, and `GET chat/v1/lead/{id}` answered 404 — the office could not message the rep.
+ *
+ * ⚠️ Narrow on purpose, and each half of the condition carries weight:
+ *   - `created-offline` only. A lead the SERVER already had was issued to the rep from elsewhere,
+ *     so its existence says nothing about where they are; it keeps the geofence rule unchanged.
+ *   - the create must not have uploaded yet (`isStepPending(work, 'lead')`). Once it lands, the
+ *     lead is an ordinary server lead and re-opening it days later must not re-check-in.
+ *
+ * So this does NOT relax the geofence for any lead the rule already covers — it supplies the
+ * arrival evidence for the one case where the sensor cannot, and where the rep physically typed
+ * the door's address into the device minutes earlier.
+ */
+export const createdAtTheDoor = (work: OfflineLeadWork | null | undefined): boolean =>
+  !!work && work.origin === 'created-offline' && isStepPending(work, 'lead');

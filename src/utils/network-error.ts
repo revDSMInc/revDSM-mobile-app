@@ -30,3 +30,26 @@ export const isTimeoutError = (err: any): boolean =>
   err?.code === 'ECONNABORTED' ||
   err?.code === 'ETIMEDOUT' ||
   /timeout|timed out/i.test(messageOf(err));
+
+/**
+ * Should this failure be shown to the rep at all?
+ *
+ * ⚠️ The case this exists for: a red **"Funding — Network Error"** over the funding sheet while
+ * the rep was completing a job at a door. The sheet works offline — the whole Result Lead flow is
+ * device-side and queues — so the only thing that banner did was tell a rep mid-sale that the app
+ * was broken, in axios' own untranslated wording.
+ *
+ * The rule, and it generalises past funding:
+ *
+ *   - a transport failure on a **read** is SILENT. Nothing was lost, the screen already holds what
+ *     it needs, and `OfflineBanner` is already saying "you are offline" once, app-wide. A second,
+ *     redder message saying the same thing in worse words only undermines a screen that is working.
+ *   - a transport failure on a **write** is ANNOUNCED, because the rep believes something
+ *     happened. It must name the action and say nothing was sent.
+ *
+ * ⚠️ Keyed off the ERROR, never off `isOnline()`. A request that dies in a tunnel is the same
+ * event whatever the connectivity model believed when it was sent, and the absence of an HTTP
+ * status is the honest signal — see `isNetworkError`.
+ */
+export const shouldAnnounceFailure = (err: any, isWrite: boolean): boolean =>
+  !isNetworkError(err) || isWrite;

@@ -36,6 +36,7 @@ import {
 import { isReissue } from '../utils/funding';
 import { LeadService } from '../../../services/api/leads';
 import { isOnline } from '../../../services/connectivity';
+import { isNetworkError, shouldAnnounceFailure } from '../../../utils/network-error';
 import { getRawPhoneNumber } from '../../../utils/phone-util';
 
 /**
@@ -284,8 +285,42 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
    * re-sync the record when the code means "you are looking at a stale copy".
    */
   const report = useCallback(
-    async (err: any, context: string): Promise<FundingError> => {
+    async (err: any, context: string, isWrite = false): Promise<FundingError> => {
       const error = classifyFundingError(err);
+
+      /**
+       * ⚠️ A TRANSPORT failure is not a funding error, and reporting it as one is what put a red
+       * **"Funding — Network Error"** over a sheet the rep was filling in at a door.
+       *
+       * `run()` gates every WRITE on `isOnline()` before it is attempted, but the reads do not go
+       * through it — `load()` on open, and `refreshPayment()` — so offline they threw, landed in
+       * `default` below, and flashed axios' own untranslated `message`. The rep is mid-way
+       * through completing a job on a form that works perfectly offline, and the app appears to
+       * be failing.
+       *
+       * Checked on the ERROR rather than on `isOnline()`: a request that dies in a tunnel is the
+       * same event whatever the connectivity model believed at the time, and `isNetworkError`
+       * keys off the absence of an HTTP status, which is the honest signal.
+       *
+       * Silent for a read. Nothing was written, the sheet already has what it needs, and
+       * `OfflineBanner` is already telling the rep they are offline — a second, redder message
+       * saying the same thing in worse words only undermines a screen that is working.
+       */
+      if (isNetworkError(err)) {
+        const offline: FundingError = {
+          ...error,
+          kind: 'offline',
+          message: `${context} needs a connection. Nothing was sent — try again once you have signal.`,
+        };
+        // ⚠️ A WRITE that died in flight still gets a message — `run()`'s pre-flight gate only
+        // catches the case where we already knew we were offline, and a rep who tapped Charge
+        // must never be left thinking it went through. A read stays silent: nothing was lost,
+        // and the sheet is still usable.
+        if (shouldAnnounceFailure(err, isWrite)) {
+          FlashMessage.info('Needs a connection', offline.message);
+        }
+        return offline;
+      }
 
       switch (error.kind) {
         case 'stale':
@@ -368,7 +403,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         apply(res?.data?.data?.funding);
         return OK(res?.data?.message, res?.data?.data);
       } catch (e) {
-        const error = await report(e, context);
+        const error = await report(e, context, true);
         return { ok: false, error };
       } finally {
         if (opts.pid) setBusyPid(null);
@@ -965,7 +1000,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         await refetch();
         return { ok: false, error };
       }
-      const reported = await report(e, 'Submit funding');
+      const reported = await report(e, 'Submit funding', true);
       logFundingSubmitted({ ...logBase, ...shape, ok: false, error: reported.message });
       return { ok: false, error: reported };
     } finally {

@@ -37,9 +37,11 @@ import {
   isOfflineLead,
   pendingLeadArchives,
   pendingLeadDeletes,
+  createdAtTheDoor,
 } from '../../utils/offline-lead-work';
 import {
   getOfflineWork,
+  findOfflineWorkForLead,
   queueLeadWorkStart,
   subscribeOfflineWork,
 } from '../../services/offlineLeadStore';
@@ -562,6 +564,15 @@ export default function LeadsPage() {
     // ⚠️ The start-appointment flow is a WRITE. Offline it can only time out, and the rep would
     // watch a spinner for the length of that timeout before the catch below opens the screen
     // anyway — so go straight there. A lead with no server record has no appointment to start.
+    // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
+    console.log(
+      '[CheckInTrace] tap id=%s offlineLead=%s online=%s workflowState=%s status=%s',
+      item._id,
+      isOfflineLead(item),
+      isOnline(),
+      (item as any)?.workflowState,
+      (item as any)?.status
+    );
     if (isOfflineLead(item) || !isOnline()) {
       // …but the ARRIVAL still happened, and it used to leave no trace at all: no log for the
       // office, and a card that went on offering **Start Appointment** on a door the rep was
@@ -573,15 +584,40 @@ export default function LeadsPage() {
       try {
         await persistActiveLeadId(item._id);
         const plan = planStartAppointment(item, userLocation);
-        if (plan.shouldCallWork) {
-          if (plan.logModule) {
+        // ⚠️ A lead the rep CREATED at this door is its own arrival evidence, and without this
+        // the check-in was silently dropped. `shouldCallWork` needs `isLeadInGeofence`, which
+        // needs both a device fix and `lead.location.coordinates` — offline neither is
+        // guaranteed (no network location provider, and `LeadCreate` files `location: null`
+        // rather than guessing when it cannot geocode). So the rep stood at the door, opened the
+        // lead they had just typed, and it queued no `work` and therefore no `chat`: the lead
+        // uploaded with no check-in log and `GET chat/v1/lead/{id}` answered 404.
+        //
+        // Only ever true for a create that has not uploaded yet — see `createdAtTheDoor`. It does
+        // not relax the geofence for any lead the rule already covers.
+        const atTheDoor = createdAtTheDoor(findOfflineWorkForLead(item));
+        // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. If `shouldCallWork` is false and
+        // `atTheDoor` is false, NOTHING below runs: no log, no queued work, no chat.
+        console.log(
+          '[CheckInTrace] plan shouldCallWork=%s logModule=%s inRange=%s atTheDoor=%s hasRecord=%s',
+          plan.shouldCallWork,
+          plan.logModule || 'NONE',
+          plan.isInRange,
+          atTheDoor,
+          !!findOfflineWorkForLead(item)
+        );
+        if (plan.shouldCallWork || atTheDoor) {
+          // With no fix the plan has no module; the door we are standing at is a check-in.
+          const logModule = plan.logModule || (atTheDoor ? 'lead_check_in' : '');
+          if (logModule) {
             // Not awaited: it is held on disk, and the rep should not wait on a write to open
             // the lead they are standing in front of.
-            void logLeadActionClick(user, plan.logModule, item);
+            void logLeadActionClick(user, logModule, item);
           }
           // A REVIEW is off-site — the rep never arrived — so it must not colour the card as
           // resumed. Online the same distinction is made by what `work` returns.
-          if (plan.logModule !== 'lead_review') {
+          // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
+          console.log('[CheckInTrace] resolved logModule=%s', logModule || 'NONE');
+          if (logModule !== 'lead_review') {
             markLeadCheckedInOffline(item._id || (item as any).id);
             // …and the SERVER half. The mark above only colours this device's card; without
             // this the office never learns the door was worked, and once the mark ages out

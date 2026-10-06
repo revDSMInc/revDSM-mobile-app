@@ -31,6 +31,7 @@ import { isOnline, onReconnect } from './connectivity';
 import { getSessionOwner, registerSessionResetHook } from './sessionScope';
 import { isOwnedBy } from '../utils/session-scope';
 import { uploadQueueManager } from '../utils/uploadQueue';
+import { rekeyActivityLogs } from './offlineActivityLog';
 import { describeQueuedLead, isSuccessfulCreate, messageOfError } from '../utils/offline-lead-queue';
 import {
   applyResolvedAddress,
@@ -59,6 +60,7 @@ import {
   buildIdMap,
   decideAfterStepError,
   findUnresolvedClientIds,
+  isClientId,
   isStepPending,
   markStepDone,
   newWorkId,
@@ -270,6 +272,12 @@ export const ensureOfflineWorkForLead = (lead: any): OfflineLeadWork | null => {
   if (existing) return existing;
 
   // Not ours yet: a lead that exists on the server, being worked offline for the first time.
+  // ⚠️ A CLIENT id here means the create queued a record this lookup failed to find. Adopting
+  // would file a SECOND record claiming the server already has the lead — see `adoptForLead`.
+  if (isClientId(id)) {
+    console.warn('[leadStore] no record for client id %s; not adopting', id);
+    return null;
+  }
   const c = lead?.customerDetails || {};
   return putOfflineWork(
     adoptExistingWork(id, describeQueuedLead({ customer: c, fullAddress: lead?.fullAddress }))
@@ -542,6 +550,36 @@ const labelForLead = (lead: any): string =>
   describeQueuedLead({ customer: lead?.customerDetails || {}, fullAddress: lead?.fullAddress });
 
 /**
+ * The record to attach new offline work to, creating one only when that is CORRECT.
+ *
+ * ⚠️ `adoptExistingWork(id, …)` files `id` as `serverIds.leadId` and marks `done: ['lead']` — it
+ * means "the server already has this lead". Handing it a CLIENT id (`work-1773…`) is therefore a
+ * lie with teeth, and it was the bug behind "the lead syncs but is never started":
+ *
+ *   - the create step is marked already done, so the lead is NEVER POSTED from this record;
+ *   - every later step addresses `work-1773…`, which no route resolves;
+ *   - the record still reaches `uploaded`, so nothing anywhere reports a problem.
+ *
+ * It happens whenever the rep taps Start Appointment on a door-created lead whose own record this
+ * lookup missed — the card is drawn from the client id, so `workForLead` finds nothing and the
+ * caller "adopts" the lead it just created.
+ *
+ * A client id means the record MUST already exist (the create queued it), so returning null is the
+ * honest answer: the caller skips rather than filing a phantom.
+ */
+const adoptForLead = (lead: any, id: string): OfflineLeadWork | null => {
+  if (isClientId(id)) {
+    console.warn(
+      '[leadStore] refusing to adopt a client id (%s) — its record should already exist',
+      id
+    );
+    return null;
+  }
+  return adoptExistingWork(id, labelForLead(lead));
+};
+
+
+/**
  * The rep started or resumed this appointment with no signal.
  *
  * The card is coloured immediately by `markLeadCheckedInOffline`; this is the half that tells the
@@ -549,8 +587,18 @@ const labelForLead = (lead: any): string =>
  */
 export const queueLeadWorkStart = (lead: any, userId: string): boolean => {
   const { id, work } = workForLead(lead);
-  if (!id || !userId) return false;
-  const base = work || adoptExistingWork(id, labelForLead(lead));
+  // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. A refusal here is the whole bug: no
+  // `workStarted` means the `work` AND `chat` steps are never applicable, so the lead uploads
+  // as one nobody ever started — visible only on a second device.
+  if (!id || !userId) {
+    console.log('[LeadSync] check-in NOT queued: id=%s userId=%s', id || 'NONE', userId || 'NONE');
+    return false;
+  }
+  console.log('[LeadSync] check-in queued for %s (record %s)', id, work ? work.clientId : 'new');
+  const base = work || adoptForLead(lead, id);
+  // ⚠️ null means a CLIENT id with no record — see `adoptForLead`. Filing a phantom here is what
+  // made the lead sync without ever being created or started.
+  if (!base) return false;
   // ⚠️ The FIRST check-in of the session wins — re-arriving at the same door does not need a
   // second PUT, and overwriting would only move the timestamp we are already not sending.
   if (base.workStarted) return true;
@@ -576,7 +624,10 @@ export const queueLeadWorkStart = (lead: any, userId: string): boolean => {
 export const queueCustomerUpdate = (lead: any, payload: Record<string, unknown>): boolean => {
   const { id, work } = workForLead(lead);
   if (!id) return false;
-  const base = work || adoptExistingWork(id, labelForLead(lead));
+  const base = work || adoptForLead(lead, id);
+  // ⚠️ null means a CLIENT id with no record — see `adoptForLead`. Filing a phantom here is what
+  // made the lead sync without ever being created or started.
+  if (!base) return false;
 
   // ⚠️ The CUSTOMER record's id, and only that. `handleCustomerSubmit` falls back to the lead's
   // own `_id` when building the online url; inheriting that fallback here would file this rep's
@@ -644,7 +695,10 @@ export const queueLeadDelete = (lead: any): OfflineDeleteOutcome | null => {
     return 'discarded';
   }
 
-  const base = work || adoptExistingWork(id, labelForLead(lead));
+  const base = work || adoptForLead(lead, id);
+  // ⚠️ null means a CLIENT id with no record — see `adoptForLead`. A door-created lead with no
+  // record has nothing on the server to delete, so this is already the state the rep wanted.
+  if (!base) return 'discarded';
   // Both ids, because photos queued before the create landed are still addressed by the client one.
   uploadQueueManager.dropLead(base.clientId);
   uploadQueueManager.dropLead(base.serverIds.leadId || id);
@@ -671,7 +725,10 @@ export const queueLeadArchive = (lead: any, isArchive: boolean): boolean => {
   const { id, work } = workForLead(lead);
   if (!id) return false;
 
-  const base = work || adoptExistingWork(id, labelForLead(lead));
+  const base = work || adoptForLead(lead, id);
+  // ⚠️ null means a CLIENT id with no record — see `adoptForLead`. Filing a phantom here is what
+  // made the lead sync without ever being created or started.
+  if (!base) return false;
   const snapshot = leadDetailForCache({ ...(lead || {}), isArchive }) as
     | Record<string, unknown>
     | null;
@@ -1080,6 +1137,13 @@ const runStep = async (
       // a real `_id` the map has no entry for and the card regresses to **Start Appointment** on a
       // door the rep already worked.
       rekeyLeadWorkflow(work.clientId, id);
+      // ⚠️ And the HELD ACTIVITY LOGS, for exactly the same reason — this one was missing, and
+      // its absence is why the portal read "Sales Arrival: Pending… Awaiting Check-In" on a
+      // door the rep had worked. The check-in log replayed fine, carrying `meta.leadId:
+      // 'work-1773…'`; that matches no lead, so the row was filed ORPHANED and the timeline
+      // could not show the arrival. Nothing errored, nothing retried — the office simply saw a
+      // rep who never arrived.
+      rekeyActivityLogs(work.clientId, id);
       // ⚠️ Keep the DEVICE's copy of the lead in step with what was just filed. Resolving only the
       // outgoing body leaves the server holding the street address while every screen that reads
       // the offline record still shows the raw coordinates — the Lead Center header, and any
@@ -1270,6 +1334,8 @@ const runStep = async (
     }
 
     case 'chat': {
+      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
+      console.log('[CheckInTrace] chat step running for leadId=%s', leadId);
       if (!leadId) throw new Error('no lead id for the chat');
       /**
        * ⚠️ `getChatByLeadId` rather than `createChatForLead` directly, and that is the whole
@@ -1281,7 +1347,9 @@ const runStep = async (
        * The offline branch of that flow skipped it, which is why a lead created at a door
        * synced fine and then had no thread at all.
        */
-      await ChatService.getChatByLeadId(leadId);
+      const chatId = await ChatService.getChatByLeadId(leadId);
+      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
+      console.log('[CheckInTrace] chat step resolved id=%s', chatId);
       // Flagged so the step never re-runs, even if the record is re-armed by a later edit.
       patchOfflineWork(work.clientId, (w) => ({ ...w, chatCreated: true }));
       return {};
@@ -1476,9 +1544,28 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
   let work = putOfflineWork({ ...start, status: 'uploading' });
   let guarded = false;
 
+  // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. A drain that silently skips a step is
+  // invisible on the device that ran it: the local check-in mark keeps the card correct, so
+  // the loss only shows on a SECOND device. This prints what the record actually holds.
+  console.log(
+    '[LeadSync] start %s origin=%s workStarted=%s chatCreated=%s done=%s',
+    work.clientId,
+    work.origin,
+    work.workStarted ? work.workStarted.userId : 'NONE',
+    work.chatCreated === true,
+    JSON.stringify(work.done)
+  );
+
   for (;;) {
     const step = nextUploadStep(work);
     if (!step) {
+      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
+      console.log(
+        '[LeadSync] done %s leadId=%s steps=%s',
+        work.clientId,
+        work.serverIds.leadId || 'NONE',
+        JSON.stringify(work.done)
+      );
       const finished = putOfflineWork({ ...work, status: 'uploaded' });
       // The door is gone from the server, so the record describes nothing. Keeping it would leave
       // a tombstone suppressing an id that can never come back, one per lead the rep ever deleted.
@@ -1492,6 +1579,8 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
 
     try {
       const sent = work;
+      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
+      console.log('[LeadSync] step %s -> %s', work.clientId, step);
       const ids = await runStep(sent, step, guarded);
       const now = latest(work);
       let landed = markStepDone(now, step, ids);
@@ -1501,7 +1590,16 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
         nextUploadStep(landed) ? { ...landed, status: 'uploading' } : landed
       );
       guarded = false;
-    } catch (err) {
+    } catch (err: any) {
+      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. A step that fails stops the record,
+      // so everything after it — including `work` and `chat` — never runs.
+      console.log(
+        '[LeadSync] FAILED %s step=%s status=%s body=%s',
+        work.clientId,
+        step,
+        err?.response?.status,
+        JSON.stringify(err?.response?.data || err?.message)
+      );
       const decision: StepDecision = decideAfterStepError(err, work, step);
       if (decision === 'done') {
         work = putOfflineWork(markStepDone(latest(work), step));

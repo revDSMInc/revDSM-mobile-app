@@ -10,6 +10,7 @@ import api from './index';
 import SocketManager from '../SocketManager';
 import RNFS from 'react-native-fs';
 import { Platform } from 'react-native';
+import { readChatId } from '../../utils/chat-response';
 
 // Bucket to sign against when a chat file carries no bucketName of its own.
 // Mirrors the web ChatModule, which falls back to 'np-revdsm-staging'. The env
@@ -28,14 +29,14 @@ class ChatService {
   async getChatByLeadId(leadId: string): Promise<string | null> {
     try {
       const res = await api.get<any>(`/chat/v1/lead/${leadId}`);
-      const chatData = res.data?.data?.chat || res.data?.data || res.data;
-      return chatData?.id || chatData?._id || (typeof chatData === 'string' ? chatData : null);
+      return readChatId(res.data);
     } catch (err: any) {
       // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
       console.log('[ChatDiag] GET lead/%s failed status=%s', leadId, err?.response?.status);
+      // ⚠️ 404 is the EXPECTED answer for a lead created offline: the thread is opened by the
+      // start-appointment flow, which never ran at the door. Creating here is the backstop.
       if (err.response?.status === 404) {
-        const chatData = await this.createChatForLead(leadId);
-        const id = chatData?.id || chatData?._id || (typeof chatData === 'string' ? chatData : null);
+        const id = await this.createChatForLead(leadId);
         // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
         console.log('[ChatDiag] after create -> id=%s', id);
         return id;
@@ -44,14 +45,15 @@ class ChatService {
     }
   }
 
-  async createChatForLead(leadId: string): Promise<any> {
+  /** Returns the new thread's id, or null if the server answered without one. */
+  async createChatForLead(leadId: string): Promise<string | null> {
     try {
       const res = await api.post<any>('/chat/v1/create', { leadId });
       // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. The POST appears to run and the
       // thread still does not exist afterwards, so we need its actual answer.
       console.log('[ChatDiag] POST create leadId=%s status=%s body=%s',
         leadId, res?.status, JSON.stringify(res?.data));
-      return res.data?.data?.chat;
+      return readChatId(res.data);
     } catch (e: any) {
       // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. This path was SILENT: the only
       // caller `.catch`es it to a console.warn, so a REFUSED create looked identical to

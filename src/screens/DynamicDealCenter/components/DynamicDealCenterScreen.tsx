@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { View, Text, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNumPadActive } from '../../../widgets/common/keyboard/NumPad';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCalculatorSchema } from '../hooks/useCalculatorSchema';
 import { useDynamicCalculators } from '../hooks/useDynamicCalculators';
@@ -79,6 +80,9 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   // Same reason as `useAuth` above the branch: needed by `onRolloutsConfirmedDone`
   // to prime the Investment Center's status cache.
   const queryClient = useQueryClient();
+  // Same reason again: read by the calculator-step SafeAreaView below, which only the
+  // 'calculator' flowStep branch reaches, but every hook here still runs unconditionally.
+  const numPadActive = useNumPadActive();
   // Edit flow is a distinct screen (its own hooks/loading). Branch BEFORE any hook
   // below runs — `mode` is stable for a navigated screen instance, so this keeps
   // hook order consistent across renders.
@@ -849,7 +853,14 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   const isDynamicConfigured = hasCalculatorSchema && hasJobBuilderConfig;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['bottom']}>
+    // ⚠️ `edges` drops 'bottom' while the in-app NumPad is up: the pad (rendered as its own
+    // sibling strip below this whole screen, see `NumPad/index.tsx`) already reserves the
+    // correct bottom safe-area padding for itself — this SafeAreaView's OWN bottom inset
+    // stacked on top of that was a second, independent contributor to the gap between the
+    // calculator tabs footer and the pad (ticket: "gap issue b/w the keyboard and tabs"),
+    // on top of `CalculatorView`'s own footer padding (see the note there). Normal state
+    // (no field focused) is unaffected — the inset is restored the instant the pad closes.
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={numPadActive ? [] : ['bottom']}>
       {/* Compact header — back button + lead name + save status, matching the regular deal center */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }}>
         <TouchableOpacity

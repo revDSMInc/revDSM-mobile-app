@@ -291,6 +291,17 @@ export const logEvent = async (eventType: string, details: any = {}) => {
   // No CONNECTION — hold the few events the office actually reads, on disk, and replay them on
   // reconnect. Everything else stays fire-and-forget: see `QUEUEABLE_LOG_MODULES` for why this is
   // an allow-list rather than "queue everything".
+  // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. Tracks whether a check-in log is HELD
+  // (offline, allow-listed) or SENT straight out. A log that is neither is dropped silently.
+  if (details.module_type === 'lead_check_in' || details.module_type === 'lead_resume') {
+    console.log(
+      '[CheckInTrace] logEvent %s online=%s queueable=%s leadId=%s',
+      details.module_type,
+      isOnline(),
+      isQueueableLog(details.module_type),
+      meta.leadId
+    );
+  }
   if (!isOnline() && isQueueableLog(details.module_type)) {
     const occurredAt = new Date().toISOString();
     // ⚠️ The location is taken NOW, from the fix this session already has, rather than at replay
