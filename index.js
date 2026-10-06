@@ -3,9 +3,11 @@
  */
 
 import React from 'react';
-import { AppRegistry, Text, TextInput, StyleSheet, Dimensions, Platform } from 'react-native';
+import { AppRegistry, Text, TextInput, Modal, StyleSheet, Dimensions, Platform } from 'react-native';
 import App from './App';
 import { resolveFontPatch } from './src/utils/default-font';
+import { NumPadProvider } from './src/widgets/common/keyboard/NumPad';
+import { useNumPadField } from './src/widgets/common/keyboard/NumPad/useNumPadField';
 import { name as appName } from './app.json';
 
 /**
@@ -65,6 +67,7 @@ const isTablet = () => {
 // Store original components
 const OriginalText = Text;
 const OriginalTextInput = TextInput;
+const OriginalModal = Modal;
 
 // Public Sans is the design system's font, but a <Text> only gets it when something
 // NAMES a face -- the NativeWind `font-*` classes do, the ~850 inline
@@ -141,7 +144,11 @@ const ScaledText = React.forwardRef((props, ref) => {
 
 // Create wrapper for TextInput component
 const ScaledTextInput = React.forwardRef((props, ref) => {
-  const { style, maxFontSizeMultiplier, ...rest } = props;
+  // Numeric fields use the in-app number pad (src/widgets/common/keyboard/NumPad); this returns
+  // the props that hide the system keyboard + attach the pad, or null for text-style fields.
+  const numPadProps = useNumPadField(props);
+  // `numPad` is ours, not a TextInput prop - never forward it to the native view.
+  const { style, maxFontSizeMultiplier, numPad: _numPad, ...rest } = props;
   const flatStyle = StyleSheet.flatten(style);
   const fontPatch = resolveFontPatch(flatStyle);
   const cap = maxFontSizeMultiplier ?? MAX_FONT_SCALE;
@@ -153,6 +160,7 @@ const ScaledTextInput = React.forwardRef((props, ref) => {
         maxFontSizeMultiplier={cap}
         style={fontPatch ? [style, fontPatch] : style}
         {...rest}
+        {...numPadProps}
       />
     );
   }
@@ -168,11 +176,23 @@ const ScaledTextInput = React.forwardRef((props, ref) => {
       maxFontSizeMultiplier={cap}
       style={[style, fontPatch, scaledStyle]}
       {...rest}
+      {...numPadProps}
     />
   );
 });
 
 // Copy all static properties and set display names for debugging/React internals
+// Modal wrapper. ⚠️ A Modal is its own native view tree: a pad drawn by the app-root provider
+// would sit hidden BEHIND an open modal while the field's system keyboard is suppressed (the
+// rep could not type at all). Every modal therefore mounts its own host for the pad.
+const NumPadModal = React.forwardRef((props, ref) => (
+  <OriginalModal ref={ref} {...props}>
+    <NumPadProvider>{props.children}</NumPadProvider>
+  </OriginalModal>
+));
+Object.assign(NumPadModal, OriginalModal);
+NumPadModal.displayName = 'Modal';
+
 Object.assign(ScaledText, OriginalText);
 ScaledText.displayName = 'Text';
 
@@ -186,6 +206,13 @@ try {
   Object.defineProperty(rn, 'Text', {
     get() {
       return ScaledText;
+    },
+    configurable: true,
+  });
+
+  Object.defineProperty(rn, 'Modal', {
+    get() {
+      return NumPadModal;
     },
     configurable: true,
   });

@@ -7,6 +7,8 @@
 
 ## iPad: numeric fields get a DOCKED keyboard, not iPadOS's floating palette
 
+> ⚠️ **SUPERSEDED** by "Custom in-app number pad" below: numeric fields no longer show ANY system keyboard, so `utils/keyboard-type.ts` is back to plain `numeric` / `number-pad` on every platform and `NUMERIC_KEYBOARD_HAS_RETURN_KEY` is always `true`. The notes below explain the history.
+
 Ticket: *"Change UI of number pad — it should be like 2nd image"*, against a screenshot of the Deal
 Center calculator on an iPad with a small floating keypad sitting on top of the Gutters rows it was
 meant to fill in.
@@ -514,3 +516,58 @@ renders show "Soffit: <colour>" chips under the header.
   take the old branches unchanged.
 - ⚠️ The field names mirror the request payload (`toLookPayload`); not verified against a real history response.
   If the chip is missing on a lighting render, log the run and check where the server echoes `selections`.
+
+## Custom in-app number pad (Lead Create pilot)
+
+Ticket: client wants a custom keyboard for digit-only fields (instead of the device/Android IME), shown only
+when such a field is tapped, never covering half the screen. **Pilot: Lead Create only**; the rest of the app
+is untouched until we roll it out.
+
+- **`utils/numpad.ts`** (pure, tested in `__tests__/utils/numpad.test.ts`): `numPadModeFor(keyboardType, override)`
+  decides pad vs system keyboard from the type the field already declares (`number-pad`/`phone-pad` → digits,
+  `numeric`/`decimal-pad` → decimal, everything else → `null` = system keyboard); `applyNumPadKey` is the edit rule.
+- **`widgets/common/keyboard/NumPad`**: `NumPadProvider` + `useNumPad`. **`CustomInput` does the detection**: under a
+  provider, a numeric field sets `showSoftInputOnFocus={false}` and attaches itself to the pad on focus / detaches on blur.
+  Outside a provider nothing changes - **rolling out = wrap another screen/modal in `NumPadProvider`**.
+- The pad is an **in-flow sibling under the ScrollView, not an overlay**, so the form shrinks instead of being covered;
+  key height is derived so the pad stays ~1/3 of the window (`useWindowDimensions`, so landscape/iPad are covered).
+- ⚠️ **The provider must sit INSIDE the `Modal`** (own native tree) and BELOW the form's ScrollView in the same column.
+- ⚠️ **Edits always happen at the END of the text.** Fields reformat as you type (phone `+1 (XXX) XXX-XXXX`), so a
+  mid-string caret is meaningless. Backspace in `digits` mode also eats trailing punctuation, or `+1 (123) ` would
+  reformat straight back to itself and the key would look dead.
+- ⚠️ **Text -> numpad field switch**: the system keyboard is still up, so `attach` calls
+  `KeyboardController.dismiss({ keepFocus: true })`. A plain `Keyboard.dismiss()` would blur the field just focused.
+- ⚠️ **iPad can't tell `number-pad` from `numeric`** (both resolve to `numbers-and-punctuation`, see the iPad ticket
+  above): pass `numPad="decimal"` on a decimal field. `numPad={false}` opts a field out.
+- ⚠️ `insets.bottom` reads 0/stale inside a Modal - the pad floors its bottom padding.
+- Not verified on device from this session: check Android (IME really hidden when tapping from Email to Phone) and the
+  iOS QuickType bar not appearing over the pad.
+- ⚠️ **Never `Pressable style={({pressed}) => ...}` here** - NativeWind drops the function form and the keys collapsed to bare text. Plain style object + `useState` (see `Key`). Look: 4-column pill grid, 3-column grid; bottom row = backspace / 0 / green check (Done), all the SAME pill size - a tall oval Done key looked wrong. Decimal fields get a `.` key and Done drops to its own row.
+- ⚠️ **`GlobalKeyboardAvoidingView` takes `enabled`; Lead Create turns it off while the pad is up** (`NumPadProvider onActiveChange`). iOS still reports the hidden system keyboard's height, which left a white gap under the pad.
+- ⚠️ **Android re-raise guard**: while a pad owns focus, `keyboardDidShow` triggers `KeyboardController.dismiss({ keepFocus: true })` (Android only - on iOS it would resign the field).
+- **Slide animation**: `NumPadPanel` animates `height` (so the form above resizes smoothly) + `translateY` over ~220ms, JS driver (height can't be native). ⚠️ The provider keeps the last target in `shown` so the pad can finish sliding OUT before it unmounts; `open` flips first, `onClosed` unmounts. Height is computed (`rows * (key+gap)`), not measured - change both together if the key rows change.
+
+### App-wide rollout (all numeric inputs, no per-file edits)
+
+Ticket: *"make the custom num pad global - every digit field in the app, restrict the device keyboard, keep the app smooth."*
+
+**Wiring (4 places, then nothing per screen):**
+- `index.js` - the existing global `ScaledTextInput` calls `useNumPadField(props)` (`widgets/common/keyboard/NumPad/useNumPadField.ts`): a numeric `keyboardType` => `showSoftInputOnFocus={false}` + attach/detach the pad. Text/email/etc. are untouched. The `numPad` prop (`'decimal' | 'digits' | false`) is ours and is stripped before the native view.
+- `index.js` - `rn.Modal` is patched to a wrapper that mounts a `NumPadProvider` INSIDE every modal. ⚠️ **Not optional**: a Modal is its own native tree, so a pad drawn by the root provider would sit hidden behind the modal while the field's system keyboard is suppressed - the rep could not type. Never render a field in a native tree that has no provider above it.
+- `App.tsx` - one root `NumPadProvider` around `NavigationContainer` for every screen.
+- `LeadCreate` keeps its own `mode="inflow"` provider (pad in the column, form shrinks) - the nearest provider wins.
+
+**`mode="pan"` (default)** is layout-agnostic: the pad is an absolute overlay and the host slides its content up by `panShiftFor(...)` so the focused field clears it. It needs no knowledge of each screen's layout, and both animations run on the NATIVE driver (no layout pass per frame), which is what keeps 25+ screens lag-free.
+- ⚠️ `PanHost` measures host + content + input with `measureInWindow` and subtracts, so iOS/Android disagreeing on whether the current transform is included can't compound the shift when focus moves A -> B.
+- ⚠️ `animateTo` no-ops when the shift is unchanged - every Modal in the app mounts a host, so an unconditional animation would start on each modal open.
+- Cost per input: one `useContext` + refs. The context value is stable, so inputs do NOT re-render when the pad opens. Provider re-renders reuse the same `children` element, so the screen below is not re-rendered either.
+
+**Behaviours worth knowing:**
+- **Done (check) fires `onSubmitEditing` and then blurs**, on every platform. Fields that commit on submit now get it on iPhone too; a blur-commit on top would double-commit (`NUMERIC_KEYBOARD_HAS_RETURN_KEY` is `true` for that reason - `RolloutView`'s drop price no longer commits on tap-away on iPhone, same as Android already did).
+- **Backspace on an already-empty field calls `onKeyPress({key:'Backspace'})`** - the OTP boxes step back with it, so OTP works on the pad with no special case.
+- Uncontrolled inputs (no `value`) are supported: the pad tracks the text and writes it with `setNativeProps`.
+- Focus A -> B waits `DETACH_GRACE_MS` before closing so the pad doesn't slide out and back in.
+- `GlobalKeyboardAvoidingView` stands down while a pad is up (`useNumPadActive`). Raw RN `KeyboardAvoidingView`s (31 files) are NOT patched: on Android there is no keyboard event at all.
+- Digits and `.` only: a numeric field that must accept a minus sign or `+` needs `numPad={false}`.
+- ⚠️ **Not verified on device from this session** (JS/unit checks only): iOS - confirm no gap/double-shift from a raw `KeyboardAvoidingView` when the hidden system keyboard reports a height, and that the QuickType bar doesn't show; both platforms - walk the rollout drop price, Calculator Summary, Profile, Edit Customer, OTP boxes.
+- Files touched by the app-wide rollout: `index.js` (TextInput + Modal patches), `utils/keyboard-type.ts` (platform split removed), `widgets/common/CustomInput.tsx` (only gained the `numPad` prop type; the logic lives in `useNumPadField`, never duplicate it there or a field attaches twice), `widgets/common/keyboard/GlobalKeyboard/index.tsx` (`useNumPadActive`).

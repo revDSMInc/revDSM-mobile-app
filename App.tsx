@@ -38,6 +38,7 @@ import { usePushNotifications } from './src/hooks/usePushNotifications';
 import { QueryClientProvider } from '@tanstack/react-query';
 import FlashMessage from 'react-native-flash-message';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
+import { NumPadProvider } from './src/widgets/common/keyboard/NumPad';
 import { queryClient } from './src/services/api/queryClient';
 import SplashScreen from './src/screens/Splash';
 import { useAuth } from './src/hooks/useAuth';
@@ -115,6 +116,8 @@ function AppContent() {
           }}
         />
       )}
+      {/* App-wide number pad for every screen; each Modal mounts its own (index.js). */}
+      <NumPadProvider>
       <NavigationContainer
         ref={navigationRef}
         onReady={() => {
@@ -137,6 +140,7 @@ function AppContent() {
       >
         <RootNavigator currentRouteName={currentRouteName} />
       </NavigationContainer>
+      </NumPadProvider>
       <FlashMessage position="top" />
       {splashMounted && (
         <Animated.View

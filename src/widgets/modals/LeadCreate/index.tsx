@@ -17,6 +17,7 @@ import {
 import { useTheme } from '../../../theme/ThemeProvider';
 import { GlobalKeyboardAvoidingView } from '../../common/keyboard/GlobalKeyboard';
 import { CustomInput } from '../../common/CustomInput';
+import { NumPadProvider } from '../../common/keyboard/NumPad';
 import { CustomButton } from '../../common/CustomButton';
 import { FlashMessage } from '../../../config/message';
 import { validateName } from '../../../utils/validation';
@@ -121,6 +122,8 @@ export default function LeadCreateModal({
   const [form, setForm] = useState(initialFormState);
 
   const scrollViewRef = useRef<ScrollView>(null);
+  // The custom pad is up: the KeyboardAvoidingView must stand down (see GlobalKeyboardAvoidingView).
+  const [numPadActive, setNumPadActive] = useState(false);
   const flashRef = useRef<any>(null);
   const [addressFieldY, setAddressFieldY] = useState(0);
   const [lfSyncBoxY, setLfSyncBoxY] = useState(0);
@@ -615,8 +618,11 @@ export default function LeadCreateModal({
       <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.4)' }]}>
         <GlobalKeyboardAvoidingView
           isModal
+          enabled={!numPadActive}
           style={[styles.modalContainer, { backgroundColor: isDark ? colors.surface : '#fff' }]}
         >
+          {/* Custom number pad: Lead ID + Phone use it; Email/Name/Code/Address keep the system keyboard. */}
+          <NumPadProvider mode="inflow" onActiveChange={setNumPadActive}>
           {/* Header */}
           <View
             className="p-6 flex-row justify-between items-center border-b"
@@ -1155,6 +1161,7 @@ export default function LeadCreateModal({
             </View>
           </ScrollView>
           <RNFlashMessage ref={flashRef} position="top" canRegisterAsDefault={false} />
+          </NumPadProvider>
         </GlobalKeyboardAvoidingView>
       </View>
     </Modal>

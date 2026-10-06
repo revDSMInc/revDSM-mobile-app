@@ -962,3 +962,15 @@ Ticket: *remove the Mapbox logo and the information button from the footsteps ma
 - ⚠️ `leadLocation` must keep driving the pin (`location.coordinates` AND the zone `latitude`/`longitude`) — the earlier fix that stopped a typed address being saved on the rep's own GPS position (the Davenport-on-Lahore bug) still holds because `handleAddressSearch` clears `location` when the rep types.
 - ⚠️ `geocodeAddress` is a network call, so it is gated on `isOnline()`; ungated it would stall or fail an offline submit.
 - Keyboard: this branch's `NUMBER_PAD_KEYBOARD` stays; the offline branch's `NUMERIC_KEYBOARD` import was unused and dropped.
+
+## Lead Create: custom number pad (pilot)
+
+`widgets/modals/LeadCreate/index.tsx` is the first screen wrapped in `NumPadProvider` (full notes and traps in
+`app-wide.md` -> "Custom in-app number pad"). Lead ID and Phone use the in-app pad; Name, Email, Lead Code and
+Address keep the system keyboard.
+
+- ⚠️ **The provider wraps the ScrollView, the RN flash message and sits INSIDE `GlobalKeyboardAvoidingView`**, so the pad
+  is a bottom sibling and the ScrollView shrinks (RN `ScrollView` has `flexShrink: 1`). Do not move it outside the `Modal`
+  or turn it into an overlay.
+- ⚠️ The phone field's `formatUSPhoneNumber` + `maxLength={17}` is why the pad edits at the END of the text only.
+- ⚠️ Lead Create now passes `mode="inflow"` explicitly: the pad is app-wide (the patched `Modal` also mounts a default pan provider around it), and the NEAREST provider wins, so this one keeps the form-shrinks-above-the-pad layout. Its `GlobalKeyboardAvoidingView` is turned off via `onActiveChange` because it sits ABOVE this provider and cannot see it through `useNumPadActive`.
