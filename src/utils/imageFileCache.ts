@@ -13,6 +13,7 @@
 // without importing a heavy modal screen.
 
 import ReactNativeBlobUtil from 'react-native-blob-util';
+import { isOnline } from '../services/connectivity';
 import {
   DEFAULT_CACHE_BUDGET_BYTES,
   formatBytes,
@@ -192,6 +193,23 @@ export const warmToLocalCache = async (url?: string | null): Promise<string | nu
     return null;
   }
 
+  /**
+   * ⚠️ OFFLINE: do not queue a download that cannot succeed, and this was a reported bug.
+   *
+   * `acquireWarmSlot` caps concurrency at 3. With no connection every attempt still has to
+   * fail before it frees its slot, so a grid of 8 photos had most of its warms sitting in the
+   * QUEUE — never resolving, so `useWarmedImageUris` left them `undefined`, and
+   * `photoTileState` reads `undefined` as `unavailable`. Manage Photos showed "Needs a
+   * connection" on photos whose bytes were on the disk, while the full-screen preview (which
+   * falls back to the raw url) rendered the same photos fine.
+   *
+   * Returning null here is the honest answer and it is IMMEDIATE, so the hook resolves the url
+   * to itself on the first tick and the tile paints from whatever the OS has.
+   *
+   * ⚠️ AFTER the `fs.exists` check above, never before it — a photo already on disk must still
+   * be served offline, which is the entire point of the cache.
+   */
+  if (!isOnline()) return null;
   await acquireWarmSlot();
   try {
     const ok = await downloadImage(url, path);

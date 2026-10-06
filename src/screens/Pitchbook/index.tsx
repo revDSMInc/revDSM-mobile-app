@@ -22,6 +22,7 @@ import greenRooflinesImages, {
 import { InspectionPhotosPanel } from '../../widgets/components/InspectionPhotosPanel';
 import { buildInspectionSections } from '../../utils/inspection-photos';
 import { ZoomableImage } from '../../widgets/common/ZoomableImage';
+import { getWarmedLocalUri } from '../../utils/imageFileCache';
 import { PresentationGesturesTutorial } from '../../widgets/components/pitchbook/PresentationGesturesTutorial';
 import { PresentationDock, type DockMode } from '../../widgets/components/pitchbook/PresentationDock';
 import { PresentationTopBar } from '../../widgets/components/pitchbook/PresentationTopBar';
@@ -554,9 +555,28 @@ export default function PitchbookScreen() {
     return Object.keys(imagesObj)[slideIndex] || '';
   }, [pitchBookImages]);
 
+  /**
+   * ⚠️ Resolved through the local FILE cache, and without this the deck was blank offline.
+   *
+   * `warmDeckSlides` already copies every slide to disk the first time the book is opened with
+   * signal — but nothing READ that copy back. The source stayed the pre-signed S3 url, which
+   * CLAUDE.md §6 records as defeating `Image.prefetch` and `cache: 'force-cache'`, so with no
+   * connection each slide rendered as an empty frame. The rep had the book, the bytes were on the
+   * device, and the screen showed nothing.
+   *
+   * ⚠️ `getWarmedLocalUri` is a MEMORY lookup, so this stays a cheap `useMemo` — it must not
+   * become async or the deck would flash blank on every tab change.
+   *
+   * ⚠️ A bundled deck's slide is a `require()` NUMBER, not an object. Those pass through
+   * untouched; only a remote slide has a `uri` to swap.
+   */
   const currentCategoryImages = useMemo(() => {
     const imagesObj = pitchBookImages[activeCategory] || {};
-    return Object.values(imagesObj);
+    return Object.values(imagesObj).map((source: any) => {
+      if (!source || typeof source !== 'object' || typeof source.uri !== 'string') return source;
+      const local = getWarmedLocalUri(source.uri);
+      return local ? { ...source, uri: local } : source;
+    });
   }, [activeCategory, pitchBookImages]);
 
   const totalGlobalPages = useMemo(() => {
@@ -1172,6 +1192,20 @@ export default function PitchbookScreen() {
   // the presentation UI means anything — page counters, tabs and the fullscreen
   // viewer all read the same two variables. Gating the whole screen here covers all
   // of them at once rather than teaching each render site an empty state.
+  /**
+   * ⚠️ "No slides published yet" is a claim about the PORTAL, and offline we cannot make it.
+   *
+   * Reported with a screenshot: a book whose slides ARE published read "No slides published yet.
+   * Ask your manager to publish it." at a door. An empty `CATEGORIES` offline means only that
+   * this device has no copy — the deck was never opened with signal, so `cachedFetch` had nothing
+   * saved. Sending the rep to their manager over a download they can fix themselves is worse than
+   * saying nothing.
+   *
+   * ⚠️ Only when OFFLINE. Online an empty deck really is an unpublished one, and that message
+   * must survive — it is the only thing that tells the rep to chase the portal.
+   */
+  const notDownloaded = !isPitchbookOnline && !isDeckError && !CATEGORIES.length;
+
   if (isRemoteDeck && (isDeckLoading || isDeckError || !CATEGORIES.length)) {
     return (
       <SafeAreaView className="flex-1 bg-background" edges={['bottom', 'left', 'right']}>
@@ -1195,12 +1229,16 @@ export default function PitchbookScreen() {
           ) : (
             <>
               <Icon
-                name={isDeckError ? 'cloud-off-outline' : 'book-open-page-variant'}
+                name={isDeckError || notDownloaded ? 'cloud-off-outline' : 'book-open-page-variant'}
                 size={48}
                 color="#919EAB"
               />
               <Text className="text-text-primary text-base font-semibold mt-4 text-center">
-                {isDeckError ? "Couldn't load this pitch book" : 'No slides published yet'}
+                {isDeckError
+                  ? "Couldn't load this pitch book"
+                  : notDownloaded
+                    ? 'Not downloaded yet'
+                    : 'No slides published yet'}
               </Text>
               <Text className="text-text-secondary text-sm mt-1 text-center">
                 {isDeckError
@@ -1210,7 +1248,9 @@ export default function PitchbookScreen() {
                       // "no connection" is only half the story — this names the thing the rep can
                       // actually act on, rather than leaving them tapping Try Again at a door.
                       "You're offline and this book hasn't been downloaded yet. Open it once with a connection and it will be available here."
-                  : 'This pitch book has no published slides. Ask your manager to publish it.'}
+                  : notDownloaded
+                    ? "You're offline and this book hasn't been downloaded to this device. Open it once with a connection and it will be available at every door after that."
+                    : 'This pitch book has no published slides. Ask your manager to publish it.'}
               </Text>
               {isDeckError && (
                 <TouchableOpacity

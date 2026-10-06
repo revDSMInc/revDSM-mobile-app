@@ -52,6 +52,39 @@ const triggerGlobalRefetch = (leadId: string) => {
   }
 };
 
+/**
+ * The real reason a batch failed — ticket: the backend's own message ("This model is
+ * currently experiencing high demand...") was never shown; the rep only ever saw the
+ * generic "Generation failed".
+ *
+ * Each failed `batch.jobs[]` entry's `error` is a STRINGIFIED JSON blob a level deeper
+ * than it looks: `"{\"error\":{\"code\":503,\"message\":\"...\",\"status\":\"...\"}}"`.
+ * Picks the first failed job (a batch of 1 is the overwhelmingly common case; a rep
+ * rendering several views at once still gets an actionable message rather than none).
+ *
+ * ⚠️ Never throws — a batch whose shape doesn't match (a future backend change, or a
+ * `cancelled` batch with no per-job error at all) falls back to a plain, still-useful
+ * generic message rather than crashing the poll loop.
+ */
+const extractBatchFailureMessage = (batch: any): string => {
+  const failedJob = Array.isArray(batch?.jobs)
+    ? batch.jobs.find((j: any) => j?.status === 'failed' && j?.error)
+    : null;
+  if (!failedJob) return batch?.message || 'Rendering failed or was cancelled';
+
+  let backendMessage: string | null = null;
+  try {
+    const parsed = typeof failedJob.error === 'string' ? JSON.parse(failedJob.error) : failedJob.error;
+    backendMessage = parsed?.error?.message || parsed?.message || null;
+  } catch {
+    // `error` wasn't JSON — fall through and use it as plain text below.
+    backendMessage = typeof failedJob.error === 'string' ? failedJob.error : null;
+  }
+
+  if (!backendMessage) return batch?.message || 'Rendering failed or was cancelled';
+  return failedJob.viewLabel ? `${failedJob.viewLabel}: ${backendMessage}` : backendMessage;
+};
+
 export const useLeadReports = (lead: any, refetch: () => void) => {
   const { user } = useAuth();
   const existingRunIdsRef = useRef<Set<string>>(new Set());
@@ -510,7 +543,18 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
               });
             }
 
-            if (batchStatus === 'completed' || batchStatus === 'succeeded' || batchStatus === 'done') {
+            // ⚠️ `status: 'done'` means the batch finished processing — it is NOT a success
+            // verdict on its own. A batch can finish `'done'` with every job FAILED
+            // (`succeeded: 0, failed: 1`), and reading `'done'` as success here reported a
+            // fully-failed render as a completed one, with no error shown at all — worse than
+            // the generic message this ticket originally complained about. `'done'` must be
+            // checked against the actual counts; `'completed'`/`'succeeded'` are a currently-
+            // unseen API shape kept as a secondary unconditional-success check for safety.
+            const batchFinished = batchStatus === 'done' || batchStatus === 'completed' || batchStatus === 'succeeded';
+            const anySucceeded = batchStatus === 'completed' || batchStatus === 'succeeded' || (batch?.succeeded || 0) > 0;
+            const anyFailed = (batch?.failed || 0) > 0;
+
+            if (batchFinished && anySucceeded && !anyFailed) {
               isDone = true;
               isCompleted = true;
               if (mockTimer) clearInterval(mockTimer);
@@ -521,11 +565,11 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
                 next[index].progress = 100;
                 return next;
               });
-            } else if (batchStatus === 'failed' || batchStatus === 'cancelled') {
+            } else if (batchStatus === 'failed' || batchStatus === 'cancelled' || (batchFinished && anyFailed)) {
               isDone = true;
               isCompleted = true;
               if (mockTimer) clearInterval(mockTimer);
-              throw new Error(batch?.message || 'Rendering failed or was cancelled');
+              throw new Error(extractBatchFailureMessage(batch));
             } else {
               if (batchTotal > 1) {
                 const succeeded = batch?.succeeded || 0;
@@ -558,14 +602,22 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
         completedCount++;
         console.error('RevRender Job Error:', err);
         
-        let errorMsg = 'Generation failed';
+        // Ticket: the backend's own failure reason (e.g. "This model is currently
+        // experiencing high demand...") never reached the rep — a batch failure was
+        // thrown from the poll loop above as a plain `Error`, but this catch only ever
+        // looked at `err?.error` (a shape that message never has), so it silently fell
+        // through to a generic string every time. `err.message` now carries the REAL
+        // backend text when the failure came from `extractBatchFailureMessage` above;
+        // the `err?.error` parse stays as a fallback for a differently-shaped error
+        // (e.g. a raw axios error from `generateRevRender` itself failing to start).
+        let errorMsg = err?.message || 'Generation failed';
         try {
           const errorBody = typeof err?.error === 'string' ? JSON.parse(err.error) : err?.error;
           if (errorBody?.error?.code === 503 || errorBody?.code === 503) {
-            errorMsg = 'AI Model is currently busy. Please try again in a few minutes.';
+            errorMsg = errorBody?.error?.message || errorBody?.message || 'AI Model is currently busy. Please try again in a few minutes.';
           }
-        } catch (e) {
-          errorMsg = err?.message || 'AI service unavailable';
+        } catch {
+          // `err.error` wasn't JSON — `errorMsg` already holds `err.message` from above.
         }
 
         updateJobStateAndPersistence(prev => {

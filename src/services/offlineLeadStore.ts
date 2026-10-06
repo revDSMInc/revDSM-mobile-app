@@ -191,6 +191,17 @@ export const putOfflineWork = (work: OfflineLeadWork): OfflineLeadWork => {
   const i = store.findIndex((w) => w.clientId === work.clientId);
   store = i === -1 ? [...store, next] : store.map((w, n) => (n === i ? next : w));
   persist();
+  // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. Every write to the store, so a record that
+  // is silently REPLACED (or written under a second clientId) is visible.
+  console.log(
+    '[LeadSync] store %s %s origin=%s status=%s workStarted=%s rows=%s',
+    i === -1 ? 'ADD' : 'UPDATE',
+    next.clientId,
+    next.origin,
+    next.status,
+    next.workStarted ? 'YES' : 'no',
+    store.length
+  );
   return next;
 };
 
@@ -209,8 +220,20 @@ export const patchOfflineWork = (
  * Park a lead the rep created with no signal. Returns the record, whose `clientId` is the handle
  * everything they do next — the appointment, the calculator, the job — hangs off.
  */
-export const enqueueOfflineLead = (payload: Record<string, unknown>): OfflineLeadWork =>
-  putOfflineWork(createOfflineWork(payload, describeQueuedLead(payload)));
+export const enqueueOfflineLead = (payload: Record<string, unknown>): OfflineLeadWork => {
+  const work = putOfflineWork(createOfflineWork(payload, describeQueuedLead(payload)));
+  // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. `clientId` is the handle EVERYTHING the rep
+  // does next hangs off; if the card is later drawn with a different id, nothing they do reaches
+  // this record. `owner=NONE` means the row can never be replayed (`mine()` filters it out).
+  console.log(
+    '[LeadSync] CREATE queued clientId=%s owner=%s hasLocation=%s label=%s',
+    work.clientId,
+    work.ownerId || 'NONE',
+    !!(payload as any)?.location,
+    work.label
+  );
+  return work;
+};
 
 /**
  * Begin working a lead that is ALREADY on the server with no signal.
@@ -540,10 +563,22 @@ const workForLead = (lead: any): { id: string; work?: OfflineLeadWork } => {
   load();
   const id = String(lead?._id || lead?.id || '');
   if (!id) return { id: '' };
+  // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. THE JOIN between create and start: the card
+  // is drawn with `_id`, and this is where that id is matched back to the record the create made.
+  // `found=NONE` with rows present means the ids do not line up — the create queued one handle and
+  // the card is carrying another, which is why the check-in lands nowhere.
+  const hit = mine().find((w) => w.clientId === id || w.serverIds.leadId === id);
+  console.log(
+    '[LeadSync] lookup id=%s found=%s mine=%s ids=%s',
+    id,
+    hit ? hit.clientId : 'NONE',
+    mine().length,
+    JSON.stringify(mine().map((w) => w.serverIds.leadId || w.clientId))
+  );
   // ⚠️ `mine()`, not `store` — acting on another rep's record would queue THEIR lead for deletion.
   // Uploaded records are deliberately included: a lead whose offline session already drained can
   // still be archived or deleted, and reusing its record keeps one row per lead.
-  return { id, work: mine().find((w) => w.clientId === id || w.serverIds.leadId === id) };
+  return { id, work: hit };
 };
 
 const labelForLead = (lead: any): string =>
@@ -1626,6 +1661,15 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
  */
 export const drainOfflineWork = async (): Promise<void> => {
   load();
+  // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. If this never prints after reconnecting,
+  // the drain is not being TRIGGERED and nothing downstream will run however correct it is.
+  console.log(
+    '[LeadSync] drain called online=%s alreadyDraining=%s rows=%s drainable=%s',
+    isOnline(),
+    draining,
+    mine().length,
+    uploadableWork(mine()).length
+  );
   if (draining || !isOnline()) return;
   draining = true;
   try {
