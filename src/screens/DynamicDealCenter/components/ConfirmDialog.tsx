@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Modal, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, Modal, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FS, FUND, PS } from './funding/funding-theme';
 
@@ -52,6 +52,11 @@ interface Props {
   busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /**
+   * Draw as an absolute layer instead of a native `<Modal>` — for raising it from INSIDE
+   * another Modal (the Result Lead sheet), where a second native Modal must never stack.
+   */
+  inline?: boolean;
 }
 
 export function ConfirmDialog({
@@ -66,11 +71,11 @@ export function ConfirmDialog({
   busy,
   onConfirm,
   onCancel,
+  inline,
 }: Props) {
   const t = TONE[tone];
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+  const body = (
+      <View style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 }, inline && StyleSheet.absoluteFill]}>
         <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, width: '100%', maxWidth: 340 }}>
           <View style={{ alignSelf: 'center', width: 42, height: 42, borderRadius: 21, backgroundColor: t.bg, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
             <Ionicons name={t.icon} size={20} color={t.fg} />
@@ -113,6 +118,11 @@ export function ConfirmDialog({
           </View>
         </View>
       </View>
+  );
+  if (inline) return visible ? body : null;
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      {body}
     </Modal>
   );
 }
