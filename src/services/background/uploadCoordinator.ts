@@ -53,7 +53,11 @@ export const pendingUploadCount = (): number => {
   if (!hasSession()) return 0;
   return (
     pendingOfflineWorkCount() +
-    uploadQueueManager.uploadableCount() +
+    // ⚠️ heldCount, NOT uploadableCount. A photo queued against a client id is not sendable YET,
+    // but it IS outstanding work — `rekeyLead` makes it sendable the moment the lead create
+    // lands, and that happens inside this same drain. Counting only the sendable ones let the
+    // loop declare `done` after the lead went up and leave the photos for the next backgrounding.
+    uploadQueueManager.heldCount() +
     getUploadQueue().length +
     queuedActivityLogCount()
   );

@@ -3,7 +3,7 @@ import { applyOfflineResult, isClientId } from '../utils/offline-lead-work';
 import { getOfflineWork, subscribeOfflineWork } from '../services/offlineLeadStore';
 import { isOnline } from '../services/connectivity';
 import { OFFLINE_CACHE, readOfflineCache, writeOfflineCache } from '../utils/offline-query-cache';
-import { leadDetailForCache } from '../utils/offline-lead-detail-cache';
+import { leadDetailForCache, mergeLeadRow } from '../utils/offline-lead-detail-cache';
 import { AppState } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
@@ -70,11 +70,20 @@ export const useLeadCenterData = (
   const queryClient = useQueryClient();
   const [lead, setLead] = useState<any>(initialLead);
 
-  // Sync state if navigation params change (e.g. on back navigation with updated lead)
+  // Sync state if navigation params change (e.g. on back navigation with updated lead).
+  //
+  // ⚠️ MERGES onto the SAME lead, never replaces it. `initialLead` comes from a list that now
+  // returns SLIM rows (`view=summary`) carrying `salesPhotos: []` and no `jobBuilder`, and its
+  // object identity changes whenever the list refetches. A plain `setLead(initialLead)` therefore
+  // threw away a lead this screen had already hydrated — from the network or from the offline
+  // cache — and the header dropped back to `0/46 slots • 0 photos` for a lead whose photos were
+  // on the device the whole time.
+  //
+  // A DIFFERENT lead id still replaces outright: that is a genuine navigation to another record,
+  // and merging there would leak one lead's data onto another.
   useEffect(() => {
-    if (initialLead) {
-      setLead(initialLead);
-    }
+    if (!initialLead) return;
+    setLead((prev: any) => mergeLeadRow(prev, initialLead));
   }, [initialLead]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   // The lead id currently being hydrated, so the open-hydrate and the focus refresh
@@ -119,6 +128,29 @@ export const useLeadCenterData = (
    * server IGNORES `leadId` on the list query string, so it would download every lead
    * the rep has to pick one out client-side.
    */
+  /**
+   * Fill the screen from the last copy saved with signal. Returns true if there was one.
+   *
+   * ⚠️ Shared by the offline branch AND the network error handler on purpose — "we are offline"
+   * and "the request failed because we are offline" must produce the SAME screen. They did not:
+   * only the first consulted the cache, so a lead opened inside the 1.5 s offline debounce took
+   * the network path, failed, and was left as the SLIM summary row the list handed it — which
+   * carries `salesPhotos: []`. That is the "0 photos, then correct after going back and
+   * returning" report: the second open happened after the debounce, so it took the cache branch.
+   */
+  const hydrateFromCache = useCallback((): boolean => {
+    if (!lead?._id || !user?._id) return false;
+    const saved = readOfflineCache<any>(detailCacheKey(lead._id), { userId: user._id })?.data;
+    if (!saved) return false;
+    setLead((prev: any) => ({
+      ...prev,
+      ...saved,
+      generatedReports: saved.generatedReports || prev?.generatedReports || [],
+    }));
+    return true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead?._id, user?._id]);
+
   const refetch = useCallback(async () => {
     if (!user?._id || !lead?._id) return;
     // ⚠️ A lead the rep created with no signal has no server record to hydrate FROM — its id is one
@@ -135,14 +167,7 @@ export const useLeadCenterData = (
     // inside the lead" QA reported after killing the app: the lead opens, and everything in it is
     // missing. Merged the same way a live response is, so the two paths cannot diverge.
     if (!isOnline()) {
-      const saved = readOfflineCache<any>(detailCacheKey(lead._id), { userId: user._id })?.data;
-      if (saved) {
-        setLead((prev: any) => ({
-          ...prev,
-          ...saved,
-          generatedReports: saved.generatedReports || prev?.generatedReports || [],
-        }));
-      }
+      hydrateFromCache();
       return;
     }
     // Collapse the open-hydrate and the focus refresh into a single request when they
@@ -224,7 +249,16 @@ export const useLeadCenterData = (
       // red LogBox reads as a crash over a Lead Center that is working fine. Only a
       // genuinely unexpected failure logs at error level.
       if (err?.httpStatus === undefined) {
-        console.warn('[LeadCenter] Refresh skipped — API unreachable:', err?.message || err);
+        // ⚠️ The request never reached the API, so this is the offline case arriving by a
+        // different route — most often because the 1.5 s offline debounce had not elapsed when
+        // the screen opened, so `isOnline()` was still true above. Fall back to the SAME cache
+        // the offline branch uses, or the rep is left looking at a summary row that reports
+        // `0/46 slots • 0 photos` for a lead whose photos are sitting on the device.
+        const recovered = hydrateFromCache();
+        console.warn(
+          `[LeadCenter] Refresh skipped — API unreachable${recovered ? ' (served from cache)' : ''}:`,
+          err?.message || err
+        );
       } else {
         console.error('[LeadCenter] Refresh failed:', err);
       }
@@ -232,7 +266,7 @@ export const useLeadCenterData = (
       hydrateInFlightRef.current = null;
       setIsRefreshing(false);
     }
-  }, [user?._id, lead?._id]);
+  }, [user?._id, lead?._id, hydrateFromCache]);
 
   // Hydrate on open. `LeadCenter`'s focus effect also calls `refetch`, but relying on
   // it alone would leave any OTHER entry point (the chat deep link, the map, a lead

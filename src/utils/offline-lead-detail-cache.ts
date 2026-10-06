@@ -84,3 +84,35 @@ export const leadDetailForCache = <T,>(lead: T): T | null => {
   }
   return pruned;
 };
+
+/**
+ * Fold an incoming lead row onto the one already on screen.
+ *
+ * ⚠️ The Lead Center is opened from a list that returns SLIM rows (`view=summary`) carrying
+ * `salesPhotos: []` and no `jobBuilder`, and that row's object identity changes on every list
+ * refetch. Replacing state with it discards a lead the screen has already hydrated — from the
+ * network or from the offline cache — and the header falls back to `0/46 slots • 0 photos` for a
+ * lead whose photos are on the device. The same loss is what made the count look right only
+ * after navigating away and back.
+ *
+ * ⚠️ A DIFFERENT `_id` replaces outright. That is a real navigation to another record, and
+ * merging there would leak one lead's photos onto another.
+ *
+ * Only ever fills a GAP: a populated incoming field always wins, so a genuine server update — a
+ * photo deleted on the portal, a rebuilt job — still lands.
+ */
+export const mergeLeadRow = <T extends Record<string, any>>(
+  prev: T | null | undefined,
+  incoming: T
+): T => {
+  if (!prev?._id || prev._id !== incoming?._id) return incoming;
+  const merged: any = { ...prev, ...incoming };
+  const keepIfEmpty = (key: string) => {
+    const next = (incoming as any)[key];
+    const held = (prev as any)[key];
+    const nextEmpty = next === undefined || next === null || (Array.isArray(next) && !next.length);
+    if (nextEmpty && held !== undefined && held !== null) merged[key] = held;
+  };
+  ['salesPhotos', 'jobBuilder', 'generatedReports', 'documents', 'calculators'].forEach(keepIfEmpty);
+  return merged as T;
+};

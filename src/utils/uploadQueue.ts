@@ -113,6 +113,21 @@ class UploadQueueManager {
   }
 
   /**
+   * Everything of ours still waiting, INCLUDING photos held behind a client id.
+   *
+   * ⚠️ `uploadableCount()` excludes a photo whose lead has not been created on the server yet,
+   * because it cannot be PUT. That is right for the drain loop and WRONG for deciding whether
+   * there is work to do: a rep who created a lead at the door has a queued lead plus photos that
+   * only become sendable once `rekeyLead` runs. Counting only the sendable ones made the
+   * background drain finish the lead, see `pending === 0`, and stop — so the photos waited for
+   * the NEXT backgrounding. That is the "I have to open the app, then background it again"
+   * report.
+   */
+  public heldCount(): number {
+    return this.queue.filter((i) => this.ownedByCurrentSession(i)).length;
+  }
+
+  /**
    * Re-read the queue from MMKV when the session changes.
    *
    * ⚠️ Reloads, never just empties. `upload_photo_queue` is in `SESSION_KEEP_KEYS`, so the saved

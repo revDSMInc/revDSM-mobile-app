@@ -22,7 +22,7 @@
 
 import { AppState, Platform, type AppStateStatus } from 'react-native';
 import { hasSession } from '../api';
-import { isOnline } from '../connectivity';
+import { isOnline, onReconnect } from '../connectivity';
 import {
   shouldStartBackgroundWork,
 } from '../../utils/background-upload-policy';
@@ -83,5 +83,29 @@ export const startBackgroundUploadService = (): void => {
         console.warn('[background] could not engage background upload', e)
       );
     }
+  });
+
+  // ⚠️ SIGNAL RETURNING WHILE BACKGROUNDED is its own trigger, and its absence was the bug.
+  //
+  // The AppState hook above only fires on the way OUT of the foreground. The common field case
+  // runs the other way round: the rep creates a lead with no signal, backgrounds the app, and
+  // signal comes back minutes later. Nothing was listening, so the drain that had already given
+  // up (`WAIT_FOR_NETWORK_MS`, or the iOS grace period expiring) was never restarted — and the
+  // work sat until the rep opened the app by hand. That is the "background service is not
+  // working" report.
+  //
+  // This re-engages the platform mechanism rather than just calling the drain: on Android the
+  // foreground service may have been released while waiting, and on iOS the grace period is
+  // long gone, so a bare drain would be killed mid-request. `engageBackgroundUpload` asks for
+  // time first and is a no-op when nothing is queued.
+  //
+  // ⚠️ Only while we are NOT in the foreground. A reconnect with the app on screen is already
+  // covered by each engine's own `onReconnect` hook; engaging here too would open a grace period
+  // nobody needs and fight the single-flight drain for no gain.
+  onReconnect(() => {
+    if (lastState === 'active') return;
+    engageBackgroundUpload().catch((e) =>
+      console.warn('[background] could not re-engage on reconnect', e)
+    );
   });
 };

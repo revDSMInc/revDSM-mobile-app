@@ -50,6 +50,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { readMapLeadsCache, writeMapLeadsCache } from '../../utils/offline-map-leads-cache';
 import { offlineMapManager } from '../../services/offlineMapManager';
 import { isOnline, isOnWifi } from '../../services/connectivity';
+import {
+  coverageNotice,
+  resolveMapCoverage,
+  satelliteNotice,
+} from '../../utils/offline-map-availability';
+import { leadCoordinates } from '../../utils/offline-map-regions';
+import { useIsOnline } from '../../hooks/useIsOnline';
 
 const { width, height } = Dimensions.get('window');
 
@@ -342,6 +349,34 @@ export default function MapDetailScreen() {
       }
     }
   }, []); // mount-only — seed once
+
+  // ─── Offline map coverage ────────────────────────────────────────────────
+  // Mapbox draws a silent grey canvas when no tiles are downloaded, so the only thing the rep saw
+  // was whatever axios banner happened to be up ("Network Error") — which reads as a broken app
+  // while standing at a door. Resolve what the device can actually draw and say so plainly.
+  //
+  // ⚠️ Recomputed on the network edge, NOT just on mount: a rep who walks out of signal with the
+  // map open must get the notice without backing out and re-entering.
+  const online = useIsOnline();
+  const mapCoverage = useMemo(() => {
+    const records = offlineMapManager.getAllRecords();
+    const target = leadCoordinates(currentLead) ?? leadCoordinates(centerCoords);
+    return resolveMapCoverage({
+      online,
+      basePack: records.find((r) => r.kind === 'base') ?? null,
+      areaPacks: records.filter((r) => r.kind === 'area'),
+      point: target,
+    });
+  }, [online, currentLead, centerCoords]);
+
+  const mapNotice = useMemo(() => coverageNotice(mapCoverage), [mapCoverage]);
+  const satNotice = useMemo(() => satelliteNotice(online), [online]);
+
+  // Leaving satellite selected while offline would strand the rep on a grey screen with no hint
+  // that the street map is still there, so drop back to streets on the way out of signal.
+  useEffect(() => {
+    if (!online && isSatelliteView) setIsSatelliteView(false);
+  }, [online, isSatelliteView]);
 
   // Maintain loading state compatible with the UI spinner
   useEffect(() => {
@@ -741,10 +776,72 @@ export default function MapDetailScreen() {
           }}
         />
 
+        {/* Offline map notice. Sits ABOVE the map surface and below the toolbars, so the rep sees
+            why the canvas looks the way it does without losing the pins or the controls.
+
+            ⚠️ `blocking` (nothing downloaded at all) also dims the canvas — a bare banner over a
+            grey void still reads as a broken screen. A base-only map is NOT dimmed: it is a real,
+            usable map and covering it would be the worse lie. */}
+        {mapNotice.tone && !isListView && (
+          <>
+            {mapNotice.blocking && (
+              <View
+                pointerEvents="none"
+                style={[
+                  StyleSheet.absoluteFill,
+                  { backgroundColor: isDark ? 'rgba(18,18,18,0.72)' : 'rgba(244,246,248,0.82)', zIndex: 14 },
+                ]}
+              />
+            )}
+            <View
+              pointerEvents="none"
+              className="absolute left-5 right-5 rounded-2xl px-4 py-3 shadow-lg"
+              style={{
+                top: mapNotice.blocking ? '38%' : undefined,
+                bottom: mapNotice.blocking ? undefined : 24,
+                zIndex: 15,
+                backgroundColor: isDark ? '#1f2937' : '#ffffff',
+                borderWidth: 1,
+                borderColor: mapNotice.tone === 'warning' ? '#f59e0b' : '#94a3b8',
+              }}
+              accessibilityLiveRegion="polite"
+              accessible
+              accessibilityLabel={`${mapNotice.title}. ${mapNotice.body}`}
+            >
+              <View className="flex-row items-center mb-1">
+                <Icon
+                  name={mapNotice.tone === 'warning' ? 'map-marker-off' : 'map-clock-outline'}
+                  size={18}
+                  color={mapNotice.tone === 'warning' ? '#f59e0b' : '#64748b'}
+                />
+                <Text
+                  className="ml-2 text-[14px] font-bold"
+                  style={{ color: isDark ? '#f1f5f9' : '#0f172a' }}
+                >
+                  {mapNotice.title}
+                </Text>
+              </View>
+              <Text
+                className="text-[12px] leading-[17px]"
+                style={{ color: isDark ? '#cbd5e1' : '#475569' }}
+              >
+                {mapNotice.body}
+              </Text>
+            </View>
+          </>
+        )}
+
         {/* Satellite / Street map-view toggle (web parity: ToggleMapView). */}
         {!isListView && (
           <TouchableOpacity
             onPress={() => {
+              // ⚠️ Imagery is never in an offline pack (packs download `styleKey: 'Street'` only),
+              // so offline this would swap a readable street map for a grey screen. Say why
+              // instead of letting the toggle look broken.
+              if (satNotice.tone) {
+                FlashMessage.warning(satNotice.title, satNotice.body);
+                return;
+              }
               setIsSatelliteView((prev) => {
                 const next = !prev;
                 const userId = user?._id || user?.id;
