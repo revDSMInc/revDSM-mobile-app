@@ -54,15 +54,25 @@ export function buildInspectionSections(
   secureImages: SecureImageMap
 ): InspectionSection[] {
   const uriByS3: Record<string, string> = {};
-  Object.values(secureImages || {}).forEach((list) =>
-    (list || []).forEach((img) => {
-      if (img?.s3url) uriByS3[img.s3url] = img.uri;
-    })
-  );
+  /**
+   * ⚠️ `Array.isArray`, not `list || []` — a non-array TRUTHY value sails through that guard and
+   * `.forEach` is then undefined. This crashed the whole Roofline Deck with "undefined is not a
+   * function" the moment a wrongly-shaped entry reached the offline cache.
+   *
+   * ⚠️ This function renders a rep's PRESENTATION in front of a customer, so it must degrade to
+   * "no photos" rather than take the screen down. Anything unrecognised is skipped.
+   */
+  Object.values(secureImages || {}).forEach((list) => {
+    if (!Array.isArray(list)) return;
+    list.forEach((img) => {
+      if (img?.s3url && typeof img.uri === 'string') uriByS3[img.s3url] = img.uri;
+    });
+  });
 
   const secMap = new Map<string, { id: string; name: string; slots: Map<string, SectionPhoto[]> }>();
 
-  (photos || []).forEach((p: any) => {
+  // ⚠️ Same reason as `uriByS3` above: a truthy non-array would pass `|| []` and then throw.
+  (Array.isArray(photos) ? photos : []).forEach((p: any) => {
     if (!p || p.deletedAt || isAnnotatedPhoto(p)) return;
     const uri = uriByS3[p.s3url] || p.secureUrl || p.uri;
     if (!uri) return;

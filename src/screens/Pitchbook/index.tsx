@@ -45,6 +45,7 @@ import {
 } from '../../widgets/common/PhotoPeekScrollLock';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { jobWaitState, WAITING_AMBER } from '../../utils/report-job-connectivity';
 import IonIcon from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../widgets/common/MainHeader';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -61,6 +62,7 @@ import { downloadPdfToDevice } from '../../utils/download-utils';
 import { storage } from '../../utils/storage';
 import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
+import { useLeadPhotosWithPending } from '../../hooks/useLeadPhotosWithPending';
 import { usePitchBookDeck } from '../../hooks/usePitchBooks';
 import { useIsOnline } from '../../hooks/useIsOnline';
 import { useTabStripAutoScroll } from '../../hooks/useTabStripAutoScroll';
@@ -188,11 +190,23 @@ export default function PitchbookScreen() {
   const [loading, setLoading] = useState(true);
   const [fullLeadData, setFullLeadData] = useState<any>(null);
 
-  const activePhotos = useMemo(() => {
+  const serverPhotos = useMemo(() => {
     return fullLeadData?.outcome?.salesPhotos || fullLeadData?.salesPhotos || lead?.salesPhotos || [];
   }, [fullLeadData, lead]);
 
-  const { data: secureImages = {} } = useSecureUrls(activePhotos);
+  /**
+   * ⚠️ Plus the shots still in the UPLOAD QUEUE. `salesPhotos` is the server's list, so a photo
+   * captured at a door with no signal is not in it — the rep saw three photos in Manage Photos
+   * marked "Saved on device" and this screen said "No inspection photos available".
+   */
+  const activePhotos = useLeadPhotosWithPending(
+    serverPhotos,
+    (lead as any)?._id || (lead as any)?.id
+  );
+
+  // ⚠️ The SERVER photos only. A queued shot has no `s3url` to sign, and passing it would
+  // change the set key on every capture, re-fetching every url for nothing.
+  const { data: secureImages = {} } = useSecureUrls(serverPhotos);
 
   const hasInspectionPhotos = useMemo(
     () => buildInspectionSections(activePhotos, secureImages).length > 0,
@@ -1626,7 +1640,11 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
               )}
               {riskJob && riskJob.status !== 'completed' && (
                 <View className="flex-row items-center gap-2">
-                  <ActivityIndicator size="small" color={colors.primary.main} />
+                  {riskJob.waiting ? (
+                    <Icon name="cloud-off-outline" size={14} color={WAITING_AMBER} />
+                  ) : (
+                    <ActivityIndicator size="small" color={colors.primary.main} />
+                  )}
                   <Text className="text-[10px] font-bold" style={{ color: t.hint }}>
                     {riskJob.progress}%
                   </Text>
@@ -1643,13 +1661,23 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
             >
               <View
                 className="h-full"
-                style={{ width: `${riskJob.progress}%`, backgroundColor: DOCK_TAB_GREEN }}
+                style={{
+                  width: `${riskJob.progress}%`,
+                  // ⚠️ Both colours are explicit values, not Tailwind classes: this sheet also
+                  // renders over the dark presentation theme, where a utility colour pair reads
+                  // wrong. DOCK_TAB_GREEN is the brand green shared with the presentation dock;
+                  // WAITING_AMBER marks a job paused because the device lost signal.
+                  backgroundColor: riskJob.waiting ? WAITING_AMBER : DOCK_TAB_GREEN,
+                }}
               />
             </View>
           )}
           {riskJob && riskJob.status !== 'completed' && (
-            <Text className="text-[10px] mt-1 italic" style={{ color: t.hint }}>
-              {riskJob.step || 'Processing...'}
+            <Text
+              className={`text-[10px] mt-1 ${riskJob.waiting ? 'font-semibold' : 'italic'}`}
+              style={{ color: riskJob.waiting ? WAITING_AMBER : t.hint }}
+            >
+              {jobWaitState(riskJob.step, !!riskJob.waiting).label}
             </Text>
           )}
         </View>

@@ -1137,6 +1137,49 @@ Ticket: a Roofline Lighting render must say what was rendered ("Christmas" + col
 - The "Rendered" line gains ` · 10/6/2026` (M/D/YYYY, no zero padding — was `Oct 6, 2026`) from `run.createdAt`, parsed as TEXT (YYYY-MM-DD) — ⚠️ never
   `new Date()`, which shifts the day across timezones. Hidden when `createdAt` is absent.
 
+## `useLeadPhotosWithPending` — the lead's photos, queue included
+
+`hooks/useLeadPhotosWithPending.ts`, merge rule in `utils/pending-inspection-photos.ts`.
+
+The Pitch Book and the Roofline Deck both built their list as
+`fullLeadData?.outcome?.salesPhotos || fullLeadData?.salesPhotos || lead?.salesPhotos || []` —
+every branch the **server's** list. A photo shot at a door with no signal is not in it; it sits in
+`uploadQueueManager` until it uploads. The rep captured three inspection photos, saw them in Manage
+Photos marked "Saved on device", opened the Roofline Deck to present them, and got "No inspection
+photos available".
+
+⚠️ **This is a different layer from the blank-thumbnail work**, which was all url→bytes
+resolution. Those fixes could not help, because the photo was never in the list to resolve.
+
+⚠️ **For RENDERING only.** A queued photo has no `_id` and no `s3url`, so delete, move and
+`useSecureUrls` must keep reading the SERVER list — passing the merged list to `useSecureUrls`
+would also change its set key on every capture and re-fetch every url for nothing.
+
+⚠️ One hook rather than the merge inlined per screen, deliberately: the two screens had drifted
+once already, and this is the file to change when a third needs the same thing.
+
+## Risk Report / revRender progress bars offline — "waiting", not "failed"
+
+`hooks/useLeadReports.ts`, `widgets/components/LeadCenter/OperationalSections.tsx`, rule in
+`utils/report-job-connectivity.ts`. Endpoints: `LeadService.getJobStatus` (risk poll),
+`getRevRenderBatchStatus` (render poll), `generateWeatherReport` / `generateRevRender` (the starts).
+
+`RiskJob` and the render job gained `waiting?: boolean`, set when a status poll dies on transport
+and cleared by the first poll that reaches the server. The card then shows an amber bar, a
+cloud-off icon in place of the `ActivityIndicator`, and `jobWaitState(...).label`.
+
+⚠️ **`startMockProgress` is a TIMER, not a measurement.** It advances 0→20→67→80% on elapsed
+seconds with no server contact, so offline it kept filling for a render that was never submitted.
+It must return early while unreachable — re-labelling a bar that is still climbing fixes nothing.
+
+⚠️ **`pollRiskStatus` deliberately keeps polling** and still returns `false` on a transport
+failure. The job is running server-side; the interval is what notices it finished.
+
+⚠️ **Three copies of this bar exist** — here, the Pitch Book sheet and the Roofline Deck sheet.
+Separate JSX, not a shared component; the rule is shared, the markup is not.
+
+Why waiting rather than failed, and the trap about keying off the error: [`offline.md`](offline.md).
+
 ## Roof Waiver form: fields hidden under the keyboard
 
 Ticket: *"the UI is hidden under the keyboard inside the waiver form."* `RoofWaiverModal.tsx` is a centred card (`maxHeight: 88%`) in a native `Modal` with a plain `ScrollView`, so the keyboard covered its lower half and nothing scrolled. Same fix as `CoCFormModal`: the backdrop is now `react-native-keyboard-controller`'s `KeyboardAvoidingView behavior="padding"` (shrinks the card to the space above the keyboard) and the body is a `KeyboardAwareScrollView` (`bottomOffset={24}`) that brings the focused field into it; `body` gained `flexShrink: 1` so the scroll area can shrink inside the card. ⚠️ Use the keyboard-controller versions, not React Native's: `KeyboardProvider` makes the app edge-to-edge, so Android no longer resizes the window. ⚠️ File is CRLF. Not verified on device.
