@@ -1,27 +1,44 @@
+import { Platform } from 'react-native';
 import type { KeyboardTypeOptions } from 'react-native';
 
 /**
- * Which keyboard type a numeric TextInput declares - the in-app pad is chosen from it (utils/numpad.ts).
+ * Which numeric keyboard a TextInput should ask for.
  *
- * ⚠️ HISTORY: iPad used to get `numbers-and-punctuation` here to dodge iPadOS's floating key
- * palette (see docs/claude/app-wide.md, "iPad: numeric fields get a DOCKED keyboard"). Numeric
- * fields now use the in-app number pad (`widgets/common/keyboard/NumPad`) and the system
- * keyboard never appears for them, so the type only has to say "whole number" vs "decimal" -
- * which is exactly what the pad reads. Do not reintroduce a platform split here.
+ * ⚠️ WHY THIS EXISTS: iPadOS renders every "pad" keyboard type — `number-pad`,
+ * `decimal-pad`, and `numeric` (which react-native maps to `UIKeyboardTypeDecimalPad`
+ * on iOS) — as a small FLOATING key palette anchored beside the field, with the
+ * phone-keypad `2 ABC / 3 DEF` lettering. On the Deal Center calculator that palette
+ * lands on top of the rows the rep is filling in, and it cannot be docked: the floating
+ * presentation is Apple's, chosen from the keyboard type alone, and no prop moves it.
+ *
+ * A NON-pad type is rendered as the ordinary full-width keyboard docked at the bottom
+ * of the screen, which is what the ticket asked for, so iPad asks for
+ * `numbers-and-punctuation` instead.
+ *
+ * ⚠️ It is a FULL keyboard, so it carries a letters key. That is safe here only because
+ * every consumer already strips non-numerics in `onChangeText` (or parses with
+ * `parseFloat`) — do not point these at a field that stores raw text.
+ *
+ * iPhone and Android are deliberately untouched: the compact pad is the right control on
+ * a phone, and Android has no floating-palette behaviour to work around.
  */
+const IS_IPAD = Platform.OS === 'ios' && Platform.isPad;
 
-/** For fields that accept decimals (prices, footages): the pad gets a `.` key. */
-export const NUMERIC_KEYBOARD: KeyboardTypeOptions = 'numeric';
+/** For fields that accept decimals (prices, footages). Phone/Android: `numeric`. */
+export const NUMERIC_KEYBOARD: KeyboardTypeOptions = IS_IPAD
+  ? 'numbers-and-punctuation'
+  : 'numeric';
 
-/** For whole-number fields: digits only. */
-export const NUMBER_PAD_KEYBOARD: KeyboardTypeOptions = 'number-pad';
+/** For whole-number fields. Phone/Android: `number-pad`. */
+export const NUMBER_PAD_KEYBOARD: KeyboardTypeOptions = IS_IPAD
+  ? 'numbers-and-punctuation'
+  : 'number-pad';
 
 /**
  * True when the numeric keyboard being shown HAS a return key.
  *
- * ⚠️ Now ALWAYS true: numeric fields use the in-app pad (`widgets/common/keyboard/NumPad`),
- * whose ✓ key fires `onSubmitEditing` and then blurs on every platform. Running an `onBlur`
- * commit as well would therefore commit TWICE per tap - read this before adding any
- * blur-as-submit workaround to a numeric field.
+ * ⚠️ Read this before adding an `onBlur` commit as a stand-in for `onSubmitEditing`:
+ * a pad type has no return key (so `onSubmitEditing` never fires and blur is the only
+ * commit), but the iPad keyboard above does — and running both would commit twice.
  */
-export const NUMERIC_KEYBOARD_HAS_RETURN_KEY = true;
+export const NUMERIC_KEYBOARD_HAS_RETURN_KEY = IS_IPAD || Platform.OS === 'android';

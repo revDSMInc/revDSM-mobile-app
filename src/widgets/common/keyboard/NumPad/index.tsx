@@ -79,7 +79,7 @@ const SLIDE_MS = 220;
 // pad out and back in. Detach waits this long for a newcomer.
 const DETACH_GRACE_MS = 60;
 
-export const NumPadProvider: React.FC<{
+const AndroidNumPadProvider: React.FC<{
   children: React.ReactNode;
   mode?: 'pan' | 'inflow';
   /** inflow only: tween the pad's HEIGHT too (form above resizes smoothly, JS driver). Default
@@ -201,6 +201,18 @@ export const NumPadProvider: React.FC<{
     </NumPadContext.Provider>
   );
 };
+
+type NumPadProviderProps = React.ComponentProps<typeof AndroidNumPadProvider>;
+
+/**
+ * ⚠️ ANDROID ONLY. On iOS/iPad this is a pure pass-through - numeric fields keep the SYSTEM keyboard
+ * (decision: the custom pad is for Android; iOS keeps what it had, incl. the iPad docked-keyboard
+ * workaround in `utils/keyboard-type.ts`). No extra Views are mounted on iOS either, so the
+ * app-root and per-Modal hosts cost iOS nothing. `useNumPadField` makes the same platform check -
+ * keep the two in step.
+ */
+export const NumPadProvider: React.FC<NumPadProviderProps> = (props) =>
+  Platform.OS === 'android' ? <AndroidNumPadProvider {...props} /> : <>{props.children}</>;
 
 /**
  * Slides `children` up so the focused field clears the overlay pad.
