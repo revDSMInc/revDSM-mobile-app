@@ -607,3 +607,17 @@ Ticket: *env values were hardcoded in `env.ts` (and derived from the API URL).* 
 - ⚠️ Values are inlined at **build time** and Metro caches transforms: after editing `.env` restart with `yarn start --reset-cache`, or the old value keeps shipping.
 - ⚠️ The prod/staging switch (bucket, Mapbox token, LMS host) is no longer derived from `API_URL` - set each one in `.env` (prod values are listed in `.env.example`).
 - ⚠️ `env.ts` throws on a missing value outside jest, so a clone without `.env` fails at launch rather than calling an empty URL. `yarn.lock` is gitignored, so run `yarn install` to get `react-native-dotenv`.
+
+### Number pad: decimal layout is 4 columns x 4 rows
+
+Ticket: *"the keyboard with the decimal part should have at least four columns — it takes three; consize it."* The decimal pad was the 3-column grid plus a fifth row (`. 0 back` and a full-width Done). It is now `1 2 3 back / 4 5 6 . / 7 8 9 + a TALL Done (spans the last two rows) / a wide 0` - the same 4 rows as the digits pad, so both modes share one height. `numPadMetrics` (`utils/numpad.ts`) always uses 4 rows (`mode` is now unused; kept for the signature); the key layout is in `NumPadPanel` (`widgets/common/keyboard/NumPad/index.tsx`). ⚠️ The panel height is COMPUTED, not measured: the Done key is `2 * keyHeight + GAP` tall and the left block is 2 rows, so they line up only while `rows = 4`; change both together. The digits pad is unchanged (3 columns, `back 0 Done` bottom row). Not verified on device.
+
+### Follow-up: the tall Done key was a circle and off its column
+
+In the 4-column decimal pad the tall Done key rendered as a near-circle (the `Key` radius is `height / 2`, and a tall key is ~2 keys high) and was wider than the `.` / back column above it (a `flex 3 : 1` split ignores the gaps). `Key` gained a `radius` prop (Done passes `keyHeight / 2`, matching the other pills) and the panel measures one column (`onLayout`: `(width - 5 * GAP) / 4`) so the 3-key block is `3w + 2G` wide and Done is exactly `w`. ⚠️ Keep the explicit widths; the `flex` values are only the first-frame fallback before the measure lands.
+
+### Number pad: `NumPadScrollView` (modal bodies)
+
+`widgets/common/NumPadScrollView.tsx` is a `ScrollView` + `collapsable={false}` content wrapper + `useNumPadScrollIntoView`, for forms whose numeric fields would otherwise sit under the in-app pad. First user: `ResultJobModal` (Down Payment amount box was half cut off); the same hook is also used directly in `DynamicTabRenderer` and `RoofWaiverModal` (see above).
+- ⚠️ **A component, not a hook call in the screen**: `useNumPadTarget` reads the NEAREST `NumPadProvider`, and every `Modal` mounts its own (`index.js`). A hook called in the modal's parent component reads the app-root provider and never fires; the component below `<Modal>` reads the right one. The same applies to `useNumPadActive` (see `PadAwareCenter` in `ResultJobModal`).
+- `contentTop` = the content container's top padding, so the offset maths stays right. Not verified on device.
