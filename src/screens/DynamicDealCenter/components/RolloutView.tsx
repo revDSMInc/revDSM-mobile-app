@@ -17,6 +17,7 @@ import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type Pa
 import { FlashMessage } from '../../../config/message';
 import { allRolloutsConfirmed, rolloutCalculators } from '../../../utils/rollout-status';
 import { useAuth } from '../../../hooks/useAuth';
+import { useBottomInset } from '../../../hooks/useBottomInset';
 import {
   DealPricing,
   DealPlan,
@@ -200,6 +201,8 @@ function PaymentPlanModal({ visible, selected, price, plans, categories, onSelec
   plans: Record<string, DealPlan>; categories: PayCategory[];
   onSelect: (key: string) => void; onClose: () => void;
 }) {
+  // A Modal reads a 0 / stale safe-area inset, so the last plan sat under Android's nav bar.
+  const bottomInset = useBottomInset();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={onClose}>
@@ -210,7 +213,7 @@ function PaymentPlanModal({ visible, selected, price, plans, categories, onSelec
               <Ionicons name="close" size={22} color="#637381" />
             </TouchableOpacity>
           </View>
-          <ScrollView contentContainerStyle={{ padding: 14 }} showsVerticalScrollIndicator={false}>
+          <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 14 + bottomInset }} showsVerticalScrollIndicator={false}>
             {categories.map((cat) => (
               <View key={cat.title || 'basic'} style={{ marginBottom: cat.title ? 16 : 8 }}>
                 {!!cat.title && (

@@ -50,25 +50,8 @@ export function getDefaultPaymentMethod(isLowesLead: boolean, existing?: string)
   return existing || 'check';
 }
 
-/** Rollout summary payment picker categories. */
-export function getRolloutPaymentCategories(isLowesLead: boolean): PaymentPlanCategory[] {
-  if (isLowesLead) {
-    return [
-      {
-        title: "",
-        bg: 'bg-slate-50',
-        text: 'text-slate-900',
-        plans: [...LOWES_BASIC_KEYS],
-      },
-      {
-        title: "Lowe's Plan",
-        bg: 'bg-[#e8f4fd]',
-        text: 'text-slate-900',
-        plans: [...LOWES_FINANCING_KEYS],
-      },
-    ];
-  }
-
+/** Non-Lowe's picker groups (Basic, GreenSky, Wells Fargo, Concora). */
+function getStandardPaymentCategories(): PaymentPlanCategory[] {
   return [
     {
       title: 'Basic Options',
@@ -107,7 +90,34 @@ export function getRolloutPaymentCategories(isLowesLead: boolean): PaymentPlanCa
   ];
 }
 
-/** Drop modal "+ Add Plan" list — Lowe's leads only see Lowe's financing plans. */
+/**
+ * Rollout summary payment picker categories. A Lowe's lead sees its own plans FIRST and
+ * then every standard financing group; every other lead never sees a Lowe's plan.
+ */
+export function getRolloutPaymentCategories(isLowesLead: boolean): PaymentPlanCategory[] {
+  const standard = getStandardPaymentCategories();
+  if (isLowesLead) {
+    return [
+      {
+        title: "",
+        bg: 'bg-slate-50',
+        text: 'text-slate-900',
+        plans: [...LOWES_BASIC_KEYS],
+      },
+      {
+        title: "Lowe's Plan",
+        bg: 'bg-[#e8f4fd]',
+        text: 'text-slate-900',
+        // Standard "Basic Options" (check / cards) stay out: Lowe's takes ACH / CC.
+        plans: [...LOWES_FINANCING_KEYS],
+      },
+      ...standard.filter((c) => c.title !== 'Basic Options'),
+    ];
+  }
+  return standard;
+}
+
+/** Drop modal "+ Add Plan" list — Lowe's leads see Lowe's financing plus every standard group. */
 export function getDropAddPlanCategories(isLowesLead: boolean): PaymentPlanCategory[] {
   if (isLowesLead) {
     return [
@@ -117,6 +127,7 @@ export function getDropAddPlanCategories(isLowesLead: boolean): PaymentPlanCateg
         text: 'text-slate-900',
         plans: [...LOWES_FINANCING_KEYS],
       },
+      ...getRolloutPaymentCategories(false).filter((cat) => cat.title !== 'Basic Options'),
     ];
   }
   return getRolloutPaymentCategories(false).filter(cat => cat.title !== 'Basic Options');
