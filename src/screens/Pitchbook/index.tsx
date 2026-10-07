@@ -41,6 +41,7 @@ import {
 } from '../../widgets/common/PhotoPeekScrollLock';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { jobWaitState, WAITING_AMBER } from '../../utils/report-job-connectivity';
 import IonIcon from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../widgets/common/MainHeader';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -1962,7 +1963,11 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
               )}
               {riskJob && riskJob.status !== 'completed' && (
                 <View className="flex-row items-center gap-2">
-                  <ActivityIndicator size="small" color={colors.primary.main} />
+                  {riskJob.waiting ? (
+                    <Icon name="cloud-off-outline" size={14} color={WAITING_AMBER} />
+                  ) : (
+                    <ActivityIndicator size="small" color={colors.primary.main} />
+                  )}
                   <Text className="text-[10px] font-bold" style={{ color: t.hint }}>
                     {riskJob.progress}%
                   </Text>
@@ -1977,12 +1982,23 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
               className="mt-3 h-1.5 w-full rounded-full overflow-hidden"
               style={{ backgroundColor: t.track }}
             >
-              <View className="h-full bg-emerald-500" style={{ width: `${riskJob.progress}%` }} />
+              <View
+                className={`h-full ${riskJob.waiting ? '' : 'bg-emerald-500'}`}
+                style={{
+                  width: `${riskJob.progress}%`,
+                  // ⚠️ Set as an explicit colour, not a Tailwind class: this sheet renders over the
+                  // dark presentation theme as well, where a slate/amber utility pair reads wrong.
+                  ...(riskJob.waiting ? { backgroundColor: WAITING_AMBER } : {}),
+                }}
+              />
             </View>
           )}
           {riskJob && riskJob.status !== 'completed' && (
-            <Text className="text-[10px] mt-1 italic" style={{ color: t.hint }}>
-              {riskJob.step || 'Processing...'}
+            <Text
+              className={`text-[10px] mt-1 ${riskJob.waiting ? 'font-semibold' : 'italic'}`}
+              style={{ color: riskJob.waiting ? WAITING_AMBER : t.hint }}
+            >
+              {jobWaitState(riskJob.step, !!riskJob.waiting).label}
             </Text>
           )}
         </View>

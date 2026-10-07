@@ -26,6 +26,7 @@ import {
 } from '../../widgets/common/PhotoPeekScrollLock';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { jobWaitState } from '../../utils/report-job-connectivity';
 import IonIcon from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../widgets/common/MainHeader';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -1393,7 +1394,11 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
               )}
               {riskJob && riskJob.status !== 'completed' && (
                 <View className="flex-row items-center gap-2">
-                  <ActivityIndicator size="small" color={colors.primary.main} />
+                  {riskJob.waiting ? (
+                    <Icon name="cloud-off-outline" size={14} color="#B45309" />
+                  ) : (
+                    <ActivityIndicator size="small" color={colors.primary.main} />
+                  )}
                   <Text className="text-[10px] font-bold text-slate-500 ">{riskJob.progress}%</Text>
                 </View>
               )}
@@ -1403,12 +1408,19 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
           {/* Progress Bar for Risk Job */}
           {riskJob && riskJob.status !== 'completed' && (
             <View className="mt-3 h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-              <View className="h-full bg-emerald-500" style={{ width: `${riskJob.progress}%` }} />
+              <View
+                className={`h-full ${riskJob.waiting ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                style={{ width: `${riskJob.progress}%` }}
+              />
             </View>
           )}
           {riskJob && riskJob.status !== 'completed' && (
-            <Text className="text-[10px] text-slate-400 mt-1 italic">
-              {riskJob.step || 'Processing...'}
+            <Text
+              className={`text-[10px] mt-1 ${
+                riskJob.waiting ? 'text-amber-700 font-semibold' : 'text-slate-400 italic'
+              }`}
+            >
+              {jobWaitState(riskJob.step, !!riskJob.waiting).label}
             </Text>
           )}
         </View>

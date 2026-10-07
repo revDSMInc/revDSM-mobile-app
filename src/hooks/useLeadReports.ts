@@ -10,6 +10,10 @@ import { reportDisplayName } from '../utils/report-name';
 import { ENV } from '../config/env';
 import { useAuth } from './useAuth';
 import { logEvent } from '../services/api/LoggerService';
+import {
+  isWaitingForSignal,
+  shouldAnnouncePollFailure,
+} from '../utils/report-job-connectivity';
 
 
 export interface RiskJob {
@@ -18,6 +22,8 @@ export interface RiskJob {
   status: string;
   step: string;
   error?: string | null;
+  /** Set when a poll died on transport: the server job is very likely still running. */
+  waiting?: boolean;
 }
 
 
@@ -206,6 +212,8 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             status: data.status,
             step: data.step,
             error: data.error || null,
+            // Reached the server: whatever `waiting` said before, it is stale now.
+            waiting: false,
           };
           updateRiskJob(updatedJob);
 
@@ -277,7 +285,18 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
           }
         }
       } catch (err) {
-        console.error('[Risk] Status check failed:', err);
+        // ⚠️ Losing signal is NOT the report failing — it is generated on the SERVER and is very
+        // probably still going. Flag the card as waiting (which replaces the frozen server `step`
+        // with an honest line and stops the bar reading as live work) and keep polling: the first
+        // tick after reconnect clears it. Returning `false` deliberately keeps the interval alive.
+        if (isWaitingForSignal(err)) {
+          updateRiskJob({
+            ...(activeRiskJobs[leadId] || { jobId, progress: 0, status: 'running', step: '' }),
+            waiting: true,
+          });
+        } else {
+          console.error('[Risk] Status check failed:', err);
+        }
       }
       return false;
     },
@@ -442,6 +461,8 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     const runRender = async (job: any, index: number) => {
       let mockTimer: any = null;
       let isCompleted = false;
+      // Set by the poll loop below when a status check dies on transport.
+      let unreachable = false;
 
       const startMockProgress = () => {
         let elapsed = 0;
@@ -450,6 +471,12 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             clearInterval(mockTimer);
             return;
           }
+          // ⚠️ This progress is a TIMER, not a measurement — it advances 0→20→67→80% on elapsed
+          // seconds alone, with no server contact. Offline that made the bar climb while nothing
+          // was happening, which is the 67% in the reported screenshot. While unreachable it must
+          // hold its last number: a bar that keeps filling is a stronger (and falser) promise than
+          // any label can undo.
+          if (unreachable) return;
           elapsed += 1;
           let nextProgress = 0;
           if (elapsed >= 15) {
@@ -527,6 +554,14 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
           await new Promise<void>(resolve => setTimeout(() => resolve(), 3000));
           try {
             const statusRes = await LeadService.getRevRenderBatchStatus(batchId);
+            if (unreachable) {
+              unreachable = false;
+              updateJobStateAndPersistence(prev => {
+                const next = [...prev];
+                if (next[index]) next[index].waiting = false;
+                return next;
+              });
+            }
             const batch = statusRes.data?.batch || statusRes.data;
             const batchStatus = batch?.status;
             const batchTotal = batch?.total || 1;
@@ -589,7 +624,21 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
           } catch (pollErr: any) {
             // Re-throw deliberate failures (failed/cancelled status) so the outer catch handles them
             if (isDone) throw pollErr;
-            console.error('Polling error:', pollErr);
+            // ⚠️ A render is generated on the SERVER; losing signal does not cancel it. Hold the
+            // bar, mark the card waiting, and keep looping — the first successful tick after
+            // reconnect clears the flag and the real progress takes over.
+            if (isWaitingForSignal(pollErr)) {
+              if (!unreachable) {
+                unreachable = true;
+                updateJobStateAndPersistence(prev => {
+                  const next = [...prev];
+                  if (next[index]) next[index].waiting = true;
+                  return next;
+                });
+              }
+            } else if (shouldAnnouncePollFailure(pollErr)) {
+              console.error('Polling error:', pollErr);
+            }
           }
         }
 
@@ -610,7 +659,14 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
         // backend text when the failure came from `extractBatchFailureMessage` above;
         // the `err?.error` parse stays as a fallback for a differently-shaped error
         // (e.g. a raw axios error from `generateRevRender` itself failing to start).
-        let errorMsg = err?.message || 'Generation failed';
+        // ⚠️ A render that never REACHED the server is a real failure — nothing was submitted and
+        // nothing is coming — but it must not be reported in axios' own words. "Network Error" over
+        // a render tells a rep mid-sale that the app is broken; this says what happened and that
+        // retrying later is the fix. (A render already accepted and merely unreachable never gets
+        // here — the poll loop holds it as `waiting` instead.)
+        let errorMsg = isWaitingForSignal(err)
+          ? 'No connection — this render was not started. Try again once you have signal.'
+          : err?.message || 'Generation failed';
         try {
           const errorBody = typeof err?.error === 'string' ? JSON.parse(err.error) : err?.error;
           if (errorBody?.error?.code === 503 || errorBody?.code === 503) {

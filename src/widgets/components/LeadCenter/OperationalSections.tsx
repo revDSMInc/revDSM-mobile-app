@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, Image, ScrollView, ActivityIndicator, Ani
 import { useTheme } from '../../../theme/ThemeProvider';
 import YearDropdown from '../../components/YearDropdown';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { jobWaitState, WAITING_AMBER, WAITING_LABEL } from '../../../utils/report-job-connectivity';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useRevRenderRunsQuery } from '../../../hooks/useLeadQuery';
 import { useLeadCalculatorStatus } from '../../../hooks/useLeadCalculatorStatus';
@@ -96,6 +97,10 @@ export const ToolsSection = ({
 
   const hasActiveJobs = revRenderJobs.some(
     (j: any) => j.status !== 'completed' && j.status !== 'failed'
+  );
+  /** Any still-running render whose last status poll could not reach the server. */
+  const revRenderWaiting = revRenderJobs.some(
+    (j: any) => j.waiting && j.status !== 'completed' && j.status !== 'failed'
   );
   const { data: runs, isLoading, refetch: refetchRuns } = useRevRenderRunsQuery(
     lead?._id || ''
@@ -269,10 +274,23 @@ export const ToolsSection = ({
             </View>
             <View className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
               <View
-                className="h-full bg-[#2EDE56] shadow-sm shadow-[#2EDE56CC]"
+                className={`h-full ${
+                  revRenderWaiting ? 'bg-amber-500' : 'bg-[#2EDE56] shadow-sm shadow-[#2EDE56CC]'
+                }`}
                 style={{ width: `${Math.round(revRenderJobs.reduce((acc: number, j: any) => acc + (j.progress || 0), 0) / revRenderJobs.length)}%` }}
               />
             </View>
+            {/* ⚠️ The bar above is driven by a TIMER, not a measurement (see
+                `startMockProgress`). Offline it used to keep climbing past a render that was never
+                submitted, so it now holds still and says why. */}
+            {revRenderWaiting && (
+              <View className="flex-row items-center gap-1.5 mt-1.5">
+                <Icon name="cloud-off-outline" size={14} color={WAITING_AMBER} />
+                <Text className="text-[12px] text-amber-700 font-semibold flex-1">
+                  {WAITING_LABEL}
+                </Text>
+              </View>
+            )}
           </View>
         )}
 
@@ -406,7 +424,13 @@ export const ToolsSection = ({
             )}
             {riskJob && riskJob.status !== 'completed' && (
               <View className="flex-row items-center gap-2">
-                <ActivityIndicator size="small" color={colors.primary.main} />
+                {/* ⚠️ No spinner while waiting — a spinning indicator beside "waiting for signal"
+                    contradicts the sentence next to it and reads as work in progress. */}
+                {riskJob.waiting ? (
+                  <Icon name="cloud-off-outline" size={16} color={WAITING_AMBER} />
+                ) : (
+                  <ActivityIndicator size="small" color={colors.primary.main} />
+                )}
                 <Text className="text-[12px] font-bold text-slate-500 ">{riskJob.progress}%</Text>
               </View>
             )}
@@ -416,12 +440,19 @@ export const ToolsSection = ({
         {/* Progress Bar for Risk Job */}
         {riskJob && riskJob.status !== 'completed' && (
           <View className="mt-3 h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-            <View className="h-full bg-[#4CBB17]" style={{ width: `${riskJob.progress}%` }} />
+            <View
+              className={`h-full ${riskJob.waiting ? 'bg-amber-500' : 'bg-[#4CBB17]'}`}
+              style={{ width: `${riskJob.progress}%` }}
+            />
           </View>
         )}
         {riskJob && riskJob.status !== 'completed' && (
-          <Text className="text-[12px] text-slate-400 mt-1 italic">
-            {riskJob.step || 'Processing...'}
+          <Text
+            className={`text-[12px] mt-1 ${
+              riskJob.waiting ? 'text-amber-700 font-semibold' : 'text-slate-400 italic'
+            }`}
+          >
+            {jobWaitState(riskJob.step, !!riskJob.waiting).label}
           </Text>
         )}
       </View>
