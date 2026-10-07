@@ -368,10 +368,14 @@ export function useDynamicInspectionCapture({
            * that throws, the catch keeps the phase-1 fallback, and the fallback is
            * `resolveS3Url` — a DIFFERENT url that was never warmed, so the tile had nothing.
            *
-           * Same key shape as `useSecureUrls`, so both screens read and write one entry.
+           * ⚠️ A SEPARATE key namespace from `useSecureUrls`, and that is load-bearing.
+           * This stores the raw axios RESPONSE; `useSecureUrls` stores a category map
+           * (`Record<string, Array<…>>`). Sharing a key made one overwrite the other, and
+           * `buildInspectionSections` then ran `(list || []).forEach` over a non-array —
+           * "undefined is not a function", a hard RENDER CRASH on the Roofline Deck.
            */
           const res = await cachedFetch(
-            `${OFFLINE_CACHE.SECURE_URLS}:${hashString(filePaths.map((f) => f.filePath).join(','))}-${filePaths.length}`,
+            `${OFFLINE_CACHE.SECURE_URLS}:capture:${hashString(filePaths.map((f) => f.filePath).join(','))}-${filePaths.length}`,
             () => LeadService.getSecureUrls(filePaths),
             { online: isOnline(), userId }
           );

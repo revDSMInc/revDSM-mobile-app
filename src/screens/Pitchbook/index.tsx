@@ -57,6 +57,7 @@ import { downloadPdfToDevice } from '../../utils/download-utils';
 import { storage } from '../../utils/storage';
 import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
+import { useLeadPhotosWithPending } from '../../hooks/useLeadPhotosWithPending';
 import { usePitchBookDeck } from '../../hooks/usePitchBooks';
 import { useIsOnline } from '../../hooks/useIsOnline';
 import { useTabStripAutoScroll } from '../../hooks/useTabStripAutoScroll';
@@ -339,11 +340,23 @@ export default function PitchbookScreen() {
   const [loading, setLoading] = useState(true);
   const [fullLeadData, setFullLeadData] = useState<any>(null);
 
-  const activePhotos = useMemo(() => {
+  const serverPhotos = useMemo(() => {
     return fullLeadData?.outcome?.salesPhotos || fullLeadData?.salesPhotos || lead?.salesPhotos || [];
   }, [fullLeadData, lead]);
 
-  const { data: secureImages = {} } = useSecureUrls(activePhotos);
+  /**
+   * ⚠️ Plus the shots still in the UPLOAD QUEUE. `salesPhotos` is the server's list, so a photo
+   * captured at a door with no signal is not in it — the rep saw three photos in Manage Photos
+   * marked "Saved on device" and this screen said "No inspection photos available".
+   */
+  const activePhotos = useLeadPhotosWithPending(
+    serverPhotos,
+    (lead as any)?._id || (lead as any)?.id
+  );
+
+  // ⚠️ The SERVER photos only. A queued shot has no `s3url` to sign, and passing it would
+  // change the set key on every capture, re-fetching every url for nothing.
+  const { data: secureImages = {} } = useSecureUrls(serverPhotos);
 
   /*
     The dock decides the Inspection tab's EMPTY state itself rather than letting

@@ -94,15 +94,25 @@ export function buildInspectionSections(
   // flatten it back into a plain s3url → signed-url lookup and re-group from the
   // photo records themselves, which carry the metadata the grouping needs.
   const uriByS3: Record<string, string> = {};
-  Object.values(secureImages || {}).forEach((list) =>
-    (list || []).forEach((img) => {
-      if (img?.s3url) uriByS3[img.s3url] = img.uri;
-    })
-  );
+  /**
+   * ⚠️ `Array.isArray`, not `list || []` — a non-array TRUTHY value sails through that guard and
+   * `.forEach` is then undefined. This crashed the whole Roofline Deck with "undefined is not a
+   * function" the moment a wrongly-shaped entry reached the offline cache.
+   *
+   * ⚠️ This function renders a rep's PRESENTATION in front of a customer, so it must degrade to
+   * "no photos" rather than take the screen down. Anything unrecognised is skipped.
+   */
+  Object.values(secureImages || {}).forEach((list) => {
+    if (!Array.isArray(list)) return;
+    list.forEach((img) => {
+      if (img?.s3url && typeof img.uri === 'string') uriByS3[img.s3url] = img.uri;
+    });
+  });
 
   const secMap = new Map<string, { id: string; name: string; slots: Map<string, SectionPhoto[]> }>();
 
-  (photos || []).forEach((p: any) => {
+  // ⚠️ Same reason as `uriByS3` above: a truthy non-array would pass `|| []` and then throw.
+  (Array.isArray(photos) ? photos : []).forEach((p: any) => {
     if (!p || p.deletedAt || isAnnotatedPhoto(p)) return;
     /**
      * ⚠️ `p.uri` is the third source, and leaving it out is what hid every photo shot at a door

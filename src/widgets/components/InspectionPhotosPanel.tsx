@@ -304,6 +304,23 @@ export function InspectionPhotosPanel({ photos, secureImages, onAction }: Inspec
   const [viewer, setViewer] = useState<{ sectionId: string; index: number } | null>(null);
   const sections = useMemo(() => buildInspectionSections(photos, secureImages), [photos, secureImages]);
 
+  /**
+   * ⚠️ The GRID needs the warmed copies too, and its absence is the reported bug.
+   *
+   * The viewer below resolves through `srcOf` (`warmed[uri] || uri`); this accordion rendered
+   * `img.uri` RAW. Those urls are pre-signed S3 links with no cache headers (CLAUDE.md §6), so
+   * offline every thumbnail painted nothing while tapping one opened a full-screen image that
+   * worked perfectly — the same photo, two code paths, one of them warmed.
+   *
+   * Hoisted to the panel rather than per section: one hook for every photo on screen, and the
+   * map is seeded synchronously, so a cached thumbnail paints on the first frame.
+   */
+  const gridUris = useMemo(
+    () => sections.flatMap((s) => s.photos.map((p) => p.uri)).filter(Boolean),
+    [sections]
+  );
+  const gridWarmed = useWarmedImageUris(gridUris);
+
   const viewerSection = viewer ? sections.find((s) => s.id === viewer.sectionId) : null;
 
   if (sections.length === 0) {
@@ -399,7 +416,13 @@ export function InspectionPhotosPanel({ photos, secureImages, onAction }: Inspec
                           borderColor: '#E2E8F0',
                         }}
                       >
-                        <Image source={{ uri: img.uri }} className="w-full h-full" resizeMode="cover" />
+                        <Image
+                          // ⚠️ The warmed local copy first — see `gridWarmed`. Falling back to
+                          // the raw url keeps this no worse than before it was cached.
+                          source={{ uri: gridWarmed[img.uri] || img.uri }}
+                          className="w-full h-full"
+                          resizeMode="cover"
+                        />
 
                         {/* Eye affordance, top-left (web `mdi:eye`). */}
                         <View
