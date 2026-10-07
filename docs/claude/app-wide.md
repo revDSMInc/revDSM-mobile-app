@@ -7,7 +7,7 @@
 
 ## iPad: numeric fields get a DOCKED keyboard, not iPadOS's floating palette
 
-> ⚠️ **SUPERSEDED** by "Custom in-app number pad" below: numeric fields no longer show ANY system keyboard, so `utils/keyboard-type.ts` is back to plain `numeric` / `number-pad` on every platform and `NUMERIC_KEYBOARD_HAS_RETURN_KEY` is always `true`. The notes below explain the history.
+> ⚠️ **STILL IN FORCE ON iOS/iPad.** The custom number pad is ANDROID-ONLY (see "Custom in-app number pad" below), so iOS and iPad keep the system keyboard and this whole section - `NUMERIC_KEYBOARD` / `NUMBER_PAD_KEYBOARD` resolving to `numbers-and-punctuation` on iPad, and `NUMERIC_KEYBOARD_HAS_RETURN_KEY` - applies exactly as written. `utils/keyboard-type.ts` was restored to its pre-pad form for that reason.
 
 Ticket: *"Change UI of number pad — it should be like 2nd image"*, against a screenshot of the Deal
 Center calculator on an iPad with a small floating keypad sitting on top of the Gutters rows it was
@@ -573,3 +573,12 @@ Ticket: *"make the custom num pad global - every digit field in the app, restric
 - Files touched by the app-wide rollout: `index.js` (TextInput + Modal patches), `utils/keyboard-type.ts` (platform split removed), `widgets/common/CustomInput.tsx` (only gained the `numPad` prop type; the logic lives in `useNumPadField`, never duplicate it there or a field attaches twice), `widgets/common/keyboard/GlobalKeyboard/index.tsx` (`useNumPadActive`).
 - ⚠️ **Default is now `mode="inflow"`, NOT pan** (follow-up): pan slid the WHOLE screen up - header included - to clear the field (Job Builder lost its top bar and the Next footer sat under the pad). In flow, the pad takes its own strip and the screen shrinks like the system keyboard did; header/footer never move. The space is reserved at once and only the pad slides (native driver); `layoutAnimated` (Lead Create only) also tweens the height. `fill` wraps children+pad in a `flex: 1` View - used by the root and the Modal wrapper, ⚠️ NOT by Lead Create, whose parent is content-sized (`maxHeight`) where a flex child collapses. Known cost: a screen whose own footer adds `insets.bottom` shows that gap above the pad. `mode="pan"` stays available but nothing uses it.
 - Files for the in-flow default: `index.js` (Modal wrapper mounts `<NumPadProvider fill>`) and `widgets/common/keyboard/NumPad/index.tsx` (`mode` default `inflow`, `fill`, `layoutAnimated`, panel reserves its space at once). Already described above - this line only lists the touched files.
+
+### Android only (decision)
+
+*"Use the custom keyboard only on Android; iOS keeps the system keyboard."*
+
+- `NumPadProvider` (`widgets/common/keyboard/NumPad/index.tsx`) is a **pure pass-through on iOS/iPad** - no host View, no state - and `useNumPadField` returns `null` unless `Platform.OS === 'android'`, so a numeric `TextInput` on iOS is exactly what it was before the pad existed. The root provider and the patched `Modal` therefore cost iOS nothing.
+- ⚠️ **Keep the two platform checks in step** (`NumPadProvider` and `useNumPadField`). If only the hook stayed Android-gated, iOS would still mount hosts; if only the provider were, iOS fields would suppress their system keyboard with no pad to type on - **a field the rep cannot type into**.
+- ⚠️ **`utils/keyboard-type.ts` is back to its original** (iPad -> `numbers-and-punctuation`, `NUMERIC_KEYBOARD_HAS_RETURN_KEY = IS_IPAD || android`), because iOS needs it again. On Android the constants are plain `numeric` / `number-pad` (distinct, which is what the pad reads), and the return-key flag is `true`, so the Done check commits exactly once - `RolloutView`'s blur commit stays disarmed there and armed on iPhone only, as before.
+- The Android-specific traps above (Done submits then blurs, Android `keyboardDidShow` guard, in-flow default, `fill`) are unchanged; the iOS-only notes in them (QuickType bar, stale keyboard height) no longer apply.

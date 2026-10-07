@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { Keyboard, TextInput } from 'react-native';
+import { Keyboard, Platform, TextInput } from 'react-native';
 import type { KeyboardTypeOptions, TextInputProps } from 'react-native';
 import { numPadModeFor, type NumPadMode } from '../../../../utils/numpad';
 import { useNumPad, type NumPadTarget } from './index';
@@ -30,7 +30,8 @@ type FieldProps = Pick<
  */
 export function useNumPadField(props: FieldProps) {
   const pad = useNumPad();
-  const mode = pad ? numPadModeFor(props.keyboardType, props.numPad) : null;
+  // ⚠️ Android only: iOS/iPad keep the system keyboard (see `NumPadProvider`).
+  const mode = pad && Platform.OS === 'android' ? numPadModeFor(props.keyboardType, props.numPad) : null;
 
   // Everything the pad reads at key-press time lives in a ref, so it never goes stale and the
   // registered target never has to be rebuilt after a keystroke.
