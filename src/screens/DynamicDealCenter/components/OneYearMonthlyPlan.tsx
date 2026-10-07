@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, Modal, Pressable, ScrollView } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import {
@@ -27,6 +27,8 @@ interface Props {
   value: OneYearMonthlyValue;
   onChange: (v: OneYearMonthlyValue) => void;
   locked?: boolean;
+  /** The lead-wide default plan (set on ANY of this lead's calculators); null when none. */
+  leadDefault?: { planKey: string; apr?: number } | null;
 }
 
 const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
@@ -37,22 +39,29 @@ const aprPercent = (apr: any): number => {
   return n < 1 ? n * 100 : n;
 };
 
-export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey, base, value, onChange, locked = false }: Props) {
+export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey, base, value, onChange, locked = false, leadDefault = null }: Props) {
   const [showPicker, setShowPicker] = useState(false);
-  const mode = value?.mode || 'match';
+  // A calculator INHERITS the lead's default plan until the rep changes it there: nothing stored yet,
+  // or `Default` clicked without a pick of its own. An explicit Match / custom pick (or its own
+  // default pick, `isDefault`) is the rep's decision for this calculator and is never overwritten.
+  const inherits = !!leadDefault && (!value || (value.mode === 'default' && !value.isDefault));
+  const mode = value?.mode || (leadDefault ? 'default' : 'match');
+
+  const effectiveDefaultKey = inherits && leadDefault ? leadDefault.planKey : value?.isDefault && value.planKey ? value.planKey : defaultKey;
 
   const resolvedKey = useMemo(() => {
     if (mode === 'match') return inHomeMethod;
-    if (mode === 'default') return defaultKey;
+    if (mode === 'default') return effectiveDefaultKey;
     return value?.planKey || defaultKey;
-  }, [mode, inHomeMethod, defaultKey, value?.planKey]);
+  }, [mode, inHomeMethod, effectiveDefaultKey, defaultKey, value?.planKey]);
 
   const monthly = useMemo(() => calcMonthly(plans, base, resolvedKey), [plans, base, resolvedKey]);
   const financing = isFinancing(plans, resolvedKey);
 
-  const commit = (nextMode: 'match' | 'default' | 'custom', nextKey?: string) => {
+  const commit = (nextMode: 'match' | 'default' | 'custom', nextKey?: string, asLeadDefault = false) => {
     if (locked) return;
-    const key = nextMode === 'match' ? inHomeMethod : nextMode === 'default' ? defaultKey : (nextKey || defaultKey);
+    const key =
+      nextMode === 'match' ? inHomeMethod : nextMode === 'default' ? (nextKey || effectiveDefaultKey) : (nextKey || defaultKey);
     const m = calcMonthly(plans, base, key);
     onChange({
       mode: nextMode,
@@ -60,8 +69,25 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
       apr: plans[key]?.apr,
       monthlyPayment: m,
       grandTotal: base,
+      // Only a plan the rep PICKED while on Default becomes the lead-wide default.
+      isDefault: nextMode === 'default' && (asLeadDefault || !!value?.isDefault),
     });
   };
+
+  // Persist an inherited default (a calculator created later, or one still on a bare `Default`).
+  useEffect(() => {
+    if (locked || !leadDefault || !inherits) return;
+    if (value && value.planKey === leadDefault.planKey) return;
+    onChange({
+      mode: 'default',
+      planKey: leadDefault.planKey,
+      apr: plans[leadDefault.planKey]?.apr,
+      monthlyPayment: calcMonthly(plans, base, leadDefault.planKey),
+      grandTotal: base,
+      isDefault: false,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leadDefault?.planKey, inherits, value?.planKey, locked]);
 
   const financingCategories = useMemo(
     () =>
@@ -114,7 +140,15 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
             </View>
           </View>
         ) : (
-          <Text style={{ fontSize: 9, color: '#94A3B8', flex: 1 }}>Pick a financing plan to show a monthly</Text>
+          // Basic method (Check / card / ACH): no financing term, so the monthly is $0 - shown
+          // exactly like the web 1-Year card ("$0 /mo  Check (Bank Fee: 0%)") instead of a hint.
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+              <Text style={{ fontSize: 16, fontWeight: '900', color: '#4CBB17' }}>{fmt(0)}</Text>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#4CBB17', marginLeft: 2 }}>/mo</Text>
+            </View>
+            <Text numberOfLines={2} style={{ fontSize: 9, fontWeight: '700', color: '#637381', marginTop: 2 }}>{planLabelOf(plans, resolvedKey)}</Text>
+          </View>
         )}
         {!locked && (
           <TouchableOpacity
@@ -125,6 +159,10 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
           </TouchableOpacity>
         )}
       </View>
+
+      <Text style={{ fontSize: 9, color: '#94A3B8', marginTop: 8, lineHeight: 12 }}>
+        {mode === 'match' ? 'Mirrors In-Home selected plan \u00B7 pencil overrides' : mode === 'default' ? 'Uses your default plan \u00B7 pencil overrides' : 'Custom plan \u00B7 Match resets it'}
+      </Text>
 
       {/* Plan picker (custom) — bottom sheet matching the rollout PaymentPlanModal. */}
       <Modal visible={showPicker} transparent animationType="slide" onRequestClose={() => setShowPicker(false)}>
@@ -159,12 +197,12 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                     )}
                     {cat.plans.map((key) => {
                       const m = calcMonthly(plans, base, key);
-                      const isSel = mode === 'custom' ? value?.planKey === key : resolvedKey === key;
+                      const isSel = resolvedKey === key;
                       return (
                         <TouchableOpacity
                           key={key}
                           activeOpacity={0.85}
-                          onPress={() => { commit('custom', key); setShowPicker(false); }}
+                          onPress={() => { if (mode === 'default') commit('default', key, true); else commit('custom', key); setShowPicker(false); }}
                           style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: isSel ? 2 : 1, borderColor: isSel ? '#4CBB17' : '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 9, backgroundColor: isSel ? '#4CBB170D' : '#fff' }}
                         >
                           <View style={{ flex: 1, paddingRight: 12 }}>

@@ -664,7 +664,7 @@ function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   );
 }
 
-function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, isRehashed = false, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, lockState, onResetJobBuilder, onDismissScopeWarning, onShowPackageInfo, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, isRehashed = false, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, lockState, onResetJobBuilder, onDismissScopeWarning, onShowPackageInfo, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange, leadOneYearDefault = null }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
   isLowesLead: boolean;
@@ -687,6 +687,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   onDownPaymentChange: (id: string, downPayment: number) => void;
   onRendersChange: (id: string, renders: any[]) => void;
   onOneYearMonthlyChange: (id: string, plan: OneYearMonthlyValue) => void;
+  leadOneYearDefault?: { planKey: string; apr?: number } | null;
 }) {
   const { user, refreshUser } = useAuth();
   const packageInfo = useMemo(
@@ -1418,6 +1419,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   value={calculator.oneYearMonthlyPlan ?? null}
                   onChange={(v) => onOneYearMonthlyChange(calculator.id, v)}
                   locked={false}
+                  leadDefault={leadOneYearDefault}
                 />
               </View>
 
@@ -1470,12 +1472,11 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                     </View>
                   )}
 
-                  {preOrderMonthly > 0 && (
-                    <View style={{ alignItems: 'center', marginTop: 4 }}>
-                      <Text style={{ fontSize: 16, fontWeight: '900', color: '#60A5FA', marginBottom: 2 }}>{fmt(preOrderMonthly)}/mo</Text>
-                      <Text style={{ fontSize: 8, color: '#94A3B8', textAlign: 'center' }} numberOfLines={2}>{planLabelOf(plans, method)}</Text>
-                    </View>
-                  )}
+                  {/* Always shown (web parity): a basic method reads "$0 /mo  Check (Bank Fee: 0%)". */}
+                  <View style={{ alignItems: 'center', marginTop: 4 }}>
+                      <Text style={{ fontSize: 16, fontWeight: '900', color: '#1C252E', marginBottom: 2 }}>{fmt(preOrderMonthly)}<Text style={{ fontSize: 11, fontWeight: '700', color: '#94A3B8' }}> /mo</Text></Text>
+                      <Text style={{ fontSize: 9, color: '#637381', textAlign: 'center' }} numberOfLines={2}>{planLabelOf(plans, method)}</Text>
+                  </View>
                 </View>
               </View>
             </View>
@@ -1804,6 +1805,12 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   const [contentWidth, setContentWidth] = useState(0);
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const summaryTabsScrollViewRef = useRef<ScrollView>(null);
+  // The 1-Year monthly plan the rep set as the DEFAULT on any of this lead's calculators; every
+  // other calculator inherits it until changed there (see OneYearMonthlyPlan).
+  const leadOneYearDefault = useMemo(() => {
+    const c = calculators.find((x) => x.oneYearMonthlyPlan?.isDefault && x.oneYearMonthlyPlan?.planKey);
+    return c ? { planKey: c.oneYearMonthlyPlan!.planKey as string, apr: c.oneYearMonthlyPlan!.apr } : null;
+  }, [calculators]);
   // The inline drop-price / end-price / down-payment inputs use the in-app number pad, which
   // `KeyboardAwareScrollView` (keyboard-frame driven) never scrolls for: bring the focused one up.
   const quoteScrollRef = useRef<any>(null);
@@ -1962,6 +1969,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               onDiscountChange={(id, d) => onDiscountChange?.(id, d)}
               onDownPaymentChange={(id, dp) => onDownPaymentChange?.(id, dp)}
               onRendersChange={(id, renders) => onRendersChange?.(id, renders)}
+              leadOneYearDefault={leadOneYearDefault}
               onOneYearMonthlyChange={(id, plan) => onOneYearMonthlyChange?.(id, plan)} />
           ) : (
             <View style={{ alignItems: 'center', paddingVertical: 80 }}>
