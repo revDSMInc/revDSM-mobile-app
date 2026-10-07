@@ -127,6 +127,12 @@ export const finalizeConsentUpload = async ({
   pdfPath: string;
   kind: ConsentFormKind;
 }): Promise<void> => {
+  // ⚠️ The waiver endpoint (`/mobile/waiver-form`) already files its own generatedReport
+  // ("Roof Waiver - {name}"), which `hasFiledConsentReport` matches on "waiver". Uploading the
+  // PDF again put every waiver on the Reports tab twice (REVDSM-1293). Consent still needs
+  // this upload: its endpoint files nothing.
+  if (kind === 'waiver') return;
+
   const reportType = consentReportType(kind);
   const formData = new FormData();
   formData.append('leadId', leadId);

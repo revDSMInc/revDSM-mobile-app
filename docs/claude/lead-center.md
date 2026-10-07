@@ -1136,3 +1136,30 @@ Ticket: a Roofline Lighting render must say what was rendered ("Christmas" + col
   `findLook(selections.lookId)` from the catalogue. Everyday / team / theme looks have no month and show the name only.
 - The "Rendered" line gains ` · 10/6/2026` (M/D/YYYY, no zero padding — was `Oct 6, 2026`) from `run.createdAt`, parsed as TEXT (YYYY-MM-DD) — ⚠️ never
   `new Date()`, which shifts the day across timezones. Hidden when `createdAt` is absent.
+
+## Reports tab: Inspection and Roof Waiver no longer filed twice (REVDSM-1293)
+
+Every inspection and roof waiver showed up as TWO generated reports (e.g. `inspection_report` +
+`Inspection_N/A.pdf`, `Roof Waiver - <name>` + `waiver_form`). Both server endpoints already file their own
+`generatedReport`, and the app then uploaded the same PDF again through `uploadGeneratedReport`.
+- Inspection (`handleInspectionSubmit`, `LeadCenter/index.tsx`): the re-upload is gone. `/pdf-reports/v1/inspection/:leadId/generate`
+  files `inspection_report` itself. The handler now invalidates `['leads']` and shows the old success flash itself.
+- Roof Waiver (`finalizeConsentUpload`, `services/api/consent-forms.ts`): returns early for `kind === 'waiver'`, which covers both
+  the online flow and the offline drain (`offlineLeadStore.ts`). `/lead/v1/:leadId/mobile/waiver-form` files `Roof Waiver - {name}`,
+  and `hasFiledConsentReport` still matches it on the `waiver` keyword.
+- ⚠️ Do NOT remove the CONSENT upload: `user/consent/v1/mobile/create` files no report, so this upload is the only one.
+- Only new submissions are affected. Duplicates already stored were deliberately left alone.
+
+Where the backend (`mhalt-revDSM-backend/src`) creates each `generatedReport` row:
+
+| Form | Mobile calls | Route | Handler, where the row is created | `reportName` stored |
+|---|---|---|---|---|
+| Inspection | `handleInspectionSubmit` → `POST /pdf-reports/v1/inspection/:leadId/generate` | `api/controllers/v1/reports/PdfReportController.ts` (`generateInspectionReport`) | `core/handlers/reports/PdfReportHandler.ts` → `generateInspectionReport`, `generatedReportDBService.create(...)` (~L535): renders the PDF, uploads it to S3 (`inspection_report/<leadCode>/...`), saves the row, emits `emitGeneratedReportsUpdate`, streams the PDF back | `inspection_report` |
+| Roof Waiver | `handleWaiverSubmit` / offline drain → `POST /lead/v1/:leadId/mobile/waiver-form` | `api/controllers/v1/lead/LeadController.ts` (`submitWaiverFormMobile`) | `core/handlers/lead/LeadHandler.ts` → `submitWaiverFormMobile`, `generatedReportDBService.create(...)` (~L7589): renders the PDF, uploads it to S3, saves a `WaiverForm` and the report row together (one `Promise.all`, so a failed save fails the request), then a `JobBuilderDocument` (Docs tab), emits sockets, streams the PDF back | `Roof Waiver - {fullName}` |
+| Consent Form | `submitConsentForm` → `POST /user/consent/v1/mobile/create` | `api/controllers/v1/consents/UserConsentController.ts` (`createConsentFormMobile`) | `core/handlers/consent/UserConsentHandler.ts` → `createUserConsentMobile`: renders the PDF but creates **no** report row | none (the mobile `finalizeConsentUpload` creates it) |
+
+The duplicates came from the generic upload endpoint `POST /generated-reports/v1` (`LeadService.uploadGeneratedReport`):
+`api/controllers/v1/reports/GeneratedReportController.ts` → `core/handlers/reports/GeneratedReportHandler.ts` → `createGeneratedReport`.
+It stores the client's `reportName`, or falls back to the uploaded file's name (~L101): `Inspection_<jobNumber|leadId>.pdf`
+for the inspection re-upload and `waiver_form` (from `waiver_form.pdf`) for the waiver one. Consent is now the only
+mobile flow that still uses it.

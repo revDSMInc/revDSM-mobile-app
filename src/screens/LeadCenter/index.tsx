@@ -31,7 +31,6 @@ import {
   useSubmitJobBuilderMutation,
   useSubmitDigitalConsentMutation,
   useSubmitRoofWaiverMutation,
-  useUploadReportMutation,
   useGenerateRevRenderMutation,
   useUploadPaperConsentOCRMutation,
   useUploadImagesMutation,
@@ -915,7 +914,6 @@ export default function LeadCenterPage() {
   const submitJobBuilder = useSubmitJobBuilderMutation();
   const consentMutation = useSubmitDigitalConsentMutation();
   const waiverMutation = useSubmitRoofWaiverMutation();
-  const reportMutation = useUploadReportMutation();
   const ocrMutation = useUploadPaperConsentOCRMutation();
   const revRenderMutation = useGenerateRevRenderMutation();
 
@@ -1268,18 +1266,11 @@ export default function LeadCenterPage() {
         throw new Error('Generated file is not a valid PDF.');
       }
 
-      const uploadData = new FormData();
-      const finalLeadId = lead?._id || lead?.id || lead?.leadId;
-      uploadData.append('leadId', finalLeadId);
-      uploadData.append('reportType', 'inspection_report');
-      uploadData.append('reportName', fileName);
-      uploadData.append('file', {
-        uri: Platform.OS === 'android' ? `file://${filePath}` : filePath,
-        type: 'application/pdf',
-        name: fileName,
-      } as any);
-
-      await reportMutation.mutateAsync(uploadData);
+      // ⚠️ No re-upload here: the generate endpoint already files the PDF as the lead's
+      // `inspection_report` generatedReport. Uploading it again put every inspection on the
+      // Reports tab twice (REVDSM-1293). Refresh the lead so the Reports tab picks it up.
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      FlashMessage.success('Success', 'Report generated and uploaded');
 
       // Count items by category from the flat data payload for telemetry parity
       const countItems = (prefix: string) => {
