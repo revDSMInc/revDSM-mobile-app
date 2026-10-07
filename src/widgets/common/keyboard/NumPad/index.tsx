@@ -262,11 +262,13 @@ const Key: React.FC<{
   pressedBg: string;
   a11y: string;
   flex?: number;
+  /** Corner radius; defaults to a full pill (height / 2). A tall key needs a smaller one. */
+  radius?: number;
   onPress?: () => void;
   onPressIn?: () => void;
   onPressOut?: () => void;
   children?: React.ReactNode;
-}> = ({ height, bg, pressedBg, a11y, flex = 1, onPress, onPressIn, onPressOut, children }) => {
+}> = ({ height, bg, pressedBg, a11y, flex = 1, radius, onPress, onPressIn, onPressOut, children }) => {
   const [down, setDown] = useState(false);
   const inert = !onPress && !onPressIn;
   return (
@@ -286,7 +288,7 @@ const Key: React.FC<{
       style={{
         flex,
         height,
-        borderRadius: height / 2,
+        borderRadius: radius ?? height / 2,
         backgroundColor: down ? pressedBg : bg,
         alignItems: 'center',
         justifyContent: 'center',
@@ -318,6 +320,7 @@ const NumPadPanel: React.FC<{
     Platform.OS === 'ios',
   );
 
+  const [colWidth, setColWidth] = useState(0);
   const progress = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const anim = Animated.timing(progress, {
@@ -414,29 +417,66 @@ const NumPadPanel: React.FC<{
     >
       <Animated.View
         style={[styles.panel, { height: panelHeight, paddingBottom: bottomPad }, overlay ? null : slide]}
+        // One of 4 equal columns, measured: the tall Done key + the 3-column block under the
+        // 4-column rows must use EXACTLY these widths or the Done key drifts (a flex 3:1 split
+        // ignores the gaps and left it wider, off the column above it).
+        onLayout={(e) => setColWidth((e.nativeEvent.layout.width - GAP * 5) / 4)}
       >
-      {ROWS.map((row, i) => (
-        <View key={i} style={styles.row}>
-          {row.map((k) => digit(k))}
-        </View>
-      ))}
       {target.mode === 'decimal' ? (
+        // 4 columns x 4 rows (one row shorter than the old 3-column layout, which put Done on a
+        // row of its own): 1 2 3 back / 4 5 6 . / 7 8 9 + a TALL Done spanning the last two rows
+        // / a wide 0.
         <>
           <View style={styles.row}>
+            {digit('1')}
+            {digit('2')}
+            {digit('3')}
+            {backKey}
+          </View>
+          <View style={styles.row}>
+            {digit('4')}
+            {digit('5')}
+            {digit('6')}
             <Key a11y="decimal point" height={keyHeight} bg={fnBg} pressedBg={fnDown} onPress={() => press('.')}>
               <Text style={[styles.keyText, { color: colors.text }]}>.</Text>
             </Key>
-            {digit('0')}
-            {backKey}
           </View>
-          {doneKey}
+          <View style={{ flexDirection: 'row', gap: GAP }}>
+            <View style={{ width: colWidth ? colWidth * 3 + GAP * 2 : undefined, flex: colWidth ? undefined : 3 }}>
+              <View style={styles.row}>
+                {digit('7')}
+                {digit('8')}
+                {digit('9')}
+              </View>
+              <View style={styles.row}>{digit('0')}</View>
+            </View>
+            <View style={{ width: colWidth || undefined, flex: colWidth ? undefined : 1, marginBottom: GAP }}>
+              <Key
+                a11y="Done"
+                radius={keyHeight / 2}
+                height={keyHeight * 2 + GAP}
+                bg={doneBg}
+                pressedBg={colors.primary.dark}
+                onPress={target.dismiss}
+              >
+                <Ionicons name="checkmark" size={28} color="#FFFFFF" />
+              </Key>
+            </View>
+          </View>
         </>
       ) : (
-        <View style={styles.row}>
-          {backKey}
-          {digit('0')}
-          {doneKey}
-        </View>
+        <>
+          {ROWS.map((row, i) => (
+            <View key={i} style={styles.row}>
+              {row.map((k) => digit(k))}
+            </View>
+          ))}
+          <View style={styles.row}>
+            {backKey}
+            {digit('0')}
+            {doneKey}
+          </View>
+        </>
       )}
       </Animated.View>
     </Animated.View>

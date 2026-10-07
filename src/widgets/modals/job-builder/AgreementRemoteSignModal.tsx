@@ -1,3 +1,4 @@
+import { useNumPadActive } from '../../common/keyboard/NumPad';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
@@ -12,7 +13,17 @@ import {
 import {
   KeyboardAvoidingView,
   KeyboardAwareScrollView,
+  KeyboardEvents,
+  useKeyboardState,
 } from 'react-native-keyboard-controller';
+
+// Last keyboard height seen anywhere in the app. `useKeyboardState` is still 0 on the first show
+// after this modal mounts, so the reserved-space cancel below needs a value BEFORE the keyboard
+// opens (ticket: the blank gap showed the first time only, then was fine).
+let lastKeyboardHeight = 0;
+KeyboardEvents.addListener('keyboardDidShow', (e) => {
+  if (e.height > 0) lastKeyboardHeight = e.height;
+});
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -162,6 +173,9 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
 }) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardState((st) => st.height);
+  const keyboardVisible = useKeyboardState((st) => st.isVisible);
+  const numPadActive = useNumPadActive();
   const { user } = useAuth();
   const uid = user?._id || user?.id;
 
@@ -842,7 +856,16 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
               bottomOffset={24}
-              contentContainerStyle={{ padding: 24, paddingBottom: Math.max(insets.bottom, 24) }}
+              // The sheet is ALREADY shrunk above the keyboard by the KeyboardAvoidingView, so the
+              // scroll view must not also reserve the keyboard's height under the content (it
+              // did: a screen-tall blank gap below Cancel). Scroll-to-focus is unaffected.
+              extraKeyboardSpace={-(keyboardHeight || lastKeyboardHeight)}
+              // Nav-bar / home-indicator clearance is dead space while a keyboard or the number pad is
+              // up (it sits between the sheet and the screen edge): keep only a small margin.
+              contentContainerStyle={{
+                padding: 24,
+                paddingBottom: keyboardVisible || numPadActive ? 12 : Math.max(insets.bottom, 24),
+              }}
             >
               {phase === 'compose' && renderCompose()}
               {phase === 'pending' && renderPending()}

@@ -1,3 +1,5 @@
+import { useKeyboardState } from 'react-native-keyboard-controller';
+import { useNumPadActive } from '../../widgets/common/keyboard/NumPad';
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   View,
@@ -160,6 +162,9 @@ function DynamicJobBuilderInner({
   const portalUnrestrictedEdit = portalUnrestrictedEditProp ?? isEdit;
   const hideAllocationTrackers = hideAllocationTrackersProp ?? isEdit;
   const insets = useSafeAreaInsets();
+  const numPadActive = useNumPadActive();
+  const systemKeyboardUp = useKeyboardState((st) => st.isVisible);
+  const keyboardUp = numPadActive || systemKeyboardUp;
   const verticalList = useMemo(
     () => initialConfig?.verticals || [],
     [initialConfig]
@@ -1353,7 +1358,9 @@ function DynamicJobBuilderInner({
           style={{
             paddingHorizontal: 24,
             paddingTop: 12,
-            paddingBottom: insets.bottom + 16,
+            // The home-indicator / nav-bar clearance is dead space while a keyboard or the
+            // number pad is up (they sit between this bar and the screen edge).
+            paddingBottom: keyboardUp ? 12 : insets.bottom + 16,
             borderTopWidth: 1,
             borderTopColor: '#E2E8F0',
             backgroundColor: '#fff',

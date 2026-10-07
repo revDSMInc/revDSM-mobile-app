@@ -18,6 +18,7 @@ import { FlashMessage } from '../../../config/message';
 import { allRolloutsConfirmed, rolloutCalculators } from '../../../utils/rollout-status';
 import { useAuth } from '../../../hooks/useAuth';
 import { useBottomInset } from '../../../hooks/useBottomInset';
+import { useNumPadScrollIntoView } from '../../../hooks/useNumPadScrollIntoView';
 import {
   DealPricing,
   DealPlan,
@@ -493,12 +494,12 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
                                   <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5 }}>{abbr}</Text>
                                 </View>
                               )}
-                              <Text style={{ fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8', marginRight: 6 }} numberOfLines={1}>{planName}</Text>
-                              {sel && <View style={{ backgroundColor: '#31D076', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>SELECTED</Text></View>}
+                              <Text style={{ flex: 1, flexShrink: 1, fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8' }} numberOfLines={2}>{planName}</Text>
                             </View>
                             <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
                               <Text style={{ fontSize: 20, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8' }}>${Math.round(monthly).toLocaleString()}</Text>
                               <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', marginLeft: 2 }}>/mo</Text>
+                              {sel && <View style={{ backgroundColor: '#31D076', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: 10, alignSelf: 'center' }}><Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>SELECTED</Text></View>}
                             </View>
                           </View>
                           <View style={{ width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: sel ? '#31D076' : '#E2E8F0', backgroundColor: sel ? '#fff' : '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}>
@@ -1803,6 +1804,11 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   const [contentWidth, setContentWidth] = useState(0);
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const summaryTabsScrollViewRef = useRef<ScrollView>(null);
+  // The inline drop-price / end-price / down-payment inputs use the in-app number pad, which
+  // `KeyboardAwareScrollView` (keyboard-frame driven) never scrolls for: bring the focused one up.
+  const quoteScrollRef = useRef<any>(null);
+  const quoteContentRef = useRef<View>(null);
+  useNumPadScrollIntoView(quoteScrollRef, quoteContentRef, 16);
 
   return (
     <PhotoPeekScrollLockProvider>
@@ -1924,8 +1930,8 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
           live in this one scroll view with no way to bring a focused field above the keyboard;
           `KeyboardAwareScrollView` does that automatically for whichever one is focused,
           instead of a hand-rolled `scrollToEnd` that only helped the bottom-most field. */}
-      <KeyboardAwareScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled" bottomOffset={24}>
-        <View style={{ maxWidth: 600, alignSelf: 'center', width: '100%' }}>
+      <KeyboardAwareScrollView ref={quoteScrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled" bottomOffset={24}>
+        <View ref={quoteContentRef} collapsable={false} style={{ maxWidth: 600, alignSelf: 'center', width: '100%' }}>
           {selectedCalc ? (
             <PremiumQuoteCard key={selectedCalc.id} calculator={selectedCalc}
               initialPrice={effectivePrice(selectedCalc)}

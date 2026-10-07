@@ -2870,3 +2870,35 @@ Ticket: *"the selected field is slightly hidden by the keyboard — it should go
 ### Follow-up: focused field still touching the pad's top edge
 
 After the scroll-into-view hook the field scrolled up but its bordered box still touched the pad. The hook measures the TextInput, not the box around it (the box reaches ~40pt lower), so the default margin in `useNumPadScrollIntoView` went 24 → 64.
+
+### Follow-up: blank gap under Cancel in the Remote Agreement sheet (keyboard up)
+
+Ticket: *"extra space on the remote agreement screen."* `AgreementRemoteSignModal` shrinks the sheet above the keyboard with `KeyboardAvoidingView` AND its `KeyboardAwareScrollView` (insets mode) also extended the scrollable area by the keyboard height, so the keyboard's height was counted twice - a large empty strip under Cancel. The scroll view now takes `extraKeyboardSpace={-keyboardHeight}` (`useKeyboardState`), which cancels the reserved bottom space (the library only uses that prop for the reserved space; scroll-to-focus still reads the real keyboard height). ⚠️ Same double-count exists wherever a `KeyboardAvoidingView` wraps a `KeyboardAwareScrollView` (e.g. `CoCFormModal`, `RoofWaiverModal`); not changed - not reported. ⚠️ `keyboardHeight` is React state, so the first frame of the first keyboard show can still reserve the space briefly. Not verified on device (iOS).
+
+### Follow-up: dead space between Next and the number pad (dynamic job builder)
+
+Ticket: *"remove all the extra space between the Next button and the keyboard."* The `DynamicJobBuilderScreen` footer (Back / Next / Complete) kept `paddingBottom: insets.bottom + 16` while a keyboard or the in-app number pad was up, but they sit between that bar and the screen edge, so the nav-bar/home-indicator clearance was pure gap (~60pt on a three-button Android bar). The footer now uses `paddingBottom: 12` when `useNumPadActive() || useKeyboardState().isVisible`, else the original value. Same idea `CalculatorView` already uses for its tabs footer. ⚠️ The `isVisible` half covers the system keyboard (iOS, text fields). Not verified on device.
+
+### Follow-up: the Remote Agreement gap came back on the FIRST open only
+
+`extraKeyboardSpace={-keyboardHeight}` used `useKeyboardState`, which is still 0 when the keyboard first shows after the modal mounts, so the reserved space was not cancelled until the second open. `AgreementRemoteSignModal` now keeps a module-level `lastKeyboardHeight` (a `KeyboardEvents` `keyboardDidShow` listener registered at import, i.e. at app start) and uses `-(keyboardHeight || lastKeyboardHeight)`. ⚠️ If no keyboard has been shown yet in the session, the first open can still show the gap; different keyboard types (email vs phone) differ in height, so the cancel can be off by the difference. Not verified on device.
+
+### Follow-up: remaining white strip under Cancel (Android, keyboard up)
+
+The sheet's scroll content kept `paddingBottom: max(insets.bottom, 24)` while the keyboard was up; the nav-bar clearance sits under the keyboard, so it was dead space. `AgreementRemoteSignModal` now uses `12` while `useKeyboardState().isVisible || useNumPadActive()`, else the old value. ⚠️ Keep the unkeyboarded value: it is the real home-bar clearance.
+
+### Follow-up: white band between the Result Lead card and the number pad
+
+Ticket: *"remove the extra space between the keyboard and the outer box."* `ResultJobModal`'s card was centred (`justifyContent: 'center'`) in the column the in-flow number pad leaves, so it floated with a band above and below. A small `PadAwareCenter` host (inside the `<Modal>`) now uses `useNumPadActive()`: pad up => `justifyContent: 'flex-end'` + 8pt bottom, so the card sits on the pad; pad down => centred as before. ⚠️ The hook MUST run inside the Modal tree - the patched `Modal` has its own `NumPadProvider`, so a call in `ResultJobModal` itself would read the app-root provider and never fire. Not verified on device.
+
+### Follow-up: the focused Down Payment amount box was half cut off by the number pad
+
+`ResultJobModal`'s body was a plain `ScrollView`, which never scrolls for the in-app pad, so a field near the bottom stayed half under it. It is now `NumPadScrollView` (new, `widgets/common/NumPadScrollView.tsx`: a `ScrollView` + content wrapper + `useNumPadScrollIntoView`; see `app-wide.md`). ⚠️ It is a COMPONENT, not a hook call in the screen, because the hook reads the nearest `NumPadProvider` and the modal has its own - a hook in `ResultJobModal` itself would read the app root's and never fire. Reuse it for any other modal body with numeric fields. Not verified on device.
+
+### Follow-up: Lowe's plan row — name overlapped the SELECTED badge and radio (drop "Secure This Price" modal)
+
+A long plan name (`6M at 0% APR — Equal Payments`) plus the `SELECTED` badge sat on ONE non-wrapping row inside the `flex: 1` text column of the financing rows in `DropOutcomeModal` (`RolloutView.tsx`), so the badge was pushed under the radio. The name is now `flex: 1, flexShrink: 1` and may wrap to 2 lines; `SELECTED` moved to the price line (`$50 /mo [SELECTED]`), which has room. ⚠️ A text next to a badge in a row needs `flexShrink: 1` on the text and a non-shrinking badge. The basic-method row (lead's own method) keeps its badge on the label row: that row has `flexWrap: 'wrap'`, so it wraps instead of overlapping. Not verified on device.
+
+### Follow-up: "+ 1st Drop" input hidden under the number pad
+
+Ticket: *tapping the 1st drop shows the price input and the keyboard at once, but the input is under the keyboard until the rep scrolls.* The inline drop input (`autoFocus`, `NUMERIC_KEYBOARD`) uses the in-app number pad, which `KeyboardAwareScrollView` (keyboard-frame driven) never scrolls for. The rollout column in `RolloutView.tsx` now runs `useNumPadScrollIntoView` (scroll ref + a `collapsable={false}` wrapper around the quote card, content top 16) so the focused drop / end-price / down-payment input is scrolled clear of the pad. ⚠️ This screen is not inside a `Modal`, so the hook in the screen component reads the right (root) provider - unlike modal bodies (use `NumPadScrollView` there). The hook waits 260 ms, so an `autoFocus` field that mounts a frame after the tap is still caught (it re-runs when the target attaches). Not verified on device.

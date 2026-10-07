@@ -70,7 +70,7 @@ import Clipboard from '@react-native-clipboard/clipboard';
 import { FlashMessage } from '../../config/message';
 import { IMAGE_CATEGORIES } from '../../constants/lead-center';
 import ReactNativeBlobUtil from 'react-native-blob-util';
-import FileViewer from 'react-native-file-viewer';
+import { ConfirmDialog } from '../DynamicDealCenter/components/ConfirmDialog';
 
 import { useLeadQuery } from '../../hooks/useLeadQuery';
 import RNFS from 'react-native-fs';
@@ -143,6 +143,7 @@ export default function LeadCenterPage() {
   const [isConsentGenerating, setIsConsentGenerating] = useState(false);
   const [isWaiverGenerating, setIsWaiverGenerating] = useState(false);
   const [isInspectionGenerating, setIsInspectionGenerating] = useState(false);
+  const [inspectionDone, setInspectionDone] = useState<{ message: string; note?: string } | null>(null);
 
   const { lead: initialLead, initialTool, fromZoneCanvasser, appointmentStarted, justCompleted, fromMyDeals } =
     route.params || {};
@@ -1049,18 +1050,26 @@ export default function LeadCenterPage() {
       toggleModal('showInspectionModal', false);
 
       setTimeout(async () => {
+        // A toast alone left the rep with nothing to tap: no way to see the file and no sign of
+        // whether it saved. Always end on the app's ConfirmDialog that says what happened and offers to open it.
+        let saved = true;
         try {
           await downloadPdfToDevice(pdfPath, 'Inspection Report', false);
-          FlashMessage.success(
-            'Success',
-            Platform.OS === 'ios'
-              ? 'Inspection report generated and uploaded.'
-              : 'Inspection report generated and saved to Downloads.'
-          );
         } catch (downloadErr) {
+          saved = false;
           console.error('[LeadCenter] Download after generation failed:', downloadErr);
-          FlashMessage.success('Success', 'Inspection report generated and uploaded successfully.');
         }
+        setInspectionDone({
+          message: saved
+            ? 'Your inspection report has been generated and saved on this device.'
+            : 'Your inspection report has been generated, but it could not be saved on this device. Please generate it again.',
+          // Where to find it: the report is not viewable inside the app.
+          note: saved
+            ? Platform.OS === 'ios'
+              ? 'Find it in the Files app, in the location you chose in the share sheet.'
+              : 'Find it in your Files / My Files app > Downloads > Inspection Report.pdf.'
+            : undefined,
+        });
       }, 400);
 
       await refetch();
@@ -1825,6 +1834,19 @@ export default function LeadCenterPage() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* The app's standard dialog (same as Result Lead / Deal Center), not a system Alert. */}
+      <ConfirmDialog
+        visible={!!inspectionDone}
+        tone="neutral"
+        hideCancel
+        title="Inspection Report Ready"
+        message={inspectionDone?.message ?? ''}
+        note={inspectionDone?.note}
+        confirmLabel="OK"
+        onCancel={() => setInspectionDone(null)}
+        onConfirm={() => setInspectionDone(null)}
+      />
 
     </>
   );

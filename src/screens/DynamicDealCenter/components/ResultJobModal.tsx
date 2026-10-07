@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { NumPadScrollView } from '../../../widgets/common/NumPadScrollView';
+import { useNumPadActive } from '../../../widgets/common/keyboard/NumPad';
+import { View, Text, TextInput, TouchableOpacity, Modal, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { BlurView } from '@react-native-community/blur';
 import { MODAL_BLUR_AMOUNT, MODAL_SCRIM } from './modal-chrome';
@@ -132,6 +134,22 @@ interface ResultJobModalProps {
     payments?: FundingPaymentRow[];
     fundingAttempts?: FundingRecord['attemptHistory'];
   }) => void;
+}
+
+/**
+ * Centres the card in the modal - until the number pad is up. The pad is mounted in-flow by the patched
+ * `Modal` (index.js) and shrinks this column, and a card centred in what is left floats with a white band
+ * above AND below it (ticket: space between the keyboard and the outer box). With the pad up the card
+ * sits on the pad instead. ⚠️ Must be rendered INSIDE the `<Modal>`: `useNumPadActive` reads the nearest
+ * provider, and the modal has its own (a hook in `ResultJobModal` itself would read the app root's).
+ */
+function PadAwareCenter({ children }: { children: React.ReactNode }) {
+  const padUp = useNumPadActive();
+  return (
+    <View style={{ flex: 1, justifyContent: padUp ? 'flex-end' : 'center', paddingHorizontal: 16, paddingBottom: padUp ? 8 : 0 }}>
+      {children}
+    </View>
+  );
 }
 
 function FloatingLabel({ text, error, bg = '#fff' }: { text: string; error?: boolean; bg?: string }) {
@@ -798,7 +816,7 @@ export function ResultJobModal({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 16 }}>
+        <PadAwareCenter>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose}>
             <BlurView
               style={StyleSheet.absoluteFill}
@@ -827,7 +845,7 @@ export function ResultJobModal({
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ paddingHorizontal: 20, paddingTop: 24 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
+            <NumPadScrollView style={{ paddingHorizontal: 20, paddingTop: 24 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
               {onFunding ? (
                 <FundingView
                   payments={payments}
@@ -1124,7 +1142,7 @@ export function ResultJobModal({
                   </View>
                 </>
               )}
-            </ScrollView>
+            </NumPadScrollView>
 
             {/* Footer */}
             <View style={{ paddingHorizontal: 20, paddingBottom: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#919EAB14' }}>
@@ -1225,7 +1243,7 @@ export function ResultJobModal({
           {showPackageInfo && (
             <FullPackageInfoOverlay anchorRect={packageAnchor} onClose={() => setShowPackageInfo(false)} />
           )}
-        </View>
+        </PadAwareCenter>
 
         {/* Every banner this sheet raises — its own, and the ones `useFunding` raises
             from inside an endpoint call — lands here rather than on the app-root

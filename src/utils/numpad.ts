@@ -48,14 +48,15 @@ export function applyNumPadKey(
 
 export const NUMPAD_GAP = 8;
 
-export function numPadMetrics(windowHeight: number, insetBottom: number, mode: NumPadMode, isIos: boolean) {
+export function numPadMetrics(windowHeight: number, insetBottom: number, _mode: NumPadMode, isIos: boolean) {
   // ⚠️ insets read 0 or stale inside a Modal - floor them for the home bar / gesture area.
   const bottomPad = Math.max(insetBottom, isIos ? 16 : 10);
   const keyHeight = Math.max(
     38,
     Math.min(56, Math.floor((windowHeight * 0.32 - bottomPad - NUMPAD_GAP * 5) / 4)),
   );
-  const rows = mode === 'decimal' ? 5 : 4;
+  // Both modes are 4 rows now (decimal is 4 columns wide instead of taller).
+  const rows = 4;
   return { bottomPad, keyHeight, panelHeight: NUMPAD_GAP + rows * (keyHeight + NUMPAD_GAP) + bottomPad };
 }
 
