@@ -93,3 +93,64 @@ carry its own `path = revDSM_Sales/<file>` (as `Info.plist`, `AppDelegate.swift`
 refs had a bare `path = BackgroundUploadTask.m`, which resolved to `ios/` (the file lives in `ios/revDSM_Sales/`).
 Fixed the two refs. ⚠️ Any new native file added to that group by hand needs the `revDSM_Sales/` prefix too.
 (`RNHapticFeedback.*` builds only because a stray duplicate sits in `ios/` — don't rely on that.)
+
+## Two ways a queued photo goes missing — resolve it, and LIST it
+
+`utils/pending-inspection-photos.ts`.
+
+Three rounds were spent on url→bytes resolution before noticing the Roofline Deck's photo was never
+in its **list** to begin with. These are independent failures and fixing one cannot fix the other:
+
+| Question | Helper |
+|---|---|
+| Is the photo in the list at all? | `salesPhotosWithPending` / `pendingAsSalesPhotos` |
+| Which URL renders it? | `mergePendingForSlot` / `mergePendingIntoSections` |
+
+⚠️ **Establish which one you have before changing anything.** An empty frame is a resolution
+problem; "No inspection photos available" is a listing problem. They look alike on a device.
+
+⚠️ **The surplus rule is per SLOT, not per list.** A queue item outlives its upload by one refetch,
+so the photo is briefly in both the server list and the queue. Deduping across the whole list drops
+a legitimately-pending second shot in the same slot.
+
+⚠️ **Every merge returns the SAME array when nothing is pending**, so callers keep their memo
+identity — these feed dependency arrays on screens that re-render constantly.
+
+## A server job that loses signal is WAITING, not failed
+
+`utils/report-job-connectivity.ts` + `hooks/useLeadReports.ts`.
+
+Reported from a door: a rep started a Risk Report and a revRender, lost signal, and all three
+things on screen lied.
+
+| Surface | Offline behaviour | Cause |
+|---|---|---|
+| revRender bar | **kept climbing** to 67% | `startMockProgress` advances 0→20→67→80% on a `setInterval` over elapsed seconds, with **no server contact** |
+| Risk Report bar | froze at 56% on *"Fetching historical data for 2023…"* forever | the poll's `catch` only logged, so the 3s interval retried silently and `riskJob` kept its last `step` |
+| a black toast | `Polling error: {"message":"Network Error"}` | raw axios rejection logged once per tick |
+
+⚠️ **Losing signal is not the job failing.** The generation runs on the SERVER — it was accepted, it
+has a jobId, and it is very probably still going; the device has merely lost the ability to ask.
+Marking it `failed` is a lie in the opposite direction and invites the rep to start it again: a
+second billed AI render, or a duplicate report, for a job that was always going to finish. So the
+state is **waiting**, the bar holds its last honest number, and polling continues — the first tick
+after reconnect clears the flag by itself.
+
+⚠️ **The stale `step` is dropped, not kept.** Holding *"Fetching historical data for 2023…"* on
+screen for ten minutes is worse than no label: a live-sounding sentence about work nobody is
+observing. `jobWaitState(step, unreachable)` returns `WAITING_LABEL` instead.
+
+⚠️ **Freezing the mock timer is not optional.** Re-labelling alone leaves a bar that keeps filling,
+which is a stronger and falser promise than any caption can undo.
+
+⚠️ **Keyed off the ERROR, never `isOnline()`** — same rule as `network-error.ts`. A poll that dies
+in a tunnel is the same event whatever the connectivity model believed; the absence of an HTTP
+status is the honest signal. A 500 from the generator is a real failure and still fails.
+
+⚠️ **Amber, not red**, and no spinner while waiting — red says "this failed", and a spinning
+indicator beside "waiting for signal" contradicts the sentence next to it.
+
+Different moment from the entry-point guard: `offline-capability.ts` already blocks *starting* a
+risk report or render with no signal, but it only speaks at the tap and cannot help a bar already
+on screen. A render whose *initial* POST never reached the server **is** a genuine failure and
+stays `failed` — reported as "No connection — this render was not started", never axios' wording.

@@ -528,3 +528,46 @@ now added). A text-mode script rewrite buries the change in a whole-file diff.
 **Known gap:** ordering keys off `leadTime`, which carries only an hour for most payloads
 (`"9am"`); two leads in the same hour fall back to chat recency. Minutes are parsed when present
 (`"1:30 PM"`), so a payload that starts sending them sorts finer with no change here.
+
+## "Unable to chat on some leads" — create-on-404 never ran
+
+`services/api/ChatService.ts` (`getChatByLeadId`, `createChatForLead`), helper in
+`utils/network-error.ts`. Endpoints: `GET /chat/v1/lead/{leadId}` → `POST /chat/v1/create`.
+
+Reported with Android and web DevTools side by side. On web the 404 is immediately followed by
+`POST /chat/v1/create` and the thread opens. On mobile the 404 was the **last request** — nothing
+followed — and the rep got an empty chat they could not use.
+
+⚠️ **The fallback already existed and had never once executed.** It was guarded by
+`err.response?.status === 404`, but `normalizeApiError` (`services/api/index.ts`) rejects with a
+**plain object spread from the response body** — there is no `.response` on it at all. The
+comparison was permanently `undefined === 404`. It reads like a working check, which is why it
+survived review; `httpStatusOf` / `isHttpStatus` now exist so nobody writes it that way again.
+
+⚠️ **`httpStatus`, never the body's own `code`/`status`.** This 404's body is literally
+`{code: 404, message: "Chat not found for this lead", data: {}}`. Trusting a spread body's `code`
+works here and silently misreads any endpoint whose 200 payload carries one. `normalizeApiError`
+reserves `httpStatus` for the real transport status for exactly this reason.
+
+⚠️ **404 is a normal answer, not an error.** A thread is opened by the start-appointment flow, so
+any lead where that never ran — created offline, imported, or predating chat — has no thread until
+someone asks. Web treats it the same way.
+
+⚠️ **The same bug broke offline chat creation.** `offlineLeadStore.ts`'s `chat` sync step calls
+`getChatByLeadId` too, so a lead created at a door synced and still ended up with no thread. Same
+root cause, fixed once at the source.
+
+Also hardened: a **200 carrying no chat id** now creates as well (same meaning as a 404), and a
+failed create resolves `null` rather than throwing — every caller treats this as "open the chat",
+so a rejection would take the screen down instead of degrading it. `createChatForLead` is safe to
+call repeatedly; the backend returns the existing thread rather than duplicating. The temporary
+`[ChatDiag]` logging added while chasing this is removed. `ChatDetail`'s addendum-PDF 409 check had
+the same broken shape and now uses `isHttpStatus`.
+
+### Still carrying the same broken pattern
+
+`err.response?.status` is read in ~15 other places that receive normalized rejections — e.g.
+`offline-lead-work.ts:823` (409), `useDynamicCalculators.ts:361` (409),
+`autoConfirmManager.ts:112`, `offlinePhotoDeleteQueue.ts:180`. Each is a dead branch in the same
+way. Only the chat ones were fixed here, deliberately: the rest change behaviour in unrelated
+features and want their own testing. Migrate to `isHttpStatus` when touching them.
