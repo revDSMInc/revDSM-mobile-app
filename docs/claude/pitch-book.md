@@ -1093,3 +1093,49 @@ Ticket: *"in Interactive Tools → Risk, the selected tab colour and the downloa
 
 - The progress bar in `RiskContent` was `bg-emerald-500` (`#10b981`) while the selected dock tab is `GREEN` (`#72BD00`, `PresentationDock.tsx`). The bar now takes `GREEN` (exported from `PresentationDock`, imported as `DOCK_TAB_GREEN`) as an inline `backgroundColor`.
 - ⚠️ Do not re-hardcode a green on the bar; if the dock's selected colour changes, the bar follows through that one constant. The spinner and the download button still use `colors.primary.main` (not part of the ask).
+
+## Offline photos in the deck: resolution, and the list itself
+
+`screens/Pitchbook/index.tsx`, `screens/RooflineDeck/index.tsx`, `utils/inspection-photos.ts`,
+`widgets/components/InspectionPhotosPanel.tsx`.
+
+Two unrelated faults that both read as "the photo is not there":
+
+**Resolution.** `buildInspectionSections` gained `|| p.uri` as a third fallback, and both of its
+loops are now `Array.isArray`-guarded. The guard is not defensive dressing — a poisoned cache entry
+(see the shared-key ticket) made `(list || []).forEach` throw `undefined is not a function`, a hard
+render crash. `x || []` does **not** guard an array: a truthy non-array passes straight through.
+`InspectionPhotosPanel`'s grid also rendered raw urls while the viewer warmed them, so it now
+resolves through `gridWarmed[img.uri] || img.uri`.
+
+**Listing.** Both screens built their photo list from the server's `salesPhotos`, which excludes
+anything still in `uploadQueueManager`. They now keep a `serverPhotos` memo and derive
+`activePhotos = useLeadPhotosWithPending(serverPhotos, leadId)`.
+
+⚠️ **`useSecureUrls` still receives `serverPhotos` only.** A queued shot has no `s3url` to sign,
+and passing the merged list would change the set key on every capture.
+
+⚠️ **The chain only works because `buildInspectionSections` falls back to `p.uri`.** A projected
+pending photo has no `s3url` and no `secureUrl`; the local `file://` copy is all it carries.
+
+Full rule and the two-ways-to-go-missing distinction: [`offline.md`](offline.md).
+
+## Risk Report bar offline in the deck sheets
+
+`screens/RooflineDeck/index.tsx`, `screens/Pitchbook/index.tsx` — the Details ▸ **Risk** tab.
+
+Both sheets render their own copy of the Lead Center risk progress bar from the same
+`useLeadReports(lead, refetch)` hook, so both inherited the same offline fault: the bar froze
+mid-generation on the last server `step` (*"Fetching property information…"*) and stayed there.
+Both now read `riskJob.waiting` and show the paused state — amber bar, cloud-off icon in place of
+the `ActivityIndicator`, and `jobWaitState(...).label` instead of the stale `step`.
+
+⚠️ **Pitch Book takes explicit colours, not Tailwind classes.** This sheet also renders over the
+dark presentation theme (`t.hint`, `t.track`), where a utility colour pair reads wrong. The
+Roofline Deck sheet is light-only and keeps the class form.
+
+⚠️ **Three copies of this bar exist** — here, the Pitch Book sheet, and
+`OperationalSections.tsx`. Separate JSX, not a shared component, so a change to the waiting state
+has to be made in all three; only the rule (`utils/report-job-connectivity.ts`) is shared.
+
+Why "waiting" rather than "failed": [`lead-center.md`](lead-center.md) and [`offline.md`](offline.md).
