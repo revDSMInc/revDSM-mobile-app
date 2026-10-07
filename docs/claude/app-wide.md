@@ -598,3 +598,12 @@ Ticket: *long JSDoc / multi-line `//` blocks above every class, hook and block.*
 - Verified: the comment-free emit (`transpileModule`, `removeComments`) of every file is byte-identical to HEAD; `tsc` reports the same 45 pre-existing errors (line numbers only shifted); jest is unchanged (the same 5 suites fail before and after); CRLF/LF endings are unchanged per file.
 - ⚠️ The "why" that used to live in code comments is now in `git log -p` / `git blame` (commit before this cleanup) and in the part files here. Re-explain a non-obvious rule in a part file, not as a comment block above the code.
 - Native code (`ios/`, `android/`) and `__tests__/` were not touched.
+
+### Environment config now comes from `.env` (`config/env.ts`)
+
+Ticket: *env values were hardcoded in `env.ts` (and derived from the API URL).* `env.ts` now only reads `@env` (babel plugin `react-native-dotenv`, wired in `babel.config.js`, typed in `src/types/env.d.ts`) and exports the same `ENV` shape, so no call site changed.
+
+- Keys: `API_URL`, `GOOGLE_MAPS_API_KEY`, `APIFY_API_TOKEN`, `WEATHER_API_KEY`, `MAPBOX_ACCESS_TOKEN`, `LMS_REDIRECT_URL`, `S3_BUCKET`, optional `S3_BASE_URL` (defaults to `https://<bucket>.s3.amazonaws.com/`). Template: `.env.example`; the real `.env` is gitignored (`*.env`).
+- ⚠️ Values are inlined at **build time** and Metro caches transforms: after editing `.env` restart with `yarn start --reset-cache`, or the old value keeps shipping.
+- ⚠️ The prod/staging switch (bucket, Mapbox token, LMS host) is no longer derived from `API_URL` - set each one in `.env` (prod values are listed in `.env.example`).
+- ⚠️ `env.ts` throws on a missing value outside jest, so a clone without `.env` fails at launch rather than calling an empty URL. `yarn.lock` is gitignored, so run `yarn install` to get `react-native-dotenv`.

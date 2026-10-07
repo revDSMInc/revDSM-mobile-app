@@ -1,34 +1,31 @@
-const API_URL = 'https://api.np.revdsm.com/';
-
-const isProductionApi = (url: string): boolean =>
-  /^https?:\/\/api\.revdsm\.com\/?$/i.test(url.trim());
-
-const getS3Bucket = (url: string): string =>
-  isProductionApi(url) ? 'mhalt-revdsm' : 'np-revdsm-staging';
-
-const getMapboxToken = (url: string): string =>
-  isProductionApi(url)
-    ? 'pk.eyJ1IjoicmV2ZHNtaW5jIiwiYSI6ImNtcmFrNmtxeDA2cDcyeHF3aGx5eWt6Mm4ifQ.N4J6zGby06pAoAEuQGIYRQ'
-    : 'pk.eyJ1IjoicmV2ZHNtaW5jIiwiYSI6ImNtcmFrNmVoZzA0MjYyeXNpMXBsa3Q0djMifQ.KZZG3r-btQQvb9MC3To7qA';
-
-const getLmsRedirectUrl = (url: string): string => {
-  if (url.includes('api.revdsm.com') && !url.includes('api.np')) {
-    return 'https://lms.revdsm.com/';
-  }
-  return 'https://lms.np.revdsm.com/';
-};
-
-const S3_BUCKET = getS3Bucket(API_URL);
-const S3_BASE_URL = `https://${S3_BUCKET}.s3.amazonaws.com/`;
-
-export const ENV = {
+import {
   API_URL,
-  GOOGLE_MAPS_API_KEY: 'AIzaSyBT3b_a8aWTuI0l9wqjhiT7lSgV_36pkUg',
-  APIFY_API_TOKEN: 'apify_api_D5hrRBM3VW3uamrDWgSu7KvkE83tY54wQrTM',
-  WEATHER_API_KEY: 'e121ca1bd2b740f493472510252304',
-  MAPBOX_ACCESS_TOKEN: getMapboxToken(API_URL),
-  LMS_REDIRECT_URL: getLmsRedirectUrl(API_URL),
+  GOOGLE_MAPS_API_KEY,
+  APIFY_API_TOKEN,
+  WEATHER_API_KEY,
+  MAPBOX_ACCESS_TOKEN,
+  LMS_REDIRECT_URL,
   S3_BUCKET,
   S3_BASE_URL,
-} as const;
+} from '@env';
 
+const required = (name: string, value: string | undefined): string => {
+  if (!value && typeof jest === 'undefined') {
+    throw new Error(`Missing ${name}. Copy .env.example to .env, fill it in and restart Metro with --reset-cache.`);
+  }
+  return value ?? '';
+};
+
+const apiUrl = required('API_URL', API_URL);
+const s3Bucket = required('S3_BUCKET', S3_BUCKET);
+
+export const ENV = {
+  API_URL: apiUrl,
+  GOOGLE_MAPS_API_KEY: required('GOOGLE_MAPS_API_KEY', GOOGLE_MAPS_API_KEY),
+  APIFY_API_TOKEN: required('APIFY_API_TOKEN', APIFY_API_TOKEN),
+  WEATHER_API_KEY: required('WEATHER_API_KEY', WEATHER_API_KEY),
+  MAPBOX_ACCESS_TOKEN: required('MAPBOX_ACCESS_TOKEN', MAPBOX_ACCESS_TOKEN),
+  LMS_REDIRECT_URL: required('LMS_REDIRECT_URL', LMS_REDIRECT_URL),
+  S3_BUCKET: s3Bucket,
+  S3_BASE_URL: S3_BASE_URL || `https://${s3Bucket}.s3.amazonaws.com/`,
+} as const;

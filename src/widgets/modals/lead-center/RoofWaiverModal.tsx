@@ -1,17 +1,17 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   Modal,
   TextInput,
-  ScrollView,
   StyleSheet,
   PanResponder,
   Platform,
   StatusBar,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardAvoidingView, KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
@@ -38,6 +38,7 @@ interface RoofWaiverModalProps {
 }
 
 import { useRoofWaiver } from '../../../hooks/useRoofWaiver';
+import { useNumPadScrollIntoView } from '../../../hooks/useNumPadScrollIntoView';
 import { useRepProducts } from '../../../hooks/useRepProducts';
 import { useAuth } from '../../../hooks/useAuth';
 import { buildRoofWaiverText } from '../../../utils/roof-waiver-text';
@@ -102,6 +103,10 @@ export const RoofWaiverModal = ({
     },
   };
 
+  // The phone field uses the in-app number pad, which KeyboardAwareScrollView can't scroll for.
+  const bodyScrollRef = useRef<any>(null);
+  const bodyContentRef = useRef<View>(null);
+  useNumPadScrollIntoView(bodyScrollRef, bodyContentRef);
   const [padLayout, setPadLayout] = useState({ width: Dimensions.get('window').width - 64, height: 260 });
 
   const {
@@ -194,7 +199,10 @@ export const RoofWaiverModal = ({
 
   return (
     <Modal visible={visible} animationType="fade" transparent>
-      <View style={styles.backdrop}>
+      {/* keyboard-controller (not RN's) KeyboardAvoidingView: KeyboardProvider makes the app edge-to-edge,
+          so Android no longer resizes the window. It shrinks the card to the space above the keyboard and
+          `KeyboardAwareScrollView` brings the focused field into it (same as CoCFormModal). */}
+      <KeyboardAvoidingView behavior="padding" style={styles.backdrop}>
         <View style={styles.card}>
           <View style={[styles.header, { backgroundColor: colors.primary.main }]}>
             <Text style={styles.headerTitle}>Roof Waiver Form</Text>
@@ -219,13 +227,16 @@ export const RoofWaiverModal = ({
             </View>
           )}
 
-          <ScrollView
+          <KeyboardAwareScrollView
+            ref={bodyScrollRef}
             style={styles.body}
+            bottomOffset={24}
             contentContainerStyle={{ paddingBottom: 12 }}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
             scrollEnabled={!showSigPad}
           >
+            <View ref={bodyContentRef} collapsable={false}>
             <View style={styles.disclaimerBox}>
               <Text style={styles.disclaimerTitle}>Roof Waiver Agreement</Text>
               <Text style={styles.disclaimerBody}>{roofWaiverText}</Text>
@@ -325,7 +336,8 @@ export const RoofWaiverModal = ({
                 </Text>
               </TouchableOpacity>
             </View>
-          </ScrollView>
+            </View>
+          </KeyboardAwareScrollView>
 
           {generatedPdf && (
             <View
@@ -507,7 +519,7 @@ export const RoofWaiverModal = ({
           position="top"
           statusBarHeight={insets.top > 0 ? insets.top : (Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined)}
         />
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
@@ -546,7 +558,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   paperFallbackText: { color: 'white', fontSize: 12, fontWeight: '500' },
-  body: { paddingHorizontal: 16, paddingTop: 20, backgroundColor: 'white' },
+  body: { paddingHorizontal: 16, paddingTop: 20, backgroundColor: 'white', flexShrink: 1 },
   disclaimerBox: {
     marginBottom: 20,
     borderRadius: 10,
