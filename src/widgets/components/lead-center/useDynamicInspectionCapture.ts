@@ -32,6 +32,8 @@ import { uploadQueueManager } from '../../../utils/uploadQueue';
 import { offlinePhotoDeleteQueue } from '../../../services/offlinePhotoDeleteQueue';
 import { resolveDeleteTarget } from '../../../utils/offline-photo-deletes';
 import { isOnline } from '../../../services/connectivity';
+import { cachedFetch, OFFLINE_CACHE } from '../../../utils/offline-query-cache';
+import { hashString } from '../../../utils/imageFileCache';
 import { getCaptureCoords } from '../../../utils/capture-location';
 import { useIsOnline } from '../../../hooks/useIsOnline';
 import { resolveS3Url } from '../../../utils/s3-utils';
@@ -354,7 +356,25 @@ export function useDynamicInspectionCapture({
         setLoading(true);
         const secureMap: Record<string, string | null> = {};
         try {
-          const res = await LeadService.getSecureUrls(filePaths);
+          /**
+           * ⚠️ Through the OFFLINE CACHE, not a bare call — and its absence is why Manage
+           * Photos showed "Needs a connection" on photos the Roofline Deck was rendering at
+           * the same moment.
+           *
+           * `useSecureUrls` (the deck's source) already wraps this same endpoint in
+           * `cachedFetch`, so offline it replays the last signed urls — expired as network
+           * addresses, but `getLocalCachePath` strips the query, so they still name the files
+           * already on disk. This screen called `LeadService.getSecureUrls` directly: offline
+           * that throws, the catch keeps the phase-1 fallback, and the fallback is
+           * `resolveS3Url` — a DIFFERENT url that was never warmed, so the tile had nothing.
+           *
+           * Same key shape as `useSecureUrls`, so both screens read and write one entry.
+           */
+          const res = await cachedFetch(
+            `${OFFLINE_CACHE.SECURE_URLS}:${hashString(filePaths.map((f) => f.filePath).join(','))}-${filePaths.length}`,
+            () => LeadService.getSecureUrls(filePaths),
+            { online: isOnline(), userId }
+          );
           const data = res?.data?.data || res?.data || [];
           filePaths.forEach((fp, i) => {
             const entry = Array.isArray(data)

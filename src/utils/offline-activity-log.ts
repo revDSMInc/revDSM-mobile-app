@@ -154,3 +154,49 @@ export const settleQueuedLog = (
     const attempts = (l.attempts || 0) + 1;
     return attempts >= maxAttempts ? [] : [{ ...l, attempts }];
   });
+
+/**
+ * Re-address every held log from the client id this device minted to the id the server issued.
+ *
+ * ⚠️ Its ABSENCE was a reported bug, and the symptom was the portal's Forever Record showing
+ * **"Sales Arrival: Pending… Awaiting Check-In"** on a door the rep had demonstrably worked — while
+ * *Sales Process* right beneath it showed their session. The check-in log had replayed, but it
+ * carried `meta.leadId: "work-1773…"`, which matches no lead, so the portal could not hang it on
+ * the timeline. The row is filed and orphaned: nothing errors, nothing retries, and the office
+ * sees a rep who never arrived.
+ *
+ * ⚠️ `payload.meta` AND `meta` both, because `LoggerService` stores the same object under both
+ * keys (`payload: { ...payload, meta: heldMeta }, meta: heldMeta`) and the POST body is built from
+ * `payload`. Rewriting one and not the other sends the stale id.
+ *
+ * ⚠️ Matched on the id only — never on `ownerId` or the module. A lead created by this device is
+ * addressed by this client id in every row that mentions it, and a partial rewrite would leave the
+ * timeline half-attached.
+ *
+ * Returns the SAME array when nothing matched, so a no-op write can be skipped.
+ */
+export const rekeyQueuedLogs = (
+  logs: readonly QueuedActivityLog[],
+  fromId: string,
+  toId: string
+): QueuedActivityLog[] => {
+  const from = String(fromId || '').trim();
+  const to = String(toId || '').trim();
+  if (!from || !to || from === to) return logs as QueuedActivityLog[];
+
+  let changed = false;
+  const next = logs.map((row) => {
+    const metaMatches = String(row.meta?.leadId ?? '') === from;
+    const payloadMatches = String(row.payload?.meta?.leadId ?? '') === from;
+    if (!metaMatches && !payloadMatches) return row;
+    changed = true;
+    return {
+      ...row,
+      meta: metaMatches ? { ...row.meta, leadId: to } : row.meta,
+      payload: payloadMatches
+        ? { ...row.payload, meta: { ...row.payload.meta, leadId: to } }
+        : row.payload,
+    };
+  });
+  return changed ? next : (logs as QueuedActivityLog[]);
+};

@@ -9,8 +9,10 @@ import { CustomDatePicker } from '../../screens/JobTracker/components/CustomDate
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { LeadService } from '../../services/api/leads';
+import { queueMapFilters } from '../../services/offlineMapFilters';
 import { NUMERIC_KEYBOARD } from '../../utils/keyboard-type';
 import { PIN_STATUS_FILTER_LABELS, PinStatusFilter } from '../../utils/sales-pins';
+import { useIsOnline } from '../../hooks/useIsOnline';
 
 // Dedicated, interceptor-free client for the Google Places/Geocode web-service calls,
 // with a finite timeout so a hung request fails fast instead of surfacing a bare
@@ -169,6 +171,14 @@ export const MapFiltersModal = ({
 }: MapFiltersModalProps) => {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
+  // Price / date / status / job-number / radius filters are all pure client-side re-filters of
+  // leads already in memory (`MapDetail`'s `baseFilteredLeads`) — they work offline with nothing
+  // to "sync". The ONE filter that genuinely needs the network is location text search, which
+  // resolves an address to coordinates via Google Places Autocomplete + Geocoding (`fetchPlaces`
+  // below, and the geocode call in `handleApply`'s location branch) — there is no offline
+  // fallback for that lookup. `isOnline` gates it so the rep sees an explicit hint instead of a
+  // silently empty results list that looks broken.
+  const isOnline = useIsOnline();
   const [localFilters, setLocalFilters] = useState(filters);
   const [showStartDate, setShowStartDate] = useState(false);
   const [showEndDate, setShowEndDate] = useState(false);
@@ -206,9 +216,12 @@ export const MapFiltersModal = ({
     return () => hideSubscription.remove();
   }, []);
 
-  // Debounced search for Places (Only for 'location' type)
+  // Debounced search for Places (Only for 'location' type). Skipped entirely offline — Google
+  // Places Autocomplete has no offline path, and firing it anyway would just burn the 15s
+  // `googleHttp` timeout for a request that cannot succeed. The hint shown next to the input
+  // (below) tells the rep why, instead of a results list that looks empty/broken.
   useEffect(() => {
-    if (searchType !== 'location' || !searchText || searchText.length < 3 || skipSearch.current) {
+    if (searchType !== 'location' || !searchText || searchText.length < 3 || skipSearch.current || !isOnline) {
       setSearchResults([]);
       return;
     }
@@ -218,7 +231,7 @@ export const MapFiltersModal = ({
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [searchText, searchType]);
+  }, [searchText, searchType, isOnline]);
 
   const fetchPlaces = async (input: string) => {
     try {
@@ -282,9 +295,16 @@ export const MapFiltersModal = ({
       if (localFilters.endDate) payload.endDate = localFilters.endDate;
       if (localFilters.isFavoriteOnly) payload.favoriteJobs = true;
       if (Object.keys(payload).length > 0) {
-        LeadService.saveLeadFilters(leadId, { savedFilters: payload }).catch((error) =>
-          console.error('[MapFilters] Error saving filters:', error),
-        );
+        // ⚠️ Offline this PATCH cannot leave the device, and the `.catch` used to swallow
+        // that — the device showed the new filters while the server kept the old set, which
+        // came back on the next read. Queued instead, and replayed on reconnect.
+        if (isOnline) {
+          LeadService.saveLeadFilters(leadId, { savedFilters: payload }).catch((error) =>
+            console.error('[MapFilters] Error saving filters:', error),
+          );
+        } else {
+          queueMapFilters(leadId, payload);
+        }
         // Sync the (shared) lead object so re-opening the map re-hydrates these filters
         // rather than a stale set — mobile has no global lead store (web: setCurrentLead).
         onFiltersPersisted?.(payload);
@@ -400,7 +420,14 @@ export const MapFiltersModal = ({
     // Clear the persisted filters too (web parity: `saveLeadFilters(leadId, { savedFilters: {} })`).
     const leadId = lead?._id || lead?.id;
     if (leadId) {
-      LeadService.saveLeadFilters(leadId, { savedFilters: {} }).catch(() => {});
+      // ⚠️ `{}` IS the write — a reset is not "nothing to send". Queueing it is what makes the
+      // reported case work: filter online, go offline, Reset, come back — the badge stayed at
+      // "1" because this request died in the `.catch` and the server never heard about it.
+      if (isOnline) {
+        LeadService.saveLeadFilters(leadId, { savedFilters: {} }).catch(() => {});
+      } else {
+        queueMapFilters(leadId, {});
+      }
     }
     // Clear the shared lead object's saved filters so a back-and-return shows the reset
     // state (not a stale filter set) without an app reload.
@@ -481,7 +508,13 @@ export const MapFiltersModal = ({
                   <View className="flex-1 px-3 justify-center">
                     <View className="flex-row items-center">
                       <TextInput
-                        placeholder={searchType === 'location' ? "Enter a location" : "Enter job number"}
+                        placeholder={
+                          searchType === 'location'
+                            ? isOnline
+                              ? 'Enter a location'
+                              : 'Location search needs a connection'
+                            : 'Enter job number'
+                        }
                         placeholderTextColor="#94a3b8"
                         className="flex-1 font-bold text-slate-700 text-[13px] h-full"
                         value={searchText}
@@ -508,6 +541,19 @@ export const MapFiltersModal = ({
                     </View>
                   </View>
                 </View>
+
+                {/* Offline hint — location search needs Google Places/Geocoding, which has no
+                    offline fallback (unlike every other filter on this sheet, which filters the
+                    already-cached lead list client-side and works offline). "Job #" search is
+                    plain-text matching and keeps working, so it's offered as the alternative. */}
+                {searchType === 'location' && !isOnline && (
+                  <View className="flex-row items-center mt-2 px-1">
+                    <Icon name="wifi-off" size={14} color="#94a3b8" />
+                    <Text className="ml-1.5 text-[11px] font-semibold text-slate-400">
+                      Location search needs a connection — try "Job #" instead while offline.
+                    </Text>
+                  </View>
+                )}
 
                 {/* Search Type Dropdown Menu */}
                 {showTypeDropdown && (

@@ -221,3 +221,89 @@ export const photoTileState = (
   if (!/^https?:\/\//i.test(uri)) return 'ready';
   return online ? 'loading' : 'unavailable';
 };
+
+// ─── Folding pending photos into the SHARED section map ───────────────────────
+
+/**
+ * `sectionImages` holds every lead photo grouped by category, and it is the source the screens
+ * BEYOND the Lead Center read: RevRender flattens it into `rawPhotos` (its picker, tab counts and
+ * `buildSchemaPickerCards` all derive from that), and the Pitch Book / Roofline Deck feed it to
+ * `buildInspectionSections`.
+ *
+ * ⚠️ It is built from `lead.salesPhotos` alone, so a photo shot at a door with no signal is
+ * INVISIBLE on all of them — the rep takes an inspection photo, opens RevRender to render it, and
+ * the picker is empty with "No photos for this product yet." The Lead Center shows it (it merges
+ * the queue itself, see `mergePendingForSlot`), so the two surfaces disagree about what the lead
+ * has, which reads as photos having been lost.
+ */
+export interface PendingSectionPhoto extends PendingPhotoView {
+  /** `sectionImages` entries are addressed by `uri`, not `secureUrl`. */
+  uri: string;
+  /** No server id yet — views keyed on `id` must tolerate this. */
+  id: string;
+  index: number;
+  category: string;
+}
+
+/**
+ * Fold the lead's pending uploads into the category map the shared screens read.
+ *
+ * ⚠️ Grouped by CATEGORY here, not by slot. `sectionImages` is one bucket per category, so the
+ * surplus rule is applied per category rather than per subcategory — the same rule, one level up.
+ * Comparing per slot would over-add: the category bucket already holds every slot's photos.
+ *
+ * ⚠️ `categoryName` carries the product scope (`"Gutters/Roofline — HOME"`) while the map's keys
+ * are the schema's display names, so the match is on the normalized name with any ` — PRODUCT`
+ * suffix stripped. An unmatched category is still added under its own key rather than dropped —
+ * being visible in the wrong group beats vanishing.
+ *
+ * Returns the SAME object when there is nothing pending, so callers can keep their memo identity.
+ */
+export const mergePendingIntoSections = <T,>(
+  sections: Record<string, T[]> | null | undefined,
+  pending: PendingUpload[] | null | undefined,
+  leadId: string | null | undefined
+): Record<string, (T | PendingSectionPhoto)[]> => {
+  const base = (sections || {}) as Record<string, T[]>;
+  const queued = (pending || []).filter(
+    (it) => it && it.leadId === leadId && it.uri && !isAnnotated(it.subcategory)
+  );
+  if (!leadId || queued.length === 0) return base;
+
+  // Category name without its product scope, normalized — what the map is keyed by.
+  const catOf = (name: string): string => norm(String(name || '').split('—')[0]);
+
+  const byCat = new Map<string, PendingUpload[]>();
+  queued.forEach((it) => {
+    const k = catOf(it.categoryName);
+    const list = byCat.get(k);
+    if (list) list.push(it);
+    else byCat.set(k, [it]);
+  });
+
+  const out: Record<string, (T | PendingSectionPhoto)[]> = { ...base };
+  const keyFor = new Map(Object.keys(base).map((k) => [norm(k), k]));
+
+  byCat.forEach((items, cat) => {
+    const mapKey = keyFor.get(cat) || items[0].categoryName.split('—')[0].trim();
+    const server = (out[mapKey] || []) as T[];
+    // Same surplus rule as `mergePendingForSlot`: a queue item is not removed until its upload
+    // succeeds, and the refetch can land first, so only what the server does not yet account for
+    // is added. Otherwise the photo appears twice the moment it uploads.
+    const surplus = items.length - server.length;
+    if (surplus <= 0) {
+      out[mapKey] = server;
+      return;
+    }
+    const add = items.slice(items.length - surplus).map((it, n) => ({
+      ...toView(it),
+      uri: it.uri,
+      id: it.id,
+      index: server.length + n,
+      category: mapKey,
+    }));
+    out[mapKey] = [...server, ...add];
+  });
+
+  return out;
+};

@@ -23,6 +23,7 @@
 import { Storage } from './storage';
 import { LeadService } from '../services/api/leads';
 import { logLeadSessionPause } from './lead-activity-log';
+import { isClientId } from './offline-lead-work';
 
 /** Where the open session lives between screens — and across app launches. */
 const ACTIVE_WORK_LEAD_KEY = 'sales:activeWorkLead';
@@ -144,6 +145,23 @@ export const endStaleLeadWorkSession = async (): Promise<void> => {
     } catch (err) {
       console.warn('[LeadWork] Stale pause log failed:', err);
     }
+  }
+
+  /**
+   * ⚠️ NEVER for a CLIENT id, and this sweep is the most dangerous place to send one.
+   *
+   * It runs at LAUNCH, which is typically the moment the device is back online — so this
+   * is the release most likely to actually reach the server. `session.leadId` is the id
+   * the Lead Center was opened with, and for a lead created at the door that is
+   * `work-1773…`. If the offline queue has meanwhile drained, the real lead now exists
+   * WITH a check-in, and the only thing stopping this from clearing it is that the stale
+   * id does not resolve. That is luck, not a guard.
+   *
+   * The session is still forgotten above, so nothing is left to sweep again.
+   */
+  if (isClientId(session.leadId)) {
+    console.log('[LeadWork] Stale session was an offline lead; nothing to release.');
+    return;
   }
 
   try {

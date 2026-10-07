@@ -21,6 +21,7 @@ import { describeFullPackage } from '../utils/tab-naming';
 import { FullPackageTitle, FullPackageInfoModal, type PackageAnchorRect } from './FullPackageBadge';
 import { useAuth } from '../../../hooks/useAuth';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
+import { useNumPadActive } from '../../../widgets/common/keyboard/NumPad';
 import { FlashMessage } from '../../../config/message';
 import {
   changeKind,
@@ -600,6 +601,13 @@ export function CalculatorView({
 }: CalculatorViewProps) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   const { user } = useAuth();
+  // True while the in-app NumPad is up over a focused field here. The pad renders as its own
+  // sibling strip BELOW this whole screen (see `NumPad/index.tsx`'s "inflow" mode) and already
+  // reserves its own bottom safe-area padding — this footer's OWN bottom padding is for when it
+  // is the last thing above the home indicator, which is not true while the pad is showing, and
+  // the two stacked on top of each other was the visible gap above the pad (ticket: "gap issue
+  // b/w the keyboard and tabs").
+  const numPadActive = useNumPadActive();
   // Payment method the locked receipt prices against — resolved exactly like the
   // live rollout view (`RolloutView.resolveMethod`): the calc's own saved method,
   // else the user default, else the lead-aware default. Drives the tier bank-fee.
@@ -893,7 +901,7 @@ export function CalculatorView({
       </ScrollView>
 
       {/* Calculator tabs footer — draggable tabs + add + view-all (rollout), matching the deal center */}
-      <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12 }}>
+      <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 16, paddingTop: 8, paddingBottom: numPadActive ? 8 : 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', height: 44 }}>
           <View style={{ flex: 1, marginRight: 12, height: 44, justifyContent: 'center', overflow: isDragging ? 'visible' : 'hidden' }}>
             <ScrollView

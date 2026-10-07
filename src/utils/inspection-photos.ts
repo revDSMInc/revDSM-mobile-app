@@ -104,7 +104,15 @@ export function buildInspectionSections(
 
   (photos || []).forEach((p: any) => {
     if (!p || p.deletedAt || isAnnotatedPhoto(p)) return;
-    const uri = uriByS3[p.s3url] || p.secureUrl;
+    /**
+     * ⚠️ `p.uri` is the third source, and leaving it out is what hid every photo shot at a door
+     * with no signal. A pending upload has NO `s3url` (the server has not issued one) and NO
+     * `secureUrl` (there is nothing to sign) — it carries only the local `file://` copy. Both
+     * lookups above miss, `uri` came back undefined, and the photo was dropped from the section
+     * entirely: the Roofline Deck's Inspection tab showed empty frames for photos the Lead
+     * Center was displaying on the screen beneath it.
+     */
+    const uri = uriByS3[p.s3url] || p.secureUrl || p.uri;
     if (!uri) return;
 
     const sec = sectionFromCategory(p.category);

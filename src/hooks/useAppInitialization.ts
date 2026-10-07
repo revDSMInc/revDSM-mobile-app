@@ -14,6 +14,7 @@ import SocketManager from '../services/SocketManager';
 import PushNotificationService from '../services/PushNotificationService';
 import { startOfflineSyncTimer, stopOfflineSyncTimer } from '../services/api/offlineUploadManager';
 import { startOfflineWorkSync } from '../services/offlineLeadStore';
+import { startMapFilterSync } from '../services/offlineMapFilters';
 import { adoptSessionOwner } from '../services/sessionScope';
 import { startPhotoQueueSync } from '../utils/uploadQueue';
 import { startActivityLogSync } from '../services/offlineActivityLog';
@@ -246,6 +247,11 @@ export function useAppInitialization() {
     // Replay the arrival events the office reads — check in / resume / review / pause — that were
     // fired at a door with no signal. Same reconnect-driven, idempotent shape as the two above.
     startActivityLogSync();
+
+    // Replay a map filter the rep applied or RESET with no signal. The PATCH is full-state, so
+    // a replay lands exactly what they chose; without it the server kept the previous set and
+    // put it back on the next read.
+    startMapFilterSync();
 
     // Keep draining all four queues after the app leaves the screen: an iOS grace period, or the
     // Android foreground service. Subscribes to app-state only — the engines above own the
