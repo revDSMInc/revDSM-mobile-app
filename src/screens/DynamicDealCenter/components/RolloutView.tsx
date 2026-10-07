@@ -59,32 +59,15 @@ import {
 } from '../../../services/offlineSettings';
 import type { CalculatorSettingsPatch } from '../../../utils/offline-settings';
 
-/** Resolve the payment plan shown for a calculator (saved → user default → lead-aware fallback). */
 const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?: string) =>
   calc.paymentMethod || userDefault || defaultMethod || 'check';
 
-/**
- * The **$200 job-minimum floor** applied to a tier value. The regular rollout AND
- * the web app run every COST/PAR/RETAIL tier through `calculateResultUtil`, which
- * bumps any priced job to $200 **INDEPENDENTLY per tier**, so a tiny job can read
- * $200 across all three. Gated on the calc having items (`retail > 0`).
- */
 const floorTier = computeFloorTier;
 
-/**
- * The calculator's cost with the $200 job-minimum floor applied — the value the
- * end price / drop price is validated against.
- */
 function effectiveCostOf(calc: CalculatorTab): number {
   return computeEffectiveCost(calc.totals);
 }
 
-/**
- * Most-specific reason an end price is invalid (else null) — below the (floored)
- * cost, then the Wells-Fargo-high $7,500 hardcoded floor (web safety net), then
- * the selected plan's own minimum. Strings match the web app exactly. Delegates
- * to the unit-tested `dynamic-rollout-pricing` module.
- */
 function endPriceError(plans: Record<string, DealPlan>, price: number, calc: CalculatorTab, method: string): string | null {
   return computeEndPriceError(plans, price, calc.totals, method);
 }
@@ -96,77 +79,44 @@ interface CalculatorTab {
   totals: { cost: number; par: number; retail: number };
   isRolloutConfirmed?: boolean;
   price?: number;
-  /** Job-scope fingerprint the entered price was priced against (drives the
-   *  "Job Scope was changed" warning). Empty when no price has been entered. */
   priceScopeSig?: string;
   paymentMethod?: string;
   dropPrice?: any[];
   downPayment?: number;
   discountPercentage?: number;
-  /** RevRender before/after pairs bound to this calculator's job build. */
   selectedRenders?: any[];
-  /** 1-Year Program monthly-payment selection (persisted for the Investment Center). */
   oneYearMonthlyPlan?: OneYearMonthlyValue;
 }
 
 interface RolloutViewProps {
   calculators: CalculatorTab[];
-  /** All configured verticals — used to label the quote-card category pills AND to
-   *  recompute the COST/PAR/RETAIL tiles live from the schema field prices. */
   verticals?: CalculatorSchema[];
-  /** Company pricing config (tier derivation + static fees) for the tile recompute. */
   pricingConfig?: PricingConfig | null;
-  /** Backend-driven payment plans + discount config (static fallback). */
   pricing: DealPricing;
-  /** Lowe's leads get the Lowe's-only plan groups + `lowes_ach` default. */
   isLowesLead?: boolean;
-  /** Rehash: the Result Lead button shows no price, since none is carried forward
-   *  from the original appointment (web `QuoteResultCard.isRehashed`). */
   isRehashed?: boolean;
-  /** Lead id — threaded into the rollout/drop activity logs (web parity). */
   leadId?: string;
-  /** Appointment id — the CalcTab does NOT carry it, so the rollout/drop logs must
-   *  receive it here or they ship `appointmentId: undefined` and the portal can't
-   *  group them into the "Rollout & Drops" module (web keys on `calculator.appointmentId`). */
   appointmentId?: string;
   onBack?: () => void;
   onConfirmRollouts?: (confirmed: Array<{ id: string; price: number; pricemarkup?: string }>) => void;
   onResultJob?: (calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
-  /** Persist the entered end price on the calculator so it survives back-to-calculator
-   *  edits (spec: never delete the user's entered end prices) and snapshots its scope. */
   onPriceCommit?: (id: string, price: number, pricemarkup?: string) => void;
-  /** Dismiss the "Job Scope was changed" warning (re-baseline the scope snapshot). */
   onDismissScopeWarning?: (id: string) => void;
-  /** Persist a calculator's payment plan (auto-saves like a field change). */
   onPaymentMethodChange?: (id: string, method: string) => void;
-  /** Persist a calculator's drop-price list. */
   onDropChange?: (id: string, drops: any[]) => void;
-  /** Persist a calculator's pre-order discount % (result-section selector). */
   onDiscountChange?: (id: string, discount: number) => void;
-  /** Persist a calculator's rollout down payment. */
   onDownPaymentChange?: (id: string, downPayment: number) => void;
-  /** Persist the RevRender pairs the rep bound to this calculator's job build. */
   onRendersChange?: (id: string, renders: any[]) => void;
-  /** Persist the 1-Year Program monthly-payment selection. */
   onOneYearMonthlyChange?: (id: string, plan: OneYearMonthlyValue) => void;
-  /** Fired after the rep taps Confirm Rollouts — the flow returns to the Lead
-   *  Center tools so they can present (map / pitch book) and open Investment Center. */
   onRolloutsConfirmedDone?: () => void;
-  /** Controlled active tab — syncs with the calculator view so switching views
-   *  preserves which calculator the user was working on. */
   activeTabId?: string;
   onTabSelect?: (id: string) => void;
-  /** Ticket 409 — the calculator the lead was already resulted from, or null. Every
-   *  calculator's Result Lead / Add Drop locks while this is set; only that one offers
-   *  Reset Job Builder. */
   submittedCalculatorId?: string | null;
-  /** Tapping Reset Job Builder on the resulted calculator. */
   onResetJobBuilder?: () => void;
 }
 
 type CatStyle = { color: string; icon: string; bg: string };
 
-// Same palette as the calculator so pills stay consistent across the flow.
 const CATEGORY_STYLE_MAP: Record<string, CatStyle> = {
   gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
   gutter: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
@@ -188,20 +138,11 @@ function styleForKey(name: string, color?: string): CatStyle {
   return { color: c, icon: 'pricetag', bg: color ? `${c}1A` : '#F4F6F8' };
 }
 
-/**
- * Grouped payment-plan picker — mirrors the regular rollout's picker
- * (`CalculatorSummary` line ~1541): plans bucketed under colored headers
- * (Basic Options, GreenSky Plans, Wells Fargo Plans, Wells Fargo High, Concora,
- * or the Lowe's groups). Plans below their `minPrice` for the current end price
- * are greyed out and warn instead of selecting. `getRolloutPaymentCategories`
- * is the shared source of truth for the group order/labels/colors.
- */
 function PaymentPlanModal({ visible, selected, price, plans, categories, onSelect, onClose }: {
   visible: boolean; selected: string; price: number;
   plans: Record<string, DealPlan>; categories: PayCategory[];
   onSelect: (key: string) => void; onClose: () => void;
 }) {
-  // A Modal reads a 0 / stale safe-area inset, so the last plan sat under Android's nav bar.
   const bottomInset = useBottomInset();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -225,31 +166,17 @@ function PaymentPlanModal({ visible, selected, price, plans, categories, onSelec
                   const plan = plans[key];
                   if (!plan) return null;
                   const min = plan.minPrice || 0;
-                  // A min-price plan (e.g. Wells Fargo "jobs over $7,500") is ALWAYS
-                  // selectable — including BEFORE any end price is entered — matching the
-                  // regular rollout picker (`CalculatorSummary`) and web. The shared
-                  // `planBelowMin` only flags an ENTERED price below the minimum
-                  // (price > 0 && price < min), so at price 0 nothing is locked: the rep
-                  // picks the plan first, THEN types the end price. (The earlier build
-                  // wrongly treated price 0 as below-min and DISABLED these rows — the
-                  // "enter end price first" lock the ticket is about.)
                   const belowMin = planBelowMin(plans, key, price);
                   const isSel = key === selected;
                   return (
                     <TouchableOpacity
                       key={key}
                       onPress={() => {
-                        // Below-min = a price IS entered and it's under the plan minimum:
-                        // warn instead of selecting (regular-rollout + Add-Plan parity). At
-                        // price 0 belowMin is false, so every plan selects freely; a later
-                        // below-min end price is caught by the end-price validation.
                         if (belowMin) { FlashMessage.warning('Payment plan', belowMinMsg(plans, key, price)); return; }
                         onSelect(key);
                       }}
                       style={{
                         padding: 14, borderRadius: 12, borderWidth: 1.5, marginBottom: 8,
-                        // Below-min rows read as GREY/muted so they're clearly distinct from
-                        // the white, selectable active options.
                         borderColor: isSel ? '#4CBB17' : '#E2E8F0',
                         backgroundColor: isSel ? '#4CBB170D' : belowMin ? '#F1F5F9' : '#fff',
                         opacity: belowMin ? 0.6 : 1,
@@ -281,7 +208,6 @@ function PaymentPlanModal({ visible, selected, price, plans, categories, onSelec
   );
 }
 
-/** One label/value line inside the program-comparison boxes. */
 function PriceRow({ label, value, green, small }: { label: string; value: string; green?: boolean; small?: boolean }) {
   const fs = small ? 10 : 11;
   return (
@@ -292,10 +218,6 @@ function PriceRow({ label, value, green, small }: { label: string; value: string
   );
 }
 
-/**
- * The financing plans the rep can add to the drop modal's "Monthly Options" list —
- * grouped exactly like the regular rollout's Add-Plan picker (`getDropAddPlanCategories`).
- */
 function DropAddPlanModal({ visible, price, plans, categories, added, onAdd, onClose }: {
   visible: boolean; price: number;
   plans: Record<string, DealPlan>; categories: PayCategory[]; added: string[];
@@ -353,21 +275,6 @@ function DropAddPlanModal({ visible, price, plans, categories, added, onAdd, onC
   );
 }
 
-/**
- * Drop-price negotiation modal — a faithful port of the regular rollout's drop
- * modal (`CalculatorSummary` drop modal / web `DropPriceModal`): a CENTERED card
- * (not a bottom sheet) with a green check, the "UPDATED PRICE" eyebrow, the price
- * with CK/CC (or ACH/CC) method badges, an Add Down Payment → Balance block, a
- * "Monthly Options" list of financing plans (add/select/remove, each showing its
- * monthly on the balance), and **Decline** / **Secure This Price** actions. Secure
- * is disabled until a plan is selected and the down payment does not exceed the
- * drop price (web parity). Records the drop only on Secure/Decline.
- */
-/**
- * Right-swipe "Delete" action for a Monthly-Options plan row (mirrors the regular
- * rollout's drop modal, `CalculatorSummary`). Extracted to a component so the
- * `useAnimatedStyle` hook lives in a real component, not a render callback.
- */
 function SwipeDeleteAction({ drag, onDelete }: { drag: any; onDelete: () => void }) {
   const styleAnimation = useAnimatedStyle(() => ({
     transform: [{ translateX: drag.value + 80 }],
@@ -389,31 +296,16 @@ function SwipeDeleteAction({ drag, onDelete }: { drag: any; onDelete: () => void
 function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 0, method, calculatorMethod, existingDrop, isLowesLead, plans, dropAddCategories, onSecure, onDecline, onPlanSelected, onClose }: {
   visible: boolean;
   dropPrice: number;
-  /**
-   * Screens the calculator carries, and what they cost.
-   *
-   * ⚠️ DISPLAY ONLY. Web (`DropPriceModal.js`) shows `droppedPrice + screensCost` as the
-   * headline and keeps `droppedPrice` for everything that computes — the balance, the
-   * down-payment cap, the plan-minimum checks and what Secure/Decline records. Folding
-   * the screens into `dropPrice` instead would quietly re-price the negotiation.
-   */
   screensCount?: number;
   screensCost?: number;
   method: string;
-  /** The lead / calculator BASE payment method (deal-center pick, e.g. AMEX). Kept
-   * separate from `method` (which is the active/pre-select plan and can become a
-   * secured drop's financing plan) so the lead's method always shows as its own row,
-   * even when Displaying a drop that was secured with a different (financing) plan. */
   calculatorMethod: string;
-  /** When reopening an already-recorded drop (Display), its saved values seed the
-   * modal so the previously-chosen plan / down payment are shown, not a blank form. */
   existingDrop?: any | null;
   isLowesLead: boolean;
   plans: Record<string, DealPlan>;
   dropAddCategories: PayCategory[];
   onSecure: (data: { paymentMethod: string; paymentMethods: string[]; downPayment: number; balance: number }) => void;
   onDecline: (data: { paymentMethod: string; paymentMethods: string[]; downPayment: number; balance: number }) => void;
-  /** Fired when the rep ADDS a financing plan → `drop price plan selected` rollout log. */
   onPlanSelected?: (planKey: string) => void;
   onClose: () => void;
 }) {
@@ -424,29 +316,15 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
 
   const [selectedPlan, setSelectedPlan] = useState(calculatorMethod);
   const [addedPlans, setAddedPlans] = useState<string[]>(isFinancing(plans, calculatorMethod) ? [calculatorMethod] : []);
-  // The payment method chosen on the lead / rollout card — kept SEPARATELY from
-  // `selectedPlan` so it stays displayed as its own row even after the rep picks a
-  // different plan in the popup (it must not be replaced by the newly-selected one).
   const [leadMethod, setLeadMethod] = useState(method);
   const [downText, setDownText] = useState('');
   const [showDown, setShowDown] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
 
-  // Seed the modal each time it opens: from the saved drop when re-displaying an
-  // existing one, otherwise from the calculator's current payment method. Without
-  // this an already-secured drop reopened empty (dropped its plan + down payment).
   useEffect(() => {
     if (!visible) return;
-    // A NEW drop defaults to ONLY the lead's method (`calculatorMethod`, e.g. AMEX) —
-    // it must NOT carry over the plan a PREVIOUS drop was secured with (that came in
-    // via `method`/activeMethod). Displaying an existing drop still seeds from that
-    // drop's own saved method + plans.
     const savedMethod = existingDrop?.paymentMethod || calculatorMethod;
     const savedDown = Number(existingDrop?.downPayment) || 0;
-    // Restore EVERY plan the rep chose for this drop (Display parity): a secured/
-    // declined drop persists its full `paymentMethods` list, so reopening it shows
-    // all of them in Monthly Options — not just the one selected plan. Falls back
-    // to the single saved method for older records that stored only `paymentMethod`.
     const savedPlans: string[] = (
       Array.isArray(existingDrop?.paymentMethods) && existingDrop.paymentMethods.length
         ? existingDrop.paymentMethods
@@ -454,20 +332,12 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
     ).filter((k: string) => isFinancing(plans, k));
     setSelectedPlan(savedMethod);
     setAddedPlans(savedPlans);
-    // The lead's method is always the calculator's BASE method (`calculatorMethod`),
-    // independent of the plan the rep selects AND of a secured drop's financing plan
-    // (which flows through `method`). So Displaying a financing-secured drop still
-    // shows the lead's basic method (e.g. AMEX) as its own row.
     setLeadMethod(calculatorMethod);
     setDownText(savedDown > 0 ? String(savedDown) : '');
     setShowDown(savedDown > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, method, calculatorMethod, existingDrop]);
 
-  // Decline / Secure fire exactly once per opening of the sheet. `dedupeDrops` used to
-  // absorb a double-tap by collapsing the identical rows it produced — but a guard that
-  // DELETES rows is the very thing that made mobile's list a subset of the server's, so
-  // the guard belongs on the button instead.
   const submitted = useRef(false);
   useEffect(() => {
     if (visible) submitted.current = false;
@@ -484,9 +354,6 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
   const canSecure = !!selectedPlan && !downExceeds;
   const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
-  // The rep can add MULTIPLE plans to Monthly Options — adding appends to the
-  // list (deduped) and marks the new one selected; each can still be removed via
-  // swipe. Only the currently-selected plan is what Secure/Decline records.
   const addPlan = (key: string) => {
     setAddedPlans((prev) => (prev.includes(key) ? prev : [...prev, key]));
     setSelectedPlan(key);
@@ -674,31 +541,16 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
   );
 }
 
-/**
- * Small "Result Job {name}" Sale/Demo chooser — mirrors the regular rollout's
- * inline chooser (`CalculatorSummary` ~L1683): a centered card with a document
- * icon, the calculator name, the most-recent price, and Sale (green) / Demo
- * (orange) / Cancel. Choosing an outcome hands off to the full Result Lead
- * (outcome) modal at the screen level.
- */
 function ResultJobChooser({ visible, name, price, isFullPackage = false, packageExtras = '', onSale, onDemo, onClose }: {
   visible: boolean; name: string; price: number;
-  /** Full package → the heading shows the icon + ⓘ in place of the derived name. */
   isFullPackage?: boolean;
-  /** Keys the package doesn't cover, rendered as `+Light` (see `describeFullPackage`). */
   packageExtras?: string;
   onSale: () => void; onDemo: () => void; onClose: () => void;
 }) {
   const { isDark } = useTheme();
-  // The contents card is an IN-SHEET overlay here, never a nested <Modal>: stacking
-  // native modals is unreliable on both platforms (same reason as the funding flow's
-  // SendLinkModal). It renders as the last child of this modal's own root.
   const [packageAnchor, setPackageAnchor] = useState<PackageAnchorRect | null>(null);
   const [showPackageInfo, setShowPackageInfo] = useState(false);
   const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
-  // animationType="none" so the drop → chooser hand-off is instant: the dimmed
-  // backdrop is up on the same frame the drop modal disappears, never revealing the
-  // un-dimmed background (web parity — the drop dialog uses timeout:0).
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
@@ -756,18 +608,10 @@ function ResultJobChooser({ visible, name, price, isFullPackage = false, package
   );
 }
 
-/**
- * "Price Declined" modal — port of web `deal-center/components/DeclinePriceModal.js`
- * (and the regular rollout's copy at `CalculatorSummary` ~L1740). Web opens this
- * the moment the drop modal closes on a decline ("keeps blur continuous, no gap
- * between modals"), offering **Result Lead** — which results the lead as a DEMO at
- * the most recent drop price — or **Exit**.
- */
 function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   visible: boolean; declinedPrice: number; onResultLead: () => void; onClose: () => void;
 }) {
   const { isDark } = useTheme();
-  // animationType="none" so decline → this modal is instant with no background flash.
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
@@ -829,16 +673,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   pricingConfig?: PricingConfig | null;
   leadId?: string;
   appointmentId?: string;
-  /** true when this calc's job scope changed after the price was entered. */
   scopeChanged?: boolean;
-  /** dismiss the scope-changed warning (re-baselines the snapshot). */
   onDismissScopeWarning?: () => void;
-  /** opens the package-contents card below the heading's ⓘ (full-package calcs only). */
   onShowPackageInfo?: (rect: PackageAnchorRect | null) => void;
   onPriceChange: (id: string, price: number, pricemarkup?: string) => void;
   onResult: (id: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
   onPaymentMethodChange: (id: string, method: string) => void;
-  /** Ticket 409: whether the lead is already resulted, and from which calculator. */
   lockState?: CalculatorLockState;
   onResetJobBuilder?: () => void;
   onDropChange: (id: string, drops: any[]) => void;
@@ -848,14 +688,10 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   onOneYearMonthlyChange: (id: string, plan: OneYearMonthlyValue) => void;
 }) {
   const { user, refreshUser } = useAuth();
-  // One verdict for this card AND the Sale/Demo chooser it opens, so the heading the
-  // rep taps "Result Lead" from and the heading they land on cannot disagree.
   const packageInfo = useMemo(
     () => describeFullPackage(calculator.entries || {}, verticals || []),
     [calculator.entries, verticals]
   );
-  // Ticket 409 lock state, normalised so every read below is a plain boolean. Absent
-  // (an embedder that does not pass it) means nothing is resulted, i.e. unchanged.
   const jobLock: CalculatorLockState = lockState || { isSubmittedTab: false, isAnySubmitted: false, isLockedByOtherTab: false };
   const [endPrice, setEndPrice] = useState(initialPrice ? String(initialPrice) : String(calculator.price || ''));
   const [focused, setFocused] = useState(false);
@@ -864,43 +700,22 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const [showDropInput, setShowDropInput] = useState(false);
   const [downText, setDownText] = useState(calculator.downPayment ? String(calculator.downPayment) : '');
   const [showDownInput, setShowDownInput] = useState((calculator.downPayment || 0) > 0);
-  // Collapsed-by-default breakdown once the rollout is locked; the chevron on the
-  // Rollout End Price box toggles it (web `isRolloutExpanded`).
   const [showLockedDetails, setShowLockedDetails] = useState(false);
-  // Pending drop price waiting on the Secure/Decline modal (web `DropPriceModal`).
   const [pendingDrop, setPendingDrop] = useState(0);
   const [showDropModal, setShowDropModal] = useState(false);
-  // The index of the already-recorded drop being re-displayed (-1 = a brand-new
-  // drop). Re-securing/declining an existing drop updates it in place instead of
-  // appending a duplicate, and its saved values seed the modal.
   const [pendingDropIndex, setPendingDropIndex] = useState(-1);
-  // Sale/Demo chooser (web `showResultModal`) — opened from Result Lead or after
-  // securing a drop; picking an outcome opens the full Result Lead outcome modal.
   const [showChooser, setShowChooser] = useState(false);
   const [chooserPrice, setChooserPrice] = useState(0);
-  // Web `ViewAllCalculators.declineModal` — null when hidden, else the declined price.
   const [declinedPrice, setDeclinedPrice] = useState<number | null>(null);
-  // Down payment carried into the Result Lead modal — seeded from the drop being
-  // resulted (secured/viewed) or the accepted drop, so a down payment entered in
-  // the drop price flow prefills the outcome modal (web parity).
   const [chooserDown, setChooserDown] = useState(0);
 
   const plans = pricing.plans;
   const method = resolveMethod(calculator, user?.defaultPaymentMethod, pricing.defaultMethod);
   const isDefaultMethod = !!user?.defaultPaymentMethod && user.defaultPaymentMethod === method;
-  // Tiers the rollout LOGS anchor markup on — the SAME fee-adjusted, $200-floored
-  // COST/PAR/RETAIL the markup anchors on. WEB PARITY (`calculateMarkup`): the
-  // anchors ALWAYS use the `check` method, so they are INDEPENDENT of the selected
-  // payment plan (unlike the displayed `tiers` below, which are fee-inflated by
-  // `method`). `computeCalculatorTiers` derivation still fixes retail-only schemas so
-  // the markup snaps to the right tier ("COST + 100%", not "PAR + 49%").
   const logTiers = useMemo(
     () => computeLogTiers(calculator.entries, verticals, pricingConfig),
     [calculator.entries, verticals, pricingConfig],
   );
-  // The "default" 1-Year monthly plan: the rep's default payment method if it's a
-  // financing plan, else the standard ~9.99% APR financing plan, else the first
-  // financing plan available (web resolves the same 9.99% default in OneYearMonthlyPlan).
   const defaultOneYearKey = useMemo(() => {
     const financingKeys = Object.keys(plans).filter((k) => isFinancing(plans, k));
     if (user?.defaultPaymentMethod && isFinancing(plans, user.defaultPaymentMethod)) return user.defaultPaymentMethod;
@@ -915,38 +730,17 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const acceptedDrop = drops.find((d) => d.status === 'accepted');
   const activeMethod = acceptedDrop?.paymentMethod || method;
   const activeDownPayment = Number(acceptedDrop?.downPayment) || 0;
-  /**
-   * What the Result Lead modal should OPEN with.
-   *
-   * ⚠️ Not `activeDownPayment`. That one is the accepted DROP's figure, so on the plain
-   * Result Lead path — no drops, which is the common case — it is always 0 and the modal
-   * opened at $0.00 even when a down payment was already saved on this calculator. The
-   * drop's value still wins when one is accepted: the deal is being resulted at the drop,
-   * and the drop carries its own down payment.
-   */
   const resultDownPayment = acceptedDrop ? activeDownPayment : (Number(calculator.downPayment) || 0);
 
-  // ── Rollout activity logs the portal timeline renders (web parity) ──────────
   const logCalculator = { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId };
 
-  // Fire the "end price entered" log once per DISTINCT committed price (web guards on
-  // `Number(price) === Number(calculator.price)`), not on every blur — otherwise
-  // re-blurring the same value spams duplicate portal rows. This is the FIRST rollout
-  // price log the portal shows under CONFIRMED ROLLOUTS.
   const loggedPriceRef = useRef<number | null>(calculator.price ? Number(calculator.price) : null);
   const logEndPriceEntered = () => {
     const p = parseFloat(endPrice) || 0;
-    // Web `handleBlurPrice`: a focus-out with no change → do nothing.
     if (loggedPriceRef.current === p) return;
-    // Web returns BEFORE saving/logging when the price is invalid (below cost, below a
-    // Wells-Fargo-High minimum, or under the plan minimum) — the inline error already
-    // shows it. Don't persist the markup and don't fire the log for an invalid price.
     if (p > 0 && priceErr) return;
     const prev = loggedPriceRef.current;
     loggedPriceRef.current = p;
-    // Web parity: persist the pricemarkup alongside the price (handleBlurPrice's
-    // updateLfCalculator({ price, pricemarkup, isRolloutConfirmed:false })), so the
-    // calculator's stored markup tracks the entered end price — not only at confirm.
     onPriceChange(calculator.id, p, p > 0 ? markupLabel(p, logTiers) : '');
     const uid = user?._id || user?.id;
     if (!uid || p <= 0) return;
@@ -964,20 +758,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }).catch(() => {});
   };
 
-  // Web `handlePaymentMethodChange` → `payment method changed` (or, once the rollout
-  // is confirmed, `payment method changed for drop`). Portal reads `newPaymentMethodLabel`.
   const logPaymentMethodChanged = (newKey: string) => {
     const uid = user?._id || user?.id;
     const oldKey = method;
     if (!uid || newKey === oldKey) return;
     const isConfirmed = !!(calculator as any).isRolloutConfirmed;
     const currentPrice = parseFloat(endPrice) || Number(calculator.price) || 0;
-    // Web parity: `fireRolloutLog` anchors this log on the calculator's CURRENT
-    // (pre-change) method — web reads the stale `calculator.paymentMethod` because the
-    // update hasn't re-rendered yet. `logTiers` (keyed on the current `method`) is
-    // exactly that OLD-plan tier set, so use it to match web. (Web logs the payment-
-    // method change against the price BEFORE the plan switched, NOT the new plan's
-    // fee — matching that here.)
     logRolloutChange({
       userId: uid,
       leadId,
@@ -996,8 +782,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }).catch(() => {});
   };
 
-  // Web `handleSelectPlan` → `drop price plan selected` (portal "Added Payment Plan"
-  // row). Fired when the rep adds a financing plan inside the drop-price modal.
   const logDropPlanSelected = (planKey: string) => {
     const uid = user?._id || user?.id;
     if (!uid || !planKey) return;
@@ -1016,8 +800,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }).catch(() => {});
   };
 
-  // Numeric markup percent (web `calculateMarkupNumber`) — the integer % a price sits
-  // above its anchor tier. Used for the drop-unselect log's extra numeric fields.
   const markupPercentOf = (price: number, t: { cost: number; par: number; retail: number }) => {
     const cost = Math.round(t.cost) || 0;
     const par = Math.round(t.par) || 0;
@@ -1026,9 +808,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     return anchor ? Math.round(((price - anchor) / anchor) * 100) : 0;
   };
 
-  // Web `handleUnselectSecured` → `drop price unselected` rollout log. Un-securing a
-  // drop marks it declined (kept in the list) and logs it — mobile previously updated
-  // the drop status but fired no log, so the un-secure never reached the portal.
   const logDropUnselected = (dropPrice: number, index: number) => {
     const uid = user?._id || user?.id;
     if (!uid) return;
@@ -1050,23 +829,10 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }).catch(() => {});
   };
 
-  // COST/PAR/RETAIL are recomputed LIVE from the entered quantities × the current
-  // schema field prices (web `getCalculationResult` parity) — NOT from the stored
-  // the stored raw totals, which for a blank-tier schema (only retail priced) carried
-  // par/cost = 0 and floored every tile to $200. `computeCalculatorTiers` resolves
-  // each tier via the company pricing config's derivation rules (par/cost derived
-  // from retail) as a PURE tier sum (this mirrors web's stored `totals`, which are
-  // pre-fee — DealCenterContext `computeTotals`).
   const liveTotals = useMemo(
     () => computeCalculatorTiers(calculator.entries, verticals, pricingConfig),
     [calculator.entries, verticals, pricingConfig],
   );
-  // The DISPLAYED tile then reproduces web `calculateResultUtil` EXACTLY, per tier:
-  //   pure tier sum  →  applyFeesToTier (static company fee, e.g. a par-only fee)
-  //   →  withPlanFee (bank-fee gross-up for the selected plan)  →  $200 floor.
-  // Applying the static fee here (not inside the sum) matches web: web stores pure
-  // totals and adds the tier fee only at render, so e.g. PAR shows `sum + parFee`
-  // (this closed the mobile↔web PAR gap where mobile showed the raw sum).
   const tiers = useMemo(() => {
     const hasItems = liveTotals.retail > 0;
     const tierValue = (key: 'cost' | 'par' | 'retail') => {
@@ -1081,9 +847,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   }, [liveTotals, method, plans, pricingConfig]);
 
   const categoryChips = useMemo(() => {
-    // Count of entered line items per category — the pill shows "Gutters (10)".
-    // Only categories with an entered value (entries hold the full seeded field
-    // list, so untouched fields must be excluded).
     const counts: Record<string, number> = {};
     const order: string[] = [];
     Object.values(calculator.entries || {}).forEach((e: any) => {
@@ -1095,49 +858,27 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     return order.map((id) => ({ id, count: counts[id] }));
   }, [calculator.entries]);
 
-  // Entered line-items, grouped by category (mirrors the old mobile locked view).
   const itemRows = useMemo(() => {
     const rows = Object.values(calculator.entries || {}).filter((e: any) => e && e.inputValue > 0) as any[];
     return rows.sort((a, b) => String(a.categoryId).localeCompare(String(b.categoryId)));
   }, [calculator.entries]);
 
-  // Web parity (`QuoteResultCard.js:106`): with no products entered COST/PAR/RETAIL are
-  // all $0, so a rollout price has nothing behind it and the end-price box stays locked
-  // until the rep adds one. Derived from the SAME `itemRows` the item list renders, so
-  // the input can never disagree with what is on screen above it.
   const hasProducts = itemRows.length > 0;
 
-  // sectionId → label so item rows read "5' 5" Gutter/DS/E (All Stories)" (web parity).
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
 
   const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
   const priceNum = parseFloat(endPrice) || 0;
-  // Below-cost / below-plan-minimum / below-$200 — the full web check set.
   const priceErr = endPriceError(plans, priceNum, calculator, method);
-  // ⚠️ `dropPriceOf`, NOT `.price` — a drop that has been through the server carries
-  // `dropedPrice` only (see the note on that helper). Reading `.price` here returned
-  // `undefined` on a reloaded calculator, so the Result Lead button showed no figure
-  // and the outcome modal opened at $0.00 with Build Job disabled.
   const finalPrice = drops.length
     ? dropPriceOf(drops[drops.length - 1])
     : (calculator.price || priceNum);
 
-  // ── Result-section values (mirror the regular rollout, CalculatorSummary.tsx:422-429) ──
-  // Shown live once a valid end price is entered. Computed via the unit-tested
-  // `computeRolloutResult`: MSRP/programs are DATA-DRIVEN from the backend discount
-  // config when present (web parity — includeInMsrp sum, per-program linked
-  // discounts, ≥100% clamp), else the pre-order + Sr/Vet two-program fallback.
-  // Screens (`number_of_screen`) fold into End-Price-w/-Screens + MSRP; the
-  // financing monthly base is endPrice − downPayment (excludes screens), per web.
   const discountPct = calculator.discountPercentage || pricing.defaultPreOrder;
   const seniorVetPct = pricing.seniorVetPct;
   const isDefaultDiscount = !!user?.defaultPercentage && user.defaultPercentage === discountPct;
   const screensCount = screensCountFromEntries(calculator.entries);
-  // Web parity (`PremiumQuoteCard.js:274`): the per-screen price comes from the
-  // schema's `number_of_screen` field, NOT a constant. This was omitted, so
-  // `computeRolloutResult` silently applied its legacy $75 fallback and the
-  // rollout disagreed with web whenever a company priced screens differently.
   const screenUnitPrice = useMemo(
     () => screenUnitPriceFromSchemas(verticals, pricingConfig),
     [verticals, pricingConfig],
@@ -1159,8 +900,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   );
   const priceWithScreens = rolloutResult.priceWithScreens;
   const msrp = rolloutResult.msrp;
-  // Map the (fallback or config) programs onto the two-box layout: highlighted =
-  // In-Home Pre-Order, the other = 1-Year Program.
   const inHomeProgram = rolloutResult.programs.find((p) => p.isHighlighted) || rolloutResult.programs[rolloutResult.programs.length - 1];
   const oneYearProgram = rolloutResult.programs.find((p) => !p.isHighlighted) || rolloutResult.programs[0];
   const oneYearGrandTotal = oneYearProgram?.grandTotal ?? msrp;
@@ -1168,41 +907,10 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const srVetDiscount = msrp * (seniorVetPct / 100);
   const preOrderDiscountVal = msrp * (discountPct / 100);
   const preOrderMonthly = rolloutResult.monthly;
-  /**
-   * Is the ROLLOUT END PRICE box locked? Narrower than `isLocked` below, on purpose.
-   *
-   * On a rehash the rollout really is still confirmed — the badge, the drops and the
-   * Jobs-Built button all stay exactly as they are — but the
-   * price is the one thing the second visit exists to change. So this single control
-   * unlocks and nothing else does, matching the calculator step, where the locked
-   * receipt likewise exposes the end price and only the end price.
-   *
-   * Re-pricing does NOT un-confirm the calculator: `onPriceChange` persists the new
-   * figure against a rollout that stays confirmed, so the rep never has to re-run
-   * Confirm Rollouts to keep going.
-   */
   const priceLocked = !!calculator.isRolloutConfirmed && !isRehashed;
 
-  // Before lock: the breakdown auto-shows as soon as a valid end price is entered.
-  // After lock: it's collapsed behind the end-price box's chevron (web parity —
-  // `(price>0 && !error && !confirmed) || (confirmed && isRolloutExpanded)`).
-  // Keyed on `priceLocked`, not `isRolloutConfirmed`: the chevron that toggles
-  // `showLockedDetails` lives ON the locked price box, so once that box is an input
-  // (rehash) the breakdown would be stuck collapsed with nothing left to open it.
   const showResult = priceLocked ? showLockedDetails : (priceNum > 0 && !priceErr);
 
-  /**
-   * Record a rep default, with or without a connection.
-   *
-   * ⚠️ The local record is written FIRST, always, and that is what makes the switch move. Its state
-   * is derived from `user.defaultPaymentMethod`, which only ever comes from the server — so before
-   * this, a tap offline sent a request that failed, left `user` untouched, and the toggle sprang
-   * back. The rep then tapped it again, which is exactly the three identical requests in the
-   * reported trace.
-   *
-   * ⚠️ Never an ERROR flash. A preference is not the rep's work; it is saved on the device and
-   * replayed on reconnect, so telling them it failed would be untrue.
-   */
   const saveDefault = async (patch: CalculatorSettingsPatch, label: string) => {
     queueCalculatorSetting(patch);
     const applied = await flushCalculatorSettings();
@@ -1220,29 +928,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       next ? 'Default payment method set' : 'Default payment method cleared'
     );
 
-  // A confirmed rollout locks Add Renders (and, via `priceLocked`, the end price).
-  //
-  // ⚠️ It deliberately does NOT lock the Pre-Order Discount tiles or their Default
-  // toggle. Ticket: "after confirming the rollout the 15% / 20% / 25% are locked — they
-  // should stay unlocked." That is also web's rule: `QuoteResultCard`'s discount group is
-  // `disabled={isDisabled}`, and `isDisabled` is `isAnyJobSubmitted && (confirmed ||
-  // submitted)` — a SUBMITTED job, not a confirmed rollout. A tile moves MSRP and the
-  // 1-Year totals, never the confirmed end price (the In-Home grand total), and it
-  // saves through the same debounced path as the post-lock down payment. Once a job IS
-  // submitted, the card-wide `pointerEvents` wrapper below locks the tiles with the rest.
   const isLocked = !!calculator.isRolloutConfirmed;
 
-  // Through `saveDefault`, so the switch also holds with no signal (queued and replayed).
   const toggleDefaultDiscount = (next: boolean) =>
     saveDefault(
       { defaultPercentage: next ? discountPct : null },
       next ? 'Default discount set' : 'Default discount cleared'
     );
 
-  // Web parity (ViewAllCalculators onDownPaymentChange → queueRolloutLog): a `down
-  // payment entered` rollout log, deduped on the same value so re-blurring doesn't
-  // re-log. Tiers/markup anchor on the calc's method (like web), and the markup is of
-  // the DOWN-PAYMENT amount (web `calculateMarkup(dp, calculator)`), not the end price.
   const loggedDownRef = useRef<number | null>(calculator.downPayment ? Number(calculator.downPayment) : null);
   const logDownPaymentEntered = (v: number) => {
     const uid = user?._id || user?.id;
@@ -1265,9 +958,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
 
   const commitDownPayment = () => {
     let v = parseFloat(downText) || 0;
-    // Web parity (PremiumQuoteCard `validatedDownPaymentChange`): a down payment
-    // can't exceed the end price. The cap reference is `rolloutPrice || calculator.price`,
-    // so it still applies when the end price was persisted but not re-typed this session.
     const cap = priceNum > 0 ? priceNum : (calculator.price || 0);
     if (cap > 0 && v > cap) {
       FlashMessage.warning('Down payment', `Down payment cannot be greater than the end price (${fmt(cap)}).`);
@@ -1285,47 +975,22 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     logDownPaymentEntered(0);
   };
 
-  // Validate the typed drop price (same checks as the regular rollout), then open
-  // the Secure/Decline modal — the drop is only RECORDED once the rep secures or
-  // declines it (web parity: entering a drop opens the negotiation modal).
   const openDrop = () => {
     const v = parseFloat(dropText) || 0;
     if (v <= 0) return;
-    // Mirrors the regular rollout's drop checks: below the floored cost → exceeds
-    // the rollout end price → the selected plan's own minimum (minPrice-driven,
-    // web parity — a plan's minPrice, e.g. 7,500, is the single source of truth).
-    // Web `handleOpenDropPrice` floors the drop at the calc's COST tier priced at its
-    // OWN payment method (fee-inflated) — i.e. the displayed COST tile ($1,117) — NOT
-    // the fee-free cost the end-price check uses. Reuse the COST tile value so the
-    // threshold and message match web (`getCalculationResult(calc, '50', method)`).
     const cost = tiers.find((t) => t.label === 'COST')?.value ?? effectiveCostOf(calculator);
     if (v < cost) { FlashMessage.error('Invalid drop price', `Drop price must be at least the cost price (${fmt(cost)}).`); return; }
-    // ⚠️ EQUAL is rejected too, and it needs its OWN branch before the `>` check — a
-    // drop at the rollout price is not a drop, it just files a negotiation round that
-    // changed nothing, and "cannot exceed" would be a confusing thing to say about a
-    // number that does not exceed it.
     if (priceNum > 0 && v === priceNum) {
       FlashMessage.error('Invalid drop price', 'Drop Price cannot be added because it is the same as the Rollout Price.');
       return;
     }
     if (priceNum > 0 && v > priceNum) { FlashMessage.error('Invalid drop price', `Drop price cannot exceed rollout end price (${fmt(priceNum)})`); return; }
-    // Wells Fargo "high" $7,500 hardcoded floor (web `handleAddDrop`) — enforced
-    // even if the backend plan omits minPrice.
     if (WELLS_FARGO_HIGH_KEYS.includes(method) && v < WF_HIGH_MIN_PRICE) {
       FlashMessage.error('Invalid drop price', `This Wells Fargo plan requires a minimum price of $${WF_HIGH_MIN_PRICE.toLocaleString()}`);
       return;
     }
     const planMin = plans[method]?.minPrice || 0;
     if (planMin && v < planMin) { FlashMessage.error('Invalid drop price', `This payment plan requires a minimum price of ${fmt(planMin)}.`); return; }
-    // ⚠️ OPENING THE MODAL WRITES NOTHING. It used to persist the entered price as a
-    // `declined` row immediately ("save the drop the instant it is entered"), which
-    // meant a PUT fired just for opening this sheet and the round existed on the server
-    // before the rep had decided anything — the reporter's "we are calling the api 2
-    // times". The row is now created by the action the rep actually takes:
-    // Decline or Secure This Price. Web behaves the same way.
-    //
-    // No activity log fires here either (web logs `drop price secured` /
-    // `drop price declined` on the explicit action only).
     setPendingDrop(v);
     setPendingDropIndex(-1); // a fresh round → Secure/Decline APPEND it
     setShowDropModal(true);
@@ -1333,17 +998,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     setDropText('');
   };
 
-  // Resolve which existing drop a Secure/Decline should EDIT in place (vs. append a
-  // NEW one). Each drop ACTION is its own numbered negotiation round: opening a fresh
-  // drop via "+ Nth Drop" APPENDS a new entry — "1st Dropped Price", "2nd Dropped
-  // Price", … — even at the same price, so the rep sees every round, exactly as web's
-  // own list does. Re-negotiating an existing row via its Display button edits THAT row
-  // in place, and `pendingDropIndex` is the row it was opened from.
-  //
-  // ⚠️ It deliberately does NOT scan for an existing row at this price. It used to,
-  // because `openDrop` pre-persisted a `declined` twin that Secure/Decline then had to
-  // convert rather than duplicate. Nothing is pre-persisted now, so that scan would
-  // silently fold a genuinely new round into an older one at the same price.
   const resolveDropTargetIndex = () => {
     const priceOf = (d: any) => Math.round(dropPriceOf(d));
     const target = Math.round(Number(pendingDrop));
@@ -1357,31 +1011,18 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     return -1;
   };
 
-  // Secure the pending drop → record it accepted (single-accepted: demote any
-  // previously-accepted drop to declined, matching web `handleSecurePrice`), then
-  // open the Result Lead outcome modal carrying the drop price.
   const secureDrop = (data: { paymentMethod: string; paymentMethods?: string[]; downPayment: number; balance: number }) => {
-    // Web drop shape (ViewAllCalculators.js:797) carries `dropedPrice`, `status`,
-    // `paymentMethod`, `pricemarkup` (the markup label), `downPayment`, `balance`.
     const pricemarkup = markupLabel(pendingDrop, logTiers);
     const targetIndex = resolveDropTargetIndex();
     const accepted = { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted', pricemarkup, ...data };
-    // Edit in place (preserving any existing `_id`, web `...item`) when targeting an
-    // existing drop; demote every OTHER accepted drop (single-accepted rule).
     const next = drops.map((d, idx) => {
       if (idx === targetIndex) return { ...d, ...accepted };
       return d.status === 'accepted' ? { ...d, status: 'declined' } : d;
     });
     if (targetIndex < 0) next.push(accepted); // a new round → append, as web does
     onDropChange(calculator.id, next);
-    // Web parity (ViewAllCalculators.js:1147): `drop price secured` rollout log.
     const uidS = user?._id || user?.id;
     if (uidS) {
-      // Web parity (handleSecurePrice `lastDroppedPrice`): the transition's OLD value is
-      // the price BEFORE this drop — the previous drop, or the rollout end price for the
-      // first — NOT the one being secured. A NEW round is not in `drops` yet, so its
-      // predecessor is the LAST existing entry; an edited row's predecessor is the one
-      // before it. The portal draws the yellow `old → new` arrow only when old ≠ new.
       const prevIdx = (targetIndex >= 0 ? targetIndex : drops.length) - 1;
       const lastDrop = prevIdx >= 0 ? (drops[prevIdx]?.dropedPrice ?? drops[prevIdx]?.price) : (calculator.price || priceNum);
       const dropNumber = targetIndex >= 0 ? targetIndex + 1 : next.length;
@@ -1394,15 +1035,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         change: {
           fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: pendingDrop, fieldCategory: 'drop',
           oldValue: lastDrop, newValue: pendingDrop,
-          // Old-price markup for the yellow "old → new" arrow (stripped in logRolloutChange).
           oldPercentageOfRollout: markupLabel(Number(lastDrop) || 0, logTiers),
           isSecured: true, isDeclined: false, dropNumber, dropPrice: pendingDrop,
           paymentPlanKey: data.paymentMethod, paymentPlanLabel: planLabelOf(pricing.plans, data.paymentMethod),
           action: 'drop price secured',
         },
       }).catch(() => {});
-      // Web `handleSecurePrice` also fires `drop price plan selected on secure`
-      // (portal "Selected Payment Plan" row) when the secured drop uses a financing plan.
       if (isFinancing(pricing.plans, data.paymentMethod)) {
         logRolloutChange({
           userId: uidS,
@@ -1423,31 +1061,21 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
-    // Web parity: securing a drop opens the Sale/Demo chooser (→ outcome modal).
     setChooserPrice(pendingDrop);
     setChooserDown(Number(data.downPayment) || 0);
     setShowChooser(true);
   };
 
-  // Decline the pending drop → record it declined (web shows a "Price Declined"
-  // confirmation; the drop then lists as Declined and Result Lead stays available).
   const declineDrop = (data: { paymentMethod: string; paymentMethods?: string[]; downPayment: number; balance: number }) => {
     const pricemarkup = markupLabel(pendingDrop, logTiers);
     const targetIndex = resolveDropTargetIndex();
     const declined = { price: pendingDrop, dropedPrice: pendingDrop, status: 'declined', pricemarkup, ...data };
-    // Edit the existing entry in place (preserving `_id`) or append a new declined
-    // one; declining never demotes other drops (only Secure enforces single-accepted).
     const next = targetIndex >= 0
       ? drops.map((d, idx) => (idx === targetIndex ? { ...d, ...declined } : d))
       : [...drops, declined];
     onDropChange(calculator.id, next);
-    // Web parity (ViewAllCalculators.js:944): `drop price declined` rollout log.
     const uidD = user?._id || user?.id;
     if (uidD) {
-      // Web parity (handleDeclinePrice `lastDroppedPrice`): OLD value is the price BEFORE
-      // this drop — the previous drop, or the rollout end price for the first — NOT the
-      // one being declined. A NEW round is not in `drops` yet, so its predecessor is the
-      // LAST existing entry; an edited row's is the one before it.
       const prevIdx = (targetIndex >= 0 ? targetIndex : drops.length) - 1;
       const lastDrop = prevIdx >= 0 ? (drops[prevIdx]?.dropedPrice ?? drops[prevIdx]?.price) : (calculator.price || priceNum);
       const dropNumber = targetIndex >= 0 ? targetIndex + 1 : next.length;
@@ -1460,7 +1088,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         change: {
           fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: pendingDrop, fieldCategory: 'drop',
           oldValue: lastDrop, newValue: pendingDrop,
-          // Old-price markup for the yellow "old → new" arrow (stripped in logRolloutChange).
           oldPercentageOfRollout: markupLabel(Number(lastDrop) || 0, logTiers),
           isSecured: false, isDeclined: true, dropNumber, dropPrice: pendingDrop,
           paymentPlanKey: data.paymentMethod, paymentPlanLabel: planLabelOf(pricing.plans, data.paymentMethod),
@@ -1471,37 +1098,11 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
-    // Web `handleDropDecline`: "Open DeclinePriceModal immediately — keeps blur
-    // continuous, no gap between modals". Replaces the mobile-only toast; neither
-    // web nor the regular rollout shows one, they show this modal.
     setDeclinedPrice(pendingDrop);
   };
 
-  // ── Result Lead ──────────────────────────────────────────────
-  // A rep can walk the customer down several drops, DECLINE each one, and result the
-  // lead anyway. That left a SOLD deal whose every drop reads Declined and whose
-  // secured price is nothing — so the portal (TNT board) had no row on THIS calculator
-  // saying what was sold, and read the accepted drop on a SIBLING calculator as the sold
-  // job instead. When nothing is secured here, the LAST drop is secured before the
-  // outcome modal opens.
-  //
-  // ⚠️ ONLY when nothing is secured. If the rep already secured an earlier drop and
-  // then explored two more without taking them, that deliberate choice stands —
-  // `autoSecureLastDrop` returns the same array reference and nothing is written.
-  //
-  // ⚠️ `onDropChange` persists IMMEDIATELY (`handleSetDrops` → `saveDropsNow`), not
-  // on the debounced calculator save, so the row is filed before the job is built.
-  //
-  // ⚠️ This was lost once already: it shipped in `c65e14f` ("Drop Price TNT Board issu
-  // fixed") and the ticket-409 merge resolved this file to a branch that predated it,
-  // silently reverting it. If it disappears again, check the merge, not the ticket.
   const openResultChooser = () => {
     const secured = autoSecureLastDrop(drops);
-    // Seeded from the CURRENT state; overridden below by the row just secured, whose
-    // own plan and down payment are what the deal is being resulted at. `activeMethod`
-    // derives from an ALREADY-accepted drop, so on this path it is still the pre-secure
-    // value; `resultDownPayment` falls back to the calculator's own saved down payment
-    // for the same reason (see its definition).
     let chooseAt = finalPrice;
     let chooseDown = resultDownPayment;
     if (secured !== drops) {
@@ -1513,9 +1114,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       chooseDown = Number(row?.downPayment) || 0;
       const uidA = user?._id || user?.id;
       if (uidA) {
-        // The portal timeline must be able to explain the secured row. Same shape as
-        // `secureDrop`'s log; the OLD value is the price BEFORE this drop (the
-        // previous round, or the rollout end price when this is the only one).
         const prev = idx > 0 ? secured[idx - 1] : null;
         const lastDrop = prev ? dropPriceOf(prev) : (calculator.price || priceNum);
         logRolloutChange({
@@ -1541,9 +1139,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     setShowChooser(true);
   };
 
-  // Web `handleDeclineResultLead`: close the modal and result the lead as a DEMO at
-  // the MOST RECENT drop price (falling back to the rollout end price when there are
-  // no drops) — it does NOT go through the Sale/Demo chooser.
   const declineResultLead = () => {
     setDeclinedPrice(null);
     const lastDrop = drops.length
@@ -1552,16 +1147,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     onResult(calculator.id, 'demo', lastDrop, activeMethod, resultDownPayment);
   };
 
-  // The resolved `method` can be a key that ISN'T offered for this lead/company —
-  // e.g. a saved user default of `check` on a company whose dynamic plans have no
-  // `check`, or a Lowe's-only key on a standard lead. Showing that stale label on a
-  // selector whose dropdown doesn't list it is confusing, so when the method isn't
-  // one of the AVAILABLE options we prompt "Select payment method" instead.
   const methodCategory = pricing.categories.find((c) => c.plans.includes(method));
   const methodAvailable = !!plans[method] && !!methodCategory;
 
-  // Shared payment-method block (heading follows it, matching the regular rollout:
-  // name → payment method → items → cost/par/retail → end price → actions).
   const paymentMethodBlock = (
     <View style={{ marginHorizontal: 14, marginBottom: 14 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 24, marginBottom: 12 }}>
@@ -1915,12 +1503,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           {/* Drops list with old-UI View/Unselect/Display */}
           {drops.map((d, i) => {
             const ordinal = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][i] || `${i + 1}th`;
-            // Web parity (`ViewAllCalculators.js:472-473` hydration): secured and
-            // declined are INDEPENDENT positive tests — `status === 'accepted'` and
-            // `status === 'declined'`. Mobile derived secured as `!declined`, which is
-            // strictly weaker: a drop with a missing/unknown status rendered SECURED
-            // while the demotion (`=== 'accepted'`, line ~866) and the tab lock icon
-            // both ignored it, so it could never be cleared.
             const declined = d.status === 'declined';
             const secured = d.status === 'accepted';
             const dp = dropPriceOf(d);
@@ -1946,11 +1528,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                       </TouchableOpacity>
                     )}
                     {secured && (
-                      // Unselect DECLINES the secured drop (keeps it in the list, marked
-                      // declined) — it does NOT remove it. Mirrors the regular rollout's
-                      // handleUnselectDrop ({ secured:false, declined:true }); here the
-                      // dynamic drop model uses status='declined'. Was filtering the drop
-                      // out entirely, losing the record.
                       <TouchableOpacity onPress={() => {
                         const nextDrops = drops.map((d2, idx) => (idx === i ? { ...d2, status: 'declined' } : d2));
                         onDropChange(calculator.id, nextDrops);
@@ -1966,8 +1543,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
                     <TouchableOpacity
                       onPress={() => {
-                        // Display action — in old UI opens the drop modal for re-negotiation,
-                        // seeded with this drop's saved plan + down payment (index i).
                         setPendingDrop(dp);
                         setPendingDropIndex(i);
                         setShowDropModal(true);
@@ -1990,22 +1565,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                 <Text style={{ fontSize: 14, fontWeight: '900', color: '#94A3B8', marginRight: 8 }}>$</Text>
                 <TextInput
                   style={{ flex: 1, fontSize: 14, fontWeight: '800', color: '#1C252E' }}
-                  // State stays the raw digits (openDrop parseFloats it); only the
-                  // display is comma-grouped.
                   value={formatAmountInput(dropText)}
                   onChangeText={(t) => setDropText(stripAmount(t))}
                   onSubmitEditing={openDrop}
-                  // iPHONE's numeric pad has NO return key, so `onSubmitEditing` never
-                  // fires there and focusing out dropped the typed price on the
-                  // floor; Android's numeric IME has a submit action, hence the
-                  // platform split. The regular rollout (`CalculatorSummary`) already
-                  // runs the same commit from both handlers. `openDrop` no-ops on an
-                  // empty/zero value, so a blur with nothing typed does nothing.
-                  //
-                  // ⚠️ iPad is EXCLUDED: it now asks for a docked `numbers-and-punctuation`
-                  // keyboard (see `utils/keyboard-type`), which DOES have a return key. Done
-                  // fires `onSubmitEditing` and then blurs, so leaving the blur commit armed
-                  // would run `openDrop` TWICE for one tap.
                   onBlur={
                     Platform.OS === 'ios' && !NUMERIC_KEYBOARD_HAS_RETURN_KEY
                       ? openDrop
@@ -2049,9 +1611,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             </TouchableOpacity>
 
             {jobLock.isSubmittedTab ? (
-              /* ⚠️ Deliberately NEVER disabled (web: `disabled={isJobBuilderSubmittedTab ? false : isDisabled}`).
-                 It is the ONLY way out of the locked state — greying it out alongside the
-                 rest would strand the rep on a lead they cannot re-result. */
               <TouchableOpacity
                 onPress={() => onResetJobBuilder?.()}
                 style={{ flex: 1, height: 56, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EF4444' }}
@@ -2088,9 +1647,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         plans={plans}
         categories={pricing.categories}
         onSelect={(key) => {
-          // Web parity (CalculatorSummary.handlePaymentPlanSelect): warn via a toast
-          // when the method is switched on a rollout whose price is already locked —
-          // the dynamic flow previously changed it silently with no feedback.
           if (key !== method) {
             if (WELLS_FARGO_HIGH_KEYS.includes(key) && priceNum > 0 && priceNum < WF_HIGH_MIN_PRICE) {
               FlashMessage.warning(`Payment plan changed - this Wells Fargo plan requires a minimum end price of $${WF_HIGH_MIN_PRICE.toLocaleString()}. Please update the end price.`);
@@ -2098,9 +1654,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
               FlashMessage.warning(`Payment method updated - the rollout price $${priceNum.toLocaleString()} is already confirmed.`);
             }
           }
-          // Log FIRST (reads the still-current `method` as the old key), then apply
-          // the change and close. This was previously duplicated — onPaymentMethodChange
-          // / setShowPlanPicker were each called twice.
           logPaymentMethodChanged(key);
           onPaymentMethodChange(calculator.id, key);
           setShowPlanPicker(false);
@@ -2113,14 +1666,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         dropPrice={pendingDrop}
         screensCount={screensCount}
         screensCost={rolloutResult.screensCost}
-        // Pre-select the ACTIVE payment method when opening a fresh drop: the plan
-        // from the currently-accepted drop if one exists, else the calculator's
-        // method. So the popup opens with the method the rep is already on (shown in
-        // the rollout card / used on the last secured drop) highlighted — they can
-        // still switch it, and Secure/Decline saves whatever is selected.
         method={activeMethod}
-        // Base lead/calculator method (e.g. AMEX) — always shown as its own row,
-        // even when Displaying a drop secured with a different financing plan.
         calculatorMethod={method}
         existingDrop={pendingDropIndex >= 0 ? drops[pendingDropIndex] : null}
         isLowesLead={isLowesLead}
@@ -2157,33 +1703,12 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const [prices, setPrices] = useState<Record<string, number>>({});
-  // Effective end price for a calculator: the freshly-entered value, else the
-  // one already persisted on the tab (e.g. from a duplicated calculator).
   const effectivePrice = (c: CalculatorTab) => prices[c.id] ?? c.price ?? 0;
-  // Fee-adjusted, $200-floored COST/PAR/RETAIL a calculator's rollout LOGS anchor
-  // markup on — matches the card tiles (web `calculateMarkup`), not the raw stored
-  // `totals`. Used for the confirm-bar `rollout confirmed` log AND the persisted
-  // `pricemarkup` (computed here because the hook lacks pricingConfig/plans).
   const logTiersFor = (c: CalculatorTab) =>
     computeLogTiers(c.entries, verticals || [], pricingConfig);
-  // A priced calculator whose job scope changed AFTER the price was entered (the live
-  // scope no longer matches the snapshot taken at pricing time). Drives the per-calc
-  // "Job Scope was changed. Please review the Rollout End Price." warning — the price
-  // itself is never cleared. Only fires when a snapshot exists (a price was entered).
   const scopeChangedOf = (c: CalculatorTab) =>
     effectivePrice(c) > 0 && !!c.priceScopeSig && scopeSignature(c.entries || {}) !== c.priceScopeSig;
-  // Web parity (`ViewAllCalculators.visibleCalculators`): a calculator whose title
-  // is still a bare number is empty (no entries → derived name is just its
-  // position) and must NOT appear in the rollout — only real, named calculators
-  // can be priced/confirmed.
   const visibleCalculators = useMemo(() => rolloutCalculators(calculators), [calculators]);
-  /**
-   * Calculators that are a FULL PACKAGE — their tab in the strip above shows the
-   * package icon + ⓘ instead of the `G+VMax+Versa+S+FWrap` letters, matching the
-   * calculator step's footer tabs. Same rule, same source of truth
-   * (`isFullPackageSelection` over each calculator's own live entries), so a tab
-   * cannot read as a package on one screen and as letters on the other.
-   */
   const packageByCalcId = useMemo(() => {
     const map: Record<string, { isFullPackage: boolean; extras: string }> = {};
     visibleCalculators.forEach((c) => {
@@ -2191,8 +1716,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
     });
     return map;
   }, [visibleCalculators, verticals]);
-  // Anchored to the tapped ⓘ (strip tab or quote-card heading) so the card opens
-  // directly beneath it rather than at a fixed screen edge.
   const [packageInfoVisible, setPackageInfoVisible] = useState(false);
   const [packageAnchor, setPackageAnchor] = useState<PackageAnchorRect | null>(null);
   const openPackageInfo = useCallback((rect: PackageAnchorRect | null) => {
@@ -2201,14 +1724,9 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   }, []);
   const allConfirmed = allRolloutsConfirmed(visibleCalculators);
   const allHavePrices = visibleCalculators.length > 0 && visibleCalculators.every((c) => effectivePrice(c) > 0);
-  // Progress tracks calculators with an END PRICE ENTERED (web `ConfirmRolloutPrices`
-  // counts `price > 0`, not confirmations), so the bar fills as the rep prices each
-  // calculator — instead of sitting at 0% until everything is confirmed at the end.
   const enteredCount = visibleCalculators.filter((c) => effectivePrice(c) > 0).length;
   const progress = visibleCalculators.length > 0 ? (enteredCount / visibleCalculators.length) * 100 : 0;
   const selectedCalc = visibleCalculators.find((c) => c.id === activeTabId) || visibleCalculators[0];
-  // Ticket 409 — resolved per calculator so the SAME rule drives the locked buttons and
-  // the tab strip's badge; they cannot disagree about which tab owns the result.
   const lockOf = useCallback(
     (calcId: string): CalculatorLockState => {
       if (!submittedCalculatorId) {
@@ -2220,8 +1738,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
     [submittedCalculatorId]
   );
 
-  // Web parity (ViewAllCalculators): auto-confirm after 10 minutes of inactivity.
-  // Track the last time each calculator's price or payment method was changed.
   const AUTO_CONFIRM_DELAY = 600000; // 10 min
   const rolloutLastChangedRef = useRef<Record<string, number>>({});
   const onConfirmRolloutsRef = useRef(onConfirmRollouts);
@@ -2239,13 +1755,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
     const method = resolveMethod(calc, user?.defaultPaymentMethod, pricing.defaultMethod);
     const err = endPriceError(pricing.plans, enteredPrice, calc, method);
     if (err) return;
-    // Anchor the persisted `pricemarkup` on the `check`-based, floored tiers
-    // (web `calculateMarkup`), NOT the raw stored `totals` — same as the logs.
     const tiers = computeLogTiers(calc.entries, verticals || [], pricingConfig);
-    // Web parity (ViewAllCalculators.autoConfirmCalculator): fire the `rollout
-    // auto-confirmed (10 min inactivity)` rollout log. The manual Confirm bar logs
-    // `rollout confirmed` inline, but auto-confirm bypasses that path — so without this
-    // an auto-confirmed calculator produced NO confirmation log at all.
     const uid = user?._id || user?.id;
     if (uid) {
       logRolloutChange({
@@ -2267,7 +1777,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
     ]);
   }, [prices, pricing, user, verticals, pricingConfig, leadId, appointmentId]);
 
-  // Check on mount and every 30 seconds (web parity: mount + polling interval).
   useEffect(() => {
     if (selectedCalc) checkAndAutoConfirm(selectedCalc);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2281,8 +1790,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
     return () => clearInterval(interval);
   }, [visibleCalculators, checkAndAutoConfirm]);
 
-  // Map categoryId -> { label, style } across all verticals so quote-card pills
-  // and item rows read nicely. Icon/color are schema-driven (Iconify → Ionicons).
   const categoryMeta = useMemo(() => {
     const map: Record<string, { label: string; style: CatStyle }> = {};
     (verticals || []).forEach((v) => (v.categories || []).forEach((cat) => {
@@ -2292,7 +1799,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
     return map;
   }, [verticals]);
 
-  // Tab-scroll state for progressive fade overlays (old UI parity)
   const [scrollOffset, setScrollOffset] = useState(0);
   const [contentWidth, setContentWidth] = useState(0);
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
@@ -2350,8 +1856,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               {visibleCalculators.map((calc) => {
                 const isActive = calc.id === selectedCalc?.id;
                 const hasLockedDrop = (calc.dropPrice || []).some((d: any) => d.status === 'accepted');
-                // Amber dot flags a tab whose job scope changed after pricing, so the rep
-                // can spot which rollout to review without opening each one.
                 const needsReview = scopeChangedOf(calc);
                 return (
                   <TouchableOpacity key={calc.id} onPress={() => onTabSelect?.(calc.id)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch', paddingHorizontal: 12, paddingVertical: 4, borderBottomWidth: 2, borderBottomColor: isActive ? '#16A34A' : 'transparent' }}>
@@ -2441,10 +1945,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               onPriceChange={(id, price, pricemarkup) => {
                 setPrices((p) => ({ ...p, [id]: price }));
                 rolloutLastChangedRef.current = { ...rolloutLastChangedRef.current, [id]: Date.now() };
-                // Persist the entered price on the tab so it survives a back-to-calculator
-                // edit (and snapshot the scope it was priced against). The hook debounces
-                // the save, so per-keystroke calls coalesce. `pricemarkup` is passed only
-                // on blur (web parity: persisted alongside the price by handleBlurPrice).
                 onPriceCommit?.(id, price, pricemarkup);
               }}
               onResult={(id, result, price, paymentMethod, downPayment) => onResultJob?.(id, result, price, paymentMethod, downPayment)}
@@ -2481,9 +1981,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
             </View>
             <TouchableOpacity onPress={() => {
               const pending = visibleCalculators.filter((c) => !c.isRolloutConfirmed);
-              // Web parity: every calculator needs a price (> 0) that clears its
-              // floored cost, the payment plan's minimum, and the Wells-Fargo-high
-              // minimum — the same checks the card enforces inline.
               const missing = pending.find((c) => effectivePrice(c) <= 0);
               if (missing) {
                 FlashMessage.error('Missing Price', `Enter an end price for “${missing.title}”.`);
@@ -2501,8 +1998,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                 price: effectivePrice(c),
                 pricemarkup: markupLabel(effectivePrice(c), logTiersFor(c)),
               }));
-              // Web parity (ViewAllCalculators.js:1559): one `rollout confirmed`
-              // rollout log per calculator being confirmed.
               const uidC = user?._id || user?.id;
               if (uidC) {
                 pending.forEach((c) => {
@@ -2523,11 +2018,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                 });
               }
               onConfirmRollouts?.(confirmed);
-              // Just confirm — STAY on the rollout screen. Navigating away here raced
-              // the calculators' debounced save (the screen unmounted before the PUT
-              // flushed, so the confirmed price could be lost). Once every rollout is
-              // confirmed, the "Jobs Built — Back to Tools" button below appears and is
-              // the only thing that navigates to the tools menu.
               FlashMessage.success('Rollouts confirmed', 'Tap “Jobs Built — Back to Tools” when ready.');
             }} disabled={!allHavePrices} style={{ minWidth: 200, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, backgroundColor: allHavePrices ? '#4CBB17' : 'rgba(145,158,171,0.12)' }}>
               <Text style={{ fontSize: 14, fontWeight: '700', textAlign: 'center', color: allHavePrices ? '#fff' : 'rgba(145,158,171,0.4)' }}>Confirm Rollouts</Text>

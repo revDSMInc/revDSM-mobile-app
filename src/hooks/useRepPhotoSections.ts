@@ -5,31 +5,12 @@ import { ENV } from '../config/env';
 import { buildRepPhotoSections } from '../utils/installer-photo-sections';
 import type { PreInstallPhotos, PhotoSection } from '../config/types/installer';
 
-/**
- * Pre-install tagger sections with the rep's reference photos resolved to signed URLs.
- *
- * The rep shots live as private S3 objects, so the raw `bucket/key` on each tag can't
- * be shown directly. This collects every rep key across the sections, batch-requests
- * signed URLs (`POST url/v1/secure/multiple`), and swaps them onto the tags. URLs are
- * cached 50 min — comfortably inside S3's 1-hour signature TTL. Until they resolve the
- * tags keep `hasRep` (so matching still works) but no `repPhotoUrl`, so the ghost
- * placeholder shows for the brief fetch.
- */
-/**
- * Canonical form of an S3 key, for matching a response row back to the tag that
- * asked for it.
- *
- * The two sides don't always agree byte for byte — a leading slash, surrounding
- * whitespace or percent-encoding on one side is enough to miss, and a miss looks
- * exactly like "the photo never loaded".
- */
 const normalizeKey = (key?: string): string => {
   if (!key) return '';
   let value = key.trim().replace(/^\/+/, '');
   try {
     value = decodeURIComponent(value);
   } catch {
-    // Already decoded, or malformed — the raw value is the best we have.
   }
   return value;
 };
@@ -42,8 +23,6 @@ export function useRepPhotoSections(photos?: PreInstallPhotos): PhotoSection[] {
     baseSections.forEach((s) =>
       s.tags.forEach((t) => {
         if (t.repPhotoS3Url) {
-          // An empty bucket makes the request fail for that row; the app's default
-          // bucket is the right fallback, as `useLeadCenterData` also does.
           list.push({
             bucketName: t.repPhotoBucket || ENV.S3_BUCKET,
             filePath: t.repPhotoS3Url,
@@ -62,11 +41,6 @@ export function useRepPhotoSections(photos?: PreInstallPhotos): PhotoSection[] {
       const secureData = res.data?.data || res.data || [];
       const rows: any[] = Array.isArray(secureData) ? secureData : [];
 
-      // Keys are indexed BOTH ways: by whatever the row echoes back and by the key
-      // we asked for at that position. `useProductImage` reads this endpoint purely
-      // positionally, so order is dependable; the echoed `filePath` is the more
-      // precise match when present. Indexing both means a mismatch in either one
-      // still resolves.
       const map: Record<string, string> = {};
       rows.forEach((row, i) => {
         const secureUrl = row?.secureUrl;

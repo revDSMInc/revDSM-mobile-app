@@ -1,9 +1,6 @@
 import api from './index';
 import { AxiosResponse } from 'axios';
 
-/**
- * Authentication Endpoints & Specific Logic
- */
 export const AuthEndpoints = {
   me: '/company',
   login: '/company/login',

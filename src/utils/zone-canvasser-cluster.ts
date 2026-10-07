@@ -2,7 +2,6 @@ import Supercluster from 'supercluster';
 import type { Region } from 'react-native-maps';
 import type { ZoneCanvasserBuilding } from '../types/zone-canvasser';
 
-/** Parity with web buildings-layer.js (leaflet.markercluster) */
 export const CLUSTER_MAX_RADIUS = 50;
 export const CLUSTER_DISABLE_AT_ZOOM = 18;
 
@@ -26,7 +25,6 @@ export function getClusterSize(count: number): ClusterSize {
   return 'large';
 }
 
-/** Convert map region to Leaflet-style zoom (used by supercluster). */
 export function regionToZoom(region: Region): number {
   const delta = region.latitudeDelta > 0 ? region.latitudeDelta : 0.05;
   const zoom = Math.log2(360 / delta);
@@ -106,7 +104,6 @@ export function clusterBuildings(
   return { clusters, index };
 }
 
-/** Web: zoomToBoundsOnClick — zoom until cluster breaks apart. */
 export function getClusterExpansionZoom(
   index: Supercluster,
   clusterId: number

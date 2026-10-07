@@ -1,24 +1,3 @@
-/**
- * offlineMapManager.ts — keeps a small, bounded amount of map on the device for use with no signal.
- *
- * Two tiers (the rules live in `utils/offline-map-regions.ts`):
- *
- * - **Base map** — Florida at zoom 0–10, one pack, downloaded ONCE per install and kept across
- *   sign-outs (it is not any rep's data).
- * - **Lead areas** — street detail (zoom 11–16) for small grid cells where the rep's leads are.
- *   Stable names, so a cell is never downloaded twice, and bounded by Mapbox's tile cap.
- *
- * ⚠️ Downloads run ONE AT A TIME through `_pump`. The retired design called `createPack` for every
- * lead inside a `.map()` — which STARTS each download — so 20+ Mapbox downloads ran in parallel and
- * the "sequential" loop after it only awaited promises already running. That was the memory spike.
- *
- * ⚠️ Downloads only run on Wi-Fi. A pack left mid-download when Wi-Fi drops is resumed on the next
- * Wi-Fi connection (`resumeAllPaused` / `syncLeads`).
- *
- * Callers interact through the single `offlineMapManager` export — no other handle to
- * `Mapbox.offlineManager` should exist in app code.
- */
-
 import Mapbox from '@rnmapbox/maps';
 import { registerSessionResetHook } from './sessionScope';
 import { isOnWifi } from './connectivity';
@@ -42,24 +21,14 @@ import {
   type LngLatBounds,
 } from '../utils/offline-map-regions';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export type OfflinePackKind = 'base' | 'area';
 
-/** Serialisable metadata persisted in MMKV for every pack. */
 export interface OfflinePackRecord {
-  /** Pack name used as the Mapbox key — `region-florida` or `area-{x}_{y}`. */
   name: string;
   kind: OfflinePackKind;
-  /** What the Profile shows instead of the pack name. */
   label: string;
-  /** Leads the area covered when it was last synced (0 for the base map). */
   leadCount: number;
-  /** Always null now — kept so an old record still parses. */
   leadId: string | null;
-  /** `[southWest, northEast]` in `[lng, lat]`. */
   bounds: LngLatBounds;
   styleKey: string;
   minZoom: number;
@@ -68,11 +37,9 @@ export interface OfflinePackRecord {
   completedAt: number;
   percentage: number;
   completedResourceSize: number;
-  /** `queued` = waiting its turn (or for Wi-Fi); `paused` = interrupted part-way. */
   status: 'queued' | 'active' | 'paused' | 'complete' | 'error';
 }
 
-/** Snapshot of progress delivered to UI listeners. */
 export interface PackProgressSnapshot {
   name: string;
   percentage: number;
@@ -82,7 +49,6 @@ export interface PackProgressSnapshot {
   state: number;
 }
 
-/** What the Profile card renders. */
 export interface OfflineMapSummary {
   base: OfflinePackRecord | null;
   areas: {
@@ -101,38 +67,15 @@ type PackErrorListener = (name: string, error: { name: string; message: string }
 
 type LeadLike = { _id?: string; location?: { coordinates?: unknown } };
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/**
- * The base map's registry. ⚠️ DEVICE-level and on the session keep-list
- * (`utils/session-scope.ts`): the tiles survive a sign-out, so the record naming them must too, or
- * the next sign-in downloads Florida again beside the copy already on disk.
- */
 const BASE_STORAGE_KEY = 'offline-map-base-packs';
 
-/**
- * Lead-area registry. Session-scoped — it is the previous rep's route — and the reset hook deletes
- * the tiles before the wipe removes this key. Same key the retired per-lead design used, so its
- * records are found and purged.
- */
 const AREA_STORAGE_KEY = 'offline-map-packs';
 
 const PROGRESS_THROTTLE_MS = 500;
 
-/** Mapbox's ambient cache — tiles drawn while online, reused offline. */
 const AMBIENT_CACHE_BYTES = 50 * 1024 * 1024;
 
-/**
- * A download that reports nothing for this long is parked as `paused` and the queue moves on, so
- * one stuck pack cannot hold the rest forever. It resumes on the next Wi-Fi sync.
- */
 const STALL_TIMEOUT_MS = 2 * 60 * 1000;
-
-// ---------------------------------------------------------------------------
-// Helpers — MMKV registry
-// ---------------------------------------------------------------------------
 
 const readKey = (key: string): OfflinePackRecord[] => {
   try {
@@ -211,24 +154,14 @@ const recordToCell = (r: OfflinePackRecord): AreaCell => ({
   tiles: 0, // re-measured by `areaCellsForLeads` for wanted cells; an existing cell only needs its name
 });
 
-// ---------------------------------------------------------------------------
-// Class — singleton
-// ---------------------------------------------------------------------------
-
 class OfflineMapManager {
   private _progressListeners = new Set<PackProgressListener>();
   private _errorListeners = new Set<PackErrorListener>();
   private _initialized = false;
 
-  /** Names waiting to download, in order. */
   private _queue: string[] = [];
   private _pumping = false;
-  /** The pack currently downloading, so the queue can skip it and a delete can stop it. */
   private _current: string | null = null;
-
-  // -----------------------------------------------------------------------
-  // Lifecycle
-  // -----------------------------------------------------------------------
 
   async init(): Promise<void> {
     if (this._initialized) return;
@@ -240,18 +173,12 @@ class OfflineMapManager {
     } catch (e) {
       console.warn('[offlineMap] init failed:', e);
     }
-    // A record left `active` belongs to a download from a previous launch that is no longer running.
     readRegistry()
       .filter((r) => r.status === 'active')
       .forEach((r) => patchRecord(r.name, { status: 'paused' }));
     await this._purgeLegacyPacks();
   }
 
-  /**
-   * Delete every pack from the retired one-per-lead design — registry records AND packs Mapbox
-   * still holds with no record (the registry was wiped at a sign-out while the tiles stayed).
-   * These are the ~85 MB `lead-…` packs, and they are what used up the tile cap.
-   */
   private async _purgeLegacyPacks(): Promise<void> {
     const names = new Set(
       readKey(AREA_STORAGE_KEY)
@@ -265,21 +192,15 @@ class OfflineMapManager {
         if (typeof n === 'string' && n.startsWith(LEGACY_LEAD_PACK_PREFIX)) names.add(n);
       });
     } catch {
-      /* registry names alone are still worth deleting */
     }
     for (const name of names) {
       try {
         await Mapbox.offlineManager.deletePack(name);
       } catch {
-        /* already gone */
       }
       removeRecord(name);
     }
   }
-
-  // -----------------------------------------------------------------------
-  // Event emitter
-  // -----------------------------------------------------------------------
 
   onPackProgress = (listener: PackProgressListener): (() => void) => {
     this._progressListeners.add(listener);
@@ -295,11 +216,6 @@ class OfflineMapManager {
     };
   };
 
-  // -----------------------------------------------------------------------
-  // What to download
-  // -----------------------------------------------------------------------
-
-  /** Queue the Florida base map unless it is already on the device. */
   ensureBaseMap(): void {
     const existing = getRecordByName(BASE_MAP_PACK_NAME);
     if (existing?.status === 'complete') return;
@@ -311,11 +227,6 @@ class OfflineMapManager {
     this._enqueue(BASE_MAP_PACK_NAME, true);
   }
 
-  /**
-   * Bring the lead-area packs in line with these leads: queue the cells they need, keep cells
-   * already downloaded while the tile budget allows, and evict only to make room.
-   * Idempotent — call it as often as leads load.
-   */
   async syncLeads(leads: readonly LeadLike[] | null | undefined): Promise<void> {
     await this.init();
     this.ensureBaseMap();
@@ -345,7 +256,6 @@ class OfflineMapManager {
     void this._pump();
   }
 
-  /** Re-queue anything interrupted — a previous launch, a Wi-Fi drop, or a stall. */
   async resumeAllPaused(): Promise<void> {
     await this.init();
     readRegistry()
@@ -354,17 +264,11 @@ class OfflineMapManager {
     void this._pump();
   }
 
-  // -----------------------------------------------------------------------
-  // Deleting
-  // -----------------------------------------------------------------------
-
-  /** Delete a pack from Mapbox and drop its metadata. */
   async deletePack(name: string): Promise<void> {
     this._queue = this._queue.filter((n) => n !== name);
     try {
       Mapbox.offlineManager.unsubscribe(name);
     } catch {
-      /* not subscribed */
     }
     try {
       await Mapbox.offlineManager.deletePack(name);
@@ -374,22 +278,12 @@ class OfflineMapManager {
     removeRecord(name);
   }
 
-  /** Delete every lead-area pack (the Profile's trash on the "Lead areas" row). */
   async deleteAllAreas(): Promise<void> {
     for (const r of readKey(AREA_STORAGE_KEY)) {
       await this.deletePack(r.name);
     }
   }
 
-  /**
-   * Drop the LEAD-AREA packs — the session ending, not a rep's choice.
-   *
-   * ⚠️ Runs before the MMKV wipe, which is the last moment the area names exist; the tiles would
-   * otherwise be orphaned on disk. It deletes through Mapbox directly rather than `deletePack`,
-   * because that re-writes the registry key after the wipe has removed it.
-   *
-   * ⚠️ The BASE map is deliberately kept: it is Florida, not the previous rep's route.
-   */
   deleteAllPacksForSessionEnd(): void {
     const names = readKey(AREA_STORAGE_KEY).map((r) => r.name);
     this._queue = this._queue.filter((n) => n === BASE_MAP_PACK_NAME);
@@ -405,10 +299,6 @@ class OfflineMapManager {
       }
     })();
   }
-
-  // -----------------------------------------------------------------------
-  // Queries
-  // -----------------------------------------------------------------------
 
   getRecord(name: string): OfflinePackRecord | null {
     return getRecordByName(name);
@@ -437,10 +327,6 @@ class OfflineMapManager {
       totalBytes: this.totalDownloadedBytes(),
     };
   }
-
-  // -----------------------------------------------------------------------
-  // Queue
-  // -----------------------------------------------------------------------
 
   private _enqueue(name: string, front = false): void {
     if (this._current === name || this._queue.includes(name)) return;
@@ -471,7 +357,6 @@ class OfflineMapManager {
     }
   }
 
-  /** Download one pack; resolves when it completes, fails, or stalls. Never rejects. */
   private _download(record: OfflinePackRecord): Promise<void> {
     const { name } = record;
     return new Promise<void>((resolve) => {
@@ -485,7 +370,6 @@ class OfflineMapManager {
         try {
           Mapbox.offlineManager.unsubscribe(name);
         } catch {
-          /* ignore */
         }
         patchRecord(name, patch);
         resolve();
@@ -531,8 +415,6 @@ class OfflineMapManager {
 
       void (async () => {
         try {
-          // A pack Mapbox already holds (a previous launch) is resumed, never created twice —
-          // `createPack` throws on an existing name.
           const existing = await Mapbox.offlineManager.getPack(name).catch(() => undefined);
           if (existing) {
             const st: any = await existing.status().catch(() => null);
@@ -569,10 +451,6 @@ class OfflineMapManager {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Style URL resolution
-// ---------------------------------------------------------------------------
-
 function resolveStyleURL(styleKey: string): string {
   switch (styleKey) {
     case 'SatelliteStreet':
@@ -587,11 +465,6 @@ function resolveStyleURL(styleKey: string): string {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Singleton export
-// ---------------------------------------------------------------------------
-
 export const offlineMapManager = new OfflineMapManager();
 
-// Lead areas name the previous rep's route, so they end with their session — the base map stays.
 registerSessionResetHook(() => offlineMapManager.deleteAllPacksForSessionEnd());

@@ -1,34 +1,13 @@
-/**
- * Full-schema entry seeding — a faithful TS port of the web deal center's
- * `buildAllEntriesFromSchema` (`calculator-items-format-util.js`).
- *
- * The web app persists a calculator's `entries` as the ENTIRE flattened field
- * list across every product/vertical — every field is present, with
- * `inputValue: 0` for anything the rep hasn't entered and its schema price in
- * `pricingAtTimeOfEntry`. Only the touched fields carry a non-zero `inputValue`
- * / `computed`. Every debounced `PUT /lfcalculators/{id}` therefore sends the
- * full list (see the network payload the web app produces).
- *
- * Mobile previously sent only the touched fields; these helpers seed the full
- * list so the mobile payload matches web exactly (create + every save).
- */
-
 import type { CalculatorSchema, CalculatorField, CalculatorEntry } from '../types/calculator';
 import { getCategoryDirectFields } from '../types/calculator';
 
-/** Direct (section-less) fields save under `${categoryId}__direct` — matches web. */
 export const directSectionId = (categoryId: string) => `${categoryId}__direct`;
 
-/**
- * Build a zero-valued entry for every field across every schema/vertical,
- * deduped by field id (a field id can appear in more than one product).
- */
 export function buildAllEntriesFromSchema(schemas: CalculatorSchema[]): CalculatorEntry[] {
   const entries: CalculatorEntry[] = [];
   const seen = new Set<string>();
 
   (schemas || []).forEach((schema) => {
-    // Web tags each category with `_productName = schema.name || ''`.
     const productName = (schema as any).name || '';
 
     (schema.categories || []).forEach((cat) => {
@@ -64,7 +43,6 @@ export function buildAllEntriesFromSchema(schemas: CalculatorSchema[]): Calculat
   return entries;
 }
 
-/** Same as `buildAllEntriesFromSchema`, keyed by field id. */
 export function buildAllEntriesMap(schemas: CalculatorSchema[]): Record<string, CalculatorEntry> {
   const map: Record<string, CalculatorEntry> = {};
   buildAllEntriesFromSchema(schemas).forEach((e) => {
@@ -73,12 +51,6 @@ export function buildAllEntriesMap(schemas: CalculatorSchema[]): Record<string, 
   return map;
 }
 
-/**
- * Overlay entered/saved entries on top of a full schema seed, so the resulting
- * map always contains every field (untouched ones at `inputValue: 0`). Used on
- * create (empty overlay → all zeros) and on hydrate (saved values fill in,
- * missing fields are back-filled from the schema).
- */
 export function mergeFullEntries(
   partial: Record<string, CalculatorEntry>,
   schemas: CalculatorSchema[]

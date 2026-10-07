@@ -27,19 +27,12 @@ import {
   PlacePrediction,
 } from '../../../utils/places';
 
-/** A co-buyer as sent to the API — phone digits only, `null` when blank. */
 export interface CoBuyerPayload {
   _id?: string;
   firstName: string;
   lastName: string;
   phone: string | null;
   email: string;
-  /**
-   * ⚠️ MOBILE-ONLY — web's co-buyer has NO address (`edit-customer-modal.js`
-   * `sanitizedCoBuyers` sends name/phone/email only), so nothing on that side writes
-   * this key. If the backend's coBuyers sub-schema does not declare it, Mongoose drops
-   * it silently: the box will look right and read back EMPTY on the next open.
-   */
   address: string;
 }
 
@@ -50,40 +43,27 @@ export interface EditCustomerPayload {
   email: string;
   address: string;
   coBuyers: CoBuyerPayload[];
-  // Set when the address came from a picked suggestion or the device GPS;
-  // undefined when it was typed free-hand and never resolved.
   latitude?: number;
   longitude?: number;
 }
 
-/** Co-buyer while being edited — phone is display-formatted. */
 interface CoBuyerDraft {
   _id?: string;
   firstName: string;
   lastName: string;
   phone: string;
   email: string;
-  /** The co-buyer's OWN address — untouched while `sameAsPrimary` is on, so unticking
-   *  the box gives the rep back whatever they had typed. */
   address: string;
   sameAsPrimary: boolean;
 }
 
-// Web parity: `edit-customer-modal.js` caps a customer at three co-buyers.
 const MAX_CO_BUYERS = 3;
 
-/**
- * How long the rep has to stop typing before their edits are logged.
- *
- * Web parity — `edit-customer-modal.js` runs `useDebounce(changedValue, 2000)`. The
- * point is that a field is logged ONCE with its final value, not once per keystroke.
- */
 const FIELD_CHANGE_DEBOUNCE_MS = 2000;
 
 const CUSTOMER_FIELD_CATEGORY = 'customer';
 const CO_BUYER_FIELD_CATEGORY = 'co_buyer';
 
-/** One pending row, shaped exactly as it goes out in the log's `meta`. */
 interface TrackedFieldChange {
   fieldName: string;
   fieldLabel: string;
@@ -92,7 +72,6 @@ interface TrackedFieldChange {
   oldValue: string;
   newValue: string;
   action: string;
-  /** 1-based, matching the "Co-Buyer N" heading. Absent on primary-buyer rows. */
   coBuyerNumber?: number;
 }
 
@@ -104,20 +83,8 @@ const CO_BUYER_FIELD_LABELS: Record<string, string> = {
   address: 'Address',
 };
 
-/**
- * A co-buyer field's tracking key, which is also the `fieldName` the log carries.
- *
- * ⚠️ `position` is the 1-BASED number, so `fieldName`, `meta.coBuyerNumber` and the
- * "Co-Buyer N" heading all say the same N. A 0-based key beside a 1-based number is
- * the kind of off-by-one a reader of the payload has no way to spot.
- *
- * ⚠️ Keyed by POSITION because a co-buyer has no id until it is saved. Removing one
- * shifts every key below it onto a different person, which is why
- * `handleRemoveCoBuyer` flushes and re-seeds instead of just splicing the array.
- */
 const coBuyerFieldKey = (position: number, field: string) => `coBuyer_${position}_${field}`;
 
-/** The five tracked values of one co-buyer, as the fields actually display them. */
 const coBuyerTrackedValues = (
   index: number,
   coBuyer: CoBuyerDraft,
@@ -127,21 +94,11 @@ const coBuyerTrackedValues = (
   [coBuyerFieldKey(index + 1, 'lastName')]: coBuyer.lastName || '',
   [coBuyerFieldKey(index + 1, 'phone')]: coBuyer.phone || '',
   [coBuyerFieldKey(index + 1, 'email')]: coBuyer.email || '',
-  // The DERIVED address — what `coBuyerAddressOf` renders — so ticking
-  // "Same address as primary buyer?" is itself reported as an address change.
   [coBuyerFieldKey(index + 1, 'address')]: coBuyer.sameAsPrimary
     ? primaryAddress
     : coBuyer.address || '',
 });
 
-/**
- * What every tracked field starts at, so the FIRST edit reports a true `oldValue`
- * instead of an empty one. Mirrors web's `lastValuesRef` seeding on open.
- *
- * ⚠️ `phone` is seeded THROUGH the formatter for the same reason the field itself is:
- * the record stores bare digits or E.164, the input shows `+1 (XXX) XXX-XXXX`, and
- * comparing the two shapes would report a phone edit the rep never made.
- */
 const seedTrackedValues = (lead: any): Record<string, string> => {
   const primaryAddress = lead?.customerDetails?.address || lead?.fullAddress || '';
   const seed: Record<string, string> = {
@@ -163,21 +120,9 @@ const emptyCoBuyer = (): CoBuyerDraft => ({
   phone: '',
   email: '',
   address: '',
-  // ⚠️ Deliberately OFF for a new co-buyer. Most co-buyers do share the primary's
-  // address, so defaulting it on would save a tap — but it would also write an address
-  // the rep never affirmed, onto a record they may only have opened to fix a name.
   sameAsPrimary: false,
 });
 
-/**
- * Exact port of the web modal's `formatPhoneNumber` — the first ten digits as
- * (XXX) XXX-XXXX, with "+1" shown beside the field rather than inside it.
- *
- * Deliberately NOT the app's `formatUSPhoneNumber`, which treats a leading 1 as
- * a country code and strips it: that corrupts a real 10-digit number whose area
- * code starts with 1 (e.g. 1214885239 renders as "+1 (214) 885-239", a digit
- * short) and would then save the mangled value.
- */
 const formatCoBuyerPhone = (value: string): string => {
   const digits = (value || '').replace(/\D/g, '').slice(0, 10);
   if (digits.length <= 3) return digits;
@@ -185,18 +130,9 @@ const formatCoBuyerPhone = (value: string): string => {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 };
 
-/** Capitalize just the first character as the rep types — leaves the rest untouched so a
- *  legitimately mixed-case name (McDonald, O'Brien) isn't forced to lowercase mid-entry.
- *  Same rule as `LeadCreate`'s First/Last Name fields. */
 const capitalizeFirst = (text: string): string =>
   text.length ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 
-/**
- * ⚠️ `sameAsPrimary` is DERIVED, never stored. Persisting a second flag beside the
- * address would give the record two ways to disagree with itself — and the answer is
- * already implied by the address matching. The empty case matters: two blank addresses
- * are not "the same address", they are two unanswered questions, so the box stays off.
- */
 export const normalizeCoBuyers = (coBuyers: any[] = [], primaryAddress = ''): CoBuyerDraft[] => {
   const primary = (primaryAddress || '').trim();
   return (Array.isArray(coBuyers) ? coBuyers : []).map((coBuyer) => {
@@ -229,16 +165,9 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   const { colors } = useTheme();
   const { user } = useAuth();
 
-  // ─── Debounced field-change logging ────────────────────────────────────────
-  // Web parity (`edit-customer-modal.js`): an edit is logged a beat AFTER the rep
-  // stops typing, NOT on Save. So the portal timeline shows the edit as it happens,
-  // and one row carries a field's final value instead of one row per keystroke.
   const pendingChangesRef = useRef<Record<string, TrackedFieldChange>>({});
   const lastValuesRef = useRef<Record<string, string>>({});
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // ⚠️ The timer must call the LATEST closure. `flushFieldChanges` reads `user` and
-  // `lead`, and firing a stale one would log against the wrong ids — the same trap
-  // `performAutoSaveRef` exists for in `DynamicJobBuilderScreen`.
   const flushFieldChangesRef = useRef<() => void>(() => {});
 
   const logIds = {
@@ -246,7 +175,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     customerId: lead?.customerDetails?._id || lead?.customerDetails?.id || null,
   };
 
-  /** Emit every pending row and advance the baselines. Safe to call with nothing pending. */
   const flushFieldChanges = () => {
     if (flushTimerRef.current) {
       clearTimeout(flushTimerRef.current);
@@ -257,8 +185,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     const changes = Object.values(pending);
     if (!changes.length) return;
 
-    // ⚠️ Advance the baselines even when there is no user to log as, or the NEXT
-    // flush would report an `oldValue` the rep has already moved on from.
     changes.forEach((change) => {
       lastValuesRef.current[change.fieldName] = change.newValue;
     });
@@ -267,9 +193,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     if (!userId) return;
 
     changes.forEach((change) => {
-      // ⚠️ Deliberate divergence: web logs the row even when the value came back to
-      // where it started (type a letter, delete it inside the debounce window), which
-      // puts a no-op row on the timeline. Skipping can only remove noise.
       if (change.oldValue === change.newValue) return;
       logEvent('change', {
         user_id: userId,
@@ -281,11 +204,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   };
   flushFieldChangesRef.current = flushFieldChanges;
 
-  /**
-   * Queue one field's latest value. Only the LAST entry per field survives, so a
-   * word typed letter by letter is one row, and editing several fields inside the
-   * window flushes them together.
-   */
   const trackFieldChange = (
     fieldName: string,
     newValue: string,
@@ -299,8 +217,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
       fieldLabel,
       fieldValue: sanitized,
       fieldCategory,
-      // The baseline is the value at open, or whatever the last flush committed —
-      // never the previous keystroke, so a row reads as one whole edit.
       oldValue: String(lastValuesRef.current[fieldName] ?? ''),
       newValue: sanitized,
       action:
@@ -317,27 +233,17 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   };
 
   useEffect(() => {
-    // Seeded here rather than in the `useRef` initializer, which would rebuild the
-    // whole map on every render only to throw it away. Nothing can be tracked before
-    // this runs — tracking needs an interaction, and effects land first.
     lastValuesRef.current = seedTrackedValues(lead);
-    // ⚠️ Flush on unmount, or an edit made inside the last debounce window before the
-    // rep taps Save or Cancel is silently dropped with the timer.
     return () => flushFieldChangesRef.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const [firstName, setFirstName] = useState(lead?.customerDetails?.firstName || '');
   const [lastName, setLastName] = useState(lead?.customerDetails?.lastName || '');
-  // Seeded THROUGH the formatter, not raw. A stored phone can be bare digits or
-  // E.164 (`4438784937` / `+14438784937`), while the length check in `handleSave`
-  // counts digits on the `+1 (XXX) XXX-XXXX` shape the field itself produces — so an
-  // unformatted seed would make an untouched, perfectly valid number fail to save.
   const [phone, setPhone] = useState(formatUSPhoneNumber(lead?.customerDetails?.phone || ''));
   const [email, setEmail] = useState(lead?.customerDetails?.email || '');
   const [submitting, setSubmitting] = useState(false);
 
-  // ─── Co-buyers ─────────────────────────────────────────────────────────────
   const [coBuyers, setCoBuyers] = useState<CoBuyerDraft[]>(() =>
     normalizeCoBuyers(
       lead?.customerDetails?.coBuyers,
@@ -368,9 +274,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
           leadId: lead?._id || lead?.id,
           customerId: lead?.customerDetails?._id || lead?.customerDetails?.id || null,
           action: 'add co-buyer opened',
-          // Always true — this row only ever fires from the + Add Co-Buyer button. It is
-          // the portal's flag for rendering the event against the co-buyer, not the
-          // primary buyer, without having to pattern-match on `action`.
           is_co_buyer: true,
         },
       });
@@ -378,21 +281,14 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   };
 
   const handleRemoveCoBuyer = (index: number) => {
-    // ⚠️ Flush FIRST. Tracking keys are positional, so anything still pending has to
-    // be attributed while the indexes still mean what they did when it was typed.
     flushFieldChanges();
 
     const removed = coBuyers[index];
     const next = coBuyers.filter((_, i) => i !== index);
     setCoBuyers(next);
 
-    // The address search is scoped by POSITION too, so an open suggestion list would
-    // now belong to whoever shifted up into that slot.
     closeCoBuyerAddressSearch();
 
-    // Re-seed every co-buyer baseline against the NEW positions. Without this the
-    // co-buyer that shifts up inherits the removed one's values and their next edit
-    // reports a change against a stranger.
     Object.keys(lastValuesRef.current)
       .filter((key) => key.startsWith('coBuyer_'))
       .forEach((key) => delete lastValuesRef.current[key]);
@@ -411,8 +307,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
           action: 'co-buyer removed',
           fieldCategory: CO_BUYER_FIELD_CATEGORY,
           coBuyerNumber: index + 1,
-          // Named as well as numbered: the number shifts the moment another is removed,
-          // so on its own it cannot identify who left the deal.
           removedCoBuyer:
             `${removed?.firstName || ''} ${removed?.lastName || ''}`.trim(),
         },
@@ -424,11 +318,7 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     setCoBuyers((prev) =>
       prev.map((coBuyer, i) => (i === index ? { ...coBuyer, sameAsPrimary: checked } : coBuyer))
     );
-    // A mirrored box is read-only, so anything the search was offering for it is now
-    // unpickable and must not stay on screen.
     if (checked) closeCoBuyerAddressSearch();
-    // The tick changes what the co-buyer's Address box READS, so it is an address
-    // change like any other — the log tracks the derived value, not the flag.
     trackFieldChange(
       coBuyerFieldKey(index + 1, 'address'),
       checked ? address : coBuyers[index]?.address || '',
@@ -438,14 +328,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     );
   };
 
-  /**
-   * The address a co-buyer actually has.
-   *
-   * ⚠️ DERIVED on every read rather than copied into `coBuyer.address` when the box is
-   * ticked. A stored mirror goes stale the moment the rep edits the primary address
-   * below — the co-buyer would keep the old street while the box still claimed "same as
-   * primary buyer". Deriving also means unticking hands back whatever they had typed.
-   */
   const coBuyerAddressOf = (coBuyer: CoBuyerDraft) =>
     coBuyer.sameAsPrimary ? address : coBuyer.address;
 
@@ -469,9 +351,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     );
   };
 
-  // ─── Address ───────────────────────────────────────────────────────────────
-  // Web parity (`edit-customer-modal.js`): prefilled from the customer record,
-  // searchable via Places autocomplete, and saved with its coordinates.
   const [address, setAddress] = useState(
     lead?.customerDetails?.address || lead?.fullAddress || ''
   );
@@ -483,7 +362,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     if (typeof latitude === 'number' && typeof longitude === 'number') {
       return { latitude, longitude };
     }
-    // GeoJSON on the lead is [longitude, latitude].
     const coords = lead?.location?.coordinates;
     if (Array.isArray(coords) && coords.length === 2) {
       return { latitude: Number(coords[1]), longitude: Number(coords[0]) };
@@ -493,18 +371,8 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   const [predictions, setPredictions] = useState<PlacePrediction[]>([]);
   const [searchingAddress, setSearchingAddress] = useState(false);
   const [locating, setLocating] = useState(false);
-  // Suppresses the search for values the user did not type: the address the
-  // modal opens with, a picked suggestion, a GPS fill. Without this the
-  // prefilled address searches itself and the suggestion list opens underneath
-  // showing the same address back — reads as a duplicate address field.
   const skipSearchRef = useRef(true);
 
-  /**
-   * ⚠️ Places autocomplete is SUPPRESSED offline rather than left to fail into its own catch.
-   * The details themselves save fine with no signal (the edit is queued), but the search is a
-   * network call — left armed it spins and then quietly returns nothing, which reads as the whole
-   * form being broken. The rep types the address off the door instead, and the caption says so.
-   */
   const online = useIsOnline();
 
   useEffect(() => {
@@ -533,19 +401,9 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     setAddressCoords(coords ?? undefined);
   };
 
-  // ── Co-buyer address autocomplete ──────────────────────────────────────────
-  // The same Places search as the primary field above, which a co-buyer's box did not
-  // have — a rep typed "Lahore" into it and nothing was offered.
-  //
-  // ⚠️ ONE prediction list for all three co-buyers, scoped by the index being searched.
-  // Only the focused box can be typing, and keying the list to that index is what makes
-  // it impossible to drop a suggestion into a DIFFERENT co-buyer's address.
   const [coBuyerSearchIndex, setCoBuyerSearchIndex] = useState<number | null>(null);
   const [coBuyerPredictions, setCoBuyerPredictions] = useState<PlacePrediction[]>([]);
   const [coBuyerSearching, setCoBuyerSearching] = useState(false);
-  // Same job as `skipSearchRef`: suppress the search for values the rep did not type,
-  // so a picked suggestion does not immediately search itself and reopen the list
-  // underneath showing the same address back.
   const coBuyerSkipSearchRef = useRef(true);
 
   const coBuyerSearchQuery =
@@ -568,7 +426,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     return () => clearTimeout(timer);
   }, [coBuyerSearchQuery, online]);
 
-  /** Drop any open suggestion list and disarm the search. */
   const closeCoBuyerAddressSearch = () => {
     coBuyerSkipSearchRef.current = true;
     setCoBuyerPredictions([]);
@@ -578,15 +435,9 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   const handlePickCoBuyerPrediction = (index: number, prediction: PlacePrediction) => {
     coBuyerSkipSearchRef.current = true;
     setCoBuyerPredictions([]);
-    // Through the normal change path, so the pick is tracked like a typed address.
     handleCoBuyerChange(index, 'address', prediction.description);
   };
 
-  /**
-   * Reverse-geocodes the device's position into the address box.
-   * `prompt` is false for the automatic fill (an empty address on open), which
-   * must stay silent — no permission dialog, no error toast.
-   */
   const applyCurrentLocation = async (prompt: boolean) => {
     try {
       setLocating(true);
@@ -636,9 +487,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
       setAddress(resolved);
       setAddressCoords(coords);
       setPredictions([]);
-      // ⚠️ Only the crosshair TAP is an edit. `prompt` is false for the silent
-      // auto-fill on open, which the rep never asked for and must not be logged as
-      // something they changed.
       if (prompt) {
         trackFieldChange('address', resolved, 'Address', CUSTOMER_FIELD_CATEGORY);
       }
@@ -652,9 +500,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     }
   };
 
-  // Nothing on file for this customer → open with where the rep is standing.
-  // Once per mount (the modal is only mounted while open), and never over an
-  // address that already exists.
   const didAutoFillRef = useRef(false);
   useEffect(() => {
     if (didAutoFillRef.current) return;
@@ -673,12 +518,7 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
       FlashMessage.error('Validation Error', 'Last Name is required.');
       return;
     }
-    // Same rule as Add New Lead (`widgets/modals/LeadCreate`): `formatUSPhoneNumber`
-    // always emits the `+1` prefix, so a COMPLETE number is ELEVEN digits — the ten
-    // local ones plus the country code. Without this a half-typed number saved.
     const phoneDigits = phone.replace(/\D/g, '');
-    // `<= 1` is the empty field: the formatter leaves `'+1 '` behind once the rep has
-    // typed and then cleared the digits, which `.trim()` alone reads as filled in.
     if (!phone.trim() || phoneDigits.length <= 1) {
       FlashMessage.error('Validation Error', 'Phone Number is required.');
       return;
@@ -692,7 +532,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
       return;
     }
 
-    // Co-buyer rules, ported from the web modal's `onSubmit`.
     for (let i = 0; i < coBuyers.length; i += 1) {
       const coBuyer = coBuyers[i];
       const coBuyerPhoneDigits = coBuyer.phone?.replace(/\D/g, '') || '';
@@ -712,8 +551,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
       }
     }
 
-    // Sent shape mirrors the web payload: digits-only phone (null when blank),
-    // empty-string email, and `_id` carried through for existing co-buyers.
     const sanitizedCoBuyers: CoBuyerPayload[] = coBuyers.map((coBuyer) => {
       const digits = coBuyer.phone?.replace(/\D/g, '') || '';
       const payload: CoBuyerPayload = {
@@ -721,15 +558,12 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
         lastName: coBuyer.lastName.trim(),
         phone: digits || null,
         email: coBuyer.email?.trim() || '',
-        // Resolved, not the flag — see `coBuyerAddressOf`.
         address: coBuyerAddressOf(coBuyer).trim(),
       };
       if (coBuyer._id) payload._id = coBuyer._id;
       return payload;
     });
 
-    // Anything typed inside the last debounce window is logged NOW, so the change
-    // rows land ahead of the `submit` row rather than being dropped on unmount.
     flushFieldChanges();
 
     try {
@@ -766,13 +600,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     }
   };
 
-  /**
-   * A primary-buyer setter that also queues its log row.
-   *
-   * ⚠️ `renderField` formats a phone BEFORE calling this, so the value tracked is the
-   * `+1 (XXX) XXX-XXXX` shape the box shows — the same shape `seedTrackedValues`
-   * seeds, which is what stops an untouched number reading as an edit.
-   */
   const trackedSetter = (
     setter: (value: string) => void,
     fieldName: string,
@@ -888,7 +715,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
                     onChangeText={(text) => {
                       skipSearchRef.current = false;
                       setAddress(text);
-                      // The typed text no longer matches the resolved point.
                       setAddressCoords(undefined);
                       trackFieldChange('address', text, 'Address', CUSTOMER_FIELD_CATEGORY);
                     }}
@@ -1249,7 +1075,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#454F5B',
   },
-  // Mirrored from the primary field, so it reads as a value rather than an input.
   fieldBoxReadOnly: {
     backgroundColor: '#F4F6F8',
   },

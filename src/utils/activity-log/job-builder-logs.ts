@@ -58,12 +58,6 @@ export const logAgreementUploaded = async (
   });
 };
 
-/**
- * Agreement SIGNED — the portal's Forever Record "Agreement" milestone renders a
- * "Signed" row only for `action: 'agreement_signed'` on a `module_type: 'job_builder'`
- * log (LeadLifecycleTimeline / log-item routing). `signMethod` distinguishes an
- * in-person signature from a remotely (web-link) signed one for anyone reading meta.
- */
 export const logAgreementSigned = async (
   userId: string,
   leadId: string,

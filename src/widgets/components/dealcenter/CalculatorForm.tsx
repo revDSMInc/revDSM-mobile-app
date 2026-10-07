@@ -58,7 +58,6 @@ export const LockedCalculatorView = ({
 
   const rolloutEndPrice = Number(active?.price) || 0;
   const drops = active?.dropPrice || [];
-  // Show the last drop price added regardless of its status (accepted or declined)
   const lastDrop = drops.length > 0 ? drops[drops.length - 1] : null;
 
   const isDuplicate = (calculators || []).some((c: any) => {
@@ -66,7 +65,6 @@ export const LockedCalculatorView = ({
     return isCalculatorIdentical(active, c);
   });
 
-  /* ── Derived data ── */
   const categoryCounts: Record<string, number> = {};
   results.items.forEach((item: any) => {
     const cat = item.category || 'Additional Services';
@@ -398,7 +396,6 @@ export const CalculatorForm = ({
     return isCalculatorIdentical(active, c);
   });
 
-  /* ── If locked, render the read-only locked view ── */
   if (readOnly) {
     return (
       <LockedCalculatorView

@@ -13,11 +13,6 @@ export function DrawingToolbar({ drawType, pointCount, onCancel, onUndo, onSave 
   const canSave = drawType === 'polygon' ? pointCount >= 3 : pointCount >= 4;
 
   return (
-    // ⚠️ Stops short of the right-hand control column (locate / map type / zoom, 44pt wide + its
-    // 16pt margin = 60) with `right: 72`, and the three buttons SHARE the width (`flex-1`). It
-    // used to be centred full-width, so "Save Zone" sat underneath the zoom buttons. `bottom: 24`
-    // is the SAME line the right-hand control column ends on (`bottom-6`), so the two read as
-    // one row. (The Mapbox logo/attribution were moved to the top-left in MapCanvas for this.)
     <View
       className="absolute flex-row gap-2"
       style={{ bottom: 24, left: 16, right: 72 }}

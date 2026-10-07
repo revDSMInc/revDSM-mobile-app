@@ -37,12 +37,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { convertJpegToPdf as sharedConvertJpegToPdf } from '../../../utils/jpeg-to-pdf';
 
-/**
- * The one definition lives in `utils/jpeg-to-pdf`. Inlined copies of this used to
- * sit in three screens, and all three declared the PAGE size as the image's pixel
- * size — which Android's PDF renderer reads literally and Quartz ignores, so a
- * converted scan opened as a giant top-left crop on Android only.
- */
 const convertJpegToPdf = (jpegBase64: string, width = 595, height = 842): string =>
   sharedConvertJpegToPdf(jpegBase64, width, height);
 
@@ -56,7 +50,6 @@ interface SummarySectionProps {
   outcomeForm?: any;
   resolvedDocuments: { agreements: any[]; orderSheets: any[] };
   setResolvedDocuments: React.Dispatch<React.SetStateAction<{ agreements: any[]; orderSheets: any[] }>>;
-  /** Ref shared with the parent JobBuilder screen to block auto-save during document uploads */
   isDocUploadingRef?: React.MutableRefObject<boolean>;
 }
 
@@ -82,7 +75,6 @@ export const SummarySection = ({
   const [agreementData, setAgreementData] = useState<any>(null);
   const [scannerType, setScannerType] = useState<'agreement' | 'orderSheet'>('agreement');
   const [isGenerating, setIsGenerating] = useState(false);
-  // REVUIUX-391: the delivery-preference prompt that precedes every Generate Agreement.
   const [deliveryPromptOpen, setDeliveryPromptOpen] = useState(false);
   const pendingGenerateOverride = useRef<any>(undefined);
   const [outcomeData, setOutcomeData] = useState<any>(null);
@@ -96,7 +88,6 @@ export const SummarySection = ({
   const fetchOutcome = async () => {
     if (!leadId) return;
     try {
-      // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
       if (!calculatorData?._id) return;
       const response = await LeadService.getLeadOutcomeByCalculator(leadId, calculatorData._id);
       const data = response.data?.data || response.data;
@@ -106,17 +97,14 @@ export const SummarySection = ({
     }
   };
 
-  // Fetch lead outcome specifically for documents
   React.useEffect(() => {
     fetchOutcome();
   }, [leadId]);
 
 
-  // Resolve secure URLs for leadOutcomeDocuments
   React.useEffect(() => {
     let cancelled = false;
     const resolveDocs = async () => {
-      // Use outcomeData from API as primary source, fallback to leadData
       const docs = outcomeData?.leadOutcomeDocuments || leadData?.leadOutcomeDocuments;
       if (!docs) {
         setResolvedDocuments({ agreements: [], orderSheets: [] });
@@ -124,7 +112,6 @@ export const SummarySection = ({
       }
       const { agreements = [], orderSheets = [] } = docs;
 
-      // Preserve original group source in case documentType is missing
       const allDocs = [
         ...agreements.map((d: any) => ({ ...d, _sourceGroup: 'agreement' })),
         ...orderSheets.map((d: any) => ({ ...d, _sourceGroup: 'orderSheet' })),
@@ -135,8 +122,6 @@ export const SummarySection = ({
         return;
       }
 
-      // Prefer a signed URL when available, else a directly resolvable S3 URL.
-      // `urls` is null on the first (instant) pass.
       const mapWith = (urls: any[] | null) =>
         allDocs.map((doc: any) => {
           const urlObj = urls?.find((u: any) => u.filePath === doc.filePath);
@@ -157,12 +142,8 @@ export const SummarySection = ({
         orderSheets: mappedAll.filter((d) => d.documentType === 'orderSheet'),
       });
 
-      // Phase 1 — render instantly with best-effort S3 URLs (no network wait) so a
-      // just-generated/scanned agreement shows immediately.
       if (!cancelled) setResolvedDocuments(split(mapWith(null)));
 
-      // Phase 2 — swap in signed URLs for opening; on failure phase-1 docs stay
-      // visible (previously the list was left empty here on any error).
       try {
         const allPaths = allDocs.map((doc: any) => ({
           filePath: doc.filePath,
@@ -209,12 +190,10 @@ export const SummarySection = ({
       return findInObj(calculatorData.inputs) || findInObj(calculatorData.extras) || findInObj(calculatorData) || 0;
     };
 
-    // 1. Gutter Section
     if (jobState.gutter && hasValue(jobState.gutter)) {
       const gutter = jobState.gutter;
       const subsections: any[] = [];
 
-      // Gutters Combination
       const gutterFields: any[] = [];
       if (gutter.gutterColorsMulti && gutter.gutterColorsMulti.length > 0) {
         gutter.gutterColorsMulti.forEach((combo: any, index: number) => {
@@ -277,7 +256,6 @@ export const SummarySection = ({
       }
       if (gutterFields.length > 0) subsections.push({ name: '', fields: gutterFields });
 
-      // Downspouts
       const downspoutFields: any[] = [];
       if (gutter.downspoutsMulti && gutter.downspoutsMulti.length > 0) {
         gutter.downspoutsMulti.forEach((ds: any, index: number) => {
@@ -298,7 +276,6 @@ export const SummarySection = ({
       if (downspoutFields.length > 0)
         subsections.push({ name: 'Downspouts & Accessories', fields: downspoutFields });
 
-      // Extras
       const extrasList: any[] = [];
       const wedges = getVal('wedges');
       const straps = getVal('straps');
@@ -357,7 +334,6 @@ export const SummarySection = ({
       }
     }
 
-    // 2. LeafFilter Section
     if (jobState.leaffilter && hasValue(jobState.leaffilter)) {
       const lf = jobState.leaffilter;
       const subsections: any[] = [];
@@ -436,7 +412,6 @@ export const SummarySection = ({
       }
     }
 
-    // 3. Soffit Section
     if (jobState.soffit && hasValue(jobState.soffit)) {
       const soffit = jobState.soffit;
       const subsections: any[] = [];
@@ -488,7 +463,6 @@ export const SummarySection = ({
       }
     }
 
-    // 4. Fascia Section
     if (jobState.fascia && hasValue(jobState.fascia)) {
       const fascia = jobState.fascia;
       const fasciaSubsections = [];
@@ -542,7 +516,6 @@ export const SummarySection = ({
       }
     }
 
-    // 5. Lighting Section
     if (jobState.lighting && hasValue(jobState.lighting)) {
       const lighting = jobState.lighting;
       const lightingSubsections: any[] = [];
@@ -612,7 +585,6 @@ export const SummarySection = ({
       }
     }
 
-    // 6. Misc Section (after Lighting to match web app order)
     if (jobState.additional && hasValue(jobState.additional)) {
       const misc = jobState.additional || {};
       const fields: any[] = [];
@@ -653,27 +625,18 @@ export const SummarySection = ({
     return sections;
   }, [jobState, calculatorData]);
 
-  // REVUIUX-391: every Generate Agreement first asks how the homeowner wants the SIGNED copy
-  // (email / text), in person and remote alike. The answer is saved on the lead, so the later
-  // finalize path — whichever it is — already knows. Generation is gated on that save.
-  // ⚠️ Skipped offline / for an offline-minted lead: the PUT cannot succeed, and the backend's
-  // no-answer default (phone AND email) is the existing behaviour.
   const handleGenerateAgreement = (scheduleTimeOverride?: any) => {
     if (!leadId) return;
-    // `onPress` handlers pass a press event here; only a real schedule override is kept.
     const override =
       scheduleTimeOverride && (scheduleTimeOverride.date || scheduleTimeOverride.reason)
         ? scheduleTimeOverride
         : undefined;
     const installDate = override?.date || jobState.scheduleTime?.date;
     if (!installDate) {
-      // Same gate `runGenerateAgreement` applies; asked BEFORE the prompt so the rep is not
-      // made to pick a channel for a document that cannot be generated yet.
       return runGenerateAgreement(override);
     }
     if (!isOnline() || isClientId(leadId)) return runGenerateAgreement(override);
     pendingGenerateOverride.current = override;
-    // Never stack native Modals — let the method dialog finish dismissing first.
     if (agreementDialogOpen) {
       setAgreementDialogOpen(false);
       setTimeout(() => setDeliveryPromptOpen(true), 350);
@@ -738,12 +701,10 @@ export const SummarySection = ({
         `${user?.firstName || ''} ${user?.lastName || ''}`.trim() ||
         'Representative';
 
-      // Lead Name for Customer
       const leadFullName =
         `${leadData?.customerDetails?.firstName || ''} ${leadData?.customerDetails?.lastName || ''
           }`.trim() || customerName;
 
-      // Construct high-fidelity Job Scope (Description of Work) to match web app logic
       const scope: string[] = [];
       const findSec = (t: string) =>
         summarySections.find((s) => s.title.toLowerCase().includes(t.toLowerCase()));
@@ -752,7 +713,6 @@ export const SummarySection = ({
         [];
       const extractFt = (v: any) => (v ? (String(v).match(/(\d+)/) || [])[1] : null);
 
-      // 1. CSR
       const lfSec = findSec('leaffilter');
       const csrField = getFields(lfSec, 'extras').find((f: any) =>
         f.value.toLowerCase().includes('c-s-r')
@@ -764,7 +724,6 @@ export const SummarySection = ({
         );
       }
 
-      // 2. Fascia Board
       const fSec = findSec('fascia');
       getFields(fSec, 'boards').forEach((f: any) => {
         const ft = extractFt(f.value);
@@ -772,7 +731,6 @@ export const SummarySection = ({
         if (match) scope.push(`Install Fascia Board (${match[2]} ${match[1]}) — ${ft}'`);
       });
 
-      // 2.1 Aluminum Fascia Boards
       let aluminumHandled = false;
       getFields(fSec, 'aluminum fascia boards').forEach((f: any) => {
         if (f.value.toLowerCase().includes('aluminum') && f.value.toLowerCase().includes('fascia board')) {
@@ -788,7 +746,6 @@ export const SummarySection = ({
         }
       }
 
-      // 3. Soffit & Porch
       const sSec = findSec('soffit');
       let soffitFt = 0;
       let soffitColor = '';
@@ -798,7 +755,6 @@ export const SummarySection = ({
         if (f.value.toLowerCase().includes('vinyl soffit')) {
           const ft = extractFt(f.value);
           soffitFt += parseInt(ft || '0');
-          // Improved color/type extraction
           const m = f.value.match(/(\d+'\s+)(.+?)\s+Vinyl Soffit/i);
           if (m) {
             const fullContent = m[2].trim();
@@ -837,7 +793,6 @@ export const SummarySection = ({
       );
       const porchLoc = getFields(sSec, 'porch').find((f: any) => f.label === 'Location');
       if (porchField) {
-        // Extract color from porch field
         const pm = porchField.value.match(/(\w+)\s+([\w\s]+)\s+Porch Ceiling/i);
         const pColor = pm ? pm[1] : (soffitColor || 'White');
         scope.push(
@@ -845,7 +800,6 @@ export const SummarySection = ({
         );
       }
 
-      // 5. Fascia Wrap
       getFields(fSec, 'trim').forEach((f: any) => {
         if (f.value.toLowerCase().includes('fascia trim')) {
           const ft = extractFt(f.value);
@@ -854,7 +808,6 @@ export const SummarySection = ({
         }
       });
 
-      // 6. Gutter & Remove/Rehang
       const gSec = findSec('gutter');
       const rrField = getFields(gSec, 'extras').find(
         (f: any) =>
@@ -884,14 +837,11 @@ export const SummarySection = ({
         if (f.label?.startsWith('Combination #')) {
           const parts = f.value.split('·').map((s: any) => s.trim());
           if (parts.length >= 2) {
-            // Find the part that looks like footage (e.g., "100'")
             const ftPart = parts.find((p: string) => /\d+'/.test(p) || /\d+ ft/.test(p));
             const ft = parseInt(extractFt(ftPart) || '0');
 
             if (ft > 0) {
               totalGutterFt += ft;
-              // Extract color - usually the part after footage or containing a known color
-              // But more reliably, it's one of the parts that isn't footage, size, or "Gutter"
               const colorPart = parts.find((p: string) =>
                 !p.includes("'") &&
                 !p.includes('"') &&
@@ -935,7 +885,6 @@ export const SummarySection = ({
         );
       }
 
-      // 10. Downspouts
       const dsSub = gSec?.subsections.find((ss: any) =>
         ss.name.toLowerCase().includes('downspout')
       );
@@ -952,12 +901,10 @@ export const SummarySection = ({
         }
       });
 
-      // 11. LeafFilter & Versa Max
       let hasLF = false;
       let hasVM = false;
       const locationNames = ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER'];
 
-      // Extract gutterWidth
       let gutterWidth: number | null = null;
       lfSec?.subsections?.forEach((sub: any) => {
         sub.fields?.forEach((field: any) => {
@@ -992,7 +939,6 @@ export const SummarySection = ({
           }
         });
       });
-      // Check main section fields too for gutter width
       lfSec?.fields?.forEach((field: any) => {
         if (
           field.label &&
@@ -1110,7 +1056,6 @@ export const SummarySection = ({
         }
       });
 
-      // Extra checks for Versa Max in profile fields (same as web app)
       lfSec?.subsections?.forEach((subsection: any) => {
         subsection.fields?.forEach((field: any) => {
           if (
@@ -1134,31 +1079,26 @@ export const SummarySection = ({
         }
       });
 
-      // 12. Gutter Tune-Up
       if (hasLF && totalGutterFt === 0) {
         scope.push(
           `Gutter Tune-Up: Remove debris from gutter and downspouts to ground, clean gutter and downspouts thoroughly, realign and repitch if needed, Install Hidden Hangers every 25", seal each seam, miter and connection with 50yr silicone`
         );
       }
 
-      // 14. Versa Max Tune-Up
       if (hasVM) {
         scope.push(
           `Existing Fascia Gutter Tune Up: Remove all debris from gutter and downspouts interior, seal each seam, miter and connection with 50yr silicone`
         );
       }
 
-      // 15. Versa Max Cleaning Disclaimer
       if (hasVM && gutterWidth !== null && gutterWidth < 3.4) {
         scope.push(`Due to gutter width, cleaning or sealing cannot be guaranteed`);
       }
 
-      // 13. Versa Max Install
       if (versaMaxEntries.length > 0) {
         versaMaxEntries.forEach((entry) => scope.push(entry));
       }
 
-      // 16 & 17. Splash Guards
       const extrasFields = getFields(gSec, 'extras');
       const splashGuardField = extrasFields.find((f: any) =>
         f.value.toLowerCase().includes('splash guard') && !f.value.toLowerCase().includes('.032')
@@ -1180,20 +1120,17 @@ export const SummarySection = ({
         scope.push(`Install ${color} Splash Guard .32 Gauge — ${count}'`);
       }
 
-      // 18. Warranty
       if (hasLF || hasVM) {
         scope.push(
           `Includes No Clog and No Leak Guarantee and Lifetime Transferable Warranty on LeafFilter`
         );
       }
 
-      // 19. Groundspouts
       const gsField = extrasFields.find((f: any) =>
         f.value.toLowerCase().includes('groundspout')
       );
       if (gsField) scope.push(`Install ${extractFt(gsField.value) || '1'} groundspouts`);
 
-      // 19.5. Lighting
       const lightSec = findSec('lighting');
       if (lightSec) {
         getFields(lightSec, '').forEach((f: any) => {
@@ -1236,7 +1173,6 @@ export const SummarySection = ({
       const labField = mFields.find((f: any) => f.label?.toLowerCase().includes('extra labor'));
       if (labField?.value) scope.push(`Additional Labor: ${labField.value}`);
 
-      // 20. Screens
       const screensField = mFields.find((f: any) =>
         f.label && (
           f.label.toLowerCase().includes('screen') ||
@@ -1310,7 +1246,6 @@ export const SummarySection = ({
     try {
       let documentUri = file.uri;
 
-      // If it's a relative server path, prepend the base API URL
       if (documentUri.startsWith('/') && !documentUri.startsWith('file://')) {
         const exists = await RNFS.exists(documentUri);
         if (!exists) {
@@ -1355,7 +1290,6 @@ export const SummarySection = ({
           return;
         }
 
-        // Try RNFS download first; fall back to fetch+write if DNS fails (common on Android emulator)
         let downloaded = false;
         try {
           const dl = RNFS.downloadFile({ fromUrl: documentUri, toFile: localPath });
@@ -1366,7 +1300,6 @@ export const SummarySection = ({
         }
 
         if (!downloaded) {
-          // fetch fallback — includes Authorization header in case URL requires it
           const token = Storage.getItem('accessToken');
           const res = await fetch(documentUri, {
             headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -1503,7 +1436,6 @@ export const SummarySection = ({
             onPress: async () => {
               try {
                 await LeadService.deleteOutcomeDocument(docId);
-                // Refresh from server to reflect deletion
                 await fetchOutcome();
               } catch (err) {
                 console.error('[Summary] Delete failed:', err);
@@ -1706,7 +1638,6 @@ export const SummarySection = ({
         {/* Appointment Status Card */}
         {outcomeForm?.result?.toLowerCase() !== 'demo' && (
           !isAppointmentSet ? (
-            /* ── NOT SCHEDULED ─────────────────────────────────────── */
             <View
               style={{ marginBottom: 24, borderRadius: 16, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2', padding: 20 }}
             >
@@ -1735,7 +1666,6 @@ export const SummarySection = ({
               </Pressable>
             </View>
           ) : (
-            /* ── SCHEDULED ──────────────────────────────────────────── */
             <View style={{ marginBottom: 24, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: '#f1f5f9', backgroundColor: 'white', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 }}>
               {/* Green header */}
               <View style={{ backgroundColor: '#10b981', paddingHorizontal: 20, paddingVertical: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1828,7 +1758,6 @@ export const SummarySection = ({
         }
         onChange={(files) => {
           const field = scannerType === 'agreement' ? 'agreements' : 'orderSheets';
-          // Update local state with draft images
           onUpdate?.('', field, files.length > 0 ? [{ files }] : []);
         }}
         onSave={async (pages) => {
@@ -1840,11 +1769,9 @@ export const SummarySection = ({
             return;
           }
 
-          // Only submit pages that are newly added — existing pages are already on the server
           const newPages = pages.filter((p) => p.isNew === true);
 
           if (newPages.length === 0) {
-            // Nothing new to upload — just close
             setScannerOpen(false);
             return;
           }
@@ -1876,7 +1803,6 @@ export const SummarySection = ({
               status: 'Sale',
               jobBuilder: {
                 ...jobState,
-                // Only append the newly scanned files
                 [stateField]: filePayloads,
               },
               LFCalculator: {
@@ -1891,7 +1817,6 @@ export const SummarySection = ({
               appointmentId: calculatorData?.appointmentId || leadId,
             };
 
-            // Calculator-scoped write — the bare lead-scoped outcome route is deprecated.
             if (calculatorData?._id) {
               await LeadService.updateLeadOutcomeByCalculator(leadId, calculatorData._id, outcomePayload);
             }
@@ -1924,7 +1849,6 @@ export const SummarySection = ({
         onCancel={() => setDeliveryPromptOpen(false)}
         onConfirmed={() => {
           setDeliveryPromptOpen(false);
-          // Let the prompt finish dismissing before the signature modal presents.
           setTimeout(() => runGenerateAgreement(pendingGenerateOverride.current), 400);
         }}
       />
@@ -1951,11 +1875,8 @@ export const SummarySection = ({
           signatureFields={agreementData.signatureFields}
           pdfDimensions={agreementData.pdfDimensions}
           onSuccess={(pdfUrl) => {
-            // Refresh outcome to pull S3 version once processed
             fetchOutcome();
           }}
-          // Enables "Send Remotely" (primary buyer + coBuyers[]). Refresh the
-          // outcome when the remote session completes so the signed agreement shows.
           customerDetails={leadData?.customerDetails}
           onRemoteComplete={fetchOutcome}
         />

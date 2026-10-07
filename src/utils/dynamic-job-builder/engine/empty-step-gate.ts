@@ -1,27 +1,3 @@
-/**
- * empty-step-gate.ts — the "No details on this step yet" gate for deal-EDIT.
- *
- * Verbatim port of web `dynamic-job-builder.js` `stateHasContent` (lines 40-60)
- * and `collectLockedFieldIds` (lines 62-77). Introduced in web commit 301a2fdc
- * ("Dynamic deal-edit modal + edit-mode builder").
- *
- * In the My Deals / deal-edit builder, a step whose saved state holds no
- * REP-ENTERED value is surfaced with a soft "Add details / Skip" prompt instead
- * of dropping the rep straight into a blank form. Deal-center-seeded values
- * (locked / dcValue fields carried over from the calculator, e.g. LeafFilter
- * Profile, Gutter Opening Width) do NOT count as content — otherwise every step
- * the calculator touched would look filled even though the rep entered nothing.
- */
-
-/**
- * Does a tab's saved state hold any real user value?
- *
- * `0`, `''`, whitespace-only strings, the numeric string `"0"`, `false`,
- * null/undefined and empty arrays/objects all count as NO content. A non-empty
- * string that isn't a zero-number, or any non-zero number/true, counts. Structural
- * keys and any `lockedFieldIds` key are skipped — the latter is what keeps
- * calculator-seeded defaults from reading as rep input.
- */
 export function stateHasContent(obj: any, lockedFieldIds?: Set<string>): boolean {
   if (obj === null || obj === undefined) return false;
   if (typeof obj === 'number') return obj !== 0;
@@ -45,11 +21,6 @@ export function stateHasContent(obj: any, lockedFieldIds?: Set<string>): boolean
   return false;
 }
 
-/**
- * Ids of every locked (deal-center-seeded) field across the whole config —
- * fields flagged `locked`, or of type `locked` / `lockedWithColor`, walked
- * recursively through `tab.fields`, `section.fields`, and `combinations.fields`.
- */
 export function collectLockedFieldIds(config: any): Set<string> {
   const set = new Set<string>();
   const walk = (fields: any[]) =>

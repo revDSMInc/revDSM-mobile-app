@@ -128,7 +128,6 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   
-  // Mode detection
   const existingReferral = selectedJob?.jobReferrals?.[0];
   const mode = !existingReferral ? 'ADD' : isMyJob ? 'EDIT' : 'VIEW';
 
@@ -210,14 +209,6 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
   const handleSubmit = async () => {
     if (mode === 'VIEW') return;
 
-    // ⚠️ Guarded HERE rather than at the three places that open this modal — the map, the Zone
-    // Canvasser and the Lead Center all mount it, and a rule copied three times is a rule that
-    // will be right in two of them. It also covers the case a call-site guard cannot: the signal
-    // dropping while the rep is part-way through the form.
-    //
-    // Not queued, deliberately. A referral is someone ELSE's contact details and the office acts
-    // on it by calling them; filing it silently hours later, with no way for the rep to see it is
-    // still waiting, is a worse promise than telling them now.
     const offlineBlock = offlineBlockFor('referral', online);
     if (offlineBlock) {
       Alert.alert(offlineBlock.title, offlineBlock.message);
@@ -283,7 +274,6 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
 
       Alert.alert('Success', `Referral ${mode === 'EDIT' ? 'updated' : 'added'} successfully`);
 
-      // Build an optimistic referral object from what was submitted
       const optimisticReferral = {
         ...(existingReferral || {}),
         firstName: form.firstName,

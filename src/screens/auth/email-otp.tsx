@@ -98,9 +98,6 @@ export default function EmailOTPScreen() {
 
       FlashMessage.success('Verified', 'Email verified successfully');
     } catch (err: any) {
-      // The code was right — the account just isn't allowed on mobile. Reported as
-      // an access problem, not a failed verification, so the rep doesn't re-enter
-      // a code that will never work.
       if (isMobileAccessDenied(err)) {
         FlashMessage.error('Access Denied', NO_MOBILE_ACCESS_MESSAGE);
         navigation.navigate('Login');
@@ -123,7 +120,6 @@ export default function EmailOTPScreen() {
     if (countdown > 0) return;
     
     try {
-      // Mock API call for resend
       await new Promise(resolve => setTimeout(() => resolve(undefined), 1000));
       FlashMessage.success('Resent', 'Code has been resent to your email');
       startCountdown();

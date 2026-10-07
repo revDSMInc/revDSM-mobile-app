@@ -26,7 +26,6 @@ export const ModalHeader = ({ title, subtitle, onClose, children }: any) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
 
-  // Robust Android Top Inset: fallback to StatusBar.currentHeight if provider returns 0
   const topInset =
     Platform.OS === 'android' ? Math.max(insets.top, StatusBar.currentHeight || 0) : insets.top;
 

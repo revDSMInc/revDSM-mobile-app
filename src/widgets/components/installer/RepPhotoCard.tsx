@@ -8,23 +8,14 @@ import type { PreInstallPhotos, RepPhoto, PhotoSlot } from '../../../config/type
 
 interface Props {
   photos?: PreInstallPhotos;
-  /** Opens the ghost-match step. Omitted while the step is still locked. */
   onOpenMatch?: () => void;
 }
 
-/** Photos live under the bucket the payload names, which need not be the env default. */
 const photoUri = (p: RepPhoto) =>
   p.bucketName && !p.s3url.startsWith('http')
     ? `https://${p.bucketName}.s3.amazonaws.com/${p.s3url.replace(/^\//, '')}`
     : resolveS3Url(p.s3url);
 
-/**
- * The rep's capture set, as returned when the job is started.
- *
- * This is the reference the installer ghost-matches against in Pre-Install Photos —
- * showing it up front means they know what exists (and what the rep skipped) before
- * they walk the house, rather than discovering it mid-step.
- */
 export function RepPhotoCard({ photos, onOpenMatch }: Props) {
   const { colors, isDark } = useTheme();
   const surface = isDark ? colors.surface : '#F4F6F8';

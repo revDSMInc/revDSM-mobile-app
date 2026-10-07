@@ -1,26 +1,3 @@
-/**
- * English → Spanish strings.
- *
- * **Spanish is an installer-only feature.** The sales side always renders English — see
- * `canSwitchLanguage` in `LanguageProvider`, which resolves the language rather than just
- * hiding the toggle.
- *
- * Keys are dotted paths that name WHERE a string appears, not what it says
- * (`installer.tab.all`, not `all`), so a word that needs two different translations in
- * two places can have them. English is the source of truth: `en` is a plain object, `es`
- * is typed against it, so a missing Spanish key is a compile error rather than a blank
- * label at runtime — and `t()` falls back to English if one ever slips through.
- *
- * ## Adding a screen
- *
- * 1. Add its keys under a new top-level group in `en`.
- * 2. Add the same keys to `es` — TypeScript will tell you if you miss one.
- * 3. In the screen: `const { t } = useTranslation()` then `t('group.key')`.
- *
- * Placeholders use `{name}` and are filled by the second argument of `t()`:
- * `t('installer.jobs.count', { count: 4 })`.
- */
-
 export const en = {
   common: {
     cancel: 'Cancel',
@@ -42,10 +19,6 @@ export const en = {
     jobTracker: 'Job Tracker',
     myLearning: 'My Learning',
     logout: 'Logout',
-    /**
-     * The language row — installers only (`canSwitchLanguage`). Always shown in the
-     * language it switches TO.
-     */
     switchToSpanish: 'Español',
     switchToEnglish: 'English',
     languageLabel: 'Language',
@@ -55,10 +28,6 @@ export const en = {
     title: 'My Installs',
     jobsOne: 'Job',
     jobsMany: 'Jobs',
-    /**
-     * Tab labels. They do NOT match the `?period=` values behind them — the request
-     * carries `all` / `tomorrow`, the installer reads Today / Tomorrow.
-     */
     tabAll: 'Today',
     tabUpcoming: 'Tomorrow',
     emptyAll: 'No installs scheduled for today.',
@@ -73,7 +42,6 @@ export const en = {
     startAppointment: 'Start Appointment',
     resumeAppointment: 'Resume Appointment',
     reviewAppointment: 'Review Appointment',
-    /** A resulted job — the visit is over, so the button reports state, not an action. */
     completedAppointment: 'Completed Appointment',
     previewAppointment: 'Preview Appointment',
     appointmentExpired: 'Appointment Expired',
@@ -83,14 +51,12 @@ export const en = {
     notYetBody: "This job is scheduled for {date}. You can open it on the day.",
     notYetBodyNoDate: 'This job is scheduled for a later date. You can open it on the day.',
 
-    /** Right day, too early — the arrival window hasn't opened yet. */
     tooEarlyTitle: 'Not open yet',
     tooEarlyBody: 'This job opens at {time}, when its arrival window starts.',
 
     leadCenter: 'Lead Center',
     timeline: 'Install Timeline',
     stepsDone: '{done} of {total} done',
-    /** Per-step badges on the rail. Uppercase on purpose — they are chips, not prose. */
     badgeStart: 'START',
     badgeResume: 'RESUME',
     badgeDone: 'DONE',
@@ -117,7 +83,6 @@ export const en = {
     resultReset: 'Reset',
     resultNotHit: 'Not Hit',
 
-    // ── Step 1 / 7 · Material pickup & return ────────────────────────────────
     materialPickup: 'Material Pickup',
     materialReturn: 'Material Return',
     materialPickupSub: 'Photo the material loaded for this job',
@@ -135,7 +100,6 @@ export const en = {
     cameraPickupLabel: 'PICKUP • Loaded Material',
     cameraReturnLabel: 'RETURN • Unused Material',
     cameraReturnHint: 'Photo the material coming back',
-    // ── Step 2 · Pre-existing conditions ────────────────────────────────────
     pecTitle: 'Pre-Existing Conditions',
     pecSub: 'Document site conditions before starting work',
     pecIntro:
@@ -166,7 +130,6 @@ export const en = {
     areaYard: 'Landscaping / Yard',
     areaOther: 'Other',
 
-    // ── Step 6 · Certificate of Completion ──────────────────────────────────
     cocTitle: 'Certificate of Completion',
     cocSub: 'Scan the CoC signed by the homeowner',
     cocIntro:
@@ -178,7 +141,6 @@ export const en = {
     cocDeleteBody:
       "Page {number} of the signed CoC will be removed from this job and deleted from the server. You'll have to rescan it — the homeowner's signature can't be recovered from the app.",
 
-    // ── Step 6 · CoC signed on the device (design port of the sales consent form) ──
     cocSignOnDevice: 'Sign Certificate of Completion',
     cocSignAgain: 'Edit Signed Certificate',
     cocSignedBy: 'Signed by {name} · {date}',
@@ -221,47 +183,33 @@ export const en = {
     cocExitStay: 'Stay on Form',
     cocExitLeave: 'Exit Form',
 
-    // ── Steps 3 / 5 · Photo match (pre & post install) ──────────────────────
     phasePre: 'PRE-INSTALL',
     phasePost: 'POST-INSTALL',
     matchedCount: '{done}/{total} MATCHED',
-    /** Free-form phase (no rep capture set) — a count, never a fraction. */
     shotsTakenCount: '{done} TAKEN',
     repPhoto: 'REP PHOTO',
     yourPhoto: 'YOUR PHOTO',
     preInstallPhoto: 'PRE-INSTALL PHOTO',
     matchedTapReview: '✓ MATCHED — tap to review',
     noRepPhoto: 'NO REP PHOTO FOR THIS TAG — TAP TO SHOOT',
-    /** Eyebrow on a tag the rep never covered — it is an addition, not a match. */
     addPhoto: 'ADD PHOTO',
     loadingRepPhoto: 'LOADING REP PHOTO…',
     tapToMatch: 'TAP PHOTO TO MATCH WITH GHOST',
     selectTagRep: 'SELECT TAG TO VIEW REP PHOTO',
-    /** Pre pass — the rep's tags are the floor, any other tag can be added to. */
     selectTagRepPlus: 'PICK A REP TAG — OR ANY OTHER TAG TO ADD A SHOT',
     selectTagPre: 'SELECT TAG TO VIEW PRE-INSTALL PHOTO',
-    /** Free-form phase — says outright that the count is the installer's call. */
     selectTagFree: 'PICK A TAG AND SHOOT — TAKE AS MANY AS YOU NEED',
     allShotsMatched: 'Done — All Shots Matched',
     donePhotosTaken: 'Done — {count} Taken',
-    /**
-     * Floating hint over the tag picker. The Done button is the LAST thing in the
-     * scroll, so on a short picker it sits below the fold with nothing to say it
-     * exists — this points at it (and scrolls to it when tapped).
-     */
     scrollForDone: 'Scroll down for Done',
-    /** Same pill before the step is finishable — there is no Done to point at yet. */
     scrollForMore: 'More tags below',
     repSale: 'REP (SALE)',
-    /** Empty reference frame in the review pair - the sale side never shot this tag. */
     noRepSalePhoto: 'No Pre-Install Photo From Sale Side',
-    /** Same frame in the POST phase, where the reference is the installer's own pre shot. */
     noPreInstallPhoto: 'No Pre-Install Photo',
     tagMatched: '{tag} — Matched',
     extraShotHint: "Free shot — no ghost. Document anything the rep didn't.",
     looksGood: 'Looks Good',
 
-    // ── Step 4 · Verify job scope ───────────────────────────────────────────
     scopeTitle: 'Verify Job Scope',
     scopeSub: 'Sold products, footages & colors — confirm or flag',
     scopePendingOne: "{count} discrepancy awaiting IM — scope review can't close until resolved",
@@ -307,7 +255,6 @@ export const en = {
   },
 } as const;
 
-/** Every key in `en`, so a gap in a translation is caught at compile time. */
 export type TranslationTree = {
   [Group in keyof typeof en]: { [Key in keyof (typeof en)[Group]]: string };
 };
@@ -580,7 +527,6 @@ export const DICTIONARIES: Record<Language, TranslationTree> = {
   es,
 };
 
-/** Dotted key of any string, e.g. `installer.tabAll`. */
 export type TranslationKey = {
   [Group in keyof typeof en]: `${Group & string}.${keyof (typeof en)[Group] & string}`;
 }[keyof typeof en];

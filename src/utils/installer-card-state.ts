@@ -1,53 +1,14 @@
-/**
- * Installer job card — action label + colors, driven by `workflowState`.
- *
- * Ports the web card's state machine (`sections/map/utils/job-card-utils.js` →
- * `CARD_COLORS` / `getJobStatus`) so a job reads the same on both platforms.
- *
- * **Where mobile deliberately differs from web.** The web derives its state from GPS
- * range and the appointment time window, and treats `workflowState` as a single
- * boolean (`=== 'resume'`) — which is why a `workflowState: 'start'` from the API hits
- * no branch there at all. Mobile reads the field directly, as the API means it: the
- * backend has already decided whether this visit is a start, a resume or a review, and
- * re-deriving that on the phone would just be a second opinion that can disagree.
- *
- * What the phone DOES decide is whether the crew can act on that state right now, and it
- * decides it the same way the tap does — the arrival window (`installer-schedule.ts`) and
- * the device's position (`installer-geofence.ts`) both downgrade the card to a preview.
- * Those two are local facts the backend can't know when it builds the row: `my-jobs` is
- * answered once and then read for minutes while the crew drives and the clock runs.
- */
-
 import { isBeforeArrivalWindow } from './installer-schedule';
 import { isJobBypassActive } from './job-bypass';
 import type { InstallerJob } from '../config/types/installer';
 import type { TranslationKey } from '../i18n/translations';
 
-/** Web `CARD_COLORS`, verbatim. */
 export const JOB_CARD_COLORS = {
-  /** Start Appointment — the visit hasn't begun. */
   ACTIVE: '#ff6b35',
-  /** Resume Appointment — already checked in once. */
   PROGRESS: '#6fcf97',
-  /** Review Appointment — read-only revisit. */
   OFFSITE: '#9e9e9e',
-  /**
-   * Preview Appointment — readable but not actionable from here. Two ways in: the
-   * Upcoming tab (not due yet) and an off-site device fix (not there yet).
-   */
   UPCOMING: '#2196f3',
-  /** Resulted — the visit is over. Web's neutral grey. */
   RESULTED: '#9e9e9e',
-  /**
-   * Expired — the arrival window passed, but the job still opens and works normally.
-   *
-   * A DARKER, cooler grey than `RESULTED` on purpose. Both states are grey, and at
-   * arm's length in sunlight two identical greys would make an expired job (still to be
-   * done) indistinguishable from a resulted one (finished) — the one comparison on this
-   * screen where being wrong costs a wasted drive. The rest of the card separates them
-   * too: resulted is washed out at 85 % opacity behind a RESULTED chip, expired is at
-   * full strength.
-   */
   EXPIRED: '#64748b',
 } as const;
 
@@ -55,41 +16,12 @@ export type JobCardStateKey = keyof typeof JOB_CARD_COLORS;
 
 export interface JobCardState {
   key: JobCardStateKey;
-  /** Border, action button, and the 10 %-alpha card wash. */
   color: string;
-  /**
-   * Translation key for the bottom action button — NOT the text.
-   *
-   * A pure function can't read the language context, and threading `t` through it would
-   * make every caller carry a hook's output into a helper that has no other reason to
-   * know about React. So the state machine names the string and the card renders it.
-   */
   actionLabelKey: TranslationKey;
-  /**
-   * Literal button text, when the label comes from the API rather than from the phrase
-   * book — a resulted job reports its own outcome (`CantDoWork|Resulted`), and those
-   * values are open-ended, so there is no translation key to name.
-   *
-   * Wins over `actionLabelKey` when set. `actionLabelKey` is still filled in as the
-   * fallback for a job whose outcome fields are missing.
-   */
   actionLabel?: string;
-  /**
-   * Web paints a 6 px bar down the left edge for the two live states
-   * (`boxShadow: '-6px 0 0 0 color'`). RN has no such shadow, so the card renders it
-   * as a real 6 px view — same look, and this flag says when.
-   */
   accentBar: boolean;
 }
 
-/**
- * `workflowState` → label + color.
- *
- * `installer/v1/my-jobs` sends three values today — **`start`, `resume`, `expired`** —
- * and every one of them opens the job. `review` and `preview` are kept because the
- * sales side of the same backend uses them and the Upcoming tab renders `preview`;
- * neither is currently sent for an installer job.
- */
 const BY_WORKFLOW_STATE: Record<string, JobCardState> = {
   start: {
     key: 'ACTIVE',
@@ -103,10 +35,6 @@ const BY_WORKFLOW_STATE: Record<string, JobCardState> = {
     actionLabelKey: 'installer.resumeAppointment',
     accentBar: true,
   },
-  /**
-   * The arrival window has passed. The job still opens and works exactly like any
-   * other — the grey is a note that the slot is stale, not a lock.
-   */
   expired: {
     key: 'EXPIRED',
     color: JOB_CARD_COLORS.EXPIRED,
@@ -127,24 +55,10 @@ const BY_WORKFLOW_STATE: Record<string, JobCardState> = {
   },
 };
 
-/**
- * A wire status → the words an installer reads.
- *
- *   `cantDoWork` → `Cant Do Work`
- *   `notHit`     → `Not Hit`
- *   `reset`      → `Reset`
- *
- * Derived rather than looked up in a table: the backend's own naming already carries the
- * word boundaries, so splitting on them means a result action added server-side reads
- * correctly with no mobile release. Handles camelCase, PascalCase (`CantDoWork`, if the
- * API ever capitalises it), and snake/kebab separators.
- */
 export const humanizeStatus = (value: string): string =>
   value
     .trim()
-    // `tDo` → `t Do`
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    // `HOAIssue` → `HOA Issue`, so an acronym doesn't get split letter by letter.
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
     .replace(/[_-]+/g, ' ')
     .split(/\s+/)
@@ -152,33 +66,11 @@ export const humanizeStatus = (value: string): string =>
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 
-/**
- * The outcome of a resulted job: **`Resulted - {status}!`** — `Resulted - Cant Do Work!`,
- * `Resulted - Not Hit!`, `Resulted - Reset!`.
- *
- * Same shape as the sales LeadCard's resulted bar (`Resulted — Sale`), so a resulted job
- * reads the same on both cards. The status is derived from the wire value by
- * `humanizeStatus` rather than mapped to a fixed phrase, so a new result action on the
- * backend needs no mobile release; `workflowState` is not appended, because on a resulted
- * job it only ever says `resulted` — which is exactly what the prefix already says.
- *
- * A resulted card used to read "Completed Appointment" whatever the outcome was, which
- * is wrong the moment the outcome is anything but completion: a job the crew could NOT
- * do reported itself as finished work.
- *
- * Returns null when there is nothing to name; the caller falls back to the phrase book.
- */
 export const resultedActionLabel = (job: InstallerJob): string | null => {
-  // A job that WAS completed is the one case the phrase book says better than the raw
-  // status does: "Completed Appointment" reads as finished work, "Resulted - Completed"
-  // reads as a status dump. Returning null hands it back to
-  // `installer.completedAppointment`, which also keeps it translated.
   if (typeof job.status === 'string' && job.status.trim().toLowerCase() === 'completed') {
     return null;
   }
 
-  // `status` is the outcome; `workflowState` is the fallback for a job that carries only
-  // that. Whichever answers, it is the thing the prefix is qualifying.
   const raw = [job.status, job.workflowState]
     .map((part) => (typeof part === 'string' ? part.trim() : ''))
     .find(Boolean);
@@ -186,29 +78,9 @@ export const resultedActionLabel = (job: InstallerJob): string | null => {
   if (!raw) return null;
 
   const outcome = humanizeStatus(raw);
-  // Nothing to qualify — "Resulted - Resulted" is noise, so the prefix stands alone.
-  // The trailing `!` is requested copy, not punctuation the status carries.
   return outcome.toLowerCase() === 'resulted' ? 'Resulted!' : `Resulted - ${outcome}!`;
 };
 
-/**
- * Has this visit already begun?
- *
- * The check-in gates — being on site, and the job being due today — exist to stop a crew
- * *starting* a visit they aren't at or aren't due at. Once the job is `inProgress` that
- * question is settled: the crew checked in on site, and they must be able to get back
- * into their own job from wherever they are — the van, a supply run, a spot where the
- * fix drifts out of the 20 m radius. So this is what both gates test before they run
- * (see `openJob` in `screens/Installer/index.tsx`).
- *
- * Two signals, either of which means started, because they come from different parts of
- * the payload and a job can carry one without the other:
- *   - `status: 'inProgress'` — the workflow transition the start tap PATCHes;
- *   - `workflowState: 'resume'` — the API's own word for "already checked in once".
- *
- * A resulted job is NOT in progress whichever it says: the visit is over, and it takes
- * the read-only review path instead.
- */
 export const isJobInProgress = (job?: InstallerJob | null): boolean => {
   if (!job || job.resulted) return false;
 
@@ -219,60 +91,12 @@ export const isJobInProgress = (job?: InstallerJob | null): boolean => {
 };
 
 export interface JobCardStateOptions {
-  /** The Upcoming tab — preview-only regardless of what the job's own state says. */
   isUpcoming?: boolean;
-  /** The card is waiting on the check-in request. */
   loading?: boolean;
-  /**
-   * A device fix exists and it matches NEITHER the job's coordinates NOR any company
-   * office. The card then renders as the light-blue UPCOMING preview.
-   *
-   * Must be false while the position is unknown (no fix yet, permission refused), not
-   * true: an unresolved location is not evidence of being somewhere else.
-   */
   offSite?: boolean;
-  /**
-   * Clock the arrival window is judged against. Injectable so the caller can drive the
-   * re-render (the label changes on its own as noon passes) and so the rule is testable
-   * without waiting for a Tuesday.
-   */
   now?: Date;
 }
 
-/**
- * The card's presentation for one job.
- *
- * Precedence: **resulted → upcoming → too early → off-site → `workflowState`**. Resulted
- * wins outright because the visit is over whatever the workflow says, and the Upcoming
- * tab is a preview of jobs whose `workflowState` is still `start` — showing them as
- * actionable would invite a crew to open future work today.
- *
- * **The button says what the tap will DO.** The two middle branches are the card's copy
- * of `openJob`'s two gates (`installer-schedule.ts` WHEN, `installer-geofence.ts` WHERE),
- * and they are here so the card can never offer an action the tap then refuses. Which
- * gives, for a job the crew is standing at:
- *
- *   | window | now      | on site | button                |
- *   |--------|----------|---------|-----------------------|
- *   | 8–12   | 9 AM     | yes     | Start Appointment     |
- *   | 8–12   | 1 PM     | yes     | Start Appointment     | ← window END is not a gate
- *   | 12–4   | 9 AM     | yes     | Preview Appointment   | ← too early
- *   | 8–12   | any      | no      | Preview Appointment   |
- *   | 12–4   | any      | no      | Preview Appointment   |
- *
- * A visit already `inProgress` is exempt from the WHEN gate only — it keeps Resume
- * whatever the clock says, since a visit underway cannot be "too early". It is NOT
- * exempt from the WHERE gate: `openJob` re-runs the geofence on every re-entry, so an
- * off-site in-progress job reads Preview like any other.
- *
- * **A manager's bypass removes the three middle branches entirely** — Upcoming, too early
- * and off site (`utils/job-bypass.ts`) — for the same reason the branches exist at all: the
- * card must say what the tap will do, and neither gate refuses a bypassed job any more. So
- * an overridden job reads Start (or Resume) from the moment it appears, on either tab, from
- * anywhere. Its `workflowState` still decides which of those it says, and a resulted job is
- * still resulted: the override lifts the gates on opening a job, not the record of one
- * that is already over.
- */
 export const resolveJobCardState = (
   job: InstallerJob,
   {
@@ -283,15 +107,9 @@ export const resolveJobCardState = (
   }: JobCardStateOptions = {}
 ): JobCardState => {
   if (loading) {
-    // Mid-request. Keep the card's own accent so it doesn't flash a different colour
-    // while it is in flight; only the label changes. A resulted or upcoming card is
-    // FETCHING, not starting — those open read-only, and "Starting Job…" would claim
-    // a finished visit is being reopened.
     const base = resolveJobCardState(job, { isUpcoming, offSite, now });
     return {
       ...base,
-      // Cleared, not just overridden: a literal `actionLabel` outranks the key, so
-      // leaving a resulted job's outcome text in place would hide the spinner label.
       actionLabel: undefined,
       actionLabelKey:
         job.resulted || isUpcoming ? 'common.loading' : 'installer.startingJob',
@@ -299,10 +117,6 @@ export const resolveJobCardState = (
   }
 
   if (job.resulted) {
-    // Not an action-shaped label: the visit is over, and inviting the crew to treat it
-    // as outstanding work was the original bug here. What it reports is the OUTCOME —
-    // `CantDoWork|Resulted` — because "Completed Appointment" is a lie on a job that
-    // could not be done. The tap still opens the job read-only.
     return {
       key: 'RESULTED',
       color: JOB_CARD_COLORS.RESULTED,
@@ -312,10 +126,6 @@ export const resolveJobCardState = (
     };
   }
 
-  // The Upcoming tab is a preview of work that isn't due — unless a manager has overridden
-  // this job, in which case it falls through to the ordinary branches below and reads
-  // Start. The TAB is what forces this branch; the job's own date already answers "not
-  // future" under the same override (`isFutureDatedJob`).
   if (isUpcoming && !isJobBypassActive(job)) {
     return {
       key: 'UPCOMING',
@@ -326,38 +136,12 @@ export const resolveJobCardState = (
   }
 
   const state = job.workflowState ? BY_WORKFLOW_STATE[job.workflowState] : undefined;
-  // An unrecognised or missing value falls back to `start` rather than to `resume`:
-  // offering to *start* a job already underway is a harmless extra check-in, while
-  // offering to *resume* one never begun would skip the start the crew expects.
-  //
-  // Unrecognised is now a real case, not just a guard: a job carrying a Can't Do
-  // Work / Not Hit / Reset request has the PHRASE for that request in
-  // `workflowState` instead of a base state. So the fallback asks the job itself
-  // rather than assuming — a crew mid-visit must keep reading Resume, and the
-  // phrase must not silently walk them back to a check-in they already did.
   const resolved =
     state ??
     (isJobInProgress(job) ? BY_WORKFLOW_STATE.resume : BY_WORKFLOW_STATE.start);
 
-  /**
-   * The WHEN gate guards the START of a visit and nothing else. A job already underway is
-   * past it — a visit in progress cannot be "too early" — and greying it to a preview on
-   * the clock would be the card refusing an action the tap allows.
-   *
-   * ⚠️ This does NOT exempt it from the WHERE gate below. `openJob` re-runs the geofence
-   * on a re-entry, so an off-site in-progress job WILL be refused, and the card has to
-   * say so.
-   */
   const startable = !isJobInProgress(job);
 
-  /**
-   * Preview: readable, not actionable from here.
-   *
-   * One presentation for both refusals — the same light blue as the Upcoming tab, the
-   * same label, no accent bar. They say the same thing to the crew ("not from here, not
-   * yet"), so they must not look like two different states, and both revert on their own:
-   * one when the crew arrives, one when the clock reaches the window.
-   */
   const preview: JobCardState = {
     key: 'UPCOMING',
     color: JOB_CARD_COLORS.UPCOMING,
@@ -365,29 +149,10 @@ export const resolveJobCardState = (
     accentBar: false,
   };
 
-  // WHEN. A 12–4 job tapped at 9 AM would be refused with "too early" — so the card says
-  // preview rather than promising a start. Only being EARLY refuses: the window's end is
-  // not a gate (`isBeforeArrivalWindow`), which is what keeps an 8–12 job startable at
-  // 1 PM, and a job with no parseable window is never refused on time at all.
   if (startable && isBeforeArrivalWindow(job, now)) return preview;
 
-  // WHERE. Not at the address and not at an office, so the check-in this tap ends in
-  // would be refused — the card must not promise to start a visit it cannot start.
-  //
-  // Deliberately NOT gated on `startable`: the geofence now runs on re-entry too, so an
-  // in-progress job the crew has walked away from must read Preview rather than offering
-  // a Resume that `openJob` will refuse.
-  //
-  // The bypass is checked here rather than by the caller so every consumer of this
-  // function is covered by one rule, and because `offSite` stays an honest answer either
-  // way — the crew really is outside the radius; it just no longer decides this job.
   if (offSite && !isJobBypassActive(job)) return preview;
 
-  // Past both gates and on site, so this job DOES open — which makes "Appointment
-  // Expired" the wrong words for it. That label read as a refusal to a crew who had
-  // simply arrived after the window closed, and the work is still theirs to do. The grey
-  // stays: the slot really is stale, and that is worth showing (see `EXPIRED`). Only the
-  // button changes, to what the tap actually does.
   if (resolved.key === 'EXPIRED') {
     return { ...resolved, actionLabelKey: 'installer.startAppointment' };
   }
@@ -395,31 +160,11 @@ export const resolveJobCardState = (
   return resolved;
 };
 
-/**
- * Every value that is a STATE rather than a phrase.
- *
- * `BY_WORKFLOW_STATE` on its own is not that list: it maps the values that pick
- * a card style, and `resulted` is not one of them — a resulted job is answered
- * by the branch above the lookup and never reaches it. Testing membership there
- * would therefore report `resulted` as a phrase and print it as a chip.
- */
 const BASE_WORKFLOW_STATES = new Set([
   ...Object.keys(BY_WORKFLOW_STATE),
   'resulted',
 ]);
 
-/**
- * The phrase a job carrying a Can't Do Work / Not Hit / Reset request reads —
- * "Pending Install Not Hit", "Rescheduled Reset", "Install Can't Do Work".
- *
- * `workflowState` holds either a base state or one of these; the server composes
- * the phrase and it replaces the base state rather than sitting in a field of its
- * own. So the test is simply "not one of the three we know" — which also means a
- * phrase added server-side shows up with no mobile release, the same property
- * `humanizeStatus` above was written for.
- *
- * Null when the job carries a base state or nothing, which is most jobs.
- */
 export const installStatusPhrase = (job: InstallerJob): string | null => {
   const value = String(job?.workflowState ?? '').trim();
   if (!value) return null;

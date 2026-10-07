@@ -20,7 +20,6 @@ export interface HeaderContextType {
   onFilterPress?: (() => void) | null;
   onListPress?: (() => void) | null;
   onNavigate?: ((route: any) => void) | null;
-  /** Number of filters currently applied — shown as a badge on the filter icon. */
   filterCount?: number | null;
   setHeaderActions: (actions: {
     onFilterPress?: (() => void) | null;
@@ -63,15 +62,8 @@ export function Header({
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [avatarError, setAvatarError] = useState(false);
 
-  // Multi-tenant dynamic branding (web parity — `account-popover.js` renders the
-  // company logo via `useSecureLogo`): the header brand button shows the tenant's
-  // company logo (`user.companyLogo`, falling back to `user.profilePicture`),
-  // presigned per session. Falls back to the rep's initials when neither resolves.
   const secureLogo = useSecureLogo();
 
-  // The brand button is a "go home" affordance, but `Leads` is not registered in
-  // the installer stack (`navigation/index.tsx`), so tapping it from an installer
-  // screen threw instead of navigating.
   const { isInstaller } = useUserRole();
   const homeRoute = isInstaller ? 'InstallerDashboard' : 'Leads';
 
@@ -87,8 +79,6 @@ export function Header({
 
   const initials = `${user?.firstName?.[0] || 'U'}${user?.lastName?.[0] || ''}`;
 
-  // Reset the image-error flag whenever a new logo URL resolves so a transient
-  // failure doesn't permanently pin the avatar to initials.
   useEffect(() => {
     setAvatarError(false);
   }, [secureLogo]);
@@ -204,8 +194,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  // Applied-filter count. Web parity: MUI <Badge color="error" max={9} />.
-  // Geometry matches the chat unread badge next to it (ChatThreadsManager).
   filterBadge: {
     position: 'absolute',
     top: -2,

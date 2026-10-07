@@ -107,41 +107,15 @@ import type {
   ProposedSchedulePayload,
 } from '../../config/types/installer';
 
-/**
- * Fingerprint of a step body, used to skip a save that would repeat the last one.
- *
- * `checkedAt` / `reportedAt` are excluded: the builders stamp them fresh on every
- * call, so leaving them in would make every body look different and the guard would
- * never fire.
- */
 const signatureOf = (body: InstallerJobPatch): string =>
   JSON.stringify(body, (key, value) =>
     key === 'checkedAt' || key === 'reportedAt' ? undefined : value
   );
 
-/**
- * How long "Wait for uploads" holds the installer before handing the decision back.
- *
- * Long enough to cover a slow photo plus a retry; short enough that a crew walking away
- * from a dead cell is never left watching a spinner they cannot dismiss.
- */
 const UPLOAD_WAIT_CAP_MS = 30000;
 
-/**
- * The green the SALES Lead Center paints its lead-summary block with.
- *
- * ⚠️ Hardcoded there (`screens/LeadCenter/index.tsx`) and deliberately NOT the theme's
- * `primary.main` (`#4CBB17`). The two are close enough to pass for one colour on their own
- * screens and different enough to read as wrong when a rep and an installer hold up the same
- * lead side by side — which is exactly what this block is for. It mirrors the rep's screen,
- * so it takes the rep's value.
- */
 const LEAD_SUMMARY_ACCENT = '#72BD00';
 
-/**
- * Installer job detail — lead context, the install timeline, and read-only job
- * reference. Every timeline step opens as a full-screen sub-flow over this screen.
- */
 export default function InstallerJobDetail() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -152,16 +126,10 @@ export default function InstallerJobDetail() {
   const job: InstallerJob = route.params?.job;
   const productIds = useMemo(() => (job?.products ?? []).map((p) => p.id), [job]);
 
-  // Pre-install tagger sections come from the rep's real capture set (rep photos
-  // resolved to signed S3 URLs); the static mock is only a fallback for jobs that
-  // carry no `preInstallPhotos`.
   const repSections = useRepPhotoSections(job?.preInstallPhotos);
   const hasRepPhotoSet = repSections.length > 0;
   const photoSections = hasRepPhotoSet ? repSections : PHOTO_SECTIONS;
 
-  // A job whose `preInstallPhotos.products` is empty has no rep capture set, so the
-  // tagger runs on the static stand-in and NO tag can ever show a reference shot.
-  // Worth saying out loud — it reads on-device as "the images are broken".
   useEffect(() => {
     if (!__DEV__ || !job?._id || hasRepPhotoSet) return;
     console.warn(
@@ -172,18 +140,6 @@ export default function InstallerJobDetail() {
     );
   }, [job, hasRepPhotoSet]);
 
-  /**
-   * The shots the installer MUST match — and deliberately **empty when the job shipped
-   * no rep photos**.
-   *
-   * It used to be derived from `photoSections`, which falls back to the static
-   * `PHOTO_SECTIONS` stand-in. That stand-in claims `hasRep: true` on all 16 of its
-   * placeholder tags, so a job with no rep capture set demanded 16 ghost-matches against
-   * 16 references that do not exist — unsatisfiable busywork, and the reason the tagger
-   * read "1/16 MATCHED" with nothing to match. With no rep set there is no defensible
-   * required list, so the photo steps go free-form and one shot is enough
-   * (`useInstallProgress` → `photoPhaseDone`).
-   */
   const requiredPhotoTagIds = useMemo(
     () => (hasRepPhotoSet ? requiredTagIdsFromSections(photoSections) : []),
     [hasRepPhotoSet, photoSections]
@@ -226,12 +182,6 @@ export default function InstallerJobDetail() {
   const upload = useInstallerPhotoUpload(job?._id, patchPhoto);
   const queryClient = useQueryClient();
 
-  /**
-   * What the two CoC signature uploads stored, and the tasks that fill them in.
-   *
-   * Refs rather than state: nothing renders from them, and the sign-off handler must
-   * read the latest value in the same tick it builds the payload.
-   */
   const cocSignatureRefs = useRef<{
     installer?: CocSignatureRef;
     customer?: CocSignatureRef;
@@ -242,27 +192,15 @@ export default function InstallerJobDetail() {
   const [resultType, setResultType] = useState<InstallerResultType | null>(null);
   const [showPhoneOptions, setShowPhoneOptions] = useState(false);
   const [showMapModal, setShowMapModal] = useState(false);
-  /** Signed URL for the submission PDF — set only once the viewer should open. */
   const [packetUri, setPacketUri] = useState<string | null>(null);
   const [resolvingPacket, setResolvingPacket] = useState(false);
   const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
   const [completingJob, setCompletingJob] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resettingJob, setResettingJob] = useState(false);
-  /**
-   * True from the moment Submit is tapped until the photo uploads have drained.
-   *
-   * `submitResult.isPending` only covers the request itself, which starts AFTER the
-   * drain — so on a slow connection the sheet sat inert for the whole upload with no
-   * spinner and no message, looking like the tap had been missed.
-   */
   const [drainingUploads, setDrainingUploads] = useState(false);
-  /** Set once the sign-off succeeds, so the button stays inert without a refetch. */
   const [justCompleted, setJustCompleted] = useState(false);
 
-  // "Job opened" once per screen mount. The job is re-bound to the log context here
-  // too, so a deep link or a back-navigation that skipped the dashboard still gives
-  // the step screens their jobId / leadId.
   const openLogged = useRef(false);
   useEffect(() => {
     if (!job?._id || openLogged.current) return;
@@ -275,17 +213,6 @@ export default function InstallerJobDetail() {
     });
   }, [job, completedCount, totalSteps, log]);
 
-  /**
-   * Check-out — closes the work session the dashboard opened on check-in
-   * (`PUT installer/v1/{id}/work` with `{ workStartedBy: null }`).
-   *
-   * Hangs off unmount rather than the back button so every way out of the job counts:
-   * the header back, the hardware back, the swipe gesture, and the `goBack()` that
-   * follows a result or a reset. Read-only opens — upcoming previews and resulted
-   * jobs — never check in, so they must not check out either; the dashboard says which
-   * is which via `checkedIn`. Mirrors the sales side's work / end-work pair in
-   * `useLeadCenterData`.
-   */
   const checkedIn = route.params?.checkedIn === true;
   useEffect(() => {
     const jobId = job?._id;
@@ -295,19 +222,6 @@ export default function InstallerJobDetail() {
     };
   }, [checkedIn, job?._id]);
 
-  /**
-   * Leaving the job by leaving the APP.
-   *
-   * Nothing unmounts when the app is backgrounded, so without this the office goes on
-   * showing the crew as being on this job for as long as the phone is in a pocket —
-   * and if the OS then kills the app, nothing ever closes it. Coming back re-opens the
-   * session, so the installer returns to a job they are checked into rather than one
-   * the server thinks they left.
-   *
-   * ⚠️ The re-check-in is sent WITHOUT a geofence body. The gate was already passed to
-   * get here; re-running it would refuse a crew member who has since walked to the
-   * far side of the property, and the endpoint's contract accepts a body-less PUT.
-   */
   useEffect(() => {
     const jobId = job?._id;
     if (!checkedIn || !jobId) return;
@@ -326,19 +240,6 @@ export default function InstallerJobDetail() {
     return () => sub.remove();
   }, [checkedIn, job?._id]);
 
-  /**
-   * Pulls what the server already holds for this job into the local timeline.
-   *
-   * The timeline is device-local, so without this a job worked from another phone —
-   * or reopened after a reinstall — renders empty while its photos sit in the database.
-   * Check-in returns the whole record on `job.stored`; the photos in it are bucket keys,
-   * so they are exchanged for signed URLs first, in one batch.
-   *
-   * Safe to re-run: the merge adds only photos this device doesn't have and fills only
-   * the answers it hasn't got, so nothing the installer entered is overwritten. It runs
-   * again when `photoSections` resolves, which is what lets matched pre/post shots find
-   * their slot (they key off the rep photo, which those sections carry).
-   */
   const tagIdBySalesPhotoId = useMemo(() => {
     const map = new Map<string, string>();
     photoSections.forEach((section) =>
@@ -349,19 +250,6 @@ export default function InstallerJobDetail() {
     return map;
   }, [photoSections]);
 
-  /**
-   * `subcategory` → tag id, for the shots `tagIdBySalesPhotoId` cannot place: the ones
-   * the installer took on tags the rep never covered, which pair with no rep photo.
-   *
-   * Both spellings are indexed because the two writers disagree — the step PATCH stores
-   * the tag ID (`buildMatchedRefs`), the multipart upload stores the tag LABEL
-   * (`matchedPhotoDescriptor`), and the server appends from both into the same array.
-   *
-   * A key claimed by two tags is DROPPED rather than resolved to the first one. Slot
-   * labels repeat across categories ("Back-Left" under both Home and Roofline), and
-   * hanging a photo on the wrong elevation is worse than leaving the tag empty — the
-   * empty tag is visibly wrong, the misfiled one is not.
-   */
   const tagIdBySubcategory = useMemo(() => {
     const map = new Map<string, string>();
     const ambiguous = new Set<string>();
@@ -397,17 +285,12 @@ export default function InstallerJobDetail() {
           const rows: any[] = res.data?.data || res.data || [];
           (Array.isArray(rows) ? rows : []).forEach((row, i) => {
             if (!row?.secureUrl) return;
-            // Indexed by what the row echoes back AND by the key asked for at that
-            // position — the endpoint is dependable positionally, and a mismatch in
-            // either one still resolves.
             [row.filePath, row.s3url, assets[i]?.filePath].forEach((candidate) => {
               const key = normalizeKey(candidate);
               if (key) urls[key] = row.secureUrl;
             });
           });
         } catch (err) {
-          // Non-photo state (conditions, scope, the return flag) still merges — a
-          // failed URL exchange must not cost the whole hydrate.
           console.warn('[InstallerJob] Could not resolve stored photo URLs:', err);
         }
       }
@@ -425,25 +308,9 @@ export default function InstallerJobDetail() {
     };
   }, [stored, hydrate, tagIdBySalesPhotoId, tagIdBySubcategory]);
 
-  // ── Leaving with uploads in flight ────────────────────────────────────────
-  //
-  // Leaving mid-upload LOSES the photo, even when the bytes reach S3.
-  //
-  // `patchPhoto` writes the returned `s3url` through `useInstallProgress.commit`, whose
-  // `setProgress` is a no-op once this screen has unmounted — so the persist effect
-  // never runs, MMKV keeps the shot as `uploadStatus: 'uploading'` for good, and the
-  // step-data PATCH has no key to reference. The image sits in S3 attached to nothing.
-  //
-  // So the exits the installer drives are held until the queue drains. Programmatic
-  // `goBack()`s are deliberately NOT intercepted (the result and reset flows own their
-  // own exit and already drain first) — blocking those would strand a submitted result
-  // on this screen.
-
-  /** Open while the installer is being asked to wait for in-flight uploads. */
   const [showUploadGuard, setShowUploadGuard] = useState(false);
   const [waitingForUploads, setWaitingForUploads] = useState(false);
 
-  /** Back to the schedule. The job isn't finished, so the session is paused. */
   const leave = useCallback(() => {
     if (job?._id) log.jobPaused(job, { completedSteps: completedCount, totalSteps });
     navigation.goBack();
@@ -457,17 +324,6 @@ export default function InstallerJobDetail() {
     leave();
   }, [upload.uploadingCount, leave]);
 
-  /**
-   * Waits the queue out, then leaves.
-   *
-   * **Capped at `UPLOAD_WAIT_CAP_MS`, and that cap is the point.** `waitForUploads`
-   * does settle on its own — a photo either lands or exhausts its retries — but on a
-   * dead cell that is three attempts against a 120 s request timeout, so the honest
-   * worst case is minutes. `ConfirmActionModal` disables its cancel button while
-   * `submitting`, so an uncapped wait would lock a crew who are packing up onto this
-   * screen with no way out. On expiry the dialog simply returns to its idle state, with
-   * "Leave anyway" live again and the choice back where it belongs.
-   */
   const handleWaitForUploads = useCallback(async () => {
     setWaitingForUploads(true);
     const timedOut = await Promise.race([
@@ -479,8 +335,6 @@ export default function InstallerJobDetail() {
     setWaitingForUploads(false);
 
     if (timedOut) {
-      // Still going. The uploads carry on in the background either way — this only
-      // hands the decision back rather than holding them any longer.
       FlashMessage.info(
         'Still uploading',
         'This connection is slow. Keep waiting, or leave and retake the photos later.'
@@ -492,13 +346,6 @@ export default function InstallerJobDetail() {
     leave();
   }, [upload, leave]);
 
-  /**
-   * The Android hardware back button — the same guard as the header arrow.
-   *
-   * `useFocusEffect` rather than a plain `useEffect`: the handler must be detached
-   * while a step sheet or the packet viewer is on top, or this screen would answer a
-   * back press meant for them.
-   */
   const uploadingCount = upload.uploadingCount;
   useFocusEffect(
     useCallback(() => {
@@ -511,23 +358,10 @@ export default function InstallerJobDetail() {
     }, [uploadingCount])
   );
 
-  /**
-   * The iOS swipe-back gesture, which no button handler can intercept — it is turned
-   * off outright while photos are in flight (the screen is registered with
-   * `gestureEnabled: true` in `navigation/index.tsx`) and restored the moment the queue
-   * drains. Without this, the one exit that skips both guards above is also the easiest
-   * one to trigger by accident on a phone held in a work glove.
-   */
   useEffect(() => {
     navigation.setOptions({ gestureEnabled: uploadingCount === 0 });
   }, [navigation, uploadingCount]);
 
-  /**
-   * What a step is worth reporting when it completes without its own Done handler.
-   *
-   * Read from `progressRef` so a completion logged in the same tick as the capture that
-   * satisfied it counts that capture.
-   */
   const stepCompletionMeta = useCallback(
     (step: InstallStepKey): Record<string, any> => {
       const p = progressRef.current;
@@ -545,7 +379,6 @@ export default function InstallerJobDetail() {
     [progressRef]
   );
 
-  /** Opening a timeline step. Its status tells the portal whether it was a re-visit. */
   const handleOpenStep = useCallback(
     (step: InstallStepKey) => {
       log.stepOpened(step, stepStatus[step]);
@@ -553,11 +386,6 @@ export default function InstallerJobDetail() {
     },
     [log, stepStatus]
   );
-
-  // ── Capture → S3 ──────────────────────────────────────────────────────────
-  // Each capture lands in local progress first (so the tile appears instantly) and
-  // is then uploaded to `installer/v1/{jobId}/images`. The upload writes its s3url
-  // back onto the same photo, which is what the step-data PATCH below references.
 
   const handleMaterialPhoto = useCallback(
     (mode: 'pickup' | 'return', photo: CapturedPhoto) => {
@@ -574,33 +402,15 @@ export default function InstallerJobDetail() {
     [upload]
   );
 
-  /**
-   * A scanned CoC page. Same shape as a material photo — into state first so the
-   * thumbnail appears, then up to S3.
-   *
-   * The scanner emits several pages in one pass and calls this once per page, so the
-   * index is read from `progressRef` (updated synchronously by `commit`) rather than
-   * from `progress`, which would still be pre-render and number every page "1".
-   */
   const handleCocPage = useCallback(
     (page: CapturedPhoto) => {
       const index = progressRef.current.cocPages.length + 1;
       addCocPage(page);
-      // Handed back to the step: on the Paper Fallback path the response carries the
-      // certificate the backend read off THIS page, and that is what prefills the form.
       return upload.uploadCoc(page, index).then((result) => result?.scan ?? null);
     },
     [addCocPage, upload, progressRef]
   );
 
-  /**
-   * A signature from the on-device Certificate of Completion.
-   *
-   * Uploaded exactly like a scanned CoC page (`phase: 'coc'`) and logged by the
-   * upload hook, which is the only place that knows the s3url and byte size. It is
-   * deliberately NOT added to `cocPages`: it is not a page of the document, and it
-   * must not appear in the step's page grid or its count.
-   */
   const handleCocSignature = useCallback(
     (photo: CapturedPhoto, who: 'installer' | 'customer') => {
       const task = upload.uploadCocSignature(photo, who).then((result) => {
@@ -610,13 +420,9 @@ export default function InstallerJobDetail() {
             s3url: patch.s3url,
             bucketName: patch.bucketName,
           };
-          // Filed as a signature the moment the url exists — see the hook.
           rememberCocSignature(patch.s3url);
         }
       });
-      // Kept so the sign-off can WAIT for it. `waitForUploads` drains the request
-      // itself, but the s3url is read one `.then` later — awaiting the task is the
-      // only ordering that guarantees the ref is on hand when the PATCH is built.
       cocSignatureTasks.current.push(task);
     },
     [upload, rememberCocSignature]
@@ -625,14 +431,10 @@ export default function InstallerJobDetail() {
 
   const handleMatchPhoto = useCallback(
     (phase: PhotoPhase, tagId: string, photo: CapturedPhoto) => {
-      // Read before the mutation: a tag that already holds a shot makes this a
-      // retake, which logs `update` rather than `add`.
       const field = phase === 'pre' ? 'preMatched' : 'postMatched';
       const replacing = !!progressRef.current[field][tagId];
 
       matchPhoto(phase, tagId, photo);
-      // The tag carries `repPhotoId` + `categoryLabel`, which become `salesPhotoId`
-      // and `category` — the pairing the portal renders the before/after from.
       const tag = photoSections.flatMap((s) => s.tags).find((t) => t.id === tagId);
       if (tag) upload.uploadMatched(phase, tag, photo, replacing);
     },
@@ -648,9 +450,6 @@ export default function InstallerJobDetail() {
     [addExtraPhoto, photoSections, upload]
   );
 
-  // ── Step data → PATCH installer/v1/update/{jobId} ─────────────────────────
-
-  /** tagId → the rep photo it ghosts, so pre/post refs carry their `salesPhotoId`. */
   const repPhotoIdByTag = useMemo(() => {
     const map = new Map<string, string>();
     photoSections.forEach((s) =>
@@ -661,13 +460,6 @@ export default function InstallerJobDetail() {
     return map;
   }, [photoSections]);
 
-  /**
-   * Builds this step's slice of the patch body from the *current* progress.
-   *
-   * Reads `progressRef` rather than `progress` because completion handlers run in
-   * the same tick as the mutation that satisfied the step (skipping the return,
-   * confirming the last product), before React has re-rendered with it.
-   */
   const buildStepData = useCallback(
     (step: InstallStepKey, options: StepDataOptions = {}): InstallerJobPatch | null => {
       const current = progressRef.current;
@@ -698,28 +490,8 @@ export default function InstallerJobDetail() {
     [progressRef, job, userId, repPhotoIdByTag]
   );
 
-  /**
-   * The last body each step successfully saved, so a step that closes right after it
-   * completed doesn't PATCH the same thing twice. Only set on success — a failed save
-   * stays "unsent" and is retried the next time the step is left.
-   */
   const lastSentRef = useRef<Partial<Record<InstallStepKey, string>>>({});
 
-  /**
-   * Sends one step's data. In-flight uploads are drained first so a photo the PATCH
-   * references always has its s3url. A step with nothing to send (Pickup, CoC — no
-   * patchable field) resolves without a request.
-   *
-   * The builders return the inner `stepData` object — `InstallerService.updateJob`
-   * wraps it — and `status` never travels on a step save; only the final sign-off and
-   * the result actions set it.
-   */
-  /**
-   * Returns the job the PATCH answered with, for the callers that need something out of
-   * it — today that is the CoC, whose response carries the generated certificate PDF.
-   * `null` covers every path that did not reach the server: no job, an empty patch, an
-   * unchanged step, or a failure (which is reported to the installer, not thrown).
-   */
   const sendStepData = useCallback(
     async (
       step: InstallStepKey,
@@ -730,9 +502,6 @@ export default function InstallerJobDetail() {
 
       const body = buildStepData(step, options);
       if (isEmptyPatch(body)) {
-        // Never silent: "I left the step and nothing was sent" is otherwise
-        // indistinguishable from a request that failed. The usual cause is a photo
-        // whose upload hasn't produced an s3url, so there is nothing to reference yet.
         console.log(`[InstallerJob] "${step}" has nothing to save — request skipped`);
         return null;
       }
@@ -748,8 +517,6 @@ export default function InstallerJobDetail() {
         lastSentRef.current[step] = signature;
         return updated;
       } catch (err: any) {
-        // The body is logged alongside the error: when the server objects to the shape
-        // rather than the connection, the payload is the only thing that explains why.
         console.warn(`[InstallerJob] Failed to save "${step}" step data:`, err, body);
         FlashMessage.error(
           "Couldn't save this step",
@@ -762,14 +529,6 @@ export default function InstallerJobDetail() {
     [job, upload, buildStepData]
   );
 
-  /**
-   * Every step's data in one body, for the final sign-off.
-   *
-   * The steps were each saved as they were left, but the completion PATCH restates
-   * all of them together — the installer's whole visit in one request — so the record
-   * can't be left half-written by a step whose save was dropped on a bad connection.
-   * The builders own disjoint keys, so merging them cannot clobber.
-   */
   const buildAllStepsData = useCallback(
     (): InstallerJobPatch =>
       INSTALL_STEPS.reduce<InstallerJobPatch>((all, { key }) => {
@@ -779,14 +538,6 @@ export default function InstallerJobDetail() {
     [buildStepData]
   );
 
-  /**
-   * The certificate submitted on the device → `stepData.coc`.
-   *
-   * Waits for both signature uploads first: their `s3url`s ARE two of the four keys
-   * in the payload, so sending before they land would file a certificate with no
-   * signatures on it. `buildCocSignOffPayload` then drops any that still has none,
-   * rather than sending an empty ref.
-   */
   const handleCocSignOff = useCallback(
     async (data: CoCFormData) => {
       await Promise.all(cocSignatureTasks.current);
@@ -802,8 +553,6 @@ export default function InstallerJobDetail() {
           relationshipType: data.relationship,
           otherRelationship: data.relationshipOther || null,
         },
-        // A signature not redrawn this time keeps the one already on file — editing a
-        // tick box must not blank the certificate's signatures.
         installerSignature:
           cocSignatureRefs.current.installer ??
           progressRef.current.cocSignOff?.installerSignature,
@@ -819,28 +568,12 @@ export default function InstallerJobDetail() {
       };
       setCocSignOff(signOff);
 
-      // The PATCH answers with the generated certificate PDF. Stored ON the sign-off,
-      // so it survives a relaunch (progress is persisted) and a later job payload that
-      // does not repeat it — that document is what the step shows from now on.
-      //
-      // ⚠️ Written from `signOff`, not re-read from progress: this is the certificate
-      // that was just filed, and the two must not be able to drift apart.
       const updated = await sendStepData('coc');
       if (updated?.cocPacket) setCocSignOff({ ...signOff, document: updated.cocPacket });
     },
     [sendStepData, setCocSignOff, progressRef]
   );
 
-  /**
-   * Drops photos from the server — `DELETE installer/v1/{jobId}/images`.
-   *
-   * Only shots that actually reached S3 have anything to delete, so anything without an
-   * `s3url` is filtered out (the service skips an empty list without a request).
-   *
-   * Never throws: the photo is already gone from the installer's screen, so a failed
-   * delete must not surface as an error they cannot act on. The cost of a miss is an
-   * orphaned S3 object, which is a cleanup problem, not a field problem.
-   */
   const deleteStoredImages = useCallback(
     async (phase: InstallerDeletePhase, photos: (CapturedPhoto | undefined)[]) => {
       if (!job?._id) return;
@@ -858,22 +591,8 @@ export default function InstallerJobDetail() {
     [job]
   );
 
-  /**
-   * Removing a photo does two things on the server, in this order:
-   *   1. `DELETE …/images` with its `s3url` — drops the stored object;
-   *   2. the step-data PATCH, restating the set that is LEFT — drops the reference.
-   * `includeEmptyPhotos` covers removing the last one: an empty array has to travel, or
-   * the server would keep the photo the installer just deleted.
-   *
-   * Neither waits for the step to close: a deletion the installer can see happen should
-   * be a deletion on the server before they walk away from signal.
-   */
   const handleRemoveMaterialPhoto = useCallback(
     async (mode: 'pickup' | 'return', photoId: string) => {
-      // An upload still in flight has no `s3url` yet, and dropping the photo from
-      // state first would leave the upload's `patchPhoto` nothing to write it onto —
-      // the object would land in S3 with nothing left pointing at it. So drain first
-      // and read the s3url afterwards; the confirm dialog's spinner covers the wait.
       const uploading =
         progressRef.current[mode].photos.find((p) => p.id === photoId)?.uploadStatus ===
         'uploading';
@@ -888,23 +607,8 @@ export default function InstallerJobDetail() {
     [progressRef, removeMaterialPhoto, upload, deleteStoredImages, sendStepData]
   );
 
-  /**
-   * Removing a pre-existing-condition photo.
-   *
-   * Unlike the material step, the whole ENTRY is the unit of state here, so the photo
-   * is filtered out of its area's entry rather than dropped from a flat array. The area
-   * stays flagged with its note intact — removing the shot is not un-flagging the
-   * condition, and removing the last one correctly re-blocks Confirm until another is
-   * taken.
-   *
-   * `buildPecStepData` restates every condition with its surviving photos nested, so
-   * the PATCH needs no `includeEmptyPhotos` equivalent — an emptied area travels as an
-   * empty `photos` array on its own.
-   */
   const handleRemovePecPhoto = useCallback(
     async (area: PECArea, photo: CapturedPhoto) => {
-      // Same reason as the material step: an in-flight upload has no s3url yet, and
-      // it writes onto the copy in progress — not onto the snapshot PECStep handed us.
       if (photo.uploadStatus === 'uploading') await upload.waitForUploads();
 
       const entry = progressRef.current.pecEntries[area.id];
@@ -922,13 +626,6 @@ export default function InstallerJobDetail() {
     [progressRef, setPecEntry, upload, deleteStoredImages, sendStepData]
   );
 
-  /**
-   * A result-evidence shot.
-   *
-   * Uploaded to S3 via the `result` phase so the s3url is available by the time
-   * the installer submits the result. The s3url + bucketName travel inside the
-   * `statusReason.images[]` payload.
-   */
   const handleResultPhoto = useCallback(
     (reason: string, photo: CapturedPhoto) => {
       addResultPhoto(photo);
@@ -937,10 +634,6 @@ export default function InstallerJobDetail() {
     [addResultPhoto, upload]
   );
 
-  /**
-   * Removing a result photo. Drains in-flight uploads first so the s3url can be
-   * read for the server-side DELETE, then drops the local copy.
-   */
   const handleRemoveResultPhoto = useCallback(
     async (photo: CapturedPhoto) => {
       if (photo.uploadStatus === 'uploading') await upload.waitForUploads();
@@ -953,44 +646,18 @@ export default function InstallerJobDetail() {
     [removeResultPhoto, upload, progressRef, deleteStoredImages]
   );
 
-  /**
-   * Throws away result evidence that was never submitted.
-   *
-   * Shots taken under one result are not evidence for another, so switching from
-   * Can't Do Work to Not Hit must not carry them over. Anything already in S3 is
-   * deleted there too — it is referenced by no `statusReason`, so leaving it would
-   * orphan the object. Photos belonging to a result the server ACCEPTED never reach
-   * here: those are cleared locally on success, without a delete, because the job now
-   * points at them.
-   */
   const discardResultPhotos = useCallback(async () => {
     const pending = progressRef.current.resultPhotos ?? [];
     if (!pending.length) return;
 
-    // Drain first, or an upload resolving after the wipe would put an s3url back on a
-    // photo that no longer exists — and that object would never be deleted.
     await upload.waitForUploads();
     const uploaded = (progressRef.current.resultPhotos ?? []).filter((p) => !!p.s3url);
     clearResultPhotos();
     if (uploaded.length) await deleteStoredImages('result', uploaded);
   }, [progressRef, upload, clearResultPhotos, deleteStoredImages]);
 
-  /*
-   * `handleRemoveCocPage` was REMOVED with the CoC page tiles — they held its only
-   * trigger (the ✕ on a tile), so it had no caller left. `removeCocPage` on the
-   * progress hook is untouched if a delete path is ever needed again.
-   */
-
-  /**
-   * Steps whose completion has already been logged this visit.
-   *
-   * `finishStep` and the close-time fallback below can both fire for one step — a step
-   * that completes and is then backed out of — and the portal must not see the
-   * completion twice.
-   */
   const completionLogged = useRef<Partial<Record<InstallStepKey, boolean>>>({});
 
-  /** Marks the step done locally, logs it, then pushes its data to the server. */
   const finishStep = useCallback(
     (step: InstallStepKey, logMeta: Record<string, any> = {}) => {
       completeStep(step);
@@ -1001,38 +668,13 @@ export default function InstallerJobDetail() {
     [completeStep, log, sendStepData]
   );
 
-  // ── Job completion ────────────────────────────────────────────────────────
-
   const allStepsDone = completedCount === totalSteps;
 
-  /**
-   * Whether this job is already signed off — either it arrived that way (reopened
-   * from the schedule, where resulted jobs open read-only) or it was completed on
-   * this screen. Completing is a one-way transition, so the button reflects that
-   * rather than offering a second, meaningless PATCH.
-   */
   const isJobComplete =
     justCompleted ||
     !!job?.resulted ||
     String(job?.status ?? '').toLowerCase() === 'completed';
 
-  /**
-   * The sign-off button breathes while it is waiting to be pressed.
-   *
-   * It appears at the bottom of a long screen, in the middle of a stack of other
-   * full-width buttons (the two result actions, Msg Ops), only after the seventh step
-   * closes — a moment the installer's attention is on the step sheet they just
-   * dismissed, not on the rail below it. The pulse is what says the last thing is now
-   * available.
-   *
-   * Deliberately the SAME motion the sales LeadCard uses for its live card — a 1.03
-   * scale over a 1 s in / 1 s out loop (`widgets/components/LeadCard.tsx`) — so the two
-   * screens read as one app rather than inventing a second idea of "press this".
-   *
-   * It runs only while the button can actually be pressed: not once the job is signed
-   * off (it goes inert and grey — animating it would promise an action that no longer
-   * exists) and not mid-PATCH.
-   */
   const completePulse = useRef(new Animated.Value(1)).current;
   const canCompleteJob = allStepsDone && !isJobComplete && !completingJob;
 
@@ -1058,39 +700,21 @@ export default function InstallerJobDetail() {
     );
     loop.start();
 
-    // Stopped on cleanup, not just when the flag flips: this screen unmounts straight
-    // into the schedule on a result, and a loop left running holds the driver.
     return () => {
       loop.stop();
       completePulse.setValue(1);
     };
   }, [canCompleteJob, completePulse]);
 
-  /**
-   * The installer's explicit sign-off ("Yes" on the completion dialog): drains
-   * uploads, PATCHes ALL 7 steps' data in one body, then moves the job to `completed`
-   * via the status endpoint.
-   *
-   * Stays on the screen afterwards rather than navigating back, so the installer
-   * sees the button go inert and knows the sign-off landed.
-   */
   const handleConfirmComplete = useCallback(async () => {
     if (!job?._id || completingJob) return;
     setCompletingJob(true);
     try {
       await upload.waitForUploads();
-      // Everything the visit recorded — all 7 steps merged — not just the last one.
       await InstallerService.completeJob(job._id, buildAllStepsData());
       log.jobCompleted(job, { completedSteps: completedCount, totalSteps });
       setJustCompleted(true);
       setShowCompleteConfirm(false);
-      // Drop the cached schedule so the dashboard can't paint this job as live.
-      // `completeJob` calls the service directly rather than through
-      // `useUpdateJobStatus`, so nothing invalidates on its behalf.
-      //
-      // Dropped, NOT refetched: this screen stays open after the sign-off, and the
-      // dashboard's list query is still active underneath it — a refetching invalidate
-      // would fire `my-jobs` from in here. The dashboard reloads on focus instead.
       staleInstallerJobs(queryClient);
       FlashMessage.success('Job completed', 'Sent back to the Install Manager.');
     } catch (err: any) {
@@ -1113,29 +737,16 @@ export default function InstallerJobDetail() {
     queryClient,
   ]);
 
-  /**
-   * Clears everything this visit recorded — every capture, note and selection —
-   * locally and, as far as the allow-list permits, on the server.
-   *
-   * Used by the "Reset" result: the crew is coming back and starting over, so the
-   * work from this visit must not carry into the next one. Never rejects; a failed
-   * server wipe is reported but doesn't undo the local one.
-   */
   const wipeJobData = useCallback(async () => {
     if (!job?._id) return;
     try {
-      // Let any in-flight upload land first — otherwise it would resolve after the
-      // wipe and re-attach an s3url to a photo that no longer exists.
       await upload.waitForUploads();
       resetProgress();
-      // Forget what each step last sent — after a wipe, the next save must go out even
-      // if the rebuilt body happens to match one from before the reset.
       lastSentRef.current = {};
       await InstallerService.updateJob(job._id, buildResetPatch(job.products ?? [], userId));
       log.jobReset(job);
     } catch (err) {
       console.warn('[InstallerJob] Failed to clear job data:', err);
-      // The local wipe already happened, so say so rather than implying nothing did.
       FlashMessage.error(
         'Reset saved on this device only',
         "The server copy couldn't be cleared — try again once you have signal."
@@ -1143,30 +754,11 @@ export default function InstallerJobDetail() {
     }
   }, [job, upload, resetProgress, userId, log]);
 
-  /**
-   * Reset — clears this visit so the job can be re-entered.
-   *
-   * **Two routes, decided by the job's own state** (see `RESET_IN_PROGRESS_STATUS`):
-   *
-   *  - **completed / resulted** → `PUT installer/v1/{id}/reset` with `{ statusReason }`.
-   *    There is a result to undo, and that endpoint is what reopens a closed job.
-   *  - **still in progress** → the SAME path Can't Do Work and Not Hit take,
-   *    `PUT installer/v1/update/{id}` with `{ status: 'reset', statusReason }`.
-   *    Nothing has closed the job, so there is no result to reopen — asking the reset
-   *    endpoint to undo one that was never recorded is what this fixes.
-   *
-   * The visit's work is wiped only AFTER the server accepts, so a failed reset leaves
-   * the recorded work alone. The reason comes from the picker inside the confirmation.
-   *
-   * Images are optional for Reset — if result photos exist in progress (captured prior
-   * to the reset), they are uploaded and included in `statusReason.images`.
-   */
   const handleConfirmReset = useCallback(
     async (reason?: string) => {
       if (!job?._id || resettingJob || !reason) return;
       setResettingJob(true);
 
-      // Drain any uploads and collect images if result photos exist.
       await upload.waitForUploads();
       const images: StatusReasonImage[] = progressRef.current.resultPhotos
         .filter((p) => !!p.s3url)
@@ -1179,11 +771,8 @@ export default function InstallerJobDetail() {
 
       try {
         if (isJobComplete) {
-          // A result exists — reopen it through the dedicated endpoint.
           await InstallerService.resetJob(job._id, statusReason);
         } else {
-          // Nothing to reopen. Same mutation as the other two results, so it shares
-          // their query invalidation and their error shape.
           await submitResult.mutateAsync({
             jobId: job._id,
             result: 'Reset',
@@ -1194,8 +783,6 @@ export default function InstallerJobDetail() {
 
         log.resultSubmitted('Reset', reason);
         await wipeJobData();
-        // Stale only — `goBack()` below re-focuses the dashboard, which refetches the
-        // schedule itself. Refetching here would send `my-jobs` from this screen.
         staleInstallerJobs(queryClient);
         setShowResetConfirm(false);
         FlashMessage.success('Lead result reset', 'The job can be re-entered.');
@@ -1225,20 +812,8 @@ export default function InstallerJobDetail() {
     ]
   );
 
-  /**
-   * Leaving a step is a save point — whatever the installer entered is PATCHed on the
-   * way out, for every one of the 7 steps, not only the ones with an explicit "done"
-   * action. So a step backed out of half-finished still reaches the database.
-   *
-   * `sendStepData` skips a body identical to that step's last successful save, so a
-   * step completed and then closed sends one request, not two.
-   */
   const handleCloseStep = useCallback(() => {
     if (openStep) {
-      // ⚠️ Not every step has a "Done" that runs `finishStep` — PICKUP, RETURN and CoC
-      // are finished by their own actions and then backed out of, so the portal never
-      // saw a completion for them at all. Their doneness is derived, so it is read here
-      // and logged once, on the way out.
       if (!completionLogged.current[openStep] && isStepDone(openStep)) {
         log.stepCompleted(openStep, stepCompletionMeta(openStep));
         completionLogged.current[openStep] = true;
@@ -1249,7 +824,6 @@ export default function InstallerJobDetail() {
     setOpenStep(null);
   }, [openStep, log, sendStepData, isStepDone, stepCompletionMeta]);
 
-  // Shots captured so far, offered as evidence when reporting a discrepancy.
   const jobPhotos: JobPhotoRef[] = useMemo(() => {
     const pickup = progress.pickup.photos.map((p, i) => ({
       id: p.id,
@@ -1267,7 +841,6 @@ export default function InstallerJobDetail() {
     return [...pickup, ...pre];
   }, [progress.pickup.photos, progress.preMatched, photoSections]);
 
-  // Per-step summary lines shown in place of the default description.
   const stepNotes = useMemo(() => {
     const materialNote = (k: 'pickup' | 'return') => {
       const s = progress[k];
@@ -1287,34 +860,17 @@ export default function InstallerJobDetail() {
         ? `${flagged.length} area${flagged.length > 1 ? 's' : ''} flagged`
         : null;
 
-    /**
-     * `required` is the phase's own denominator — the rep's set for pre, the pre pass's
-     * own shots for post. Empty means free-form.
-     */
     const matchNote = (
       required: string[],
       m: Record<string, unknown>,
       x: Record<string, unknown[]>
     ) => {
-      // Free-form: no denominator to count against, so the rail reports what was taken
-      // rather than a fraction of a demand that isn't being made. Extras count here for
-      // the same reason they satisfy the step.
       if (!required.length) {
         const n =
           Object.keys(m).length +
           Object.values(x).reduce((sum, list) => sum + (list?.length ?? 0), 0);
         return n > 0 ? `${n} photo${n > 1 ? 's' : ''} taken` : null;
       }
-      // ⚠️ The denominator is the required set UNION what was actually matched, not the
-      // required set alone. A tag the rep skipped is not "required" (it has no reference
-      // to ghost against), but the tagger still lets the installer shoot it - and once
-      // they have, it is part of this pass.
-      //
-      // Counting only the required set made one screen contradict itself: a pre pass of
-      // three shots read "2/2 shots matched" while the Post row directly below measured
-      // against those same three and read "2/3". The union cannot make a finished step
-      // look unfinished - every id it adds comes FROM `m`, so it lifts both halves of
-      // the fraction by one.
       const ids = Array.from(new Set([...required, ...Object.keys(m)]));
       const n = ids.filter((id) => m[id]).length;
       return n > 0 ? `${n}/${ids.length} shots matched` : null;
@@ -1328,20 +884,12 @@ export default function InstallerJobDetail() {
       return: materialNote('return'),
       pec: pecNote,
       pre: matchNote(requiredPhotoTagIds, progress.preMatched, progress.preExtras),
-      // Post is measured against the pre pass — see `isStepDone('post')`.
       post: matchNote(
         Object.keys(progress.preMatched),
         progress.postMatched,
         progress.postExtras
       ),
       measure: scopeNote,
-      // A certificate signed on the device OUTRANKS the page count, and is not
-      // phrased as one: the customer filled the form in, so the timeline says what
-      // happened rather than counting scans of a paper copy that was never made.
-      //
-      // ⚠️ It is also the honest reading when both exist — a page count beside a
-      // signed certificate invited the row to be read as "6 pages of THIS", which is
-      // what the duplicated-signature bug made it say.
       coc: progress.cocSignOff
         ? 'Submitted'
         : progress.cocPages.length
@@ -1350,7 +898,6 @@ export default function InstallerJobDetail() {
     };
   }, [progress, productIds, requiredPhotoTagIds]);
 
-  // Guard sits below every hook so hook order stays identical across renders.
   if (!job) {
     return (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]}>
@@ -1367,26 +914,6 @@ export default function InstallerJobDetail() {
     job.customerName ||
     [job.customerDetails?.firstName, job.customerDetails?.lastName].filter(Boolean).join(' ');
 
-  /**
-   * Sends the chosen result. TWO endpoints, decided by which button was pressed:
-   *
-   *  - **Can't Do Work** → `POST installer/v1/{id}/status-requests` with
-   *    `{ reason, images[] }`. A request for the job to be stood down, NOT a
-   *    transition — the status stays put until the office acts on it. Its images
-   *    carry `timestampTaken` + `coordinates` as well as the key, because whoever
-   *    reviews the claim needs to know when and where each shot was taken.
-   *  - **Not Hit** → `PUT installer/v1/update/{id}` with `{ status, statusReason }`,
-   *    unchanged. This one really does close the job, so it stays a transition.
-   *
-   * The status is the wire CODE, not the button label the installer read
-   * (`RESULT_STATUS_CODE`); on the request path it only gates non-result types.
-   * Reset never reaches here; it has its own endpoint, via `handleConfirmReset`.
-   *
-   * Drains in-flight photo uploads first so every attached photo has its s3url before
-   * either request goes out — evidence lands with the record, not after it. A failed
-   * evidence upload does NOT block the submission: the installer needs to move on even
-   * if the network drops their last shot.
-   */
   const handleSubmitResult = async (
     reason: string,
     proposedSchedule?: ProposedSchedulePayload
@@ -1399,13 +926,8 @@ export default function InstallerJobDetail() {
     const needsSchedule = result === 'Not Hit' || result === 'Reset';
     if (needsSchedule && !proposedSchedule?.date) return;
 
-    // Can't Do Work, Not Hit, and in-progress Reset all file a request and leave
-    // the job inProgress until the office (and customer) act on it.
     const isStatusRequest = true;
 
-    // Drain uploads so every photo that has started uploading has its s3url. The flag
-    // is what puts the sheet's button into its loading state for the duration — this
-    // is the slow half on a bad connection, not the request below.
     setDrainingUploads(true);
     try {
       await upload.waitForUploads();
@@ -1413,10 +935,6 @@ export default function InstallerJobDetail() {
       setDrainingUploads(false);
     }
 
-    // Collect images that have an s3url (uploaded successfully). The status-request
-    // endpoint records each shot's capture time and fix alongside the key — both are
-    // already on the CapturedPhoto, so nothing extra is captured for it. `coordinates`
-    // stays `null` rather than being dropped when the device had no fix.
     const uploaded = progressRef.current.resultPhotos.filter((p) => !!p.s3url);
     const images: StatusReasonImage[] = uploaded.map((p) => ({
       s3url: p.s3url!,
@@ -1429,9 +947,6 @@ export default function InstallerJobDetail() {
       coordinates: p.coordinates ?? null,
     }));
 
-    // Every attached photo failed to reach S3. Submitting now would file a Can't Do
-    // Work with no evidence behind it — the thing the modal makes mandatory — so say so
-    // and let the installer retake rather than silently dropping the requirement.
     if (progressRef.current.resultPhotos.length > 0 && images.length === 0) {
       FlashMessage.error(
         "Photos didn't upload",
@@ -1440,10 +955,6 @@ export default function InstallerJobDetail() {
       return;
     }
 
-    // The photos are on the server's own record now — the status request or the job's
-    // `statusReason` — so the local copies are duplicates. Cleared WITHOUT a server
-    // delete, since that record references them. Leaving them behind is what made
-    // Can't Do Work's photos reappear under Not Hit on the next open.
     const finish = (title: string, body: string) => {
       log.resultSubmitted(result, reason);
       clearResultPhotos();
@@ -1477,12 +988,6 @@ export default function InstallerJobDetail() {
     }
   };
 
-  /**
-   * Opens the rep's job submission PDF.
-   *
-   * The URL is only exchanged for a signed one on tap, not on every job open — most
-   * installers never open the packet, and a signed URL expires in an hour anyway.
-   */
   const handleViewPacket = async () => {
     if (resolvingPacket) return;
     log.packetViewed(job.packet?.fileName);
@@ -1499,32 +1004,10 @@ export default function InstallerJobDetail() {
     }
   };
 
-  /**
-   * Opens the job's chat — the shared LEAD thread, not an installer-only one.
-   *
-   * There is exactly one chat per lead and everybody is in it: the sales rep, ops and
-   * installer managers, the lead installer and the crew. That is the point — the crew
-   * can ask the rep a question and the office sees it. So this keys on **`job.leadId`,
-   * never `job._id`** (CHAT-MOBILE-API.md §0); opening by job id would mint a second
-   * thread for a lead that already has one.
-   *
-   * `chatId: ''` is the app's established "open by lead" form (LeadCenter and DealDetail
-   * both use it) — `useChatSession` resolves the id from `leadId`, creating the chat if
-   * the lead has none. Navigation is therefore instant rather than sitting behind a
-   * round trip.
-   *
-   * The participant check runs in the BACKGROUND, after navigating: it costs two
-   * requests and only affects badges and push, so making the installer watch a spinner
-   * for it would be the wrong trade.
-   */
-  // A plain function, not a `useCallback`: everything from here down sits after the
-  // `if (!job)` early return, so a hook here would be called conditionally.
   const handleOpenChat = () => {
     log.opsChatOpened();
 
     if (!job.leadId) {
-      // A job with no lead behind it has no thread, and creating one would have nothing
-      // to key on.
       FlashMessage.info(
         'No chat for this job',
         "This job isn't linked to a lead yet, so there's no conversation to open. Call your Install Manager instead."
@@ -1548,17 +1031,11 @@ export default function InstallerJobDetail() {
   const handleOpenResult = (type: InstallerResultType) => {
     log.resultOpened(type);
 
-    // Completed-job Reset still reopens via PUT /:id/reset — no proposed date.
-    // In-progress Reset uses ResultJobModal (reason + new date) like Not Hit.
     if (type === 'Reset' && isJobComplete) {
       setShowResetConfirm(true);
       return;
     }
 
-    // Evidence never crosses between the two capturing results: opening Not Hit with
-    // shots taken for Can't Do Work still on hand would offer them as justification for
-    // a result they have nothing to do with. Fire-and-forget — the modal opens now, and
-    // the S3 cleanup behind it has nothing the installer needs to wait for.
     void discardResultPhotos();
     setResultType(type);
   };
@@ -1809,9 +1286,6 @@ export default function InstallerJobDetail() {
           {/* Sign-off — only once every step on the rail is satisfied. Goes inert
               (not hidden) after completion, so the state stays legible. */}
           {allStepsDone && (
-            // The scale lives on a wrapper rather than on the button itself: the margin
-            // has to stay OUTSIDE the transform, or the gap to the next card would
-            // breathe along with it.
             <Animated.View
               className="mb-4"
               style={{ transform: [{ scale: completePulse }] }}
@@ -1865,9 +1339,6 @@ export default function InstallerJobDetail() {
                 onPress={() => handleOpenResult(result)}
                 className="flex-1 h-12 rounded-xl items-center justify-center"
                 style={{
-                  // On a completed job Reset drops its in-flow amber for error red: it
-                  // no longer nudges a live job along, it undoes a signed-off result.
-                  // Nothing to clash with either — Can't Do Work is gone by then.
                   backgroundColor:
                     isJobComplete && result === 'Reset'
                       ? colors.error.main
@@ -1906,8 +1377,6 @@ export default function InstallerJobDetail() {
           skipMaterial('pickup');
           handleCloseStep();
         }}
-        // The same handler the back button gets: leaving a step is the save point, and
-        // Done must not become a second way of saving that can drift from it.
         onDone={handleCloseStep}
         onBack={handleCloseStep}
       />
@@ -1982,10 +1451,6 @@ export default function InstallerJobDetail() {
         onSetStatus={setScopeStatus}
         onReportDiscrepancy={(productId, issue, note, attachments) => {
           reportDiscrepancy.mutate({ productId, issue, note, attachments });
-          // A flagged product leaves the step un-completable, so this is the only
-          // chance to record `DISCREPANCY_FOUND`. Safe to fire here even though the
-          // caller marks the product pending immediately after: `sendStepData`
-          // awaits before reading progress, so that synchronous update lands first.
           void sendStepData('measure');
         }}
         onComplete={() => finishStep('measure', { productCount: productIds.length })}
@@ -1996,9 +1461,6 @@ export default function InstallerJobDetail() {
         visible={openStep === 'coc'}
         job={job}
         pages={progress.cocPages}
-        // The generated certificate. The device's own copy (kept on the sign-off from
-        // the submit response) wins over the job payload's, because a job re-fetched
-        // from the list does not carry it.
         document={progress.cocSignOff?.document ?? job.cocPacket}
         onAddPage={handleCocPage}
         onSignature={handleCocSignature}
@@ -2071,25 +1533,14 @@ export default function InstallerJobDetail() {
         visible={showResetConfirm}
         icon="alert"
         tone="danger"
-        // A job still IN PROGRESS resets from a bottom sheet: the crew is mid-work, the
-        // reason list is the substance of it, and a sheet keeps the job behind it in
-        // view. A job already COMPLETED keeps the centred dialog — undoing a signed-off
-        // result is the heavier decision and should interrupt.
         presentation={isJobComplete ? 'dialog' : 'sheet'}
         title="Reset Lead Result?"
-        // The completed-job dialog spells out what Reset costs — it is wiping a result
-        // that has already been signed off, and the title alone doesn't say that the
-        // lead comes back for a re-run. The in-progress SHEET stays blurb-free: there
-        // is no result to clear yet, and the copy would only push the reason list
-        // further down the sheet.
         description={
           isJobComplete
             ? 'Are you sure you want to reset this lead result? This will clear the ' +
               'current result and allow you to re-enter the lead.'
             : undefined
         }
-        // The API requires a reason on every result, Reset included, so the picker
-        // lives in this dialog rather than behind a second popup.
         reasons={INSTALLER_RESULT_REASONS.Reset}
         confirmLabel="Reset"
         submitting={resettingJob}
@@ -2100,8 +1551,6 @@ export default function InstallerJobDetail() {
       <ResultJobModal
         visible={!!resultType}
         result={resultType}
-        // Covers BOTH waits — the photo drain and the result request — so the button
-        // never falls back to "Submit Result" in the gap between them.
         submitting={drainingUploads || submitResult.isPending || statusRequest.isPending}
         photos={progress.resultPhotos ?? []}
         uploadingCount={upload.uploadingCount}

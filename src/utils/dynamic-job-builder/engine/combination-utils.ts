@@ -39,8 +39,6 @@ export function buildDefaultItemFromFields(fields: any[] = [], existing: any = {
   flattenLeafFields(fields).forEach((field) => {
     if (field.key && field.key.startsWith('_')) return;
 
-    // Web parity: toggle/optionList always seed empty, even when locked with a
-    // dcValue — this block must come before the locked/dcValue check below.
     if (field.type === 'toggle' || field.type === 'optionList') {
       item[field.id] = field.multiSelect ? [] : '';
       return;
@@ -68,13 +66,6 @@ export function buildDefaultItemFromFields(fields: any[] = [], existing: any = {
       field.defaultValue &&
       isDefaultValueOptedIn(field)
     ) {
-      // Ticket 1063: a `dropdown` seeds its configured default the same way `text`
-      // always has. Deliberately CONDITION-BLIND — this file must not import the
-      // dependency engine, so `dependencies.defaultWhen` is NOT consulted here; the
-      // gate is applied at hydrate time (`dynamic-job-state-storage.hydrateFieldValue`)
-      // and at render time (`DropdownField`). `isDefaultValueOptedIn` is only a flag
-      // read, not a rule, so it is safe here — and it is what stops a
-      // `useDefaultValue: false` config from seeding a leftover `defaultValue`.
       item[field.id] = field.defaultValue;
     } else {
       item[field.id] = '';
@@ -176,8 +167,6 @@ export function getCombinationDisplayNumber(combo: any, index: number, indexOffs
 }
 
 export function createNextCombinationItem(section: any, combos: any[] = [], indexOffset = 0) {
-  // Never below the highest chip already on screen: a stale stored number (from a
-  // saved draft) would otherwise hand the new combination a number that is taken.
   const highest = combos.reduce(
     (max: number, combo: any, idx: number) =>
       Math.max(max, getCombinationDisplayNumber(combo, idx, indexOffset)),
@@ -189,23 +178,10 @@ export function createNextCombinationItem(section: any, combos: any[] = [], inde
   };
 }
 
-/**
- * The first combination of a section is its PARENT: hydration seeds exactly one per
- * section (locked from the Job Summary), and everything after it was added by the rep.
- * The parent cannot be removed.
- *
- * `firstShownIndex` — in My Deals an unfinished saved combination can be hidden, so
- * the parent is the first combination actually SHOWN. 0 everywhere else.
- */
 export function isParentCombination(index: number, firstShownIndex = 0) {
   return index === firstShownIndex;
 }
 
-/**
- * The combinations a combination section renders — its `comboGroups` list, the legacy
- * tab-level `combinations` for the `default` section, else the one unsaved default item.
- * Mirrors `getSectionCombos` in `DynamicTabRenderer.tsx`.
- */
 export function getRenderedSectionCombos(section: any, tabState: any = {}) {
   const fromGroups = tabState?.comboGroups?.[section.id]?.combinations;
   if (fromGroups?.length) return fromGroups;
@@ -213,24 +189,6 @@ export function getRenderedSectionCombos(section: any, tabState: any = {}) {
   return [{ ...(section.defaultItem || {}) }];
 }
 
-/**
- * Renumber every combination of a tab 1..N, in the order the sections render.
- *
- * Numbering runs ACROSS sections (LeafFilter's 6" section holds #1, its 7" section
- * #2, …). Each section used to number only from its own count, so adding to the 7"
- * section first (#3) and then to the 6" one handed out #2 a second time — the 7"
- * section's stored numbers were never shifted. Running this after every change keeps
- * the stored `_combinationNumber` (read by the summary, logs and diff) in step with
- * what is on screen.
- *
- * `sections` must be the combination sections actually rendered, in order. A section
- * with nothing saved yet still counts its one default combination, which is not
- * written into state (it has no stored number and displays by position).
- *
- * `isShown(combo, section)` — My Deals hides unfinished saved combinations; those
- * are skipped (keep their stored number, take no slot) so the visible chips run
- * 1..N with no gap. Defaults to counting every combination.
- */
 export function renumberTabCombinations(
   sections: any[] = [],
   tabState: any = {},
@@ -376,23 +334,14 @@ export function syncTabCombinationGroups(tab: any, combinationGroups: any[]) {
 }
 
 export function computeGroupUsed(combos: any[] = [], group: any) {
-  // rowFields is already flattened, so grid/number inputs nested inside a stack
-  // or accordion are included — allocation tracking works regardless of how the
-  // combination fields are grouped in the config.
   const rowFields = getFlattenedCombinationSectionRowFields(group);
 
-  // Measurement grids define the consumed quantity when present. Sum only the
-  // grids and ignore sibling numbers (e.g. miters / end-caps) so add-on inputs
-  // that share the combination aren't double-counted against the allocation.
   const gridFields = rowFields.filter((f: any) => f.type === 'locationGrid');
   if (gridFields.length) {
     return combos.reduce(
       (sum: number, combo: any) =>
         sum +
         gridFields.reduce((gridSum: number, gf: any) => {
-          // The grid may be stored under the field id, its `key`, or the legacy
-          // `grid` slot — a grid that resolves `undefined` reads as 0 used, which
-          // is what silently froze the price when footage changed.
           const grid = combo[gf.id] ?? (gf.key ? combo[gf.key] : undefined) ?? combo.grid;
           return (
             gridSum +
@@ -408,9 +357,6 @@ export function computeGroupUsed(combos: any[] = [], group: any) {
     );
   }
 
-  // No grid: the consumed quantity is the sum of every numeric input in the
-  // combination. Config-driven — does NOT rely on specific field keys, so any
-  // tab's allocation (sqft, linear feet, units, custom names…) tracks correctly.
   const numberFields = rowFields.filter((f: any) => f.type === 'number');
   if (numberFields.length) {
     return combos.reduce(

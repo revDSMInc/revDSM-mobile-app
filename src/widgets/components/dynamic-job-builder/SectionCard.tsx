@@ -9,8 +9,6 @@ interface SectionCardProps {
   className?: string;
 }
 
-// Matches the normal Job Builder combination card: rounded-[24px], slate border,
-// p-5 shadow; amber-400 border + alert-circle warning when incomplete.
 export function SectionCard({ children, incomplete, borderColor, className = '' }: SectionCardProps) {
   return (
     <View

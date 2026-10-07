@@ -87,12 +87,6 @@ const getDocStyleAndIcon = (fileName: string) => {
   }
 };
 
-// A single grid tile. Defined at MODULE level (not inside the component) so its
-// function identity is stable across renders — otherwise every re-render of
-// ChatMessageBubble (e.g. opening/closing the photo viewer) would be seen by
-// React as a "new component type", unmounting and remounting the <Image> and
-// forcing it to reload (the grey-flash-then-reappear bug). `force-cache` makes
-// any legitimate redisplay instant from the native image cache.
 const GridImageCell = React.memo(function GridImageCell({
   src,
   label,
@@ -268,13 +262,6 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
 
 
   const mediaUri = useMemo(() => {
-    // Only a LOCAL file:// URI (an optimistic, just-sent image) is trusted
-    // directly — that keeps the sender's own image visible instantly instead of
-    // blanking while its signed URL is fetched. Server http(s) URLs are NOT used
-    // raw: a reloaded message carries a bare/unsigned S3 URL that 403s (renders
-    // blank), so it MUST go through the signed-URL path below via `filePath` —
-    // exactly like received images, which render correctly. This is why images
-    // went blank after leaving and re-entering the chat.
     const localUri = [primaryFile?.url, msg.image, msg.imageUrl, msg.video, msg.videoUrl].find(
       (u) => typeof u === 'string' && u.startsWith('file://')
     );
@@ -288,15 +275,11 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
       msg.video ||
       msg.videoUrl;
     if (!raw || typeof raw !== 'string') {
-      // No path/url on the file, but a just-signed optimistic URL may still exist.
       if (typeof primaryFile?.previewUrl === 'string' && /^https?:\/\//.test(primaryFile.previewUrl)) {
         return primaryFile.previewUrl;
       }
       return '';
     }
-    // Priority: 1. Signed URL keyed by the file's STABLE id (web parity — robust for
-    // appointment photos), 2. signed URL by filePath, 3. optimistic previewUrl / url,
-    // 4. raw local/remote URI.
     const idKey = (primaryFile as any)?.id || (primaryFile as any)?._id;
     let resolved = (idKey && imageUrls[idKey]) || imageUrls[raw] || imageUrls[cleanFilePath(raw)];
     if (
@@ -316,8 +299,6 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     return resolved;
   }, [primaryFile, msg.image, msg.imageUrl, msg.video, msg.videoUrl, imageUrls]);
 
-  // Every image file on this message (appointment photos arrive as a single
-  // message carrying many image refs → rendered as a WhatsApp-style grid below).
   const imageFiles = useMemo(() => {
     return files.filter((f: any) => {
       if (!f) return false;
@@ -328,13 +309,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     });
   }, [files]);
 
-  // Resolve a grid image's display URL. Prefer the signed URL (keyed by S3
-  // filePath); fall back to a just-signed optimistic `previewUrl` or a local
-  // file:// — never a bare S3 URL (which 403s → blank). Empty string ⇒ spinner.
   const getGridSrc = (f: any): string => {
-    // Web parity (getSrc): the signed URL is keyed by the file's STABLE id first —
-    // robust for appointment photos whose S3 keys don't round-trip as object keys —
-    // then by filePath (voice / gallery / reload).
     const idKey = f?.id || f?._id;
     const byId = idKey ? imageUrls[idKey] : undefined;
     if (byId) return byId;
@@ -342,20 +317,13 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     const signed = fp ? imageUrls[fp] || imageUrls[cleanFilePath(fp)] : undefined;
     if (signed) return signed;
     if (typeof f?.previewUrl === 'string' && /^https?:\/\//.test(f.previewUrl)) return f.previewUrl;
-    // Web parity: the optimistic appointment-photo file carries its signed URL in `url`.
     if (typeof f?.url === 'string' && /^https?:\/\//.test(f.url)) return f.url;
-    // Local, just-picked images (gallery batch). Android can hand back content://
-    // URIs, which RN's <Image> renders natively — pass those through too.
     const local = [f?.url, f?.uri].find(
       (u: any) => typeof u === 'string' && (u.startsWith('file://') || u.startsWith('content://'))
     );
     return (local as string) || '';
   };
 
-  // Caption shown under each APPOINTMENT photo in the grid — the same human label
-  // the Manage Photos grid / picker shows (e.g. "Front of Home"). Sent as the
-  // file's subcategory AND fileName so either survives a reload. Gallery photos
-  // carry none of these signals, so they grid WITHOUT captions.
   const getPhotoLabel = (f: any): string => {
     const isAppt =
       f?.isAppointmentPhoto ||
@@ -402,7 +370,6 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
   const [galleryVisible, setGalleryVisible] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
 
-  // Every album image as a {uri,label} for the full-screen swipe viewer.
   const galleryImages = useMemo(
     () => imageFiles.map((f: any) => ({ uri: getGridSrc(f), label: getPhotoLabel(f) })),
     [imageFiles, imageUrls]
@@ -568,7 +535,6 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
       setShowReactionBar(false);
     }
   };
-  // === Swipe to Reply Logic ===
   const msgRef = useRef(msg);
   msgRef.current = msg;
   const triggerReply = useCallback(() => {
@@ -598,7 +564,6 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
   const renderReplyPreview = (replyTo: any) => {
     if (!replyTo) return null;
 
-    // If replyTo is just a string (ID), we can't render the full preview
     if (typeof replyTo === 'string') {
       return (
         <TouchableOpacity
@@ -711,7 +676,6 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     console.log(`[Reactions] Rendering ${reactions.length} reactions for message:`, msg._id);
 
     const grouped = reactions.reduce((acc: any, r: any) => {
-      // Handle both object {emoji, reaction} and string formats
       const emoji = typeof r === 'string' ? r : (r.emoji || r.reaction);
       if (!emoji) return acc;
       const count = (r && typeof r === 'object' && Array.isArray(r.users)) ? r.users.length : 1;
@@ -776,7 +740,6 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
       if (users.length > 0) {
         return users.map((u: any) => ({ ...u, emoji }));
       }
-      // Fallback for old/simple format
       return [{ ...emojiGroup, emoji }];
     });
 
@@ -1014,9 +977,6 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     );
   };
 
-  // WhatsApp-style photo album for messages carrying ≥2 images (appointment
-  // photos). 2 → side-by-side, 3 → 2-over-1, 4+ → 2×2 with a "+N" overlay on the
-  // last tile. Mirrors the web MessageItem renderImageGrid.
   const openGalleryAt = (i: number) => {
     setGalleryIndex(Math.max(0, i));
     setGalleryVisible(true);
@@ -1029,15 +989,6 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     const half = (W - GAP) / 2;
     const count = imageFiles.length;
 
-    // Render a tile via the stable module-level GridImageCell. This is a plain
-    // helper that RETURNS <GridImageCell/> — it is NOT a component defined in
-    // render, so the underlying <Image> keeps its identity across re-renders and
-    // never remounts/reloads when the viewer opens or closes.
-    //
-    // Label rule: appointment photos always show their caption (at every count),
-    // while gallery photos stay caption-free — getPhotoLabel returns '' for
-    // non-appointment files, so no per-count gate is needed. The "+N" overlay
-    // tile shows no label.
     const cell = (file: any, index: number, w: number, h: number, overlayText?: string) => (
       <GridImageCell
         src={getGridSrc(file)}
@@ -1072,7 +1023,6 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
         </View>
       );
     } else {
-      // 4 → clean 2×2; >4 → same 2×2 with a "+N" overlay on the 4th tile.
       const shown = imageFiles.slice(0, 4);
       const remaining = count - 4;
       body = (

@@ -1,5 +1,4 @@
 export const paymentPlans: Record<string, any> = {
-  // Payment Methods
   check: {
     fee: 0.0,
     label: 'Check (Bank Fee: 0%)',
@@ -28,7 +27,6 @@ export const paymentPlans: Record<string, any> = {
     duration: 0,
   },
 
-  // GreenSky Plans
   greensky2511: {
     fee: 0.04,
     label:
@@ -76,7 +74,6 @@ export const paymentPlans: Record<string, any> = {
     duration: 180,
   },
 
-  //New plans for GreenSky
   greensky1509: {
     fee: 0.0,
     label: '1509 (10.99% APR, 180 months) (Bank Fee: 0%)',
@@ -99,7 +96,6 @@ export const paymentPlans: Record<string, any> = {
     duration: 240,
   },
 
-  // Wells Fargo Plans
   wf1148: {
     fee: 0.0175,
     label: '1148 (6 Months no interest option with regular payments) (Bank Fee: 1.75%)',
@@ -152,7 +148,6 @@ export const paymentPlans: Record<string, any> = {
     pf: 0.0215,
     duration: 0,
   },
-  // -----------------------------
   wf3198: {
     fee: 0.11,
     label:
@@ -226,7 +221,6 @@ export const paymentPlans: Record<string, any> = {
     duration: 60,
   },
 
-  // Wells Fargo Plans (Jobs over $7,500)
   wf3672: {
     fee: 0.078,
     label:
@@ -300,7 +294,6 @@ export const paymentPlans: Record<string, any> = {
     minPrice: 7500,
   },
 
-  // Concora Credit
   concora: {
     fee: 0.1175,
     label: '19.9% APR - 3% Payment (Bank Fee: 11.75%)',
@@ -312,7 +305,6 @@ export const paymentPlans: Record<string, any> = {
     duration: 0,
   },
 
-  // Lowe's Plans (web lf-calculator parity)
   lowes_ach: {
     fee: 0.04,
     label: 'ACH (Bank Fee: 4%)',

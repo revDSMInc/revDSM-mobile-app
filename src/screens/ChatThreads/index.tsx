@@ -42,17 +42,6 @@ const STATUS_OPTIONS = [
   'No Sales',
 ];
 
-/**
- * The INSTALLER's own filter list.
- *
- * An installer only ever meets a lead that has already been sold and scheduled, so
- * 'Unresulted Leads' (no outcome yet) and 'No Sales' (lost) name states that cannot
- * reach them - both filter to an empty list for this role. What is left is the
- * install lifecycle, which is the whole of what an installer tracks.
- *
- * NOTE 'All' is deliberately kept, so an installer always has a way back to every
- * conversation once they have narrowed it.
- */
 const INSTALLER_STATUS_OPTIONS = [
   'All',
   'Pending Install',
@@ -68,26 +57,12 @@ export default function ChatThreadsScreen({ navigation }: any) {
 
   const [mainTab, setMainTab] = useState<'myleads' | 'channels'>('myleads');
   const [searchQuery, setSearchQuery] = useState('');
-  // Land on ALL, so the screen opens on every conversation instead of hiding resulted
-  // leads behind a filter the rep never chose. These two seeds must stay in sync: the
-  // dropdown derives the key from the label (`opt.toLowerCase().replace(/ /g, '')`), so
-  // they are exactly what tapping the 'All' row produces. `useChatThreads` already reads
-  // 'all' as "no status constraint" on both the server query and the client-side filter.
-  //
-  // NOTE this is now the right seed for BOTH roles, so no `isInstaller` branch is
-  // needed here. The installer list drops 'Unresulted Leads' (see
-  // INSTALLER_STATUS_OPTIONS), so seeding an installer to it would have opened the
-  // screen on a filter absent from its own menu, over a list that is always empty for
-  // that role. 'All' is in both lists and is the only seed correct for either.
   const [statusFilter, setStatusFilter] = useState('all');
   const [filterUnread, setFilterUnread] = useState(false);
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState('All');
   const [showCreateChannel, setShowCreateChannel] = useState(false);
 
-  // Which list the dropdown offers. Both start with the same All row the seed above
-  // uses, so a role change under a signed-in session cannot strand `selectedStatus` on
-  // a label its own list no longer holds.
   const statusOptions = isInstaller ? INSTALLER_STATUS_OPTIONS : STATUS_OPTIONS;
 
   useEffect(() => {
@@ -118,14 +93,6 @@ export default function ChatThreadsScreen({ navigation }: any) {
 
   const leadSections = useMemo(() => groupChatsByLeadDate(filteredChats), [filteredChats]);
 
-  // TEMPORARY diagnostic - dumps exactly what the list is RENDERING, which is the
-  // filtered/searched set, not the raw API response. Fires once the fetch settles and
-  // again whenever the displayed set changes (tab, status filter, search, unread).
-  //
-  // NOTE each row goes through `sanitizeForLog` but the ARRAY IS LEFT WHOLE. Passing
-  // the array itself would cap it at LOG_MAX_ARRAY (20) and hide the very rows being
-  // inspected; sanitizing per row still truncates long strings and nested arrays, so a
-  // chat carrying a document blob cannot push megabytes across the DevTools websocket.
   useEffect(() => {
     if (!__DEV__ || loading) return;
     const rows: any[] = mainTab === 'myleads' ? filteredChats : filteredChannels;
@@ -148,10 +115,6 @@ export default function ChatThreadsScreen({ navigation }: any) {
     navigation.navigate('ChatDetail', {
       leadId: item.leadDetails?._id,
       chatId: item._id || item.id,
-      // The header inside the chat must read as the row that opened it. An installer
-      // row is `{jobNumber} {lastName} {timeWindow}`, so the same builder produces the
-      // title here - imported rather than re-derived, since two copies of this string
-      // is exactly how the list and the header came to disagree.
       customerName: isInstaller
         ? buildInstallerLeadHeading(item.leadDetails, getLeadIdDisplay(item.leadDetails))
         : (() => {
@@ -180,9 +143,6 @@ export default function ChatThreadsScreen({ navigation }: any) {
     });
   };
 
-  // ⚠️ An empty thread list and an unreachable one look identical, and only one of them means
-  // "you have no messages". Saying which sends the rep back to it when they have signal rather
-  // than leaving them believing the conversation is gone.
   const online = useIsOnline();
 
   const emptyState = (

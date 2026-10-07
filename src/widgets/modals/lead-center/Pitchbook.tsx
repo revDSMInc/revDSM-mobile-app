@@ -46,7 +46,6 @@ export default function Pitchbook({ onClose, lead }: PitchbookProps) {
   const [activeToolTab, setActiveToolTab] = useState('inspection');
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
 
-  // Animation for tools drawer
   const toolsAnim = useRef(new Animated.Value(0)).current;
 
   const toggleTools = () => {
@@ -90,7 +89,6 @@ export default function Pitchbook({ onClose, lead }: PitchbookProps) {
     return getGlobalPosition(activeCategory, currentSlideIndex);
   }, [activeCategory, currentSlideIndex]);
 
-  // Lifecycle logs
   React.useEffect(() => {
     const userId = user?._id || user?.id;
     if (userId) {

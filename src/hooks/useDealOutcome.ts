@@ -33,7 +33,6 @@ export const useDealOutcome = (
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
 
-  // Extract a reliable lead ID
   const leadId = lead?._id || lead?.leadId || lead?.id;
 
   const fetchOutcomeData = async (leadIdOverride?: string) => {
@@ -41,7 +40,6 @@ export const useDealOutcome = (
     if (!activeLeadId) return;
     try {
       setLoading(true);
-      // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
       const calcId = activeCalculator?._id || resolveLeadCalculatorId(lead);
       if (!calcId) return;
       const res = await LeadService.getLeadOutcomeByCalculator(activeLeadId, calcId);
@@ -135,7 +133,6 @@ export const useDealOutcome = (
       return;
     }
 
-    // Validation for Demo status
     if (outcomeStatus === 'demo') {
       if (!outcomeForm.reason) {
         Alert.alert('Required Field', 'Please select a reason for the demo.');
@@ -151,7 +148,6 @@ export const useDealOutcome = (
       setLoadingMessage('Opening Job Builder...');
       setLoading(true);
 
-      // Build the LFCalculator payload — always required with a title
       let lfCalculatorPayload = activeCalculator && Object.keys(activeCalculator).length > 0
         ? {
           ...activeCalculator,
@@ -163,7 +159,6 @@ export const useDealOutcome = (
         }
         : undefined;
 
-      // Fetch latest calculator from server to resolve missing _ids in dropPrice for LFCalculator
       if (lfCalculatorPayload && lfCalculatorPayload._id) {
         try {
           const apptId = appointmentId || lfCalculatorPayload.appointmentId;
@@ -201,12 +196,8 @@ export const useDealOutcome = (
         }
       }
 
-      // Update outcome: only touch status/result/LFCalculator/calculator references.
-      // DO NOT send jobBuilder here — the web app never overwrites the existing jobBuilder
-      // when Build Job is pressed. Overwriting it would wipe agreements the user already attached.
       const payload: any = {
         ...outcomeForm,
-        // Strip any stale LFCalculator that might be in outcomeForm from a previous fetch
         LFCalculator: undefined,
         status: outcomeStatus,
         result: outcomeStatus,
@@ -221,19 +212,15 @@ export const useDealOutcome = (
         balance: (outcomeStatus as any) === 'sale' ? outcomeForm.balance : '',
       };
 
-      // Only attach LFCalculator if we have valid calculator data
       if (lfCalculatorPayload) {
         payload.LFCalculator = lfCalculatorPayload;
       }
 
-      // Update Lead Outcome (status + LFCalculator only — existing jobBuilder preserved on server)
-      // Calculator-scoped write — the bare lead-scoped outcome route is deprecated.
       const outcomeCalcId = activeCalculator?._id || resolveLeadCalculatorId(lead);
       if (outcomeCalcId) {
         await LeadService.updateLeadOutcomeByCalculator(leadId, outcomeCalcId, payload);
       }
 
-      // Update Timeline
       await LeadService.updateLeadTimelineProgress(leadId, {
         leadResulted: 'completed',
         jobBuild: 'active',
@@ -242,7 +229,6 @@ export const useDealOutcome = (
 
       onRefresh?.();
 
-      // Both sale and demo go to Job Builder
       if (outcomeStatus === 'sale' || outcomeStatus === 'demo') {
         setTimeout(() => {
           setLoading(false);

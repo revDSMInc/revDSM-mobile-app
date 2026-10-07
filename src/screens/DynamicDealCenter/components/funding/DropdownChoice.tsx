@@ -3,19 +3,6 @@ import { View, Text, TouchableOpacity } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FS, FUND, PS } from './funding-theme';
 
-/**
- * A labelled dropdown for a small, mutually-exclusive choice. The list expands
- * IN PLACE under the field rather than in a `Modal`: the screens that use it are
- * already inside one, and native Modals must never be stacked.
- *
- * Titles are never truncated — the selected one reads in full in the field, and
- * every row in the list wraps instead of ending in an ellipsis.
- *
- * ⚠️ Same contract as `SegmentedChoice`: `onSelect` also fires for a `disabled`
- * option (with `allowed: false`) so the caller can explain the refusal, and the
- * option that is already selected keeps its full treatment even when disabled.
- */
-
 export interface DropdownOption<T extends string> {
   value: T;
   title: string;

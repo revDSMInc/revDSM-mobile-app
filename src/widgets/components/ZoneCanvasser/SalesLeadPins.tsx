@@ -1,28 +1,3 @@
-/**
- * SalesLeadPins — the Sales Map's lead/job pins + tap-to-open job card, ported into
- * the Zone Canvasser's Mapbox map. It is a trimmed copy of `LeadMap.tsx`'s pin
- * machinery: same data source (`LeadService.findJobs`), same teardrop pin, same
- * `MapJobCard` popup and the same gallery / upload / referral secondary modals.
- *
- * Differences from the Sales Map (by request):
- *   - NO filter set — a single show/hide toggle drives everything (`enabled`).
- *   - Pins are coloured by `pinCategory` only (REVUIUX-439: green uploaded, dark
- *     green installed, purple pending install). The Sales Map's amber/red tints come
- *     from its favorite/search filters, which we don't have here.
- *
- * The job card is a native `MarkerView` anchored CENTERED right above the tapped pin
- * (with a downward pointer), exactly like the Sales Map. On tap the camera flies to
- * `[lng, lat + 0.003]` at zoomLevel 14 — the same "shift center north to center the
- * card vertically" the Sales Map uses (`LeadMap.handleMarkerClick`) — so the card
- * lands centered on screen.
- *
- * Split into three exports because Mapbox layers must live INSIDE the `<MapView>`
- * while RN `<Modal>`s must NOT (same split `LeadMap` uses):
- *   - `useSalesMapPins`    — owns the state + data + handlers.
- *   - `SalesLeadPinsLayer` — Mapbox `Images`/`ShapeSource`/`SymbolLayer` + the
- *                            selected-lead `MarkerView` card. Render inside MapView.
- *   - `SalesLeadPinsModals`— the gallery/upload/referral modals. Render outside MapView.
- */
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { View, TouchableOpacity, Animated } from 'react-native';
 import { ShapeSource, SymbolLayer, MarkerView, Images, Camera } from '@rnmapbox/maps';
@@ -41,16 +16,11 @@ import { getPinCategory, pinSortKeyExpression } from '../../../utils/sales-pins'
 const MARKER_GREEN = require('../../../assets/images/map/marker-green.png');
 const MARKER_INSTALLED = require('../../../assets/images/map/marker-installed.png');
 const MARKER_PENDING = require('../../../assets/images/map/marker-pending.png');
-// Built once — a new array each render would re-send the layer style to native.
 const PIN_SORT_KEY = pinSortKeyExpression();
 
-// Zoom the camera flies to on pin tap — matches the Sales Map (`LeadMap`), which at
-// this zoom lands the anchored card centered on screen. (Zoom 16 pushed it low.)
 const PIN_FOCUS_ZOOM = 14;
-// Zoom when the (already-open) card is tapped — matches the Sales Map's CARD_FOCUS_ZOOM.
 const CARD_FOCUS_ZOOM = 15.5;
 
-/** Job ownership check — same logic as `LeadMap.isJobOwner` (id then name match). */
 const isJobOwner = (item: any, user: any): boolean => {
   if (!user || !item) return false;
   const uid = typeof user === 'string' ? user : user._id || user.id;
@@ -76,11 +46,6 @@ const isJobOwner = (item: any, user: any): boolean => {
 
 export type SalesMapPins = ReturnType<typeof useSalesMapPins>;
 
-/**
- * Owns the sales-pin state. Fetches all jobs once (the first time `enabled` is true —
- * i.e. the Zone Canvasser is open and the toggle is on), then keeps them; the toggle
- * only flips visibility, so switching it is instant and never re-fetches.
- */
 export function useSalesMapPins({
   enabled,
   cameraRef,
@@ -96,8 +61,6 @@ export function useSalesMapPins({
   const [showUpload, setShowUpload] = useState(false);
   const [showReferral, setShowReferral] = useState(false);
   const fetchedRef = useRef(false);
-  // A single tap fires both ShapeSource.onPress AND MapView.onPress; this timestamp
-  // guard makes a tap select-once and stops the map press deselecting right after.
   const lastMarkerPressRef = useRef(0);
 
   const fetchAllJobs = useCallback(async () => {
@@ -119,8 +82,6 @@ export function useSalesMapPins({
     }
   }, [enabled, fetchAllJobs]);
 
-  // Exclude the reserved TAM30000–30032 range (web/Sales-Map parity) and anything
-  // without usable coordinates.
   const validLeads = useMemo(
     () =>
       leads.filter((l: any) => {
@@ -134,8 +95,6 @@ export function useSalesMapPins({
     [leads]
   );
 
-  // id → full lead: markers only carry the id in their (flattened) GeoJSON props,
-  // so the tap handler resolves the full object from here.
   const leadsByIdRef = useRef<Map<string, any>>(new Map());
   useMemo(() => {
     const m = new Map<string, any>();
@@ -159,7 +118,6 @@ export function useSalesMapPins({
     [validLeads]
   );
 
-  // Keep the open card / gallery job pointing at the freshest data.
   useEffect(() => {
     if (selectedLead?._id) {
       const latest = validLeads.find((l: any) => l._id === selectedLead._id);
@@ -168,7 +126,6 @@ export function useSalesMapPins({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [validLeads]);
 
-  // Toggling the pins off closes any open card.
   useEffect(() => {
     if (!enabled) setSelectedLead(null);
   }, [enabled]);
@@ -182,8 +139,6 @@ export function useSalesMapPins({
         return;
       }
       setSelectedLead(lead);
-      // Sales Map parity (`LeadMap.handleMarkerClick`): shift the center north so the
-      // anchored card is centered vertically on screen.
       cameraRef.current?.setCamera({
         centerCoordinate: [Number(coords[0]), Number(coords[1]) + 0.003],
         zoomLevel: PIN_FOCUS_ZOOM,
@@ -206,8 +161,6 @@ export function useSalesMapPins({
     [enabled, handleMarkerClick]
   );
 
-  // Called from the MapView background press — dismiss the card unless a pin was
-  // just tapped (the guard) so selecting a pin doesn't immediately close it.
   const onBackgroundPress = useCallback(() => {
     if (Date.now() - lastMarkerPressRef.current < 400) return;
     setSelectedLead((prev: any) => (prev ? null : prev));
@@ -278,11 +231,6 @@ export function useSalesMapPins({
   };
 }
 
-/**
- * The Mapbox pin layer + selected-lead card. MUST be rendered as a child of the
- * Zone Canvasser `<MapView>`. `enabled` gates the SymbolLayer visibility + the card
- * (when off, the pins hide but the fetched data is retained by the hook).
- */
 export function SalesLeadPinsLayer({
   pins,
   enabled,
@@ -305,7 +253,6 @@ export function SalesLeadPinsLayer({
     onReferencePress,
   } = pins;
 
-  // Card fade + scale in, delayed so the camera starts gliding first (LeadMap parity).
   const cardAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (selectedLead?._id) {
@@ -352,9 +299,8 @@ export function SalesLeadPinsLayer({
                 ['get', 'category'],
                 'installed', 'markerInstalled',
                 'pendingInstall', 'markerPending',
-                /* uploaded */ 'markerGreen',
+                'markerGreen',
               ],
-              // Pending / installed pins on top of the green ones (`PIN_DRAW_ORDER`).
               symbolSortKey: PIN_SORT_KEY,
               iconSize: ['interpolate', ['linear'], ['zoom'], 8, 0.7, 12, 0.9, 16, 1.1],
               iconAnchor: 'bottom',
@@ -438,10 +384,6 @@ export function SalesLeadPinsLayer({
   );
 }
 
-/**
- * The gallery / upload / referral modals opened from the job card. MUST be rendered
- * OUTSIDE the `<MapView>` (RN Modals can't live inside it) — same as `LeadMap`.
- */
 export function SalesLeadPinsModals({ pins }: { pins: SalesMapPins }) {
   const {
     user,

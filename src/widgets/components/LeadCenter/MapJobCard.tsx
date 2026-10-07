@@ -75,8 +75,6 @@ export const MapJobCard = ({
     return { houseNum: '', rest };
   };
 
-  // Pending-install pins show the scheduled / sale date; a sold job's
-  // `installationDate` is null until installed and must never be formatted.
   const formattedDate = getPinDateLabel(job);
   const productsText = getProductsText(job);
 

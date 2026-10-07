@@ -6,16 +6,7 @@ import { SendToHomeownerSheet, ShareableRender } from './SendToHomeownerSheet';
 
 const GREEN = '#2EDE56';
 
-/**
- * Polling for renders that are still generating.
- *
- * ⚠️ The screen navigates here the MOMENT generation is requested, but the
- * server takes roughly 30s per render. Without polling the panel loads an empty
- * list, reports "0 ready" and only fills if the rep thinks to pull-to-refresh —
- * which is how this was reported.
- */
 const POLL_INTERVAL_MS = 5000;
-/** ⚠️ A ceiling, so a render that never lands cannot poll forever in the rep's pocket. */
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
 type Run = {
@@ -27,7 +18,6 @@ type Run = {
   selections?: Record<string, any> | null;
 };
 
-/** A run carries renderType in its stored selections — that is how Core and Lighting are told apart. */
 const isLighting = (r: Run) => r.selections?.renderType === 'look' || r.selections?.renderType === 'lighting';
 
 function detailFor(r: Run): string {
@@ -36,7 +26,6 @@ function detailFor(r: Run): string {
     const pattern = r.selections?.pattern === 'single' ? 'Single color' : 'Alternating';
     return name ? `${name} · ${pattern}` : pattern;
   }
-  // Core: list whichever surfaces were chosen.
   const sel = r.selections ?? {};
   const parts = ['soffit', 'fascia', 'gutter', 'downspout']
     .filter((k) => sel[k])
@@ -44,25 +33,6 @@ function detailFor(r: Run): string {
   return parts.join(' · ');
 }
 
-/**
- * Results — the renders that are ready, and sending them to the homeowner.
- *
- * The homeowner receives a LINK, not the images, so "Send" collects a recipient
- * and the backend mints and delivers it. Nothing here downloads or attaches an
- * image.
- *
- * ⚠️ NOT MOUNTED ANYWHERE RIGHT NOW. revRender used to land here after Generate;
- * it now returns to Lead Center, which already owns generation progress
- * (`useLeadReports.handleStartRevRenders`) and was showing the same thing twice.
- *
- * ⚠️ KEPT ON PURPOSE — do not delete it as dead code. It and
- * `SendToHomeownerSheet` are the ONLY callers of `LeadService.shareRevRenders`,
- * so deleting them silently removes send-to-homeowner (483 §9), which is a
- * shipped requirement and not something the queue screen replaced. Whatever
- * surfaces finished renders next (Lead Center's `RevRenderHistoryModal` is the
- * natural home) should mount this panel or lift its send action, rather than
- * rebuild the share call.
- */
 export function ResultsPanel({
   leadId,
   isDark,
@@ -79,9 +49,7 @@ export function ResultsPanel({
   defaultPhone?: string;
   defaultEmail?: string;
   onBack: () => void;
-  /** How many renders were just submitted; poll until this many new ones appear. */
   expectedNewRenders?: number;
-  /** Called once they have all landed, so the caller can clear its counter. */
   onRendersArrived?: () => void;
 }) {
   const [runs, setRuns] = useState<Run[]>([]);
@@ -90,22 +58,18 @@ export function ResultsPanel({
   const [error, setError] = useState<string | null>(null);
   const [sendFor, setSendFor] = useState<ShareableRender[] | null>(null);
   const [sentIds, setSentIds] = useState<string[]>([]);
-  /** Runs still fetching their image — keyed by runId so cards are independent. */
   const [imageLoading, setImageLoading] = useState<Record<string, boolean>>({});
-  /** True while we are still waiting on renders the server has not finished. */
   const [awaitingRenders, setAwaitingRenders] = useState(expectedNewRenders > 0);
 
   const sub = isDark ? '#919EAB' : '#637381';
   const label = isDark ? '#fff' : '#212B36';
   const cardBg = isDark ? '#1E1E1E' : '#fff';
 
-  /** Returns how many finished runs were found, so the poller can decide to stop. */
   const load = useCallback(async (): Promise<number> => {
     setError(null);
     try {
       const res = await LeadService.getRevRenderRuns(leadId);
       const list: Run[] = res.data?.runs || res.data?.data?.runs || [];
-      // Newest first, and only runs that actually produced an image.
       const ready = list
         .filter((r) => r.generatedUrl || r.s3UrlGenerated)
         .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
@@ -113,8 +77,6 @@ export function ResultsPanel({
       return ready.length;
     } catch (e: any) {
       setError(e?.response?.data?.error || 'Could not load renders.');
-      // ⚠️ -1, not 0 — a failed request must not read as "no renders yet" and
-      // stop the poll on a baseline of zero.
       return -1;
     } finally {
       setLoading(false);
@@ -122,13 +84,6 @@ export function ResultsPanel({
     }
   }, [leadId]);
 
-  /**
-   * Initial load, then poll while renders are still being generated.
-   *
-   * ⚠️ Keyed off the COUNT at mount, not off `expectedNewRenders` alone: the
-   * rep may already have renders from an earlier batch, so "done" is
-   * `baseline + expected`, never just "the list is non-empty".
-   */
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -166,8 +121,6 @@ export function ResultsPanel({
     };
 
     run();
-    // ⚠️ Clearing the timer is not optional: the panel unmounts when the rep
-    // taps Back, and a live timer would keep polling against a dead screen.
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);

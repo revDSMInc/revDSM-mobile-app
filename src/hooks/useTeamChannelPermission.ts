@@ -12,11 +12,9 @@ export function useTeamChannelPermission(channel: ChannelData | null | undefined
 
   const canPost = useMemo(() => {
     if (!channel) return false;
-    // RESTRICTED - no posting allowed
     if (['announcements', 'files', 'commission-sheets'].includes(channelType || '')) {
       return false;
     }
-    // ALLOWED
     if (['sales-wins', 'general', 'questions'].includes(channelType || '')) {
       return true;
     }

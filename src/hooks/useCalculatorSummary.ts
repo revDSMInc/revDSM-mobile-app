@@ -92,10 +92,6 @@ const getCostPriceForCalc = (calc: any, isLowesLead?: boolean): number => {
   );
 };
 
-/**
- * Maps a raw API drop entry to our local DropEntry shape.
- * This is the single place that translates API → local, mirroring the web.
- */
 const mapApiDrop = (dp: any, calcPaymentMethod: string): DropEntry => ({
   _id: dp._id,
   price: dp.dropedPrice,
@@ -107,10 +103,6 @@ const mapApiDrop = (dp: any, calcPaymentMethod: string): DropEntry => ({
   addedPlans: dp.addedPlans || [],
 });
 
-/**
- * Converts our local DropEntry back to the API payload shape.
- * Never includes _clientId — only includes _id when the server has already assigned one.
- */
 const dropEntryToPayload = (dp: DropEntry) => ({
   ...(dp._id ? { _id: dp._id } : {}),
   dropedPrice: Number(dp.price),
@@ -157,17 +149,12 @@ export const useCalculatorSummary = (
     Number(activeCalc.inputs.discountPercentage) || 15
   );
 
-  // --- WEB-PARITY: Local droppedPrices state, always initialized from API ---
-  // This is the single source of truth for drop entries on this calculator.
-  // Keyed by activeCalc._id so switching tabs always uses fresh data.
   const [droppedPrices, setDroppedPrices] = useState<DropEntry[]>(() =>
     (activeCalc.dropPrice || []).map((dp: any) =>
       mapApiDrop(dp, activeCalc.inputs?.paymentPlan || 'check')
     )
   );
 
-  // Reinitialize from API whenever the active calculator changes OR its dropPrice array changes.
-  // "Replace entirely from API — never merge with stale local state" (mirrors web).
   useEffect(() => {
     setDroppedPrices(
       (activeCalc.dropPrice || []).map((dp: any) =>
@@ -178,9 +165,7 @@ export const useCalculatorSummary = (
 
   const [isSaving, setIsSaving] = useState(false);
 
-  // --- Display modal state ---
   const [displayDrop, setDisplayDrop] = useState<any>(null);
-  // Index-based targeting: same as web's existingDropIndex
   const [displayDropIndex, setDisplayDropIndex] = useState<number>(-1);
 
   const [downPayment, setDownPayment] = useState(0);
@@ -188,18 +173,14 @@ export const useCalculatorSummary = (
   const [addedPlans, setAddedPlans] = useState<string[]>([]);
   const [tempPlan, setTempPlan] = useState<string | null>(null);
 
-  // Local string state so the TextInput is never reset mid-typing
   const [priceText, setPriceText] = useState<string>(
     activeCalc.price ? String(activeCalc.price) : ''
   );
 
-  // Keep priceText in sync when activeCalc.price changes externally
-  // (e.g. switching between rollout tabs) but NOT while the user is typing
   useEffect(() => {
     setPriceText(activeCalc.price ? String(activeCalc.price) : '');
   }, [activeCalc._id]);
 
-  /** Builds and sends the dropPrice payload to the server. */
   const saveDropPriceToServer = async (updatedDrops: DropEntry[], extraPayload?: any) => {
     setIsSaving(true);
     try {
@@ -274,9 +255,6 @@ export const useCalculatorSummary = (
     }
   };
 
-  // ----------------------------------------------------------------
-  // handleAddDrop — mirrors web's "new entry" branch in handleSecurePrice
-  // ----------------------------------------------------------------
   const handleAddDrop = async (status: 'accepted' | 'declined' = 'declined') => {
     const num = Number(dropValue.replace(/[^0-9.]/g, ''));
     const costPrice = Math.round(results.costAtCheck ?? results.price50);
@@ -306,9 +284,6 @@ export const useCalculatorSummary = (
     try {
       let updatedDrops: DropEntry[];
 
-      // --- WEB PARITY: Deduplication check ---
-      // If a declined entry with the same price already exists, update it in-place
-      // instead of appending a duplicate (mirrors web's existingDeclinedIndex logic).
       const existingDeclinedIndex = droppedPrices.findIndex(
         (item) => !item.secured && Number(item.price) === num
       );
@@ -326,14 +301,12 @@ export const useCalculatorSummary = (
               addedPlans,
             };
           }
-          // Enforce single-accepted rule
           if (status === 'accepted' && item.secured) {
             return { ...item, secured: false, declined: true };
           }
           return item;
         });
       } else {
-        // Truly new price — demote any existing accepted entry, then append
         const newEntry: DropEntry = {
           price: num,
           secured: status === 'accepted',
@@ -351,7 +324,6 @@ export const useCalculatorSummary = (
         ];
       }
 
-      // Log the drop price action
       const userId = user?._id || user?.id;
       if (userId) {
         const _costPrice = Math.round(results.costAtCheck ?? results.price50) || 0;
@@ -446,7 +418,6 @@ export const useCalculatorSummary = (
         }
       }
 
-      // Optimistic local update
       setDroppedPrices(updatedDrops);
       updateActive({
         dropPrice: updatedDrops.map(dropEntryToPayload),
@@ -473,16 +444,11 @@ export const useCalculatorSummary = (
     }
   };
 
-  // ----------------------------------------------------------------
-  // handleDisplayDropAction — mirrors web's "update existing" branch
-  // Uses index-based targeting (most reliable, same as web).
-  // ----------------------------------------------------------------
   const handleDisplayDropAction = async (status: 'accepted' | 'declined') => {
     if (displayDropIndex === -1) return;
 
     try {
       const targetId = displayDrop?._id;
-      // Match by _id if available, otherwise fall back to index
       const targetIdx = droppedPrices.findIndex((item, idx) => {
         if (targetId && item._id === targetId) return true;
         if (!targetId && idx === displayDropIndex) return true;
@@ -503,7 +469,6 @@ export const useCalculatorSummary = (
             addedPlans,
           };
         }
-        // Enforce single-accepted rule
         if (status === 'accepted' && item.secured) {
           return { ...item, secured: false, declined: true };
         }
@@ -607,7 +572,6 @@ export const useCalculatorSummary = (
         }
       }
 
-      // Optimistic local update
       setDroppedPrices(updatedDrops);
       updateActive({
         dropPrice: updatedDrops.map(dropEntryToPayload),
@@ -699,14 +663,12 @@ export const useCalculatorSummary = (
     }
   };
 
-  // Called on every keystroke — only updates local display string, no save
   const handlePriceChange = (val: string) => {
     const cleaned = val.replace(/[^0-9.]/g, '');
     setPriceText(cleaned);
     if (error) setError(null);
   };
 
-  // Called when the user finishes editing (onEndEditing / onBlur)
   const handlePriceBlur = () => {
     const num = Number(priceText.replace(/[^0-9.]/g, ''));
     const costPrice = Math.round(results.costAtCheck ?? results.price50);
@@ -1077,16 +1039,13 @@ export const useCalculatorSummary = (
     propagateDefaultPaymentPlan,
     logPaymentMethodChange,
     logDropPlanSelect,
-    // Drop display state
     displayDrop,
     setDisplayDrop,
     displayDropIndex,
     setDisplayDropIndex,
-    // Local droppedPrices (web-parity)
     droppedPrices,
     setDroppedPrices,
     isSaving,
-    // Down payment
     downPayment,
     setDownPayment,
     showDownPaymentInput,

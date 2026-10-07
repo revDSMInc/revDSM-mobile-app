@@ -15,24 +15,6 @@ import {
 import { getSelectableOptionsDiscount, type DiscountConfig } from '../utils/dynamic-discount';
 import { WF_HIGH_MIN_PRICE } from '../../../utils/calculator/payment-method-validation';
 
-/**
- * Backend-driven pricing for the Dynamic Deal Center — payment plans + discount
- * config — ported 1:1 from the web app so the dynamic rollout/result flow reads
- * the SAME data the web reads instead of the mobile static constants.
- *
- *   plans     : GET /payment-plans/v1/sales/provider-plans   (web `useGetPaymentPlans`)
- *   discounts : GET /company/v1/discount-config/sales         (web `useGetDiscountConfig`)
- *
- * The calculator schema (`/calculator-form-schemas/deal-center`) carries NONE of
- * this — payment plans, discount tiers, and the Sr+Vet % are three independent
- * backend concerns, exactly as on web. Demo/result reasons have NO endpoint on
- * either platform (hardcoded everywhere), so they stay static in ResultJobModal.
- *
- * When an endpoint returns nothing configured (or fails) we fall back to the same
- * shared static utils the regular mobile Deal Center uses, so the flow keeps
- * working pre-config / offline — the UI is identical either way.
- */
-
 const PROVIDER_PLANS_URL = '/payment-plans/v1/sales/provider-plans';
 const DISCOUNT_CONFIG_URL = '/company/v1/discount-config/sales';
 
@@ -52,7 +34,6 @@ export interface DealPlan {
   providerColor?: string;
 }
 
-/** Grouped picker category — `bg`/`text` are concrete hex (this screen is inline-styled). */
 export interface PayCategory {
   title: string;
   bg: string;
@@ -61,40 +42,19 @@ export interface PayCategory {
 }
 
 export interface DealPricing {
-  /** key → plan (dynamic byKey, else the static map). */
   plans: Record<string, DealPlan>;
-  /** rollout payment-plan picker groups (basics flat + one group per financing provider). */
   categories: PayCategory[];
-  /** drop modal "+ Add Plan" groups (financing only). */
   dropAddCategories: PayCategory[];
-  /** outcome-modal down-payment methods (cash/card only). */
   outcomeDownPaymentMethods: { label: string; value: string }[];
-  /** default payment plan for a new rollout on this lead. */
   defaultMethod: string;
-  /** pre-order discount options (e.g. [15, 20, 25]). */
   preOrderOptions: number[];
-  /** default pre-order discount %. */
   defaultPreOrder: number;
-  /** Sr+Vet discount % that grosses up MSRP (usually 10). */
   seniorVetPct: number;
-  /** Raw backend discount config (discounts[] + programs[]) for data-driven MSRP/program math. Null pre-config. */
   discountConfig: DiscountConfig | null;
-  /** true when the backend supplied plans (vs the static fallback). */
   isDynamic: boolean;
   isLoading: boolean;
 }
 
-// ── Payment-plan normalization (ports web `normalizePlan`/`normalizeResponse`) ──
-
-/**
- * Lowe's plans arrive from the API with auto-generated keys (e.g. "ACHBankFee4",
- * "6Mat799APRBankFee4"), but the whole Lowe's flow (ACH default, `isLowesPlan`
- * filtering, `plans[key]` lookups, min-price gating) is keyed on the CANONICAL keys
- * `lowes_ach` / `lowes_cc` / `lowes_<months>m`. Without this mapping the plans keep
- * their raw API keys, `isLowesPlan` (which tests the `lowes` prefix) never matches,
- * and a Lowe's lead's picker comes back EMPTY. Verbatim port of web
- * `src/api/payment-plans.js:canonicalLowesKey`. Returns null for non-Lowe's plans.
- */
 function canonicalLowesKey(plan: any, providerName?: string): string | null {
   if (!/lowe/i.test(providerName || '')) return null;
   const label = String(plan.label || plan.name || '').toLowerCase();
@@ -141,7 +101,6 @@ function normalizePlanResponse(data: any): DealPlan[] {
   return all.filter((p) => p.key);
 }
 
-/** Provider → fallback group color (ports web `getGroupColor`). */
 function groupColor(group: string, fallback?: string): string {
   if (fallback) return fallback;
   const l = (group || '').toLowerCase();
@@ -152,28 +111,12 @@ function groupColor(group: string, fallback?: string): string {
   return '#f5f5f5';
 }
 
-/**
- * Is this a Lowe's plan? Lowe's leads must ONLY see Lowe's plans and non-Lowe's
- * leads must NEVER see them (web parity — see `getRolloutPaymentCategories`). We
- * detect by the plan key prefix (`lowes_ach`, `lowes_60m`, …) or provider name.
- */
 function isLowesPlan(p: DealPlan): boolean {
   const key = (p.key || '').toLowerCase();
   const prov = (p.provider || '').toLowerCase();
   return key.startsWith('lowes') || prov.includes('lowe');
 }
 
-/**
- * Build the rollout picker groups from dynamic plans: basics flat, financing per
- * provider. Within a provider, plans whose minimum is the high-value threshold
- * (`WF_HIGH_MIN_PRICE`, $7,500) are split into their OWN "{provider} (Jobs over
- * $7,500)" group — web parity with the static `getRolloutPaymentCategories`
- * "Wells Fargo High (>$7,500)" split. Grouping purely by provider lumped the
- * high-value Wells Fargo plans (3672/3667/…) under the same header as the regular
- * WF plans, so the "(Jobs over $7,500)" heading was missing on mobile. The split
- * is threshold-driven (only WF has $7,500 plans today), so providers like GreenSky
- * — whose plans carry various sub-$7,500 minimums — stay in a single group.
- */
 export function buildCategories(plans: DealPlan[]): PayCategory[] {
   const basics = plans.filter((p) => p.type === 'cash' || p.type === 'card');
   const cats: PayCategory[] = [];
@@ -194,8 +137,6 @@ export function buildCategories(plans: DealPlan[]): PayCategory[] {
     const color = groupColor(g, groups[g][0]?.providerColor);
     const base = groups[g].filter((p) => (p.minPrice || 0) < WF_HIGH_MIN_PRICE);
     const high = groups[g].filter((p) => (p.minPrice || 0) >= WF_HIGH_MIN_PRICE);
-    // Only split into two headers when the provider genuinely has both tiers;
-    // a single-tier provider keeps one group titled with just its name.
     if (base.length && high.length) {
       cats.push({ title: g, bg: color, text: '#1C252E', plans: base.map((p) => p.key) });
       cats.push({ title: `${g} (Jobs over $${WF_HIGH_MIN_PRICE.toLocaleString()})`, bg: color, text: '#1C252E', plans: high.map((p) => p.key) });
@@ -205,8 +146,6 @@ export function buildCategories(plans: DealPlan[]): PayCategory[] {
   });
   return cats;
 }
-
-// ── Static-fallback helpers (convert the shared utils' Tailwind tokens → hex) ──
 
 const NAMED_HEX: Record<string, string> = {
   'bg-slate-50': '#F8FAFC',
@@ -235,13 +174,10 @@ function staticDropAddCategories(isLowesLead: boolean): PayCategory[] {
   }));
 }
 
-// ── Discount-config normalization (ports web `normalizeDealCenterConfig`) ──
-
 interface DiscountShape {
   preOrderOptions: number[];
   defaultPreOrder: number;
   seniorVetPct: number;
-  /** Raw config (discounts[] + programs[]) for data-driven MSRP/program math; null pre-config. */
   discountConfig: DiscountConfig | null;
 }
 const DISCOUNT_FALLBACK: DiscountShape = {
@@ -255,10 +191,6 @@ function normalizeDiscount(raw: any): DiscountShape {
   if (!config || config.isActive === false || !Array.isArray(config.discounts) || !config.discounts.length) {
     return DISCOUNT_FALLBACK;
   }
-  // Resolve the rep-selectable discount the SAME way the MSRP math does
-  // (`getSelectableDiscountKey`) rather than hardcoding `pre_order` — otherwise a
-  // config keyed differently renders the static fallback tiles while MSRP is
-  // computed from the config, and the two silently disagree.
   const preOrder = getSelectableOptionsDiscount(config.discounts);
   const seniors = config.discounts.find((d: any) => d.key === 'seniors');
   const options: any[] = Array.isArray(preOrder?.options) ? preOrder.options : [];
@@ -268,20 +200,12 @@ function normalizeDiscount(raw: any): DiscountShape {
     preOrderOptions: values.length ? values : DISCOUNT_FALLBACK.preOrderOptions,
     defaultPreOrder: def ? Number(def.value) : values[values.length - 1] || DISCOUNT_FALLBACK.defaultPreOrder,
     seniorVetPct: seniors && seniors.type === 'fixed' ? Number(seniors.value) || 10 : DISCOUNT_FALLBACK.seniorVetPct,
-    // Preserve the full config so the rollout can compute MSRP/programs data-driven (web parity).
     discountConfig: { discounts: config.discounts, programs: config.programs || [], isActive: config.isActive },
   };
 }
 
-/**
- * Fetch + normalize backend payment plans and discount config for the lead, with
- * a static fallback. `isLowesLead` only affects the fallback grouping/default.
- */
 export function useDealPricing(lead: any): DealPricing {
   const isLowesLead = lead?.lowesLead === true;
-  // Plans and discount tiers are company setup. Cached so the rollout can still price, pick a
-  // payment method and validate against a plan minimum with no signal — without them the fallback
-  // static lists apply, which are not this company's plans.
   const { user } = useAuth();
   const userId = user?._id || user?.id;
 
@@ -322,21 +246,12 @@ export function useDealPricing(lead: any): DealPricing {
     const discount = discountData || DISCOUNT_FALLBACK;
 
     if (isDynamic) {
-      // Full lookup map keeps every key resolvable (labels for already-saved
-      // methods), but the picker/categories only surface plans relevant to the
-      // lead: Lowe's leads see EVERY plan (Lowe's + GreenSky + Wells Fargo + …), others see non-Lowe's only.
       const plans: Record<string, DealPlan> = {};
       dyn.forEach((p) => {
         plans[p.key] = p;
       });
       const relevant = isLowesLead ? dyn : dyn.filter((p) => !isLowesPlan(p));
 
-      // A Lowe's lead whose dynamic provider-plans response carried NO Lowe's plans
-      // (the company hasn't published Lowe's provider plans, or they arrived without
-      // a recognizable Lowe's provider/key) would otherwise leave the picker EMPTY.
-      // Fall back to the shared static Lowe's plans (lowes_ach / lowes_cc / financing)
-      // so the dropdown is always populated with Lowe's-ONLY methods — the whole flow
-      // is keyed on those canonical keys anyway. Non-Lowe's leads keep the dynamic set.
       if (isLowesLead && !relevant.some(isLowesPlan)) {
         const lowesCategories = staticCategories(true);
         const mergedPlans: Record<string, DealPlan> = { ...plans };
@@ -363,7 +278,6 @@ export function useDealPricing(lead: any): DealPricing {
 
       const categories = buildCategories(relevant);
       const allBasics = relevant.filter((p) => p.type === 'cash' || p.type === 'card');
-      // A Lowe's lead takes its down payment through Lowe's ACH / CC only.
       const basics = isLowesLead ? allBasics.filter(isLowesPlan) : allBasics;
       const preferred = isLowesLead
         ? basics.find((p) => /ach/i.test(p.key)) || basics[0]
@@ -383,7 +297,6 @@ export function useDealPricing(lead: any): DealPricing {
       };
     }
 
-    // Static fallback — identical to the regular mobile Deal Center's source.
     return {
       plans: STATIC_PLANS as Record<string, DealPlan>,
       categories: staticCategories(isLowesLead),
@@ -400,23 +313,10 @@ export function useDealPricing(lead: any): DealPricing {
   }, [plansData, discountData, isLowesLead, plansLoading, discountLoading]);
 }
 
-// ── Pure plan-math helpers (take the resolved `plans` map so they work with
-//    either the dynamic or the static source) ──────────────────────────────
-
 export function planLabelOf(plans: Record<string, DealPlan>, key?: string): string {
   return plans[key || '']?.label || 'Select payment plan';
 }
 
-/**
- * Short company/provider abbreviation for a financing plan, e.g. `WF` (Wells
- * Fargo), `GS` (GreenSky), so a rep can tell at a glance which lender a plan
- * belongs to when only its code shows (`1157`, `2521`). Resolves from the plan's
- * `provider` name (dynamic `/provider-plans` path) and falls back to the plan
- * KEY prefix (`wf*`, `greensky*`, `concora`, `lowes_*`) for the static
- * `payment-plans.ts` fallback, which carries no `provider` field. Returns `''`
- * for basic (cash/card) methods and unknown providers so callers show the bare
- * label unchanged.
- */
 export function planProviderAbbr(plan?: DealPlan, key?: string): string {
   const prov = (plan?.provider || '').trim();
   if (prov) {
@@ -439,29 +339,18 @@ export function planProviderAbbr(plan?: DealPlan, key?: string): string {
   return '';
 }
 
-/**
- * Compact one-line plan label for the Investment Center monthly, e.g.
- * `GS1599, 9.99% APR, 180M` (was the full `1599 (Fixed Rate of 9.99% APR for 180
- * Months) (Bank Fee: 4.75%)`). Format: `{providerAbbr}{code}, {apr}% APR, {months}M`.
- * The APR part is dropped for 0% plans; months come from the label's "X Months"
- * (else `duration`). Falls back to the raw label if nothing parses.
- */
 export function compactPlanLabel(plans: Record<string, DealPlan>, key?: string): string {
   const plan = plans[key || ''];
   if (!plan) return '';
   const label = String(plan.label || '');
   const abbr = planProviderAbbr(plan, key);
   const code = label.match(/^\s*(\d+)/)?.[1] || '';
-  // Catalog APR is stored as a fraction (0.0999) or a whole percent (9.99).
   const aprRaw = Number(plan.apr) || 0;
   const aprPct = aprRaw > 0 && aprRaw < 1 ? aprRaw * 100 : aprRaw;
   const months = Number(label.match(/(\d+)\s*Months?/i)?.[1] || 0) || Number(plan.duration) || 0;
   const parts: string[] = [];
   const codePart = `${abbr}${code}`.trim();
   if (codePart) parts.push(codePart);
-  // Always surface the APR — a deferred-interest / 0% plan shows "0% APR" rather than
-  // omitting it, so the customer always sees the rate (web parity: `formatPlanTerms`
-  // returns "0% APR" when the plan carries no APR).
   parts.push(aprPct > 0 ? `${Number(aprPct.toFixed(2))}% APR` : '0% APR');
   if (months > 0) parts.push(`${months}M`);
   return parts.length ? parts.join(', ') : label;
@@ -471,14 +360,6 @@ export function isFinancing(plans: Record<string, DealPlan>, key?: string): bool
   return plans[key || '']?.type === 'financing';
 }
 
-/**
- * Monthly payment for a financing plan. Ports web
- * `calculateMonthlyPaymentForPlan` (PremiumQuoteCard.js:25-49) EXACTLY, including
- * the $35 minimum-payment floor and the plan-label special cases — previously
- * missing on mobile, so reps could quote a monthly the paperwork won't honor:
- *   - labels starting `3198`/`1529` → flat $35 when basePrice < 2500
- *   - labels starting `1148`/`1019` → floor the pf-based payment to $35
- */
 const MIN_MONTHLY_PAYMENT = 35;
 export function calcMonthly(plans: Record<string, DealPlan>, principal: number, key?: string): number {
   const plan = plans[key || ''] as DealPlan | undefined;
@@ -498,7 +379,6 @@ export function calcMonthly(plans: Record<string, DealPlan>, principal: number, 
   return 0;
 }
 
-/** Inflate a tier value by the selected plan's bank fee (web `calculateResultUtil`). */
 export function withPlanFee(plans: Record<string, DealPlan>, value: number, method?: string): number {
   const fee = plans[method || '']?.fee || 0;
   return fee >= 1 ? value : value / (1 - fee);
@@ -514,8 +394,6 @@ export function belowMinMsg(plans: Record<string, DealPlan>, key: string, price:
   const min = plans[key]?.minPrice || 0;
   if (!min) return '';
   const n = Number(price) || 0;
-  // Web (`validatePriceForPaymentMethod`) validates the END PRICE against the plan
-  // minimum, not a "cost price" — string aligned to web.
   return n === 0
     ? `This payment plan requires a minimum price of $${min.toLocaleString()}.`
     : `This payment plan requires a minimum price of $${min.toLocaleString()}. Current price: $${n.toLocaleString()}.`;

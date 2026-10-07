@@ -46,7 +46,6 @@ import { isClientId } from '../../utils/offline-lead-work';
 import { offlineNoticeFor } from '../../utils/offline-capability';
 
 const GiftedChatAny = GiftedChat as any;
-// ─── Custom Message Type ──────────────────────────────────────────────────────
 export interface ICustomMessage extends IMessage {
   reactions?: any[];
   isPinned?: boolean;
@@ -54,8 +53,6 @@ export interface ICustomMessage extends IMessage {
   replyToDetails?: any;
 }
 
-// ─── Sub-Component for Recorded Voice Playback ───────────────────────────────
-// This isolates playback state updates to prevent the whole ChatDetail from re-rendering
 const RecordedVoicePlayer = memo(({ uri, onSend, colors, onReset }: any) => {
   const { playbackState, playbackPos, playbackDuration, startPlayback, pausePlayback } =
     useVoiceNote();
@@ -135,7 +132,6 @@ export default function ChatDetailScreen() {
   const { leadId, chatId: initialChatId, customerName, description, chatType = 'lead', initialParticipants = [], salesPhotos: routeSalesPhotos, previewImage: routePreviewImage, previewImages: routePreviewImages } = route.params;
   const isChannel = chatType === 'channel';
 
-  // Log chat open
   React.useEffect(() => {
     if (user?._id) {
       logEvent('open', {
@@ -218,7 +214,6 @@ export default function ChatDetailScreen() {
     leadId
   );
 
-  // Dynamically resolve channel details and permissions
   const channelObj = useMemo(() => {
     return channel || {
       _id: chatId,
@@ -237,32 +232,8 @@ export default function ChatDetailScreen() {
   const isManager = user?.role === 'Manager' || user?.role === 'Admin' || user?.isAdmin;
   const isViewOnly = isChannel ? (!canPost && !isManager) : false;
 
-  /**
-   * ⚠️ A SECOND, separate lock — deliberately not folded into `isViewOnly`.
-   *
-   * They are different facts and the rep must be told which one applies: view-only means "this
-   * channel is not yours to post in", which no amount of waiting changes, while offline means
-   * "try again in a minute". Merging them would tell a rep with no signal they lack permission.
-   *
-   * The Lead Center blocks the ENTRY to a thread offline; this covers the connection dropping
-   * while the rep is already inside one — the composer would otherwise look ready and swallow
-   * whatever they typed, since nothing here queues a message.
-   */
   const online = useIsOnline();
 
-  /**
-   * ⚠️ A lead created at the door has NO THREAD YET, and that is a second reason the
-   * composer cannot send — one that has nothing to do with the current signal.
-   *
-   * A thread is addressed by the lead's SERVER id. Until the queued lead create lands,
-   * the only id that exists is the client one (`lead-…`), `getChatByLeadId` finds
-   * nothing for it, and `chatId` stays null. `handleSend` then bails on
-   * `if (!chatId) return` — reported as **"I press send and nothing happens"**, on a
-   * device showing full 5G.
-   *
-   * Reusing the existing lock is the point: the composer already knows how to explain
-   * itself. What was missing was this reason, not the mechanism.
-   */
   const threadNotCreatedYet = !isChannel && !chatId && isClientId(leadId);
   const offlineLocked = !online || threadNotCreatedYet;
 
@@ -271,9 +242,6 @@ export default function ChatDetailScreen() {
   }, []);
 
   const handleOfflineClick = useCallback(() => {
-    // ⚠️ Two different reasons, two different messages. Telling a rep on full signal
-    // that "messages need a connection" is wrong and unactionable — the thread is
-    // simply not on the server yet, and it will be shortly.
     if (threadNotCreatedYet) {
       FlashMessage.info(
         'This lead is still uploading',
@@ -287,9 +255,6 @@ export default function ChatDetailScreen() {
 
   const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
   const [showLeadImagePicker, setShowLeadImagePicker] = useState(false);
-  // Action queued while the attachment menu closes. A native picker (gallery /
-  // files) or another modal (annotated photos) cannot be presented on iOS until
-  // the menu's own modal has fully dismissed, so we defer it to onDismiss.
   const pendingAttachmentAction = useRef<null | (() => void)>(null);
 
   const runPendingAttachmentAction = useCallback(() => {
@@ -298,11 +263,9 @@ export default function ChatDetailScreen() {
     action?.();
   }, []);
 
-  // Close the menu, then run the chosen action once it's off-screen.
   const selectAttachmentOption = useCallback((action: () => void) => {
     pendingAttachmentAction.current = action;
     setShowAttachmentSheet(false);
-    // Android's <Modal> has no onDismiss; run after it unmounts.
     if (Platform.OS === 'android') {
       setTimeout(runPendingAttachmentAction, 220);
     }
@@ -313,16 +276,6 @@ export default function ChatDetailScreen() {
   const [historyModalVisible, setHistoryModalVisible] = useState(false);
   const [historyData, setHistoryData] = useState<any[]>([]);
 
-  // ─── Job-change addendum cards (SALES-APP-ADDENDUM-CHAT.md) ────────────────
-  // `jobChangeDraftId` drives the changes modal. `addendumPdfPending` is BOTH the
-  // spinner and the double-tap guard — `/amendment-pdf` generates the document on
-  // demand for addendums approved before the feature existed, so two taps would
-  // mean two PDF builds and two uploads for one addendum.
-  //
-  // ⚠️ It carries `cardId` (the MESSAGE id) as well as `draftId`, and the spinner
-  // is keyed on `cardId`. One addendum posts up to THREE cards (proposed →
-  // approved/declined) which all share the same `draftId`, so keying the spinner
-  // on the draft lights up every card of that addendum instead of the tapped one.
   const [jobChangeDraftId, setJobChangeDraftId] = useState<string | null>(null);
   const [addendumPdfPending, setAddendumPdfPending] = useState<
     { draftId: string; cardId: string } | null
@@ -424,7 +377,6 @@ export default function ChatDetailScreen() {
   const mentionResults = useMemo(() => {
     console.log('[Mentions Debug] mentionResults recalculating... showMentions:', showMentions, 'composerText:', JSON.stringify(composerText));
     if (!showMentions) return [];
-    // Use state-based composerText for reactive filtering
     const lastWord = composerText.split(/\s/).pop() || '';
     console.log('[Mentions Debug] Recalculating lastWord:', JSON.stringify(lastWord));
     if (!lastWord.startsWith('@')) return [];
@@ -451,7 +403,6 @@ export default function ChatDetailScreen() {
     const rawName = u.username || u.userName || u.firstName || u.name || 'User';
     const name = rawName.trim().replace(/\s+/g, '_');
     const words = composerTextRef.current.split(' ');
-    // Replace the last word (the @query) with the full mention
     words[words.length - 1] = `@${name} `;
     const newText = words.join(' ');
     setComposerText(newText);
@@ -469,8 +420,6 @@ export default function ChatDetailScreen() {
     else await startRecording();
   }, [recordingState, stopRecording, startRecording]);
 
-  // ─── Render Functions ───────────────────────────────────────────────────────
-
   const renderSystemMessage = useCallback(
     (props: any) => {
       const { currentMessage } = props;
@@ -478,7 +427,6 @@ export default function ChatDetailScreen() {
       const userId = currentMessage.user?._id || 'unknown';
       const initial = name.charAt(0).toUpperCase();
 
-      // Priority Hash color
       let bgColor = stringToColor(userId);
 
       if (name.includes('Operational Manager')) bgColor = '#67e8f9'; // OM (Cyan)
@@ -508,7 +456,6 @@ export default function ChatDetailScreen() {
 
   const renderDay = useCallback(
     (props: any) => {
-      // Don't show the date separator for the initial onboarding system messages
       if (
         props.currentMessage?.system &&
         props.currentMessage?._id?.toString().startsWith('sys-')
@@ -589,7 +536,6 @@ export default function ChatDetailScreen() {
               },
             });
           }
-          // Optimistic update
           setMessages((prev) =>
             prev.map((m) => (m._id === msg._id ? { ...m, isPinned: !msg.isPinned } : m))
           );
@@ -601,7 +547,6 @@ export default function ChatDetailScreen() {
           }
         } catch (err) {
           console.error('Pinning failed:', err);
-          // Revert optimistic update
           setMessages((prev) =>
             prev.map((m) => (m._id === msg._id ? { ...m, isPinned: msg.isPinned } : m))
           );
@@ -617,7 +562,6 @@ export default function ChatDetailScreen() {
       const handleReact = async (m: any, e: string) => {
         if (!chatId) return;
 
-        // Find if I have ANY existing reaction on this message
         const myPrevReaction = m.reactions?.find((r: any) =>
           r.users?.some((u: any) => String(u.userId) === String(currentUserId))
         );
@@ -639,13 +583,11 @@ export default function ChatDetailScreen() {
               },
             });
           }
-          // Optimistic update
           setMessages((prev) =>
             prev.map((msgItem: ICustomMessage) => {
               if (msgItem._id !== m._id) return msgItem;
               let newReactions = [...(msgItem.reactions || [])];
 
-              // 1. Remove my existing reaction from ANY emoji group
               newReactions = newReactions
                 .map((r) => ({
                   ...r,
@@ -653,7 +595,6 @@ export default function ChatDetailScreen() {
                 }))
                 .filter((r) => r.users.length > 0);
 
-              // 2. If it was a different emoji (or no emoji), add the new one
               if (!alreadyReactedSameEmoji) {
                 const rIdx = newReactions.findIndex((r) => r.emoji === e);
                 if (rIdx !== -1) {
@@ -670,7 +611,6 @@ export default function ChatDetailScreen() {
             })
           );
 
-          // 3. Socket emits
           if (myPrevReaction) {
             ChatService.removeReaction(chatId, m._id, myPrevReaction.emoji);
           }
@@ -694,10 +634,8 @@ export default function ChatDetailScreen() {
           onViewHistory={handleViewHistory}
           onNavigateToMessage={handleNavigateToMessage}
           onDelete={(id: string) => {
-            // Optimistic UI: remove immediately from local state
             setMessages((prev: any[]) => prev.filter((m: any) => m._id?.toString() !== id?.toString()));
             setPinnedMessages((prev: any[]) => prev.filter((m: any) => m._id?.toString() !== id?.toString()));
-            // Emit to server
             ChatService.deleteMessage(id);
           }}
           imageUrls={imageUrls}
@@ -711,16 +649,6 @@ export default function ChatDetailScreen() {
     [currentUserId, filteredParticipants, setReplyingTo, handleNavigateToMessage, imageUrls, isViewOnly, handleDisabledClick, searchQuery, highlightedMessageId, searchResults, searchIndex, chatId, user._id, setMessages, isChannel, leadId, setEditingMessage, setComposerText, setShowMentions, setPinnedMessages]
   );
 
-  // ─── Job-change addendum cards ─────────────────────────────────────────────
-
-  /**
-   * Fetch and open an addendum's SIGNED PDF (spec §4.1).
-   *
-   * The url is a short-lived pre-signed S3 link, so it is fetched at tap time and
-   * never cached. Guarded against a double tap: the endpoint GENERATES the
-   * document on demand for addendums approved before this feature shipped, so a
-   * second concurrent tap costs a duplicate build + upload.
-   */
   const openAddendumPdf = useCallback(
     async (draftId: string, cardId: string) => {
       if (!draftId || addendumPdfPending) return;
@@ -730,15 +658,8 @@ export default function ChatDetailScreen() {
         const body = res?.data;
         const url = body?.data?.url || body?.url || null;
         if (!url) throw new Error('No PDF returned');
-        // ⚠️ The changes modal is deliberately LEFT OPEN when the PDF is opened
-        // from inside it (the accepted-fallback button). Dismissing one Modal and
-        // presenting another in the same tick is unreliable on iOS — the second
-        // can silently fail to appear. The PDF stacks on top instead, and closing
-        // it returns to the "customer approved" card, which reads correctly.
         setAddendumPdf({ visible: true, uri: url });
       } catch (err: any) {
-        // 409 = the draft is not accepted. It shouldn't reach here from an
-        // ACCEPTED card, but fall back to the changes view rather than dead-end.
         if (err?.response?.status === 409) {
           setJobChangeDraftId(draftId);
         } else {
@@ -752,15 +673,8 @@ export default function ChatDetailScreen() {
     [addendumPdfPending]
   );
 
-  /**
-   * View on an addendum card. Approved ⇒ the signed PDF, always; anything still
-   * open (proposed / declined) ⇒ the before/after the customer was asked to sign.
-   * Deliberate, and specified by the client.
-   */
   const handleViewJobChange = useCallback(
     (meta: JobChangeMeta, cardId: string) => {
-      // Always the tapped card's OWN draftId — a lead can carry several
-      // addendums, so "the lead's addendum" is never a valid lookup.
       if (meta.action === 'ACCEPTED') openAddendumPdf(meta.draftId, cardId);
       else setJobChangeDraftId(meta.draftId);
     },
@@ -769,13 +683,6 @@ export default function ChatDetailScreen() {
 
   const renderMessage = useCallback(
     (props: any) => {
-      // allow empty messages to render
-
-      // Addendum lifecycle events render as a CARD, not a bubble — bypassing
-      // `Message` also drops the avatar, me/them alignment, reactions, the
-      // long-press menu and the read-receipt row, all of which web suppresses
-      // here. `getJobChangeMeta` returns null for every other message (including
-      // unknown future `metadata.type` values), so those fall through unchanged.
       const jobChangeMeta = getJobChangeMeta(props.currentMessage);
       if (jobChangeMeta) {
         return (
@@ -783,9 +690,6 @@ export default function ChatDetailScreen() {
             message={props.currentMessage}
             meta={jobChangeMeta}
             onView={handleViewJobChange}
-            // Keyed on the MESSAGE id, not the draft: the proposed and the
-            // approved card of one addendum share a draftId, so matching on that
-            // would spin BOTH when only one was tapped.
             isLoading={
               !!addendumPdfPending &&
               addendumPdfPending.cardId === String(props.currentMessage?._id)
@@ -814,8 +718,6 @@ export default function ChatDetailScreen() {
 
   const renderInputToolbar = useCallback(
     (props: any) => {
-      // ⚠️ Offline is tested FIRST. A rep with no signal in a channel they cannot post in has two
-      // reasons they cannot type; the one they can act on is the one worth telling them.
       if (offlineLocked) {
         return (
           <TouchableOpacity
@@ -889,8 +791,6 @@ export default function ChatDetailScreen() {
         );
       }
 
-      // Selected-attachment previews — rendered ABOVE the input bar (gifted-chat's
-      // renderAccessory sits BELOW the composer row, so it can't go there).
       const pendingStrip =
         pendingAttachments.length > 0 ? (
           <View
@@ -1296,8 +1196,6 @@ export default function ChatDetailScreen() {
             }}
           >
             {[
-              // "Appointment Photos" surfaces the lead's annotated photos —
-              // only meaningful in a lead chat (needs a leadId).
               ...(leadId && !isChannel
                 ? [
                   {
@@ -1364,9 +1262,6 @@ export default function ChatDetailScreen() {
         visible={!!jobChangeDraftId}
         draftId={jobChangeDraftId}
         onClose={() => setJobChangeDraftId(null)}
-        // The modal has a single button, so there is no card to disambiguate —
-        // it gets its own sentinel id and reads `pdfLoading` rather than the
-        // per-card match.
         onOpenPdf={(draftId) => openAddendumPdf(draftId, `modal:${draftId}`)}
         pdfLoading={!!addendumPdfPending}
       />
@@ -1386,8 +1281,6 @@ export default function ChatDetailScreen() {
         initialSalesPhotos={routeSalesPhotos}
         onConfirm={(photos) => {
           setShowLeadImagePicker(false);
-          // Stage the photos as composer previews — the user can add a caption
-          // and then Send (images upload first, then the message).
           addPendingAppointmentPhotos(photos);
         }}
       />

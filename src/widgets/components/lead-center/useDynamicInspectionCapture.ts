@@ -1,26 +1,3 @@
-// ─── useDynamicInspectionCapture.ts ──────────────────────────────────────────
-// Capture/upload/load/delete state for the DYNAMIC inspection photos flow
-// (sales side, mobile). Adapted from the web reference
-//   src/sections/job/components/dynamic-inspection-photos/use-dynamic-inspection-capture.js
-//
-// Differences from web (mobile parity, not divergence):
-//  - Uploads go through the existing offline-capable MMKV upload queue
-//    (`uploadQueueManager`) instead of a direct multipart POST, so photos taken
-//    offline are queued and retried — the mobile app's core strength.
-//  - Secure URLs are resolved via `LeadService.getSecureUrls`; deletes via
-//    `LeadService.deleteImage` (both already used across the lead-center).
-//  - Photos are the single source of truth from `lead.salesPhotos`; a lead
-//    refetch (query invalidation from the queue) re-resolves the grid.
-//
-// Photos are addressed type-agnostically by (product-scoped category label,
-// storageName). Any category type resolves its slot to that pair, so nothing
-// schema-specific is persisted.
-//
-// NOTE (deferred vs web): move-photo and annotated sections are NOT implemented
-// here — see the web file above for `movePhoto` / `getAnnotatedFor`. Core capture,
-// categorized display, delete, and local tag-as-extra are complete.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LeadService } from '../../../services/api/leads';
 import { queryClient } from '../../../services/api/queryClient';
@@ -95,7 +72,6 @@ const dedupeExtras = (...lists: (InspectionSlot | InspectionSlot[])[]): Inspecti
 export interface DynamicInspectionCapture {
   leadId: string | undefined;
   loading: boolean;
-  /** Live connectivity. Views use it to avoid claiming an upload is moving when nothing is. */
   online: boolean;
   getPhotos: (label: string, subcategory: string) => CapturedPhoto[];
   countUnderLabel: (label: string) => number;
@@ -127,14 +103,6 @@ export interface DynamicInspectionCapture {
     toCategoryLabel: string;
     toSubcategory: string;
     key?: string;
-    /**
-     * The photo's REAL stored category, used verbatim instead of `scopeCat(fromCategoryLabel)`.
-     *
-     * ⚠️ For an ORPHAN ("+ UNSORTED") the stored category is not scoped to a product — it is a
-     * bare legacy name like `"Home"` — so scoping it would send a `currentPosition` that
-     * matches nothing and the move would silently fail. The TO side is always scoped, which is
-     * exactly what re-files the photo into the schema.
-     */
     fromCategoryAbsolute?: string;
   }) => Promise<void>;
   getAnnotatedFor: (label: string) => { subcategory: string; photo: CapturedPhoto }[];
@@ -152,8 +120,6 @@ export function useDynamicInspectionCapture({
 
   const index: SchemaIndex = useMemo(() => indexSchema(categories), [categories]);
 
-  // Photos are stored/loaded per product: the saved salesPhoto.category is
-  // prefixed with the product so each product owns its own images.
   const scopeCat = useCallback(
     (label: string) => (productKey ? `${productKey} — ${label}` : label),
     [productKey]
@@ -161,14 +127,7 @@ export function useDynamicInspectionCapture({
 
   const [photosBySubcat, setPhotosBySubcat] = useState<Record<string, CapturedPhoto[]>>({});
 
-  // ── not-yet-uploaded photos ────────────────────────────────────────────────
-  // `capturedPreviews` below shows a just-shot photo instantly, but it is state on ONE mount of
-  // this hook — and Manage Photos mounts its own. Offline there is nothing on the server yet, so
-  // that screen rendered 0 photos and every tab 0/N for a lead the rep had just shot three times.
-  // The MMKV upload queue is the source that survives the modal boundary and an app restart.
   const online = useIsOnline();
-  // Deletes filed offline. Every read below subtracts them, or the server keeps returning a photo
-  // the rep has already removed and the delete appears to undo itself on the next refetch.
   const [deletedUrls, setDeletedUrls] = useState<Set<string>>(() =>
     offlinePhotoDeleteQueue.deletedUrls(leadId)
   );
@@ -190,13 +149,6 @@ export function useDynamicInspectionCapture({
     [pendingUploads, leadId]
   );
 
-  /**
-   * The display source for every read below — server photos with any pending upload the server
-   * does not yet account for folded in, per slot.
-   *
-   * ⚠️ Reads only. `deletePhoto` / `movePhoto` still write through `setPhotosBySubcat`: a queued
-   * photo has no `_id` and no `s3url`, so there is nothing for those endpoints to address.
-   */
   const displayPhotos = useMemo(() => {
     if (pendingBySlot.size === 0) return photosBySubcat;
     const next: Record<string, CapturedPhoto[]> = { ...photosBySubcat };
@@ -206,10 +158,7 @@ export function useDynamicInspectionCapture({
     return next;
   }, [photosBySubcat, pendingBySlot]);
   const [localExtras, setLocalExtras] = useState<Record<string, InspectionSlot[]>>({});
-  // Optimistic previews for a just-captured photo, keyed by subKey(scopedLabel, storage).
   const [capturedPreviews, setCapturedPreviews] = useState<Record<string, string>>({});
-  // Mirror of `capturedPreviews` for the resolve effect (whose deps don't include it),
-  // so a just-captured LOCAL uri can back the server photo instantly.
   const capturedPreviewsRef = useRef<Record<string, string>>({});
   useEffect(() => {
     capturedPreviewsRef.current = capturedPreviews;
@@ -219,26 +168,11 @@ export function useDynamicInspectionCapture({
   const [movingKeys, setMovingKeys] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
 
-  // s3urls we just deleted but that a briefly-stale lead refresh may still return.
   const pendingDeletesRef = useRef<Set<string>>(new Set());
-  // s3url -> destination subKey for a just-moved photo. Until a refetch reports the
-  // photo at its NEW position, an eventually-consistent replica may still return it
-  // at the OLD position; this guard drops those stale copies so the photo doesn't
-  // flash back into the original slot (it stays optimistically in the new one).
   const pendingMovesRef = useRef<Map<string, string>>(new Map());
-  // Monotonic cache of every server-confirmed photo we've ever seen (keyed by
-  // subKey, deduped by s3url). The backend is eventually consistent: right after
-  // an upload, some lead refetches come back from a replica that does NOT yet
-  // have the new photo. Rebuilding purely from such a refetch would blank a slot
-  // that was just filled — the "active → inactive → active" flicker. So the
-  // displayed map is the UNION of this cache and the fresh lead; a photo only
-  // leaves the cache on an explicit in-app delete (pendingDeletesRef), never on a
-  // transient empty read. This is also what guarantees no tagged photo is missed.
   const knownPhotosRef = useRef<Record<string, CapturedPhoto[]>>({});
-  // subKey -> uiKey, so when a server photo arrives we can clear the right uploading flag.
   const pendingUploadKeyRef = useRef<Record<string, string>>({});
 
-  // Only reload when the lead's photos actually change.
   const salesPhotosSignature = useMemo(() => {
     const photos = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
     return photos
@@ -246,14 +180,12 @@ export function useDynamicInspectionCapture({
       .join('|');
   }, [lead?.salesPhotos]);
 
-  // Load + resolve secure URLs for photos whose category belongs to this schema.
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       const rawPhotos: any[] = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
 
-      // Drop any photo we just deleted that the server still returns.
       const pending = pendingDeletesRef.current;
       if (pending.size) {
         const stillReturned = new Set(rawPhotos.map((p) => p?.s3url).filter(Boolean));
@@ -261,11 +193,6 @@ export function useDynamicInspectionCapture({
           if (!stillReturned.has(u)) pending.delete(u);
         });
       }
-      // ⚠️ BOTH sets. `pendingDeletesRef` is in-memory and covers the online delete still
-      // settling; `deletedUrls` is the MMKV queue and is the only one that survives a remount,
-      // a screen change or an app restart — which is exactly the span an offline delete has to
-      // last. Subtracting only the first made a photo deleted offline reappear the moment the
-      // rep reopened Manage Photos.
       const suppressed = deletedUrls;
       const photos =
         pending.size || suppressed.size
@@ -283,17 +210,10 @@ export function useDynamicInspectionCapture({
         if (p.bucketName && p.s3url) filePaths.push({ bucketName: p.bucketName, filePath: p.s3url });
       });
 
-      // Build the displayed photo map for a given signed-URL map. The `secureUrl`
-      // falls back to the just-captured LOCAL preview (always renders) and then a
-      // direct S3 url, so a photo shows INSTANTLY without waiting on the signed-URL
-      // round trip — that wait is what made added photos "take time to come".
       const buildMap = (secureMap: Record<string, string | null>) => {
         const fresh: Record<string, CapturedPhoto[]> = {};
         scoped.forEach((p) => {
           const k = subKey(p.category, p.subcategory);
-          // A just-moved photo: if this (possibly stale) refetch still reports it at
-          // the OLD slot, drop it so it doesn't flash back; once it appears at the new
-          // slot the guard clears and normal handling resumes.
           if (p.s3url && pendingMovesRef.current.has(p.s3url)) {
             const target = pendingMovesRef.current.get(p.s3url);
             if (k === target) pendingMovesRef.current.delete(p.s3url);
@@ -311,10 +231,6 @@ export function useDynamicInspectionCapture({
           });
         });
 
-        // Merge fresh photos into the monotonic cache: a transient refetch that is
-        // missing a photo must NOT drop it, but a fresh copy DOES refresh a stale
-        // one (e.g. a newly-resolved secureUrl). Explicitly-deleted s3urls are
-        // pruned so real deletions still take effect.
         const merged: Record<string, CapturedPhoto[]> = {};
         const allKeys = new Set([...Object.keys(knownPhotosRef.current), ...Object.keys(fresh)]);
         allKeys.forEach((k) => {
@@ -345,31 +261,15 @@ export function useDynamicInspectionCapture({
         return merged;
       };
 
-      // ── Phase 1: render INSTANTLY from the local preview / direct S3 url. ──
       if (cancelled) return;
       const immediate = buildMap({});
       knownPhotosRef.current = immediate;
       setPhotosBySubcat(immediate);
 
-      // ── Phase 2: resolve the real signed URLs in the background, swap them in. ──
       if (filePaths.length > 0) {
         setLoading(true);
         const secureMap: Record<string, string | null> = {};
         try {
-          /**
-           * ⚠️ Through the OFFLINE CACHE, not a bare call — and its absence is why Manage
-           * Photos showed "Needs a connection" on photos the Roofline Deck was rendering at
-           * the same moment.
-           *
-           * `useSecureUrls` (the deck's source) already wraps this same endpoint in
-           * `cachedFetch`, so offline it replays the last signed urls — expired as network
-           * addresses, but `getLocalCachePath` strips the query, so they still name the files
-           * already on disk. This screen called `LeadService.getSecureUrls` directly: offline
-           * that throws, the catch keeps the phase-1 fallback, and the fallback is
-           * `resolveS3Url` — a DIFFERENT url that was never warmed, so the tile had nothing.
-           *
-           * Same key shape as `useSecureUrls`, so both screens read and write one entry.
-           */
           const res = await cachedFetch(
             `${OFFLINE_CACHE.SECURE_URLS}:${hashString(filePaths.map((f) => f.filePath).join(','))}-${filePaths.length}`,
             () => LeadService.getSecureUrls(filePaths),
@@ -383,7 +283,6 @@ export function useDynamicInspectionCapture({
             secureMap[`${fp.bucketName}:${fp.filePath}`] = entry?.secureUrl || entry?.url || null;
           });
         } catch (e) {
-          // keep the phase-1 fallbacks
         }
         if (cancelled) return;
         const signed = buildMap(secureMap);
@@ -392,8 +291,6 @@ export function useDynamicInspectionCapture({
       }
       setLoading(false);
 
-      // Clear optimistic previews / uploading flags for slots now backed by a real
-      // server photo (runs after phase 2 so the preview persists until then).
       const finalMap = knownPhotosRef.current;
       setCapturedPreviews((prev) => {
         const next = { ...prev };
@@ -421,9 +318,6 @@ export function useDynamicInspectionCapture({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    // ⚠️ `deletedUrls` is in the deps on purpose: filing an offline delete must re-run this
-    // effect, or the row the rep just removed stays on screen until something else happens to
-    // invalidate the lead — which offline is nothing at all.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [salesPhotosSignature, index, productKey, deletedUrls]);
 
@@ -432,7 +326,6 @@ export function useDynamicInspectionCapture({
       const sk = subKey(scopeCat(label), subcategory);
       const server = displayPhotos[sk] || [];
       if (server.length > 0) return server;
-      // Surface the optimistic preview so the slot shows filled immediately.
       const preview = capturedPreviews[sk];
       if (preview) {
         return [{ secureUrl: preview, subcategory, isOptimistic: true }];
@@ -459,7 +352,6 @@ export function useDynamicInspectionCapture({
     [displayPhotos]
   );
 
-  // Extras derived from the server merged with locally-added, photo-less ones.
   const serverExtrasFor = useCallback(
     (category: InspectionCategory): InspectionSlot[] => {
       if (!category?.allowDynamicAdd) return [];
@@ -546,19 +438,10 @@ export function useDynamicInspectionCapture({
       const scopedCategory = scopeCat(categoryLabel);
       const sk = subKey(scopedCategory, subcategory);
 
-      // Optimistic preview + uploading flag.
       setCapturedPreviews((prev) => ({ ...prev, [sk]: asset.uri }));
       setUploadingKeys((prev) => ({ ...prev, [key]: true }));
       pendingUploadKeyRef.current[sk] = key;
 
-      // Push to the persistent, offline-capable MMKV upload queue. The queue
-      // invalidates ['lead', leadId] on success, which refreshes the lead prop
-      // and, via the load effect, clears the optimistic preview.
-      //
-      // ⚠️ The coordinates are resolved HERE, where the rep is standing — not by the queue at
-      // upload time, which offline can be hours later and miles away. `getCaptureCoords` reads a
-      // warm cache and never rejects, so this does not hold up the queue push; a photo with no
-      // fix is still queued, just without coordinates.
       void getCaptureCoords().then((coords) => {
         uploadQueueManager.addToQueue({
           leadId,
@@ -607,9 +490,6 @@ export function useDynamicInspectionCapture({
     }) => {
       if (!leadId) return;
 
-      // What this delete actually MEANS. A photo shot offline is only in the upload queue, so
-      // there is nothing on the server to remove — dropping the queue item IS the delete, and
-      // filing a server delete for it would address an s3url that does not exist.
       const target = resolveDeleteTarget(photo as any);
       if (target.kind === 'nothing') return;
 
@@ -617,8 +497,6 @@ export function useDynamicInspectionCapture({
         if (key) setDeletingKeys((prev) => ({ ...prev, [key]: true }));
         try {
           uploadQueueManager.dropQueuedItem(target.pendingId);
-          // No optimistic prune needed: the row came FROM the queue, so removing the item
-          // removes the card on the queue's own listener tick.
         } finally {
           if (key)
             setDeletingKeys((prev) => {
@@ -633,10 +511,6 @@ export function useDynamicInspectionCapture({
       const url = target.s3url;
       if (key) setDeletingKeys((prev) => ({ ...prev, [key]: true }));
 
-      // ── Offline: hide it now, file the delete for replay. ────────────────────────────────
-      // ⚠️ The local prune MUST happen for the offline arm too. The server still returns the
-      // photo until the replay lands, so without subtracting it the row reappears on the next
-      // read and the rep sees the delete "undo itself".
       if (!isOnline()) {
         pendingDeletesRef.current.add(url);
         const dkOff = subKey(scopeCat(categoryLabel), subcategory);
@@ -668,10 +542,6 @@ export function useDynamicInspectionCapture({
       try {
         await LeadService.deleteImage(leadId, { s3urls: [url], category: 'salesPhotos' });
 
-        // Activity log — web parity with `logPhotoDelete`. The stored photo
-        // carries its own fully-scoped category/subcategory, so read them off the
-        // photo (falling back to the passed args). `(annotated)` copies log under
-        // the annotated module, exactly as upload does.
         const logCategory = photo.category || categoryLabel;
         const logSub = photo.subcategory || subcategory;
         const isAnnotated = String(logSub || '').toLowerCase().includes('(annotated)');
@@ -700,11 +570,8 @@ export function useDynamicInspectionCapture({
           });
         }
 
-        // Remove from the grid only after the server confirms; mark pending so a
-        // briefly-stale refresh can't flash it back in.
         pendingDeletesRef.current.add(url);
         const dk = subKey(scopeCat(categoryLabel), subcategory);
-        // Prune the monotonic cache too, else the union would resurrect it.
         knownPhotosRef.current = {
           ...knownPhotosRef.current,
           [dk]: (knownPhotosRef.current[dk] || []).filter((p) => p.s3url !== url),
@@ -717,7 +584,6 @@ export function useDynamicInspectionCapture({
           queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
           queryClient.invalidateQueries({ queryKey: ['leads'] });
         } catch (e) {
-          /* noop */
         }
         await refreshLeadData?.(leadId);
       } catch (error) {
@@ -734,14 +600,6 @@ export function useDynamicInspectionCapture({
     [leadId, scopeCat, refreshLeadData, userId]
   );
 
-  // Move a stored photo to a different slot (category/subcategory) without
-  // re-shooting it. Reuses the image-position endpoint, which re-tags the
-  // salesPhoto and re-files the S3 object when the subcategory changes. Both
-  // source and target are addressed the same way capture uses everywhere:
-  // product-scoped category label + storageName. Port of web `movePhoto`.
-  //
-  // Deliberately NOT optimistic (web parity): nothing touches photosBySubcat, so
-  // the moved photo re-resolves into its new slot purely from the lead refresh.
   const movePhoto = useCallback(
     async ({
       photo,
@@ -760,14 +618,8 @@ export function useDynamicInspectionCapture({
       key?: string;
       fromCategoryAbsolute?: string;
     }) => {
-      // The endpoint is id-based. The salesPhoto identifier is inconsistent across
-      // the API — some payloads expose `_id`, some `id` (the regular/static move in
-      // JobDocsSection uses `.id`). Guarding on `_id` ALONE made the move silently
-      // no-op whenever the photo only carried `id`, so the photo appeared to "not
-      // move". Accept either.
       const photoId = photo?._id || (photo as any)?.id;
       if (!leadId || !photoId) return;
-      // An orphan's category is already absolute (and unscoped); a normal card's needs scoping.
       const fromCatAbs = fromCategoryAbsolute || scopeCat(fromCategoryLabel);
       if (
         norm(fromCatAbs) === norm(scopeCat(toCategoryLabel)) &&
@@ -777,11 +629,6 @@ export function useDynamicInspectionCapture({
       }
       if (key) setMovingKeys((prev) => ({ ...prev, [key]: true }));
 
-      // Optimistically relocate the photo so the rep sees it in the destination slot
-      // immediately (web relies on a fast refetch; on mobile the refetch can lag, so
-      // without this the photo looked like it "didn't move"). The refetch below
-      // reconciles to server truth; `pendingMovesRef` stops a stale replica read from
-      // flashing it back to the old slot in the meantime.
       const fromK = subKey(fromCatAbs, fromSubcategory);
       const toK = subKey(scopeCat(toCategoryLabel), toSubcategory);
       const movedPhoto = { ...photo, category: scopeCat(toCategoryLabel), subcategory: toSubcategory };
@@ -815,12 +662,9 @@ export function useDynamicInspectionCapture({
           queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
           queryClient.invalidateQueries({ queryKey: ['leads'] });
         } catch {
-          /* noop */
         }
         await refreshLeadData?.(leadId);
       } catch {
-        // Move failed — drop the optimistic guard so the refetch can restore the
-        // photo to its real (original) slot instead of stranding it in the target.
         if (photo.s3url) pendingMovesRef.current.delete(photo.s3url);
         await refreshLeadData?.(leadId); // restore truth
       } finally {
@@ -835,10 +679,6 @@ export function useDynamicInspectionCapture({
     [leadId, scopeCat, refreshLeadData]
   );
 
-  // Every stored photo under this category label whose subcategory marks it as
-  // annotated (created by the annotation editor), regardless of slot config.
-  // Returns [{ subcategory, photo }] for the "+ ANNOTATED" section. Port of web
-  // `getAnnotatedFor` — scans every subKey under the product-scoped label.
   const getAnnotatedFor = useCallback(
     (label: string): { subcategory: string; photo: CapturedPhoto }[] => {
       const prefix = `${norm(scopeCat(label))}||`;
@@ -855,7 +695,6 @@ export function useDynamicInspectionCapture({
     [photosBySubcat, scopeCat]
   );
 
-  // Header progress over defined slots + extras (context-selector excluded).
   const progress = useMemo(() => {
     let total = 0;
     let filled = 0;

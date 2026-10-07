@@ -21,7 +21,6 @@ export interface RiskJob {
 }
 
 
-// Shared global state for active risk jobs across hook instances to keep them perfectly synced in real-time
 const activeRiskJobs: Record<string, RiskJob | null> = {};
 const riskJobListeners: Record<string, Set<(job: RiskJob | null) => void>> = {};
 const activePolls = new Set<string>();
@@ -52,20 +51,6 @@ const triggerGlobalRefetch = (leadId: string) => {
   }
 };
 
-/**
- * The real reason a batch failed — ticket: the backend's own message ("This model is
- * currently experiencing high demand...") was never shown; the rep only ever saw the
- * generic "Generation failed".
- *
- * Each failed `batch.jobs[]` entry's `error` is a STRINGIFIED JSON blob a level deeper
- * than it looks: `"{\"error\":{\"code\":503,\"message\":\"...\",\"status\":\"...\"}}"`.
- * Picks the first failed job (a batch of 1 is the overwhelmingly common case; a rep
- * rendering several views at once still gets an actionable message rather than none).
- *
- * ⚠️ Never throws — a batch whose shape doesn't match (a future backend change, or a
- * `cancelled` batch with no per-job error at all) falls back to a plain, still-useful
- * generic message rather than crashing the poll loop.
- */
 const extractBatchFailureMessage = (batch: any): string => {
   const failedJob = Array.isArray(batch?.jobs)
     ? batch.jobs.find((j: any) => j?.status === 'failed' && j?.error)
@@ -77,7 +62,6 @@ const extractBatchFailureMessage = (batch: any): string => {
     const parsed = typeof failedJob.error === 'string' ? JSON.parse(failedJob.error) : failedJob.error;
     backendMessage = parsed?.error?.message || parsed?.message || null;
   } catch {
-    // `error` wasn't JSON — fall through and use it as plain text below.
     backendMessage = typeof failedJob.error === 'string' ? failedJob.error : null;
   }
 
@@ -104,7 +88,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     }
   }, [leadId]);
 
-  // Synchronize state across all instances of this hook using a listener pattern
   useEffect(() => {
     if (!leadId) return;
 
@@ -133,7 +116,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     
     riskJobListeners[leadId].add(listener);
 
-    // Register this instance's refetch callback
     if (!globalRefetchListeners[leadId]) {
       globalRefetchListeners[leadId] = new Set();
     }
@@ -148,7 +130,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     };
   }, [leadId, refetch]);
 
-  // Resolve secure S3 URLs for generated reports
   const refreshSecureUrls = async () => {
     const reports = [
       ...(lead?.generatedReports || []),
@@ -213,7 +194,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             console.log('[Risk] Job completed, final sync...');
             updateRiskJob(null);
 
-            // Log successful report generation
             const address = lead?.fullAddress || lead?.address || '';
             const street = address?.split(',')[0] || '';
             if (user?._id || user?.id) {
@@ -231,12 +211,10 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
               });
             }
             
-            // Invalidate React Query cache to update other screens (MapDetail, LeadCenter, etc.)
             queryClient.invalidateQueries({ queryKey: ['mapJobs'] });
             queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
             queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] });
             
-            // Poll/retry refetch a few times to ensure the server has finalized and linked the report
             let attempts = 0;
             const maxAttempts = 4;
             const refetchWithRetry = async () => {
@@ -255,7 +233,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             console.warn('[Risk] Job failed:', data.error);
             updateRiskJob(null);
 
-            // Log report generation error
             const address = lead?.fullAddress || lead?.address || '';
             const street = address?.split(',')[0] || '';
             if (user?._id || user?.id) {
@@ -284,7 +261,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     [leadId, refetch, updateRiskJob]
   );
 
-  // Coordinated Risk Report Polling Effect: only one polling interval runs per leadId/jobId
   useEffect(() => {
     let interval: any;
     const jobId = riskJob?.jobId;
@@ -318,7 +294,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     };
   }, [riskJob?.jobId, riskJob?.status, pollRiskStatus, leadId]);
 
-  // Initial check for existing rev render jobs
   useEffect(() => {
     const initJobs = () => {
       const savedRev = Storage.getItem(`rev_render_jobs_${leadId}`);
@@ -350,7 +325,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
       updateRiskJob(null);
       FlashMessage.error('Error', 'Failed to start report generation');
 
-      // Log report generation start error
       const address = lead?.fullAddress || lead?.address || '';
       const street = address?.split(',')[0] || '';
       if (user?._id || user?.id) {
@@ -376,7 +350,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
         report ? reportDisplayName(report, 'Risk Report') : `RiskReport_${lead?.leadId || 'lead'}`
       );
     } catch (err) {
-      // Error handled in utility
     }
   };
 
@@ -384,7 +357,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     try {
       await downloadPdfToDevice(url, `${type}_${lead?.leadId || 'lead'}`);
     } catch (err) {
-      // Error handled in utility
     }
   };
 
@@ -394,7 +366,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
       await LeadService.resetWeatherReport(reportId);
       updateRiskJob(null);
       
-      // Invalidate React Query cache
       queryClient.invalidateQueries({ queryKey: ['mapJobs'] });
       queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
       queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] });
@@ -491,9 +462,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
                         resData?.data?.batch?.batchId ||
                         resData?.batch?.id;
 
-        // A single payload's batch can render MORE than one image; capture the count
-        // so the Tools card shows one "AI Rendering" placeholder PER render (not one
-        // per job). Set as early as the create response exposes it.
         const initialTotal = Number(
           resData?.batch?.total ?? resData?.data?.batch?.total ?? resData?.total ?? 0
         ) || 0;
@@ -531,8 +499,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             const batchStatus = batch?.status;
             const batchTotal = batch?.total || 1;
 
-            // Keep the job's render count in sync so the Tools card shows one
-            // placeholder per render while the batch is still generating.
             if (batchTotal > 1) {
               updateJobStateAndPersistence(prev => {
                 const next = [...prev];
@@ -543,13 +509,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
               });
             }
 
-            // ⚠️ `status: 'done'` means the batch finished processing — it is NOT a success
-            // verdict on its own. A batch can finish `'done'` with every job FAILED
-            // (`succeeded: 0, failed: 1`), and reading `'done'` as success here reported a
-            // fully-failed render as a completed one, with no error shown at all — worse than
-            // the generic message this ticket originally complained about. `'done'` must be
-            // checked against the actual counts; `'completed'`/`'succeeded'` are a currently-
-            // unseen API shape kept as a secondary unconditional-success check for safety.
             const batchFinished = batchStatus === 'done' || batchStatus === 'completed' || batchStatus === 'succeeded';
             const anySucceeded = batchStatus === 'completed' || batchStatus === 'succeeded' || (batch?.succeeded || 0) > 0;
             const anyFailed = (batch?.failed || 0) > 0;
@@ -587,7 +546,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
               }
             }
           } catch (pollErr: any) {
-            // Re-throw deliberate failures (failed/cancelled status) so the outer catch handles them
             if (isDone) throw pollErr;
             console.error('Polling error:', pollErr);
           }
@@ -602,14 +560,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
         completedCount++;
         console.error('RevRender Job Error:', err);
         
-        // Ticket: the backend's own failure reason (e.g. "This model is currently
-        // experiencing high demand...") never reached the rep — a batch failure was
-        // thrown from the poll loop above as a plain `Error`, but this catch only ever
-        // looked at `err?.error` (a shape that message never has), so it silently fell
-        // through to a generic string every time. `err.message` now carries the REAL
-        // backend text when the failure came from `extractBatchFailureMessage` above;
-        // the `err?.error` parse stays as a fallback for a differently-shaped error
-        // (e.g. a raw axios error from `generateRevRender` itself failing to start).
         let errorMsg = err?.message || 'Generation failed';
         try {
           const errorBody = typeof err?.error === 'string' ? JSON.parse(err.error) : err?.error;
@@ -617,7 +567,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             errorMsg = errorBody?.error?.message || errorBody?.message || 'AI Model is currently busy. Please try again in a few minutes.';
           }
         } catch {
-          // `err.error` wasn't JSON — `errorMsg` already holds `err.message` from above.
         }
 
         updateJobStateAndPersistence(prev => {

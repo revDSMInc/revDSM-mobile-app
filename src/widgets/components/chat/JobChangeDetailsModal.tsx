@@ -10,24 +10,10 @@ import {
   buildJobChangeSummary,
 } from '../../../utils/job-change-summary';
 
-/**
- * The proposed / declined addendum's before-and-after (spec §4.2).
- *
- * Reads `GET /lead/v1/job-builder-draft/{draftId}/public` — the SAME payload the
- * customer's own consent page renders, which is the point: staff see exactly the
- * before/after the customer was asked to sign. The endpoint needs no auth.
- *
- * ⚠️ All of the diffing lives in `utils/job-change-summary.ts`, not here — the
- * four formatting rules there exist because the two sides of a draft are written
- * by different screens and a naive comparison reports unchanged values as
- * changes.
- */
-
 interface Props {
   visible: boolean;
   draftId: string | null;
   onClose: () => void;
-  /** Approved ⇒ PDF, always. Handed back up so one PDF fetch guard serves both entry points. */
   onOpenPdf: (draftId: string) => void;
   pdfLoading?: boolean;
 }
@@ -84,7 +70,6 @@ export const JobChangeDetailsModal = ({ visible, draftId, onClose, onOpenPdf, pd
       if (!data) throw new Error('Empty response');
       setSummary(buildJobChangeSummary(data));
     } catch (err: any) {
-      // 404 means the draft was hard-deleted — show a state, don't crash the card.
       const status = err?.response?.status;
       setError(
         status === 404
@@ -147,8 +132,6 @@ export const JobChangeDetailsModal = ({ visible, draftId, onClose, onOpenPdf, pd
             )}
           </View>
         ) : summary?.isAccepted ? (
-          // The customer signed after the card was posted. Approved ⇒ PDF, always —
-          // the signed document is the record, so the change rows are suppressed.
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
             <View
               style={{

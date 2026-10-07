@@ -8,28 +8,16 @@ import { LeadService } from '../../../services/api/leads';
 interface SwatchColor {
   name: string;
   hex: string;
-  /**
-   * Optional SECOND hex marking a two-colour COMBINATION swatch (e.g. Lighting
-   * "Wire Color" White/Black). Web (`color-value-utils.js` `isDualColor`) flags the
-   * combination by the presence of `hex2` — NOT a `'both'` sentinel.
-   */
   hex2?: string;
   imageUrl?: string;
   bucketName?: string;
   filePath?: string;
 }
 
-// A palette entry with a second hex is a two-colour COMBINATION swatch, rendered as a
-// 135° half/half split — `hex` top-left, `hex2` bottom-right — exactly like web
-// (`getColorSwatchSx`: `linear-gradient(135deg, hex 50%, hex2 50%)`). RN can't put a
-// gradient in `backgroundColor`, so the swatch rendered blank; we draw the split with
-// SVG using the entry's own two colours (data-driven, not hardcoded white/black).
 function isDualColor(c?: SwatchColor): boolean {
   return Boolean(c && c.hex2);
 }
 
-// Fills its parent (an already-clipped rounded swatch) with the web diagonal split:
-// `topLeft` base + `bottomRight` triangle {TR, BR, BL}, matching the 135° gradient.
 function DiagonalSplit({ topLeft, bottomRight }: { topLeft: string; bottomRight: string }) {
   return (
     <Svg
@@ -52,24 +40,12 @@ interface SwatchPickerProps {
   colors?: SwatchColor[];
   showMoreColors?: boolean;
   accentColor?: string;
-  /**
-   * Web `CompactColorPicker` mode: render a single "＋ Color" box (or the selected
-   * colour + pen icon) that opens the "Select Color" sheet, instead of the inline
-   * 4-up preview grid. Used by `colorSelection` fields (gutter Extras).
-   */
   compact?: boolean;
 }
 
-/**
- * Resolves a secure product-image URL per color (web `useColorSecureImages`):
- * colors carrying `{ bucketName, filePath }` are batched through `getSecureUrls`
- * once; colors that already carry a plain `imageUrl` use it directly. Returns a
- * name → url map so the selected color can show its product image.
- */
 function useColorSecureImages(colors: SwatchColor[]) {
   const [urlByName, setUrlByName] = useState<Record<string, string>>({});
 
-  // Stable signature so the effect only refires when the image sources change.
   const signature = useMemo(
     () => colors.map((c) => `${c.name}:${c.bucketName || ''}:${c.filePath || ''}:${c.imageUrl || ''}`).join('|'),
     [colors],
@@ -117,8 +93,6 @@ function useColorSecureImages(colors: SwatchColor[]) {
   return urlByName;
 }
 
-// Web `CompactColorPicker.isLightColor` — relative-luminance test so text/icon
-// contrast flips to black over a light swatch.
 function isLightHex(hex?: string): boolean {
   const m = /^#([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '');
   if (!m) return false;
@@ -128,9 +102,6 @@ function isLightHex(hex?: string): boolean {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5;
 }
 
-// Matches the normal Job Builder swatch grid (GutterSection): 4-up w-[23%] h-14
-// border-4 swatches, #22C55E selected ring + check, "More Colors" → full modal,
-// the selected color's product image, and the #22C55E "✓ value" chip.
 export function SwatchPicker({
   label,
   value,
@@ -156,7 +127,6 @@ export function SwatchPicker({
     return (
       <TouchableOpacity
         key={c.name}
-        // Web parity (useCanDeselectSelection): re-tapping the selected color clears it.
         onPress={() => {
           onChange?.(selected ? '' : c.name);
           if (size === 'modal') setModalOpen(false);
@@ -166,9 +136,6 @@ export function SwatchPicker({
         <View
           className={size === 'grid' ? 'w-full h-full rounded-xl items-center justify-center' : 'w-full h-14 rounded-xl items-center justify-center'}
           style={{
-            // Combination swatch paints via the SVG split below (its first hex is the
-            // base here); a normal colour paints its hex directly. `overflow: 'hidden'`
-            // clips the split to the rounded corners.
             backgroundColor: both ? (c.hex || '#FFFFFF') : c.hex,
             borderWidth: 4,
             borderColor: selected ? accentColor : '#E2E8F0',
@@ -186,7 +153,6 @@ export function SwatchPicker({
     );
   };
 
-  // Full "Select Color" bottom sheet — shared by the grid and compact modes.
   const colorModal = (
     <Modal visible={modalOpen} transparent animationType="slide" onRequestClose={() => setModalOpen(false)}>
       <View className="flex-1 bg-black/40 justify-end">
@@ -207,11 +173,7 @@ export function SwatchPicker({
     </Modal>
   );
 
-  // Web `CompactColorPicker`: a single bordered box — "＋ Color" when empty, or the
-  // selected colour filled with a pen icon + name — that opens the sheet on press.
   if (compact) {
-    // Web `CompactColorPicker.isLightColor`: pick black text/icon over a light
-    // selected swatch (e.g. white/cream) so the label stays legible.
     const onSelectedColor = isLightHex(selectedHex) ? '#000' : '#fff';
     return (
       <View className="mb-5">

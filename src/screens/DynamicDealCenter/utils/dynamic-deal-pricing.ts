@@ -1,22 +1,9 @@
-// Pricing helpers for the DYNAMIC deal-edit flow (mobile).
-//
-// FAITHFUL port of web `src/sections/deal/components/dynamic-deal-pricing.js`.
-
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import { resolveAllocationMetrics } from '../../../utils/dynamic-job-builder/engine/allocation-value-resolver';
 import { collectAllocationFields } from '../../../utils/dynamic-job-builder/engine/allocation-utils';
 import { extractDealCenterFieldOptions, type DealCenterFieldOption } from './build-deal-center-data';
 import { resolveFieldTierPrice, applyFeesToTier, type PricingConfig } from './pricing-config-util';
 
-// TEMP diagnostic — flip to true to trace the [dealEditPricing] delta computation
-// (mirrors web's `MYDEALFLOW_DEBUG`; logs schemaPrev/schemaNext/delta + changed qty).
-// ⚠️ TEMPORARILY ON to diagnose "price doesn't change when the build changes".
-// Set back to `false` before release — it logs on every keystroke in the wizard.
-// ⚠️ Keep FALSE in anything that ships. When true, every recompute on the Job Price
-// step runs `schemaRetailBreakdown` + `describeBridge` (which rebuilds the calculator
-// details twice and walks every allocation) and emits two `console.warn`s carrying
-// large JSON — on every keystroke. Flip to `true` only while diagnosing a pricing
-// bridge issue; `describeBridge().summary` is the line to read (lead with `allocMoved`).
 const DEAL_PRICING_DEBUG = false;
 
 export interface Tiers {
@@ -30,7 +17,6 @@ export interface EditedTiersResult {
   next: Tiers;
   delta: Tiers;
   changed: boolean;
-  /** Diagnostic line for the on-screen strip. Only set while `DEAL_PRICING_DEBUG`. */
   debug?: string;
 }
 
@@ -47,7 +33,6 @@ export const parsePrice = (val: any): number => {
   return parseFloat(String(val).replace(/[^0-9.-]/g, '')) || 0;
 };
 
-/** Map a UI balance-payment-method (key or label) to the tier engine's payment key. */
 export function resolveTierPaymentMethod(balanceMethod: any): 'amex' | 'mcVisaDscvr' | 'check' {
   const m = String(balanceMethod || '').toLowerCase();
   if (m.includes('amex')) return 'amex';
@@ -57,7 +42,6 @@ export function resolveTierPaymentMethod(balanceMethod: any): 'amex' | 'mcVisaDs
 
 const STRUCTURAL_STATE_KEYS = new Set(['_storageVersion', 'scheduleTime', 'agreements', 'orderSheets']);
 
-// Section-qualified keys so same-id fields in different sections aren't cross-summed.
 const SCOPE_SEP = '::';
 const qualify = (scopeId: string, fieldId: string) => `${scopeId}${SCOPE_SEP}${fieldId}`;
 
@@ -70,15 +54,6 @@ const normName = (s: any): string =>
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
 
-/**
- * One tier's price for a `details` object, mirroring web `calculateResultUtil`'s
- * schema-based branch: read `details.totals` when present (the stored calculator),
- * else sum `details.entries[].computed`, else price the schema fields by looking up
- * each field's quantity in `details` (`field.name`/`field.id`) × `field.price[tier]`.
- * Then gross up by the balance method's bank fee and apply the $200 job minimum —
- * exactly the web tier engine, for both the stored (`previous`) and the
- * schema-priced (`next` delta) computations.
- */
 function tierFor(details: any, markupKey: string, { schemas, paymentMethod, pricingConfig }: TierOpts): number {
   const tierKey = markupToTierKey(markupKey);
   const plan = paymentPlans[paymentMethod || 'check'] || {};
@@ -93,11 +68,6 @@ function tierFor(details: any, markupKey: string, { schemas, paymentMethod, pric
       0
     );
   } else {
-    // Price each schema field's quantity via `resolveFieldTierPrice` (web
-    // `calculateResultUtil`), NOT a bare `field.price[tierKey]` read: a schema that
-    // prices a field at ONE tier (usually retail) and leaves cost/par blank relies
-    // on the company config's derivation rule to fill the others. The old direct
-    // read returned 0 for those derived tiers, so COST/PAR stayed $0.
     (schemas || []).forEach((schema: any) => {
       (schema?.categories || []).forEach((cat: any) => {
         const directFields = cat.directFields || cat.fields || [];
@@ -115,8 +85,6 @@ function tierFor(details: any, markupKey: string, { schemas, paymentMethod, pric
     });
   }
 
-  // Company-authored static fees (web `applyFeesToTier`), gated on line items so a
-  // fee alone never floors an empty job to $200.
   checkRetail = applyFeesToTier(checkRetail, tierKey, pricingConfig, { hasLineItems: checkRetail > 0 });
 
   let price = fee >= 1 ? checkRetail : checkRetail / (1 - fee);
@@ -124,12 +92,6 @@ function tierFor(details: any, markupKey: string, { schemas, paymentMethod, pric
   return Math.round(Number(price) || 0);
 }
 
-/**
- * DIAGNOSTIC: the per-field RETAIL contributions for a `details` map, biggest first.
- * Mirrors the exact lookup `tierFor` uses (`details[field.name] ?? details[field.id]`
- * × retail price) so the log shows precisely which field(s) sum to the retail tier —
- * used to trace a garbage tier back to the stray quantity that produced it.
- */
 function schemaRetailBreakdown(
   details: any,
   schemas: any[],
@@ -161,12 +123,6 @@ function schemaRetailBreakdown(
   return rows.sort((a, b) => b.subtotal - a.subtotal).slice(0, 20);
 }
 
-/**
- * DIAGNOSTIC (gated on `DEAL_PRICING_DEBUG`): report which link of the
- * build→calculator bridge produced — or failed to produce — a quantity. Every
- * value here is derived from the same helpers the real path uses, so it cannot
- * disagree with them. See the call site for how to read it.
- */
 function describeBridge(
   dealCenterData: any,
   originalJobState: any,
@@ -183,11 +139,6 @@ function describeBridge(
   const fieldOptions = extractDealCenterFieldOptions(schemas);
   const prev = buildCalculatorDetails(dealCenterData, originalJobState, config, fieldOptions);
   const next = buildCalculatorDetails(dealCenterData, editedJobState, config, fieldOptions);
-  // ⚠️ NUMERIC keys only. This filter was `Number(next[k]) !== Number(prev[k])`,
-  // which counts every TEXT field as changed — `Number('Micro Mesh')` and
-  // `Number('Versa')` are both NaN and `NaN !== NaN` is true. That inflated the
-  // reported diff (25 on a build where no quantity had moved at all) and made a
-  // correctly-unchanged price look like a broken bridge.
   const isNumericValue = (v: any) =>
     v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
   const overlayDiff = Object.keys(next)
@@ -197,15 +148,9 @@ function describeBridge(
     })
     .slice(0, 25)
     .map((k) => ({ key: k, from: prev[k] ?? null, to: next[k] ?? null }));
-  // THE decisive signal for "why didn't the price move": which allocation totals
-  // actually differ between the original and the edited build. If this is empty,
-  // the rep changed nothing the config maps to a priced quantity — which is a
-  // CONFIG fact, not a broken bridge.
   const allocMoved = Object.keys({ ...allocPrev, ...allocNext })
     .filter((ref) => Number(allocNext[ref] ?? 0) !== Number(allocPrev[ref] ?? 0))
     .map((ref) => ({ ref, from: allocPrev[ref] ?? 0, to: allocNext[ref] ?? 0 }));
-  // Every quantity key the SCHEMA can actually price, so an overlay key that is not
-  // in this set is a ref the schema will silently ignore.
   const schemaKeys = new Set<string>();
   (schemas || []).forEach((s: any) =>
     (s?.categories || []).forEach((c: any) => {
@@ -216,12 +161,6 @@ function describeBridge(
         });
     })
   );
-  // Per-allocation detail (web's `>>mydealflow alloc`): for every allocation the
-  // config declares, whether its tab state was found, what the metric engine
-  // resolved as "used", and which calculator refs that total maps onto. An
-  // allocation whose `optionBinding` doesn't match the rep's selection (e.g. a 5"
-  // gutter allocation while the combo says 7") legitimately resolves 0 — that is
-  // NOT a bug, and this is how to tell it apart from a broken binding.
   const allocDetail: any[] = [];
   (config?.verticals || []).forEach((v: any) =>
     (v.tabs || []).forEach((t: any) => {
@@ -275,11 +214,6 @@ function describeBridge(
     overlayDiff,
     overlayDiffPriceable: priceable,
     flatNextSample: Object.entries(flatNext).slice(0, 12),
-    /**
-     * One line for the on-screen strip. `allocMoved` is the one to read: empty
-     * means no allocation total changed, so there is nothing for the schema to
-     * re-price and an unchanged tier is CORRECT.
-     */
     summary:
       `schemas=${(schemas || []).length} schemaKeys=${schemaKeys.size} ` +
       `alloc=${Object.keys(allocNext).length} allocMoved=${allocMoved.length} ` +
@@ -299,10 +233,6 @@ function tiersFromDetails(details: any, opts: TierOpts): Tiers {
   };
 }
 
-/**
- * Previous/stored tiers from the deal's own calculator snapshot. Uses the
- * calculator's `totals`/`entries` exactly as the deal-center result screen does.
- */
 export function computeStoredTiers(calculatorData: any, opts: TierOpts): Tiers {
   if (!calculatorData || typeof calculatorData !== 'object') {
     return { cost: 0, par: 0, retail: 0 };
@@ -324,11 +254,6 @@ function isNumericLike(v: any): boolean {
   return false;
 }
 
-/**
- * Flatten a runtime dynamic job state into `{ "<scopeId>::<fieldId>": quantity }`,
- * summing numeric leaves and location grids within a section. Scoping by section
- * prevents same-id fields in different sections from being cross-summed.
- */
 export function extractQuantitiesByFieldId(jobState: any): Record<string, number> {
   const map: Record<string, number> = {};
 
@@ -368,8 +293,6 @@ export function extractQuantitiesByFieldId(jobState: any): Record<string, number
         if (group?.sectionState) ingestFieldMap(secId, group.sectionState);
       });
 
-      // Tab-level direct fields / legacy tab-level combinations — skip sectionFields/comboGroups
-      // as they are handled above (sectionFields) and comboGroups.
       const rest: Record<string, any> = {};
       Object.keys(tab).forEach((k) => {
         if (k !== 'sectionFields' && k !== 'comboGroups') rest[k] = (tab as any)[k];
@@ -384,11 +307,6 @@ export function extractQuantitiesByFieldId(jobState: any): Record<string, number
   return map;
 }
 
-/**
- * Map every config field id (section-qualified) → the set of calculator/schema
- * keys it feeds: its `dcField`/`dcFields`, plus its own key/name/id (and the part
- * before `__`). Scoped by section id to match `extractQuantitiesByFieldId`.
- */
 function buildFieldCalcKeyMap(config: any): Record<string, Set<string>> {
   const map: Record<string, Set<string>> = {};
   const walk = (fields: any[], scopeId: string) =>
@@ -416,15 +334,10 @@ function buildFieldCalcKeyMap(config: any): Record<string, Set<string>> {
   return map;
 }
 
-/** Resolve all schema keys a field id should be stored under (id + legacy alias). */
 function collectDealCenterKeysForFieldId(fieldId: string, fieldOptions: DealCenterFieldOption[]): string[] {
   const keys = new Set<string>();
   if (!fieldId) return [];
   keys.add(fieldId);
-  // Canonical match first (unchanged). The legacyKey fallback covers an allocation
-  // that references a field by its legacy `name` instead of its id — without it that
-  // direction of the alias pair is left stale, which is the same shadowing bug the
-  // overlay below exists to prevent, just mirrored.
   const opt =
     (fieldOptions || []).find((o) => o.key === fieldId || o.fieldId === fieldId) ||
     (fieldOptions || []).find((o) => o.legacyKey && o.legacyKey === fieldId);
@@ -435,10 +348,6 @@ function collectDealCenterKeysForFieldId(fieldId: string, fieldOptions: DealCent
   return Array.from(keys);
 }
 
-/**
- * Every calculator field ref an allocation maps to: its own `dcField`/`dcFields`
- * plus the dc refs declared on its metrics' `valueSource`.
- */
 function collectAllocationDcRefs(alloc: any): string[] {
   const refs = new Set<string>();
   const push = (r: any) => {
@@ -456,13 +365,6 @@ function collectAllocationDcRefs(alloc: any): string[] {
   return [...refs];
 }
 
-/**
- * Compute allocation-derived calculator quantities from a job state: for every
- * allocation in the config, resolve its "used" total via the builder's OWN metric
- * engine (honoring optionBinding / contributor / dependency rules) and map that
- * total onto the allocation's calculator refs. This is how gutters/downspouts —
- * which have no direct `dcField` — reach the schema pricing path.
- */
 function buildAllocationQtyMap(jobState: any, config: any, dealCenterData: any = {}): Record<string, number> {
   const map: Record<string, number> = {};
   const add = (ref: any, qty: number) => {
@@ -474,8 +376,6 @@ function buildAllocationQtyMap(jobState: any, config: any, dealCenterData: any =
     (v.tabs || []).forEach((t: any) => {
       let tabState = jobState?.[v.id]?.[t.id];
       if (!tabState) {
-        // The runtime vertical key may differ from the config id — locate the
-        // tab's state by tab id under any vertical entry.
         const verticals = Object.values(jobState || {}).filter(
           (x: any) => x && typeof x === 'object' && !Array.isArray(x)
         );
@@ -509,11 +409,6 @@ function buildAllocationQtyMap(jobState: any, config: any, dealCenterData: any =
   return map;
 }
 
-/**
- * Index the edited build's quantities under every key a calculator entry might
- * match on: by dcField (authoritative), by field id, by normalized name, and
- * by section label. Quantities feeding the same key across sections are summed.
- */
 function buildBuilderQtyIndex(jobState: any, config: any, dealCenterData: any = {}): {
   byDcField: Record<string, number>;
   byId: Record<string, number>;
@@ -562,21 +457,12 @@ function buildBuilderQtyIndex(jobState: any, config: any, dealCenterData: any = 
     })
   );
 
-  // Overlay allocation-derived quantities. `buildAllocationQtyMap` ALREADY emits
-  // both the raw ref and its normalized form as separate keys, so re-adding
-  // `normName(ref)` here counted the normalized key up to three times over.
   const allocMap = buildAllocationQtyMap(jobState, config, dealCenterData);
   Object.entries(allocMap).forEach(([ref, qty]) => addSum(byDcField, ref, qty));
 
   return { byDcField, byId, byName, bySection };
 }
 
-/**
- * Rebuild calculator entries from the edited build: for each priced entry,
- * find its build quantity by the strongest available link (dcField, id,
- * name, section) and recompute tiers. Returns null when the calculator has
- * no entries array.
- */
 export function rebuildCalculatorEntries(
   calculatorData: any,
   editedJobState: any,
@@ -650,13 +536,6 @@ export function rebuildCalculatorEntries(
   return { entries: nextEntries, changed };
 }
 
-/**
- * Reconstruct the calculator quantity map (keyed by schema field id/name) from the
- * deal-center baseline overlaid with the build's current field values. Editing a
- * formerly-locked deal-center field (which carries `dcField`) rewrites that
- * calculator quantity; allocation-derived quantities (gutters/downspouts) are
- * overlaid too — so the schema pricing path recomputes the tiers.
- */
 export function buildCalculatorDetails(
   dealCenterData: any,
   jobState: any,
@@ -664,14 +543,11 @@ export function buildCalculatorDetails(
   fieldOptions: DealCenterFieldOption[]
 ): Record<string, any> {
   const base: Record<string, any> = { ...(dealCenterData || {}) };
-  // Mobile dealCenterData carries no `__fieldOptions`, but strip defensively.
   delete base.__fieldOptions;
   if (!jobState || !config) return base;
 
   const flat = extractQuantitiesByFieldId(jobState);
   const keyMap = buildFieldCalcKeyMap(config);
-  // Accumulate per calculator key so several sections feeding the SAME calc key
-  // (shared `dcField`) sum instead of clobbering.
   const perKey: Record<string, number> = {};
   Object.entries(keyMap).forEach(([qid, keys]) => {
     const val = flat[qid];
@@ -682,29 +558,10 @@ export function buildCalculatorDetails(
   });
   Object.entries(perKey).forEach(([k, v]) => {
     base[k] = v;
-    // Propagate to every schema alias (legacy name) so the schema pricing path
-    // finds the overlaid quantity regardless of which name the schema field uses.
     collectDealCenterKeysForFieldId(k, fieldOptions).forEach((alias) => {
       if (alias !== k) base[alias] = v;
     });
   });
-  // Overlay allocation-derived quantities (gutter footage, downspouts, …).
-  //
-  // The alias propagation here is REQUIRED, not defensive — without it a build edit
-  // can be silently unpriceable. `tierFor` reads `details[field.name] ?? details[field.id]`
-  // and `??` does NOT fall through on 0, so whichever alias `dealCenterData` already
-  // holds wins. A mobile calculator seeds EVERY schema field at `inputValue: 0`
-  // (`build-all-entries.ts`, web parity) and `buildDealCenterData` writes each entry
-  // under BOTH the field id and its legacy `name`. Writing only the raw ref therefore
-  // left `details[field.name] === 0` shadowing the overlaid quantity: the LeafFilter
-  // footage reached `base` under the id, `tierFor` read the 0 under the name, and the
-  // deal-edit wizard reported "No priced quantity change detected from the build"
-  // while the Job Build summary showed the change. It only bites when the calculator
-  // carries an entry for the field, which is why a deal created on WEB re-priced and
-  // the same edit on a MOBILE-created deal did not.
-  //
-  // ⚠️ Web (`dynamic-deal-pricing.js:234`) is byte-identical to the old code and has
-  // the same latent bug — this is a deliberate divergence, not a port gap.
   const allocMap = buildAllocationQtyMap(jobState, config, dealCenterData);
   Object.entries(allocMap).forEach(([ref, qty]) => {
     if (!qty) return;
@@ -716,28 +573,6 @@ export function buildCalculatorDetails(
   return base;
 }
 
-/**
- * Full guided-pricing recompute (web `computeEditedTiers`). `previous` = the deal's
- * actual stored tiers; `next` = `previous + delta`, where the delta is the edited
- * build priced against the calculator SCHEMA minus the original build so priced.
- */
-/**
- * The contract price, never below what the build COSTS.
- *
- * ⚠️ **Auto Adjust must not hand back a price this screen then refuses.** It sets the
- * price by preserving the deal's ORIGINAL markup against the rebuilt tiers, and that
- * markup can itself be below cost — a deal sold at `COST −5%` reproduces −5% against
- * the new cost, which is faithful and invalid at once. The rep is then looking at a red
- * *"Cannot be below the cost of $X"* under a figure a button just produced, with
- * **Confirm** dead and nothing saying why. It shows up most on a REFUND, where pricing
- * down is the whole point and the floor is the last thing between them and Confirm.
- *
- * ⚠️ **Clamp; never relax the floor for a refund.** Waiving it would sell the job below
- * what it costs to build, which is the one thing the rule exists to stop. The floor is a
- * business rule and Auto Adjust is a convenience, so the convenience yields.
- *
- * A missing or zero floor is a no-op: an unpriced build must not drag the price to 0.
- */
 export function clampToCostFloor(price: number, cost: number): { price: number; clamped: boolean } {
   const floor = Number(cost) || 0;
   const value = Number(price) || 0;
@@ -770,18 +605,9 @@ export function computeEditedTiers({
 }): EditedTiersResult {
   const opts: TierOpts = { schemas, paymentMethod, isLowesLead, pricingConfig };
   const clamp = (v: number) => Math.max(0, Math.round(v));
-  // Use the deal's REAL stored tiers to decide `previous`; DON'T let the
-  // contract-price fallback stand in, or it poisons the branch selection below.
-  // Mobile never persists LFCalculator (see DynamicDealEditScreen note), so on a
-  // dynamic deal `computeStoredTiers` is all-zero and we must price `previous`
-  // from the schema instead — otherwise COST/PAR read $0 and only RETAIL (the
-  // contract price) shows on the Previous card.
   const rawStored = computeStoredTiers(calculatorData, opts);
   const storedHasValue = !!(rawStored.cost || rawStored.par || rawStored.retail);
   const contractRetail = parsePrice(originalContractPrice);
-  // Contract-price fallback (RETAIL only) — applied ONLY when nothing else priced
-  // the build, so a legacy deal with neither totals nor schema-priceable build is
-  // never left fully blank.
   const withContractFallback = (t: Tiers): Tiers =>
     t.cost || t.par || t.retail
       ? t
@@ -804,31 +630,14 @@ export function computeEditedTiers({
     };
     let debugLine: string | undefined;
     if (DEAL_PRICING_DEBUG) {
-      // Per-field retail breakdown of the PREVIOUS build — the biggest contributors
-      // to schemaPrev.retail. A garbage tier (e.g. $268k on a $500 job) shows up here
-      // as one field with an absurd `qty` (a stray large value the schema priced) or
-      // as far more line items than the rep actually entered.
       const breakdown = schemaRetailBreakdown(stripped(prevDetails), schemas, opts.pricingConfig);
       // eslint-disable-next-line no-console
       console.warn('[dealEditPricing]', JSON.stringify({ stored: rawStored, schemaPrev, schemaNext, delta, topRetailFields: breakdown }));
-      // WHY the delta is what it is. `delta: 0` with a real build edit means the
-      // bridge found nothing — this says at which link it broke:
-      //   flatNext 0            → the edited job state never reached here
-      //   keyMapHits 0          → config field ids don't line up with the state's
-      //                           section-qualified keys (scope drift)
-      //   allocRefs 0           → no allocation mapped a quantity to a calculator ref
-      //   allocMoved []         → the build changed nothing that maps to a priced
-      //                           quantity. NOT a bridge failure — read the config
-      //                           before touching code (see the LeafFilter note in
-      //                           CLAUDE.md: only grid column sums move that tab).
-      //   priceable 0 w/ moves  → refs moved but aren't schema field ids/names
       const bridge = describeBridge(dealCenterData, originalJobState, editedJobState, config, schemas);
       debugLine = bridge.summary;
       // eslint-disable-next-line no-console
       console.warn('[dealEditPricing:bridge]', JSON.stringify(bridge));
     }
-    // Real stored totals win; otherwise the schema-priced ORIGINAL build (which
-    // carries COST/PAR/RETAIL), and only then the bare contract-price fallback.
     const previous = withContractFallback(storedHasValue ? rawStored : schemaPrev);
     return {
       debug: debugLine,
@@ -843,8 +652,6 @@ export function computeEditedTiers({
     };
   }
 
-  // Entry-based rebuild path: when calculator has entries but no schemas,
-  // rebuild entries from the edited build and recompute tiers.
   const rebuilt = rebuildCalculatorEntries(calculatorData, editedJobState, originalJobState, config, dealCenterData);
   if (rebuilt) {
     const calcNoTotals = { ...calculatorData, totals: undefined };
@@ -871,7 +678,6 @@ export function computeEditedTiers({
     };
   }
 
-  // Schema-overlay bridge fallback: price build fields against schema.
   const prevDc = tiersFromDetails(
     buildCalculatorDetails(dealCenterData, originalJobState, config, []),
     opts
@@ -898,17 +704,6 @@ export function computeEditedTiers({
   };
 }
 
-/**
- * COST/PAR/RETAIL markup label + % for the price input badge. FAITHFUL port of web
- * `dynamic-deal-edit-modal.js:getMarkupInfo`. Express the price as a POSITIVE
- * premium over the nearest LOWER tier (order tiers low→high, pick the highest tier
- * the price is at or above), NOT the nearest tier by absolute distance. This is what
- * keeps the RETAIL % consistent between the Previous and New cards: Auto Adjust sets
- * `newContract = next.retail × (originalContract / previous.retail)`, so when the
- * original price sits at/above retail both cards read RETAIL and the SAME +X%
- * (X = (originalContract − previous.retail) / previous.retail). The old nearest-tier
- * logic could snap the New badge to a different tier and show a different %.
- */
 export function getMarkupInfo(
   price: any,
   tiers: Tiers | undefined | null,

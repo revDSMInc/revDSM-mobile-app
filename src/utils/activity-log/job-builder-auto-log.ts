@@ -13,7 +13,6 @@ export const JOB_BUILDER_STORIES = ['1ST STORY', '2ND STORY', '3RD STORY'] as co
 
 export const JOB_BUILDER_STORY_LABELS = ['1st Story', '2nd Story', '3rd Story'] as const;
 
-/** Gutter grid: location × story (lIdx * 3 + sIdx). LeafFilter/Lighting: story × location. */
 export function measurementIndexToLabels(
   mIdx: number,
   layout: 'gutter' | 'leaffilter' | 'lighting'
@@ -54,11 +53,6 @@ export function normalizeLoggedSections(raw: unknown): Record<string, boolean> {
   return loggedSections;
 }
 
-/**
- * ⚠️ `calculatorId` is REQUIRED in practice: the outcome endpoint is
- * calculator-scoped since the bare lead-scoped route was deprecated. Callers that
- * cannot resolve one get the empty shape rather than a 404 round trip.
- */
 export async function fetchJobBuilderLoggedSections(leadId: string, calculatorId?: string | null) {
   if (!calculatorId) {
     return { payload: {}, jobBuilder: {}, loggedSections: normalizeLoggedSections(undefined) };
@@ -95,7 +89,6 @@ export async function markAutoFieldsLogged(
   }
 }
 
-/** Strip noise from calculator titles in log meta only (not UI). */
 export function sanitizeCalculatorLogTitle(title: string): string {
   return (title || '')
     .replace(/⚠️/g, '')
@@ -114,7 +107,6 @@ function isLoggableJobBuilderValue(value: unknown): boolean {
   return true;
 }
 
-/** Only log when a value is set or cleared — not when empty placeholders are auto-initialized. */
 export function shouldLogJobBuilderFieldChange(oldValue: unknown, newValue: unknown): boolean {
   if (String(oldValue ?? '') === String(newValue ?? '')) return false;
   return isLoggableJobBuilderValue(newValue) || isLoggableJobBuilderValue(oldValue);

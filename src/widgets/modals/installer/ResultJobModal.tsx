@@ -24,48 +24,15 @@ interface Props {
   visible: boolean;
   result: InstallerResultType | null;
   submitting?: boolean;
-  /**
-   * Evidence captured so far. Owned by the parent (it lives in `InstallProgress`) so a
-   * shot still uploading when Submit is pressed is drained rather than dropped.
-   */
   photos?: CapturedPhoto[];
-  /**
-   * How many captures are still being sent to S3.
-   *
-   * Submitting drains these before the result goes out, so without this the sheet sat
-   * silent after the tap for as long as the upload took — no spinner, no message,
-   * nothing to say the app was doing anything.
-   */
   uploadingCount?: number;
-  /** A shot was taken — the parent stores it and starts the upload. */
   onPhotoCaptured?: (reason: string, photo: CapturedPhoto) => void;
-  /** Resolves once the photo is gone from the server too; the ✕ spinner waits on it. */
   onRemovePhoto?: (photo: CapturedPhoto) => void | Promise<void>;
-  /**
-   * Customer name for the sales-style appointment scheduler (Not Hit / Reset).
-   */
   customerName?: string;
   onClose: () => void;
   onConfirm: (reason: string, proposedSchedule?: ProposedSchedulePayload) => void;
 }
 
-/**
- * Results a job the installer can't complete.
- *
- * A reason is mandatory — an unexplained non-completion is what the Install Manager
- * can't action, so confirm stays disabled until one is picked.
- *
- * Once a reason IS picked, the installer attaches photos of what stopped them. The
- * strip is the same one the Pre-Existing Conditions step uses (52 px tiles, a ✕ per
- * tile that confirms before deleting), because it is the same job: evidence that only
- * means something next to the label explaining it.
- *
- * **Can't Do Work requires at least one photo** — that result puts the install back on
- * the schedule and someone has to justify the return trip, which a sentence alone
- * doesn't. Not Hit does not: "Car Broke Down" and "Medical Emergency" have nothing at
- * the job site to photograph, and demanding one would strand an installer reporting
- * exactly those.
- */
 export function ResultJobModal({
   visible,
   result,
@@ -87,10 +54,6 @@ export function ResultJobModal({
     null
   );
 
-  // Reasons are per-result-type, so a stale pick must not survive a type change.
-  // Photos are deliberately NOT cleared here: switching reason after shooting is
-  // common ("Weather" → "Roof Access Unsafe"), and the shots are still the evidence.
-  // `buildResultStepData` re-stamps them with whichever reason is finally submitted.
   useEffect(() => {
     setReason(null);
     setCameraOpen(false);
@@ -108,7 +71,6 @@ export function ResultJobModal({
   const reasons = INSTALLER_RESULT_REASONS[result] ?? [];
   const canAttach = !!reason && !!onPhotoCaptured;
 
-  /** Can't Do Work must be evidenced; Not Hit need not be. */
   const photosRequired = result === "Can't Do Work" && !!onPhotoCaptured;
   const needsPhoto = photosRequired && photos.length === 0;
   const needsSchedule = result === 'Not Hit' || result === 'Reset';
@@ -117,8 +79,6 @@ export function ResultJobModal({
   const isUploading = uploadingCount > 0;
   const photoWord = `photo${uploadingCount === 1 ? '' : 's'}`;
 
-  // The camera takes the whole sheet rather than stacking another modal on top of it —
-  // a viewfinder inside a 85 %-height bottom sheet is unusable.
   if (cameraOpen && reason) {
     return (
       <Modal visible={visible} animationType="slide" onRequestClose={() => setCameraOpen(false)}>
@@ -136,8 +96,6 @@ export function ResultJobModal({
   return (
     <>
     <Modal
-      // Hide this sheet while the scheduler is up. RN will not show a second Modal
-      // on top of this one (same pattern as EditContractDetailsModal).
       visible={visible && !schedulerOpen}
       transparent
       animationType="slide"
@@ -149,10 +107,6 @@ export function ResultJobModal({
           className="w-full rounded-t-[32px] px-6 pt-5"
           style={{
             backgroundColor: isDark ? colors.surface : colors.background,
-            // Clears the system bar the sheet now paints UNDER (`EDGE_TO_EDGE_MODAL` on the
-            // Modal above). The bar overlays this padding rather than sitting below it, so what
-            // the installer SEES under the last button is the same on a 3-button bar, a gesture
-            // pill and an iOS home indicator alike.
             paddingBottom: footerBottomPadding(insets.bottom),
             maxHeight: '85%',
           }}
@@ -377,9 +331,6 @@ export function ResultJobModal({
             }}
           >
             {submitting ? (
-              // A bare spinner didn't say WHICH wait this is. Draining a photo upload on
-              // a bad connection is much longer than the result request itself, and
-              // "Uploading…" is what stops that looking like a hang.
               <View className="flex-row items-center">
                 <ActivityIndicator color="#fff" />
                 <Text className="text-white text-base font-bold ml-2">

@@ -24,8 +24,6 @@ import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
 
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 export interface AmendmentChange {
   key: string;
   label: string;
@@ -48,16 +46,12 @@ interface ContractAmendmentModalProps {
   draftId?: string | null;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 function formatValue(v: any): string {
   if (v == null || v === '') return '—';
   return String(v);
 }
 
 
-
-// ─── Component ────────────────────────────────────────────────────────────────
 
 export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
   visible,
@@ -77,7 +71,6 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
 
-  // ── Signature state — same pattern as ConsentFormModal ────────────────────
   const [showSigPad, setShowSigPad] = useState(false);
   const [savedPaths, setSavedPaths] = useState<string[]>([]);
   const [livePaths, setLivePaths] = useState<string[]>([]);
@@ -130,14 +123,12 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
     setCurrentPath('');
   };
 
-  // ── Send sub-view state ────────────────────────────────────────────────────
   type SendMode = 'sms' | 'email';
   const [sendView, setSendView] = useState<SendMode | null>(null);
   const [sendTo, setSendTo] = useState('');
   const [sendSubject, setSendSubject] = useState('Contract Amendment Signature Required');
   const [sending, setSending] = useState(false);
 
-  // Reset on open
   React.useEffect(() => {
     if (visible) {
       setSavedPaths([]);
@@ -149,17 +140,14 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
     }
   }, [visible]);
 
-  // ── Public link ───────────────────────────────────────────────────────────
   const publicLink = useMemo(() => {
     if (!leadId) return '';
     let base: string = ENV.API_URL || '';
 
-    // Clean up trailing slash
     if (base.endsWith('/')) {
       base = base.slice(0, -1);
     }
 
-    // Map backend server URL to its corresponding web app frontend client URL
     if (base.includes('dev-api.revdsm.com')) {
       base = 'https://dev-sales.revdsm.com';
     } else if (base.includes('staging-api.revdsm.com')) {
@@ -167,7 +155,6 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
     } else if (base.includes('api.revdsm.com')) {
       base = 'https://sales.revdsm.com';
     } else {
-      // General regex fallback: replace -api with -app or remove api prefix
       base = base.replace('-api', '-app').replace('api.', 'app.').replace('/api', '');
     }
 
@@ -189,8 +176,6 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
     [publicLink, customerFirstName, customerLastName]
   );
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-  /** Formats only the local 10-digit part as (XXX) XXX-XXXX, no +1 prefix. */
   const formatLocalPhone = (text: string): string => {
     const digits = text.replace(/\D/g, '').slice(-10).substring(0, 10);
     if (!digits) return '';
@@ -199,11 +184,9 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
     return `(${digits.substring(0, 3)}) ${digits.substring(3, 6)}-${digits.substring(6)}`;
   };
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
   const handleOpenSend = (mode: SendMode) => {
     setSendView(mode);
     if (mode === 'sms') {
-      // Strip country code and format only the local part
       const digits = defaultPhone.replace(/\D/g, '').replace(/^1/, '').slice(-10);
       setSendTo(formatLocalPhone(digits));
     } else {
@@ -219,7 +202,6 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
       return;
     }
 
-    // Clean and format phone number for Twilio (enforce US format: +1 followed by 10 digits)
     if (sendView === 'sms') {
       const digits = to.replace(/\D/g, '');
       if (digits.length >= 10) {
@@ -284,7 +266,6 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
 
   const canSubmit = !submitting && savedPaths.length > 0;
 
-  // ── Render helpers ────────────────────────────────────────────────────────
   const renderChangeRow = (c: AmendmentChange) => (
     <View key={c.key} style={{ marginBottom: 8 }}>
       <Text style={styles.changeLabel}>{c.label}</Text>
@@ -296,7 +277,6 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
     </View>
   );
 
-  // ── Send sub-modal ─────────────────────────────────────────────────────────
   if (visible && sendView) {
     const cleanDigits = sendTo.replace(/\D/g, '');
     const canSend = sendView === 'sms' ? cleanDigits.length === 10 : sendTo.trim().length > 0;
@@ -427,7 +407,6 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
     );
   }
 
-  // ── Main modal ─────────────────────────────────────────────────────────────
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
@@ -690,8 +669,6 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
   );
 };
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
@@ -719,7 +696,6 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
 
-  // Warning
   warningBanner: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -732,7 +708,6 @@ const styles = StyleSheet.create({
   },
   warningText: { flex: 1, fontSize: 13, lineHeight: 18 },
 
-  // Changes card
   changesCard: { borderRadius: 16, overflow: 'hidden', marginBottom: 20 },
   changesHeader: { paddingHorizontal: 16, paddingVertical: 12 },
   changesTitle: { fontWeight: '700', fontSize: 13 },
@@ -752,7 +727,6 @@ const styles = StyleSheet.create({
   },
   changeNew: { fontSize: 13, fontWeight: '800', color: '#4CBB17' },
 
-  // Signature section
   sigSectionTitle: { fontSize: 13, fontWeight: '700', marginBottom: 8 },
   sigThumbnail: {
     width: '100%',
@@ -782,7 +756,6 @@ const styles = StyleSheet.create({
   sigClearLinkText: { color: '#FF5630', fontWeight: '700', fontSize: 12 },
   sigHint: { fontSize: 11, color: '#919EAB', marginTop: 6 },
 
-  // OR
   orRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 16 },
   orLine: { flex: 1, height: 1 },
   orText: {
@@ -794,7 +767,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
 
-  // Send chips
   sendRow: { flexDirection: 'row', gap: 10, marginBottom: 24 },
   sendChip: {
     flex: 1,
@@ -809,7 +781,6 @@ const styles = StyleSheet.create({
   },
   sendChipText: { fontWeight: '800', color: '#4CBB17', fontSize: 13 },
 
-  // Footer
   cancelBtn: {
     height: 52,
     borderRadius: 16,
@@ -830,7 +801,6 @@ const styles = StyleSheet.create({
   },
   submitBtnText: { fontWeight: '900', fontSize: 15, letterSpacing: 0.3 },
 
-  // Send sub-view inputs
   fieldLabel: {
     fontSize: 10,
     fontWeight: '900',
@@ -862,7 +832,6 @@ const styles = StyleSheet.create({
   },
   sendBtnText: { fontWeight: '900', color: 'white', fontSize: 14 },
 
-  // ── Inline signature pad overlay (identical to ConsentFormModal) ──
   sigOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.55)',

@@ -16,13 +16,7 @@ interface DraggableTextProps {
   setShowStylePanel: (show: boolean) => void;
   handleDeleteTextNote: (id: string) => void;
   handleMoveText: (id: string, newPx: number, newPy: number) => void;
-  /**
-   * Live pinch scale of the canvas. `gestureState.dx/dy` are SCREEN pixels while the
-   * note's position is stored in canvas units, so at 3x an untouched drag would carry
-   * the note three times as far as the finger. Same correction the stroke layer applies.
-   */
   zoomScale?: number;
-  /** False while the rep is in Zoom mode, so a pinch that lands on a note pans instead of dragging it. */
   dragEnabled?: boolean;
 }
 

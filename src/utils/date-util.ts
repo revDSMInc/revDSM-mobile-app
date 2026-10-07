@@ -1,17 +1,11 @@
 import { parseISO, isValid } from 'date-fns';
 
-/**
- * Robust date parser that handles ISO strings, slash-formatted dates (M/D/YYYY),
- * and standard date parsing safely across all JS runtimes (including Hermes).
- */
 export function parseSafeISO(dateStr: string | null | undefined): Date {
   if (!dateStr) return new Date(NaN);
   
-  // Try parsing as ISO first (standard date-fns method)
   const parsedISO = parseISO(dateStr);
   if (isValid(parsedISO)) return parsedISO;
 
-  // Check for M/D/YYYY or MM/DD/YYYY formats
   if (typeof dateStr === 'string' && dateStr.includes('/')) {
     const parts = dateStr.split('/');
     if (parts.length === 3) {
@@ -25,7 +19,6 @@ export function parseSafeISO(dateStr: string | null | undefined): Date {
     }
   }
 
-  // Fallback to native Date constructor
   const nativeDate = new Date(dateStr);
   return nativeDate;
 }

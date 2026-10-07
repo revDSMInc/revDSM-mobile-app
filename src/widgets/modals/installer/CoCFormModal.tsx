@@ -30,56 +30,22 @@ import type {
   InstallerJob,
 } from '../../../config/types/installer';
 
-/**
- * Certificate of Completion — Install, signed on the device.
- *
- * ⚠️ **The FIELDS are the paper certificate's**, one for one: the review note, the three
- * attestations (18+, authorised to sign, installed per contract), Installer's Signature
- * beside Job #, Customer's Signature beside Date, and the relationship to the homeowner.
- * Nothing on the paper form is left out and nothing is added to it — the customer's name,
- * phone, email and address are not on the certificate and are not asked for here; the job
- * record already carries them.
- *
- * ⚠️ **The CHROME is the sales Customer Consent Form's**
- * (`widgets/modals/lead-center/ConsentFormModal.tsx`), requested as a design port: the
- * same green header with its Paper Fallback pill, floating-label fields, dashed signature
- * boxes over an in-card pad, checkbox treatment, exit confirmation and footer.
- *
- * ⚠️ **What leaves this component:** `onSignatureCaptured` per saved signature (a JPEG
- * for the images endpoint) and `onSubmit` for the form itself, which the step turns into
- * `stepData.coc`. It makes no requests of its own, and no PDF is produced — the sales
- * modal generates one, this does not, so the SCAN path (onPaperFallback) is still the
- * only route that files the paper document.
- */
-
-/**
- * Who the signer is, from the certificate's relationship boxes.
- *
- * Re-exported rather than redeclared — this used to be its own two-value union, and a
- * third value on the wire would have left the form unable to represent it.
- */
 export type CoCRelationship = CocRelationshipType;
 
-/** What the form hands back on submit. Device-local — see the note above. */
 export interface CoCFormData {
   jobNumber: string;
   date: string;
-  /** All three must be true to submit — the certificate is void without them. */
   isAdult: boolean;
   isAuthorizedSigner: boolean;
   installedPerContract: boolean;
   relationship: CoCRelationship;
-  /** Free text, only when `relationship` is `other`. */
   relationshipOther: string;
-  /** SVG path commands from the pad, in pad coordinates. */
   installerSignaturePaths: string[];
   customerSignaturePaths: string[];
-  /** The pad's size when they were drawn — the viewBox those paths replay in. */
   signatureSize: { width: number; height: number };
   signedAt: string;
 }
 
-/** Which signature the pad is currently collecting. */
 type SignatureSlot = 'installer' | 'customer';
 
 interface Props {
@@ -87,69 +53,18 @@ interface Props {
   job: InstallerJob;
   onClose: () => void;
   onSubmit: (data: CoCFormData) => void;
-  /** Drops to the document scanner — the sales form's "Paper Fallback" pill. */
   onPaperFallback: () => void;
-  /**
-   * Fired as each signature is SAVED, not at submit — one call per signature, with a
-   * JPEG on disk ready for `installer/v1/{jobId}/images`.
-   *
-   * WARNING: saving is the right moment. Submit is gated behind the three
-   * attestations, so uploading there would leave a signed certificate with nothing
-   * sent until every box happened to be ticked. Re-signing uploads again, which is
-   * intended — each saved signature is its own image.
-   */
   onSignatureCaptured?: (uri: string, who: SignatureSlot) => void;
-  /**
-   * The certificate already on file, from `stepData.coc` on the check-in response.
-   *
-   * Reopening the form shows what was actually FILED, not what this device happens to
-   * remember — so a certificate signed on another phone, or before a reinstall, comes
-   * back complete. The strokes only exist where they were drawn, so a signature
-   * restored from the server is shown as its uploaded IMAGE.
-   */
   initial?: CocSignOff | null;
-  /**
-   * The certificate the backend read off a SCANNED paper form, from the Paper Fallback
-   * pill (`utils/installer-coc-scan.ts`).
-   *
-   * OUTRANKS `initial` and the derived defaults, field by field: it is the paper in the
-   * crew's hand and the customer has already signed it, so its Job # and its date are
-   * the certificate's own rather than this job record's and today's. A field the page
-   * did not carry is `undefined` and falls through to what the form would have shown.
-   */
   scanned?: CocScanFields | null;
-  /**
-   * Shown as a blocking card over the form while something the crew is waiting on runs
-   * — today, the backend reading a scanned page. `null` when nothing is pending.
-   *
-   * ⚠️ An in-card OVERLAY, not a second `Modal`. A native modal raised over this one is
-   * the thing that wedges iOS (see `CoCStep.handlePaperFallback`), and it is why the
-   * signature pad and the exit prompt below are overlays too.
-   */
   busyLabel?: string | null;
   submitting?: boolean;
 }
 
-/**
- * The header's "Paper Fallback" pill — SHOWN again, by request.
- *
- * ⚠️ It is the ONLY entry point to the document scanner in this step — the result
- * screen's own Scan button was removed earlier and stays removed — so turning this
- * back off means the certificate can only be signed on the device.
- *
- * Kept as a flag rather than inlined: the whole scan path — `onPaperFallback` here,
- * `startScan` and the page grid in `CoCStep` — hangs off it, so switching the button
- * off (or on again) is this one boolean.
- */
 const SHOW_PAPER_FALLBACK = true;
 
 const two = (n: number) => n.toString().padStart(2, '0');
 
-/**
- * Hand-rolled rather than `toLocaleDateString`, for the reason
- * `utils/inspection-photos.ts` records: it cannot be relied on unless Intl data is
- * compiled into the JS engine.
- */
 const todayMMDDYYYY = () => {
   const d = new Date();
   return `${two(d.getMonth() + 1)}/${two(d.getDate())}/${d.getFullYear()}`;
@@ -169,24 +84,8 @@ export function CoCFormModal({
 }: Props) {
   const { colors, isDark } = useTheme();
   const { t } = useTranslation();
-  // Every interaction on this form is logged from HERE — the step only sees the
-  // submitted certificate, so it cannot report what was ticked, cleared or abandoned.
   const log = useInstallerActivityLog();
 
-  /**
-   * Job # and Date are READ-ONLY, and derived rather than entered.
-   *
-   * The job number is the record's, shown as filed or as `N/A` when the endpoint sent
-   * none — a crew standing at the house cannot know it, and a typo here files the
-   * certificate against the wrong job. The date is TODAY, because today is when it is
-   * being signed; re-signing an existing certificate re-dates it, which is the honest
-   * record of when the signatures were taken.
-   *
-   * WARNING: a SCANNED certificate overrides both. The paper carries its own Job # and
-   * its own date, the customer has already signed against them, and showing this job
-   * record's number and today's date beside a document that says otherwise would file
-   * two different answers for the same certificate.
-   */
   const jobNumber =
     scanned?.jobNumber || job.jobNumber || job.leadDisplayId || job.leadId || 'N/A';
   const signedDate = scanned?.date || todayMMDDYYYY();
@@ -196,12 +95,6 @@ export function CoCFormModal({
       scanned?.relationshipOther ?? initial?.customer?.otherRelationship ?? '',
   });
 
-  /**
-   * WARNING: `??`, not `||`, on every scanned box. A box the page reported as UNTICKED
-   * is `false` and must stay unticked; `||` would fall through to the filed certificate
-   * and tick it back on, which is an attestation nobody made. `undefined` — the page did
-   * not say — is the only case that falls through.
-   */
   const [attest, setAttest] = useState({
     adult: scanned?.isAdult ?? !!initial?.confirmations?.is18OrOlder,
     authorized: scanned?.isAuthorizedSigner ?? !!initial?.confirmations?.isHomeownerOrAuthorized,
@@ -210,33 +103,17 @@ export function CoCFormModal({
       !!initial?.confirmations?.installationCompletedAsPerContract,
   });
 
-  /**
-   * Deliberately UNSET until the signer picks one.
-   *
-   * The paper form has two boxes and neither is pre-ticked. Defaulting to "Homeowner"
-   * would put an attestation about who is signing into the record without anyone having
-   * made it — the one thing on this certificate that must be an active choice.
-   */
   const [relationship, setRelationship] = useState<CoCRelationship | null>(
     scanned?.relationship ?? initial?.customer?.relationshipType ?? null
   );
 
-  // Cancel / header-✕ raise a confirmation rather than dismissing, so a half-signed
-  // certificate can't be lost to a stray tap. Sales does the same, for the same reason.
   const [showExitConfirm, setShowExitConfirm] = useState(false);
 
-  // ── Signature state (ported from the sales form, one pad serving two slots) ──
   const [signatures, setSignatures] = useState<Record<SignatureSlot, string[]>>({
     installer: initial?.installerSignaturePaths ?? [],
     customer: initial?.customerSignaturePaths ?? [],
   });
 
-  /**
-   * The filed signature images, for the slots this device has no strokes for.
-   *
-   * A slot counts as SIGNED when it has either — otherwise reopening a filed
-   * certificate would demand two fresh signatures to change a tick box.
-   */
   const filedSignature: Record<SignatureSlot, string | undefined> = {
     installer: initial?.installerSignatureUrl,
     customer: initial?.customerSignatureUrl,
@@ -252,22 +129,12 @@ export function CoCFormModal({
     height: 260,
   });
 
-  /**
-   * Off-screen rasterisation surfaces, one per signature.
-   *
-   * ⚠️ They are positioned off-screen rather than hidden: `react-native-view-shot`
-   * draws a real, laid-out view, so `display: none`, zero size or `opacity: 0` all
-   * capture nothing. They are also a FIXED size, independent of the preview box the
-   * installer sees — the uploaded image must not change with the phone or with how
-   * far the form happens to be scrolled.
-   */
   const installerShot = React.useRef<View>(null);
   const customerShot = React.useRef<View>(null);
 
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        // Claim the touch immediately, or the ScrollView underneath steals the stroke.
         onStartShouldSetPanResponder: () => true,
         onStartShouldSetPanResponderCapture: () => true,
         onMoveShouldSetPanResponder: () => true,
@@ -310,8 +177,6 @@ export function CoCFormModal({
       log.cocSignatureSaved({
         who: sigSlot,
         strokes: livePaths.length,
-        // A line that already carried a signature — drawn again, or an earlier one
-        // being replaced on a certificate that was already filed.
         replaced: signatures[sigSlot].length > 0 || !!filedSignature[sigSlot],
       });
       setSignatures((prev) => ({ ...prev, [sigSlot]: [...livePaths] }));
@@ -326,7 +191,6 @@ export function CoCFormModal({
   };
 
 
-  /** Ticking or un-ticking one attestation — logged either way, by its payload key. */
   const toggleAttest = (
     field: keyof typeof attest,
     confirmation: 'is18OrOlder' | 'isHomeownerOrAuthorized' | 'installationCompletedAsPerContract'
@@ -336,7 +200,6 @@ export function CoCFormModal({
     setAttest((prev) => ({ ...prev, [field]: checked }));
   };
 
-  /** Tapping the ticked box clears the answer — that is a state, and it is logged. */
   const selectRelationship = (value: CoCRelationship) => {
     const next = relationship === value ? null : value;
     log.cocRelationshipSelected({
@@ -346,19 +209,11 @@ export function CoCFormModal({
     setRelationship(next);
   };
 
-  /** Cancel and the header ✕ both land here, and are told apart in the log. */
   const dismiss = (via: 'cancel' | 'close') => {
     log.cocFormDismissed({ via, signed: !!initial });
     setShowExitConfirm(true);
   };
 
-  /**
-   * Any ticked box answers the question, so Submit unlocks on the tick.
-   *
-   * Only `other` needs more: it is the write-in line, and an unfilled one names
-   * nobody. `spouse` is a first-class enum value (not an `other` write-in), so it
-   * stands on its own exactly as `homeowner` does.
-   */
   const relationshipNamed =
     relationship === 'homeowner' ||
     relationship === 'spouse' ||
@@ -374,16 +229,9 @@ export function CoCFormModal({
     relationshipNamed &&
     !submitting;
 
-  /**
-   * One signature as a JPEG on disk.
-   *
-   * Returns `''` rather than throwing: the certificate is signed either way, and
-   * losing the submit over a failed raster would be worse than losing the image.
-   */
   const rasterise = async (ref: React.RefObject<View | null>): Promise<string> => {
     try {
       const uri = await captureRef(ref, { format: 'jpg', quality: 0.9, result: 'tmpfile' });
-      // Android hands back a bare path; the upload's multipart needs a scheme.
       return uri.startsWith('file://') || uri.startsWith('content://') ? uri : `file://${uri}`;
     } catch (err) {
       console.warn('[CoCForm] Could not rasterise a signature:', err);
@@ -391,15 +239,6 @@ export function CoCFormModal({
     }
   };
 
-  /**
-   * Rasterise-and-hand-off, run whenever a slot's paths change.
-   *
-   * WARNING: it has to be an EFFECT, not part of `saveSig`. The off-screen surface
-   * only holds the new strokes after the render that `setSignatures` triggers, so
-   * capturing inside the handler would photograph the PREVIOUS signature — and
-   * nothing at all for the first one. The extra frame is for Android, where the
-   * native view is attached a beat after the commit.
-   */
   const capturedKey = React.useRef<Record<SignatureSlot, string>>({
     installer: '',
     customer: '',
@@ -436,13 +275,6 @@ export function CoCFormModal({
     });
   };
 
-  /**
-   * The sales form's field: a floating label notched into the border, value inside.
-   *
-   * A read-only field renders grey (`#919EAB`) rather than looking disabled — it is
-   * context the signer confirms, not something anyone fills in. Same treatment the
-   * sales consent form gives its own read-only rows.
-   */
   const renderField = (
     label: string,
     value: string,
@@ -467,14 +299,6 @@ export function CoCFormModal({
     </View>
   );
 
-  /**
-   * The certificate's tick boxes — square, filled green, exactly as sales draws them.
-   *
-   * ⚠️ `inline` is for the relationship row, whose three one-word answers sit side
-   * by side. It drops the row margin and, crucially, the label's `flex-1` — in a
-   * horizontal parent that would make each box claim an equal third and spread the
-   * ticks across the width instead of keeping each label against its own box.
-   */
   const renderCheck = (
     checked: boolean,
     label: string,
@@ -501,17 +325,8 @@ export function CoCFormModal({
     </TouchableOpacity>
   );
 
-  /**
-   * A signature line from the paper form: the label, then the drawn signature or the
-   * prompt. Tapping opens the pad as an in-card overlay, NOT a nested Modal — stacked
-   * native modals are unreliable on both platforms, which is why the sales form does it
-   * this way too.
-   */
   const renderSignature = (slot: SignatureSlot, label: string) => {
     const paths = signatures[slot];
-    // Strokes win: they are what THIS session drew. The filed image is the fallback
-    // for a certificate signed elsewhere, and it is replaced the moment the box is
-    // signed again.
     const filed = paths.length === 0 ? filedSignature[slot] : undefined;
     return (
       <View className="mb-6">
@@ -961,16 +776,6 @@ export function CoCFormModal({
 }
 
 const styles = StyleSheet.create({
-  /**
-   * ⚠️ `elevation` is NOT decoration here, and neither overlay works without it.
-   *
-   * The form card carries `shadow-2xl`, which NativeWind turns into a real Android
-   * ELEVATION — and on Android elevation decides sibling draw order outright, so a
-   * plain `zIndex` on a later sibling loses to it and the overlay renders BEHIND the
-   * form. Both overlays therefore sit above the card on both axes: zIndex for iOS,
-   * elevation for Android. Keep them above the card's, and the exit prompt above the
-   * signature pad.
-   */
   busyOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.55)',
@@ -1068,7 +873,6 @@ const styles = StyleSheet.create({
   },
   sigSaveText: { fontWeight: '700', fontSize: 13 },
   fieldWrap: { marginBottom: 20, position: 'relative' },
-  /** Clearance for the absolutely-positioned floating label — see the call site. */
   otherFieldWrap: { marginTop: 12 },
   floatingLabel: {
     position: 'absolute',
@@ -1089,7 +893,6 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   fieldInput: { flex: 1, fontSize: 12, padding: 0, color: '#1C252E' },
-  // Off-screen, NOT hidden — `react-native-view-shot` draws a laid-out view.
   cardHost: { flex: 1, justifyContent: 'center' },
   sigPreview: { height: 144 },
   sigPreviewInk: { backgroundColor: '#F8FAFC' },

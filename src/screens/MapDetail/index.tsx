@@ -91,21 +91,16 @@ const isJobOwner = (item: any, user: any): boolean => {
 const EMPTY_LEADS: any[] = [];
 
 const getRegionDeltaForRadiusMiles = (latitude: number, radiusMiles: number) => {
-  // latitude: ~69 miles per degree. Use diameter (radius * 2) to fit full range.
   const latDelta = (radiusMiles * 2) / 69;
-  // longitude shrinks by cos(latitude)
   const cosLat = Math.cos((latitude * Math.PI) / 180) || 0.0001;
   const lonDelta = latDelta / Math.max(cosLat, 0.0001);
 
-  // Small padding so pins at the edge stay visible.
   return {
     latitudeDelta: Math.max(latDelta * 1.2, 0.01),
     longitudeDelta: Math.max(lonDelta * 1.2, 0.01),
   };
 };
 
-// The cleared filter state — the base every reset returns to (and the seed the
-// initial state layers a lead's saved filters on top of).
 const DEFAULT_MAP_FILTERS: FilterState = {
   jobNumber: '',
   sortOrder: 'date-desc',
@@ -136,13 +131,6 @@ export default function MapDetailScreen() {
   const headerCtx = useHeader();
   const { setHeaderActions } = headerCtx;
 
-  /**
-   * Does the shared header CURRENTLY hold this screen's actions?
-   *
-   * A BOOLEAN on purpose, never the handler itself: the handlers are new closures on
-   * every render, so depending on their identity would re-register forever. This flips
-   * at most once per claim, so the self-heal below settles immediately.
-   */
   const headerHasMapActions = !!headerCtx.onFilterPress;
 
   const isFocused = useIsFocused();
@@ -164,41 +152,15 @@ export default function MapDetailScreen() {
 
   const [isListView, setIsListView] = useState(false);
   const [updatedJob, setUpdatedJob] = useState<any>(null);
-  // Satellite / street map-view toggle (web parity: `isSatelliteView`).
   const [isSatelliteView, setIsSatelliteView] = useState(false);
 
-  // Hydrate the filter state from the lead's persisted `savedFilters` on first mount
-  // (web parity), so the rep returns to exactly the filters they last applied here.
   const [filters, setFilters] = useState<FilterState>(() => ({
     ...DEFAULT_MAP_FILTERS,
     ...savedFiltersToFilterState((currentLead as any)?.savedFilters),
   }));
 
-  // Badge on the header's filter icon — how many filters are currently applied.
-  // Reads the applied `filters` (only written by the modal's Search/Reset), so
-  // it tracks what the map is actually filtered by, not in-progress edits.
   const activeFilterCount = useMemo(() => countAppliedMapFilters(filters), [filters]);
 
-  /**
-   * Claim the header's filter + list icons — and RE-claim them if they ever go missing.
-   *
-   * ⚠️ This was a single `useFocusEffect`, i.e. a ONE-SHOT handshake fired the instant
-   * this screen focused, and that is why the icons were absent on arrival: anything that
-   * cleared the shared actions after that moment left the screen with no way to notice.
-   * It is a shared mutable store written by two screens and reset whenever the navigator
-   * that owns it re-mounts, so "set it once and hope" was never enough — and the symptom
-   * was an empty header with the map underneath perfectly functional, until the rep
-   * tapped the bell or the chat icon, which navigates away and back and re-fires the
-   * handshake.
-   *
-   * Listing `headerHasMapActions` makes the effect self-healing: the moment the header
-   * reports it is NOT holding them, this re-registers. It settles in one extra pass,
-   * because that dependency is a boolean.
-   *
-   * `useIsFocused()` + `useEffect` rather than `useFocusEffect` for the same reason —
-   * `useFocusEffect` only re-runs on a focus transition, so it cannot react to the store
-   * being emptied while this screen stays focused.
-   */
   useEffect(() => {
     if (!isFocused) return;
     setHeaderActions({
@@ -208,14 +170,6 @@ export default function MapDetailScreen() {
     });
   }, [isFocused, headerHasMapActions, activeFilterCount, setHeaderActions]);
 
-  /**
-   * Release them on blur or unmount — a separate effect so the claim above can re-run on
-   * a filter-count change WITHOUT tearing the icons down and putting them back.
-   *
-   * ⚠️ Keyed on `isFocused` only. Folding this into the claim effect would null the
-   * actions every time the applied-filter count changed, which is a visible flicker of
-   * the two icons while the rep is using the very filter modal they open.
-   */
   useEffect(() => {
     if (!isFocused) return;
     return () => {
@@ -251,7 +205,6 @@ export default function MapDetailScreen() {
   };
 
   useEffect(() => {
-    // Get initial location for API call
     const requestLocation = async () => {
       if (Platform.OS === 'ios') {
         await Geolocation.requestAuthorization('whenInUse');
@@ -268,7 +221,6 @@ export default function MapDetailScreen() {
         },
         (err) => {
           console.log('Location error:', err);
-          // Fallback to Tampa coords so leads still fetch on failure
           setUserLocation({ latitude: 27.9506, longitude: -82.4572 });
         },
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
@@ -305,15 +257,9 @@ export default function MapDetailScreen() {
     },
     enabled: !!user?._id,
     staleTime: 1000 * 60 * 5, // 5 minutes
-    // ⚠️ Opening the map must ask the server again, whatever `staleTime` says. A lead marked
-    // Sale becomes a purple pending-install pin on the BACKEND, and nothing on this device
-    // invalidates `mapJobs` when that happens, so a 5-minute-old cache (also seeded by the
-    // Leads / Lead Center prefetch) hid a brand-new pin until it aged out. `'always'` still
-    // paints the cached pins instantly and only adds the fresh ones when the request lands.
     refetchOnMount: 'always',
   });
 
-  // Sync queryLeads to leads state
   useEffect(() => {
     const activeLeads = queryLeads || EMPTY_LEADS;
     setLeads(activeLeads);
@@ -325,22 +271,13 @@ export default function MapDetailScreen() {
     }
   }, [queryLeads]);
 
-  // Snapshot successful query results to MMKV so the map works offline.
-  // Runs after every successful fetch; writeMapLeadsCache silently no-ops on
-  // empty arrays or storage errors.
   useEffect(() => {
     if (Array.isArray(queryLeads) && queryLeads.length > 0) {
       writeMapLeadsCache(queryLeads, filters as unknown as Record<string, unknown>, user?._id);
-      // Street detail for where these leads are — queued, one download at a time, Wi-Fi only.
-      // Idempotent: an area already downloaded is skipped, and a filtered view never evicts one
-      // unless the tile budget needs the room.
       if (isOnWifi()) void offlineMapManager.syncLeads(queryLeads);
     }
   }, [queryLeads, filters, user?._id]);
 
-  // Seed leads from the offline cache on mount when the device is offline (or
-  // when the query returned nothing). This gives the map pins to show while
-  // the user waits for a reconnect.
   useEffect(() => {
     if (leads.length === 0 && !isOnline()) {
       const cached = readMapLeadsCache(user?._id);
@@ -350,13 +287,6 @@ export default function MapDetailScreen() {
     }
   }, []); // mount-only — seed once
 
-  // ─── Offline map coverage ────────────────────────────────────────────────
-  // Mapbox draws a silent grey canvas when no tiles are downloaded, so the only thing the rep saw
-  // was whatever axios banner happened to be up ("Network Error") — which reads as a broken app
-  // while standing at a door. Resolve what the device can actually draw and say so plainly.
-  //
-  // ⚠️ Recomputed on the network edge, NOT just on mount: a rep who walks out of signal with the
-  // map open must get the notice without backing out and re-entering.
   const online = useIsOnline();
   const mapCoverage = useMemo(() => {
     const records = offlineMapManager.getAllRecords();
@@ -372,19 +302,14 @@ export default function MapDetailScreen() {
   const mapNotice = useMemo(() => coverageNotice(mapCoverage), [mapCoverage]);
   const satNotice = useMemo(() => satelliteNotice(online), [online]);
 
-  // Leaving satellite selected while offline would strand the rep on a grey screen with no hint
-  // that the street map is still there, so drop back to streets on the way out of signal.
   useEffect(() => {
     if (!online && isSatelliteView) setIsSatelliteView(false);
   }, [online, isSatelliteView]);
 
-  // Maintain loading state compatible with the UI spinner
   useEffect(() => {
     setLoading(queryLoading);
   }, [queryLoading]);
 
-  // Coming back to a map that never unmounted (open a lead from it, make a sale, go back) is a
-  // focus change, not a mount, so `refetchOnMount` does not fire. Refetch on that transition too.
   const wasFocusedRef = useRef(isFocused);
   useEffect(() => {
     if (isFocused && !wasFocusedRef.current && user?._id) refetchQuery();
@@ -395,12 +320,6 @@ export default function MapDetailScreen() {
     refetchQuery();
   };
 
-  // Keep the lead object we were handed (same reference the parent LeadCenter holds in
-  // its `useLeadCenterData` state) fresh after a save/reset, so re-opening the map
-  // re-hydrates from the just-persisted `savedFilters` instead of a stale set. Mobile
-  // has no global lead store, so we sync the shared reference + the ['lead', id] cache
-  // (web does this via `setCurrentLead`). Without this, a reset only "sticks" after an
-  // app reload.
   const persistSavedFiltersOnLead = React.useCallback(
     (savedFilters: any) => {
       if (currentLead && typeof currentLead === 'object') {
@@ -416,10 +335,6 @@ export default function MapDetailScreen() {
     [currentLead, queryClient],
   );
 
-  // Reset → clear all filters and return the map to the full, unfiltered list.
-  // Web parity: reset POSTs `find` with an empty `{}` payload. We call it explicitly
-  // (and seed the react-query cache) so the request fires every time, regardless of
-  // the map-jobs cache/staleTime (a key-change alone can be served from cache).
   const handleResetFilters = React.useCallback(async () => {
     setFilters(DEFAULT_MAP_FILTERS);
     try {
@@ -443,7 +358,6 @@ export default function MapDetailScreen() {
   const baseFilteredLeads = useMemo(() => {
     console.log('[MapDetail DEBUG] Recalculating filteredLeads. leads.length:', leads.length, 'myJobsOnly:', filters.myJobsOnly, 'user ID:', user?._id || user?.id);
     let result = [...leads];
-    // 1. Filter out specific job number range (Web parity)
     result = result.filter((item) => {
       const jobNumber = item?.jobNumber;
       if (typeof jobNumber === 'string' && jobNumber.startsWith('TAM')) {
@@ -455,20 +369,14 @@ export default function MapDetailScreen() {
       return true;
     });
 
-    // 2. Local Filtering based on UI filters (for strictness)
     result = result.filter((item) => {
-      // Job Number / Search Text - only filter by text if NOT performing a location search
       if (filters.jobNumber && !filters.centerCoords) {
-        // Coerce to string — jobNumber/fullAddress can be numeric in API data,
-        // where `?.toLowerCase()` would throw "undefined is not a function".
         const search = String(filters.jobNumber).toLowerCase();
-        // `displayJobNumber` (e.g. T500008) or the raw number (the lead number for a sold job).
         const matchesJob = jobNumberMatches(item, search);
         const matchesAddress = String(item.fullAddress ?? '').toLowerCase().includes(search);
         if (!matchesJob && !matchesAddress) return false;
       }
 
-      // Referral Filter (match web app logic)
       if (filters.isReferralOnly) {
         const isMine = isJobOwner(item, user);
         const hasReferrals = item.jobReferrals && item.jobReferrals.length > 0;
@@ -480,54 +388,33 @@ export default function MapDetailScreen() {
         }
       }
 
-      // My Jobs Only
       if (filters.myJobsOnly) {
         const isMine = isJobOwner(item, user);
         console.log('[MapDetail DEBUG] MyJobsOnly check for job:', item.jobNumber, 'user uid:', user?._id || user?.id, 'isMine:', isMine);
         if (!isMine) return false;
       }
 
-      // Favorite Only
       if (filters.isFavoriteOnly) {
         const isFav = item.isFavorite === true || item.isFavourite === true;
         if (!isFav) return false;
       }
 
-      // Pin status — client side, like web (pending vs everything else). The MODAL's
-      // dropdown only; see the ⚠️ on `isMapInstalledOnly` in MapFiltersModal.tsx.
       if (!matchesPinStatusFilter(item, filters.statusFilter)) return false;
 
-      // On-map "INS" / "PI" quick toggles — STRICT category match, independent of the
-      // dropdown above. "in the installed toggle only installed pins display, uploaded
-      // pins should not display in this toggle."
       if (filters.isMapInstalledOnly && getPinCategory(item) !== 'installed') return false;
       if (filters.isMapPendingInstallOnly && getPinCategory(item) !== 'pendingInstall') return false;
 
-      // Price Range
       if (filters.minPrice && (item.price || 0) < parseFloat(filters.minPrice)) return false;
       if (filters.maxPrice && (item.price || 0) > parseFloat(filters.maxPrice)) return false;
 
-      // Distance filter. Centred on a SEARCHED location when there is one, otherwise on the
-      // rep's own GPS fix.
-      //
-      // ⚠️ That fallback is the ticket ("filter by distance"). The radius used to require
-      // `centerCoords`, so the modal's "Select Distance" picker did NOTHING unless the rep
-      // had also searched an address — a filter that silently no-ops is worse than one that
-      // is absent, because the rep believes the list is filtered.
-      //
-      // ⚠️ Skipped entirely when there is no origin at all (no search AND no fix yet):
-      // filtering against nothing would empty the list until the GPS lock lands.
       if (filters.radius > 0) {
         const origin = filters.centerCoords || userLocation;
         if (origin) {
           const miles = getJobDistanceMiles(item, origin);
-          // A job with no coordinates cannot be shown to be within the radius.
           if (miles === null || miles > filters.radius) return false;
         }
       }
 
-      // Date Range — a pending job has no install date, so it is dated by its sale
-      // date (backend `dateFilter` parity) rather than dropped / dated by createdAt.
       if (filters.startDate) {
         const itemDate = new Date(getPinSortDate(item));
         if (itemDate < new Date(filters.startDate)) return false;
@@ -567,13 +454,9 @@ export default function MapDetailScreen() {
   ]);
 
   const filteredLeads = useMemo(() => {
-    // Apply Sorting
     return [...baseFilteredLeads].sort((a, b) => {
       if (sortOption === 'price_asc') return (a.price || 0) - (b.price || 0);
       if (sortOption === 'price_desc') return (b.price || 0) - (a.price || 0);
-      // Nearest/farthest first, from the rep's own GPS fix. Jobs with no position sort to
-      // the END — see `compareByDistance`. With no fix yet every job is `null`, so the list
-      // keeps its incoming order rather than shuffling when the fix arrives.
       if (sortOption === 'distance_asc') return compareByDistance(a, b, userLocation);
       if (sortOption === 'distance_desc') return compareByDistance(a, b, userLocation, true);
 
@@ -585,21 +468,13 @@ export default function MapDetailScreen() {
     });
   }, [baseFilteredLeads, sortOption, userLocation]);
 
-  // Opened FROM a lead (Lead Center -> Map / Expand Map) that has just been sold: its purple
-  // pending-install pin is what the rep came to see, so open on it instead of leaving the camera
-  // on their GPS fix. A map opened with no lead (header icon) still lands on the GPS as before
-  // (QA ticket 321). Looked up in `baseFilteredLeads`, so a pin the active filters hide is never
-  // jumped to.
   const openedFromLead = (currentLead as any)?._id ? currentLead : null;
   const leadPendingPin = useMemo(
     () => (openedFromLead ? findPendingInstallPinForLead(baseFilteredLeads, openedFromLead) : null),
     [openedFromLead, baseFilteredLeads],
   );
-  // The lead id the map has already opened on. One-shot per lead: a later refetch hands back a new
-  // pin object, and re-jumping would snatch the camera back from wherever the rep has panned to.
   const openedOnLeadPinRef = useRef<string | null>(null);
 
-  // Automatic navigation to searched job or location (Web Parity)
   useEffect(() => {
     if (filters.centerCoords) {
       const radius = filters.radius || 0;
@@ -630,7 +505,6 @@ export default function MapDetailScreen() {
   }, [filters.jobNumber, filteredLeads, filters, leadPendingPin, openedFromLead]);
 
   useEffect(() => {
-    // Distance result feedback for location-based radius searches only.
     if (!filters.centerCoords || !filters.radius) return;
     const key = `${filters.centerCoords.latitude.toFixed(5)}-${filters.centerCoords.longitude.toFixed(5)}-${filters.radius}-${filteredLeads.length}`;
     if (lastRadiusMessageKeyRef.current === key) return;
@@ -654,10 +528,6 @@ export default function MapDetailScreen() {
           currentLead={centerCoords ?? currentLead}
           focusLead={jumpLead}
           fullScreen
-          // Open framed on the rep's CURRENT GPS location (not the office). LeadMap
-          // re-asserts the camera on the user once the map + first GPS fix are both
-          // ready (robust to the fix-before-style-ready race). A searched location
-          // still wins; `currentLead` stays for the route line + selection.
           focusUserLocationOnOpen
           leads={baseFilteredLeads}
           isFavoriteFilter={filters.isFavoriteOnly}
@@ -678,12 +548,6 @@ export default function MapDetailScreen() {
               else if (type === 'myjobs') next = { ...prev, myJobsOnly: !prev.myJobsOnly };
               else if (type === 'referral') next = { ...prev, isReferralOnly: !prev.isReferralOnly };
               else if (type === 'favorite') next = { ...prev, isFavoriteOnly: !prev.isFavoriteOnly };
-              // Independent of `statusFilter` — a STRICT `pinCategory` match, not the
-              // dropdown's "everything not pending" rule (see the ⚠️ on
-              // `isMapInstalledOnly` in MapFiltersModal.tsx). Mutually exclusive with
-              // EACH OTHER only, enforced here rather than by sharing one field: a pin
-              // can't be both, so turning one on turns the other off. Tapping the active
-              // one again clears it.
               else if (type === 'installed') {
                 const nextOn = !prev.isMapInstalledOnly;
                 next = { ...prev, isMapInstalledOnly: nextOn, isMapPendingInstallOnly: nextOn ? false : prev.isMapPendingInstallOnly };
@@ -835,9 +699,6 @@ export default function MapDetailScreen() {
         {!isListView && (
           <TouchableOpacity
             onPress={() => {
-              // ⚠️ Imagery is never in an offline pack (packs download `styleKey: 'Street'` only),
-              // so offline this would swap a readable street map for a grey screen. Say why
-              // instead of letting the toggle look broken.
               if (satNotice.tone) {
                 FlashMessage.warning(satNotice.title, satNotice.body);
                 return;
@@ -951,8 +812,6 @@ export default function MapDetailScreen() {
                     : 'N/A');
 
                  const isOwner = isJobOwner(job, user);
-                // Ticket: "results should also have distance". Null until the first GPS fix
-                // lands, or when the job has no coordinates — rendered as — rather than 0.
                 const distanceMiles = getJobDistanceMiles(job, userLocation);
 
                 return (
@@ -1084,7 +943,6 @@ export default function MapDetailScreen() {
         selectedJob={selectedJob}
         isMyJob={isJobOwner(selectedJob, user)}
         onSuccess={(referralData) => {
-          // ── 1. Instantly update the visible job card ──────────────────────
           let patchedJob: any = null;
           setSelectedJob((prev: any) => {
             if (!prev) return prev;
@@ -1098,7 +956,6 @@ export default function MapDetailScreen() {
             return patchedJob;
           });
 
-          // ── 2. Patch the full leads list so filters/map stay consistent ──
           setLeads((prev: any[]) =>
             prev.map((job: any) => {
               if (job._id !== selectedJob?._id) return job;
@@ -1112,7 +969,6 @@ export default function MapDetailScreen() {
             })
           );
 
-          // ── 3. Patch React Query cache to keep it consistent ─────────────
           queryClient.setQueryData(queryKey, (old: any) => {
             if (!old) return old;
             return old.map((job: any) => {
@@ -1127,12 +983,10 @@ export default function MapDetailScreen() {
             });
           });
 
-          // Pass the patched job down to LeadMap so the selectedLead state there updates instantly
           if (patchedJob) {
             setUpdatedJob(patchedJob);
           }
 
-          // ── 4. Background refetch to sync real server state ──────────────
           fetchLeads();
         }}
       />

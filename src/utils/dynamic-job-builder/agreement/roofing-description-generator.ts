@@ -1,18 +1,3 @@
-/**
- * Roofing Description Generator
- *
- * Generates description lines for roofing components based on job state.
- * Reads from the actual dynamic job builder vertical state using correct tab IDs,
- * section IDs, and field IDs from the job builder config.
- *
- * Lines are output in the exact order specified by the description table.
- *
- * Faithful TS port of web `roofing-description-generator.js`.
- *
- * @param verticalState - The current vertical state keyed by tab IDs
- * @returns Array of description lines for the "Description of Work"
- */
-
 const SEC = {
   tearOffCombos: 'section_1782302701612',
   shingleCombos: 'section_1782364022364',
@@ -122,7 +107,6 @@ export function generateRoofingDescriptions(verticalState: any): string[] {
   const TAB = buildTab(extractVerticalId(vs));
   const descriptions: string[] = [];
 
-  // Pre-collect combo data
   const tearOffCombos = getCombos(vs, TAB.tearOff, SEC.tearOffCombos);
   const shingleCombos = getCombos(vs, TAB.shingles, SEC.shingleCombos);
   const underCombos = getCombos(vs, TAB.underlayment, SEC.underlaymentCombos);
@@ -132,7 +116,6 @@ export function generateRoofingDescriptions(verticalState: any): string[] {
   const hasShingles = shingleCombos.some((c: any) => getComboNumber(c, F.shingleSquares) > 0);
   const hasDecking = deckingCombos.some((c: any) => getComboNumber(c, F.deckingSheets) > 0);
 
-  // 1. Tear-Off
   if (hasTearOff) {
     tearOffCombos.forEach((combo: any) => {
       const sqFt = getComboNumber(combo, F.tearOffSqFt);
@@ -143,12 +126,10 @@ export function generateRoofingDescriptions(verticalState: any): string[] {
     });
   }
 
-  // 2. Tear-Off Description
   if (hasTearOff) {
     descriptions.push('Installation: Remove existing roofing material(s) to decking, clear all debris from property, inspect decking for damage prior to installation');
   }
 
-  // 3. Decking Repair
   if (hasDecking) {
     deckingCombos.forEach((combo: any) => {
       const sheets = getComboNumber(combo, F.deckingSheets);
@@ -158,7 +139,6 @@ export function generateRoofingDescriptions(verticalState: any): string[] {
     });
   }
 
-  // 4. Drip Edge
   underCombos.forEach((combo: any) => {
     const ft = getComboNumber(combo, F.dripEdgeFt);
     if (ft <= 0) return;
@@ -166,21 +146,18 @@ export function generateRoofingDescriptions(verticalState: any): string[] {
     descriptions.push(`Install ${type} Drip Edge — ${ft}'`);
   });
 
-  // 5. Starter Strip
   underCombos.forEach((combo: any) => {
     const ft = getComboNumber(combo, F.starterStripFt);
     if (ft <= 0) return;
     descriptions.push(`Install Starter Strip — ${ft}'`);
   });
 
-  // 6. Ice & Water Shield
   underCombos.forEach((combo: any) => {
     const sqft = getComboNumber(combo, F.iceWaterShield);
     if (sqft <= 0) return;
     descriptions.push(`Install Ice & Water Shield — ${sqft} sq ft`);
   });
 
-  // 7. Underlayment
   underCombos.forEach((combo: any) => {
     const uwType = getComboString(combo, F.underlaymentType);
     if (!uwType) return;
@@ -189,31 +166,26 @@ export function generateRoofingDescriptions(verticalState: any): string[] {
     descriptions.push(`Install ${uwType} Underlayment — ${sqft} sq ft`);
   });
 
-  // 8. Valley Metal
   const valleyMetalFt = getSectionNumber(vs, TAB.flashing, SEC.otherFlashing, F.valleyMetalFt);
   if (valleyMetalFt > 0) {
     descriptions.push(`Install Valley Metal — ${valleyMetalFt}'`);
   }
 
-  // 9. Step Flashing
   const stepFlashingFt = getSectionNumber(vs, TAB.flashing, SEC.otherFlashing, F.stepFlashingFt);
   if (stepFlashingFt > 0) {
     descriptions.push(`Install Step Flashing — ${stepFlashingFt}'`);
   }
 
-  // 10. Chimney Flashing
   const chimneyType = getSectionString(vs, TAB.flashing, SEC.chimneyFlashing, F.chimneyType);
   if (chimneyType) {
     descriptions.push(`Chimney Flashing (${chimneyType})`);
   }
 
-  // 11. Skylight Flashing
   const skylightCount = getSectionNumber(vs, TAB.flashing, SEC.otherFlashing, F.skylightCount);
   if (skylightCount > 0) {
     descriptions.push(`Install Skylight Flashing — ${skylightCount} unit(s)`);
   }
 
-  // 12. Shingle Install
   if (hasShingles) {
     shingleCombos.forEach((combo: any) => {
       const sq = getComboNumber(combo, F.shingleSquares);
@@ -224,45 +196,37 @@ export function generateRoofingDescriptions(verticalState: any): string[] {
     });
   }
 
-  // 13. Shingle Install Description
   if (hasShingles) {
     descriptions.push('Installation: Install per manufacturer specs, nail pattern per local code, step flash all wall intersections, seal all penetrations');
   }
 
-  // 14. Pipe Boot
   const pipeBootCount = getSectionNumber(vs, TAB.ridgeVentilation, SEC.ridgeVentilation, F.pipeBootCount);
   if (pipeBootCount > 0) {
     descriptions.push(`Install Pipe Boot(s) — ${pipeBootCount} ea`);
   }
 
-  // 15. Box Vent
   const boxVentCount = getSectionNumber(vs, TAB.ridgeVentilation, SEC.ridgeVentilation, F.boxVentCount);
   if (boxVentCount > 0) {
     descriptions.push(`Install Box Vent(s) — ${boxVentCount} ea`);
   }
 
-  // 16. Continuous Ridge Vent
   const ridgeVentFt = getSectionNumber(vs, TAB.ridgeVentilation, SEC.ridgeVentilation, F.ridgeVentFt);
   if (ridgeVentFt > 0) {
     descriptions.push(`Install Continuous Ridge Vent — ${ridgeVentFt}'`);
   }
 
-  // 17. Ridge Cap
   const ridgeCapFt = getSectionNumber(vs, TAB.ridgeVentilation, SEC.ridgeVentilation, F.ridgeCapFt);
   if (ridgeCapFt > 0) {
     const ridgeCapType = getSectionString(vs, TAB.ridgeVentilation, SEC.ridgeVentilation, F.ridgeCapType);
     descriptions.push(`Install ${ridgeCapType} Ridge Cap — ${ridgeCapFt}'`);
   }
 
-  // 18. Labor - Story/Pitch
   const laborSqFt = getSectionNumber(vs, TAB.labor, SEC.labor, F.laborSqFt);
   if (laborSqFt > 0) {
     const laborStory = getSectionString(vs, TAB.labor, SEC.labor, F.laborStory);
     const laborPitch = getSectionString(vs, TAB.labor, SEC.labor, F.laborPitch);
     descriptions.push(`Roofing Labor — Story ${laborStory}, ${laborPitch} Pitch — ${laborSqFt} sq ft`);
   }
-
-  // 19. Notes — no field in config, skipped
 
   return descriptions;
 }

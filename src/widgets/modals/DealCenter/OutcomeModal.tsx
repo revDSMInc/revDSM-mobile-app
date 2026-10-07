@@ -78,7 +78,6 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
 }) => {
   const { colors, isDark } = useTheme();
   const isLowesLead = lead?.lowesLead === true;
-  // Web `result-lead-modal.js:61`. See `Lead.isRehashed`.
   const isRehashed = lead?.isRehashed === true;
   const contractPrice = cleanNum(outcomeForm.originalContractPrice);
   const downPaymentMethods = getOutcomeDownPaymentMethods(isLowesLead);
@@ -101,10 +100,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
     setExpanded(isExpanding ? key : null);
 
     if (isExpanding) {
-      // Small delay to allow the dropdown to render before scrolling
       setTimeout(() => {
-        // This is a simple approximation. In a real app we'd use onLayout.
-        // For now, we scroll based on common field positions.
         const scrollPositions: Record<string, number> = {
           oneLeg: 0,
           result: 60,
@@ -213,7 +209,6 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
     </View>
   );
 
-  // Group results by category for tags
   const categories = Array.from(new Set((results?.items || []).map((item: any) => item.category)));
 
   return (

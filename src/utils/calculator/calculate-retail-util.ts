@@ -52,7 +52,6 @@ export const calculateRetail = ({
         return sum + (item ? n(value) * item.price : 0);
       }, 0);
 
-    // Vertical product items (cost prices)
     const verticalTotal = Object.entries(verticals || inputs || {})
       .filter(([key]) => key.startsWith('rf') || key.startsWith('win') || key.startsWith('fl') || key.startsWith('rm'))
       .reduce((sum: number, [key, value]) => {

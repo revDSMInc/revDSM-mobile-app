@@ -62,9 +62,6 @@ export const useChatLogic = (
   const [searchIndex, setSearchIndex] = useState(0);
   const [searchResults, setSearchResults] = useState<string[]>([]);
 
-  // Attachments staged in the composer (previews) — sent on the main Send, with
-  // the images uploaded BEFORE the typed message. Mirrors the web MessageInput
-  // (`files` + `pendingAppointmentPhotos`).
   type PendingAppointmentPhoto = {
     _id?: string;
     s3url: string;
@@ -257,8 +254,6 @@ export const useChatLogic = (
     [chatId, replyingTo, editingMessage, setMessages, currentUserId, user, composerText, isChannel, leadId]
   );
 
-  // Pick gallery images/videos and STAGE them as composer previews (not sent
-  // until the main Send — so a caption can be added first). Web parity.
   const handleAttach = useCallback(() => {
     launchImageLibrary({ mediaType: 'mixed', selectionLimit: 5 }, (response) => {
       if (!response.assets?.length) return;
@@ -267,8 +262,6 @@ export const useChatLogic = (
         ...response.assets!.map((f, i) => ({
           id: `gal_${Date.now()}_${i}_${Math.random()}`,
           kind: 'gallery' as const,
-          // ⚠️ `fileSize` is carried through to the activity log — the picker is the only
-          // place a gallery file's byte size is known before upload. Dropping it here logged 0.
           asset: { uri: f.uri, fileName: f.fileName, type: f.type, fileSize: f.fileSize },
           previewUri: f.uri,
           isImage: !!f.type?.startsWith('image'),
@@ -277,10 +270,6 @@ export const useChatLogic = (
     });
   }, []);
 
-  // Upload staged gallery assets as ONE message carrying all files — so a batch
-  // selected together renders as a single WhatsApp-style grid (same as
-  // appointment photos), not one bubble per photo. Optimistic bubble renders
-  // instantly from the local uris.
   const sendGalleryAssets = useCallback(
     async (
       assets: Array<{ uri?: string; fileName?: string; type?: string; fileSize?: number }>,
@@ -302,7 +291,6 @@ export const useChatLogic = (
       const optimistic = {
         _id: tempId,
         text: '',
-        // Top-level image only helps the single-image render path.
         image: assets.length === 1 && firstIsImg ? assets[0].uri : undefined,
         createdAt: new Date(),
         user: { _id: String(currentUserId) },
@@ -321,10 +309,6 @@ export const useChatLogic = (
           '',
           reply?._id
         );
-        // ⚠️ Logged AFTER the upload, not before it. `filePath` is an S3 object path that does
-        // not exist until the server has stored the file — logging first could only have put a
-        // local `file://` uri in the record, which is useless to the portal. A send that fails
-        // now logs nothing, which is correct: nothing was sent.
         if (user?._id) {
           const first = assets[0];
           const storedFiles = stored?.files?.length
@@ -358,18 +342,12 @@ export const useChatLogic = (
     [chatId, currentUserId, setMessages, user, leadId, isChannel]
   );
 
-  // Send a single image (local OR remote) as a chat message. Used by the
-  // "Annotated Photos" picker, whose images are remote signed S3 URLs.
-  // Remote images must be downloaded to a local file first — React Native's
-  // FormData multipart engine cannot read an http(s) URL as a file (see
-  // ChatService.sendFileMessage, which passes http URIs through untouched).
   const sendImageAsMessage = useCallback(
     async (uri: string, fileName = 'Photo') => {
       if (!uri || !chatId) return;
       const tempId = `temp_${Date.now()}_${Math.random()}`;
       const safeName = /\.(jpe?g|png|gif|webp)$/i.test(fileName) ? fileName : `${fileName}.jpg`;
 
-      // Optimistic bubble uses the (remote) uri directly so it renders instantly.
       const optimistic = {
         _id: tempId,
         text: '',
@@ -385,7 +363,6 @@ export const useChatLogic = (
 
       try {
         let uploadUri = uri;
-        // Remote images must be downloaded locally before the multipart upload.
         if (/^https?:\/\//i.test(uri)) {
           const localPath = `${RNFS.CachesDirectoryPath}/chat_photo_${Date.now()}.jpg`;
           const { statusCode } = await RNFS.downloadFile({ fromUrl: uri, toFile: localPath }).promise;
@@ -400,17 +377,11 @@ export const useChatLogic = (
           { uri: uploadUri, name: safeName, type: 'image/jpeg' },
           ''
         );
-        // ⚠️ After the upload — see the note on the gallery send above. The S3 path is only
-        // known once the server has stored the file.
         if (user?._id) {
-          // `uploadUri` is a LOCAL path by now (a remote image was downloaded above), so its
-          // size can be measured for the fallback row. Best-effort: a failed stat logs 0
-          // rather than failing a send that already succeeded.
           let localSize = 0;
           try {
             localSize = (await RNFS.stat(uploadUri.replace('file://', ''))).size;
           } catch {
-            // size stays 0
           }
           const storedFiles = stored?.files?.length
             ? stored.files
@@ -426,8 +397,6 @@ export const useChatLogic = (
               isReply: false,
               messageType: 'image',
               fileName: safeName,
-              // ⚠️ 1, not the hard-coded 12000 this used to send. Web sends the file COUNT
-              // here, not a byte size, and a fabricated 12000 read as a real measurement.
               fileSize: 1,
               files: buildChatLogFiles(storedFiles),
               message: ' ',
@@ -445,10 +414,6 @@ export const useChatLogic = (
     [chatId, currentUserId, setMessages, user, leadId, isChannel]
   );
 
-  // Send multiple appointment photos (the lead's sales photos) as ONE message.
-  // These already live in S3, so we send their references — NOT re-uploads —
-  // exactly like the web (MessageInput.handleSend). A single bubble carries all
-  // selected photos and renders as a WhatsApp-style grid (see ChatMessageBubble).
   const sendAppointmentPhotos = useCallback(
     async (
       photos: Array<{
@@ -466,9 +431,6 @@ export const useChatLogic = (
       const tempId = `temp_${Date.now()}_${Math.random()}`;
 
       const filesPayload = photos.map((p) => {
-        // Human caption ("Front of Home") the chat grid shows under the photo.
-        // Stored as BOTH subcategory and (base of) fileName so it survives even
-        // if the server echoes only one of them back on reload.
         const label = p.label || p.subcategory || p.category || 'Appointment Photo';
         const fileName = `${label.replace(/[\/\\]/g, '-')}.jpg`;
         return {
@@ -482,8 +444,6 @@ export const useChatLogic = (
         };
       });
 
-      // Optimistic bubble — all photos in one message. `previewUrl` carries the
-      // already-signed URL so the grid shows instantly before the server echo.
       const optimistic = {
         _id: tempId,
         text: '',
@@ -495,9 +455,6 @@ export const useChatLogic = (
           type: 'image',
           mimeType: 'image/jpeg',
           path: f.filePath,
-          // Web parity (ChatModule optimisticPhoto): the already-signed URL goes in
-          // BOTH `url` and `previewUrl` so the grid renders instantly (getGridSrc reads
-          // `url`; the display keys off the picker's resolved link, no fetch needed).
           url: photos[i].secureUrl || undefined,
           previewUrl: photos[i].secureUrl || undefined,
           isAppointmentPhoto: true,
@@ -512,10 +469,6 @@ export const useChatLogic = (
 
       try {
         const stored = await ChatService.sendAppointmentPhotos(chatId, filesPayload, ' ', reply?._id);
-        // ⚠️ Logged AFTER the send even though the S3 PATH was known before it — the per-file
-        // BYTE SIZE is not. These are references to photos the device never downloaded, so the
-        // server's stored rows are the only place a real size exists. Falls back to the sent
-        // payload (path and category intact, size 0) if the response carries no rows.
         if (user?._id) {
           const storedFiles = stored?.files?.length ? stored.files : filesPayload;
           logEvent('send', {
@@ -546,8 +499,6 @@ export const useChatLogic = (
     [chatId, currentUserId, setMessages, user, leadId, isChannel]
   );
 
-  // Send a plain text message (optimistic + REST). Extracted so the unified
-  // send can fire it AFTER the staged images have uploaded.
   const sendTextMessage = useCallback(
     async (text: string, reply?: any) => {
       if (!chatId || !text?.trim()) return;
@@ -587,9 +538,6 @@ export const useChatLogic = (
     [chatId, currentUserId, user, setMessages, isChannel, leadId]
   );
 
-  // Unified send for the composer's Send button: flush any staged attachments
-  // (images upload FIRST, per product spec), then send the typed message. Also
-  // handles the edit case (text-only).
   const handleSend = useCallback(async () => {
     if (!chatId) return;
     const text = (composerTextRef.current || composerText || '').trim();
@@ -634,7 +582,6 @@ export const useChatLogic = (
       .map((a: any) => a.photo);
     const galleryAssets = atts.filter((a) => a.kind === 'gallery').map((a: any) => a.asset);
 
-    // Clear the composer immediately for a snappy feel.
     setPendingAttachments([]);
     setComposerText('');
     composerTextRef.current = '';
@@ -645,7 +592,6 @@ export const useChatLogic = (
     }
 
     try {
-      // Images upload FIRST, then the message (per product spec / screenshot).
       if (appointmentPhotos.length) await sendAppointmentPhotos(appointmentPhotos, reply);
       if (galleryAssets.length) await sendGalleryAssets(galleryAssets, reply);
       if (text) await sendTextMessage(text, reply);
@@ -692,20 +638,14 @@ export const useChatLogic = (
         const storedDocs = await Promise.all(docs.map((f) =>
           ChatService.sendFileMessage(chatId, { uri: f.uri, name: f.name, type: f.type }, '')
         ));
-        // ⚠️ After the uploads — see the note on the gallery send. A document's S3 path does not
-        // exist until the server has stored it.
         if (user?._id) {
           const firstDoc = docs[0];
-          // ⚠️ ONE row per document. Each doc is its own request, so the stored rows are
-          // gathered from every response; the picker's own list is the fallback. The previous
-          // log named only `docs[0]`, so a rep attaching three files logged one.
           const storedFiles = storedDocs.flatMap((s: any, i: number) =>
             s?.files?.length
               ? s.files
               : [{
                   fileName: docs[i]?.name || 'Document',
                   fileType: docs[i]?.type || '',
-                  // The document picker reports `size`; it is the real byte count.
                   fileSize: docs[i]?.size ?? 0,
                 }]
           );
@@ -723,8 +663,6 @@ export const useChatLogic = (
                 type: firstDoc?.type,
               }),
               fileName: docs.map((f) => f.name || 'Document').join(', '),
-              // ⚠️ The file COUNT, as web sends. This was the picker's BYTE size (142786 in the
-              // report), which reads as a measurement in a field the portal counts.
               fileSize: docs.length,
               files: buildChatLogFiles(storedFiles),
               message: ' ',
@@ -739,7 +677,6 @@ export const useChatLogic = (
         return;
       }
       console.warn('[Document] send failed:', err?.message || err);
-      // Remove optimistic messages on failure
       setMessages((prev: any[]) => prev.filter((m) => typeof m._id === 'string' && m._id.startsWith('temp_')));
       Alert.alert('Send Failed', 'Failed to send document. Please try again.');
     }
@@ -748,8 +685,6 @@ export const useChatLogic = (
   const handleSendVoiceNote = async (uri: string) => {
     if (!uri || !chatId) return;
     console.log('[Media] Sending voice note:', uri);
-    // Computed inside the guard below, read by the post-send log — the `stat` is worth doing
-    // once, and only when there is a user to log for.
     let voiceLogMeta: { fileName: string; fileSize: number } | null = null;
     if (user?._id) {
       const fileName = uri.split('/').pop() || `voice_${Date.now()}.m4a`;
@@ -781,28 +716,21 @@ export const useChatLogic = (
         received: false,
       };
 
-      // Instantly clear the recorder/player and hide the sending bar
       reset();
 
-      // Add the optimistic voice note to the message list instantly
       setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
 
-      // Execute the API send in the background
       const stored = await ChatService.sendFileMessage(
         chatId,
         { uri, name: fileName, type: 'audio/m4a' },
         ''
       );
-      // ⚠️ After the send — the recording is uploaded by this request, so its S3 path does not
-      // exist before it. `duration` and the real byte size are kept: unlike the other sends, a
-      // voice note's size IS measured (`RNFS.stat`) rather than guessed, and the portal shows both.
       if (user?._id && voiceLogMeta) {
         const storedFiles = stored?.files?.length
           ? stored.files
           : [{
               fileName: voiceLogMeta.fileName,
               fileType: 'audio/m4a',
-              // Measured with `RNFS.stat` above — a real byte count, not a guess.
               fileSize: voiceLogMeta.fileSize,
             }];
         logEvent('send', {
@@ -827,7 +755,6 @@ export const useChatLogic = (
       }
     } catch (err) {
       console.warn('[Media] Failed to send voice note:', err);
-      // Clean up the optimistic message from list on failure
       setMessages((prev: any[]) => prev.filter((m) => m._id !== tempId));
       Alert.alert('Error', 'Failed to send voice note. Please try again.');
     }

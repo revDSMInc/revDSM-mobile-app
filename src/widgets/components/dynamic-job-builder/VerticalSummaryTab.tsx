@@ -16,13 +16,9 @@ interface VerticalSummaryTabProps {
   lockedTabIds?: string[];
   dealCenterData?: any;
   applyConditions?: boolean;
-  // Finalize extras (appointment / agreement / order-sheet). Provided only when
-  // rendered inside the live Job Builder; absent in preview/config contexts.
   products?: any[];
-  /** Calculator form schemas — supply the per-tab category colour (web parity). */
   schemas?: any[];
   repDetails?: any;
-  /** Web `useDealEditMode()` — editing an already-resulted deal. */
   editMode?: boolean;
   leadId?: string;
   calculatorResultData?: any;
@@ -37,31 +33,16 @@ interface VerticalSummaryTabProps {
   resolvedDocuments?: { agreements: any[]; orderSheets: any[] };
   setResolvedDocuments?: React.Dispatch<React.SetStateAction<{ agreements: any[]; orderSheets: any[] }>>;
   isDocUploadingRef?: React.MutableRefObject<boolean>;
-  /** Resolves to the category's server documents (signed URLs), or null on failure. */
   onUploadDocs?: (cat: 'agreement' | 'orderSheet', payloads: any[]) => Promise<any[] | null>;
-  /** Re-reads the lead's stored documents for a category (no upload). */
   onRefreshDocs?: (cat: 'agreement' | 'orderSheet') => Promise<any[] | null>;
-  /**
-   * Drives the Job Builder's collapsing step header. The Summary tab owns its OWN
-   * ScrollView (it returns before `DynamicTabRenderer`'s), so it has to be wired
-   * separately or the header would sit frozen on this one tab.
-   *
-   * ⚠️ Spread it whole — it carries touch/momentum handlers, not just `onScroll`.
-   */
   collapsingScrollProps?: Record<string, any>;
-  /** Height of the collapsing header floating over the top of this list (overlay mode). */
   collapsingTopInset?: number;
 }
 
 function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: string; text: string; variant?: string; showLabel?: boolean }) {
   const valueColor = variant === 'missing' ? '#ef4444' : '#1e293b';
-  // Labels come verbatim from the portal-authored schema (`field.label`), which
-  // can carry stray whitespace — e.g. " LeafFilter Profile" renders indented
-  // while its sibling rows sit flush. Trim for display only; the underlying
-  // field data is untouched.
   const labelText = label?.trim();
 
-  // No label → value spans the full width (web `SummaryFieldRow` early return).
   if (!showLabel || !labelText) {
     return (
       <View className="py-1">
@@ -70,9 +51,6 @@ function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: s
     );
   }
 
-  // Web parity (`SummaryFieldRow` Grid: label md={4} + value md={8}): the label
-  // sits in a left column and the value to its right, instead of stacked — this is
-  // the summary layout the web reference shows.
   return (
     <View className="flex-row items-start py-1">
       <Text
@@ -86,20 +64,6 @@ function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: s
   );
 }
 
-/**
- * The measurement grid, as ordinary summary ROWS — `1st Story | Left: 63ft, Right: 7ft, Front: 50ft
- * (120ft total)`. The line itself is built by `formatStoryMeasurementLine`.
- *
- * ⚠️ Rendered through `SummaryFieldRow`, like every other row, and placed AFTER the field rows.
- * It used to have its own layout (a fixed `w-16` label in smaller, lighter type) and sat in the
- * right-hand column BESIDE the "Combination #" chip, so the story line floated above the rows on a
- * grid of its own — reported as *"3rd Story  Left Side: 22ft is not looking well, put it in the end
- * of the row, like the client show it in the table"*. Sharing the row component is what keeps the
- * label column aligned; do not give this its own widths again.
- *
- * The data arrives keyed by LOCATION (Left Side → per-story values); the table is keyed by STORY, so
- * it is inverted here.
- */
 function LocationSummaryRows({ locationRows }: { locationRows: any[] }) {
   if (!locationRows?.length) return null;
 
@@ -118,9 +82,6 @@ function LocationSummaryRows({ locationRows }: { locationRows: any[] }) {
   return (
     <>
       {Object.keys(storyMap).map((story) => {
-        // `Left Side: 1ft, Front: 2ft (3ft total)` — the colon and the
-        // only-when-it-adds-up total both live in the pure formatter, which is
-        // testable; this component cannot be loaded under jest.
         const text = formatStoryMeasurementLine(storyMap[story]);
         return <SummaryFieldRow key={story} label={story} text={text} />;
       })}
@@ -151,29 +112,11 @@ function ExtrasList({ label, items }: { label?: string; items: any[] }) {
   );
 }
 
-// Web draws its summary dividers at two weights (`alpha(theme.palette.divider, …)`):
-// 0.4 — a clearly visible rule — BETWEEN combinations and between combination
-// groups, and 0.12 — a hairline — between the field rows inside a simple section.
-// Mobile previously used `slate-100`/`slate-50` for all of them, which is so close
-// to white that combinations ran together with no visible separation.
 const DIVIDER_STRONG = '#CBD5E1'; // ≈ alpha(divider, 0.4)
 const DIVIDER_HAIRLINE = '#F1F5F9'; // ≈ alpha(divider, 0.12)
 
 function CombinationSummaryItem({ entry, accentColor, isLast }: { entry: any; accentColor: string; isLast: boolean }) {
-  // Web parity (`CombinationSummaryItem` Grid: label md={4} + body md={8}): the
-  // "Combination #N" chip sits in a left column with the combo's summary line to
-  // its right; the per-field rows below keep the same label/value column split so
-  // labels align under the chip — matching the web summary reference layout.
   return (
-    // Spacing around the rule is set HERE in `style`, not via NativeWind margin
-    // classes, so there is no ambiguity about which wins when a `style` prop is also
-    // present on the same View.
-    //
-    // The two sides are deliberately NOT equal. Above the rule the last field row
-    // already contributes its own row spacing, so 16px of padding reads as ~24px.
-    // Below it the next "Combination #N" chip is a tight pill (`py-0.5`) whose text
-    // sits flush against its top edge, so an equal 16px read as the line touching the
-    // chip. 22px below balances the two optically.
     <View
       style={
         isLast
@@ -243,10 +186,6 @@ export function VerticalSummaryTab({
   collapsingScrollProps,
   collapsingTopInset = 0,
 }: VerticalSummaryTabProps) {
-  // `products` + `schemas` feed `resolveTabAccentColor` (web parity): they carry the
-  // per-tab category colour that gives each summary card its own header colour.
-  // They were previously omitted, so every card fell through to `vertical.color`
-  // — one colour shared by every tab, which is why all headers rendered the same.
   const summarySections = useMemo(
     () =>
       buildVerticalSummarySections(vertical, verticalState, {
@@ -255,51 +194,25 @@ export function VerticalSummaryTab({
         applyConditions,
         products,
         schemas,
-        // Deal-edit: drives the "no rep content → empty summary" gate AND lets
-        // formatFieldSummaryValue prefer the rep's live value over the deal-center
-        // one for editable locked fields (web parity). Was never threaded, so the
-        // summary always fell back to the calculator value.
         editMode,
       }),
     [vertical, verticalState, lockedTabIds, dealCenterData, applyConditions, products, schemas, editMode]
   );
 
-  // Only show the finalize cards inside the live builder (a root-state setter is
-  // present); preview/config renders pass none of these and skip the section.
   const showFinalize = Boolean(onUpdateRootState);
   const productKey = vertical?.productId || vertical?.id;
 
-  // Warm everything the offline agreement is rendered from, HERE rather than in the dialog.
-  //
-  // ⚠️ The dialog fetches them only once it is open, which is the one moment they cannot be
-  // fetched: the rep is at the door, the customer is waiting, and the reason the agreement is
-  // being generated on the device is that there is no connection. Reaching the Summary tab always
-  // precedes tapping Generate, so this is the last point at which asking is still useful — and
-  // when there IS signal it refreshes the copy the next offline agreement will be built from.
-  //
-  // Both are cached per rep (`OFFLINE_CACHE.AGREEMENT_CONFIG` / `DESCRIPTION_SCHEMA`), so a single
-  // earlier online session is enough to stock them; this only keeps them current.
   useGetAgreementConfig(showFinalize);
   useGetDescriptionSchema(showFinalize ? productKey : undefined);
-  // The logo is the third, and it is the one that could NEVER stock itself: the only code that
-  // reads it is the device-side generator, which only mounts when there is no connection. So the
-  // request it makes there always fails and the contract goes out with a blank header. Warmed
-  // here it is bytes on disk before the rep leaves signal. Costs nothing after the first success
-  // (a recent copy is served without a request).
   useCompanyLogoBase64(showFinalize);
 
   return (
-    // ⚠️ Reanimated.ScrollView, not RN's: `collapsingScrollProps.onScroll` is a UI-thread worklet
-    // handler (useCollapsingHeader) and only a Reanimated scroll view can host one. NativeWind
-    // `className` does not reach it, so the old `p-4` is an explicit 16pt contentContainerStyle.
     <Reanimated.ScrollView
       style={{ flex: 1 }}
       showsVerticalScrollIndicator={false}
       contentContainerStyle={{ padding: 16, paddingTop: 16 + collapsingTopInset, paddingBottom: 160 }}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive"
-      // Keep a focused input (appointment / agreement fields) above the keyboard —
-      // the screen no longer wraps this in a padding KeyboardAvoidingView.
       automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
       {...collapsingScrollProps}
     >
@@ -346,9 +259,6 @@ export function VerticalSummaryTab({
                             last — e.g. the line above "Downspout & Accessories". */}
                         {groupIdx < section.combinationSections.length - 1 && (
                           <View
-                            // `marginBottom` here is ON TOP of the parent's `space-y-4`,
-                            // so the next group's bold heading clears the rule by about
-                            // the same 22px the combination chips get above.
                             style={{
                               borderTopWidth: 1,
                               borderTopColor: DIVIDER_STRONG,
@@ -410,9 +320,6 @@ export function VerticalSummaryTab({
           isDocUploadingRef={isDocUploadingRef}
           onUploadDocs={onUploadDocs}
           onRefreshDocs={onRefreshDocs}
-          // SummaryFinalizeCards declares + destructures repDetails and hands it to
-          // DynamicAgreementDialog, but nothing was passing it — generated
-          // agreements got `repDetails={undefined}`.
           repDetails={repDetails}
           editMode={editMode}
           productKey={productKey}

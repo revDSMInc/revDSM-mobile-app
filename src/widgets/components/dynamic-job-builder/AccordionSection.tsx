@@ -11,8 +11,6 @@ interface AccordionSectionProps {
   badge?: { type: string; message: string } | null;
 }
 
-// Matches the normal Job Builder collapsible tracker (LeafFilter): #A5E1ED border,
-// #F0F9FF header, font-black, MCIcon chevrons + status badge.
 export function AccordionSection({
   label,
   icon,
@@ -23,15 +21,11 @@ export function AccordionSection({
 }: AccordionSectionProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
-  // Web `AccordionStatusBadge.badgeColors` (job-builder-field-accordion.js):
-  // error #f97316, warning/info/success from the theme palette.
   const badgeColor =
     badge?.type === 'error' ? '#f97316' :
     badge?.type === 'warning' ? '#FFAB00' :
     badge?.type === 'success' ? '#22C55E' : '#00B8D9';
 
-  // Web icon per status: success → check-circle, warning → alert-circle-outline,
-  // anything else → alert.
   const badgeIcon =
     badge?.type === 'success' ? 'check-circle' :
     badge?.type === 'warning' ? 'alert-circle-outline' : 'alert';
@@ -41,8 +35,6 @@ export function AccordionSection({
       <TouchableOpacity
         onPress={() => setExpanded(!expanded)}
         className="flex-row items-center justify-between p-3"
-        // Web keeps the header a constant alpha(info.main, 0.08) regardless of the
-        // badge — tinting it with the badge colour was a mobile-only divergence.
         style={{ backgroundColor: '#F0F9FF' }}
       >
         <View className="flex-row items-center gap-2 flex-1">

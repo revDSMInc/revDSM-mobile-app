@@ -5,14 +5,6 @@ import { OFFLINE_CACHE, cachedFetch } from '../../../utils/offline-query-cache';
 import { isOnline } from '../../../services/connectivity';
 import { useAuth } from '../../../hooks/useAuth';
 
-/**
- * Per-vertical description schemas that drive the agreement "Description of Work".
- * RN port of web `src/api/description-schema.js`.
- *   list:      GET /sales-rep/v1/description-schema        -> { data: { schemas: [] } }
- *   byProduct: GET /sales-rep/v1/description-schema/:id     -> { data: { schema: {} } }
- * The schema is fed to `evaluateDescriptionSchema(schema, jobState, verticalState)`.
- */
-
 const DESCRIPTION_SCHEMA_LIST_URL = '/sales-rep/v1/description-schema';
 
 export function useGetDescriptionSchemas(enabled: boolean = true) {
@@ -46,9 +38,6 @@ export function useGetDescriptionSchema(productId?: string) {
 
   const { data, isLoading, error, isFetching } = useQuery<any>({
     queryKey: ['descriptionSchema', productId || null],
-    // ⚠️ Cached PER PRODUCT — the snapshot name carries the product id. One shared key would let a
-    // rep who opened Gutters last see Gutters' Description of Work on a Roofing agreement, which
-    // is a wrong document rather than a missing one.
     queryFn: () =>
       cachedFetch<any>(
         `${OFFLINE_CACHE.DESCRIPTION_SCHEMA}:${productId}`,

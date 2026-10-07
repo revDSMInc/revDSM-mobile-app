@@ -12,20 +12,10 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 import { useTheme } from '../../../theme/ThemeProvider';
 import { zoneApiId, zoneKnockedCount, zoneLabel } from '../../../utils/zone-helpers';
 
-/**
- * Port of web src/sections/map/zone-canvasser/archived-zones-panel.js — the rep's
- * archived zones, each with an Unarchive action.
- *
- * Split into a card and a toggle so the card can render IN FLOW above the bottom-left
- * buttons: as an absolute popover it would overflow its button's bounds, and Android
- * never delivers a touch there — every Unarchive button would be dead.
- */
-
 type CardProps = {
   zones: any[];
   loading: boolean;
   onUnarchive: (zone: any) => void | Promise<void>;
-  /** The zone id currently being unarchived (web `processingId`). */
   processingId: string | null;
 };
 
@@ -33,8 +23,6 @@ export function ArchivedZonesCard({ zones, loading, onUnarchive, processingId }:
   const { colors, isDark } = useTheme();
   const { width, height } = useWindowDimensions();
 
-  // Web confirm dialog copy, verbatim. A native Alert, not a Modal, for the reason the
-  // stats popup gives: this already sits inside the map's full-screen Modal.
   const confirmUnarchive = (zone: any) => {
     if (processingId) return;
     Alert.alert(
@@ -56,7 +44,6 @@ export function ArchivedZonesCard({ zones, loading, onUnarchive, processingId }:
         backgroundColor: isDark ? colors.surface : '#FFFFFF',
         borderWidth: 1,
         borderColor: border,
-        // Web: hug the viewport on mobile (max 300 wide).
         width: Math.min(300, width - 32),
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 8 },
@@ -81,9 +68,6 @@ export function ArchivedZonesCard({ zones, loading, onUnarchive, processingId }:
           No archived zones.
         </Text>
       ) : (
-        // The header stays put while the list scrolls. The cap sits on the ScrollView
-        // itself (web: 340 overall) — a maxHeight on the card alone does not reliably
-        // make Yoga shrink the list.
         <ScrollView
           nestedScrollEnabled
           showsVerticalScrollIndicator
@@ -146,7 +130,6 @@ export function ArchivedZonesCard({ zones, loading, onUnarchive, processingId }:
   );
 }
 
-/** Web toggle: white with an archive icon, dark with a close icon while open. */
 export function ArchivedZonesToggle({ open, onPress }: { open: boolean; onPress: () => void }) {
   return (
     <TouchableOpacity

@@ -21,24 +21,16 @@ import { LeadService } from '../../../services/api/leads';
 import { ENV } from '../../../config/env';
 import { IMAGE_CATEGORIES } from '../../../constants/lead-center';
 
-// A selected appointment photo, handed back as an S3 reference (NOT re-uploaded).
-// Mirrors the web AppointmentPhotosMenu → MessageInput.handleSendAppointmentPhotos.
 export interface SelectedAppointmentPhoto {
   _id?: string;
   s3url: string;
   bucketName?: string;
   category?: string;
   subcategory?: string;
-  // Human-readable caption ("Front of Home") resolved from IMAGE_CATEGORIES —
-  // same label the Manage Photos grid shows.
   label?: string;
   secureUrl?: string;
 }
 
-// Resolve a photo's category/subcategory the SAME way the LeadCenter "Manage
-// Photos" (Job Docs) does — so this picker shows exactly that set with matching
-// labels. A photo whose category isn't a known IMAGE_CATEGORIES section is NOT
-// shown in Manage Photos, so we hide it here too.
 const findCategoryConfig = (cat?: string): any => {
   if (!cat) return undefined;
   const lc = cat.toLowerCase();
@@ -47,10 +39,6 @@ const findCategoryConfig = (cat?: string): any => {
   );
 };
 const isManagePhotosCategory = (cat?: string) => !!findCategoryConfig(cat);
-// Dynamic inspection photos are stored under a product-scoped category like
-// "Windows — Front" (see useDynamicInspectionCapture.scopeCat). They are NOT in
-// IMAGE_CATEGORIES, so the old `isManagePhotosCategory`-only filter dropped them
-// from chat. Admit any category carrying the " — " product-scope marker too.
 const isDynamicInspectionCategory = (cat?: string) => !!cat && cat.includes(' — ');
 const isSelectablePhotoCategory = (cat?: string) =>
   isManagePhotosCategory(cat) || isDynamicInspectionCategory(cat);
@@ -77,13 +65,9 @@ interface LeadImagePickerModalProps {
   onClose: () => void;
   onConfirm: (photos: SelectedAppointmentPhoto[]) => void;
   leadId?: string;
-  // Photos handed in from an already-loaded lead (LeadCenter). When present we
-  // skip the network fetch entirely — this mirrors the web AppointmentPhotosMenu,
-  // which receives `selectedJob.salesPhotos` as a prop.
   initialSalesPhotos?: any[];
 }
 
-// Small icon map for the category tabs (web AppointmentPhotosMenu parity).
 const getCategoryIcon = (category?: string): string => {
   if (!category) return 'image-multiple-outline';
   const lower = category.toLowerCase();
@@ -113,7 +97,6 @@ export const LeadImagePickerModal = ({
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState(0);
 
-  // Reset selection whenever the picker is (re)opened.
   useEffect(() => {
     if (visible) {
       setSelectedKeys([]);
@@ -121,16 +104,6 @@ export const LeadImagePickerModal = ({
     }
   }, [visible]);
 
-  // Fetch the lead from the Sales Portal DETAIL endpoint — the SAME source LeadCenter
-  // hydrates from (see useLeadCenterData). `workLead` is a work-session PUT and does
-  // not reliably return the photo array, which is why this picker previously showed no
-  // photos, so it stays only as a fallback. Gated on `visible` so opening a chat never
-  // triggers a lead fetch on its own.
-  //
-  // ⚠️ This used to request the LIST with `?leadId=` and `.find()` the row. That is now
-  // wrong twice over: the server IGNORES `leadId` on the list, and the list is slim
-  // (`view=summary`), so the row it found would carry `salesPhotos: []` — the picker
-  // would silently fall through to `workLead` and show nothing.
   const { data: lead, isLoading: leadLoading } = useQuery({
     queryKey: ['lead-photos', leadId],
     queryFn: async () => {
@@ -141,8 +114,6 @@ export const LeadImagePickerModal = ({
       } catch (e) {
         console.warn('[LeadImagePicker] sales-portal lead fetch failed:', e);
       }
-      // Fallback for envs/reps where the detail endpoint doesn't surface it (it 404s
-      // when the signed-in rep isn't the lead's assigned or shadow rep).
       const workRes = await LeadService.workLead(leadId as string, user!._id);
       return workRes.data?.data || workRes.data;
     },
@@ -150,9 +121,6 @@ export const LeadImagePickerModal = ({
     staleTime: 60000,
   });
 
-  // Raw photo records (carry s3url / category / subcategory / bucketName).
-  // Restricted to the SAME set the LeadCenter "Manage Photos" (Job Docs) shows:
-  // sales photos whose category is a known IMAGE_CATEGORIES section.
   const leadPhotos = useMemo(() => {
     const photos =
       (initialSalesPhotos && initialSalesPhotos.length ? initialSalesPhotos : lead?.salesPhotos) || [];
@@ -161,7 +129,6 @@ export const LeadImagePickerModal = ({
 
   const { data: secureMap, isLoading: urlsLoading } = useSecureUrls(leadPhotos);
 
-  // Signed URL for each photo, keyed by its s3url.
   const secureByS3 = useMemo(() => {
     const map: Record<string, string> = {};
     if (secureMap) {
@@ -174,19 +141,12 @@ export const LeadImagePickerModal = ({
     return map;
   }, [secureMap]);
 
-  // Warm the native image cache for EVERY photo (not just the ones currently
-  // on-screen in the FlatList) as soon as the signed URLs resolve. Combined with
-  // `cache: 'force-cache'` on the thumbnails, this makes re-opening the picker —
-  // and scrolling through it — instant instead of re-downloading each time. The
-  // signed URLs themselves are already cached for 50 min by useSecureUrls, so
-  // these bytes stay valid for the whole chat session.
   useEffect(() => {
     Object.values(secureByS3).forEach((u) => {
       if (u) Image.prefetch(u).catch(() => {});
     });
   }, [secureByS3]);
 
-  // Category tabs: an "ALL" tab + one tab per distinct category (web parity).
   const dynamicTabs = useMemo(() => {
     const byKey = new Map<string, { id: string; label: string; icon: string; count: number }>();
     byKey.set('__all__', {
@@ -234,12 +194,9 @@ export const LeadImagePickerModal = ({
       .map((p: any) => ({
         _id: p._id,
         s3url: p.s3url,
-        // Same bucket resolution useSecureUrls used to DISPLAY these photos, so
-        // the chat's later signed-URL fetch (on reload) hits the right bucket.
         bucketName: p.bucketName || ENV.S3_BUCKET,
         category: p.category || '',
         subcategory: p.subcategory || '',
-        // Human label ("Front of Home") — shown under the photo in the chat grid.
         label: resolveSubLabel(p.category, p.subcategory),
         secureUrl: secureByS3[p.s3url] || undefined,
       }));

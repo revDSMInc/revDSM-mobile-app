@@ -1,13 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, Modal, FlatList, Animated, ScrollView } from 'react-native';
 
-/**
- * ⚠️ `dark` is OPT-IN and defaults to the light look every existing caller relies on.
- * The control is hardcoded white (trigger and panel), which is right on the Lead Center
- * and the Roofline Deck but reads as a white slab on the Pitch Book's dark presentation
- * dock — so that one caller asks for the dark palette rather than the component guessing
- * from a theme it cannot see (the dock is dark in BOTH app themes).
- */
 const YearDropdown = ({
   defaultValue = 3,
   min = 1,

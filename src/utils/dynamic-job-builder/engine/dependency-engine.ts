@@ -52,12 +52,6 @@ function toNumber(value: any) {
   return Number.isNaN(n) ? 0 : n;
 }
 
-/**
- * The canonical rule context. Exported (ticket 1063) because per-option
- * `optionVisibility` rules in `toggle-utils` must be evaluated against the SAME
- * context as field-level `visibleWhen`/`requiredWhen` — anything less makes
- * cross-section, by-key and allocation-metric references resolve to `undefined`.
- */
 export function buildRuleEvaluationContext(ctx: any = {}, state: any = {}) {
   return {
     dealCenterData: ctx.dealCenterData || {},
@@ -68,9 +62,6 @@ export function buildRuleEvaluationContext(ctx: any = {}, state: any = {}) {
     sectionState: ctx.sectionState,
     combos: ctx.combos,
     sections: ctx.sections,
-    // Which surface the builder is on, for `flow` rules. Sales passes `editMode`;
-    // the portal and admin editors pass `unrestrictedEdit`. Both names are read so
-    // the three engines stay diffable.
     editMode: Boolean(ctx.editMode ?? ctx.unrestrictedEdit),
   };
 }
@@ -117,27 +108,12 @@ function resolveAllocationTolerance(field: any) {
   return Number(normalizeAllocationStatusMessages(field?.statusMessages).tolerance) || 0;
 }
 
-/** The surfaces the builder runs on. A `flow` rule compares against these. */
 export const FLOW_MODES = ['create', 'edit'];
 
-/** True for a rule that asks which surface the builder is on rather than reading a value. */
 function isFlowRule(rule: any) {
   return (rule?.source || 'dealCenter') === 'flow';
 }
 
-/**
- * Evaluate a `flow` rule — "is the rep building this job, or amending it in My Deals?"
- *
- * ⚠️ A flow rule only ever does work at CREATE time. The deal-edit flow runs the
- * builder with `applyConditions: false` — every condition is bypassed so an
- * amendment can reach any field — so in My Deals the option list is returned
- * unfiltered before any rule is consulted. That is why "show when flow is edit" is
- * the useful direction: it hides the option while the job is being built, and edit
- * mode shows everything regardless. The reverse, "show only at create", cannot be
- * enforced, because nothing is enforced in edit mode. Web behaves identically
- * (`effectiveApplyConditions = editMode ? false : …`), so this is parity, not a
- * mobile limitation — and it is why no create/edit toggle belongs in the UI.
- */
 function evaluateFlowRule(rule: any, ctx: any) {
   const current = ctx?.editMode ? 'edit' : 'create';
   const operator = rule?.operator || 'eq';
@@ -145,23 +121,12 @@ function evaluateFlowRule(rule: any, ctx: any) {
     .map((v: any) => String(v ?? '').trim())
     .filter(Boolean);
 
-  // An unanswered flow rule decides nothing, like any other unauthored rule.
   if (!wanted.length) return true;
 
   const matches = wanted.includes(current);
   return operator === 'neq' || operator === 'notIn' ? !matches : matches;
 }
 
-/**
- * True when a rule names no field of any kind.
- *
- * Such a rule cannot be evaluated: `resolveSourceValue` has nothing to look up and
- * returns `undefined`, which every operator then reads as a failure. That is the
- * wrong default for an unauthored condition — it silently hides whatever the rule
- * was attached to, and for an `optionVisibility` entry it can empty a dropdown's
- * option list entirely, which makes the whole field disappear with nothing on
- * screen saying why.
- */
 function ruleReferencesNoField(rule: any) {
   return !rule?.field && !rule?.fieldId && !rule?.fields?.length && !rule?.fieldIds?.length;
 }
@@ -300,13 +265,6 @@ function isNonZero(value: any) {
   return Boolean(value);
 }
 
-/**
- * Truthiness for the `truthy`/`falsy` operators (web parity). A quantity of `0`
- * — or the string `"0"` a text input produces — means "nothing entered", so it
- * must read as FALSY; a plain `Boolean()` counted `"0"` as truthy, which let a
- * zero-valued contributor/visibility rule match when web's would not.
- * Non-numeric strings stay truthy.
- */
 function isTruthyValue(value: any): boolean {
   if (value === null || value === undefined || value === '') return false;
   if (typeof value === 'number') return value !== 0;
@@ -322,30 +280,8 @@ function isTruthyValue(value: any): boolean {
 export function evaluateRule(rule: any, ctx: any = {}) {
   if (!rule) return true;
 
-  // ⚠️⚠️ ORDER IS LOAD-BEARING: the flow branch goes ABOVE the unauthored-rule
-  // guard below. A `flow` rule names no field BY DESIGN — it asks which surface the
-  // builder is on, it does not read a value — so `ruleReferencesNoField` is true for
-  // every one of them. Put this second and each flow rule is read as "no rule",
-  // returns true, and the options it was meant to hide at create time all show:
-  // silently, and it is exactly the bug the feature exists to prevent.
   if (isFlowRule(rule)) return evaluateFlowRule(rule, ctx);
 
-  // ⚠️ An unauthored rule is NOT a condition — fail OPEN, not closed.
-  //
-  // Treated as "no rule", matching `evaluateRule(null)` / `evaluateRuleGroup(null)`,
-  // so a half-filled rule leaves the option showing. This is the whole reason the
-  // reported LeafFilter config rendered broken: its profile dropdown carries
-  // `optionVisibility["Versa"] = { source: 'dealCenter', field: '', operator:
-  // 'anyNonZero' }`. Failing closed hid "Versa", which left only "Versa Max", which
-  // failed every one of the seven width options' rules, which removed the width
-  // field from the screen entirely — one unauthored rule taking out two controls
-  // with nothing explaining why.
-  //
-  // Failing open is also what Lance's requirement asks for: the rep must always be
-  // able to pick any width the company configured, as a manual override.
-  //
-  // Blast radius measured on web across every job-builder config in the dev
-  // database: 1 rule out of 519 references no field — that one.
   if (ruleReferencesNoField(rule)) return true;
 
   const operator = rule.operator || 'truthy';
@@ -464,8 +400,6 @@ function resolveAllocationAvailFromValueSource(valueSource: any, dealCenterData:
     );
   }
 
-  // static / state / contributors / computed budgets aren't a single deal-center
-  // number — use the configured fallback so a real budget isn't read as 0.
   return Number(valueSource.fallback) || 0;
 }
 
@@ -479,12 +413,6 @@ function getAllocationBudgetValueSource(field: any) {
 }
 
 export function resolveAllocationAvail(field: any, dealCenterData: any = {}) {
-  // Modern allocations define their budget inside the budget metric's
-  // valueSource (metrics: [{ role: 'budget', valueSource: { type: 'dealCenter' } }]);
-  // legacy ones put it on field.dcField / field.avail. Resolve the metrics form
-  // FIRST, otherwise a metrics-based card (whose top-level field.avail is 0) is
-  // mistaken for a zero-budget/excluded card and silently skipped by completion
-  // checks — leaving Next enabled while its allocation is still incomplete.
   const budgetSource = getAllocationBudgetValueSource(field);
   if (budgetSource) {
     return resolveAllocationAvailFromValueSource(budgetSource, dealCenterData);
@@ -648,8 +576,6 @@ export function isFieldRequired(field: any, state: any = {}, ctx: any = {}) {
   return evaluateRuleGroup(requiredWhen, buildRuleEvaluationContext(ctx, state));
 }
 
-/** True when a configured default color should apply for the current state.
- * Web parity: src/components/dynamic-job-builder/engine/dependency-engine.js. */
 export function isDefaultColorActive(field: any, state: any = {}, ctx: any = {}) {
   const useDefault = isDefaultValueOptedIn(field);
   if (!useDefault || !field?.defaultValue) return false;
@@ -660,30 +586,11 @@ export function isDefaultColorActive(field: any, state: any = {}, ctx: any = {})
   return evaluateRuleGroup(defaultWhen, buildRuleEvaluationContext(ctx, state));
 }
 
-/**
- * Fallback default for `resolveLockedValue` on a field whose default is conditional
- * (`dependencies.defaultWhen`). Returns '' when the condition is NOT met so the raw
- * `field.defaultValue` is never leaked past the rule (this is what stops a
- * not-included product — e.g. a LeafFilter whose inclusion condition isn't met — from
- * persisting a phantom non-zero default that the portal then renders as a product),
- * and `undefined` when the field has no conditional default at all, letting the caller
- * keep its existing `field.defaultValue` behaviour untouched.
- * Web parity: dependency-engine.js:608.
- */
 export function resolveConditionalDefault(field: any, state: any = {}, ctx: any = {}) {
   if (!field?.dependencies?.defaultWhen) return undefined;
   return isDefaultColorActive(field, state, ctx) ? (field.defaultValue ?? '') : '';
 }
 
-/**
- * The default a field should actually show/seed right now, or '' when none applies.
- *
- * Unlike `resolveConditionalDefault` this never returns `undefined`: it answers
- * "what is the effective default", not "is there a conditional one". '' covers
- * all three no-default cases — the opt-in is off (`useDefaultValue: false` with a
- * leftover `defaultValue`), no `defaultValue` is authored, or `defaultWhen` is
- * not met. Ticket 1063; web parity: dependency-engine.js `resolveEffectiveDefaultValue`.
- */
 export function resolveEffectiveDefaultValue(field: any, state: any = {}, ctx: any = {}) {
   return isDefaultColorActive(field, state, ctx) ? (field.defaultValue ?? '') : '';
 }
@@ -771,10 +678,6 @@ function validateRuleRefs(rule: any, knownKeys: Set<string>, location: string, e
     });
   }
 
-  // Was `rule.field && !String(rule.field).trim()`, which can only be true for a
-  // WHITESPACE-ONLY key — for `field: ''` the first clause is falsy, so the one
-  // case it exists to catch (a rule saved with no field picked at all) was never
-  // reported, and the broken config reached production silently.
   if (source === 'dealCenter' && !rule.field && !rule.fields?.length) {
     errors.push(`${location}: Deal Center field is required`);
   }

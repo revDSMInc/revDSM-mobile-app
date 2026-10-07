@@ -15,27 +15,15 @@ import { format, isValid } from 'date-fns';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LeadService } from '../../services/api/leads';
 
-/**
- * My Deals — reached from the Leads-page calendar button. Web parity with
- * `MyDealsView` (`src/sections/map/components/my-deals-view.js`): a paginated,
- * filterable list of resulted deals fed by `GET /demo/v1/leads/sales`. Tapping a
- * deal opens the **Deal Detail** screen (web navigates to `/dashboard/deal/:id`),
- * from which the rep starts the 4-step dynamic edit wizard.
- *
- * Styled to match the Dynamic Job Builder (slate surfaces, green accent).
- */
-
 interface MyDealsProps {
   navigation?: NativeStackNavigationProp<any>;
 }
 
 const PAGE_LIMIT = 12;
 
-// Tab index → scheduleFilter (web `getScheduleFilter`): 1→scheduled, 2→TBD, 0→All.
 const SCHEDULE_FILTERS: (string | null)[] = [null, 'scheduled', 'TBD'];
 const TAB_LABELS = ['All', 'Scheduled', 'TBD'];
 
-// ── card display helpers (web parity: my-deal-card.js) ──────────────────────
 function shortenOfficeName(name?: string): string {
   if (!name || typeof name !== 'string') return '';
   const words = name.trim().split(' ');
@@ -161,26 +149,12 @@ export default function MyDeals({ navigation }: MyDealsProps) {
   const [hasMore, setHasMore] = useState(true);
   const [search, setSearch] = useState('');
 
-  // ⚠️ These guards MUST be refs written SYNCHRONOUSLY, not state mirrored by an
-  // effect. They used to be `useEffect(() => { loadingRef.current = loading })`,
-  // which lands a render LATE — and `onEndReached` fires on mount (FlatList fires it
-  // whenever the content is shorter than the viewport, which an empty list always is).
-  // So page 2 went out while page 1 was still in flight, and because both shared one
-  // `loading` flag, page 2's fast empty response ran `setLoading(false)` on the way
-  // out. `showInitialLoader` then went false with `leads` still empty, so My Deals sat
-  // on "No leads found" for the REST of page 1's download — the ~10 s the rep sees —
-  // and only filled in when the big response finally landed.
   const inFlightRef = useRef(false);
   const hasMoreRef = useRef(true);
-  // Only the newest request may write state, so a superseded one (tab switched
-  // mid-flight) can never overwrite the list it no longer belongs to.
   const requestIdRef = useRef(0);
 
   const fetchDeals = useCallback(
     async (pageNum: number, isNewFilter: boolean) => {
-      // Pagination never overlaps. A new-filter/refresh load is allowed through
-      // because it SUPERSEDES whatever is running — dropping it would strand the
-      // screen on the previous tab's results.
       if (inFlightRef.current && !isNewFilter) return;
 
       const requestId = ++requestIdRef.current;
@@ -209,7 +183,6 @@ export default function MyDeals({ navigation }: MyDealsProps) {
         hasMoreRef.current = false;
         setHasMore(false);
       } finally {
-        // A superseded request must NOT clear the flags the live one owns.
         if (requestId === requestIdRef.current) {
           inFlightRef.current = false;
           setLoading(false);
@@ -220,7 +193,6 @@ export default function MyDeals({ navigation }: MyDealsProps) {
     [activeTab]
   );
 
-  // Reset + refetch page 1 whenever the filter tab changes.
   useEffect(() => {
     setLeads([]);
     setPage(1);
@@ -230,9 +202,6 @@ export default function MyDeals({ navigation }: MyDealsProps) {
   }, [activeTab, fetchDeals]);
 
   const onEndReached = useCallback(() => {
-    // ⚠️ Never paginate an empty list. FlatList fires `onEndReached` on mount when the
-    // content is shorter than the viewport, so with nothing rendered yet this ran
-    // immediately and asked for page 2 before page 1 had returned.
     if (!leads.length) return;
     if (inFlightRef.current || !hasMoreRef.current) return;
     const next = page + 1;
@@ -252,17 +221,11 @@ export default function MyDeals({ navigation }: MyDealsProps) {
     (lead: any) => {
       const leadId = lead?._id || lead?.id || lead?.leadId;
       if (!leadId) return;
-      // A deal opens the SAME Lead Center screen a sold lead opens (lead info +
-      // Job docs / Map / Tools + the resulted Contract Details card), rather than a
-      // separate deal screen. `fromMyDeals` retitles the header "Deal" and keeps the
-      // Contract Details pencil on the My Deals edit flow (the deal-edit wizard).
       navigation?.navigate('LeadCenter', { lead, fromMyDeals: true });
     },
     [navigation]
   );
 
-  // Client-side search over the loaded deals (matches the visible "Search leads…"
-  // box in the web mobile view). Server filtering stays on the schedule tabs.
   const visibleLeads = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return leads;
@@ -277,9 +240,6 @@ export default function MyDeals({ navigation }: MyDealsProps) {
   const showInitialLoader = loading && !refreshing && leads.length === 0;
 
   return (
-    // The global revDSM header (MainHeader) sits above this screen and already consumes
-    // the top inset — same as Lead Center — so only the remaining edges are applied here,
-    // otherwise the title bar would get double top padding.
     <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }} edges={['bottom', 'left', 'right']}>
       {/* Header */}
       <View

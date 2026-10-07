@@ -9,15 +9,10 @@ import { isContainerFieldType } from '../constants/field-types';
 import { resolveLocationGridConfig } from './location-grid-utils';
 
 const SKIP_FIELD_TYPES = new Set(['allocation', 'combinationSummary', 'sectionLabel']);
-// `_addedInEdit`: session-only My Deals marker (`combination-color-filter.ts`).
 const SKIP_STATE_KEYS = new Set(['colorValues', '_combinationNumber', '_addedInEdit']);
 
-// Standalone color-picker field types. Their stored value is a color name and
-// their own label is usually generic ("Color"), so a change log needs the
-// owning input's label to say *whose* color was picked.
 const COLOR_FIELD_TYPES = new Set(['swatch', 'colorSelection', 'customColor']);
 
-// Field types that can never be the "owner" a color picker belongs to.
 const NON_OWNER_FIELD_TYPES = new Set([
   ...COLOR_FIELD_TYPES,
   'allocation',
@@ -31,8 +26,6 @@ function isColorFieldType(type: any) {
   return COLOR_FIELD_TYPES.has(type);
 }
 
-// A bare "Color" / "Colour" / "Custom Color" / "Colors" carries no identity, so
-// it must be qualified with the owning field rather than logged on its own.
 function isGenericColorLabel(label: any) {
   if (!label) return true;
   return /^(custom\s+)?colou?rs?$/i.test(String(label).trim());
@@ -52,11 +45,6 @@ function isOwnerCandidateField(field: any) {
   return Boolean(field.label || field.key);
 }
 
-// Walk a section's field tree to find the input a standalone color picker
-// belongs to. The owner is the nearest preceding input sibling in render order
-// (e.g. the "Replace Corner Miter" number rendered right above its color slot),
-// falling back to the enclosing stack/accordion container's label. Returns null
-// when the target id is not in this branch so the caller can keep searching.
 function findColorOwnerLabel(
   fields: any[],
   targetId: string,
@@ -94,18 +82,6 @@ export function tabHasMultipleComboSections(tab: any) {
   return getCombinationGroups(tab).length > 1;
 }
 
-/**
- * A display name for a combo section, used to keep each section's combos distinct
- * in the log. Every LeafFilter gutter profile is its own combination section and
- * numbers its combos from #1, so with empty section labels they all collapse to
- * "LeafFilter Combo #1" and the log viewer dedups them into one struck-through
- * entry. Prefer the section's own label, else a stable ordinal so different
- * sections never share a combo label.
- *
- * NOTE: a `sectionLabel` *field* inside the section is deliberately NOT used - it
- * is an inner sub-group header (e.g. "Miters & End Caps") that names only part of
- * the section, so borrowing it mislabels sibling fields above it.
- */
 export function resolveComboSectionLabel(tab: any, section: any) {
   const label = String(section?.label || '').trim();
   if (label) return label;
@@ -151,12 +127,6 @@ export function buildSchemaFieldLabel({
   const sectionLabel = section?.label || '';
   const rawFieldLabel = field?.label || field?.key || field?.id || 'Field';
 
-  // A color change must say *whose* color was picked. Two models feed in here:
-  //   1. Attached color (colorValues) - `field` is already the owning input, so
-  //      its own label ("Replace Corner Miter") is the qualifier.
-  //   2. Standalone color field (swatch/colorSelection/customColor) - its own
-  //      label is generic ("Color"), so we fall back to `ownerLabel`, the
-  //      adjacent input the picker belongs to.
   const isColorContext = isColor || isColorFieldType(field?.type);
   let fieldLabel = rawFieldLabel;
   if (isColorContext) {
@@ -176,8 +146,6 @@ export function buildSchemaFieldLabel({
         ? comboIndex + 1
         : null;
 
-  // With multiple combo sections, prefix with the section (label/header/ordinal)
-  // so each section's "Combo #N" is distinct; otherwise the tab label suffices.
   const comboPrefix =
     comboNum != null
       ? tabHasMultipleComboSections(tab)
@@ -370,8 +338,6 @@ export function resolveFieldLogContext(stateKey: string, tab: any, tabState: any
     return { skip: true };
   }
 
-  // Standalone color pickers store their value under their own field id (not in
-  // `colorValues`), so resolve the input they belong to for a meaningful label.
   const ownerLabel = isColorFieldType(field.type)
     ? resolveColorFieldOwnerLabel(section, field.id)
     : '';

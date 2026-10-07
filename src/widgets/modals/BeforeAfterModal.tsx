@@ -105,7 +105,6 @@ export const BeforeAfterModal = ({
 
       const isOnline = await checkOnlineStatus();
       if (!isOnline) {
-        // Enqueue offline uploads
         if (beforeImages.length > 0) {
           await enqueueOfflineUpload({
             jobNumber: job.jobNumber,
@@ -209,7 +208,6 @@ export const BeforeAfterModal = ({
         return;
       }
 
-      // Upload Before Images if any
       let updatedBefore = [];
       if (beforeImages.length > 0) {
         const formData = new FormData();
@@ -222,7 +220,6 @@ export const BeforeAfterModal = ({
         updatedBefore = res.data?.data?.images?.beforeImages || res.data?.images?.beforeImages || [];
       }
 
-      // Upload After Images if any
       let updatedAfter = [];
       if (afterImages.length > 0) {
         const formData = new FormData();

@@ -37,9 +37,4 @@ export function createBlankJobBuilderConfig() {
   };
 }
 
-// NOTE: createDefaultJobBuilderConfig() (a hardcoded gutter/roofline template)
-// was removed as part of "remove mocks entirely" — the Dynamic Job Builder now
-// renders only real backend config. createEmptyVertical/createEmptyTab remain for
-// the in-app config builder (add vertical / add tab actions).
-
 export { createDefaultField };

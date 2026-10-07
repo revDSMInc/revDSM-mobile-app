@@ -5,11 +5,6 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { LEGEND_ITEMS } from '../../../utils/zone-canvasser-status';
 import { BuildingMapMarker } from './BuildingMapMarker';
 
-/**
- * The building-status legend card. Rendered IN FLOW above the bottom-left buttons
- * (see ZoneCanvasserMap), not as an absolute popover off its own button — Android does
- * not deliver touches to a child drawn outside its parent's bounds.
- */
 export function MapLegendCard() {
   const { colors, isDark } = useTheme();
 
@@ -33,7 +28,6 @@ export function MapLegendCard() {
   );
 }
 
-/** Web palette toggle: white with a palette icon, dark with a close icon while open. */
 export function MapLegendToggle({ open, onPress }: { open: boolean; onPress: () => void }) {
   return (
     <TouchableOpacity

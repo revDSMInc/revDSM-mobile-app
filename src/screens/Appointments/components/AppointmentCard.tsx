@@ -10,7 +10,6 @@ interface AppointmentCardProps {
   onDelete: () => void;
 }
 
-// Port of web `CalculatorAppointmentCard.js`.
 export const AppointmentCard: React.FC<AppointmentCardProps> = ({
   appointment,
   onEdit,

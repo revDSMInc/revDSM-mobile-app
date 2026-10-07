@@ -1,10 +1,3 @@
-/**
- * Jest mock for react-native-mmkv.
- *
- * The real module loads Nitro TurboModules, which cannot initialize under the
- * jest/node environment. This provides an in-memory, API-compatible stand-in so
- * that `src/utils/storage.ts` (and anything transitively importing it) can load.
- */
 class MMKVMock {
   constructor() {
     this._store = new Map();
@@ -37,7 +30,6 @@ class MMKVMock {
     this._store.delete(key);
   }
 
-  // storage.ts calls `remove` via its Storage helper
   remove(key) {
     this._store.delete(key);
   }

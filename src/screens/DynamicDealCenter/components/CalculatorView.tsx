@@ -36,16 +36,13 @@ interface CalculatorTabLite {
   title: string;
   isRolloutConfirmed?: boolean;
   paymentMethod?: string;
-  /** Live field values — read to decide whether this tab is a full package. */
   entries?: Record<string, CalculatorEntry>;
 }
 
 interface CalculatorViewProps {
-  /** All configured verticals (products) rendered as the top horizontal scroller. */
   verticals: CalculatorSchema[];
   entries: Record<string, CalculatorEntry>;
   onEntryChange: (fieldId: string, entry: CalculatorEntry) => void;
-  /** Clear one category's fields in a single pass (fires one `section cleared` log). */
   onClearSection?: (categoryId: string, categoryLabel: string) => void;
   totals: CalculatorTotals;
   readOnly?: boolean;
@@ -56,40 +53,20 @@ interface CalculatorViewProps {
   onRenameTab?: (id: string, name: string) => void;
   onDuplicateTab?: (id: string) => void;
   onDeleteTab?: (id: string) => void;
-  /** Reorder tabs via drag: receives the new id order + the id that should stay active. */
   onReorderTabs?: (orderedIds: string[], activeId: string) => void;
   onViewAll?: () => void;
-  /** Confirmed rollout end price — shown in the locked receipt's green sub-card. */
   price?: number;
-  /** Confirmed drop-price list — the last drop shows as "Updated End Price". */
   drops?: any[];
-  /** Company pricing config — the locked receipt adds the per-tier static fee (web parity). */
   pricingConfig?: PricingConfig | null;
-  /**
-   * Resolved payment plans (web `paymentPlans`) — the locked receipt grosses each
-   * COST/PAR/RETAIL tier up by the selected plan's bank fee, exactly like the live
-   * rollout tiles and web `calculateResultUtil`. Without this the locked tiles
-   * showed the pre-fee sum (e.g. COST $972 vs web's fee-inflated $1,117).
-   */
   plans?: Record<string, DealPlan>;
-  /** Lead-aware default payment method (web `getDefaultPaymentMethod`) — fallback when the calc/user have none. */
   defaultMethod?: string;
-  /** Resolved appointment id — enables the "Add This Job to Job Tracker" button. */
   appointmentId?: string;
-  /** Lowe's lead flag — drives the job-tracker modal's payment-method grouping. */
   isLowesLead?: boolean;
-  /**
-   * The customer's `"<first> <last>"`, used as the FIRST tab's label while that
-   * calculator is still untitled (web parity — see `tabCalcs`). Empty when the lead
-   * carries no name, which leaves the tab blank exactly as before.
-   */
   customerTabName?: string;
 }
 
 type CatStyle = SchemaStyle;
 
-// Name-keyed fallback palette (used only when the backend schema doesn't supply
-// `icon`/`color`), mirroring the old mobile deal center visual language.
 const CATEGORY_STYLE_MAP: Record<string, CatStyle> = {
   gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
   gutter: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
@@ -104,8 +81,6 @@ const CATEGORY_STYLE_MAP: Record<string, CatStyle> = {
   miscellaneous: { color: '#637381', icon: 'ellipsis-horizontal-circle', bg: '#F4F6F8' },
 };
 
-// Icon + color are read from the schema first (Iconify → Ionicons + hex/token
-// resolution), falling back to the name-based palette above.
 function getCategoryStyle(category: CalculatorCategory): CatStyle {
   const named = CATEGORY_STYLE_MAP[(category.name || '').toLowerCase()]
     || CATEGORY_STYLE_MAP[(category.label || '').toLowerCase()];
@@ -119,18 +94,6 @@ function getVerticalStyle(schema: CalculatorSchema): CatStyle {
   );
 }
 
-/**
- * Field input row — visually mirrors the old deal center `InputField`
- * (`SharedElements.tsx`): a floating top-left label, a bordered rounded input,
- * and a right-aligned unit + green retail-price badge.
- *
- * Matches web field behavior exactly:
- *   - On focus the border turns GREEN (`#4CBB17`); the background never changes
- *     just from entering a value.
- *   - A conditional "highlight" dependent field tints its background
- *     (`highlightColor`) while its parent field is filled.
- *   - A conditional "fixed" field is auto-filled with its fixed value and locked.
- */
 function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, fixedValue }: {
   field: CalculatorField;
   value: number;
@@ -145,17 +108,12 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
-  // Fixed (auto-filled) dependent fields: force the schema fixed value and keep
-  // it synced whenever the field becomes/stays fixed.
   useEffect(() => {
     if (!isFixed) return;
     const fv = fixedValue || 0;
     if (value !== fv) onChangeRef.current(fv);
   }, [isFixed, fixedValue, value]);
 
-  // Field rows are keyed by field.id (stable across tabs); resync the displayed
-  // text to the active tab's value whenever the field isn't being edited so
-  // switching / duplicating / confirming a tab never shows a stale value.
   useEffect(() => {
     if (focused) return;
     const next = value > 0 ? String(value) : '';
@@ -163,8 +121,6 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
   }, [value, focused, text]);
 
   const disabled = !!readOnly || !!field.disabled || !!isFixed;
-  // Background stays white on normal value entry (matches web). Only a
-  // conditional-highlight dependent field tints its background.
   const bg = highlightColor || '#fff';
   const borderColor = focused ? '#4CBB17' : '#919EAB33';
 
@@ -210,11 +166,6 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
   );
 }
 
-/**
- * One collapsible category card — mirrors the old deal center `Section`
- * (rounded white card, icon-circle header, chevron toggle) with schema-driven
- * `FieldRow` inputs stacked inside.
- */
 function CategoryCard({ category, entries, onEntryChange, onClearSection, readOnly, expanded, onToggle, allFields, formState }: {
   category: CalculatorCategory;
   entries: Record<string, CalculatorEntry>;
@@ -223,9 +174,7 @@ function CategoryCard({ category, entries, onEntryChange, onClearSection, readOn
   readOnly?: boolean;
   expanded: boolean;
   onToggle: () => void;
-  /** flattened fields across ALL verticals (for conditional dependency resolution) */
   allFields: CalculatorField[];
-  /** live value map keyed by field id AND name (drives conditional highlight/fixed) */
   formState: Record<string, number>;
 }) {
   const style = getCategoryStyle(category);
@@ -235,9 +184,6 @@ function CategoryCard({ category, entries, onEntryChange, onClearSection, readOn
 
   const handleFieldChange = useCallback((field: CalculatorField, sectionId: string, value: number) => {
     const price = field.price || { cost: 0, par: 0, retail: 0 };
-    // Preserve the seeded `productName` (build-all-entries sets it from schema.name)
-    // instead of reading a non-existent `category.productName`, which blanked it on
-    // every touched field and diverged from the zero-seed for the same field.
     const productName = (entries[field.id] as any)?.productName ?? (category as any)._productName ?? (category as any).productName ?? '';
     onEntryChange(field.id, {
       fieldId: field.id, categoryId: category.id, sectionId, productName,
@@ -248,9 +194,6 @@ function CategoryCard({ category, entries, onEntryChange, onClearSection, readOn
     });
   }, [category, onEntryChange, entries]);
 
-  // Clear all fields in this category (mirrors web's category "Clear" button).
-  // Prefer the hook's single-pass clear (one `section cleared` activity event, web
-  // parity); fall back to the per-field loop only if no handler is wired.
   const clearCategory = useCallback(() => {
     if (onClearSection) {
       onClearSection(category.id, category.label);
@@ -320,17 +263,7 @@ function CategoryCard({ category, entries, onEntryChange, onClearSection, readOn
   );
 }
 
-/**
- * Job Summary card — matches the web deal center summary block: one card with a
- * header + item-count badge, a single row of category pills across every vertical
- * with entries, then a FLAT list of the entered items (each row carries its own
- * category icon/color). The items are NOT split into separate per-category
- * sub-sections (that was the mobile-only divergence). Spans every vertical the
- * calculator has entries in.
- */
 function JobSummary({ entries, catMeta, sectionLabelMap }: { entries: Record<string, CalculatorEntry>; catMeta: Record<string, { label: string; style: CatStyle }>; sectionLabelMap: Record<string, string> }) {
-  // Entered items ordered by category (so rows of the same category stay
-  // together), flattened into a single list — web parity.
   const { items, categories } = useMemo(() => {
     const grouped: Record<string, CalculatorEntry[]> = {};
     const order: string[] = [];
@@ -411,11 +344,6 @@ function JobSummary({ entries, catMeta, sectionLabelMap }: { entries: Record<str
   );
 }
 
-/**
- * Receipt-style locked (confirmed) view — a faithful port of the regular deal
- * center `LockedCalculatorView` (`CalculatorForm.tsx`). Rendered instead of the
- * editable category list once a tab's rollout price is confirmed (`readOnly`).
- */
 function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingConfig, verticals, plans, method, onShowPackageInfo }: {
   name: string;
   entries: Record<string, CalculatorEntry>;
@@ -426,7 +354,6 @@ function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingCon
   verticals: CalculatorSchema[];
   plans?: Record<string, DealPlan>;
   method?: string;
-  /** Opens the package-contents card below the heading's ⓘ. */
   onShowPackageInfo?: (rect: PackageAnchorRect | null) => void;
 }) {
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
@@ -434,17 +361,14 @@ function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingCon
   const metaFor = (categoryId: string) =>
     catMeta[categoryId] || { label: categoryId, style: { color: '#637381', icon: 'list', bg: '#F4F6F8' } as CatStyle };
 
-  // Entered item rows (value > 0), each carrying its category for style/label lookup.
   const items = useMemo(() => (
     Object.values(entries)
       .filter((e) => e && e.inputValue > 0)
       .map((e) => ({ value: e.inputValue, unit: e.unit, label: e.label, categoryId: e.categoryId, sectionId: e.sectionId }))
   ), [entries]);
 
-  // sectionId → label, so item rows read "5' 5" Gutter/DS/E (All Stories)" (web parity).
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
 
-  // Distinct categories among entered items + per-category counts.
   const categoryCounts = useMemo(() => {
     const map: Record<string, number> = {};
     items.forEach((it) => { map[it.categoryId] = (map[it.categoryId] || 0) + 1; });
@@ -459,14 +383,7 @@ function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingCon
     [entries, verticals, pricingConfig],
   );
 
-  // $200 job-minimum floor per tile (only once there's a real retail total).
   const floorTier = (v: number) => (liveTotals.retail > 0 && v < 200 ? 200 : v);
-  // Reproduce web `calculateResultUtil` EXACTLY, per tier — matching the live rollout
-  // tiles so the values don't change on lock:
-  //   pure tier sum  →  applyFeesToTier (static company fee, e.g. a par-only fee)
-  //   →  withPlanFee (bank-fee gross-up for the confirmed plan)  →  $200 floor.
-  // The plan gross-up was previously missing here, so a financing-plan calc showed the
-  // pre-fee sum (COST $972) instead of web's fee-inflated tile (COST $1,117).
   const tierValue = (v: number, key: 'cost' | 'par' | 'retail') => {
     const withFee = applyFeesToTier(v, key, pricingConfig, { hasLineItems: v > 0 });
     return floorTier(withPlanFee(plans || {}, withFee, method));
@@ -601,24 +518,10 @@ export function CalculatorView({
 }: CalculatorViewProps) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   const { user } = useAuth();
-  // True while the in-app NumPad is up over a focused field here. The pad renders as its own
-  // sibling strip BELOW this whole screen (see `NumPad/index.tsx`'s "inflow" mode) and already
-  // reserves its own bottom safe-area padding — this footer's OWN bottom padding is for when it
-  // is the last thing above the home indicator, which is not true while the pad is showing, and
-  // the two stacked on top of each other was the visible gap above the pad (ticket: "gap issue
-  // b/w the keyboard and tabs").
   const numPadActive = useNumPadActive();
-  // Payment method the locked receipt prices against — resolved exactly like the
-  // live rollout view (`RolloutView.resolveMethod`): the calc's own saved method,
-  // else the user default, else the lead-aware default. Drives the tier bank-fee.
   const lockedMethod = activeTab?.paymentMethod || user?.defaultPaymentMethod || defaultMethod || 'check';
-  // sectionId → label so Job Summary rows read "5' 5" Gutter/DS/E (All Stories)".
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
   const [menuIdx, setMenuIdx] = useState<number | null>(null);
-  // Where the tapped ⓘ is on screen — the contents card opens just below it, so the
-  // same modal serves the footer tab and the receipt heading at opposite ends of the
-  // screen. `null` while closed; the presence of a rect is not the visibility flag,
-  // because a measure can legitimately come back null (see `measureAnchor`).
   const [packageInfoVisible, setPackageInfoVisible] = useState(false);
   const [packageAnchor, setPackageAnchor] = useState<PackageAnchorRect | null>(null);
   const openPackageInfo = useCallback((rect: PackageAnchorRect | null) => {
@@ -635,7 +538,6 @@ export function CalculatorView({
   const tabsScrollRef = useRef<ScrollView>(null);
   const scrollXRef = useRef(0);
 
-  // Keep the selected vertical valid if the verticals list changes.
   useEffect(() => {
     if (!verticals.some((v) => v.id === selectedVerticalId)) {
       setSelectedVerticalId(verticals[0]?.id);
@@ -644,9 +546,6 @@ export function CalculatorView({
 
   const selectedVertical = verticals.find((v) => v.id === selectedVerticalId) || verticals[0];
 
-  // On (re)open, jump to the vertical that already has entered values so the rep
-  // immediately SEES what was added earlier instead of an empty first vertical.
-  // One-shot per mount — it never fights a later manual vertical switch.
   const didAutoSelectRef = useRef(false);
   useEffect(() => {
     if (didAutoSelectRef.current) return;
@@ -664,7 +563,6 @@ export function CalculatorView({
     didAutoSelectRef.current = true;
   }, [entries, verticals, selectedVertical]);
 
-  // categoryId -> { label, style } across ALL verticals (drives the Job Summary).
   const catMeta = useMemo(() => {
     const map: Record<string, { label: string; style: CatStyle }> = {};
     verticals.forEach((v) => (v.categories || []).forEach((c) => {
@@ -673,9 +571,6 @@ export function CalculatorView({
     return map;
   }, [verticals]);
 
-  // Flattened field list across every vertical — conditional `dependsOn`
-  // references can point at fields in other categories, so resolution needs the
-  // full set (mirrors web passing the whole form's `fields`).
   const allFields = useMemo(() => {
     const list: CalculatorField[] = [];
     verticals.forEach((v) => (v.categories || []).forEach((c) => {
@@ -685,7 +580,6 @@ export function CalculatorView({
     return list;
   }, [verticals]);
 
-  // Live value map keyed by field id AND name → the numeric value entered.
   const formState = useMemo(() => {
     const map: Record<string, number> = {};
     Object.values(entries).forEach((e) => {
@@ -696,9 +590,6 @@ export function CalculatorView({
     return map;
   }, [entries]);
 
-  // ── Portal-driven automatic quantities (e.g. Booster Box from the lighting footage) ──
-  // Every field that carries an `autoQuantity` block, with where it lives so a write can build
-  // a complete entry. Empty (and so inert) until the portal publishes such a block.
   const autoFields = useMemo(() => {
     const out: { field: CalculatorField; config: NonNullable<ReturnType<typeof normalizeAutoQuantity>>; categoryId: string; sectionId: string }[] = [];
     verticals.forEach((v) => (v.categories || []).forEach((c) => {
@@ -712,11 +603,7 @@ export function CalculatorView({
     return out;
   }, [verticals]);
 
-  // Footage total per tab+field as last seen. The FIRST sight of a tab only records it, so
-  // opening a saved calculator (or switching tabs) never rewrites a quantity the rep chose.
   const lastTotalsRef = useRef<Record<string, number>>({});
-  // Per field: the quantity when a burst of typing began and the latest one written, so one popup
-  // reports the net change instead of one per keystroke ("3", "35", "350").
   const burstRef = useRef<Record<string, { start: number; latest: number; total: number; timer: ReturnType<typeof setTimeout> | null }>>({});
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
@@ -731,8 +618,6 @@ export function CalculatorView({
       if (prevTotal === undefined || prevTotal === total) return;
 
       const current = formState[field.id] || 0;
-      // The rep owns the value once it differs from what the rule would have set for the
-      // PREVIOUS footage (e.g. they ordered a booster at 220 ft) - never overwrite that.
       if (current !== quantityForTotal(config, prevTotal)) return;
       const next = quantityForTotal(config, total);
       if (next === current) return;
@@ -780,33 +665,13 @@ export function CalculatorView({
     Object.values(burstRef.current).forEach((b) => b.timer && clearTimeout(b.timer));
   }, []);
 
-  // Adapt the id-based tab model to the index-based draggable-tabs component.
   const tabCalcs = useMemo(() => tabs.map((t, idx) => {
     const pkg = describeFullPackage(t.entries || {}, verticals);
     return {
     _id: t.id,
-    // Numeric draft titles are internal identifiers, so they never render as-is.
-    //
-    // The FIRST tab falls back to the customer's name instead of showing nothing.
-    //
-    // ⚠️ This is now only a LEGACY fallback. A first calculator is CREATED titled
-    // with the customer (`useDynamicCalculators`, web parity), so its title is not
-    // numeric and this branch is not reached. It still matters for every lead whose
-    // calculator was created before that fix and is stored as `"1"` — without it
-    // those deal centers reopen on the unlabelled pill they always had.
-    //
-    // Only tab 0: a second, third… empty calculator all reading the same customer
-    // name would be worse than blank, since the rep could not tell them apart.
     name: /^\d+$/.test(t.title) ? (idx === 0 ? customerTabName || '' : '') : t.title,
     isRolloutConfirmed: t.isRolloutConfirmed,
-    // Gutter + LeafFilter + Soffit + Trim wrap [Fascia] all entered → the tab shows a
-    // package icon + ⓘ instead of the `G+VMax+S+FWrap` letters, plus `+<extras>` for
-    // anything the package doesn't cover. Recomputed from each tab's OWN live entries,
-    // so it tracks the rep's typing — including on tabs they aren't looking at.
     isFullPackage: pkg.isFullPackage,
-    // NOT `extras` — `HorizontalDraggableTabs.isCalculatorIdentical` reads `calc.extras`
-    // as the classic deal center's extras OBJECT, and a string there would be walked
-    // as one. The dynamic flow opts out of that check, but the name would still be a trap.
     packageExtras: pkg.extras,
     };
   }), [tabs, verticals, customerTabName]);

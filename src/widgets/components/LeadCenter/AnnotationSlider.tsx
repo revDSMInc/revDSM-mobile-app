@@ -5,7 +5,6 @@ import {
 } from 'react-native';
 import Svg, { Rect, Defs, Pattern, LinearGradient, Stop } from 'react-native-svg';
 
-// Custom slider for size adjustment
 export const CustomSlider = ({ value, onValueChange, activeColor }: { value: number; onValueChange: (v: number) => void; activeColor: string }) => {
   const sliderWidth = useRef<number>(0);
   const startVal = useRef<number>(0);
@@ -68,7 +67,6 @@ export const CustomSlider = ({ value, onValueChange, activeColor }: { value: num
   );
 };
 
-// Custom opacity slider with SVG checkered backdrop and linear gradient overlay
 export const OpacitySlider = ({ value, onValueChange, activeColor }: { value: number; onValueChange: (v: number) => void; activeColor: string }) => {
   const sliderWidth = useRef<number>(0);
   const startVal = useRef<number>(0);

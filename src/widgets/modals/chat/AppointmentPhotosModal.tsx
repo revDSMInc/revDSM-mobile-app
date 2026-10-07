@@ -1,16 +1,3 @@
-/**
- * AppointmentPhotosModal — mobile port of the web `AppointmentPhotosMenu.js`.
- *
- * A bottom-sheet categorized picker for the lead's already-captured
- * appointment / inspection / gallery photos (`lead.salesPhotos`). The user browses
- * by category tab, multi-selects, and taps send. Selected photos are handed back to
- * the caller as S3 descriptors (NO re-upload) — the caller sends them via
- * `ChatService.sendAppointmentPhotos`, matching web's `handleSendAppointmentPhotos`.
- *
- * Photo source is fetched lazily on open: `LeadService.findJobs({})` (the same
- * endpoint the map / lead list already use — list items carry `salesPhotos`), matched
- * by lead `_id`, then secure URLs resolved via `LeadService.getSecureUrls`.
- */
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
@@ -54,7 +41,6 @@ interface AppointmentPhotosModalProps {
   onSend: (photos: AppointmentPhotoSelection[]) => void;
 }
 
-// Ionicons equivalents of the web category icon map.
 const CATEGORY_ICONS: Record<string, string> = {
   home: 'home-outline',
   inspection: 'search-outline',
@@ -104,11 +90,6 @@ export default function AppointmentPhotosModal({
   onSend,
 }: AppointmentPhotosModalProps) {
   const { colors } = useTheme();
-  // This sheet is anchored to the BOTTOM of the screen (`justifyContent: 'flex-end'`),
-  // so its last row sits exactly where the Android gesture bar / 3-button navigation
-  // bar is drawn. The app is edge-to-edge (`KeyboardProvider` in `App.tsx` puts it
-  // there), which means nothing insets it automatically and the "Send N photos" button
-  // ends up underneath the system buttons — tappable only by luck.
   const insets = useSafeAreaInsets();
 
   const [loading, setLoading] = useState(false);
@@ -119,7 +100,6 @@ export default function AppointmentPhotosModal({
 
   const keyOf = (p: SalesPhoto) => p._id || p.s3url || '';
 
-  // Fetch the lead's sales photos + secure URLs whenever the sheet opens.
   useEffect(() => {
     if (!visible || !leadId) return;
     let cancelled = false;
@@ -326,10 +306,6 @@ export default function AppointmentPhotosModal({
             </View>
           ) : (
             <ScrollView
-              // With nothing selected there is no send bar beneath, so the LAST ROW of
-              // photos becomes the thing sitting under the nav bar — the same bug one
-              // element up. The inset is only added in that case, otherwise the send
-              // bar's own padding would double it.
               contentContainerStyle={{
                 padding: 12,
                 paddingBottom: selectedKeys.length > 0 ? 12 : insets.bottom + 12,
@@ -389,9 +365,6 @@ export default function AppointmentPhotosModal({
 
           {/* Send bar */}
           {selectedKeys.length > 0 && (
-            // `pt-3` in the class, bottom padding in `style`: the inset has to be ADDED
-            // to the base padding, so expressing it as a class would just be overridden
-            // and leave it ambiguous which one applied.
             <View
               className="px-5 pt-3 border-t"
               style={{ borderColor: colors.border, paddingBottom: insets.bottom + 12 }}

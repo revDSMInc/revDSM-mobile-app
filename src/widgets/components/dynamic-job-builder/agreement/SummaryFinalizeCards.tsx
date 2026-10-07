@@ -49,39 +49,25 @@ interface SummaryFinalizeCardsProps {
   resolvedDocuments?: { agreements: any[]; orderSheets: any[] };
   setResolvedDocuments?: React.Dispatch<React.SetStateAction<{ agreements: any[]; orderSheets: any[] }>>;
   isDocUploadingRef?: React.MutableRefObject<boolean>;
-  // Persists the base64 doc payloads via the screen (which holds config +
-  // dealCenterData to serialize field state and writes the web-shaped outcome).
   onUploadDocs?: (cat: DocCategory, payloads: any[]) => Promise<any[] | null>;
-  /** Re-reads the lead's stored documents for a category (no upload). */
   onRefreshDocs?: (cat: DocCategory) => Promise<any[] | null>;
   productKey?: string;
   verticalState?: any;
   jobState?: any;
   calculatorResultData?: any;
   repDetails?: any;
-  /** Web `useDealEditMode()` — true when editing an already-resulted deal. */
   editMode?: boolean;
 }
 
 const GREEN = '#22C55E';
-// jobState.agreements / .orderSheets are FLAT arrays of file objects (the shape the
-// backend outcome endpoint expects: [{ name, file, documentType, isNew }]). Some
-// server-loaded shapes wrap them in { files: [...] } — normalize either to flat.
 const toFlatFiles = (arr?: any[]): any[] =>
   (arr || []).flatMap((x) => (x && Array.isArray(x.files) ? x.files : [x])).filter(Boolean);
 const isPdf = (f: any) =>
   (f?.contentType || f?.mimeType || '').includes('pdf') ||
   String(f?.name || f?.uri || f?.url || '').toLowerCase().endsWith('.pdf');
 const fileSrc = (f: any) => f?.secureUrl || f?.displayUrl || f?.url || f?.uri || f?.thumbnailUrl || f?.file;
-// Stable identity for reconciling a document across the scanner round-trip AND for
-// de-duplicating the two display sources: a server doc keeps its serverId (or its
-// immutable S3 filePath); a freshly-scanned one falls back to url/uri/name.
 const docIdentity = (d: any): string =>
   String(d?.serverId ?? d?._id ?? d?.filePath ?? d?.id ?? d?.url ?? d?.uri ?? d?.name ?? '');
-// The same document reaches us from two places once it is on the server: the draft
-// copy on `jobState` (what web reads, and what survives a reopen) and the freshly
-// signed copy from the outcome query. Keep the FIRST occurrence — callers pass the
-// server-resolved list first, so the live signed URL wins over the draft's stale one.
 const dedupeDocs = (files: any[]): any[] => {
   const seen = new Set<string>();
   return files.filter((f) => {
@@ -92,17 +78,6 @@ const dedupeDocs = (files: any[]): any[] => {
   });
 };
 
-// After signing, the SAME agreement can land in the list more than once with DIFFERENT
-// identities — the local `file://` system-generated PDF (from an in-person sign) plus
-// one or more server rows from the lead-scoped read (including a not-yet-resolved copy
-// whose URL is still a bare S3 `filePath`, so it won't open). `dedupeDocs` can't merge
-// them (uri vs serverId), so the card showed TWO agreements — one opening, one not.
-//
-// A system-generated (signed) agreement is UNIQUE per job, so collapse every
-// `isSystemGenerated` agreement copy into ONE: display the copy that will actually open
-// (a `file://` / `http` / `data:` src), but carry a durable `serverId`/`filePath` from
-// any copy so it still dedupes across sources and a later delete/reopen can resolve it.
-// Scanned / manually-added agreements (not system-generated) are left untouched.
 const isOpenableDoc = (f: any): boolean => {
   const s = String(fileSrc(f) || '');
   return s.startsWith('file://') || s.startsWith('http') || s.startsWith('data:');
@@ -117,13 +92,6 @@ const collapseSignedAgreement = (files: any[]): any[] => {
     filePath: sysGen.map((f) => f?.filePath).find(Boolean) ?? best?.filePath ?? null,
     isSystemGenerated: true,
   };
-  // The signed agreement can ALSO arrive UNFLAGGED — a copy read from the calculator-
-  // scoped outcome query (which doesn't mark `isSystemGenerated`) whose S3 URL often
-  // hasn't resolved, so it's a bare `filePath` that won't open. That's the "second
-  // agreement, one can't be opened" from the REMOTE (web-signed) flow. Drop a
-  // NON-system-generated agreement copy when a signed one exists AND it is either the
-  // SAME document (shares serverId/filePath/name) or simply not openable (unresolved).
-  // A genuinely-distinct, openable scanned agreement is kept.
   const mergedKeys = new Set(
     [merged.serverId, merged.filePath, merged.name].filter(Boolean).map(String)
   );
@@ -131,8 +99,6 @@ const collapseSignedAgreement = (files: any[]): any[] => {
     const keys = [f?.serverId, f?.filePath, f?.name].filter(Boolean).map(String);
     return keys.some((k) => mergedKeys.has(k)) || !isOpenableDoc(f);
   };
-  // Preserve order: the FIRST system-generated slot becomes the merged entry; the rest
-  // (and any unflagged duplicate/broken copy) are dropped.
   let placed = false;
   return files.reduce<any[]>((acc, f) => {
     if (f?.isSystemGenerated) {
@@ -148,11 +114,6 @@ const collapseSignedAgreement = (files: any[]): any[] => {
   }, []);
 };
 
-/**
- * Appointment + Agreement + Order-sheet cards for the dynamic Job Builder summary
- * tab. Mirrors the normal JB SummarySection finalize section, wired to the dynamic
- * root-state setter and the ported client-side agreement generator.
- */
 export function SummaryFinalizeCards({
   leadId,
   isSale,
@@ -174,37 +135,16 @@ export function SummaryFinalizeCards({
   repDetails,
   editMode = false,
 }: SummaryFinalizeCardsProps) {
-  // Web `vertical-summary-tab.js:407-409` (uses `useDealEditMode()`): editing an
-  // already-resulted deal drops the "Required" gates and hides the demo-only
-  // order-sheet card.
   const agreementRequired = !!isSale && !editMode;
   const orderSheetRequired = !!isDemo && !editMode;
   const showOrderSheetCard = !!isSale || (!!isDemo && !editMode);
   const [schedulerVisible, setSchedulerVisible] = useState(false);
   const [isEditingAppt, setIsEditingAppt] = useState(false);
   const [scannerCategory, setScannerCategory] = useState<DocCategory | null>(null);
-  // The category whose documents are being filed right now, or null.
-  //
-  // `DocumentScannerModal.handleSave` does NOT await `onSave` — it fires it and closes
-  // immediately — so the rep is dropped back onto this card while the upload is still
-  // running (read the file, convert the JPEG to a PDF on the JS thread, PUT it). Before
-  // this the card just sat on "No documents" for those seconds with nothing to say it
-  // was working, so the rep read it as the document having been lost.
-  //
-  // `isDocUploadingRef` cannot drive this — it is a ref (it exists to keep the autosave
-  // off the wire mid-upload) and never re-renders.
   const [uploadingCategory, setUploadingCategory] = useState<DocCategory | null>(null);
   const [agreementDialogVisible, setAgreementDialogVisible] = useState(false);
-  // A remote signature in progress: the lowercase `remote-status` (pending / sent /
-  // viewed / completed / …) or null when nothing is out for signature. Drives the
-  // "Pending Customer Signature" card. `remoteManageOpen` reopens the tracking sheet
-  // (resend / edit contact / cancel) without regenerating the agreement.
   const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
   const [remoteManageOpen, setRemoteManageOpen] = useState(false);
-  // For the "signed remotely" activity log: the last status the poll observed (to detect
-  // the active→completed transition) + a once-guard so a reopened, already-signed
-  // agreement isn't re-logged (the server audits completion; the client only logs the
-  // transition it actually witnesses).
   const lastRemoteStatusRef = useRef<string | null>(null);
   const remoteSignedLoggedRef = useRef(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -214,8 +154,6 @@ export function SummaryFinalizeCards({
 
   const isAppointmentSet = Boolean(scheduleTime?.date);
 
-  // View a document: server docs / PDFs (http URLs) open in the PDF viewer (which
-  // also handles image URLs); a locally-generated image data-uri opens inline.
   const openDoc = (doc: any) => {
     const src = fileSrc(doc);
     if (!src) return;
@@ -226,25 +164,6 @@ export function SummaryFinalizeCards({
     }
   };
 
-  // Display = server-resolved docs first (live signed URLs), then the draft copy
-  // held on `jobState` (web's `existingAgreements={jobState?.agreements}`), deduped
-  // so a document that exists in both — the normal case once it has uploaded — is
-  // listed once.
-  //
-  // EXCEPT in EDIT mode, where merging the two doubled every document. The deal is
-  // already submitted there, so the server read (`downloadOutcomeDocuments` —
-  // lead-scoped, and the ONLY source that reflects deletions) is the complete
-  // record. The draft copies on `jobState` are those SAME documents, but written by
-  // the sign/scan flow WITHOUT a `serverId`/`filePath` — so `docIdentity` keys them
-  // on their local `file://` uri while the server copy keys on `serverId`, the two
-  // never collide, and `dedupeDocs` cannot merge them. (Name is NOT usable as a
-  // fallback key: two genuinely different agreements both display as "Agreement",
-  // so matching on it would HIDE a real document.)
-  //
-  // A document added during the edit session is safe: `commitUploaded` replaces
-  // BOTH sources with the server read-back, so it is already in `resolvedDocuments`.
-  // The `.length` guard keeps the draft as a fallback if that read ever comes back
-  // empty, so an edit can never render zero documents when the draft has some.
   const mergeDocSources = useCallback(
     (server: any[] | undefined, draft: any[] | undefined) => {
       const serverFiles = server || [];
@@ -254,10 +173,6 @@ export function SummaryFinalizeCards({
     [editMode]
   );
 
-  // NOTE: the backend's unnamed duplicate agreement row is dropped UPSTREAM, on the raw
-  // server rows (`dropUnnamedAgreements` in `utils/outcome-documents.ts`). It cannot be
-  // done here — every loader defaults the name to 'Agreement' before the rows reach this
-  // component, so the empty name that identifies the duplicate is already gone.
   const agreementFiles = useMemo(
     () => collapseSignedAgreement(mergeDocSources(resolvedDocuments?.agreements, agreements)),
     [agreements, resolvedDocuments, mergeDocSources]
@@ -267,16 +182,6 @@ export function SummaryFinalizeCards({
     [orderSheets, resolvedDocuments, mergeDocSources]
   );
 
-  // --- appointment -------------------------------------------------------
-  // The rep OPENED the scheduler — `action_type: 'click'`, distinct from the
-  // `change` row `saveAppointment` files when they confirm one. It carries the
-  // appointment as it stands at that moment, so the portal can tell an open that
-  // changed nothing from one that did.
-  //
-  // Fired from BOTH entry points — the pencil on a scheduled card and the
-  // 'Schedule Appointment' button on an unscheduled one. Nothing is set on the
-  // second, so `date`/`timeWindow` go out as null rather than being omitted: an
-  // absent key reads as 'not reported', and here it is genuinely 'not yet set'.
   const logSchedulerOpened = () => {
     if (!user?._id) return;
     logEvent('click', {
@@ -296,7 +201,6 @@ export function SummaryFinalizeCards({
     });
   };
 
-  // appointment_scheduled (web parity: schedule-appointment-summary-card handleConfirm).
   const logAppointmentScheduled = (data: any) => {
     if (!user?._id) return;
     logEvent('change', {
@@ -316,27 +220,12 @@ export function SummaryFinalizeCards({
     });
   };
 
-  // The scheduler's NEW-appointment flow (isEdit=false) never calls onConfirm — it
-  // calls onGenerate ("Generate Dynamic Agreement") or onUpload ("Add Presigned
-  // Agreement"). Both must (a) persist scheduleTime and (b) proceed to the next
-  // step, exactly like the normal JB. onConfirm is only used by the EDIT flow.
   const saveAppointment = (data: any) => {
     onUpdateRootState?.('scheduleTime', { ...data, customerName: data.customerName || customerName });
     setSchedulerVisible(false);
     setIsEditingAppt(false);
   };
 
-  // The rep answered YES to the offered window (or confirmed a TBD reason) and the
-  // modal is showing 'Job Booked!'. THAT is when the appointment is booked, so the
-  // row is filed here — not on 'Generate Dynamic Agreement' / 'Add Presigned
-  // Agreement', which are what the rep does with the booking afterwards. Those two
-  // still persist it (the create flow never calls onConfirm), they just no longer
-  // log it, so one booking is one row either way.
-  //
-  // ⚠️ NOT in the EDIT flow. Re-scheduling a booked job commits at 'Save Changes',
-  // and when `requireScheduleAmendment` is on it commits only once the customer has
-  // SIGNED the amendment — logging at 'Yes' would record a reschedule the customer
-  // can still refuse. `handleScheduleConfirm` covers that path.
   const handleAppointmentBooked = (data: any) => {
     if (isEditingAppt) return;
     logAppointmentScheduled(data);
@@ -349,8 +238,6 @@ export function SummaryFinalizeCards({
 
   const handleScheduleAndGenerate = (data: any) => {
     saveAppointment(data);
-    // Let the scheduler modal finish dismissing before presenting the next modal
-    // (iOS only shows one modal at a time; presenting mid-dismiss can no-op).
     setTimeout(() => setAgreementDialogVisible(true), 350);
   };
 
@@ -359,12 +246,8 @@ export function SummaryFinalizeCards({
     setTimeout(() => setScannerCategory('agreement'), 350);
   };
 
-  // --- upload ------------------------------------------------------------
   const rootKeyFor = (cat: DocCategory) => (cat === 'agreement' ? 'agreements' : 'orderSheets');
 
-  // Upload new docs to the lead outcome. The backend requires each doc as a base64
-  // PDF at agreements[i].file / orderSheets[i].file (FLAT array, not { files: [] }).
-  // Returns display-copies (image thumbnails) on success, or null on failure.
   const uploadNewFiles = async (cat: DocCategory, newFiles: any[]): Promise<any[] | null> => {
     if (!leadId || !newFiles.length) return null;
     if (isDocUploadingRef) isDocUploadingRef.current = true;
@@ -373,7 +256,6 @@ export function SummaryFinalizeCards({
       const payloads: any[] = [];
       const displayDocs: any[] = [];
       for (const f of newFiles) {
-        // Resolve to raw base64 (no data: prefix) + whether it's already a PDF.
         let base64Body: string | undefined;
         let alreadyPdf = false;
         const src = f.file && String(f.file).startsWith('data:') ? f.file : null;
@@ -386,10 +268,6 @@ export function SummaryFinalizeCards({
         }
         if (!base64Body) continue;
 
-        // Assembled through the filesystem: the in-memory builder decodes and
-        // re-encodes the whole document on the JS thread, which a low-RAM device
-        // can fail outright - and the throw surfaced here as a bare
-        // "Upload failed". Byte-identical output; falls back on any error.
         const pdfBase64 = alreadyPdf ? base64Body : await convertJpegToPdfAsync(base64Body);
         const baseName = f.name || `${cat}_${Date.now()}`;
         payloads.push({
@@ -398,8 +276,6 @@ export function SummaryFinalizeCards({
           documentType: cat,
           isNew: true,
         });
-        // Thumbnail: keep the ORIGINAL image (name + uri) so it renders as an image
-        // preview, not a generic PDF icon (isPdf keys off name/uri/contentType).
         displayDocs.push({
           name: baseName,
           uri: f.file || f.uri,
@@ -410,21 +286,11 @@ export function SummaryFinalizeCards({
       }
       if (!payloads.length) return null;
 
-      // Persist via the screen — it holds the config + dealCenterData needed to
-      // serialize the field state and writes the web-shaped outcome payload
-      // (top-level agreements/orderSheets → upserts the LeadOutcomeDocument S3
-      // rows; serialized jobBuilder.dynamicJobState so field state isn't lost).
-      // It resolves to the category's SERVER documents (serverId + filePath +
-      // signed URL), or null when the upload itself failed.
       const serverDocs = onUploadDocs ? await onUploadDocs(cat, payloads) : null;
       if (!serverDocs) {
         Alert.alert('Upload failed', 'Could not save the document. Please try again.');
         return null;
       }
-      // Prefer the server copies — they carry the serverId a later delete needs and
-      // a URL that is valid on every device (and on web). Only if the read-back came
-      // back empty do we fall back to the local thumbnails so the rep still sees the
-      // document they just added.
       return serverDocs.length ? serverDocs : displayDocs;
     } catch (e) {
       console.warn('[SummaryFinalizeCards] upload failed', e);
@@ -436,30 +302,13 @@ export function SummaryFinalizeCards({
     }
   };
 
-  // Record the uploaded documents ON THE JOB STATE — web parity, and the fix for
-  // "the PDF is gone when I come back".
-  //
-  // Web holds its documents at `jobState.agreements` / `.orderSheets` in
-  // `[{ files: [...] }]` groups (`dynamic-job-builder.js#handleAgreementDocumentsChange`)
-  // and renders the summary from exactly that (`existingAgreements={jobState?.agreements}`).
-  // The storage serializer passes both keys through, so the draft save persists them
-  // and a reopen — on either platform — restores them. Mobile used to CLEAR the key
-  // here and lean on the calculator-scoped outcome echoing `leadOutcomeDocuments`,
-  // which it does not reliably do: the document had uploaded, but nothing that the
-  // reopened screen (or web) reads knew about it.
-  //
-  // `files` are the server rows (serverId + filePath + signed URL) — durable and
-  // cross-platform, and NOT base64, so the draft payload stays small.
   const commitUploaded = (cat: DocCategory, files: any[]) => {
     const key = rootKeyFor(cat);
     onUpdateRootState?.(key, files.length ? [{ files }] : []);
     setResolvedDocuments?.((prev) => {
       const base = prev || { agreements: [], orderSheets: [] };
-      // The server read-back is the full list for this category, so replace rather
-      // than append — appending duplicated every previously-listed document.
       return { ...base, [key]: files };
     });
-    // Refresh the outcome + document queries so a re-open isn't served stale cache.
     if (leadId) {
       queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] });
       queryClient.invalidateQueries({ queryKey: ['leadOutcomeDocs', leadId] });
@@ -467,17 +316,6 @@ export function SummaryFinalizeCards({
     }
   };
 
-  // The rep pressed one of the card's controls — Generate, Add Document, or the
-  // pencil that REPLACES Add Document once the card holds something. Same relation
-  // to the act it leads to as `logSchedulerOpened` has to `saveAppointment`: the
-  // same `meta.action`, told apart by `action_type: 'click'`, so an open that led
-  // nowhere is legible beside the one that filed a document.
-  //
-  // ⚠️ The PENCIL is logged as well as the two buttons the ticket named. It is the
-  // same `setScannerCategory(cat)` call — Add Document simply becomes a pencil once
-  // a document exists — so logging only the empty-state button would make the row
-  // stop firing the moment the card has anything on it. `source` keeps the three
-  // apart.
   const logDocumentSheetOpened = (
     cat: DocCategory,
     kind: 'uploaded' | 'generated',
@@ -494,11 +332,6 @@ export function SummaryFinalizeCards({
     });
   };
 
-  // One document event — an Update that ADDED pages, or one that REMOVED filed
-  // ones. Both categories go through here so an agreement and an order sheet can
-  // never end up filing differently-shaped rows for the same act, and so the
-  // action/label pairing lives in one place (`utils/document-audit.ts`) rather
-  // than being spelled out at each call site.
   const logDocumentAudit = (
     cat: DocCategory,
     kind: 'uploaded' | 'removed',
@@ -509,8 +342,6 @@ export function SummaryFinalizeCards({
     const descriptor = documentAuditDescriptor(cat, kind);
     const meta = buildDocumentAuditMeta(cat, kind, leadId, docs, refRows);
     if (!descriptor || !meta) return;
-    // `module_type: 'job_builder'` so the portal's Forever Record renders it (it
-    // only routes document rows from job_builder logs).
     logEvent(descriptor.eventType, {
       user_id: user._id,
       created_by: user._id,
@@ -521,11 +352,6 @@ export function SummaryFinalizeCards({
 
   const handleScannerSave = async (cat: DocCategory, images: any[]) => {
     const key = cat === 'agreement' ? 'agreements' : 'orderSheets';
-    // Reflect REMOVALS immediately, in BOTH display sources. The scanner already
-    // fired the DELETE for any doc the rep crossed out, but only the resolved list
-    // was pruned — the copy on the job state was left alone, so a delete-only Update
-    // left the removed page on screen until a reopen. Keep just the documents still
-    // present in the set the scanner returned (matched by identity).
     const surviving = new Set((images || []).map(docIdentity).filter(Boolean));
     const keep = (d: any) => surviving.has(docIdentity(d));
     setResolvedDocuments?.((prev) => {
@@ -535,19 +361,11 @@ export function SummaryFinalizeCards({
     const remainingDraft = toFlatFiles(cat === 'agreement' ? agreements : orderSheets).filter(keep);
     onUpdateRootState?.(key, remainingDraft.length ? [{ files: remainingDraft }] : []);
 
-    // Audit log: pages the rep crossed out before pressing Update. `priorFiles` is
-    // the very list handed to the scanner as `initialFiles`, so the diff is against
-    // exactly what was on screen — and it is logged BEFORE the delete-only early
-    // return below, so a removal is recorded whether or not the same Update also
-    // added something. The scanner has already fired the DELETEs by the time it
-    // calls back, so this reports what happened, not what was attempted.
     const priorFiles = cat === 'agreement' ? agreementFiles : orderSheetFiles;
     logDocumentAudit(cat, 'removed', pickUnknownDocuments(priorFiles, surviving, docIdentity));
 
     const newFiles = (images || []).filter((f) => f?.isNew !== false);
     if (!newFiles.length) {
-      // Delete-only Update: no upload to piggyback the refresh on, so drop the cached
-      // document lists here — the next read reflects the rows the scanner deleted.
       if (leadId) {
         queryClient.invalidateQueries({ queryKey: ['leadOutcomeDocs', leadId] });
         queryClient.invalidateQueries({ queryKey: ['editOutcomeDocs', leadId] });
@@ -558,15 +376,6 @@ export function SummaryFinalizeCards({
     const displayDocs = await uploadNewFiles(cat, newFiles);
     if (displayDocs) {
       commitUploaded(cat, displayDocs);
-      // Audit log: pages were scanned / presigned in (web parity — the GENERATED
-      // agreement path is logged separately, in DynamicAgreementDialog, as
-      // agreement_generated). Order sheets were not logged here at all before, so
-      // adding one left no trace while adding an agreement did.
-      //
-      // The count and names come from `newFiles` — what the rep actually added —
-      // while the S3 refs come from the rows `displayDocs` did not already hold:
-      // that list is the category's WHOLE server list, so counting it would report
-      // the total on the lead rather than this upload.
       const knownIds = new Set(priorFiles.map(docIdentity).filter(Boolean));
       logDocumentAudit(
         cat,
@@ -579,27 +388,6 @@ export function SummaryFinalizeCards({
   };
 
   const handleAgreementGenerated = async (file: any) => {
-    // A GENERATED agreement is rendered AND FILED by the server.
-    //
-    // Mobile generates through `pdf-reports/v1/agreement/{leadId}/preview` + `/sign`
-    // (web can't share this path — it rasterises the agreement in the browser with
-    // html2canvas and has no sign call at all, see `dynamic-agreement-generator.js`).
-    // That sign endpoint stores its OWN LeadOutcomeDocument, named server-side from
-    // the real job number. Uploading the returned PDF on top of it filed a SECOND row
-    // for the same agreement — the two differently-named cards ("Agreement_STN-…" from
-    // the server, "Agreement_SPN/A_…" from `handleSigned`'s own template).
-    //
-    // So a system-generated agreement is NEVER UPLOADED — that is the only way to
-    // guarantee one row. An earlier version tried to confirm the server's row first
-    // and uploaded when it could not see one, but the confirmation reads the
-    // CALCULATOR-scoped outcome, which does not echo `leadOutcomeDocuments`: the check
-    // always came back empty, so it always uploaded and the duplicate returned.
-    //
-    // We still try to adopt the server's row (one cheap read) purely to get its
-    // serverId/filePath, which is what makes the draft copy durable off-device and
-    // lets a later delete reach the server. When that read shows nothing we record the
-    // local `file://` reference instead — the document is stored either way, and
-    // `buildDocumentPayloads` knows not to re-send a system-generated one at submit.
     if (file?.isSystemGenerated) {
       const localRef = {
         name: file.name,
@@ -607,8 +395,6 @@ export function SummaryFinalizeCards({
         contentType: 'application/pdf',
         documentType: 'agreement' as const,
         isNew: false,
-        // Marks this as already filed by the sign endpoint — never upload, never
-        // re-send. Read by `utils/document-payloads.ts`.
         isSystemGenerated: true,
       };
       const knownIds = new Set(agreementFiles.map(docIdentity).filter(Boolean));
@@ -625,39 +411,17 @@ export function SummaryFinalizeCards({
           ? serverDocs!.map((d) => ({ ...d, isSystemGenerated: true }))
           : [...toFlatFiles(agreements), localRef]
       );
-      // Portal Forever Record "Signed" row — a system-generated agreement is one the
-      // rep signed in-person (the `/sign` endpoint filed it).
       if (user?._id && leadId) {
         logAgreementSigned(user._id, leadId, 'in_person').catch(() => {});
       }
       setAgreementDialogVisible(false);
       return;
     }
-    // Scanned / manually added agreements have no server-side filing step, so they
-    // need an explicit upload. `uploadNewFiles` reads the on-disk `file://` PDF to
-    // base64 TRANSIENTLY (never into React state — that was the OOM crash) and PUTs it
-    // via `handleUploadDocs`.
     const displayDocs = await uploadNewFiles('agreement', [file]);
     if (displayDocs) commitUploaded('agreement', displayDocs);
     setAgreementDialogVisible(false);
   };
 
-  // A REMOTELY-signed agreement is filed by the server the moment every signer signs
-  // (REVDSM-263) — there is NO local `file://` copy to hand back, so the in-person
-  // `handleSigned`/`handleAgreementGenerated` path can't be reused (it would commit an
-  // empty local reference). Instead we READ the stored agreement from the outcome and
-  // commit it like any server-filed document.
-  //
-  // The read MUST be LEAD-scoped (`fetchLeadOutcomeDocumentRows`, which now reads
-  // `…/outcome/documents/download` — the bare `…/outcome` route it used is deprecated):
-  // agreements live on `leadOutcomeDocuments`, which the calculator-scoped outcome
-  // (`onRefreshDocs`) does not echo. Routing the resolved server rows through
-  // `commitUploaded` mirrors the in-person adopt path exactly — it writes BOTH the
-  // display list and the durable `jobState.agreements` copy (so a calc-scoped refetch
-  // can't wipe it) and marks the rows already-filed so finalize never double-sends.
-  //
-  // A short retry covers the race where "Done" is tapped in the instant between the
-  // final signature and the server finishing the PDF filing.
   const handleRemoteAgreementComplete = async () => {
     if (!leadId) return;
     let resolvedAgreements: any[] = [];
@@ -673,29 +437,17 @@ export function SummaryFinalizeCards({
       if (attempt < 2) await new Promise<void>((resolve) => setTimeout(() => resolve(), 1200));
     }
     if (resolvedAgreements.length) {
-      // `isSystemGenerated` marks these as already-filed (parity with the in-person
-      // adopt branch) so the legacy no-system-generated payload path skips them.
       commitUploaded(
         'agreement',
         resolvedAgreements.map((d) => ({ ...d, isSystemGenerated: true }))
       );
     } else if (leadId) {
-      // Nothing readable yet — at least drop the caches so a reopen picks it up.
       queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] });
       queryClient.invalidateQueries({ queryKey: ['leadOutcomeDocs', leadId] });
       queryClient.invalidateQueries({ queryKey: ['editOutcomeDocs', leadId] });
     }
   };
 
-  // ── Remote signature tracking ────────────────────────────────────────────────
-  // The remote flow is mobile-only (REVDSM-263): the rep sends the agreement, the
-  // homeowner e-signs on their own device, and the server files the signed PDF when
-  // every signer is done. So there is a window where the agreement is OUT for
-  // signature with no document filed yet — we surface it as "Pending Customer
-  // Signature" and poll the signed PDF in once it exists.
-
-  // `remote-status` → the lowercase agreement status (or null when nothing is out).
-  // Mirrors AgreementRemoteSignModal.normalizeAgreement.
   const normalizeRemoteStatus = (raw: any): string | null => {
     const data = raw?.data?.data ?? raw?.data ?? raw;
     const ag =
@@ -707,9 +459,6 @@ export function SummaryFinalizeCards({
     return ag?.status ? String(ag.status).toLowerCase() : null;
   };
 
-  // An agreement is out for remote signature but not yet filed. `completed` is kept
-  // "active" for the brief window between the last signature and the server filing
-  // the PDF (the poll swaps in the document the moment it lands).
   const isRemotePending =
     agreementFiles.length === 0 &&
     (remoteStatus === 'pending' ||
@@ -717,9 +466,6 @@ export function SummaryFinalizeCards({
       remoteStatus === 'viewed' ||
       remoteStatus === 'completed');
 
-  // Probe `remote-status` on open, then poll while pending. Only runs for a SALE with
-  // no filed agreement — once a document exists (`agreementFiles.length > 0`) there is
-  // nothing to track and this early-returns, which also stops any running poll.
   useEffect(() => {
     if (!leadId || !isSale || agreementFiles.length > 0) return;
     let cancelled = false;
@@ -744,21 +490,12 @@ export function SummaryFinalizeCards({
           status === 'viewed' ||
           status === 'completed';
         if (status === 'completed') {
-          // Portal timeline: log the completion ONCE, and only when we WITNESS the
-          // transition from an active (pending/sent/viewed) state this session — not on
-          // reopen of an already-signed agreement (that would mis-timestamp and duplicate;
-          // the backend audits the actual completion time).
           const wasActive =
             prevStatus === 'pending' || prevStatus === 'sent' || prevStatus === 'viewed';
           if (wasActive && user?._id && !remoteSignedLoggedRef.current) {
             remoteSignedLoggedRef.current = true;
-            // `agreement_signed` on `module_type: 'job_builder'` — the action the portal's
-            // Forever Record renders as the "Signed" row (signMethod: 'remote' keeps the
-            // web-link distinction in meta).
             logAgreementSigned(user._id, leadId, 'remote').catch(() => {});
           }
-          // Signed PDF is filed server-side — read it into the card. Once it commits,
-          // agreementFiles becomes non-empty and this effect re-runs → early return.
           await handleRemoteAgreementComplete();
         }
         if (active) {
@@ -767,7 +504,6 @@ export function SummaryFinalizeCards({
           stop(); // none / cancelled / expired / declined
         }
       } catch {
-        // Network / not-found → treat as no active remote agreement.
       }
     };
     tick();
@@ -775,16 +511,9 @@ export function SummaryFinalizeCards({
       cancelled = true;
       stop();
     };
-    // `remoteStatus` is a dep so the poll RESTARTS when it becomes active — e.g. the
-    // rep sends the agreement (handleRemoteSent → 'pending') after the initial probe
-    // already found nothing and stopped. A no-op tick sets the same value → no
-    // re-render → no churn; only a real status change re-runs the effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leadId, isSale, agreementFiles.length, remoteStatus]);
 
-  // The rep just sent the agreement for remote signature (the whole stack closed back
-  // to this summary). Reflect the pending state immediately; the poll keeps it in sync
-  // and swaps in the signed PDF once the customer signs.
   const handleRemoteSent = () => setRemoteStatus('pending');
 
   const renderDocSection = (
@@ -794,10 +523,6 @@ export function SummaryFinalizeCards({
     files: any[],
     cat: DocCategory,
     isAgreement: boolean,
-    // Web `document-summary-cards.js`: the badge is driven by a `required` FLAG
-    // (agreements → sale, order sheets → demo), not by "is this the agreement
-    // card". Mobile hardcoded `isAgreement`, so agreements were always badged
-    // Required and order sheets never were.
     required = false,
   ) => {
     const isEmpty = files.length === 0;
@@ -834,10 +559,6 @@ export function SummaryFinalizeCards({
         <View style={styles.sectionBody}>
           {isEmpty ? (
             isAgreement && isRemotePending ? (
-              // Agreement is out for REMOTE signature — hide Generate / Add Document
-              // and show the pending status. The signed PDF appears here on its own
-              // once the customer signs (the poll reads it in). "Manage / Resend"
-              // reopens the tracking sheet without regenerating the agreement.
               <View style={{ alignItems: 'center', paddingVertical: 24, borderStyle: 'dashed', borderColor: '#FDE68A', borderWidth: 2, borderRadius: 24, backgroundColor: '#FFFBEB' }}>
                 <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#FEF3C7', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
                   <Icon name="clock-outline" size={32} color="#D97706" />
@@ -1061,16 +782,6 @@ export function SummaryFinalizeCards({
         leadId={leadId || ''}
         category={scannerCategory || 'orderSheet'}
         initialFiles={scannerCategory === 'agreement' ? agreementFiles : orderSheetFiles}
-        // ORDER SHEETS ARE NEVER RESTRICTED — written as an explicit branch on the
-        // category (rather than folding both cases into one boolean) so that editing
-        // the agreement rule here cannot silently take the ✕ off order sheets too.
-        //
-        // Agreements: hidden in the MY DEALS edit flow only (`editMode`). That deal is
-        // already SUBMITTED, so its agreement is the executed contract — an addendum
-        // adds to it and must never delete it. The JOB BUILDER create flow keeps delete,
-        // because nothing is filed yet and the rep may still be correcting the document.
-        // Pages scanned in THIS session keep their ✕ regardless (`item.isNew` in
-        // DocumentScannerModal), so a misscan is never stuck in either flow.
         allowRemoveExisting={scannerCategory === 'agreement' ? !editMode : true}
       />
 
@@ -1103,8 +814,6 @@ export function SummaryFinalizeCards({
         customerDetails={{ firstName: customerName }}
         onSent={() => setRemoteManageOpen(false)}
         onComplete={() => {
-          // Customer signed while the rep had the tracking sheet open — read the filed
-          // PDF straight into the card.
           setRemoteManageOpen(false);
           handleRemoteAgreementComplete();
         }}

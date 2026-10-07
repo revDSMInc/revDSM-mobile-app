@@ -14,7 +14,6 @@ export interface CalculatorField {
     matchMode?: 'any' | 'all';
     valueMode?: string;
     fixedValue?: string | number;
-    /** `range` mode: the field's value follows the aggregate of `dependsOn` (see utils/auto-quantity.ts). */
     aggregate?: string;
     ranges?: { min: number; max?: number | null; value: string | number }[];
     notifyRep?: boolean;
@@ -62,7 +61,6 @@ export interface CalculatorEntry {
   fieldId: string;
   categoryId: string;
   sectionId: string;
-  /** product (schema) name this field belongs to — matches web `_productName` */
   productName?: string;
   name: string;
   label: string;
@@ -108,7 +106,6 @@ export function getCategorySectionFields(cat: CalculatorCategory): CalculatorFie
   return (cat.sections || []).flatMap((s) => s.fields);
 }
 
-/** Every field in a category — direct fields + all section fields (web `getCategoryAllFields`). */
 export function getCategoryAllFields(cat: CalculatorCategory): CalculatorField[] {
   return [...getCategoryDirectFields(cat), ...getCategorySectionFields(cat)];
 }

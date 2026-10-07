@@ -1,4 +1,3 @@
-/** Map marker colors — parity with web buildings-layer.js */
 export const BUILDING_MARKER_COLORS: Record<string, string> = {
   go_back: '#fd7e14',
   not_interested: '#4B0082',
@@ -23,7 +22,6 @@ export const LEGEND_ITEMS = [
   { status: 'not_qualified', color: BUILDING_MARKER_COLORS.not_qualified, label: 'Not Qualified' },
 ];
 
-/** Results picker — labels only (web results-modal.js) */
 export const RESULT_OPTIONS = [
   { value: 'not_interested', label: 'Not Interested' },
   { value: 'not_qualified', label: 'Not Qualified' },
@@ -54,7 +52,6 @@ export const APPOINTMENT_COLORS = {
   UPCOMING: '#2196f3',
 };
 
-/** Status chip config for submitted lead popup — parity with web submitted-lead-popup.js */
 export const STATUS_CHIP_CONFIG: Record<
   string,
   { label: string; color: string; bg: string; icon: string }

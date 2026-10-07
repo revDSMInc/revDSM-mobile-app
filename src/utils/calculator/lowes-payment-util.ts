@@ -22,7 +22,6 @@ export type PaymentPlanCategory = {
   plans: string[];
 };
 
-/** Plan disabled when end/drop price is below plan minimum (web PaymentPlanSelect / DropPriceModal). */
 export function isPlanBelowMinPrice(planKey: string, price: number): boolean {
   const plan = paymentPlans[planKey];
   if (!plan?.minPrice) return false;
@@ -41,7 +40,6 @@ export function getBelowMinMessage(planKey: string, price: number): string {
   return `This plan requires a minimum cost price of $${plan.minPrice.toLocaleString()} (cost: $${numericPrice.toLocaleString()}).`;
 }
 
-/** Default payment method for new rollouts (web tab-action-utils). */
 export function getDefaultPaymentMethod(isLowesLead: boolean, existing?: string): string {
   if (isLowesLead) {
     if (!existing || existing === 'check') return 'lowes_ach';
@@ -50,7 +48,6 @@ export function getDefaultPaymentMethod(isLowesLead: boolean, existing?: string)
   return existing || 'check';
 }
 
-/** Non-Lowe's picker groups (Basic, GreenSky, Wells Fargo, Concora). */
 function getStandardPaymentCategories(): PaymentPlanCategory[] {
   return [
     {
@@ -90,10 +87,6 @@ function getStandardPaymentCategories(): PaymentPlanCategory[] {
   ];
 }
 
-/**
- * Rollout summary payment picker categories. A Lowe's lead sees its own plans FIRST and
- * then every standard financing group; every other lead never sees a Lowe's plan.
- */
 export function getRolloutPaymentCategories(isLowesLead: boolean): PaymentPlanCategory[] {
   const standard = getStandardPaymentCategories();
   if (isLowesLead) {
@@ -108,7 +101,6 @@ export function getRolloutPaymentCategories(isLowesLead: boolean): PaymentPlanCa
         title: "Lowe's Plan",
         bg: 'bg-[#e8f4fd]',
         text: 'text-slate-900',
-        // Standard "Basic Options" (check / cards) stay out: Lowe's takes ACH / CC.
         plans: [...LOWES_FINANCING_KEYS],
       },
       ...standard.filter((c) => c.title !== 'Basic Options'),
@@ -117,7 +109,6 @@ export function getRolloutPaymentCategories(isLowesLead: boolean): PaymentPlanCa
   return standard;
 }
 
-/** Drop modal "+ Add Plan" list — Lowe's leads see Lowe's financing plus every standard group. */
 export function getDropAddPlanCategories(isLowesLead: boolean): PaymentPlanCategory[] {
   if (isLowesLead) {
     return [
@@ -133,7 +124,6 @@ export function getDropAddPlanCategories(isLowesLead: boolean): PaymentPlanCateg
   return getRolloutPaymentCategories(false).filter(cat => cat.title !== 'Basic Options');
 }
 
-/** Outcome modal down-payment methods (web contract-details basic vs lowesBasic). */
 export function getOutcomeDownPaymentMethods(isLowesLead: boolean) {
   if (isLowesLead) {
     return [

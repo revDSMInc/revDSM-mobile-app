@@ -10,8 +10,6 @@ interface LockedFieldWithColorProps {
   colors?: Array<{ name: string; hex: string }>;
 }
 
-// Matches the normal Job Builder locked row + inline color swatches: slate +
-// font-black, #CBD5E1 lock, #22C55E selected swatch ring.
 export function LockedFieldWithColor({
   label,
   value,

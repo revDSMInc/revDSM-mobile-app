@@ -8,23 +8,13 @@ interface ToggleGroupProps {
   value?: string | string[];
   onChange?: (val: string | string[]) => void;
   color?: string;
-  /** Multi-select (web `field.multiSelect`) — value is an array, toggles stay lit. */
   isMulti?: boolean;
 }
 
 const GAP = 8; // matches gap-2, aligns with OptionList/SwatchPicker spacing
 
-// Toggle options always lay out in a fixed 2-column grid — so a single option is
-// full-width-in-a-column, three wrap 2 + 1, and four render as a clean 2×2 (e.g.
-// Soffit Type's four long-labelled options) instead of being crammed into one row.
 const TOGGLE_COLS = 2;
 
-// Matches the normal Job Builder toggle/selector buttons (GutterSection size /
-// partial, LeafFilter profile): #22C55E selected, slate idle, h-11 rounded-xl
-// border-2, font-black. The selected value is echoed below as a PLAIN "✓ value"
-// text line (web `option-selector.js` renders it as a success-colored caption) —
-// never a filled chip, which read as a second selection. When `isMulti`, value
-// is an array and multiple toggles stay selected (web `option-selector.js`).
 export function ToggleGroup({ label, options = [], value, onChange, color = '#22C55E', isMulti = false }: ToggleGroupProps) {
   const cols = TOGGLE_COLS;
   const selectedValues = isMulti ? (Array.isArray(value) ? value : []) : [];
@@ -39,7 +29,6 @@ export function ToggleGroup({ label, options = [], value, onChange, color = '#22
       onChange?.(next);
       return;
     }
-    // Web parity (useCanDeselectSelection): re-tapping the selected toggle clears it.
     onChange?.(value === opt ? '' : opt);
   };
 

@@ -10,11 +10,8 @@ interface Props extends TextInputProps {
   onRightIconPress?: () => void;
   containerStyle?: ViewStyle;
   inputContainerStyle?: ViewStyle;
-  /** Overrides the default 12pt input text size (and the label indent is dropped with `flushLabel`). */
   fontSize?: number;
-  /** Drop the label's 4pt left indent so it lines up with sibling section labels. */
   flushLabel?: boolean;
-  /** `'decimal'` adds the dot key to the in-app number pad (iPad can't infer it); `false` keeps the system keyboard. */
   numPad?: 'digits' | 'decimal' | false;
 }
 

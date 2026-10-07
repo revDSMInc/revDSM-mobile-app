@@ -1,20 +1,7 @@
 import { LookPattern } from './types';
 
-/**
- * A colour too dark to glow is dropped from a look: LEDs cannot emit black, so
- * rendering one would promise something the product cannot do. 483 §6 sets the
- * threshold at a brightest channel under 40 of 255 and flags it as a starting
- * point to tune against real renders — hence the named constant.
- */
 export const MIN_GLOW_CHANNEL = 40;
 
-/**
- * Max colours in a custom look.
- *
- * ⚠️ SIX, matching the mock's "Colors · up to 6" and the catalogue's own
- * ceiling. This read 4 and the builder silently capped a rep mid-build. The
- * label is generated from this constant, so the two cannot drift apart again.
- */
 export const MAX_CUSTOM_COLORS = 6;
 
 const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
@@ -23,7 +10,6 @@ export function isHexColor(value: string): boolean {
   return HEX.test(String(value).trim());
 }
 
-/** Expand #abc to #aabbcc so downstream comparisons are uniform. */
 export function expandHex(hex: string): string {
   const v = String(hex).trim();
   if (v.length !== 4) return v.toUpperCase();
@@ -44,10 +30,6 @@ export function canGlow(hex: string): boolean {
   return brightestChannel(hex) >= MIN_GLOW_CHANNEL;
 }
 
-/**
- * Keep only the colours that can actually glow, and report what was removed so
- * the builder can show its inline notice rather than silently losing a swatch.
- */
 export function dropUnglowableColors(colors: string[]): { kept: string[]; dropped: string[] } {
   const kept: string[] = [];
   const dropped: string[] = [];
@@ -57,13 +39,6 @@ export function dropUnglowableColors(colors: string[]): { kept: string[]; droppe
   return { kept, dropped };
 }
 
-/**
- * The colour of puck `i` along a run, for the builder's dusk preview.
- *
- * Mirrors the mock's `pc()`: 'single' repeats one colour, 'alternating' cycles
- * one puck at a time. Pure so the sequence can be tested without rendering —
- * getting it wrong misrepresents the product rather than just looking off.
- */
 export function puckColors(colors: string[], pattern: LookPattern, count: number): string[] {
   const palette = colors.length ? colors : ['#4A5677'];
   if (pattern === 'single' || palette.length === 1) {
@@ -72,38 +47,15 @@ export function puckColors(colors: string[], pattern: LookPattern, count: number
   return Array.from({ length: count }, (_, i) => palette[i % palette.length]);
 }
 
-/** One colour can only ever be 'single'; the UI offers no pattern control. */
 export function patternFor(colors: string[]): LookPattern {
   return colors.length === 1 ? 'single' : 'alternating';
 }
 
-/**
- * Clamp a value that came from a gesture into a usable range.
- *
- * ⚠️ `Math.max(0, NaN)` is `NaN` — a min/max clamp does NOT filter NaN out.
- * A touch event can hand back an undefined coordinate, `undefined / width` is
- * NaN, and the NaN then flows all the way into a style as `"#NANNANNAN"` /
- * `"NaN%"`, which Android throws on. Every gesture-derived number goes through
- * here.
- */
 export function clamp01(value: number, fallback = 0): number {
-  // ⚠️ Only NaN falls back. ±Infinity is a MEANINGFUL overshoot — it comes
-  // from dividing by a zero width — so it clamps to the end of the range it
-  // points at. Treating it as "unknown" snapped the brightness bar to black
-  // when a drag ran off the right-hand end.
   if (Number.isNaN(value)) return fallback;
   return Math.min(1, Math.max(0, value));
 }
 
-/**
- * HSV → hex, for the custom look builder's wheel.
- * h 0-360 (angle on the wheel), s 0-1 (distance from centre), v 0-1 (brightness slider).
- *
- * ⚠️ Inputs are sanitised rather than trusted. A NaN hue makes `seg` NaN,
- * which indexes the sector table out of bounds and THROWS ("t is not
- * iterable") — during render, so it takes the screen down rather than just
- * producing a wrong colour.
- */
 export function hsvToHex(h: number, s: number, v: number): string {
   const hue = Number.isFinite(h) ? ((h % 360) + 360) % 360 : 0;
   s = clamp01(s);
@@ -120,13 +72,6 @@ export function hsvToHex(h: number, s: number, v: number): string {
   return `#${hex(r)}${hex(g)}${hex(b)}`.toUpperCase();
 }
 
-/**
- * Inverse, so tapping an existing swatch puts the wheel back where it was.
- *
- * ⚠️ Returns a usable colour for a malformed hex rather than NaN channels.
- * This feeds the wheel and the brightness ramp directly, and NaN there crashes
- * the render — see `hsvToHex`.
- */
 export function hexToHsv(hex: string): { h: number; s: number; v: number } {
   if (!isHexColor(hex)) return { h: 0, s: 0, v: 1 };
   const v6 = expandHex(hex);

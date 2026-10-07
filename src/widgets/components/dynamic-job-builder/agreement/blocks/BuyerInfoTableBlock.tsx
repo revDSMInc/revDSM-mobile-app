@@ -2,9 +2,6 @@ import React from 'react';
 import { View, Text } from 'react-native';
 import { AgreementBlockProps } from './types';
 
-// Faithful port of web `blocks/buyer-info-table-block.js`.
-// Renders one bordered row per `block.settings.rows` entry; each cell within a row
-// produces a grey label cell + a white value cell. Returns null when there are no rows.
 export default function BuyerInfoTableBlock({
   block,
   customerDetails,

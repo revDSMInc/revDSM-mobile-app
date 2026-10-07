@@ -54,7 +54,6 @@ export const RiskReportModal = ({ visible, onClose, lead, refetch }: RiskReportM
         return;
       }
 
-      // Step 1: Elevation
       setLoadingStep(1);
       addLog(`Fetching elevation data for coordinates...`);
       const elevationRes = await fetch(
@@ -65,7 +64,6 @@ export const RiskReportModal = ({ visible, onClose, lead, refetch }: RiskReportM
       const elevationFeet = (elevationMeters * 3.28084).toFixed(2);
       addLog(`✅ Saved Elevation: ${elevationFeet} ft`);
 
-      // Step 2: Weather
       setLoadingStep(2);
       addLog(`Gathering weather forecast...`);
       const weatherRes = await fetch(
@@ -74,7 +72,6 @@ export const RiskReportModal = ({ visible, onClose, lead, refetch }: RiskReportM
       const weatherData = await weatherRes.json();
       addLog(`✅ Saved Weather: ${weatherData?.current?.condition?.text || 'Clear'}`);
 
-      // Step 3: Zillow Property Details
       setLoadingStep(3);
       addLog(`Scraping property details from Zillow via Apify...`);
       const apifyRes = await fetch(
@@ -88,7 +85,6 @@ export const RiskReportModal = ({ visible, onClose, lead, refetch }: RiskReportM
       const zillowData = await apifyRes.json();
       addLog(`✅ Saved Property: ${zillowData?.[0]?.homeStatus || 'Unknown'} status`);
 
-      // Step 4: HTML String generation (Mobile limitation fallback)
       setLoadingStep(4);
       addLog('Compiling report payload...');
 
@@ -98,23 +94,18 @@ export const RiskReportModal = ({ visible, onClose, lead, refetch }: RiskReportM
         property: zillowData?.[0],
       });
 
-      // Submit
       setLoadingStep(5);
       addLog('Submitting report to backend...');
 
-      // Note: Since react-native-html-to-pdf is deliberately excluded for stability,
-      // we format the form data as required: 'reportType', 'file' or raw json
       const formData = new FormData();
       formData.append('leadId', lead?._id || lead?.id);
       formData.append('reportType', 'risk_report');
       formData.append('fileName', `Risk-Report-${Date.now()}.pdf`);
 
-      // Sending JSON metadata - the backend will create the physical PDF.
       formData.append('payload', reportPayload);
 
       await uploadReport.mutateAsync(formData);
 
-      // Log successful report generation
       const street = address?.split(',')[0] || '';
       await logEvent('create', {
         user_id: user?._id || user?.id,
@@ -139,7 +130,6 @@ export const RiskReportModal = ({ visible, onClose, lead, refetch }: RiskReportM
       const errorMsg = parseApiError(e);
       addLog(`❌ Error: ${errorMsg}`);
 
-      // Log report generation error
       const lat = lead?.customerDetails?.lat || lead?.location?.lat;
       const lng = lead?.customerDetails?.lng || lead?.location?.lng;
       const address = lead?.fullAddress || lead?.address || '';

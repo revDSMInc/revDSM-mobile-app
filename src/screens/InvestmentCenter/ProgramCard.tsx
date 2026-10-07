@@ -4,38 +4,20 @@ import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { useAnimatedStyle, LinearTransition, FadeOut } from 'react-native-reanimated';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
-/**
- * One program branch card in the Investment Center (web parity: `program-card.js`).
- * It renders the SAME breakdown as the rollout's In-Home Pre-Order / 1-Year Program
- * boxes (Total → Sr+Vet → [Discount] → Grand Total → down payment → monthly) so the
- * numbers the customer sees here match exactly what the rep confirmed in the rollout.
- *
- * The In-Home Pre-Order card is `highlighted` and, when opted into, fires the real
- * Result Lead handoff. The 1-Year Program card is visual-only: opting into it just
- * "crosses off" In-Home. Selecting one program `crossedOff`s the other.
- */
-
 const fmt = (n: number) => `$${Math.round(n || 0).toLocaleString()}`;
 
 export interface ProgramRow {
   label: string;
   value: string;
-  /** render the value in green (a discount line) */
   green?: boolean;
 }
 
-/** One financing plan in the In-Home "Monthly" shortlist (web `shortlistPlans`). */
 export interface ShortlistPlan {
   key: string;
   monthly: number;
-  /** compact terms label, e.g. "GS1599, 9.99% APR, 180M" */
   terms: string;
 }
 
-/**
- * Right-swipe "Delete" action for a Monthly-Options plan row (mirrors the dynamic
- * rollout's `SwipeDeleteAction`). Narrower to fit the compact program card.
- */
 function PlanSwipeDelete({ drag, onDelete }: { drag: any; onDelete: () => void }) {
   const styleAnimation = useAnimatedStyle(() => ({ transform: [{ translateX: drag.value + 64 }] }));
   return (
@@ -55,29 +37,20 @@ function PlanSwipeDelete({ drag, onDelete }: { drag: any; onDelete: () => void }
 interface Props {
   title: string;
   highlighted?: boolean;
-  /** Show the dark "PRICE LOCK" pill above the title (the 1-Year program, web parity). */
   priceLock?: boolean;
   rows: ProgramRow[];
-  /** Reserve breakdown-row height for this many rows (pads short cards with
-   *  invisible rows) so cards with different row counts keep the same height above
-   *  the Grand Total — aligning the Add-Down-Payment button across both cards. */
   reserveRows?: number;
   grandTotal: number;
   monthly?: number;
   planLabel?: string;
   downPayment?: number;
-  /** Optional editable down-payment control — replaces the read-only line. */
   downPaymentSlot?: React.ReactNode;
-  /** In-Home (highlighted) card only: render the interactive "Monthly" shortlist —
-   *  a selectable $/mo list the rep builds (add/select/swipe-to-delete) — instead
-   *  of the single read-only monthly the 1-Year card shows. */
   planInteractive?: boolean;
   shortlistPlans?: ShortlistPlan[];
   selectedPlanKey?: string;
   onSelectPlan?: (key: string) => void;
   onRemovePlan?: (key: string) => void;
   onAddPlan?: () => void;
-  /** Basic (non-financing) method badges shown next to Grand Total, e.g. CK/CC/AMEX. */
   badges?: { key: string; label: string }[];
   selectedBadgeKey?: string;
   onSelectBadge?: (key: string) => void;
@@ -182,9 +155,6 @@ export function ProgramCard({
         ) : null}
 
         {planInteractive ? (
-          // In-Home: an interactive "Monthly" shortlist (web parity). The rep adds
-          // financing plans the customer picks from; each is selectable (radio →
-          // check) and swipe-left deletes it. Empty until the first plan is added.
           <View style={{ marginTop: 10 }}>
             <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', letterSpacing: 0.5, marginBottom: 6, textTransform: 'uppercase' }}>Monthly</Text>
             {!shortlistPlans || shortlistPlans.length === 0 ? (
@@ -262,8 +232,6 @@ export function ProgramCard({
             flexDirection: 'row',
             justifyContent: 'center',
             gap: (readOnly && selected) ? 3 : 4,
-            // Same reasoning as the header title: the label sat flush against the
-            // button's edges, which the spotlight's ~2× zoom magnifies.
             paddingHorizontal: 12,
           }}
         >

@@ -11,16 +11,6 @@ import {
   type NotificationHistoryType,
 } from '../services/api/notifications';
 
-/**
- * Notification history, unread badge and mark-read.
- *
- * Backs the Notification Center screen and the header bell. The push side of the
- * same feature lives in `hooks/usePushNotifications.ts`; both funnel taps through
- * `resolvePushRoute`, so a row and a banner can never land in different places.
- *
- * Contract: NOTIFICATIONS-MOBILE-API.md §5.
- */
-
 export const unreadCountKey = (userId?: string) => ['notification-unread', userId];
 export const historyKey = (userId?: string, type: string = 'all') => [
   'notification-history',
@@ -30,22 +20,11 @@ export const historyKey = (userId?: string, type: string = 'all') => [
 
 const PAGE_SIZE = 20;
 
-/** Every route here enforces ownership — `:userId` must be the caller's own id. */
 function useUserId(): string {
   const { user } = useAuth();
   return String((user as any)?._id || (user as any)?.id || '');
 }
 
-// ─── Unread badge ────────────────────────────────────────────────────────────
-
-/**
- * The header bell's count.
- *
- * Polled rather than pushed: the contract describes this endpoint as
- * "cheap by design — intended to be polled without pulling a page". A foreground
- * push also invalidates this key (see `push-routing.invalidationKeysFor`), so the
- * badge moves the moment a notification lands rather than up to a minute later.
- */
 export function useUnreadNotificationCount() {
   const userId = useUserId();
 
@@ -64,28 +43,15 @@ export function useUnreadNotificationCount() {
 
   const unreadCount = query.data ?? 0;
 
-  /**
-   * Mirror to the OS badge so the springboard icon agrees with the in-app count.
-   * ⚠️ Android only shows this on launchers that support badges; a failure here is
-   * cosmetic and must never surface.
-   */
   useEffect(() => {
-    // Reached through the lazy shim: a build without the native modules must not
-    // take the header bell down with it. See services/push-native.ts.
-    //
-    // ⚠️ try/catch as well as `.catch` — `setBadgeCount` can throw SYNCHRONOUSLY
-    // when the native side is missing, which a promise `.catch` does not cover.
     try {
       getNativePush()?.notifee?.setBadgeCount(unreadCount)?.catch?.(() => {});
     } catch {
-      // Cosmetic only — a launcher that cannot show a badge must never surface.
     }
   }, [unreadCount]);
 
   return { unreadCount, isLoading: query.isLoading, refetch: query.refetch };
 }
-
-// ─── History ─────────────────────────────────────────────────────────────────
 
 export interface NotificationRow {
   id: string;
@@ -98,10 +64,6 @@ export interface NotificationRow {
   raw: any;
 }
 
-/**
- * ⚠️ Row ids come back under several spellings depending on the route. Reading a
- * fixed list rather than guessing one, the same discipline as `rowPayload`.
- */
 const rowId = (row: any): string =>
   String(row?._id || row?.id || row?.notificationId || '');
 
@@ -123,7 +85,6 @@ export function useNotificationHistory(type: NotificationHistoryType = 'all') {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
 
-  // A type change is a different list, not a later page of the same one.
   useEffect(() => {
     setPage(1);
   }, [type]);
@@ -169,8 +130,6 @@ export function useNotificationHistory(type: NotificationHistoryType = 'all') {
   };
 }
 
-// ─── Mark read ───────────────────────────────────────────────────────────────
-
 export function useMarkNotificationsRead() {
   const userId = useUserId();
   const queryClient = useQueryClient();
@@ -186,8 +145,6 @@ export function useMarkNotificationsRead() {
       try {
         await NotificationApi.markRead(userId, notificationId);
       } catch (err) {
-        // Non-fatal: the row still opens. Marking read is a side effect of the tap,
-        // not the point of it.
         console.warn('[Notifications] markRead failed:', err);
       } finally {
         invalidate();
@@ -210,20 +167,6 @@ export function useMarkNotificationsRead() {
   return { markRead, markAllRead };
 }
 
-// ─── Presentation helpers ────────────────────────────────────────────────────
-
-/**
- * Icon, ink and bubble tint per event family — the four families the redesign
- * paints (`notify-ui.txt`): PINE for leads, AMBER for signatures, RUST for a
- * cancellation or a refusal, SLATE for chat. The same three groupings as the
- * Android notification channels, so a row in the list reads as the banner that
- * raised it.
- *
- * ⚠️ Takes the payload as well as the type because `addendum-signed` covers a
- * DECLINE too, and its title reads "Addendum signed" either way. Branching on
- * `data.outcome` is the only way to tell them apart — the rule the contract
- * states, applied here so a refusal does not wear the same badge as an approval.
- */
 export const NOTIFICATION_TINTS = {
   pine: { color: '#1E5C43', tint: '#E7F0EA' },
   amber: { color: '#B4762C', tint: '#FBF0E1' },
@@ -264,16 +207,6 @@ export function describeNotification(
       return of('slate', 'message-outline', 'Messages');
     case 'chat-tagged':
       return of('slate', 'at', 'Messages');
-    /**
-     * CHAT-REACTION-NOTIFICATIONS.md §4. Without a case this falls to `default`
-     * and shows a grey bell in an "Other" group, sitting next to correctly
-     * grouped chat rows on the same screen.
-     *
-     * ⚠️ The contract suggests `color: '#0B6A85'` — that is the OLD chat tint,
-     * written before this function moved to the redesign's four families. SLATE
-     * is that colour's replacement, so the reaction still reads as chat; taking
-     * the hex literally would make it the one chat row painted a fifth colour.
-     */
     case 'chat-reaction':
       return of('slate', 'emoticon-happy-outline', 'Messages');
     case 'lead-issued':
@@ -289,11 +222,6 @@ export function describeNotification(
   }
 }
 
-/**
- * Hand-rolled rather than `toLocaleString`, for the reason `formatCaptureTime` in
- * `utils/inspection-photos.ts` gives: it must not depend on Intl being compiled
- * into the JS engine.
- */
 export function formatNotificationTime(iso: string): string {
   if (!iso) return '';
   const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(iso);
@@ -313,7 +241,6 @@ export function formatNotificationTime(iso: string): string {
   return isToday ? time : `${Number(mo)}/${Number(d)}/${String(y).slice(2)} · ${time}`;
 }
 
-/** Client-side unread filter — `:type` only accepts `all` or a real eventType. */
 export function useUnreadFilter(rows: NotificationRow[], unreadOnly: boolean) {
   return useMemo(
     () => (unreadOnly ? rows.filter((r) => r.isUnread) : rows),

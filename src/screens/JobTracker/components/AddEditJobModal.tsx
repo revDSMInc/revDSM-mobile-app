@@ -61,7 +61,6 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job, isLowesLead 
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
 
-  // Dynamically group payment methods based on isLowesLead, matching rollout summary
   const PAYMENT_GROUPS = isLowesLead
     ? [
         {
@@ -120,19 +119,12 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job, isLowesLead 
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [datePickerType, setDatePickerType] = useState<'install' | 'sold'>('install');
 
-  // The company ladder. Null while loading / unconfigured / on error, in which
-  // case calculateCommission falls back to the legacy hardcoded ladder.
   const { commissionConfig } = useCommissionConfig();
 
-  // Auto-calculate commission whenever salesPrice or paymentMethod changes
   useEffect(() => {
-    // Only auto-calculate commission for calculator-originated jobs (non-manual)
     if (!formData.isManual && formData.salesPrice !== undefined && formData.paymentMethod) {
       const comm = calculateCommission(formData.salesPrice, formData.paymentMethod, {
         config: commissionConfig,
-        // The job record carries the deal-center retail when the row was filed by
-        // the job-builder auto-add. Without it the ladder still applies, but its
-        // top rungs are unreachable - see commission-utils.
         retailPrice: Number((formData as any).retailPrice) || 0,
         adminFeeOverride: isLowesLead ? 0 : null,
       });
@@ -147,7 +139,6 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job, isLowesLead 
   useEffect(() => {
     if (visible) {
       if (job && (job.id || job._id)) {
-        // Edit mode - load existing data
         setFormData({
           ...job,
           jobNumber: job.jobNumber || '',
@@ -164,9 +155,6 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job, isLowesLead 
           calculatorId: job.calculatorId || '',
         });
       } else {
-        // New job mode - "nothing pre-added" rule. Sales Price is seeded from the
-        // originating calculator's end price when provided (web parity, deal
-        // center's `endPrice`); manual adds carry none, so it stays 0.
         setFormData({
           jobNumber: '',
           customerName: job?.customerName || '',

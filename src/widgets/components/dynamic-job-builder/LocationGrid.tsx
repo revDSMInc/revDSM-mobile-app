@@ -15,8 +15,6 @@ interface LocationGridProps {
   applyConditions?: boolean;
 }
 
-// Removes any column not in the visible set so hidden-column data never leaks
-// into totals or the persisted value (matches web stripHiddenColumns).
 function stripToVisibleColumns(value: any, visibleKeys: Set<string>) {
   if (!value || typeof value !== 'object') return value;
   const next: any = {};
@@ -35,27 +33,14 @@ function stripToVisibleColumns(value: any, visibleKeys: Set<string>) {
   return next;
 }
 
-/**
- * The text shown in a grid cell. Web parity (`location-grid.js`): 0 / '0' / empty
- * render blank so the "0" placeholder shows through.
- *
- * The value MUST be stringified: `update()` stores cell values as numbers, and
- * React Native's TextInput only renders a `string` — passing the raw number left
- * the cell blank even though the row/column totals (which read state directly)
- * counted it. Web gets away with the raw value because an HTML input coerces it.
- */
 function cellText(raw: any): string {
   if (raw === 0 || raw === '0' || raw == null || raw === '') return '';
   return String(raw);
 }
 
-// Styled to match the normal Job Builder measurement grid (GutterSection /
-// LeafFilterSection): slate-50 rounded input cells, font-black, sky totals,
-// #22C55E grand-total bar.
 export function LocationGrid({ label = 'Measurements', value = {}, onChange, field, singleStory, dealCenterData = {}, state = {}, applyConditions = true }: LocationGridProps) {
   const config = resolveLocationGridConfig(field || { singleStory });
   const { rows, rowHeaderLabel, unit } = config;
-  // Per-column visibleWhen gating (e.g. hide "3rd Story" unless the deal has 3 stories).
   const columns = resolveVisibleColumns({ columns: config.columns || [] }, dealCenterData, state, applyConditions);
   const visibleKeys = new Set<string>(columns.map((c: any) => c.key));
 

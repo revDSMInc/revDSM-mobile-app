@@ -1,8 +1,3 @@
-/**
- * Auto-field definitions for one-time audit logging of locked job builder / result fields.
- * Ported from web src/api/auto-fields.js
- */
-
 import { logEvent } from '../../services/api/LoggerService';
 
 export const AUTO_FIELDS_BY_SECTION: Record<string, any[]> = {
@@ -71,7 +66,6 @@ export function getAutoFieldEntriesForSection(section: string, calculatorData: a
   const entries: Array<{ key: string; label: string; value: any; fieldType?: string }> = [];
   const fields = AUTO_FIELDS_BY_SECTION[section] || [];
 
-  // DealCenter passes nested { inputs, extras }, LeadCenter passes flat.
   const flat = {
     ...(calculatorData?.inputs || {}),
     ...(calculatorData?.extras || {}),

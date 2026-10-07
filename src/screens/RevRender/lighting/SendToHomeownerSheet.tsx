@@ -8,15 +8,9 @@ const GREEN = '#2EDE56';
 export interface ShareableRender {
   runId: string;
   label: string;
-  /** e.g. "Halloween · Alternating", or the Core spec summary. */
   detail?: string;
 }
 
-/**
- * "Send to homeowner" (REVUIUX-483 Results). The homeowner gets a link, not the
- * images themselves — so this collects a channel, a recipient and which renders
- * to include, and the backend mints and sends the link.
- */
 export function SendToHomeownerSheet({
   visible,
   renders,
@@ -74,13 +68,10 @@ export function SendToHomeownerSheet({
         runIds: included,
         channel,
         recipientName: name.trim() || undefined,
-        // Sent as typed — the backend normalises display formatting.
         ...(channel === 'sms' ? { recipientPhone: phone.trim() } : { recipientEmail: email.trim() }),
       });
 
       if (data?.sent === false) {
-        // The link exists and works; only delivery failed. Keep the sheet open
-        // so the rep can retry or fix the number rather than losing the share.
         setWarning(data?.deliveryError || 'Could not deliver — the link was created, try again.');
         onSent?.({ shareId: data.shareId, link: data.link, sent: false });
       } else {

@@ -53,10 +53,8 @@ import {
   pinSortKeyExpression,
 } from '../../../utils/sales-pins';
 
-// Built once — a new array each render would re-send the layer style to native.
 const PIN_SORT_KEY = pinSortKeyExpression();
 
-// Mapbox uses an access token initialized once at module load.
 Mapbox.setAccessToken(ENV.MAPBOX_ACCESS_TOKEN);
 
 const MARKER_IMAGES = {
@@ -64,36 +62,28 @@ const MARKER_IMAGES = {
   searched: require('../../../assets/images/map/marker-red.png'),
   favorite: require('../../../assets/images/map/marker-amber.png'),
   selected: require('../../../assets/images/map/marker-selected.png'),
-  // REVUIUX-439 sold-job pins: dark green + white check / purple + white dot.
   installed: require('../../../assets/images/map/marker-installed.png'),
   pendingInstall: require('../../../assets/images/map/marker-pending.png'),
 };
 
 const { width, height } = Dimensions.get('window');
 
-// STATIC TAMPA DATA
 const TAMPA_COORDS = {
   latitude: 27.9506,
   longitude: -82.4572,
 };
 
-// Boundary lock — same bounds as the web app Leaflet MAP_BOUNDS.
-// Mapbox uses [longitude, latitude] order. SW [15, -180] NE [85, -40].
 const MAP_BOUNDS = {
   ne: [-40, 85] as [number, number],
   sw: [-180, 15] as [number, number],
 };
 
-// True when [lng, lat] falls inside MAP_BOUNDS (web parity: `isWithinMapBounds`).
-// Anything outside is unusable as a camera target: `maxBounds` clamps it to the
-// edge of the box, which lands the map in open ocean rather than on the point.
 const isWithinMapBounds = (longitude: number, latitude: number) =>
   longitude >= MAP_BOUNDS.sw[0] &&
   longitude <= MAP_BOUNDS.ne[0] &&
   latitude >= MAP_BOUNDS.sw[1] &&
   latitude <= MAP_BOUNDS.ne[1];
 
-// Match web app logic exactly - check salesRepId and name-based properties
 const isJobOwner = (item: any, user: any): boolean => {
   if (!user || !item) return false;
   const uid = typeof user === 'string' ? user : (user._id || user.id);
@@ -135,13 +125,6 @@ interface LeadMapProps {
   isReferralFilter?: boolean;
   isMyJobsFilter?: boolean;
   isHeatMapFilter?: boolean;
-  // Pin-status quick filters (web has no analog — the map screen already carried
-  // MapFiltersModal's `statusFilter`; these mirror it with the SAME 4 on-map toggle
-  // switches heatmap/myjobs/referral/favorite already use). Ticket: "add a toggle
-  // button for the pending install pins and the installed pins ... the toggle should
-  // be same as already appended in the map." Booleans in, not the raw `statusFilter`
-  // string, so this component stays ignorant of `PinStatusFilter` — MapDetail owns
-  // that type and decides what "on" means.
   isInstalledOnlyFilter?: boolean;
   isPendingInstallOnlyFilter?: boolean;
   onToggleFilter?: (
@@ -150,23 +133,10 @@ interface LeadMapProps {
   searchedJobNumber?: string;
   onFavoriteToggle?: (jobId: string, isFavorite: boolean) => void;
   showProduct?: boolean;
-  // Satellite / street map-view toggle (web parity: `isSatelliteView`). When true
-  // the Mapbox style switches to satellite-streets (hybrid — imagery + labels).
   isSatelliteView?: boolean;
-  // Route/directions toggle (web parity: `showRoute`). When true a driving route
-  // is drawn from the user's location to the current lead / searched center.
   showRoute?: boolean;
-  // When the parent makes an optimistic patch to a job (e.g. after referral submit)
-  // it passes the updated job here so the open job card reflects instantly.
   updatedJob?: any;
-  // Open the map framed on the rep's office (`user.office[]` from `/company`)
-  // instead of drifting to their GPS position. Used by the full Map screen; the
-  // Lead Center map leaves this off so it still opens on the lead.
   focusOfficeOnOpen?: boolean;
-  // Open the map framed on the rep's CURRENT GPS location. Used by the full Map
-  // screen. Robust to the GPS-fix-before-style-ready race: it re-asserts the
-  // camera once BOTH the map is ready and a fix is in. A searched location /
-  // focused lead still wins.
   focusUserLocationOnOpen?: boolean;
 }
 
@@ -202,15 +172,9 @@ export const LeadMap = ({
   const insets = useSafeAreaInsets();
   const mapViewRef = useRef<MapView>(null);
   const cameraRef = useRef<Camera>(null);
-  // Pin-colour legend: closed until the rep taps the palette button (same as the
-  // footsteps map's legend).
   const [legendOpen, setLegendOpen] = useState(false);
   const zoomRef = useRef(10); // tracks current zoom for +/- buttons
 
-  // ─── Data source ─────────────────────────────────────────────────────────
-  // `internalLeads` is only used when no externalLeads prop is provided
-  // (standalone LeadMap without MapDetail). When MapDetail passes `leads`,
-  // we use that directly — synchronously — with NO intermediate setState.
   const [internalLeads, setInternalLeads] = useState<any[]>([]);
   const [dataVersion, setDataVersion] = useState(0); // increments on every data refresh
 
@@ -224,7 +188,6 @@ export const LeadMap = ({
       setInternalLeads(jobs);
       setDataVersion((v) => v + 1);
 
-      // Refresh active selections to show new images/referrals immediately
       if (selectedLead?._id) {
         const updated = jobs.find((j: any) => j._id === selectedLead._id);
         if (updated) setSelectedLead(updated);
@@ -240,8 +203,6 @@ export const LeadMap = ({
     }
   };
 
-  // When externalLeads change (MapDetail refreshed data after referral/gallery action),
-  // bump the version so markers re-render and colors update.
   const prevLeadsHashRef = useRef('');
   useEffect(() => {
     if (externalLeads) {
@@ -251,15 +212,12 @@ export const LeadMap = ({
         setDataVersion((v) => v + 1);
       }
     } else {
-      // Standalone mode — fetch our own data
       fetchAllJobs();
     }
   }, [externalLeads]);
 
   const [userLocation, setUserLocation] = useState<any>(null);
   const [showRoute, setShowRoute] = useState(false);
-  // Keep the internal route state in sync with the parent-controlled prop so the
-  // route toggle (MapDetail / filters) drives the existing route infrastructure.
   useEffect(() => {
     setShowRoute(showRouteProp);
   }, [showRouteProp]);
@@ -271,7 +229,6 @@ export const LeadMap = ({
   const [showReferral, setShowReferral] = useState(false);
   const [activeFilters, setActiveFilters] = useState(['DEF-0', 'AJ-1', 'DEF-3']);
 
-  // Keep selectedLead and galleryJob in sync with the latest data in allLeads
   useEffect(() => {
     if (selectedLead?._id) {
       const latest = allLeads.find((l: any) => l._id === selectedLead._id);
@@ -318,9 +275,6 @@ export const LeadMap = ({
       isMyJobsOnly: activeFilters.includes('MJ-1'),
       isReferralOnly: activeFilters.includes('RF-2'),
       isFavoriteOnly: activeFilters.includes('FV-3') || !!isFavoriteFilter,
-      // No local-mode (`activeFilters`) analog for these two — that fallback path
-      // only exists for a caller with no `leads` array to filter (the embedded
-      // preview in `OperationalSections.tsx`), where a pin-status filter is moot.
       isInstalledOnly: false,
       isPendingOnly: false,
     };
@@ -339,20 +293,17 @@ export const LeadMap = ({
     let result = [...allLeads];
 
     result = result.filter((item: any) => {
-      // 1. TAM Range Filter (Excludes TAM30000-30032)
       const jobNumber = item?.jobNumber;
       if (typeof jobNumber === 'string' && jobNumber.startsWith('TAM')) {
         const num = parseInt(jobNumber.substring(3), 10);
         if (num >= 30000 && num <= 30032) return false;
       }
 
-      // 3. My Jobs Filter
       if (isMyJobsOnly) {
         const isOwner = isJobOwner(item, user);
         if (!isOwner) return false;
       }
 
-      // 4. Reference Filter (match web app logic)
       if (isReferralOnly) {
         const isMine = isJobOwner(item, user);
         const hasReferrals = item.jobReferrals && item.jobReferrals.length > 0;
@@ -364,7 +315,6 @@ export const LeadMap = ({
         }
       }
 
-      // 5. Favorite Job Filter
       if (isFavoriteOnly) {
         const isFav = item.isFavorite === true || item.isFavourite === true;
         if (!isFav) return false;
@@ -376,7 +326,6 @@ export const LeadMap = ({
     return result;
   }, [allLeads, user, isMyJobsOnly, isReferralOnly, isFavoriteOnly, externalLeads, dataVersion]);
 
-  // ─── Separate searched, favorite and default leads ────────────────────────
   const { searchedLeads, favoriteLeads, defaultLeads } = useMemo(() => {
     const searched: any[] = [];
     const favorites: any[] = [];
@@ -399,9 +348,6 @@ export const LeadMap = ({
     return { searchedLeads: searched, favoriteLeads: favorites, defaultLeads: defaults };
   }, [filteredLeads, isFavoriteOnly, searchedJobNumber]);
 
-  // Fast lookup of a job by id — markers only carry the id in their GeoJSON
-  // properties (Mapbox flattens/serializes feature properties), so we resolve
-  // the full lead object on press from this map.
   const leadsByIdRef = useRef<Map<string, any>>(new Map());
   useMemo(() => {
     const m = new Map<string, any>();
@@ -410,11 +356,6 @@ export const LeadMap = ({
     return m;
   }, [filteredLeads]);
 
-  // ─── Combined GeoJSON for all job markers ──────────────────────────────────
-  // One FeatureCollection with a `category` property so a single SymbolLayer can
-  // pick the right pin image. SymbolLayer renders thousands of points smoothly.
-  // `searched` / `favorite` win over the pin category (web parity); a default pin
-  // takes its `pinCategory` — `uploaded` keeps the existing green `default`.
   const markersGeoJson = useMemo(() => {
     const defaultCategory = (job: any) => {
       const c = getPinCategory(job);
@@ -441,7 +382,6 @@ export const LeadMap = ({
     };
   }, [defaultLeads, favoriteLeads, searchedLeads]);
 
-  // Per-category counts for the legend (web parity) — the pins actually on the map.
   const pinCategoryCounts = useMemo(
     () =>
       countPinCategories(
@@ -450,9 +390,6 @@ export const LeadMap = ({
     [filteredLeads]
   );
 
-  // ─── Heatmap GeoJSON ───────────────────────────────────────────────────────
-  // Each point carries a numeric `weight` derived from price: a 0.3 baseline for
-  // jobs under $5000, scaling up for higher-value jobs.
   const heatmapGeoJson = useMemo(() => {
     return {
       type: 'FeatureCollection' as const,
@@ -513,7 +450,6 @@ export const LeadMap = ({
         setSelectedLead(currentLead);
       }
     } else if (currentLead?.latitude && currentLead?.longitude) {
-      // Handle direct coordinate objects — used for location search navigation from MapFiltersModal
       cameraRef.current?.setCamera({
         centerCoordinate: [currentLead.longitude, currentLead.latitude],
         zoomLevel: 13,
@@ -522,11 +458,6 @@ export const LeadMap = ({
     }
   }, [currentLead]);
 
-  // ─── Opening view: the rep's office ────────────────────────────────────────
-  // The Map screen opens framed on the office from `/company` (`user.office[]`,
-  // coords in `verifiedAddress`) instead of sliding to wherever the rep happens
-  // to be standing. An explicit target — a lead handed in, or a searched
-  // location — always wins, and the 🎯 button still recentres on the rep.
   const officeCoords = useMemo(() => {
     const coords = getOfficeCoords(user);
     if (!coords) {
@@ -537,8 +468,6 @@ export const LeadMap = ({
       }
       return null;
     }
-    // A point outside the map's bounds (bad or lat/lon-swapped API data) would be
-    // clamped to the edge of the box and open on water — refuse it and fall back.
     if (!isWithinMapBounds(coords.longitude, coords.latitude)) {
       console.log('[LeadMap] Office coordinates are outside the map bounds — ignoring.', coords);
       return null;
@@ -550,34 +479,23 @@ export const LeadMap = ({
   }, [user, focusOfficeOnOpen]);
 
   const hasExplicitTarget = !!(currentLead || focusLead);
-  // A REAL opening search target (saved / searched location, or a jumped-to lead)
-  // that should own the opening camera — as opposed to the operational lead, which
-  // has an `_id`. A bare `{ latitude, longitude }` center (no `_id`) is a search.
   const hasSearchCenter = !!(
     focusLead ||
     (currentLead?.latitude != null && currentLead?.longitude != null && !currentLead?._id)
   );
   const didFrameOfficeRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
-  // Read from inside startTracking's async callbacks, which capture their
-  // creation scope — a ref keeps them looking at the current value.
   const suppressInitialRecenterRef = useRef(false);
 
   const officeCoordsRef = useRef(officeCoords);
 
   useEffect(() => {
     officeCoordsRef.current = officeCoords;
-    // Don't let the first GPS fix steal the opening camera when an explicit target
-    // owns it: the office (Map screen), OR — on the full Map screen that opens on the
-    // rep — a saved/searched location. With no such target, the GPS recenter runs so
-    // a plain open lands on the rep. The 🎯 button (forceAnimate) always overrides.
     suppressInitialRecenterRef.current =
       (focusOfficeOnOpen && !!officeCoords && !hasExplicitTarget) ||
       (focusUserLocationOnOpen && hasSearchCenter);
   }, [focusOfficeOnOpen, focusUserLocationOnOpen, officeCoords, hasExplicitTarget, hasSearchCenter]);
 
-  // Mapbox reads `defaultSettings` once, at mount — when the office is already
-  // known by then the very first paint lands on it, with no Tampa→office jump.
   const defaultCameraSettings = useMemo(() => {
     if (focusOfficeOnOpen && officeCoords && !hasExplicitTarget) {
       return {
@@ -595,15 +513,9 @@ export const LeadMap = ({
   useEffect(() => {
     if (!focusOfficeOnOpen || didFrameOfficeRef.current) return;
     if (hasExplicitTarget || !officeCoords) return;
-    // setCamera before the style has loaded is dropped on the floor, so wait for
-    // the map to report ready. `defaultSettings` has usually put us there already;
-    // this makes it certain, and covers a profile that arrives late.
     if (!mapReady) return;
 
     didFrameOfficeRef.current = true;
-    // NB: a non-zero duration is required. `animationDuration: 0` is dropped by
-    // @rnmapbox v10 and the camera falls back to (0,0), which `maxBounds` then
-    // clamps to the edge of the box — i.e. the map opens on open ocean.
     cameraRef.current?.setCamera({
       centerCoordinate: [officeCoords.longitude, officeCoords.latitude],
       zoomLevel: OFFICE_ZOOM,
@@ -624,21 +536,10 @@ export const LeadMap = ({
     }
   }, [focusLead]);
 
-  // ─── Opening view: the rep's CURRENT GPS location (full Map screen) ─────────
-  // `startTracking` flies to the first GPS fix on open, but that `setCamera` is
-  // dropped on the floor if the fix lands before the style has loaded — leaving the
-  // map on its default frame. So re-assert the camera once BOTH the map is ready and
-  // a fix is in (one-shot). A searched location / focused lead still wins, and an
-  // out-of-region fix is ignored (it would clamp to the map-bounds edge / open ocean).
   const didFocusUserRef = useRef(false);
   useEffect(() => {
     if (!focusUserLocationOnOpen || didFocusUserRef.current) return;
     if (!mapReady || !userLocation) return;
-    // Only a REAL search target should override "open on my location". A saved /
-    // searched location arrives as a bare `{ latitude, longitude }` center (no
-    // `_id`); the operational lead itself may also carry top-level lat/lng but
-    // has an `_id` — that is NOT a search and must not suppress the GPS focus,
-    // otherwise a plain lead open (no saved location filter) never lands on the rep.
     const isSearchCenter =
       currentLead?.latitude != null && currentLead?.longitude != null && !currentLead?._id;
     const hasSearchTarget = !!(focusLead || isSearchCenter);
@@ -659,14 +560,8 @@ export const LeadMap = ({
       const { latitude, longitude } = position.coords;
       setUserLocation({ latitude, longitude });
 
-      // Opening framed on the office? Then the first GPS fix must not steal the
-      // camera — only an explicit 🎯 tap (forceAnimate) recentres on the rep.
       if (!forceAnimate && suppressInitialRecenterRef.current) return;
 
-      // Out of region — e.g. testing from outside the US. Flying there would be
-      // clamped by `maxBounds` to the edge of the box, which leaves the map on
-      // open ocean. Anchor on the office instead (web parity: map.js's
-      // out-of-region branch), or stay put when there isn't one.
       if (!isWithinMapBounds(longitude, latitude)) {
         console.log('[LeadMap] Current position is outside the map bounds — not recentring.', {
           latitude,
@@ -688,7 +583,6 @@ export const LeadMap = ({
         return;
       }
 
-      // Otherwise animate to the user's current location on open / GPS tap.
       cameraRef.current?.setCamera({
         centerCoordinate: [longitude, latitude],
         zoomLevel: 13,
@@ -705,7 +599,6 @@ export const LeadMap = ({
       );
     };
 
-    // Try high accuracy first, but timeout after 5 seconds to fallback to low accuracy
     Geolocation.getCurrentPosition(
       successCallback,
       errorCallback,
@@ -715,10 +608,6 @@ export const LeadMap = ({
 
   const [loadingDetail, setLoadingDetail] = useState(false);
 
-  // Card entrance animation. The card itself is a native MarkerView glued to the
-  // marker coordinate (so it tracks the marker through any pan/zoom natively).
-  // We fade + scale it in with a small delay so the camera has already started
-  // gliding toward the marker before the card appears — a smooth, sequenced feel.
   const cardAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (selectedLead?._id) {
@@ -753,7 +642,6 @@ export const LeadMap = ({
         FlashMessage.info('Job is removed from favourite');
       }
 
-      // Mutate the lead object inside allLeads array in-place so both internal/external lists and clicked markers reference the fresh state!
       const target = allLeads.find((l) => l._id === job._id);
       if (target) {
         target.isFavourite = nextValue;
@@ -772,7 +660,6 @@ export const LeadMap = ({
         );
       }
 
-      // Always bump version so markers re-render and update their colors
       setDataVersion((v) => v + 1);
 
       if (selectedLead && selectedLead._id === job._id) {
@@ -801,7 +688,6 @@ export const LeadMap = ({
         animationDuration: 600,
       });
 
-      // Log pin selected event
       const targetLat = coords[1];
       const targetLng = coords[0];
       logMapPinSelected(user, {
@@ -816,9 +702,6 @@ export const LeadMap = ({
   const handleMarkerClickRef = useRef<(job: any) => void>(handleMarkerClick);
   handleMarkerClickRef.current = handleMarkerClick;
 
-  // Timestamp of the last marker selection. The native ShapeSource.onPress and
-  // the MapView.onPress can both fire for a single tap; this guard makes sure a
-  // tap is handled exactly once (and the map press never deselects right after).
   const lastMarkerPressRef = useRef(0);
 
   const selectJob = (job: any) => {
@@ -826,8 +709,6 @@ export const LeadMap = ({
     handleMarkerClickRef.current(job);
   };
 
-  // Native, reliable marker hit-test (Mapbox does the hit detection with the
-  // ShapeSource's enlarged hitbox), so taps land consistently at any zoom.
   const onMarkerSourcePress = useCallback((e: any) => {
     if (isHeatMapActive) return;
     if (Date.now() - lastMarkerPressRef.current < 400) return;
@@ -836,10 +717,6 @@ export const LeadMap = ({
     if (job) selectJob(job);
   }, [isHeatMapActive]);
 
-  // Zoom threshold the popup is considered "anchored close" at. When the map is
-  // zoomed out further than this, tapping the popup card itself glides the camera
-  // in and re-centers on the marker (nested buttons inside the card still take
-  // priority for their own taps).
   const CARD_FOCUS_ZOOM = 15.5;
   const handleCardPress = useCallback(() => {
     if (!selectedLead?.location?.coordinates) return;
@@ -852,7 +729,6 @@ export const LeadMap = ({
     });
   }, [selectedLead]);
 
-  // Haversine formula to compute great-circle distance in kilometers
   const getDistanceInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371; // Radius of the earth in km
     const dLat = (lat2 - lat1) * (Math.PI / 180);
@@ -867,12 +743,6 @@ export const LeadMap = ({
     return R * c; // Distance in km
   };
 
-  // Map background tap handler.
-  //  • If a marker was just selected (native ShapeSource.onPress), ignore this so
-  //    we don't immediately deselect it.
-  //  • When the heatmap is active there are no pins, so a tap selects the closest
-  //    lead within 2km.
-  //  • Otherwise it deselects.
   const handleMapPress = useCallback(
     (feature: any) => {
       if (Date.now() - lastMarkerPressRef.current < 400) return;
@@ -929,7 +799,6 @@ export const LeadMap = ({
       const data = await response.json();
 
       if (data.routes && data.routes.length > 0) {
-        // Mapbox LineLayer expects [lng, lat] coordinate pairs.
         const coords: [number, number][] = data.routes[0].geometry.coordinates.map(
           (c: any) => [c[0], c[1]] as [number, number]
         );
@@ -948,14 +817,12 @@ export const LeadMap = ({
     }
   }, [showRoute, userLocation, currentLead]);
 
-  // Check if a job is near the searched location (within 2 km radius)
   const isNearSearchedLocation = (jobLat: number, jobLng: number) => {
     if (!currentLead?.latitude || !currentLead?.longitude) return false;
     const dist = getDistanceInKm(jobLat, jobLng, currentLead.latitude, currentLead.longitude);
     return dist <= 2;
   };
 
-  // Debug: Log when search location changes
   useEffect(() => {
     if (currentLead?.latitude && currentLead?.longitude) {
       console.log('[SearchLocation] Search location set to:', { lat: currentLead.latitude, lng: currentLead.longitude });
@@ -1045,15 +912,9 @@ export const LeadMap = ({
               style={{
                 visibility: isHeatMapActive ? 'visible' : 'none',
                 heatmapWeight: ['interpolate', ['linear'], ['get', 'weight'], 0, 0, 1.5, 1],
-                // Moderate intensity so density stays lower — warm hotspots
-                // only where leads genuinely cluster, with more cyan/green
-                // across the sparser areas.
                 heatmapIntensity: ['interpolate', ['linear'], ['zoom'], 0, 0.25, 9, 0.38, 13, 0.5, 16, 0.6],
                 heatmapRadius: ['interpolate', ['linear'], ['zoom'], 0, 16, 9, 22, 13, 40, 16, 60],
                 heatmapOpacity: ['interpolate', ['linear'], ['zoom'], 7, 0.9, 16, 0.7],
-                // Match the web heatmap ramp: faint blue (very sparse) → cyan →
-                // green at low density, then yellow → orange across most of the
-                // range (warm-dominant), with red for the densest cores.
                 heatmapColor: [
                   'interpolate',
                   ['linear'],
@@ -1105,11 +966,8 @@ export const LeadMap = ({
                   'searched', 'markerRed',
                   'installed', 'markerInstalled',
                   'pendingInstall', 'markerPending',
-                  /* default (uploaded) */ 'markerGreen',
+                  'markerGreen',
                 ],
-                // Draw pending / installed / favourite / searched ABOVE the plain green
-                // pins — by default overlapping pins stack by screen Y and the few purple
-                // ones were buried in the green clusters (see `PIN_DRAW_ORDER`).
                 symbolSortKey: PIN_SORT_KEY,
                 iconSize: ['interpolate', ['linear'], ['zoom'], 8, 0.7, 12, 0.9, 16, 1.1],
                 iconAnchor: 'bottom',
@@ -1296,20 +1154,6 @@ export const LeadMap = ({
         <View className="gap-2">
           {(
             [
-              // Ticket: "move that toggle from very bottom to top ... in their
-              // position", then "pending install toggle also move from bottom to top" —
-              // BOTH pin-status toggles are now first/second in this array (render
-              // order top-to-bottom in the stack below), grouped together since they are
-              // a matched, mutually-exclusive pair. HM/MJ/RF/FV keep their relative
-              // order, now 3rd-6th instead of 1st-4th.
-              //
-              // ⚠️ Coloured to match their OWN pins (`PIN_CATEGORY_META`), unlike the
-              // four below which stay the switch's default green. "All the toggles
-              // [look] the same — make it different for pending install and installed":
-              // six identical green switches meant telling INS/PI apart from HM/MJ/RF/FV
-              // — and from each other — needed reading the two-letter label. PI's dark
-              // label keeps it legible on its yellow track (white-on-yellow is the
-              // switch's low-contrast default).
               {
                 active: 'INS', inactive: 'DEF', id: 'IN-4', type: 'installed' as const,
                 activeColor: PIN_CATEGORY_META.installed.color,
@@ -1492,7 +1336,6 @@ export const LeadMap = ({
         onClose={() => setShowReferral(false)}
         selectedJob={galleryJob}
         onSuccess={(referralData) => {
-          // ── 1. Instantly patch galleryJob so the card updates immediately ──
           setGalleryJob((prev: any) => {
             if (!prev) return prev;
             const existing: any[] = prev.jobReferrals || [];
@@ -1504,7 +1347,6 @@ export const LeadMap = ({
             return { ...prev, jobReferrals: updated };
           });
 
-          // ── 2. Patch internalLeads so marker icons / filters stay consistent
           setInternalLeads((prev: any[]) =>
             prev.map((job: any) => {
               if (job._id !== galleryJob?._id) return job;
@@ -1518,7 +1360,6 @@ export const LeadMap = ({
             })
           );
 
-          // ── 3. Background sync: full server refetch in either mode ────────
           if (!externalLeads) {
             fetchAllJobs();
           } else {

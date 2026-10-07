@@ -1,9 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, Platform, Pressable, Keyboard, InputAccessoryView } from 'react-native';
 
-// iOS-only "Done" bar id for the multiline TBD-reason input. A multiline TextInput
-// has no return-key dismiss on iOS, so without an accessory bar the keyboard can't
-// be closed. Android ignores inputAccessoryViewID and dismisses via its own controls.
 const TBD_REASON_ACCESSORY_ID = 'tbdReasonDoneBar';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -27,12 +24,6 @@ interface AppointmentSchedulerModalProps {
   visible: boolean;
   onClose: () => void;
   onConfirm: (data: any) => void;
-  /**
-   * The rep CONFIRMED the time window (or the TBD reason) — the modal is showing
-   * 'Job Booked!'. Fired for the audit trail only: the appointment is still
-   * persisted by `onGenerate` / `onUpload` / `onConfirm`, which is what the rep
-   * picks NEXT on that card. Both the accept and TBD paths call it.
-   */
   onBooked?: (data: any) => void;
   onGenerate?: (data: any) => void;
   onUpload?: (data: any) => void;
@@ -40,24 +31,10 @@ interface AppointmentSchedulerModalProps {
   isEdit?: boolean;
   initialDate?: string;
   initialTimeWindow?: string;
-  /**
-   * View the modal opens on. Defaults to `'date'` (the calendar). Pass `'time'`
-   * to jump straight to the time-proposal step for `initialDate` — used by the
-   * deal-edit Step-0 inline calendar, which already picked the date, so the modal
-   * shouldn't show a second calendar.
-   */
   initialView?: 'date' | 'time';
-  /**
-   * When true, rescheduling an EXISTING appointment with real changes requires a
-   * customer signature (contract amendment) before the change is committed.
-   * Web parity: `appointment-scheduler.js` `requireScheduleAmendment`.
-   */
   requireScheduleAmendment?: boolean;
-  /** Lead id — needed to create/update the amendment lead-draft. */
   leadId?: string;
-  /** Full lead object — provides customer phone/email/name for the amendment modal. */
   lead?: any;
-  /** Old schedule values, diffed against the new selection to build the amendment changes list. */
   scheduleTime?: { date?: string; timeWindow?: string; reason?: string };
 }
 
@@ -82,7 +59,6 @@ export const AppointmentSchedulerModal = ({
 
   const [view, setView] = useState<'date' | 'time' | 'tbd' | 'success'>('date');
 
-  // ── Contract-amendment gating (web parity: appointment-scheduler.js) ────────
   const [amendmentOpen, setAmendmentOpen] = useState(false);
   const [amendmentChanges, setAmendmentChanges] = useState<AmendmentChange[]>([]);
   const [amendmentSubmitting, setAmendmentSubmitting] = useState(false);
@@ -115,7 +91,6 @@ export const AppointmentSchedulerModal = ({
   const [tbdReason, setTbdReason] = useState('');
   const [isTBD, setIsTBD] = useState(false);
 
-  // Sync state when props change and modal becomes visible
   React.useEffect(() => {
     if (visible) {
       if (initialDate && initialDate !== 'TBD') {
@@ -125,8 +100,6 @@ export const AppointmentSchedulerModal = ({
           setCurrentMonth(parsed);
         }
         setIsTBD(false);
-        // Jump straight to the time-proposal step when the caller already picked
-        // the date (deal-edit inline calendar). Default stays the calendar view.
         if (initialView === 'time' && !isNaN(parsed.getTime())) {
           setTimeSlotIdx(0);
           setView('time');
@@ -136,9 +109,6 @@ export const AppointmentSchedulerModal = ({
         setView('tbd');
       }
 
-      // Seed the current window when re-opening on an existing appointment, but
-      // NOT when jumping to a fresh time proposal (initialView='time' starts at
-      // the first slot, matching handleDateSelect / web).
       if (initialTimeWindow && initialView !== 'time') {
         const idx = windows.findIndex(w => w.value === initialTimeWindow);
         if (idx !== -1) setTimeSlotIdx(idx);
@@ -167,12 +137,6 @@ export const AppointmentSchedulerModal = ({
     }
   };
 
-  // The appointment as the 'Job Booked!' card states it. Shared so the booked
-  // callback and the two buttons on that card can never describe the same
-  // appointment differently.
-  //
-  // ⚠️ `tbd` is passed in, never read from `isTBD`: both callers set that state in
-  // the same tick, so reading it here would see the PREVIOUS value.
   const bookedAppointmentData = (tbd: boolean) =>
     tbd
       ? { date: 'TBD', reason: tbdReason, customerName }
@@ -196,7 +160,6 @@ export const AppointmentSchedulerModal = ({
 
   const handleModalClose = () => {
     onClose();
-    // Reset views after modal closes
     setTimeout(() => {
       setView('date');
       setTimeSlotIdx(0);
@@ -209,9 +172,6 @@ export const AppointmentSchedulerModal = ({
     }, 300);
   };
 
-  // ── Amendment gating ────────────────────────────────────────────────────────
-  // Diff old (scheduleTime / initial* props) vs new selection — web parity with
-  // `appointment-scheduler.js` `buildScheduleChanges`.
   const buildScheduleChanges = (appointmentData: any): AmendmentChange[] => {
     const oldDate = scheduleTime?.date ?? initialDate ?? '';
     const oldWindow = scheduleTime?.timeWindow ?? initialTimeWindow ?? '';
@@ -233,7 +193,6 @@ export const AppointmentSchedulerModal = ({
     return changes;
   };
 
-  // Build the appointmentData object emitted by the edit "Save Changes" button.
   const buildEditAppointmentData = () =>
     isTBD
       ? { date: 'TBD', reason: tbdReason, customerName }
@@ -259,8 +218,6 @@ export const AppointmentSchedulerModal = ({
             : null,
       };
 
-      // Schedule amendment only — do not send contract fields so a pending contract
-      // proposal on the draft is preserved (web parity).
       const draftRes = await LeadService.upsertLeadDraft(leadId, { scheduleTime: scheduleTimeDraft });
       const newDraftId =
         draftRes?.data?._id ||
@@ -291,7 +248,6 @@ export const AppointmentSchedulerModal = ({
     }
   };
 
-  // Edit "Save Changes" handler: gate on amendment when required + changed.
   const handleEditConfirm = async () => {
     const appointmentData = buildEditAppointmentData();
     const changes = buildScheduleChanges(appointmentData);
@@ -306,7 +262,6 @@ export const AppointmentSchedulerModal = ({
     handleModalClose();
   };
 
-  // Amendment signed → persist schedule + accept draft, then run onConfirm.
   const handleAmendmentSubmit = async ({ signature }: { signature: string }) => {
     if (!pendingPayloadRef.current || !leadId) return;
     setAmendmentSubmitting(true);
@@ -320,7 +275,6 @@ export const AppointmentSchedulerModal = ({
             customerSignature: signature || null,
           });
         } catch {
-          // non-fatal
         }
       }
       FlashMessage.success('Installation time updated successfully');
@@ -330,7 +284,6 @@ export const AppointmentSchedulerModal = ({
       try {
         await onConfirm?.(data ?? {});
       } catch {
-        // non-fatal
       }
       handleModalClose();
     } catch (error) {
@@ -341,7 +294,6 @@ export const AppointmentSchedulerModal = ({
     }
   };
 
-  // Calendar Logic
   const startOfCurrentMonth = startOfMonth(currentMonth);
   const endOfCurrentMonth = endOfMonth(currentMonth);
   const daysInMonth = eachDayOfInterval({ start: startOfCurrentMonth, end: endOfCurrentMonth });
@@ -543,8 +495,6 @@ export const AppointmentSchedulerModal = ({
                     placeholder={"Please explain why the installation date cannot be determined at this time...\nExamples: \u2022 Waiting for material delivery \u2022 Customer needs to confirm schedule \u2022 Weather-dependent installation \u2022 Pending"}
                     placeholderTextColor="#94a3b8"
                     style={{ flex: 1, textAlignVertical: 'top', fontSize: 14, fontWeight: '700', color: '#0f172a' }}
-                    // iOS: a multiline field has no return-key dismiss, so link a
-                    // "Done" accessory bar (below) to close the keyboard. No-op on Android.
                     inputAccessoryViewID={Platform.OS === 'ios' ? TBD_REASON_ACCESSORY_ID : undefined}
                   />
                 </View>

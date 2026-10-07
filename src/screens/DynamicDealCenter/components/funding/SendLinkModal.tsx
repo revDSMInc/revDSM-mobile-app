@@ -15,104 +15,17 @@ import {
   type FundingPayment,
 } from '../../utils/funding';
 
-/**
- * "Send application/payment link" — the sheet that gets the homeowner onto their
- * own phone to finish a card or a loan application.
- *
- * Three ways out, in the order a rep actually uses them at a kitchen table:
- * **scan the QR** (the homeowner is sitting right there), **text it**, **email it**.
- * All three point at the SAME hosted page: `POST …/link` is idempotent, so opening
- * the sheet, backing out and reopening never stacks links or leaves an earlier one
- * live (spec §5.4).
- *
- * ⚠️ **The server does the sending**, not the device. `link-sent` with a `text` or
- * `email` channel dispatches a real SMS/HTML email — the app only supplies the
- * destination. On a `502` nothing was sent and nothing was written, so the sheet
- * stays open on the same step rather than claiming success.
- *
- * ⚠️ Opening this sheet marks NOTHING. `Link Sent` only ticks once a send actually
- * completes (spec §5.4) — which for QR means the rep confirming the homeowner
- * scanned it.
- *
- * ⚠️ **RESEND** (REVDSM-1155 Item A) reuses this same sheet rather than adding a
- * second one — it is the same two calls (`link`, then `link-sent`), and a separate
- * "resend" sheet would be a second place for the channel rules to drift. When the row
- * is already at Link Sent the sheet opens **on the channel that was used, with the
- * destination prefilled**, so the rep corrects the digit they got wrong instead of
- * retyping from a blank field — retyping is how the same typo gets made twice.
- * `Back` still reaches the QR and the other channel.
- *
- * ⚠️ **A resend to the SAME destination delivers the same url** — `link` is idempotent
- * while the page is open. That is right for "the SMS never arrived": the page was
- * always fine, the delivery was not.
- *
- * ⚠️ **A resend to a DIFFERENT destination is a RE-ISSUE** (REVDSM-1155). The server
- * expires the old Checkout session before minting the new page, so the link the wrong
- * person is holding stops working — which is the entire point, since that url is a
- * bearer credential and a mistyped number often belongs to a real person. The rep is
- * asked to confirm first (`reissueWarning`), because it is the last moment to check
- * the new number before a second stranger gets one, and the confirmation screen says
- * the old link was cancelled. See `isReissue`.
- *
- * ⚠️ The url is a **bearer credential** scoped to one payment: anyone holding it
- * can complete that payment. It is never logged or persisted — it lives in the
- * parent's state for the life of this sheet and no longer.
- *
- * Rendered as an in-sheet overlay, not a nested `<Modal>`: this already lives
- * inside the Result Lead modal, and stacked native modals are unreliable on both
- * platforms.
- */
-
-/**
- * ⚠️ **A STATIC import, and it must stay one. Do NOT put this back behind a
- * `try/catch`.**
- *
- * It used to be an optional `require(...)` that fell back to `QRCode = null` and an
- * amber *"QR display is unavailable in this build"* note. That reads like a deliberate
- * build flag, so nobody ever realised a dependency was missing — and the QR broke,
- * got fixed on one machine, and came back for everyone else, repeatedly.
- *
- * The cause was never the code: `react-native-qrcode-svg` was hand-added to
- * `package.json` in `c558fa0` and, because **`yarn.lock` is gitignored**
- * (`.gitignore:80`, untracked for the whole history), there is no shared lockfile to
- * carry it — so it only ever reached a machine whose owner happened to re-run
- * `yarn install`. The silent fallback is what let that ship instead of being noticed.
- *
- * Static, an absent module is a **Metro resolution error at build time** — loud,
- * immediate, and fixed by `yarn install`. It can no longer reach a rep at a kitchen
- * table. The package is pure JS over `react-native-svg` (already a hard dependency
- * here), so there is nothing to pod-install or link.
- */
 import QRCode from 'react-native-qrcode-svg';
 
 type Stage = 'choose' | 'text' | 'email' | 'done';
 
 interface Props {
   payment: FundingPayment;
-  /** The hosted-page url from `POST …/link`. Empty while it is still being fetched. */
   link: string;
   isLoadingLink: boolean;
-  /** A `link-sent` call is in flight. */
   isSending: boolean;
-  /**
-   * The company's gateway cannot accept payments (`charges_enabled`) — the
-   * server's own wording.
-   *
-   * ⚠️ This is the ONE link failure a retry cannot fix, so it must not fall through
-   * to the generic *"Close this and try again"* below: the rep would try again,
-   * fail again, and call support. Only someone with portal access can resolve it.
-   */
   blockedReason?: string | null;
-  /** Resolves true only when the server confirms the send — see the 502 note above. */
   onSend: (channel: FundingChannel, destination?: string) => Promise<boolean>;
-  /**
-   * The rep put the link on the clipboard.
-   *
-   * ⚠️ Reported as a bare event, and the callback takes NO argument on purpose: the
-   * url is a bearer credential and must not travel to a logger. What matters for the
-   * record is only that the credential left the app — the payment can be completed
-   * from wherever it was pasted, and no other event covers that.
-   */
   onCopyLink?: () => void;
   onClose: () => void;
 }
@@ -157,53 +70,22 @@ export function SendLinkModal({
   onCopyLink,
   onClose,
 }: Props) {
-  /**
-   * Is this a second (or third) send for a row that is already at Link Sent?
-   *
-   * ⚠️ Read off the PAYMENT, not passed in as a prop: both host screens already
-   * hand this component the row, and deriving it here is what stops the two of them
-   * from ever disagreeing about whether a send is a resend.
-   */
   const isResend = canResendLink(payment);
   const previously = lastSendNote(payment);
 
-  /**
-   * ⚠️ Lazy initialisers, not an effect. Both hosts mount this conditionally
-   * (`{!!linkPayment && <SendLinkModal …/>}`), so it remounts on every open and the
-   * seed runs exactly once per open — an effect would fight the rep the moment they
-   * started correcting the number.
-   */
   const [stage, setStage] = useState<Stage>(() => (isResend ? resendSeed(payment).stage : 'choose'));
   const [phone, setPhone] = useState(() => (isResend ? resendSeed(payment).phone : ''));
   const [email, setEmail] = useState(() => (isResend ? resendSeed(payment).email : ''));
   const [sentTo, setSentTo] = useState('');
-  /**
-   * Was the send that landed on the confirmation screen a RE-ISSUE?
-   *
-   * ⚠️ Captured at send time rather than re-derived for the `done` copy: the row is
-   * refetched the moment the send lands, so by then `sentTo` is the NEW destination
-   * and `isReissue` would compare it against itself and answer false. The rep would
-   * never be told the old link had been cancelled.
-   */
   const [cancelledOld, setCancelledOld] = useState<string | null>(null);
 
-  /**
-   * The pending re-issue confirmation — the copy to show and what to do on YES.
-   *
-   * ⚠️ The action is held as a THUNK rather than reconstructed when the rep confirms.
-   * The channel and destination are captured at the moment they pressed Send, so a
-   * keystroke landing behind the confirmation cannot change what is actually sent.
-   */
   const [confirm, setConfirm] = useState<{ warning: string; run: () => void } | null>(null);
 
   const isBank = payment.type === 'bank';
   const noun = isBank ? 'application' : 'payment';
   const title = `${isResend ? 'Resend' : 'Send'} ${noun} link`;
 
-  /** Only advance to the confirmation when the SERVER says the send happened. */
   const deliver = async (channel: FundingChannel, destination: string | undefined, who: string) => {
-    // Read BEFORE the call: the row is refreshed by the send, so afterwards the old
-    // destination is gone. Same reason `useFunding.wasLinkSent` snapshots first.
     const cancelled = isReissue(payment, channel, destination)
       ? String(payment.sentTo || '').trim()
       : null;
@@ -214,25 +96,6 @@ export function SendLinkModal({
     setStage('done');
   };
 
-  /**
-   * Send, pausing first when this cancels a link that is already out there.
-   *
-   * ⚠️ Not required by the API — the server re-issues either way — but the rep is
-   * about to kill a page the homeowner may already have open, and this is the last
-   * moment to notice a wrong number before a SECOND stranger receives one.
-   *
-   * ⚠️ **An in-sheet layer, NOT a native `Alert` and NOT a nested `<Modal>`.** This
-   * component is already an absolutely-positioned overlay (it is not itself a Modal,
-   * for the stacked-modal reason at the top of the file), so another absolute layer
-   * inside its own root sits above it with no z-order risk and carries the app’s own
-   * type and colour. A native Alert here rendered in the OS chrome instead: system
-   * font, system buttons, and a title the rep reads as coming from the phone rather
-   * than from the deal.
-   *
-   * ⚠️ The keyboard is dismissed first. This is raised from the text/email stage,
-   * where the keyboard covers the lower half of the screen — the previous native
-   * dialog was drawn over it, but an in-sheet card is not.
-   */
   const confirmThenDeliver = (channel: FundingChannel, destination: string, who: string) => {
     const warning = reissueWarning(payment, channel, destination);
     if (!warning) {
@@ -287,9 +150,6 @@ export function SendLinkModal({
                   <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, marginTop: 12 }}>Preparing the link…</Text>
                 </View>
               ) : blockedReason ? (
-                /* ⚠️ NOT "try again". The company's Stripe account is connected but
-                   cannot take payments, and no number of taps changes that — the
-                   rep needs someone with portal access, so say so and name them. */
                 <View style={{ alignSelf: 'stretch', backgroundColor: FUND.RED_BG, borderRadius: 11, padding: 12 }}>
                   <Text style={{ fontSize: FS.BODY, fontFamily: PS.extrabold, color: FUND.RED_TEXT }}>
                     Payments are not set up for your company yet
@@ -305,9 +165,6 @@ export function SendLinkModal({
                   </Text>
                 </View>
               ) : !link ? (
-                /* The link call failed — the hook has already said why. Without a url
-                   there is nothing to scan, text or email, so offer the way out
-                   rather than three dead buttons. */
                 <View style={{ alignSelf: 'stretch', backgroundColor: FUND.RED_BG, borderRadius: 11, padding: 12 }}>
                   <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.RED_TEXT, lineHeight: 17 }}>
                     Couldn’t create the payment link. Close this and try again — nothing has been sent.

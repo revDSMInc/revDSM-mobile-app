@@ -65,7 +65,6 @@ export const BeforeImageModal = ({
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
   const [imageToDeleteIndex, setImageToDeleteIndex] = useState<number | null>(null);
 
-  // Reset new images when modal opens
   React.useEffect(() => {
     if (visible) {
       setNewImages([]);
@@ -122,7 +121,6 @@ export const BeforeImageModal = ({
   };
 
   const handleDeleteNew = (index: number) => {
-    // Only allow delete of new images; also guard against deleting if total would be 0
     const totalAfterDelete = existingUris.length + newImages.length - 1;
     if (existingUris.length > 0 && totalAfterDelete < 1) {
       FlashMessage.warning('At least 1 image is required.'); return;

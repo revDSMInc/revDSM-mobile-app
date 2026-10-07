@@ -7,63 +7,18 @@ import { RefundApprovalCard } from './RefundApprovalStatus';
 import { describePayment, groupTotal, type AttemptLogEntry, type FundingPayment, type PayMode } from '../../utils/funding';
 import type { FundingApprovalReminder, FundingRefund } from '../../../../services/api/FundingService';
 
-/**
- * The **Funding** screen — the second half of the Result Lead sheet.
- *
- * The pricing screen answers "who is paying what"; this one answers "how far has
- * each of those payments actually got". One card per payment, grouped into money
- * that collects NOW (the down payment) and money that settles AFTER INSTALL (the
- * balance), because those two have completely different expectations of the rep.
- *
- * An **upfront** contract has no such split — it is all collected now — so it
- * renders as one Upfront section instead of the two. ⚠️ Its payments arrive from
- * the server as `kind: 'down'` (see `PaymentKind`), so the grouping is driven by
- * `payMode` rather than by the rows: nothing about a single payment distinguishes
- * "the down payment on a financed job" from "the whole contract paid at once".
- *
- * Purely presentational, and everything it draws comes from the funding record the
- * server last returned — ⚠️ **no step is ever advanced locally** (spec rule 3).
- * Every action is a callback into `useFunding`.
- */
-
 interface Props {
   payments: FundingPayment[];
-  /** Split (Down Payment + Balance) or Upfront — decides the section headings. */
   payMode: PayMode;
   contractTotal: number;
   covered: boolean;
-  /** Result switched to Bank Decline — nothing collects, but the attempts stay on record. */
   bankDeclined: boolean;
   log: AttemptLogEntry[];
-  /** ISO timestamp of the most recent sync across all rows, already formatted. */
   lastSyncedAt: string | null;
   syncingAll: boolean;
-  /** The pid whose own action is in flight. */
   busyPid: string | null;
-  /**
-   * The company's Stripe account cannot accept payments yet (`charges_enabled`).
-   *
-   * ⚠️ Rendered ONCE at the top, never per card: the condition is company-wide, so
-   * a job with three card rows would otherwise meet the same message three times.
-   * It also disables every send, because a rep who is only shown an error will
-   * retry it until they call support — and only someone with portal access can fix it.
-   */
   paymentsSetupError?: string | null;
-  /**
-   * Refunds raised on this job, newest first, each with the row it comes out of.
-   *
-   * ⚠️ Optional, and absent on the Result Lead sheet by construction: a sale being
-   * priced for the first time has collected nothing to give back. It is the My Deals
-   * addendum flow that can owe a refund, so only that mount passes it.
-   */
   refunds?: { payment: FundingPayment; refund: FundingRefund }[];
-  /**
-   * The reminder window for ONE refund (REVDSM-1160), resolved by the host.
-   *
-   * ⚠️ A resolver rather than four flat props, because a job can carry more than one
-   * refund and only the one whose approval was actually read may show the button —
-   * flat props would put the first refund's window on every card.
-   */
   reminderFor?: (refund: FundingRefund) => {
     reminder?: FundingApprovalReminder | null;
     approverName?: string;
@@ -76,24 +31,12 @@ interface Props {
   onMarkCollected: (pid: string) => void;
   onChargeCard: (pid: string) => void;
   onActivate: (pid: string) => void;
-  /**
-   * Re-settle a drifted loan (`POST …/reactivate`). Optional: without it a drifted
-   * row still SAYS so, it just cannot be closed from here.
-   */
   onReactivate?: (pid: string) => void;
   onEditPayments: () => void;
   onResultAsBankDecline: () => void;
   onUndoBankDecline: () => void;
 }
 
-/**
- * A group heading.
- *
- * The **running total** matters more the more rows there are: once a half of the
- * contract can be split across several lines, "does the down payment add up to
- * what we agreed" stops being answerable by looking at one card. `total` counts
- * what will really arrive (a decided loan's APPROVED amount), same as coverage.
- */
 function SectionLabel({ text, hint, total, first }: { text: string; hint: string; total: number; first?: boolean }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginHorizontal: 4, marginBottom: 10, marginTop: first ? 0 : 8 }}>
@@ -106,7 +49,6 @@ function SectionLabel({ text, hint, total, first }: { text: string; hint: string
   );
 }
 
-/** The company-wide `charges_enabled` gate. Not a per-row failure — see `Props`. */
 function SetupBanner({ message }: { message: string }) {
   return (
     <View style={{ flexDirection: 'row', gap: 10, backgroundColor: FUND.RED_BG, borderWidth: 1.4, borderColor: FUND.RED_BORDER, borderRadius: 14, padding: 14, marginBottom: 18 }}>
@@ -161,9 +103,6 @@ export function FundingView({
     <PaymentFundingCard
       key={p.pid}
       payment={p}
-      // `$500 Check (1 of 2)` — computed against ALL payments, not the group, so a
-      // card's ordinal matches the blocker sentence in the footer, which is
-      // likewise numbered across the whole record.
       title={describePayment(p, payments)}
       covered={covered}
       bankDeclined={bankDeclined}
@@ -278,8 +217,6 @@ export function FundingView({
           {log.map((l, i) => {
             const partial = l.outcome === 'Partial';
             const declined = l.outcome === 'Declined';
-            // A Full attempt is a normal event, not an exception — it gets a neutral
-            // rail so the two that DO need the rep's attention still stand out.
             const rail = declined ? FUND.RED : partial ? FUND.AMBER : FUND.GREEN;
             const badge = declined
               ? { bg: FUND.RED_BG, fg: FUND.RED_TEXT }

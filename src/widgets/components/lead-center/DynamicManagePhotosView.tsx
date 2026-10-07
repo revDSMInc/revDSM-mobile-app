@@ -1,21 +1,3 @@
-// ─── DynamicManagePhotosView.tsx ─────────────────────────────────────────────
-// Schema-driven ("dynamic") MANAGE PHOTOS screen for the mobile lead-center.
-// Mobile port of the web reference
-//   src/sections/job/components/dynamic-inspection-photos/manage-photos-view.js
-//   src/sections/job/components/dynamic-inspection-photos/dynamic-manage-photos-dialog.js
-//
-// This is deliberately NOT the capture view. `DynamicInspectionView` renders every
-// schema SLOT as a tappable pill (including the empty ones) so the rep knows where
-// a photo still needs shooting. Manage Photos is the opposite: it renders ONE CARD
-// PER PHOTO THAT ACTUALLY EXISTS — a thumbnail grid — and categories with no photos
-// disappear entirely. That mirrors web's `sections.filter(s => s.cards.length > 0)`.
-//
-// Feature parity with the web dialog: per-photo delete (with confirm), move to
-// another slot, full-screen preview, the "+ EXTRAS" and "+ ANNOTATED" sections,
-// and annotate select-mode. Layout follows web's MOBILE breakpoints (2-column
-// grids, header controls stacked rather than inline).
-// ─────────────────────────────────────────────────────────────────────────────
-
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -62,15 +44,8 @@ const RED = '#EF4444';
 
 interface PhotoCard {
   cat: InspectionCategory;
-  /** Display label above the card — the slot name (or the extra's name). */
   label: string;
-  /** Storage name used for delete/move lookups. */
   storageName: string;
-  /**
-   * The schema slot this photo occupies. Carried so the move modal can rebuild the
-   * exact `uiKey(cat.id, slot.id)` and highlight the FROM tile — without the slot's
-   * real `id`, `fromKey` resolves to `"<cat>::undefined"` and never matches.
-   */
   slot: InspectionSlot;
   key: string;
   photo: CapturedPhoto;
@@ -88,11 +63,6 @@ interface DynamicManagePhotosViewProps {
   products: InspectionProduct[];
   onClose: () => void;
   refetch?: () => void | Promise<void>;
-  /**
-   * Re-open Manage Photos after the annotation editor closes. Annotating leaves
-   * this screen (ImageAnnotation is a route, not a modal), so the host has to put
-   * the rep back where they were — same contract as the static ManagePhotosModal.
-   */
   onReopen?: () => void;
 }
 
@@ -111,32 +81,18 @@ export function DynamicManagePhotosView({
     products.length ? (products[0].id as string) : null,
   );
   const [activeTab, setActiveTab] = useState(0);
-  // The pageable viewer: every photo on screen, opened at the tapped one.
   const [preview, setPreview] = useState<{ photos: SectionPhoto[]; index: number } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [deleting, setDeleting] = useState(false);
-  // Annotate select-mode (web: the header pencil). selectedMap is keyed by card
-  // key so the same photo can't be picked twice.
   const [selectMode, setSelectMode] = useState(false);
   const [selectedMap, setSelectedMap] = useState<Map<string, PhotoCard>>(new Map());
   const [moveState, setMoveState] = useState<MoveState | null>(null);
 
-  // Total photos across ALL products, deduped by s3url and including annotated
-  // copies — mirrors web's `managePhotosCount`, so the title matches the count on
-  // the "Manage Photos (N)" button that opened this screen. Deliberately NOT
-  // capture.totalPhotos, which is scoped to the selected product.
-  // ⚠️ Pending uploads are counted too. Offline there is nothing on the server yet, so this read
-  // 0 while the Lead Center button that opened it read 3 — the header folds the queue in and this
-  // did not. Two counts of the same thing disagreeing on one screen.
   const online = useIsOnline();
   const [pendingUploads, setPendingUploads] = useState(() => uploadQueueManager.getQueue());
-  // Which queued photo is actually moving right now, so only that tile says "Uploading…".
   const [activeUploadId, setActiveUploadId] = useState<string | null>(() =>
     uploadQueueManager.getActiveUploadId(),
   );
-  // Bumped whenever a delete is filed or drains, so the counts below recompute. A counter is a
-  // derived value, so it needs a reason to re-run — without this the card disappears and the
-  // header keeps the old number until something else happens to invalidate the lead.
   const [deleteTick, setDeleteTick] = useState(0);
   useEffect(() => {
     const sync = () => {
@@ -154,9 +110,6 @@ export function DynamicManagePhotosView({
 
   const managePhotosCount = useMemo(() => {
     const all = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
-    // ⚠️ Photos deleted offline are still returned by the server until the queue drains, so the
-    // header must subtract them — otherwise the rep deletes a photo, watches the card go, and the
-    // title still reads the old number.
     const removed = offlinePhotoDeleteQueue.deletedUrls(lead?._id || lead?.id);
     const photos = removed.size ? all.filter((p: any) => !removed.has(p?.s3url)) : all;
     const seen = new Set<string>();
@@ -164,8 +117,6 @@ export function DynamicManagePhotosView({
       if (!p?.s3url || seen.has(p.s3url)) return;
       seen.add(p.s3url);
     });
-    // Only the surplus, per slot — the queue does not drop an item until its upload succeeds, and
-    // the lead refetch can land first, so for a moment a photo is in both lists.
     let pending = 0;
     indexPendingBySlot(pendingUploads as any, lead?._id || lead?.id).forEach((items, slot) => {
       const onServer = photos.filter(
@@ -201,7 +152,6 @@ export function DynamicManagePhotosView({
     [selectedProduct],
   );
 
-  // Same product scoping as the capture view, so both read the same photo buckets.
   const capture = useDynamicInspectionCapture({
     lead,
     categories: activeCategories,
@@ -213,15 +163,11 @@ export function DynamicManagePhotosView({
   const tabIndex = Math.min(activeTab, Math.max(topTabs.length - 1, 0));
   const activeCategory = topTabs[tabIndex] || null;
 
-  // Every leaf category under the active tab (container tabs resolve to their
-  // children), exactly as web does via indexSchema().leafCategories.
   const leafs = useMemo(
     () => indexSchema(activeCategory ? [activeCategory] : []).leafCategories,
     [activeCategory],
   );
 
-  // ONE CARD PER EXISTING PHOTO. A slot with no photos contributes nothing, and a
-  // category whose cards are all empty is dropped — no placeholder boxes.
   const sections = useMemo(
     () =>
       leafs
@@ -265,8 +211,6 @@ export function DynamicManagePhotosView({
     [leafs, capture],
   );
 
-  // Annotated copies for the active tab, across every leaf category. Marked by a
-  // " (Annotated)" suffix on the subcategory — there is no separate field.
   const annotated = useMemo(
     () =>
       leafs.flatMap((cat) =>
@@ -274,8 +218,6 @@ export function DynamicManagePhotosView({
           cat,
           label: subcategory.replace(/\(Annotated\)/i, '').trim() || subcategory,
           storageName: subcategory,
-          // Annotated copies aren't movable (no `canMove`), so a minimal slot is enough
-          // to satisfy the card shape — the real slot id is never needed here.
           slot: { name: subcategory, storageName: subcategory } as InspectionSlot,
           key: `annotated-${cat.id}-${photo.s3url || photo._id || i}`,
           photo,
@@ -284,9 +226,6 @@ export function DynamicManagePhotosView({
     [leafs, capture],
   );
 
-  // Base names (per category) that already have an annotated copy. The matching
-  // ORIGINAL must not be selectable again — mobile's annotation screen always
-  // appends " (Annotated)", so re-selecting would produce "X (Annotated) (Annotated)".
   const annotatedBaseKeys = useMemo(
     () =>
       new Set(
@@ -298,8 +237,6 @@ export function DynamicManagePhotosView({
     [annotated],
   );
 
-  // Move is only worth offering when there is at least one OTHER slot to move to.
-  // Counted across every category of the product, not just the active tab.
   const moveTargetCount = useMemo(() => {
     const { leafCategories } = indexSchema(activeCategories);
     return leafCategories.reduce(
@@ -308,14 +245,6 @@ export function DynamicManagePhotosView({
     );
   }, [activeCategories, capture]);
 
-  // ── Orphaned / "unsorted" photos ────────────────────────────────────────────
-  // Photos in `lead.salesPhotos` whose stored `category` doesn't match ANY
-  // configured product's scoped leaf category (`{product} — {label}`) — e.g. photos
-  // captured via the static flow, before the inspection schema existed, or under a
-  // renamed product. The dynamic capture hook silently drops these (they fail its
-  // `expectedCats` filter), yet the "Manage Photos (N)" count includes them — which
-  // is the "count shows N but the view is empty" bug. Surface them here so they can
-  // be viewed and deleted instead of being invisible-but-counted.
   const orphanPhotos = useMemo(() => {
     const expected = new Set<string>();
     (products || []).forEach((prod: any) => {
@@ -339,8 +268,6 @@ export function DynamicManagePhotosView({
     return out;
   }, [products, lead?.salesPhotos]);
 
-  // Resolve secure URLs for the orphans (they were never resolved by the capture
-  // hook, which filtered them out before the secure-URL step).
   const orphanSecure = useSecureUrls(
     orphanPhotos.map((p) => ({ s3url: p.s3url, bucketName: p.bucketName, category: p.category, subcategory: p.subcategory })),
   );
@@ -355,9 +282,6 @@ export function DynamicManagePhotosView({
   const orphanCards = useMemo<PhotoCard[]>(
     () =>
       orphanPhotos.map((p, i) => ({
-        // Synthetic category: its `label` doubles as the delete `categoryLabel`, so
-        // keep the photo's REAL stored category there; `id` is unique so it can't
-        // collide with an annotated-base key. deletePhoto identifies by s3url anyway.
         cat: { id: `orphan-${p.s3url || i}`, label: p.category || 'Unsorted' } as any,
         label: p.subcategory || p.category || 'Photo',
         storageName: p.subcategory || '',
@@ -368,22 +292,6 @@ export function DynamicManagePhotosView({
     [orphanPhotos, orphanUriByS3],
   );
 
-  // Every tile paints from the local FILE cache rather than from its pre-signed
-  // S3 url. Those urls carry no cache headers, so the OS image cache refuses to
-  // store them (CLAUDE.md section 6) and this grid re-downloaded every photo in
-  // full on EVERY open - 22 of them on Roofline. Now the first open warms them,
-  // and every later open, the hold-to-peek preview and the annotation editor all
-  // read the same file.
-  //
-  // WARNING The tile renders `warmedUris[uri]` and NOTHING while that is
-  // undefined - deliberately. Rendering the network url meanwhile would have the
-  // `<Image>` fetch the same bytes the warm is already fetching, so a first open
-  // would cost twice the bandwidth and land slower. `useWarmedImageUris` resolves
-  // every url to something (the url itself when it cannot be cached), so a tile
-  // can never be stranded on the spinner.
-  //
-  // Order matters: the cache runs a few downloads at a time, and this is the
-  // order the cards are laid out, so the tiles at the top of the list land first.
   const cardUris = useMemo(() => {
     const seen = new Set<string>();
     const push = (u?: string | null) => { if (u && !seen.has(u)) seen.add(u); };
@@ -399,7 +307,6 @@ export function DynamicManagePhotosView({
   const isEmpty =
     sections.length === 0 && extraCards.length === 0 && annotated.length === 0 && orphanCards.length === 0;
 
-  // Two columns, matching web's `xs: repeat(2, 1fr)` mobile breakpoint.
   const GAP = 12;
   const H_PADDING = 16;
   const cardWidth = (width - H_PADDING * 2 - GAP) / 2;
@@ -415,11 +322,6 @@ export function DynamicManagePhotosView({
     }
   };
 
-  // Open the shared annotation editor for the current selection. Mobile's
-  // ImageAnnotation screen uploads the annotated copies itself (appending
-  // " (Annotated)" to each subcategory), so there is nothing to persist here.
-  // `categoryName` MUST be the product-scoped category the photo is stored under,
-  // or the annotated copy lands outside this product's buckets.
   const openAnnotationForSelection = () => {
     const cards = [...selectedMap.values()].filter((c) => c.photo.secureUrl);
     if (!cards.length) return;
@@ -447,9 +349,6 @@ export function DynamicManagePhotosView({
     });
   };
 
-  // Every photo visible in the current view, in the order the grid shows them, so the viewer
-  // can page through them with the thumbnail strip. Uses the warmed local file where there is
-  // one, so paging does not re-download the full-size photos the tiles already fetched.
   const openPreview = (tapped: PhotoCard) => {
     const all = [
       ...sections.flatMap((s) => s.cards),
@@ -477,28 +376,19 @@ export function DynamicManagePhotosView({
       showLabel?: boolean;
       canMove?: boolean;
       selectable?: boolean;
-      /** See `MoveState.fromIsAbsoluteCategory` — set for orphan ("+ UNSORTED") cards. */
       absoluteCategory?: boolean;
     } = {},
   ) => {
     const uri = card.photo.secureUrl || undefined;
-    // The local copy, once warm. Undefined means the download is still in flight.
     const localUri = uri ? warmedUris[uri] : undefined;
     const tileState = photoTileState(uri, localUri, online);
     const unavailableOffline = tileState === 'unavailable' && !!uri;
     const busy = !!capture.deletingKeys[card.key] || !!capture.movingKeys?.[card.key];
-    // ⚠️ Still in the upload queue: no `_id` and no `s3url`, so delete and move have nothing to
-    // address and would silently no-op. The row says what is happening instead of offering
-    // actions that cannot work. It becomes an ordinary card the moment the upload lands.
     const isPending = (card.photo as any)?.isPending === true;
     const isSelected = selectedMap.has(card.key);
-    // An original that already has an annotated copy can't be re-annotated.
     const alreadyAnnotated = annotatedBaseKeys.has(
       `${card.cat.id}::${card.label.trim().toLowerCase()}`,
     );
-    // ⚠️ A queued photo cannot be annotated either — the annotation screen round-trips through
-    // the server copy, which does not exist yet. Locked for the same reason as an already-
-    // annotated original rather than being silently pickable and failing later.
     const lockedFromSelect = selectMode && selectable && (alreadyAnnotated || isPending);
     const selectableNow = selectMode && selectable && !lockedFromSelect;
 
@@ -524,18 +414,12 @@ export function DynamicManagePhotosView({
           <PhotoPeekPressable
             uri={localUri || uri}
             label={card.label}
-            // ⚠️ Not peekable or openable when the bytes are not on the device: the viewer and
-            // the hold-to-peek both render the same url, so they would show the same blank box
-            // the tile is already explaining. Selecting it is still allowed — that is a
-            // decision about the photo, not a view of it.
             disabled={!uri || lockedFromSelect || (unavailableOffline && !selectableNow)}
             peekDisabled={selectMode || unavailableOffline}
             onPress={() => {
               if (!uri) return;
               if (selectableNow) toggleSelect(card);
               else if (unavailableOffline) return;
-              // The preview opens on the warmed file, so a tap does not
-              // re-download the full-size photo the tile just fetched.
               else if (!selectMode) openPreview(card);
             }}
             style={{ width: '100%', aspectRatio: 1.6, alignItems: 'center', justifyContent: 'center' }}
@@ -551,10 +435,6 @@ export function DynamicManagePhotosView({
                 resizeMode="cover"
                 spinnerColor="#fff"
                 unavailableLabel={online ? 'Tap to retry' : 'Needs a connection'}
-                // ⚠️ Drop the cached copy before retrying. A tile fails when the local file is
-                // gone (cache cleared) or the url is dead; re-rendering the same source would
-                // fail identically forever. `forgetWarmedUri` unlinks it and clears the memo, so
-                // the next warm actually downloads again.
                 onRetry={() => {
                   void forgetWarmedUri(uri).then(() => refetch?.());
                 }}
@@ -610,8 +490,6 @@ export function DynamicManagePhotosView({
 
           {/* A queued photo shows its state instead of actions. */}
           {!selectMode && isPending && (() => {
-            // Offline the photo is not waiting on anything — it is on the handset and will
-            // go up by itself, so the tile says that rather than implying a stall.
             const isInFlight = (card.photo as any)?.pendingId === activeUploadId;
             const st = pendingStatusFor(isInFlight, online);
             return (
@@ -674,8 +552,6 @@ export function DynamicManagePhotosView({
                     setMoveState({
                       photo: card.photo,
                       fromCategory: card.cat,
-                      // Pass the REAL slot (with its id/isExtra/key) so the move modal can
-                      // rebuild uiKey(cat.id, slot.id) and highlight this as the FROM tile.
                       fromSlot: card.slot,
                       key: card.key,
                       ...(absoluteCategory ? { fromIsAbsoluteCategory: true } : null),
@@ -743,8 +619,6 @@ export function DynamicManagePhotosView({
   };
 
   return (
-    // Scroll lock so holding a photo to peek freezes the grid scroll — finger movement
-    // can't scroll-steal + dismiss the peek mid-hold.
     <PhotoPeekScrollLockProvider>
     <View style={{ flex: 1, backgroundColor: '#0D1F1A' }}>
       {/* Header — close + title with the live photo count */}

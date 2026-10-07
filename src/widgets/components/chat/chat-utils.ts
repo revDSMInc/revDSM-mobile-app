@@ -59,7 +59,6 @@ export const cleanFilePath = (p: string) => {
   if (!p) return '';
   let cleaned = p.replace(/^(file:\/\/|content:\/\/|data:)/, '');
 
-  // Extract path from S3 URL if present
   if (cleaned.includes('amazonaws.com/')) {
     cleaned = cleaned.substring(cleaned.indexOf('amazonaws.com/') + 14);
   }

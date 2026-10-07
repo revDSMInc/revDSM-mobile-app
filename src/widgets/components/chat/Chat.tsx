@@ -51,10 +51,7 @@ export default function Chat({ onClose, lead }: Props) {
   const socketRef = useRef<any>(null);
   const typingTimers = useRef<Map<string, any>>(new Map());
 
-  // Wallpaper mapping
   const wallpaperColor = isDark ? '#0B141A' : '#E5DDD5';
-
-  // ── helpers ─────────────────────────────────────────────────────────────────
 
   const refreshChatParticipants = useCallback(async (id: string) => {
     try {
@@ -79,8 +76,6 @@ export default function Chat({ onClose, lead }: Props) {
 
   const fetchSecureUrls = async (newMessages: any[]) => {
     try {
-      // Carry each file's bucketName so the signed URL is requested against the
-      // right bucket — otherwise reloaded images come back blank.
       const seen = new Set<string>();
       const cleaned = ChatService.extractFileRefs(newMessages)
         .map((r) => ({ filePath: cleanFilePath(r.filePath), bucketName: r.bucketName }))
@@ -99,7 +94,6 @@ export default function Chat({ onClose, lead }: Props) {
       const raw = await ChatService.getMessages(id, lim);
       setHasMore(raw.length >= lim);
       
-      // Stable sort: newest-first (b - a) for bottom-to-top flow
       const sorted = [...raw].sort((a, b) => {
         const dA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
         const dB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
@@ -113,11 +107,8 @@ export default function Chat({ onClose, lead }: Props) {
     }
   }, []);
 
-  // ── socket setup ─────────────────────────────────────────────────────────────
-
   const attachSocketListeners = useCallback(
     (socket: any, id: string) => {
-      // Pinned Messages Sync
       socket.on('message-pinned', (data: any) => {
         const mId = (data.messageId || data.id || data.message?._id)?.toString();
         setMessages((prev) => prev.map((m) => (m._id === mId ? { ...m, isPinned: true } : m)));
@@ -186,13 +177,10 @@ export default function Chat({ onClose, lead }: Props) {
         setMessages((prev) => prev.map((msg) => (msg._id === normalized._id ? normalized : msg)));
       });
 
-      // Initial fetch
       ChatService.getPinnedMessages(id);
     },
     [currentUserId, refreshChatParticipants]
   );
-
-  // ── init ─────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     let mounted = true;
@@ -204,11 +192,9 @@ export default function Chat({ onClose, lead }: Props) {
           if (mounted) setChatId(activeId);
         }
         if (activeId && mounted) {
-          // Clear previous messages to ensure a fresh, correctly ordered load
           setMessages([]);
           await loadMessages(activeId, 30);
 
-          // Participant Logic (Auto-join sync)
           const parts = await ChatService.getLeadParticipants(activeId);
           setParticipants(parts);
           const isPart = parts.some((p) => (p?._id || p?.id || p) === currentUserId);
@@ -240,8 +226,6 @@ export default function Chat({ onClose, lead }: Props) {
     };
   }, [lead?._id, chatId, loadMessages, attachSocketListeners, currentUserId]);
 
-  // ── actions ───────────────────────────────────────────────────────────────────
-
   const onSend = useCallback(
     async (newMsgs: IMessage[] = []) => {
       if (!chatId) return;
@@ -249,17 +233,14 @@ export default function Chat({ onClose, lead }: Props) {
 
       try {
         if (editingMessage) {
-          // Optimistic Edit
           const oldText = editingMessage.text;
           setMessages(prev => prev.map(m => m._id === editingMessage._id ? { ...m, text: raw.text, isEdited: true } : m));
           await ChatService.editMessage(editingMessage._id, raw.text).catch(err => {
-            // Revert on failure
             setMessages(prev => prev.map(m => m._id === editingMessage._id ? { ...m, text: oldText } : m));
             throw err;
           });
           setEditingMessage(null);
         } else {
-          // Optimistic Send
           const tempId = `temp_${Date.now()}`;
           const optimisticMsg = {
             ...raw,
@@ -316,7 +297,6 @@ export default function Chat({ onClose, lead }: Props) {
     const action = msg.isPinned ? 'unpin' : 'pin';
 
     try {
-      // Optimistic update
       setMessages((prev) =>
         prev.map((m) => (m._id === msg._id ? { ...m, isPinned: !msg.isPinned } : m))
       );
@@ -327,7 +307,6 @@ export default function Chat({ onClose, lead }: Props) {
       }
     } catch (err) {
       console.error('Pinning failed:', err);
-      // Revert optimistic
       setMessages((prev) =>
         prev.map((m) => (m._id === msg._id ? { ...m, isPinned: msg.isPinned } : m))
       );
@@ -336,11 +315,8 @@ export default function Chat({ onClose, lead }: Props) {
 
   const handleDelete = (msgId: string) => {
     ChatService.deleteMessage(msgId);
-    // Optimistic update
     setMessages((prev) => prev.filter((m) => m._id !== msgId));
   };
-
-  // ── renderers ──────────────────────────────────────────────────────────────────
 
   const handleViewHistory = useCallback((msg: any) => {
     setHistoryData(msg.editHistory || []);
@@ -370,7 +346,6 @@ export default function Chat({ onClose, lead }: Props) {
       const msg = props.currentMessage || {};
       const files = msg.files || [];
       const isMsgVoice = !!(msg.audio || msg.voice || msg.audioUrl || msg.voiceUrl || msg.isVoiceNote || msg.type === 'audio');
-// allow empty messages to render
 
       const isSameUser =
         props.currentMessage?.user?._id === props.nextMessage?.user?._id;

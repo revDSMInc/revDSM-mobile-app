@@ -152,7 +152,6 @@ export const TagPhotoModal = ({
           },
         };
 
-        // Optimistic local state update
         const currentCategory = movingImage.categoryName;
         const currentImgs = sectionImages[currentCategory] || [];
         const photoToMove = currentImgs.find(
@@ -182,24 +181,20 @@ export const TagPhotoModal = ({
           });
         }
 
-        // Run mutation asynchronously in the background, waiting for any pending upload first
         waitForPendingUpload().then(() => {
           updateImagePositionMutation.mutateAsync({ leadId: lead._id, payload })
             .then(() => refetch())
             .catch((error: any) => console.error('Failed to move photo in cascade background', error));
         });
 
-        // Shift UI immediately to the displaced photo conflict/movement state
         setMovingImage({
           image: existingImage,
           categoryName: slot.categoryName,
         });
         setConflict(null);
       } else {
-        // Trigger upload in background without blocking UI
         handleUpload(slot.categoryName, slot.idx, taggingAsset, slot.name);
 
-        // Immediately update state to start moving the displaced image
         setMovingImage({
           image: existingImage,
           categoryName: slot.categoryName,
@@ -210,8 +205,6 @@ export const TagPhotoModal = ({
     };
 
     const handleKeepBothOption = () => {
-      // Clear conflict first so the extra picker screen is rendered
-      // (conflict takes priority in the render conditional, so we must clear it)
       setConflict(null);
       setShowExtraPicker(true);
     };
@@ -655,7 +648,6 @@ export const TagPhotoModal = ({
                     });
                   } else {
                     if (movingImage) {
-                      // Moving a displaced photo to its new slot
                       setIsProcessing(true);
                       handleMovePhoto(slot.categoryName, slot.idx, slot.name)
                         .then(() => {

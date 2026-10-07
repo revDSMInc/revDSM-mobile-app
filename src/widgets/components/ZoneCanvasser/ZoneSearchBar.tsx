@@ -14,26 +14,7 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { fetchPlacePredictions, resolvePlace, type PlacePrediction } from '../../../utils/places';
 import type { MapCoordinate } from '../../../types/zone-canvasser';
 
-/**
- * The zone map's address search — a port of web
- * src/components/zone-canvasser-search/zone-canvasser-search-{bar,popover}.js.
- *
- * Kept from web:
- *  - suggestions are Places Autocomplete restricted to `types: ['address']`;
- *  - a committed search pans the map (zoom 17) and drops a pin;
- *  - emptying the box, or the ✕, clears the committed search and removes the pin.
- *
- * ⚠️ Deliberate divergences:
- *  - PICKING a suggestion commits it immediately — the map moves the moment the rep taps
- *    the address. Web only fills the box and waits for the Search button; on a phone that
- *    reads as the tap doing nothing ("the map should move to the selected location").
- *    Search (button or keyboard submit) still re-centres on the picked place.
- *  - Editing the text after picking drops the picked place. Web keeps it, so Search would
- *    pan to a place the box no longer names.
- */
-
 type Props = {
-  /** Reset on close — the map modal stays mounted while hidden (web `closeZoneMap`). */
   visible: boolean;
   onSearch: (address: string, coords: MapCoordinate) => void;
   onClear: () => void;
@@ -54,9 +35,7 @@ export const ZoneSearchBar = forwardRef<TextInput, Props>(function ZoneSearchBar
   const [predictions, setPredictions] = useState<PlacePrediction[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
-  // Set when the text was written by a pick, so it doesn't search itself again.
   const skipSearchRef = useRef(false);
-  // Only the newest autocomplete response may land.
   const requestIdRef = useRef(0);
 
   useEffect(() => {
@@ -108,14 +87,10 @@ export const ZoneSearchBar = forwardRef<TextInput, Props>(function ZoneSearchBar
     setIsResolving(true);
     const place = await resolvePlace(item.placeId);
     setIsResolving(false);
-    // Web's place_changed ignores a place without geometry + a formatted address. Say so
-    // rather than leaving a tap that silently did nothing.
     if (!place?.formattedAddress) {
       Alert.alert('Location not found', 'Could not find that address. Try another suggestion.');
       return;
     }
-    // Only arm the skip when the text actually changes — if it doesn't, the search effect
-    // never runs to consume it, and the rep's next keystroke would be ignored.
     if (place.formattedAddress !== inputValue) skipSearchRef.current = true;
     setInputValue(place.formattedAddress);
     setPending({

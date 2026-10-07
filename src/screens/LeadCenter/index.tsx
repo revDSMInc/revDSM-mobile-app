@@ -148,7 +148,6 @@ export default function LeadCenterPage() {
   const { lead: initialLead, initialTool, fromZoneCanvasser, appointmentStarted, justCompleted, fromMyDeals } =
     route.params || {};
 
-  // Custom Hooks for Data, Reports, and Modals
   const {
     lead,
     setLead,
@@ -163,69 +162,15 @@ export default function LeadCenterPage() {
     setSectionImages,
   } = useLeadCenterData(initialLead, user, { appointmentStarted, fromMyDeals });
 
-  // Pull this lead's photos onto the device while there is still signal. Every other warm in
-  // the app is lazy — it happens when the rep looks — which offline is exactly too late.
   usePrecacheLeadPhotos(lead);
 
-  // ── The offline agreement's two company-wide assets ────────────────────────────
-  //
-  // ⚠️ These were warmed only from the Job Builder's SUMMARY tab, which is the last screen
-  // before the agreement and is reached long after the rep has left signal. So a rep who had
-  // never finished a job online had no layout on the device, and Generate Agreement at the door
-  // answered "This agreement's layout hasn't been downloaded yet. Open a lead once while you're
-  // online, then try again." — advice the app did not actually honour, because opening a lead
-  // warmed nothing. It does now, which makes that message true.
-  //
-  // Cheap to repeat: the config query is shared and 5-minute-stale, and the logo serves any copy
-  // under a day old without touching the network. The Summary-tab warms stay — they also cover
-  // the per-product description schema, which cannot be resolved from here.
-  // ⚠️ `useIsOnline()`, not the imperative `isOnline()` — this is a render-time read, and it has
-  // to re-run the warm when a connection comes BACK while the rep is sitting on the lead.
   const leadCenterOnline = useIsOnline();
   useGetAgreementConfig(leadCenterOnline);
   useCompanyLogoBase64(leadCenterOnline);
 
-  // ── Contract Details pencil opens the 4-step deal-edit wizard ───────────────
-  // Install Date → Job Build → Job Price → Review & Submit, replacing the inline
-  // "Edit Contract Details — select what to edit" modal.
-  //
-  // ⚠️ BOTH entry points now, not just My Deals. This screen IS the sold-lead Lead
-  // Center either way, so a deal reached from Sold Leads and the same deal reached
-  // from My Deals were offering two different editors for one record — and only the
-  // wizard raises an ADDENDUM, which is what a submitted deal's changes have to be.
-  //
-  // The pencil is rendered by `ContractDetailsCard` only past its `hasContract`
-  // guard (sale / demo), so this is unreachable on a lead with no contract to edit.
-  //
-  // ⚠️ THE PENCIL ALWAYS OPENS THE WIZARD. There is no dynamic-vs-legacy branch
-  // here any more, and re-adding one will reintroduce the bug below.
-  //
-  // It used to branch on an `isDynamicDeal` computed from the `lead` object. That
-  // CANNOT WORK, and the reason is structural rather than a matter of checking more
-  // fields: the job build is not on the lead. It is fetched from its own endpoint
-  // (`getPortalJobBuilder`, with a calculator-outcome fallback) by the wizard
-  // itself, which queries it on mount.
-  // Lead Center never calls it, so every synchronous guess from `lead` answered
-  // "not dynamic" for genuinely dynamic deals and dropped the rep into the inline
-  // "Edit Contract Details" modal. Widening the predicate only moved which deals
-  // guessed wrong.
-  //
-  // ⚠️ This matters beyond the wrong sheet appearing: ONLY the wizard raises an
-  // ADDENDUM, which is what a submitted deal's changes have to be. The inline modal
-  // edits the record directly, so the customer never gets a signing link — a
-  // contract changed with no signature against it.
-  //
-  // The wizard is the right destination for a legacy deal too: it resolves the build
-  // itself and can report honestly when there is nothing to edit, which is a thing
-  // this screen has no way to find out before navigating.
-
   const handleEditDeal = useCallback(() => {
     const leadId = lead?._id || lead?.id || lead?.leadId;
     if (!leadId) return;
-    // ⚠️ Blocked at the ENTRY, not at Submit. The wizard reads the calculator, the schemas and the
-    // drafts on the way in, so offline it opens onto a build it cannot price — and the rep would
-    // walk four steps before being told. What it produces is an addendum, which the server raises
-    // and which texts the customer a signing link; there is nothing a device can stand in for.
     const blockedEdit = offlineBlockFor('addendum', isOnline());
     if (blockedEdit) {
       FlashMessage.info(blockedEdit.title, blockedEdit.message);
@@ -235,9 +180,6 @@ export default function LeadCenterPage() {
       lead,
       mode: 'edit',
       calculatorResultData: {
-        // The outcome doc exposes the calculator under several shapes depending on
-        // where the lead came from, so check them all — the edit screen needs the
-        // calculator-scoped outcome rather than the lead-wide one.
         calculatorId:
           lead?.selectedCalculatorId ||
           lead?.calculatorId ||
@@ -256,10 +198,6 @@ export default function LeadCenterPage() {
     });
   }, [navigation, lead]);
 
-  // Web parity (`LocationBroadcaster`, mounted app-wide and keyed on `workLeadId`):
-  // while the rep has a lead open, push their position to its watch room every minute so
-  // ops can see whether they are on site. A DEAL has no on-site work session, so it does
-  // not broadcast — the same reason its back press logs no pause below.
   useLocationBroadcaster(lead, !fromMyDeals);
 
   const hasLoggedPauseRef = useRef(false);
@@ -271,91 +209,20 @@ export default function LeadCenterPage() {
     leadRef.current = lead;
   }, [user, lead]);
 
-  /**
-   * The ONE exit path for the session pause. Every way out of this screen goes through
-   * it — the screen's own back arrow, Android hardware back, the global header's home
-   * button, and the unmount backstop — so no route can leave the ops session log
-   * thinking the rep is still on site.
-   *
-   * `hasLoggedPauseRef` makes it idempotent: `handleClose` navigates, which then
-   * unmounts, and both would otherwise log. Reads its inputs from refs because the
-   * unmount cleanup runs with whatever closure it was created with.
-   */
   const pauseLeadSession = useCallback(() => {
-    /**
-     * ⚠️ A pause means the REP LEFT THE LEAD — and they can only do that while the app
-     * is the thing on screen.
-     *
-     * Opening the camera hands the foreground to another activity, and Android is free
-     * to tear this screen down behind it (it does so routinely on an emulator, and on
-     * any device with "Don't keep activities" on). That ran the unmount backstop below
-     * and filed a pause for a lead the rep was standing in front of — so ops saw them
-     * go offline in the middle of an inspection, and the screen came straight back with
-     * a fresh `work` call behind it. Reported against the camera; the same tear-down
-     * happens for any foreground hand-off.
-     *
-     * `AppState.currentState` is not sampled here — RN caches it from the host
-     * lifecycle event, so by the time an unmount caused by backgrounding runs, it
-     * already reads 'background'. A real back press is always 'active'.
-     *
-     * Consequence, and it is the right way round: if the OS kills the app while it is
-     * backgrounded, no pause is filed and the session stays open. That is the failure
-     * this ticket asked for — a lead wrongly marked offline is worse than one that
-     * stays on until the rep actually comes back and leaves it.
-     */
     if (AppState.currentState !== 'active') return Promise.resolve();
 
     const leadId = leadRef.current?._id;
     if (!leadId || hasLoggedPauseRef.current) return Promise.resolve();
     hasLoggedPauseRef.current = true;
-    // The rep left of their own accord, so the next launch must not treat this session
-    // as one a kill left behind and file a second pause for it.
     clearLeadWorkSession();
 
-    /**
-     * RELEASE the work session here, beside the log that announces it.
-     *
-     * ⚠️ This used to live ONLY in `useLeadCenterData`'s unmount cleanup, so it was
-     * tied to the screen being DESTROYED rather than to the rep leaving. Observed on
-     * device: the screen's own back arrow sent `{ workStartedBy: null }`, and **no route
-     * through the green `MainHeader` did** — the logo included, even though it lands back
-     * on `Leads`. The pause log went out on all of them, so ops read the rep as having
-     * left while the server still had them as `workStartedBy: <them>`, which is a rep who
-     * looks like they are sitting in a customer's house they walked out of.
-     *
-     * The bell / chat / account buttons additionally PUSH their screen on top, so Lead
-     * Center is not even unmounted on those.
-     *
-     * Releasing from the one exit path every route already goes through is what makes
-     * the two halves inseparable: no route can now pause without releasing, whatever the
-     * navigator does to the screen afterwards. Do NOT move this back into an unmount.
-     */
-    /**
-     * ⚠️ NOT for a lead this device is still holding, and this was a DATA-LOSS bug rather
-     * than a missing feature.
-     *
-     * `leadId` is the CLIENT id (`work-1773…`) until the create lands, so the PUT 404s —
-     * harmless on its own. The damage is the race on the way back: the rep checks in
-     * offline, backs out, signal returns, and the queue files `work` correctly. If this
-     * release then goes out — the rep re-opens and leaves the lead once online — it sends
-     * `{ workStartedBy: null }` and UNDOES the check-in that had just synced. The device
-     * still shows Resume Appointment (that mark is local), so the rep sees a worked door
-     * and the office, and any second device, sees one nobody ever started.
-     *
-     * Offline the request cannot leave the device either way, so skipping it loses
-     * nothing: a session that was never opened on the server needs no giving back.
-     */
     if (!isClientId(leadId) && isOnline()) {
       LeadService.endWorkLead(leadId).catch((e) =>
         console.warn('[LeadCenter] Work end failed:', e)
       );
     }
 
-    // Web `job-capture-images-view.js`: a deal is opened to be read, not worked, so
-    // firing a pause would mark the rep as having worked a closed job in the ops
-    // session log. ⚠️ The RELEASE above still runs for a deal — the Lead Center opens a
-    // work session on mount either way and it has to be given back. Only the LOG is
-    // suppressed.
     if (fromMyDeals) return Promise.resolve();
 
     return logLeadSessionPause(userRef.current, leadRef.current).catch((err) => {
@@ -368,21 +235,11 @@ export default function LeadCenterPage() {
     pauseLeadSessionRef.current = pauseLeadSession;
   }, [pauseLeadSession]);
 
-  /**
-   * The green `MainHeader` is rendered by the NAVIGATOR, outside this stack screen, so
-   * its "go home" brand button called `navigation.navigate('Leads')` directly and never
-   * touched `handleClose` — backing out that way logged no pause. Registering
-   * `onNavigate` for as long as this screen is focused routes it through the same exit.
-   *
-   * Not awaited: the log POST is queued in a module-level chain that outlives this
-   * screen, so the rep's tap is never delayed by a round trip.
-   */
   const { setHeaderActions } = useHeader();
   useFocusEffect(
     useCallback(() => {
       setHeaderActions({
         onNavigate: (target: any) => {
-          // Not awaited (see above); `pauseLeadSession` swallows its own errors.
           pauseLeadSessionRef.current();
           navigation.navigate(target);
         },
@@ -391,24 +248,6 @@ export default function LeadCenterPage() {
     }, [setHeaderActions, navigation])
   );
 
-  /**
-   * The other half of `pauseLeadSession`: coming BACK to a lead re-opens the session it
-   * released.
-   *
-   * ⚠️ Without this, making the pause release the work session would have created a
-   * worse bug than the one it fixed. The header's bell / chat / account buttons PUSH
-   * their screen on top, so Lead Center is never unmounted — it is only blurred. The
-   * mount effect in `useLeadCenterData` that calls `workLead` is keyed on
-   * `lead._id`/`user._id`, so it does not re-run on the way back, and the rep would
-   * return to a lead the server thinks nobody is working.
-   *
-   * Keyed on `hasLoggedPauseRef`, so this is a no-op on the FIRST focus — the mount
-   * effect has already opened the session, and re-sending `workLead` there would stamp a
-   * second check-in for one arrival.
-   *
-   * ⚠️ Runs for a deal too. `pauseLeadSession` releases a deal's session (it just files
-   * no log), so a deal has to be able to re-acquire it or the two stop matching.
-   */
   useFocusEffect(
     useCallback(() => {
       if (!hasLoggedPauseRef.current) return;
@@ -418,13 +257,7 @@ export default function LeadCenterPage() {
       if (!leadId || !userId) return;
 
       hasLoggedPauseRef.current = false;
-      // Re-arm the killed-app backstop as well — the pause cleared the stored record, so
-      // without this a kill from here on would leave the re-opened session dangling.
       beginLeadWorkSession(currentLead, userRef.current, fromMyDeals);
-      // ⚠️ Same guard as the release it pairs with: a client id is not a route the server
-      // has, and offline the PUT cannot leave the device. The queued `work` step owns the
-      // check-in for an offline lead — re-sending it here would 404 and, worse, leave this
-      // path and `pauseLeadSession` disagreeing about who files the session.
       if (isClientId(leadId) || !isOnline()) return;
       LeadService.workLead(leadId, userId).catch((e) =>
         console.warn('[LeadCenter] Work resume failed:', e)
@@ -434,9 +267,6 @@ export default function LeadCenterPage() {
 
   useEffect(() => {
     return () => {
-      // Backstop for the paths that unmount without announcing themselves — a
-      // `reset`/`replace` from a sub-flow, the iOS swipe-back gesture, or the OS
-      // tearing the screen down.
       pauseLeadSessionRef.current();
     };
   }, []);
@@ -498,7 +328,6 @@ export default function LeadCenterPage() {
           staleTime: 1000 * 60 * 5,
         });
 
-        // Request location permissions asynchronously in background
         if (Platform.OS === 'ios') {
           await Geolocation.requestAuthorization('whenInUse');
         } else {
@@ -634,11 +463,6 @@ export default function LeadCenterPage() {
     setShowEmailOptions(false);
   };
 
-  // ── addendum drafts → the status banners AND the addendums list ──────────────
-  // ONE fetch feeding both, exactly like web's shared `useJobBuilderDrafts`. It runs
-  // on BOTH routes (not just `fromMyDeals`) because `AddendumsCard` renders on both —
-  // web's own note: "it is null when the lead has none, so it costs the Lead Center
-  // nothing when there are no addendums." Only the BANNERS are deal-only.
   const { data: dealDrafts = [], isFetched: draftsFetched } = useQuery({
     queryKey: ['lead-job-builder-drafts', lead?._id],
     queryFn: async () => {
@@ -648,8 +472,6 @@ export default function LeadCenterPage() {
         const list = body?.data?.drafts || body?.data || body?.drafts || [];
         return Array.isArray(list) ? list : [];
       } catch (err) {
-        // Web parity: "Addendums are supplementary; a failure must not affect the
-        // page." An error must read as "no banner", never as a broken screen.
         console.warn('[LeadCenter] drafts fetch failed:', err);
         return [];
       }
@@ -658,18 +480,11 @@ export default function LeadCenterPage() {
     staleTime: 30_000,
   });
 
-  // Auto-refresh Lead data when screen is focused
   useFocusEffect(
     useCallback(() => {
       if (lead?._id) {
         queryClient.invalidateQueries({ queryKey: ['revrender-runs', lead._id] });
-        // Submitting an addendum CREATES a draft this list cannot otherwise learn
-        // about — the rep returns here straight from the edit wizard, so without
-        // this the banner only appears after leaving and re-opening the deal.
-        // (Web solves the same problem with `useJobBuilderDrafts`'s `refetch`.)
         queryClient.invalidateQueries({ queryKey: ['lead-job-builder-drafts', lead._id] });
-        // Refund figures live in these two (60 s staleTime) — without this a refund
-        // issued while the rep was away kept showing until they left and re-opened.
         queryClient.invalidateQueries({ queryKey: ['leadApprovals', lead._id] });
         queryClient.invalidateQueries({ queryKey: ['leadApprovalsFunding', lead._id] });
         refetch(); // Ensure lead data is fresh when returning from other screens
@@ -677,8 +492,6 @@ export default function LeadCenterPage() {
     }, [lead?._id, queryClient, refetch])
   );
 
-  // Pull-to-refresh — the same three refreshes the focus effect above performs, so a
-  // pull and a re-focus can never leave the screen in different states.
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const handlePullToRefresh = useCallback(async () => {
     setPullRefreshing(true);
@@ -686,8 +499,6 @@ export default function LeadCenterPage() {
       if (lead?._id) {
         queryClient.invalidateQueries({ queryKey: ['revrender-runs', lead._id] });
         queryClient.invalidateQueries({ queryKey: ['lead-job-builder-drafts', lead._id] });
-        // Refund state (approvals card + contract card) — awaited so the spinner
-        // stays until the new figures have landed.
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ['leadApprovals', lead._id] }),
           queryClient.invalidateQueries({ queryKey: ['leadApprovalsFunding', lead._id] }),
@@ -701,10 +512,6 @@ export default function LeadCenterPage() {
     }
   }, [lead?._id, queryClient, refetch]);
 
-  // Just returned from finishing a job (Complete Job) — the route param `lead` is the
-  // pre-result snapshot, so force fresh refetches. A couple of delayed passes beat the
-  // backend replication lag that otherwise required the rep to leave and re-open the
-  // lead before the result status (and contract docs) updated.
   useEffect(() => {
     if (!justCompleted || !lead?._id) return;
     refetch();
@@ -714,16 +521,13 @@ export default function LeadCenterPage() {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-    // Run once on arrival from Complete Job (leadId is stable for this mount).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [justCompleted, lead?._id]);
 
-  // Auto-open Job Builder logic
   useEffect(() => {
     const handleAutoOpen = async () => {
       if (route.params?.openJobBuilder && !isOutcomeLoading) {
         try {
-          // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
           const autoOpenCalcId = resolveLeadCalculatorId(lead);
           const res = autoOpenCalcId
             ? await LeadService.getLeadOutcomeByCalculator(lead?._id, autoOpenCalcId)
@@ -763,10 +567,6 @@ export default function LeadCenterPage() {
             };
             setJobState(updatedJobState);
           }
-          // Read the calculator + outcome form off THIS response. They used to come
-          // from a mount-time `getLeadOutcome` in `useLeadCenterData`, which existed
-          // only to prefill these two values — that call is gone (web makes no outcome
-          // request on this screen), so derive them here, where the data is fresher.
           const nextCalculatorData = outcome?.LFCalculator || calculatorData;
           const nextOutcomeForm = outcome || outcomeForm;
           const uId = user?._id || user?.id;
@@ -796,10 +596,6 @@ export default function LeadCenterPage() {
   }, [route.params?.openJobBuilder, isOutcomeLoading, calculatorData, outcomeForm]);
 
   const handleOpenChat = () => {
-    // ⚠️ Blocked at the DOOR rather than inside the thread. Ops chat is live: with no signal the
-    // history cannot load and nothing typed would reach anyone, so opening it puts the rep in a
-    // conversation that silently is not one. The thread guards its own composer as well, for a
-    // connection that drops while they are already in there.
     const blocked = offlineBlockFor('chat', isOnline());
     if (blocked) {
       FlashMessage.info(blocked.title, blocked.message);
@@ -812,8 +608,6 @@ export default function LeadCenterPage() {
         const dateStr = lead.leadDate ? format(new Date(lead.leadDate), 'MM.dd.yy') : '';
         return `${lead.office || ''} Lead ${dateStr} - ${lead.leadId || 'N/A'}`.trim() || 'Discussion';
       })(),
-      // Hand the loaded photos to the Appointment Photos picker (web parity —
-      // web passes selectedJob.salesPhotos straight into the chat composer).
       salesPhotos: lead.salesPhotos || [],
       previewImage: lead.previewImage,
       previewImages: lead.previewImages,
@@ -823,7 +617,6 @@ export default function LeadCenterPage() {
   const handleShowJobBuilder = async () => {
     try {
       setLoading(true);
-      // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
       const showJbCalcId = resolveLeadCalculatorId(lead);
       const res = showJbCalcId
         ? await LeadService.getLeadOutcomeByCalculator(lead?._id, showJbCalcId)
@@ -863,8 +656,6 @@ export default function LeadCenterPage() {
         };
         setJobState(updatedJobState);
       }
-      // Same as the auto-open path: the calculator + outcome form come from THIS
-      // response, not from a mount-time prefetch (removed — see useLeadCenterData).
       const nextCalculatorData = outcome?.LFCalculator || calculatorData;
       const nextOutcomeForm = outcome || outcomeForm;
       const uId = user?._id || user?.id;
@@ -919,17 +710,6 @@ export default function LeadCenterPage() {
   const ocrMutation = useUploadPaperConsentOCRMutation();
   const revRenderMutation = useGenerateRevRenderMutation();
 
-  /**
-   * Park a signed consent form / roof waiver on the device when it cannot be posted.
-   *
-   * ⚠️ Two reasons it cannot, and the second is easy to miss: no connection, OR a lead this device
-   * minted the id for. `POST .../lead-1773…/mobile/waiver-form` is a request that 404s however
-   * good the signal is, so a form signed on a lead created at the door has to queue even online.
-   *
-   * ⚠️ Queueing also SATISFIES THE GATE. The consent is what licenses presenting a quote, and the
-   * check reads the server's `generatedReports`; without the queued record the rep would be asked
-   * to collect a second signature from a customer who has already given one.
-   */
   const queueConsentOffline = async (kind: ConsentFormKind, data: any): Promise<void> => {
     const work = ensureOfflineWorkForLead(lead);
     const queued = work
@@ -942,21 +722,13 @@ export default function LeadCenterPage() {
       FlashMessage.error('Not saved', `Couldn't keep the ${consentFormLabel(kind).toLowerCase()} on this device — please try again.`);
       return;
     }
-    // ⚠️ Never "Submitted". The PDF is rendered by the SERVER, so nothing is filed yet and there is
-    // no document to show — telling the rep otherwise invites them to promise the customer a copy
-    // that has not been produced.
     FlashMessage.success(
       'Saved on this device',
       `${consentFormLabel(kind)} signed. It uploads on its own as soon as you have a connection.`
     );
-    // ⚠️ A no-op with no signal, and the point of it is the OTHER reason a form queues: a lead
-    // whose id this device minted. There the connection is fine, so nothing would otherwise start
-    // the drain until connectivity happened to blip — and "uploads automatically" would be a lie
-    // for however long that took.
     runUpload();
   };
 
-  /** Can this form actually be posted right now? A client-id lead is as disqualifying as no signal. */
   const consentMustQueue = (): boolean =>
     !isOnline() || isClientId(String(lead?._id || lead?.id || ''));
 
@@ -964,15 +736,12 @@ export default function LeadCenterPage() {
     toggleModal('showConsentModal', false);
     if (consentMustQueue()) {
       await queueConsentOffline('consent', data);
-      // Deliberately not a string: the modal reads a string as "here is your PDF" and offers to
-      // open, share and save it. There is no PDF until this uploads.
       return null;
     }
     setIsConsentGenerating(true);
     try {
       const res = await consentMutation.mutateAsync({ leadId: lead?._id, payload: data });
 
-      // Log successful consent form submission
       if (user?._id || user?.id) {
         logEvent('submit', {
           user_id: user?._id || user?.id,
@@ -998,7 +767,6 @@ export default function LeadCenterPage() {
           reportType: 'consent_form',
         });
 
-        // Log 'create' event to mirror web
         if (user?._id || user?.id) {
           logEvent('create', {
             user_id: user?._id || user?.id,
@@ -1012,7 +780,6 @@ export default function LeadCenterPage() {
             },
           });
 
-          // Call logReportGeneration to populate the activity feed
           const currentDate = format(new Date(), 'MMMM d, yyyy');
           const reportType = 'consent Form';
           const reportData = `The consent form, generated by ${user?.firstName} ${user?.lastName} on ${currentDate}, for the ${lead?.fullAddress || ''} area.`;
@@ -1038,11 +805,6 @@ export default function LeadCenterPage() {
     }
   };
 
-  // Web parity (`job-capture-images-sections/edit-customer-modal.js`): the three
-  // `customer_details` activity events the portal timeline expects — a `view` when the
-  // pencil opens the modal, one `change` per edited field, and a `submit` once the
-  // PATCH succeeds. Id resolution (`customerId` is NOT the lead id) lives in
-  // `utils/customer-detail-changes.ts`.
   const logCustomerDetailsEvent = (
     eventType: 'view' | 'submit',
     action: string
@@ -1064,8 +826,6 @@ export default function LeadCenterPage() {
         throw new Error('Customer ID is missing. Unable to update customer.');
       }
 
-      // Coordinates ride along only when the address was resolved (picked from
-      // the suggestions or taken from GPS) — web parity with `edit-customer-modal.js`.
       const payload: Record<string, any> = {
         firstName: data.firstName,
         lastName: data.lastName,
@@ -1079,9 +839,6 @@ export default function LeadCenterPage() {
         payload.longitude = data.longitude;
       }
 
-      // ⚠️ A client id is as disqualifying as no signal — `PATCH lead/v1/customer/lead-1773…`
-      // 404s however good the connection is, so a lead created at the door queues even online.
-      // The rule the agreement dialog and the consent queue already apply.
       const queueIt = !isOnline() || isClientId(customerId);
       if (queueIt) {
         if (!queueCustomerUpdate(lead, payload)) {
@@ -1097,8 +854,6 @@ export default function LeadCenterPage() {
         if (!prev) return prev;
         return {
           ...prev,
-          // The header reads `fullAddress` first, so patch both — `refetch()`
-          // below reconciles either one with what the server actually stored.
           fullAddress: data.address || prev.fullAddress,
           customerDetails: {
             ...prev.customerDetails,
@@ -1116,15 +871,7 @@ export default function LeadCenterPage() {
       });
 
       if (!queueIt) FlashMessage.success('Success', 'Customer details updated successfully.');
-      // Queued or sent, the edit happened — and `customer_details` is on the held-log allow-list
-      // (`utils/offline-activity-log.ts`), so the row is kept and replayed rather than dropped.
       logCustomerDetailsEvent('submit', 'customer details saved');
-      // ⚠️ The per-field `change` rows are NOT emitted here. They are debounced off the
-      // rep's typing inside `EditCustomerModal` (web parity), so they have already been
-      // sent by the time Save is pressed — emitting them again from the saved payload
-      // would put every edit on the timeline twice.
-      // ⚠️ Not offline: the read would fail, and the queued edit is already on screen through
-      // `applyOfflineResult`, which keeps showing it across a refetch and a relaunch alike.
       if (!queueIt) refetch();
     } catch (error: any) {
       const apiError = error?.response?.data || error?.data || error;
@@ -1147,7 +894,6 @@ export default function LeadCenterPage() {
     try {
       const res = await waiverMutation.mutateAsync({ leadId: lead?._id, payload: data });
 
-      // Log successful roof waiver submission
       if (user?._id || user?.id) {
         logEvent('submit', {
           user_id: user?._id || user?.id,
@@ -1173,7 +919,6 @@ export default function LeadCenterPage() {
           reportType: 'waiver_form',
         });
 
-        // Log 'create' event for roof waiver to mirror web
         if (user?._id || user?.id) {
           logEvent('create', {
             user_id: user?._id || user?.id,
@@ -1187,7 +932,6 @@ export default function LeadCenterPage() {
             },
           });
 
-          // Call logReportGeneration to populate the activity feed
           const currentDate = format(new Date(), 'MMMM d, yyyy');
           const reportType = 'roof_waiver Form';
           const reportData = `The roof_waiver form, generated by ${user?.firstName} ${user?.lastName} on ${currentDate}, for the ${lead?.fullAddress || ''} area.`;
@@ -1281,7 +1025,6 @@ export default function LeadCenterPage() {
 
       await reportMutation.mutateAsync(uploadData);
 
-      // Count items by category from the flat data payload for telemetry parity
       const countItems = (prefix: string) => {
         const keys = Object.keys(data).filter(
           (key) => key.startsWith(prefix) && key.endsWith('[issue]')
@@ -1312,7 +1055,6 @@ export default function LeadCenterPage() {
         });
       }
 
-      // Close the modal first so that the flash message and sharesheet appear on the main screen
       toggleModal('showInspectionModal', false);
 
       setTimeout(async () => {
@@ -1447,9 +1189,6 @@ export default function LeadCenterPage() {
           stickyHeaderIndices={[1]}
           contentContainerStyle={{ paddingBottom: 20 }}
           refreshControl={
-            // ⚠️ Its OWN flag, not the hook's `isRefreshing`. That one is also true for
-            // the mount and focus refetches, so reusing it would spin the control every
-            // time the rep navigates back to this screen without having pulled anything.
             <RefreshControl
               refreshing={pullRefreshing}
               onRefresh={handlePullToRefresh}
@@ -1631,17 +1370,9 @@ export default function LeadCenterPage() {
                 onOpenPdf={handleOpenPdf}
                 secureUrls={secureUrls}
                 isRefreshing={isRefreshing}
-                // ⚠️ Unconditional. See the note on `handleEditDeal` — a conditional
-                // here is what sent dynamic deals to the inline modal.
                 onEditContract={handleEditDeal}
                 drafts={dealDrafts}
-                // Whether the drafts query has SETTLED (success or handled error).
-                // The pending-addendum card holds its first paint until it has, so a
-                // draft's own contact never flickers in over the customer's.
                 draftsReady={draftsFetched}
-                // Resend / Cancel change the DRAFT; an Edit Phone/Email writes the
-                // CUSTOMER record, which the recipient line falls back to — so refetch
-                // both rather than only the drafts.
                 onDraftsChanged={() => {
                   queryClient.invalidateQueries({ queryKey: ['lead-job-builder-drafts', lead?._id] });
                   refetch();
@@ -1698,7 +1429,6 @@ export default function LeadCenterPage() {
                     setLoading(true);
                     let activeLead = leadRef.current || lead;
 
-                    // If lead details are missing (e.g. still loading), wait and retry refetching
                     let refetchAttempts = 0;
                     while (
                       refetchAttempts < 5 &&
@@ -1899,8 +1629,6 @@ export default function LeadCenterPage() {
                 }}
                 onShowDynamicDealCenter={() => navigation.navigate('DynamicDealCenter', { lead })}
                 onShowInvestmentCenter={() => navigation.navigate('InvestmentCenter', { lead })}
-                // `book` is set when the rep picked a portal-authored pitch book from
-                // the card's list; without it the screen serves the bundled deck.
                 onShowPitchbook={(book?: { bookId: string; bookName?: string }) =>
                   navigation.navigate('Pitchbook', {
                     lead,

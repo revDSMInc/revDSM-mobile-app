@@ -1,21 +1,3 @@
-/**
- * `stepData` builders for `PATCH installer/v1/update/{jobId}`.
- *
- * One builder per timeline step, each returning `null` when the step has nothing to
- * send so a caller can skip the request entirely. Each returns the INNER object;
- * `InstallerService.updateJob` wraps it in `{ stepData: … }`.
- *
- * Only the keys the server stores (`INSTALLER_PATCH_FIELDS`) may appear — anything
- * else is stripped before sending.
- *
- *  - **Every photo array is sent whole**, not as an increment. The multipart upload
- *    already appended each shot; restating the current set is what keeps a retaken or
- *    deleted photo from leaving a stale row behind.
- *  - A photo joins its array only once its upload returned an `s3url`.
- *  - **Pre-existing conditions** carry their photos nested per area — the only place
- *    the server learns which shot documents which condition.
- */
-
 import {
   DISCREPANCY_ISSUE_TYPES,
   PEC_AREAS,
@@ -40,11 +22,6 @@ import {
   type StepPhotoRef,
 } from '../config/types/installer';
 
-/**
- * Drops any key the server doesn't accept. Cheap insurance: a field added to a
- * builder before the backend supports it degrades to "not sent" instead of failing
- * the whole step's save with a 400.
- */
 export const stripUnsupportedFields = (patch: InstallerJobPatch): InstallerJobPatch => {
   const clean: InstallerJobPatch = {};
   INSTALLER_PATCH_FIELDS.forEach((key) => {
@@ -54,15 +31,9 @@ export const stripUnsupportedFields = (patch: InstallerJobPatch): InstallerJobPa
   return clean;
 };
 
-/** True when a patch would send nothing. */
 export const isEmptyPatch = (patch: InstallerJobPatch | null): boolean =>
   !patch || Object.keys(patch).length === 0;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Photo references
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** A photo only becomes referenceable once the upload gave it an `s3url`. */
 export const isUploaded = (photo?: CapturedPhoto | null): boolean => !!photo?.s3url;
 
 export const toPhotoRef = (
@@ -79,30 +50,10 @@ export const toPhotoRef = (
 export const toPhotoRefs = (photos: CapturedPhoto[]): StepPhotoRef[] =>
   photos.filter(isUploaded).map((p) => toPhotoRef(p));
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Step 1 · Pickup / Step 7 · Return
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Whether an empty photo array is meaningful.
- *
- * An untouched step and a step whose last photo was just deleted both hold zero
- * photos, and they must not send the same thing: omitting the key leaves the server's
- * copy alone (right for the first), sending `[]` clears it (right for the second). The
- * builders can't tell the two apart, so the caller says — only a delete passes
- * `includeEmptyPhotos`, which keeps an un-hydrated device from wiping a set it simply
- * hasn't loaded yet.
- */
 export interface StepDataOptions {
   includeEmptyPhotos?: boolean;
 }
 
-/**
- * Pickup — the loaded-material shots, as the set currently stands.
- *
- * A photo joins the array only once its upload returned an `s3url`. "Had material on
- * truck" (`skipped`) has no backend field, so a skipped pickup PATCHes nothing.
- */
 export const buildPickupStepData = (
   progress: InstallProgress,
   options: StepDataOptions = {}
@@ -116,7 +67,6 @@ export const buildPickupStepData = (
     : null;
 };
 
-/** Return — the "used all material" flag plus the returned-stock shots. */
 export const buildReturnStepData = (
   progress: InstallProgress,
   options: StepDataOptions = {}
@@ -133,10 +83,6 @@ export const buildReturnStepData = (
   };
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Step 2 · Pre-Existing Conditions
-// ─────────────────────────────────────────────────────────────────────────────
-
 const areaLabel = (areaId: string): string =>
   PEC_AREAS.find((a) => a.id === areaId)?.label ?? areaId;
 
@@ -144,8 +90,6 @@ const toCondition = (areaId: string, entry: PECEntry): PreExistingConditionPaylo
   label: areaLabel(areaId),
   isSelected: true,
   description: entry.note?.trim() ?? '',
-  // Nested here rather than in a flat array — this is the only place the backend
-  // learns which shot documents which area.
   photos: toPhotoRefs(entry.photos ?? []).map((ref) => ({
     ...ref,
     subcategory: areaLabel(areaId),
@@ -156,7 +100,6 @@ export const buildPecStepData = (
   progress: InstallProgress,
   userId?: string
 ): InstallerJobPatch | null => {
-  // `null` = the installer never answered the question; nothing to record yet.
   if (progress.pecHasConditions === null) return null;
 
   const conditions =
@@ -176,18 +119,6 @@ export const buildPecStepData = (
   return { preExistingConditions };
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Step 3 · Pre-Install / Step 5 · Post-Install
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * The matched set as photo refs.
- *
- * Keyed by tag, so a retake replaces its predecessor rather than adding to it — which
- * is why sending the whole set is right here: the PATCH restates what the installer
- * actually ended up with, independent of how many shots were appended along the way.
- * `salesPhotoId` is the rep photo each one pairs with.
- */
 const buildMatchedRefs = (
   matched: Record<string, CapturedPhoto>,
   repPhotoIdByTag: Map<string, string> = new Map()
@@ -223,11 +154,6 @@ export const buildPostInstallStepData = (
     : null;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Step 4 · Verify Job Scope
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** "Wrong Product" → "WRONG_PRODUCT". Anything unrecognised falls to OTHER. */
 export const toDiscrepancyCategory = (issue?: string): DiscrepancyCategory => {
   const match = DISCREPANCY_ISSUE_TYPES.find(
     (t) => t.toLowerCase() === (issue ?? '').trim().toLowerCase()
@@ -236,11 +162,6 @@ export const toDiscrepancyCategory = (issue?: string): DiscrepancyCategory => {
   return match.toUpperCase().replace(/\s+/g, '_') as DiscrepancyCategory;
 };
 
-/**
- * `resolved` maps to CORRECT, not DISCREPANCY: the Install Manager settled it, so the
- * scope as sold is what gets installed. The discrepancy itself was already routed
- * through `installer/v1/jobs/{id}/discrepancy` when it was raised.
- */
 const toScopeStatus = (status?: ScopeStatus): ScopeItemPayloadStatus => {
   if (!status) return 'PENDING';
   if (status.state === 'pending') return 'DISCREPANCY';
@@ -305,34 +226,6 @@ export const buildScopeStepData = (
   return { jobScopeVerification };
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Step 6 · CoC
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * CoC — the scanned pages of the signed Certificate of Completion.
- *
- * Same contract as the material arrays: whole set every time, and a page joins it only
- * once its upload returned an `s3url`. `subcategory: 'coc'` matches what the upload
- * descriptor stamped, so the two records agree.
- *
- * Page order rides on `timestampTaken` rather than an index, because the scanner can
- * add several pages in one pass and a rescan has to slot back in at the right place —
- * an index would renumber every page after it.
- */
-/**
- * `stepData.coc` from a signed certificate.
- *
- * Narrows the stored record to the four keys the contract names and nothing else —
- * the strokes, the job number and the date the device also keeps are for the screen,
- * not for the wire.
- *
- * ⚠️ `otherRelationship` is NULL for a homeowner, never `''`: the contract sends null,
- * and an empty string reads as "Other, and they did not say".
- *
- * ⚠️ A signature is omitted rather than sent empty when its upload has not produced an
- * `s3url`. A `{ s3url: "" }` would look like a stored image that resolves to nothing.
- */
 export const buildCocSignOffPayload = (
   signOff?: CocSignOff | null
 ): CocStepPayload | null => {
@@ -356,7 +249,6 @@ export const buildCocSignOffPayload = (
     },
     customer: {
       relationshipType,
-      // Only `other` has anything to write in — the enum says the rest.
       otherRelationship: isOther && other ? other : null,
     },
   };
@@ -379,26 +271,12 @@ export const buildCocStepData = (
   const patch: InstallerJobPatch = {};
   if (photos.length || options.includeEmptyPhotos) patch.installerCocPhotos = photos;
 
-  // The two halves of this step are independent: a job can be signed on the device,
-  // scanned on paper, or both, and neither may wipe the other.
   const coc = buildCocSignOffPayload(progress.cocSignOff);
   if (coc) patch.coc = coc;
 
   return Object.keys(patch).length ? patch : null;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Reset
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Clears everything the job has recorded, as far as the API allows.
- *
- * Sets every patchable field back to its untouched value: conditions un-checked and
- * empty, all five photo arrays emptied, every product back to PENDING, the return
- * flag off. Everything the installer sees on the device is wiped alongside it
- * (`useInstallProgress.reset`).
- */
 export const buildResetPatch = (
   products: SoldProduct[],
   userId?: string
@@ -431,11 +309,6 @@ export const buildResetPatch = (
   };
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Lookup helper
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Every captured photo on a job, by local id — used to resolve scope attachments. */
 export const indexPhotosById = (progress: InstallProgress): Map<string, CapturedPhoto> => {
   const map = new Map<string, CapturedPhoto>();
   const add = (photos?: CapturedPhoto[]) =>

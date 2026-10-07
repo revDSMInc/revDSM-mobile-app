@@ -7,10 +7,6 @@ interface Props {
   style?: ViewStyle;
 }
 
-/**
- * A reusable component that provides dynamic bottom padding based on the device's safe area insets.
- * Essential for Android's navigation bar (buttons vs. gestures) and iOS home indicators.
- */
 export const SafeBottomSpacer: React.FC<Props> = ({ height = 16, style }) => {
   const insets = useSafeAreaInsets();
 

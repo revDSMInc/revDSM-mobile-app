@@ -1,31 +1,3 @@
-/**
- * Expected payout date.
- *
- *   GET /company/v1/sales/commission-config  ->  `payout`
- *
- * Port of the portal's `src/utils/calculate-expected-payout-date.js`, written
- * against the frontend's PAYOUT-DATE-GUIDE.md. Two schedule types:
- *
- *  - `payPeriodLag` - periods close on a fixed weekday and each period is paid
- *    a number of PAY DATES (i.e. weeks) later, so every job in one period
- *    shares a pay date.
- *  - `dayOfMonth` - the month is split into bands, each aiming at a day of the
- *    month, then snapped to the nearest pay weekday.
- *
- * Pure and RN-free on purpose (same reason `commission-config.ts` is): what a
- * rep is told they will be paid, and when, has to be testable under jest, and
- * every consumer pulls in React Native.
- *
- * WARNING Per the guide: never store the result on the job. It is derived and
- * goes stale the moment an admin edits the schedule - recompute at render.
- * `null` means "we cannot say"; render "To be determined" rather than
- * fabricating a date.
- *
- * WARNING Do not patch this file against the portal's. If the two disagree,
- * re-port it whole - two apps disagreeing about what a rep earned is the
- * failure the shared engine exists to prevent.
- */
-
 import type { PayoutConfig, PayoutBucket } from './commission-config';
 
 export const PAYOUT_SCHEDULE_TYPES = {
@@ -34,7 +6,6 @@ export const PAYOUT_SCHEDULE_TYPES = {
   DAY_OF_MONTH: 'dayOfMonth',
 } as const;
 
-/** Bounded so a pathological config can never spin the render thread. */
 const MAX_GUARD_WEEKS = 60;
 const MAX_SHIFT_DAYS = 30;
 
@@ -51,8 +22,6 @@ const WEEKDAY_LABELS = [
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})/;
 const US_DATE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/;
 
-/* ---------------------------------------------------------------- dates - */
-
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
@@ -61,19 +30,12 @@ function addDays(d: Date, n: number): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 }
 
-/** Local `YYYY-MM-DD`, for comparing against the `nonBankingDays` list. */
 function dateKey(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-/**
- * WARNING An ISO string carries a timezone OFFSET, so `new Date(...)` can land
- * on the previous or next calendar day - and this is the date a rep is paid on.
- * The `YYYY-MM-DD` prefix is therefore read as TEXT, never through `Date`.
- * (Same rule as `utils/job-change-summary.ts`.)
- */
 export function parseEarnedDate(value: any): Date | null {
   if (!value) return null;
   if (value instanceof Date) return isNaN(value.getTime()) ? null : startOfDay(value);
@@ -95,7 +57,6 @@ function daysInMonth(year: number, monthIndex: number): number {
   return new Date(year, monthIndex + 1, 0).getDate();
 }
 
-/** Forward to the next `weekday`, INCLUSIVE - a date already on it stays put. */
 function snapForwardToWeekday(date: Date, weekday: number): Date {
   return addDays(date, (((weekday - date.getDay()) % 7) + 7) % 7);
 }
@@ -127,8 +88,6 @@ function shiftOffNonBankingDays(date: Date, config: PayoutConfig): Date {
   return out;
 }
 
-/* ------------------------------------------------------------- schedule - */
-
 export function findPayoutBand(earned: Date, config: PayoutConfig): PayoutBucket | null {
   const bands = Array.isArray(config.dayOfMonthSchedule) ? config.dayOfMonthSchedule : [];
   const day = earned.getDate();
@@ -140,11 +99,6 @@ interface PayoutStep {
   date: Date;
 }
 
-/**
- * The un-shifted target plus the intermediate step the UI can show. Returns
- * null for `none`, an unparseable date, a missing weekday the type needs, or a
- * gap in the bands - all of which mean "we cannot say".
- */
 function resolveTarget(
   earned: Date,
   config: PayoutConfig
@@ -158,8 +112,6 @@ function resolveTarget(
         ? periodEnd
         : snapForwardToWeekday(periodEnd, config.payDateWeekday);
 
-    // WARNING `lagPeriods` counts PAY DATES, not days: 2 means the SECOND pay
-    // date after the period closes, i.e. +7 days on top of the first one.
     const lag = Math.max(1, Number(config.lagPeriods) || 1);
 
     return {
@@ -175,8 +127,6 @@ function resolveTarget(
     const monthIndex = earned.getMonth() + (Number(band.monthOffset) || 0);
     const year = earned.getFullYear() + Math.floor(monthIndex / 12);
     const month = ((monthIndex % 12) + 12) % 12;
-    // Clamped to the month's real length, so a band aiming at the 31st still
-    // resolves in February.
     const day = Math.min(band.payDayOfMonth, daysInMonth(year, month));
     const aimed = new Date(year, month, day);
 
@@ -189,9 +139,6 @@ function resolveTarget(
   return null;
 }
 
-/* -------------------------------------------------------------- exports - */
-
-/** The pay date for an earned (install/sold) date, or null. */
 export function calculateExpectedPayoutDate(
   earnedDate: any,
   config: PayoutConfig | null | undefined
@@ -204,10 +151,6 @@ export function calculateExpectedPayoutDate(
   const resolved = resolveTarget(earned, config);
   if (!resolved) return null;
 
-  // A pay date can never precede the work it pays for. `payDateAdjustment:
-  // 'previous'` can snap a target back past the earned date, and a holiday
-  // shift can move it again, so the guard runs AROUND the shift rather than
-  // before it.
   let candidate = resolved.target;
   for (let i = 0; i < MAX_GUARD_WEEKS; i += 1) {
     const shifted = shiftOffNonBankingDays(candidate, config);
@@ -217,7 +160,6 @@ export function calculateExpectedPayoutDate(
   return shiftOffNonBankingDays(candidate, config);
 }
 
-/** `{ earned, payDate, lag, step }` - the middle step, for a UI walkthrough. */
 export function explainPayoutDate(
   earnedDate: any,
   config: PayoutConfig | null | undefined
@@ -234,7 +176,6 @@ export function explainPayoutDate(
   };
 }
 
-/** Whole days between the earned date and the pay date, or null. */
 export function payoutLagDays(
   earnedDate: any,
   config: PayoutConfig | null | undefined
@@ -257,7 +198,6 @@ function ordinal(n: number): string {
   }
 }
 
-/** One-line human summary of the schedule. */
 export function describePayoutSchedule(config: PayoutConfig | null | undefined): string {
   if (!config || config.scheduleType === PAYOUT_SCHEDULE_TYPES.NONE) {
     return 'No payout schedule configured.';
@@ -285,20 +225,12 @@ export function describePayoutSchedule(config: PayoutConfig | null | undefined):
   }, on the nearest ${payDay}.`;
 }
 
-/**
- * The date the job's pay is earned on, per `earnedDateField`.
- *
- * WARNING There is deliberately NO fallback to the other field. A job with no
- * install date yet (`toBeDetermined`) has no payout date, and answering with
- * the sold date instead would be a fabricated one.
- */
 export function resolveEarnedDate(job: any, config: PayoutConfig | null | undefined): any {
   if (!job) return null;
   const field = config?.earnedDateField === 'soldDate' ? 'soldDate' : 'installDate';
   return job[field] ?? null;
 }
 
-/** `resolveEarnedDate` + `calculateExpectedPayoutDate` in one call. */
 export function expectedPayoutDateFor(
   job: any,
   config: PayoutConfig | null | undefined

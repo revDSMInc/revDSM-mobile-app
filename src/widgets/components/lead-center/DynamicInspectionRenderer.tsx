@@ -1,14 +1,3 @@
-// ─── DynamicInspectionRenderer.tsx ───────────────────────────────────────────
-// Photo-first tagging UI for the dynamic inspection flow (mobile). Port of the
-// web reference `dynamic-schema-renderer.js`:
-//   CategoryTabStrip — the top category tab row (controlled)
-//   CategoryBody     — renders one category's slots (dispatch by type)
-//
-// Compass-grid categories lay out by row/col; flat/grouped lists render as a
-// 2-col pill grid; context-selector resolves levels then shows its slots;
-// container categories nest into their own tab strip.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -31,17 +20,13 @@ import {
 import type { DynamicInspectionCapture } from './useDynamicInspectionCapture';
 
 const GREEN = '#4CBB17';
-// Move-photo "FROM" tile highlight — yellow so the source slot stands out on the dark grid.
 const FROM_YELLOW = '#FACC15';
 
-// The full MaterialCommunityIcons glyph set, so we can tell a real icon name from
-// one that would render as a "?" tofu box. (Same JSON the vector-icons font uses.)
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const MDI_GLYPHS: Record<string, number> = require('react-native-vector-icons/glyphmaps/MaterialCommunityIcons.json');
 const isValidMdi = (name: string): boolean =>
   !!name && Object.prototype.hasOwnProperty.call(MDI_GLYPHS, name);
 
-// Iconify roots whose exact name differs from the MaterialCommunityIcons name.
 const MDI_ALIASES: Record<string, string> = {
   house: 'home',
   search: 'magnify',
@@ -65,9 +50,6 @@ const MDI_ALIASES: Record<string, string> = {
   pin: 'map-marker',
 };
 
-// Keyword → MDI, applied only when a stripped/aliased name is NOT a real glyph, so a
-// product/tab whose Iconify icon has no MDI twin still renders a sensible icon. Order
-// matters: most specific first. Matched against the cleaned name AND the raw string.
 const KEYWORD_MDI: Array<[RegExp, string]> = [
   [/window/, 'window-closed-variant'],
   [/door/, 'door'],
@@ -91,18 +73,6 @@ const KEYWORD_MDI: Array<[RegExp, string]> = [
   [/document|file|paper|note|form/, 'file-document-outline'],
 ];
 
-/**
- * Iconify string → a REAL MaterialCommunityIcons name.
- *
- * Three problems have to be solved so a schema icon never renders as a "?" tofu box:
- *  1. Drop the icon-set prefix (`mdi:`, `solar:`, `fluent-color:`…).
- *  2. Strip size/style suffixes MDI doesn't use — `home-28`, `home-24-filled`,
- *     `home-2-bold-duotone` all collapse to `home` (MDI's own `-outline` is kept).
- *  3. The stripped name may STILL not exist in MDI (Fluent/Solar have thousands of
- *     icons MDI lacks, e.g. `window-24` → `window`, which MDI has no glyph for). So we
- *     validate against the glyph set: use the name if it's real, else an alias, else a
- *     keyword match, else the neutral `fallback` — never an unrenderable name.
- */
 export const iconifyToMdi = (raw?: string | null, fallback = 'image-outline'): string => {
   if (!raw) return fallback;
   const s = String(raw).trim();
@@ -119,7 +89,6 @@ export const iconifyToMdi = (raw?: string | null, fallback = 'image-outline'): s
   const aliased = MDI_ALIASES[name] || name;
   if (isValidMdi(aliased)) return aliased;
 
-  // Not a real glyph → keyword-map so we still show something meaningful, not tofu.
   const haystack = `${name} ${s}`.toLowerCase();
   for (const [re, mdi] of KEYWORD_MDI) {
     if (re.test(haystack) && isValidMdi(mdi)) return mdi;
@@ -130,11 +99,6 @@ export const iconifyToMdi = (raw?: string | null, fallback = 'image-outline'): s
 
 const slugify = (v: unknown) => String(v ?? '').trim().replace(/\s+/g, '_').toLowerCase();
 
-// ─── Product selector (dropdown) ──────────────────────────────────────────────
-// Web parity (dynamic-inspection-photos-dialog.js:432-467 / dynamic-manage-photos-
-// dialog.js:327-359): products (verticals) are chosen from a DROPDOWN — a bordered
-// green button showing the selected product + a chevron, opening a menu of options —
-// NOT a horizontal pill row.
 export interface InspectionProduct {
   id: string;
   name: string;
@@ -155,7 +119,6 @@ export function ProductDropdown({
   const [anchor, setAnchor] = useState<{ x: number; y: number; width: number } | null>(null);
   const selected = products.find((p) => p.id === selectedProductId) || products[0];
 
-  // Anchor the menu directly under the trigger button (measure it in the window).
   const openMenu = () => {
     const node = btnRef.current as any;
     if (node?.measureInWindow) {
@@ -254,20 +217,9 @@ interface CommonBodyProps {
   capture: DynamicInspectionCapture;
   onSlotClick: SlotClick;
   onTagAsExtra?: (category: InspectionCategory) => void;
-  /**
-   * Move-photo flow only: the ui-key of the slot the photo is being moved FROM.
-   * That slot renders as a yellow "FROM" tile so the rep can see the origin while
-   * picking a destination (web `move-photo-dialog` parity).
-   */
   moveFromKey?: string;
-  /**
-   * Chip selections of any chip-selector ancestors — prefixed into each leaf's
-   * storage name so each chip owns its own photos (web `_scope`/SCOPE_SEP parity).
-   */
   scope?: string[];
 }
-
-// ─── One slot as a wide tap-to-tag pill ───────────────────────────────────────
 
 function SlotButton({
   slot,
@@ -284,18 +236,12 @@ function SlotButton({
 }) {
   const key = slot.isExtra ? (slot.key as string) : uiKey(category.id, slot.id);
   const photos = capture.getPhotos(category.label, slot.storageName);
-  // ⚠️ "Uploading" means an upload is actually MOVING, which can only be true online. Offline the
-  // photo is queued on the device and nothing is in flight, so a spinner here is a lie that reads
-  // as a stall — the rep sees a tagged slot spinning forever and assumes the shot was lost. The
-  // tick plus the filled colour already say the photo is held; `Manage Photos` carries the
-  // per-photo sync wording.
   const uploading = capture.online !== false && !!capture.uploadingKeys[key];
   const deleting = !!capture.deletingKeys[key];
   const moving = !!capture.movingKeys?.[key];
   const filled = photos.length > 0;
   const showSpinner = deleting || moving || (uploading && !filled);
   const disabled = deleting || moving || (!!moveFromKey && moveFromKey === key);
-  // The slot this photo is being moved out of — amber, and not tappable.
   const isMoveSource = !!moveFromKey && moveFromKey === key;
 
   return (
@@ -313,9 +259,6 @@ function SlotButton({
           justifyContent: 'center',
           borderWidth: 1.5,
           borderColor: isMoveSource ? FROM_YELLOW : filled ? GREEN : 'rgba(255,255,255,0.12)',
-          // Web parity (dynamic-schema-renderer.js:60-81): unfilled pill is a
-          // translucent teal, NOT the near-opaque `#16302A` that (with the dark text
-          // below) rendered the tag label invisible.
           backgroundColor: isMoveSource
             ? 'rgba(250,204,21,0.18)'
             : filled
@@ -337,8 +280,6 @@ function SlotButton({
                 fontWeight: '600',
                 fontSize: 13,
                 textAlign: 'center',
-                // Web renders both filled and unfilled slot labels white
-                // (unfilled `color: 'white'`), never dark ink on the dark screen.
                 color: isMoveSource ? FROM_YELLOW : '#fff',
               }}
             >
@@ -381,8 +322,6 @@ function SlotButton({
   );
 }
 
-// ─── Simple 2-col pill grid ───────────────────────────────────────────────────
-
 function PillGrid({
   category,
   slots,
@@ -418,8 +357,6 @@ function PillGrid({
     </View>
   );
 }
-
-// ─── Compass layout (row/col positioned) ──────────────────────────────────────
 
 function CompassLayout({
   category,
@@ -500,11 +437,7 @@ function groupSlots(slots: InspectionSlot[]): [string, InspectionSlot[]][] {
   return Array.from(groups.entries());
 }
 
-// ─── Leaf body ────────────────────────────────────────────────────────────────
-
 function LeafBody({ category, capture, onSlotClick, onTagAsExtra, moveFromKey, scope = [] }: CommonBodyProps & { category: InspectionCategory }) {
-  // Under a chip-selector the leaf's slots are scoped by the chosen chip(s) so each
-  // chip owns its own photos; getCapturableSlots reads `_scope`. Web parity (:238).
   const scopedCategory = scope.length ? { ...category, _scope: scope } : category;
   const definedSlots = getCapturableSlots(scopedCategory);
   const extras = capture.extrasFor(category);
@@ -576,8 +509,6 @@ function LeafBody({ category, capture, onSlotClick, onTagAsExtra, moveFromKey, s
   );
 }
 
-// ─── Context selector body ────────────────────────────────────────────────────
-
 function ContextBody({ category, capture, onSlotClick, moveFromKey, scope = [] }: CommonBodyProps & { category: InspectionCategory }) {
   const levels = Array.isArray(category.contextLevels) ? category.contextLevels : [];
   const contextSlots = Array.isArray(category.contextSlots) ? category.contextSlots : [];
@@ -595,8 +526,6 @@ function ContextBody({ category, capture, onSlotClick, moveFromKey, scope = [] }
   const resolvedValues = levels.map((l) => resolved[l.key] || null);
   const allResolved = levels.length > 0 && resolvedValues.every(Boolean);
   const path = resolvedValues.filter(Boolean).join(' › ');
-  // A chip-selector ancestor scopes these context slots so they don't collide with
-  // the same context path under a different chip (web parity, ContextBody:482).
   const scopePrefix = scope.length ? `${scope.join(SCOPE_SEP)}${SCOPE_SEP}` : '';
   const scopeIdPrefix = scope.length ? `${scope.join('||')}::` : '';
   const contextSlotObjects: InspectionSlot[] = allResolved
@@ -671,10 +600,7 @@ function ContextBody({ category, capture, onSlotClick, moveFromKey, scope = [] }
   );
 }
 
-// ─── Category body dispatcher (container -> nested tabs) ───────────────────────
-
 export function CategoryBody({ category, capture, onSlotClick, onTagAsExtra, moveFromKey, scope = [] }: CommonBodyProps & { category: InspectionCategory }) {
-  // Chip-selector with children → a chip row → scoped data (web parity).
   if (isChipContainer(category)) {
     return (
       <ChipSelectorBody
@@ -690,7 +616,6 @@ export function CategoryBody({ category, capture, onSlotClick, onTagAsExtra, mov
   if (isContextSelector(category)) {
     return <ContextBody category={category} capture={capture} scope={scope} onSlotClick={onSlotClick} moveFromKey={moveFromKey} />;
   }
-  // Tab-style container (tab-bar / dynamic-sub-tabs) → nested tab strip.
   if (isTabContainer(category) && getChildren(category).length > 0) {
     return (
       <NestedCategoryTabs
@@ -703,7 +628,6 @@ export function CategoryBody({ category, capture, onSlotClick, onTagAsExtra, mov
       />
     );
   }
-  // Leaf, or a leaf that also owns sub-categories (own slots + stacked children).
   return (
     <CompositeBody
       category={category}
@@ -715,8 +639,6 @@ export function CategoryBody({ category, capture, onSlotClick, onTagAsExtra, mov
     />
   );
 }
-
-// ─── Chip-selector body (chip row → selection card → the chip's data) ─────────
 
 function ChipSelectorBody({ category, capture, scope = [], onSlotClick, moveFromKey, onTagAsExtra }: CommonBodyProps & { category: InspectionCategory }) {
   const perChip = usesPerChipContent(category);
@@ -730,8 +652,6 @@ function ChipSelectorBody({ category, capture, scope = [], onSlotClick, moveFrom
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const activeChip = chips.find((c) => c.key === selectedKey) || null;
   const chipScope = activeChip ? [...scope, activeChip.label] : scope;
-  // When a picked chip leads into ANOTHER chip level, let the deeper level own the
-  // summary card (one card with the full path, not one per level).
   const activeIsChip = activeChip ? activeChip.contentCategories.some((c) => isChipContainer(c)) : false;
 
   const countChip = (chip: { label: string; contentCategories: InspectionCategory[] }) =>
@@ -827,8 +747,6 @@ function ChipSelectorBody({ category, capture, scope = [], onSlotClick, moveFrom
   );
 }
 
-// ─── Composite body (own slots + stacked sub-categories) ──────────────────────
-
 function CompositeBody({ category, capture, scope = [], onSlotClick, moveFromKey, onTagAsExtra }: CommonBodyProps & { category: InspectionCategory }) {
   const kids = getChildren(category);
   const scopedCategory = scope.length ? { ...category, _scope: scope } : category;
@@ -838,7 +756,6 @@ function CompositeBody({ category, capture, scope = [], onSlotClick, moveFromKey
     <LeafBody category={category} capture={capture} scope={scope} onSlotClick={onSlotClick} moveFromKey={moveFromKey} onTagAsExtra={onTagAsExtra} />
   );
 
-  // Pure leaf (no sub-categories) — render directly (handles the empty state too).
   if (kids.length === 0) return leaf;
 
   return (
@@ -868,8 +785,6 @@ function CompositeBody({ category, capture, scope = [], onSlotClick, moveFromKey
     </View>
   );
 }
-
-// ─── Tab strip (controlled) ───────────────────────────────────────────────────
 
 export function CategoryTabStrip({
   categories,
@@ -920,8 +835,6 @@ export function CategoryTabStrip({
     </View>
   );
 }
-
-// ─── Nested tabs (for container categories inside a body) ─────────────────────
 
 function NestedCategoryTabs({ categories, capture, onSlotClick, onTagAsExtra, moveFromKey, scope = [] }: CommonBodyProps & { categories: InspectionCategory[] }) {
   const [active, setActive] = useState(0);

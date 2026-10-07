@@ -1,4 +1,3 @@
-/** Web-app matched colour tokens — use via ThemeContext */
 export const PALETTE = {
   primary: { main: '#4CBB17', light: '#5BE49B', dark: '#007867', contrastText: '#FFFFFF' },
   secondary: { main: '#8E33FF', light: '#C684FF', dark: '#5119B7', contrastText: '#FFFFFF' },

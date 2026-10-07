@@ -1,7 +1,3 @@
-/**
- * Parses API and Network errors into user-friendly localized messages.
- * Specifically checks for HTTP status codes (404, 500, 502) and connection/network disruptions.
- */
 export const parseApiError = (error: any): string => {
   if (error?.response) {
     const status = error.response.status;
@@ -22,7 +18,6 @@ export const parseApiError = (error: any): string => {
     return data?.message || data?.error || `Request failed with status code ${status}`;
   }
 
-  // Handle network disruptions or offline status
   const errorMsg = error?.message || '';
   const errorCode = error?.code || '';
   if (

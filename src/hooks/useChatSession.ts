@@ -1,13 +1,3 @@
-/**
- * useChatSession — Room-level subscription hook
- *
- * Does NOT own the socket. The socket is managed globally by SocketManager.
- * This hook only:
- *   1. Joins/leaves the specific chat room
- *   2. Subscribes to room events (messages, reactions, pins)
- *   3. Loads messages via REST
- */
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Vibration } from 'react-native';
 import { IMessage } from 'react-native-gifted-chat';
@@ -49,33 +39,21 @@ export const useChatSession = (
 
   const fetchSecureUrls = async (newMessages: IMessage[]) => {
     try {
-      // Web parity (ChatModule.fetchSecureUrls): key each resolved signed URL by the
-      // file's STABLE id, aligning the getSecureLinks response POSITIONALLY to the
-      // request. Appointment-photo S3 keys (spaces/em-dashes, often an empty bucket)
-      // don't round-trip as object keys, so filePath-only keying left them unresolved
-      // and the tile showed a placeholder. We ALSO key by filePath so voice notes and
-      // gallery images (looked up by path) keep resolving.
       const entries: Array<{ id?: string; filePath: string; cleaned: string; bucketName?: string }> = [];
       const seen = new Set<string>();
       const push = (rawFp: any, bucketName?: string, id?: string) => {
-        // Only real S3 keys — skip local (file://, content://) and already-signed
-        // (http) uris, which carry no S3 key to sign.
         if (typeof rawFp !== 'string' || !rawFp) return;
         if (/^(https?:|data:|file:|content:)/i.test(rawFp)) return;
         if (seen.has(rawFp)) return;
         seen.add(rawFp);
         const cleaned = cleanFilePath(rawFp);
-        // Already resolved (by id or by either key form)?
         if ((id && imageUrls[id]) || imageUrls[rawFp] || imageUrls[cleaned]) return;
-        // Request with the RAW S3 key — web (ChatModule) and the picker (useSecureUrls)
-        // both sign the raw `filePath`/`s3url`; a cleaned key can miss on the backend.
         entries.push({ id, filePath: rawFp, cleaned, bucketName });
       };
       (newMessages as any[]).forEach((m) => {
         (m.files || m.messageFiles || []).forEach((f: any) => {
           const id = f.id || f._id;
           const bn = f.bucketName;
-          // Primary path, then the alternate field names the old extractFileRefs covered.
           push(f.filePath || f.path || (f.url && !String(f.url).startsWith('http') ? f.url : undefined), bn, id);
           push(f.imageUrl, bn, id);
           push(f.s3_path, bn, id);
@@ -83,7 +61,6 @@ export const useChatSession = (
           push(f.mediaUrl, bn, id);
           push(f.thumbnailUrl, bn, id);
         });
-        // Top-level media (no per-file id) — voice/image/video on the message itself.
         [m.voice, m.voiceUrl, m.audio, m.audioUrl, m.image, m.imageUrl, m.video, m.s3_path, m.mediaUrl].forEach(
           (v: any) => push(v),
         );
@@ -94,8 +71,6 @@ export const useChatSession = (
         entries.map((e) => ({ filePath: e.filePath, bucketName: e.bucketName })),
       ).catch(() => [] as any[]);
 
-      // TEMP DIAGNOSTIC — remove after debugging. Confirms this code runs and whether
-      // the backend actually returns signed URLs for these files.
       console.log(
         `[REVDSM-DIAG chat] requested=${entries.length} sampleKey=${entries[0]?.filePath?.slice(-50)} ` +
           `sampleBucket=${entries[0]?.bucketName} → sampleUrl=${(data[0]?.secureUrl || data[0]?.url || 'EMPTY')?.toString().slice(0, 70)}`,
@@ -128,7 +103,6 @@ export const useChatSession = (
       setMessages(normalized);
       fetchSecureUrls(normalized);
 
-      // Pre-populate pinned from REST (before socket responds)
       const initialPinned = normalized.filter((m: any) => m.isPinned === true);
       if (initialPinned.length > 0) {
         setPinnedMessages(initialPinned);
@@ -140,7 +114,6 @@ export const useChatSession = (
     }
   }, []);
 
-  // ─── Load messages + fetch participants ─────────────────────────────────────
   useEffect(() => {
     const init = async () => {
       setLoading(true);
@@ -171,7 +144,6 @@ export const useChatSession = (
     init();
   }, [chatId, leadId, isChannel, limit, loadMessages]);
 
-  // Mark messages read when they are loaded
   useEffect(() => {
     if (messages.length > 0 && chatId) {
       if (isChannel) {
@@ -182,21 +154,17 @@ export const useChatSession = (
     }
   }, [messages.length, chatId, isChannel, currentUserId]);
 
-  // ─── Room join/leave + socket event subscriptions ───────────────────────────
   useEffect(() => {
     if (!chatId) return;
 
-    // Join the room via the global persistent socket
     const joinEvent = isChannel ? 'join-team-channel' : 'join-chat';
     SocketManager.joinRoom(chatId, joinEvent, currentUserId);
 
-    // Request pinned messages immediately after joining to sync state
     SocketManager.emit(isChannel ? 'get-channel-pinned-messages' : 'get-pinned-messages', {
       chatId,
       channelId: chatId,
     });
 
-    // ── Mark as Read ─────────────────────────────────────────────────────────
     const markAllRead = (msgs: any[]) => {
       const allIds = msgs.map((m: any) => m._id?.toString()).filter(Boolean);
       if (allIds.length === 0) return;
@@ -209,23 +177,18 @@ export const useChatSession = (
           userId: currentUserId,
         });
       } else {
-        // PLURAL — the singular event takes a bare string and drops an object on the
-        // floor (CHAT-MOBILE-API.md §3.1).
         SocketManager.emit('mark-messages-seen', { chatId, messageIds: allIds });
         SocketManager.emit('mark-all-messages-as-read', { chatId, userId: currentUserId });
       }
     };
 
-    // Mark current messages as read
     markAllRead(messages);
 
-    // Track socket connection state
     const onConnect = () => setIsConnected(true);
     const onDisconnect = () => setIsConnected(false);
     const unsubConnect = SocketManager.on('connect', onConnect);
     const unsubDisconnect = SocketManager.on('disconnect', onDisconnect);
 
-    // ── New messages ─────────────────────────────────────────────────────────
     const handleNewMessage = (m: any) => {
       console.log('[Socket] handleNewMessage Raw Payload:', JSON.stringify(m, null, 2));
       const normalized = ChatService.normalizeMessage(m);
@@ -233,7 +196,6 @@ export const useChatSession = (
         console.log('[Socket] Incoming Voice Note Detected:', normalized);
       }
 
-      // Delay fetching secure URLs to ensure backend has finished processing the file
       setTimeout(() => {
         fetchSecureUrls([normalized]);
       }, 150);
@@ -255,7 +217,6 @@ export const useChatSession = (
           return prev;
         }
 
-        // Optimized replacement logic to avoid "double message" glitch
         const normFiles = (normalized as any).files || [];
 
         const optimisticIndex = prev.findIndex((msg) => {
@@ -264,7 +225,6 @@ export const useChatSession = (
             (typeof msg._id === 'string' && msg._id.startsWith('temp_'));
           if (!isPending) return false;
 
-          // Use string comparison for IDs to be safe
           const msgUserId = String(msg.user?._id || '');
           const normUserId = String(normalized.user?._id || '');
           const sameUser = msgUserId === normUserId;
@@ -276,8 +236,6 @@ export const useChatSession = (
           const sameText = msg.text === normalized.text && !!msg.text;
 
           const msgFiles = (msg as any).files || [];
-          // Match by filename (server preserves original filename through S3 upload)
-          // Fallback: same user + same file count + sent within 60s window
           const sameFiles =
             msgFiles.length > 0 &&
             normFiles.length > 0 &&
@@ -308,7 +266,6 @@ export const useChatSession = (
           updated[optimisticIndex] = {
             ...normalized,
             user: localMsg.user, // Inherit local "Me" identity
-            // Preserve local media URIs to prevent flicker
             image: localMsg.image || normalized.image,
             video: localMsg.video || normalized.video,
             voice: localMsg.voice || normalized.voice,
@@ -318,13 +275,6 @@ export const useChatSession = (
               return {
                 ...nf,
                 url: lf.url || nf.url, // Keep local file:// or content://
-                // Preserve the optimistic signed preview URL + appointment markers.
-                // Dynamic scoped-category ("<product> — <label>") inspection photos do
-                // NOT re-resolve via imageUrls[filePath] after the echo (em-dash/space
-                // S3 keys + often empty bucketName), so dropping previewUrl left the
-                // grid cell / single image with no working src → a perpetual spinner.
-                // previewUrl still points at the valid signed URL the optimistic bubble
-                // was already showing; isAppointmentPhoto keeps its grid classification.
                 previewUrl: nf.previewUrl || lf.previewUrl,
                 isAppointmentPhoto: nf.isAppointmentPhoto ?? lf.isAppointmentPhoto,
               };
@@ -333,7 +283,6 @@ export const useChatSession = (
           return updated;
         }
 
-        // If it's from "Me" but we didn't find an optimistic message, check ID mismatch
         const isFromMe = String(normalized.user?._id) === String(currentUserId);
         if (!isFromMe && normalized.text && prev.some(m => m.text === normalized.text && (!m.sent || m._id.toString().startsWith('temp_')))) {
           console.warn('[Socket] Possible duplicate detected but matching failed. ID mismatch?', {
@@ -345,7 +294,6 @@ export const useChatSession = (
         return [normalized, ...prev];
       });
 
-      // Mark seen
       if (isChannel) {
         SocketManager.emit('mark-channel-message-seen', {
           channelId: chatId,
@@ -363,7 +311,6 @@ export const useChatSession = (
     const unsubNewMsg = SocketManager.on('new-message', handleNewMessage);
     const unsubNewChanMsg = SocketManager.on('new-channel-message', handleNewMessage);
 
-    // ── Edits ────────────────────────────────────────────────────────────────
     const unsubEdited = SocketManager.on('message-edited', (m: any) => {
       const normalized = ChatService.normalizeMessage(m);
       const updater = (prev: any[]) =>
@@ -372,7 +319,6 @@ export const useChatSession = (
       setPinnedMessages(updater);
     });
 
-    // ── Reactions ────────────────────────────────────────────────────────────
     const handleReaction = (m: any) => {
       Vibration.vibrate(50);
       const msgId = (m.messageId || m.id || m.message?._id || m._id)?.toString();
@@ -386,14 +332,12 @@ export const useChatSession = (
     const unsubReactAdded = SocketManager.on('reaction-added', handleReaction);
     const unsubReactRemoved = SocketManager.on('reaction-removed', handleReaction);
 
-    // ── Delete ───────────────────────────────────────────────────────────────
     const unsubDeleted = SocketManager.on('message-deleted', (data: any) => {
       const deletedId = (data.messageId || data.id || data.message?._id || data._id)?.toString();
       setMessages((prev) => prev.filter((msg) => msg._id?.toString() !== deletedId));
       setPinnedMessages((prev) => prev.filter((msg) => (msg as any)._id?.toString() !== deletedId));
     });
 
-    // ── Pin / Unpin ──────────────────────────────────────────────────────────
     const unsubPinned = SocketManager.on('message-pinned', (data: any) => {
       Vibration.vibrate(50);
       const msgId = (data.messageId || data.id || data.message?._id || data._id)?.toString();
@@ -425,7 +369,6 @@ export const useChatSession = (
       setPinnedMessages((prev) => prev.filter((m: any) => m._id?.toString() !== msgId));
     });
 
-    // ── Pinned messages list (response to get-pinned-messages) ───────────────
     const unsubPinnedResponse = SocketManager.on('pinned-messages-response', (data: any) => {
       const pins = data?.pinnedMessages || (Array.isArray(data) ? data : []);
       const normalized = pins.map((m: any) => ChatService.normalizeMessage(m));
@@ -435,7 +378,6 @@ export const useChatSession = (
       setPinnedMessages(normalized);
     });
 
-    // ── Seen Updates ─────────────────────────────────────────────────────────
     const handleMessageSeen = (data: any) => {
       console.log('[Socket] message-seen/channel-message-seen received:', data);
       const { messageId, messageIds, seenBy } = data || {};
@@ -466,7 +408,6 @@ export const useChatSession = (
 
       setMessages((prev) =>
         prev.map((m) => {
-          // If the message is sent by Me, and it doesn't already have this user in seenBy
           const isFromMe = String(m.user?._id) === String(currentUserId);
           if (isFromMe) {
             const hasUser = ((m as any).seenBy || []).some((u: any) => String(u.userId || u.id) === String(userId));
@@ -489,7 +430,6 @@ export const useChatSession = (
     const unsubLeadRead = SocketManager.on('lead-chat-read', handleChatRead);
     const unsubAllRead = SocketManager.on('mark-as-read-response', handleChatRead);
 
-    // ── Typing ───────────────────────────────────────────────────────────────
     const handleTyping = (data: any) => {
       if (data.userId === currentUserId) return;
       if (data.isTyping) {
@@ -517,7 +457,6 @@ export const useChatSession = (
       // Leave the room but DO NOT disconnect the global socket
       SocketManager.leaveRoom(chatId);
 
-      // Unsubscribe all event handlers
       unsubConnect();
       unsubDisconnect();
       unsubNewMsg();

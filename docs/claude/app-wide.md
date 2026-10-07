@@ -589,3 +589,12 @@ Ticket: *job-builder field half hidden by the number pad.* The in-flow pad emits
 - `widgets/common/keyboard/NumPad/index.tsx`: new `NumPadTargetContext` + exported `useNumPadTarget()` (the field that owns the pad, `null` when down), provided in both the in-flow and pan branches next to `NumPadActiveContext`. The target's identity changes per field, so an effect keyed on it re-runs on every focus move.
 - `hooks/useNumPadScrollIntoView.ts` consumes it: after 260 ms it measures the focused input against the scroll view's window bottom and `scrollTo`s the shortfall + 64pt (24pt left the bordered field box touching the pad's top edge: the measured rect is the TextInput, and the box extends ~40pt below it - ⚠️ don't shrink the margin back). Offset is derived from a `collapsable={false}` content wrapper's window y, not `onScroll`.
 - ⚠️ Any form with numeric fields in a scroll view needs this hook; tuning `bottomOffset` does nothing for the pad. Wired so far into `DynamicTabRenderer` only; see the follow-up in `deal-center.md`. Not verified on device.
+
+### Comment cleanup (all of `src/` + root app files)
+
+Ticket: *long JSDoc / multi-line `//` blocks above every class, hook and block.* Removed ~15.8k comments across 556 files with a TypeScript-AST pass (not regex), so strings, template literals, JSX text and regexes were never touched.
+
+- Kept: lint / TS directives (`eslint-disable*`, `@ts-*`, `/// <reference>`), and a few single-line (<= 90 chars) comments that flag a trap (`⚠`, `do not`, `TODO`, `workaround`). Multi-line blocks are always dropped.
+- Verified: the comment-free emit (`transpileModule`, `removeComments`) of every file is byte-identical to HEAD; `tsc` reports the same 45 pre-existing errors (line numbers only shifted); jest is unchanged (the same 5 suites fail before and after); CRLF/LF endings are unchanged per file.
+- ⚠️ The "why" that used to live in code comments is now in `git log -p` / `git blame` (commit before this cleanup) and in the part files here. Re-explain a non-obvious rule in a part file, not as a comment block above the code.
+- Native code (`ios/`, `android/`) and `__tests__/` were not touched.

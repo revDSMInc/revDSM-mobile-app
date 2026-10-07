@@ -1,18 +1,3 @@
-/**
- * icon-color.ts — schema-driven icon + color resolution for the Dynamic Deal
- * Center, mirroring the web app.
- *
- * The backend schema stores `icon` as an **Iconify** string (e.g. `mdi:home`,
- * `solar:home-2-bold-duotone`, `mdi:leaf`) and `color` as either a hex value
- * (`#4CBB17`) or an MUI palette token (`primary`, `success.main`, `warning.dark`).
- * Web renders those directly via `<Icon icon={...}>` + `resolveSchemaColorValue`.
- *
- * React Native can't render Iconify names, so we translate them to the closest
- * `react-native-vector-icons/Ionicons` name and resolve palette tokens to hex —
- * keeping the icons/colors fully data-driven (not hard-coded per category name).
- */
-
-// MUI palette tokens → mobile theme hexes (mirrors the web deal-center palette).
 const PALETTE: Record<string, string> = {
   primary: '#4CBB17',
   secondary: '#8E33FF',
@@ -24,7 +9,6 @@ const PALETTE: Record<string, string> = {
   gray: '#637381',
 };
 
-/** Resolve a schema color (hex or MUI token like `warning.dark`) to a hex string. */
 export function resolveSchemaColor(color?: string, fallback = '#637381'): string {
   if (!color) return fallback;
   const trimmed = String(color).trim();
@@ -33,14 +17,10 @@ export function resolveSchemaColor(color?: string, fallback = '#637381'): string
   return PALETTE[base.toLowerCase()] || (base.startsWith('#') ? base : fallback);
 }
 
-/** 10%-alpha background derived from a resolved hex color (soft chip/avatar bg). */
 export function softBg(hexColor: string): string {
   return /^#[0-9a-fA-F]{6}$/.test(hexColor) ? `${hexColor}1A` : '#F4F6F8';
 }
 
-// Keyword → Ionicons name. We normalize the Iconify string (drop the `mdi:` /
-// `solar:` prefix and cosmetic suffixes) then match on a contained keyword, so
-// `solar:home-2-bold-duotone`, `mdi:home`, `mdi:home-outline` all map to `home`.
 const KEYWORD_ICONS: Array<[string, string]> = [
   ['home', 'home'],
   ['house', 'home'],
@@ -84,7 +64,6 @@ const KEYWORD_ICONS: Array<[string, string]> = [
   ['paint', 'color-palette'],
 ];
 
-/** Translate an Iconify string (or bare name) to the closest Ionicons name. */
 export function iconifyToIonicons(icon?: string, fallback = 'pricetag'): string {
   if (!icon) return fallback;
   const raw = String(icon).toLowerCase();
@@ -99,11 +78,6 @@ export function iconifyToIonicons(icon?: string, fallback = 'pricetag'): string 
 
 export type SchemaStyle = { color: string; icon: string; bg: string };
 
-/**
- * Resolve a schema entity's `{ icon, color }` (category or vertical/product) to
- * a mobile `{ color, icon, bg }` style. Falls back to a provided name-based
- * style only when the schema supplies neither icon nor color.
- */
 export function resolveSchemaStyle(
   entity: { icon?: string; color?: string } | undefined,
   fallback?: Partial<SchemaStyle>
@@ -114,11 +88,6 @@ export function resolveSchemaStyle(
   return { color, icon, bg };
 }
 
-/**
- * Name-based category palette — the fallback look used across the dynamic flow
- * (calculator cards, rollout pills, Job Summary rows) when the schema supplies no
- * icon/color. Keys are matched case-insensitively against a category name/label.
- */
 export const CATEGORY_STYLE_MAP: Record<string, SchemaStyle> = {
   gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
   gutter: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
@@ -133,7 +102,6 @@ export const CATEGORY_STYLE_MAP: Record<string, SchemaStyle> = {
   miscellaneous: { color: '#637381', icon: 'ellipsis-horizontal-circle', bg: '#F4F6F8' },
 };
 
-/** Name-based fallback style for a category id/name (schema-less path). */
 export function styleForKey(name: string, color?: string): SchemaStyle {
   const found = CATEGORY_STYLE_MAP[(name || '').toLowerCase()];
   if (found) return found;
@@ -141,12 +109,6 @@ export function styleForKey(name: string, color?: string): SchemaStyle {
   return { color: c, icon: 'pricetag', bg: color ? `${c}1A` : '#F4F6F8' };
 }
 
-/**
- * Build a `categoryId → { label, style }` map across every vertical's categories,
- * resolving icon/color from the schema (Iconify → Ionicons) with the name-based
- * palette as fallback. Shared by the rollout quote card and the Result Lead Job
- * Summary so category pills + item-row icons are consistent everywhere.
- */
 export function buildCategoryMeta(
   verticals: Array<{ categories?: Array<{ id: string; label?: string; name?: string; icon?: string; color?: string }> }> | undefined,
 ): Record<string, { label: string; style: SchemaStyle }> {

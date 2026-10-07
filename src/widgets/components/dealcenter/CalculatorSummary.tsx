@@ -146,19 +146,14 @@ export const CalculatorSummary = ({
   const { colors, isDark } = useTheme();
   const { user, refreshUser } = useAuth();
   const isLowesLead = lead?.lowesLead === true;
-  // Web `QuoteResultCard.js:103`. See `Lead.isRehashed`.
   const isRehashed = lead?.isRehashed === true;
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
-  // Derived from user preference — mirrors web's useEffect logic:
-  // isDefaultPayment = (user.defaultPaymentMethod === activeCalc.inputs.paymentPlan)
   const isDefaultPayment =
     !!user?.defaultPaymentMethod &&
     user.defaultPaymentMethod === activeCalc.inputs?.paymentPlan;
 
-  // Derived from user preference — mirrors web's useEffect logic:
-  // isDefaultDiscount = (user.defaultPercentage === calculator.discountPercentage)
   const isDefaultDiscount =
     !!user?.defaultPercentage &&
     user.defaultPercentage === activeCalc.inputs?.discountPercentage;
@@ -206,8 +201,6 @@ export const CalculatorSummary = ({
     const currentPrice = rolloutEndPrice;
     const isConfirmedWithPrice = !!activeCalc.isRolloutConfirmed && currentPrice > 0;
 
-    // Web parity: these are non-blocking warning toasts (enqueueSnackbar), not a
-    // native Alert dialog — so the rep isn't interrupted by an OK-to-dismiss popup.
     if (WELLS_FARGO_HIGH_KEYS.includes(method) && currentPrice > 0 && currentPrice < WF_HIGH_MIN_PRICE) {
       FlashMessage.warning(
         `Payment plan changed - this Wells Fargo plan requires a minimum end price of $${WF_HIGH_MIN_PRICE.toLocaleString()}. Please update the end price.`
@@ -403,23 +396,17 @@ export const CalculatorSummary = ({
   const screensCount = Number(activeCalc.inputs.ckToInstallers) || 0;
   const endPrice = Number(activeCalc.price) || 0;
 
-  // Source of truth: jobBuilderState is freshly fetched from the API via useDealOutcome,
-  // matching the actual lead payload: lead.jobBuilder.status === 'submitted' && lead.jobBuilder.calculatorId
-  // We prioritize the API-fetched jobBuilderState to avoid stale data from the lead object.
   const resultedCalculatorId = jobBuilderState?.calculatorId || lead?.jobBuilder?.calculatorId;
   const isJobBuilderSubmitted =
     (jobBuilderState?.status === 'submitted' || lead?.jobBuilder?.status === 'submitted') &&
     !!resultedCalculatorId &&
     String(activeCalc?._id) === String(resultedCalculatorId);
 
-  // Job was submitted from a DIFFERENT calculator — this tab should be dimmed & non-interactive
   const isJobSubmittedOnOtherCalc =
     (jobBuilderState?.status === 'submitted' || lead?.jobBuilder?.status === 'submitted') &&
     !!resultedCalculatorId &&
     String(activeCalc?._id) !== String(resultedCalculatorId);
 
-  // If endPrice is 0, use results.total (Retail) as the base.
-  // Note: results.total already includes screens, so we don't add them again in the fallback case.
   const activeDrop = droppedPrices.length > 0 ? droppedPrices[droppedPrices.length - 1] : null;
   const acceptedDrop = droppedPrices.find((d: any) => d.secured);
   // Always show the original rollout end price — dropouts do NOT change this value
@@ -433,14 +420,11 @@ export const CalculatorSummary = ({
   const oneYearGrandTotal = msrp - srVetDiscount;
   const preOrderGrandTotal = msrp - srVetDiscount - preOrderDiscountVal;
 
-  // Deferred Financing Scenarios (web parity: calculation-utils.js calculateQuote +
-  // summary/DeferredScenarios.js). Only surfaced for a deferred-interest financing plan.
   const deferredInfo = useMemo(() => {
     const plan: any = paymentPlans[activeCalc?.inputs?.paymentPlan];
     if (!plan || plan.type !== 'financing' || !plan.deferredMonths || plan.deferredMonths <= 0) {
       return { show: false, scenarios: null as any };
     }
-    // Financed base = the after-discounts In-Home Pre-Order grand total shown above.
     const afterDiscounts = preOrderGrandTotal;
     const loanPrincipal = afterDiscounts * (1 + (plan.pf || 0));
     const monthlyRateAfterDeferred = (plan.aprAfterDeferred || 0) / 12;
@@ -722,10 +706,8 @@ export const CalculatorSummary = ({
                     <TouchableOpacity
                       onPress={async () => {
                         const nextVal = !isDefaultPayment;
-                        // Update the calculator-level flag locally
                         updateActive({ isDefaultPayment: nextVal });
                         handleSave();
-                        // Mirror web: persist to user preference API and refresh user profile
                         try {
                           await SettingsService.updateCalculatorsSetting({
                             defaultPaymentMethod: nextVal ? activeCalc.inputs.paymentPlan : null,
@@ -1890,11 +1872,9 @@ export const CalculatorSummary = ({
         {(() => {
           const isDisplayMode = displayDropIndex !== -1;
           const isVisible = showDropModal || isDisplayMode;
-          // Web parity: use local droppedPrices for display mode, dropValue for new entry
           const currentDropPrice = isDisplayMode
             ? (droppedPrices[displayDropIndex]?.price || 0)
             : (Number(dropValue) || 0);
-          // Unified down payment: both modes now use the same `downPayment` state
           const currentDownPayment = downPayment;
           const currentShowDownPaymentInput = displayShowDownPaymentInput || showDownPaymentInput;
 
@@ -1931,11 +1911,9 @@ export const CalculatorSummary = ({
               return;
             }
 
-            // Close drop modal immediately and show declined modal right away
             if (showDropModal) setShowDropModal(false);
             if (displayDropIndex !== -1) { setDisplayDrop(null); setDisplayDropIndex(-1); }
             setDeclinedPrice(price);
-            // Run the async save in the background
             if (isDisplayMode) {
               handleDisplayDropAction('declined').catch((e) => console.warn('handleDisplayDropAction decline error', e));
             } else {
@@ -1964,11 +1942,9 @@ export const CalculatorSummary = ({
               return;
             }
 
-            // Close drop modal immediately and show result modal right away
             if (showDropModal) setShowDropModal(false);
             if (displayDropIndex !== -1) { setDisplayDrop(null); setDisplayDropIndex(-1); }
             setShowResultModal(true);
-            // Run the async save in the background
             if (isDisplayMode) {
               handleDisplayDropAction('accepted').catch((e) => console.warn('handleDisplayDropAction accept error', e));
             } else {
@@ -2199,7 +2175,6 @@ export const CalculatorSummary = ({
                               renderRightActions={renderRightActions}
                               rightThreshold={40}
                               onSwipeableWillOpen={() => {
-                                // We can use a slight delay if we want, or rely on exiting animation
                                 const newPlans = addedPlans.filter((k) => k !== planKey);
                                 setAddedPlans(newPlans);
                                 if (selectedPlan === planKey) {

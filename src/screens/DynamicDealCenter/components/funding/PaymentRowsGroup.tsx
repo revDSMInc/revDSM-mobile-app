@@ -20,86 +20,26 @@ import {
   type PaymentRow,
 } from '../../utils/funding';
 
-/**
- * The **Down Payment** / **Balance** groups on the pricing screen.
- *
- * A sale is no longer one method per half of the contract — the rep can split
- * either half across as many instruments as the homeowner needs. Each line is an
- * amount against a payment method, and the Balance group carries one **auto** row
- * that always holds whatever is left of the contract price, so the two halves can
- * never silently stop adding up to the deal.
- *
- * A row that a lender has already answered is a **fact, not an input**: it locks,
- * shows the approved amount, and is stamped with what the lender said. Its money is
- * settled and re-typing it would misstate what was agreed to.
- *
- * ── two layouts, one component ──────────────────────────────────────────────
- * `panel` (default) is the Result Lead sheet's recessed treatment: a bordered
- * panel with its title notched out of `FUND.PANEL`. `plain` is the My Deals
- * mockup's: a bold heading over free-standing lines, a bordered **Remove** button
- * instead of an ✕, and — the substantive difference — a **lender chip** in place of
- * the method dropdown once a row has a lender position, carrying the status in
- * words and a **Swap** button.
- *
- * ⚠️ The layouts are a prop rather than two components because everything that can
- * be got WRONG here — the auto row's arithmetic, the below-minimum gate, when a row
- * may be removed, what the chip is allowed to claim — is shared. Forking would give
- * two screens two different answers to those, which is precisely the class of bug
- * this module keeps hitting.
- */
-
 interface Props {
   title: string;
-  /**
-   * Running total for the heading (`Down Payment · $2,500`).
-   *
-   * ⚠️ Worth the prop rather than being derived here: once a half of the contract
-   * is several lines, "does this add up to what we agreed" is no longer answerable
-   * by reading one field, and the auto row hides the arithmetic by design.
-   */
   total?: number;
-  /** Only this group's rows, in display order. */
   rows: PaymentRow[];
-  /** All rows across both groups — the auto amount is a whole-contract calculation. */
   allRows: PaymentRow[];
   price: number;
   plans: Record<string, DealPlan>;
-  /** Flat option list (Down Payment: cash/card only — financing carries a balance, not a deposit). */
   options?: { label: string; value: string }[];
-  /** Grouped option list (Balance: the full provider-grouped catalog). */
   categories?: PayCategory[];
-  /** The row the rep must fill to close a gap a lender decision opened. */
   needsRowId?: string | null;
-  /**
-   * Can the rep add/remove payment lines? See `MULTI_METHOD_ENABLED` — on today.
-   * Gates the remove control as well as Add: with Add disabled, a removed row could
-   * not be brought back.
-   */
   canAdd?: boolean;
-  /** `panel` = the Result Lead sheet. `plain` = the My Deals mockup. */
   layout?: 'panel' | 'plain';
   onChangeAmount: (id: string, text: string) => void;
   onChangeMethod: (id: string, key: string) => void;
   onRemove: (id: string) => void;
   onAdd: () => void;
-  /**
-   * Bring an archived plan back onto a row (`POST …/restore`).
-   *
-   * ⚠️ Symmetric on the server — whatever is current goes onto the shelf in
-   * exchange — so the shelf is never empty after a restore and the action can be
-   * undone the same way. Omit it and the archived block renders read-only.
-   */
   onRestore?: (id: string, archivedId: string) => void;
-  /**
-   * Rendered inside the group, below Add — the Upfront group puts its
-   * `CoverageBar` and its "no balance to finance" note here. A slot rather than
-   * two more props, so a caller can put anything under its own rows without this
-   * component learning what upfront means.
-   */
   footer?: React.ReactNode;
 }
 
-/** Panel layout's compact verdict, inside the disabled select. */
 function StatusPill({ decision }: { decision: 'full' | 'short' | 'declined' }) {
   const declined = decision === 'declined';
   return (
@@ -111,11 +51,6 @@ function StatusPill({ decision }: { decision: 'full' | 'short' | 'declined' }) {
   );
 }
 
-/**
- * The mockup's lender chip palette. Four states, and the neutral one matters as
- * much as the others: a plan nobody has answered for yet must NOT borrow the green
- * of one that was approved.
- */
 const CHIP: Record<LenderTone, { border: string; bg: string; name: string; sub: string; dot: string }> = {
   neutral: { border: '#E5E7EB', bg: '#F9FAFB', name: '#111827', sub: '#6B7280', dot: '#D1D5DB' },
   pending: { border: '#FDE68A', bg: '#FFFBEB', name: '#92400E', sub: '#B45309', dot: '#F59E0B' },
@@ -142,26 +77,15 @@ export function PaymentRowsGroup({
   onRestore,
   footer,
 }: Props) {
-  /**
-   * ⚠️ Reactive, not a one-shot `isOnline()` read. The signal can drop while the
-   * sheet is open — a rep walks from the kitchen table to the driveway — and a
-   * snapshot taken at mount would leave the card rows looking pickable.
-   */
   const online = useIsOnline();
   const [openRowId, setOpenRowId] = useState<string | null>(null);
-  /**
-   * Which locked row is currently explaining itself. One at a time — two notes open at
-   * once on a three-line split would push the Confirm gate off the screen.
-   */
   const [lockedNoteId, setLockedNoteId] = useState<string | null>(null);
-  /** Tapping the same locked row again dismisses it; tapping another moves the note. */
   const openLockedNote = (pid: string) => {
     setOpenRowId(null);
     setLockedNoteId((cur) => (cur === pid ? null : pid));
   };
   const plain = layout === 'plain';
 
-  /** The provider-grouped / flat option list, shared by the select and by Swap. */
   const renderOptions = (row: PaymentRow, amount: number) => (
     <View
       style={
@@ -172,15 +96,11 @@ export function PaymentRowsGroup({
     >
       {options?.map((o) => {
         const isSel = o.value === row.method;
-        // Cards cannot be collected with no signal — see `planBlockedOffline`.
         const offBlocked = planBlockedOffline(plans, o.value, online);
         return (
           <TouchableOpacity
             key={o.value}
             onPress={() => {
-              // ⚠️ Still TAPPABLE, explaining itself — not `disabled`. A dead row
-              // with no reason reads as a broken app, and the rep is standing in
-              // front of a customer deciding how to pay.
               if (offBlocked) {
                 FlashMessage.warning('Needs a connection', blockedOfflineMsg(plans, o.value));
                 return;
@@ -213,11 +133,8 @@ export function PaymentRowsGroup({
           {cat.plans.map((key) => {
             const plan = plans[key];
             if (!plan) return null;
-            // Gate against THIS line's amount: a plan's minimum applies to the money
-            // it actually carries, not to the whole contract.
             const gateAt = amount > 0 ? amount : price;
             const belowMin = planBelowMin(plans, key, gateAt);
-            // Card and lender rows both need the server to mint their link.
             const offBlocked = planBlockedOffline(plans, key, online);
             const dimmed = belowMin || offBlocked;
             const isSel = key === row.method;
@@ -225,9 +142,6 @@ export function PaymentRowsGroup({
               <TouchableOpacity
                 key={key}
                 onPress={() => {
-                  // ⚠️ Offline is checked FIRST. A plan can be both below its
-                  // minimum and unavailable offline, and "raise the price" is
-                  // useless advice when the method could not be used at any price.
                   if (offBlocked) {
                     FlashMessage.warning('Needs a connection', blockedOfflineMsg(plans, key));
                     return;
@@ -263,13 +177,6 @@ export function PaymentRowsGroup({
   );
 
   const body = rows.map((row, rowIndex) => {
-    // ⚠️ SETTLED, not merely "a lender answered". `decision` exists only on financing
-    // rows, so this used to leave a CHARGED down payment card — or a collected check —
-    // fully editable: Remove and Swap were both offered on money already with the
-    // processor, and a swap resets the row server-side. See `isSettledRow`.
-    // ⚠️ The METHOD lock is narrower than "settled": a lender decision alone leaves the
-    // financing plan swappable (see `isMethodLockedRow`). The AMOUNT of a decided row
-    // stays read-only — it is the lender's figure.
     const locked = isMethodLockedRow(row);
     const settled = isSettledRow(row);
     const needs = row.pid === needsRowId;
@@ -278,18 +185,9 @@ export function PaymentRowsGroup({
     const isOpen = openRowId === row.pid;
     const readOnlyAmount = settled || !!row.auto;
 
-    // The auto row can only be dismissed once it has nothing left to hold; removing it
-    // while money is unassigned would hide the shortfall. `isRemovableRow` adds the
-    // server's own rule on top — it 409s a row with a sent link or a decision.
     const removable = canAdd && isRemovableRow(row) && (!row.auto || amount === 0);
 
-    // The mockup's own split: the REMAINDER row draws the chip (`autoRowHtml`),
-    // every other line draws a dropdown (`simpleRowHtml`). A decided row joins it
-    // wherever it sits — a lender's verdict does not belong behind a chevron.
-    // See `showsChip`; gating this on lender state alone is what dropped Swap.
     const chip = plain && showsChip(row);
-    // A financing line nobody has applied for yet is genuinely outstanding, where a
-    // check the install crew collects is not — see `lenderState`.
     const lender = chip ? lenderState(row, plans[row.method]?.type === 'financing') : null;
     const tone = lender ? CHIP[lender.tone] : CHIP.neutral;
     const drift = driftNote(row);
@@ -298,7 +196,6 @@ export function PaymentRowsGroup({
     const fieldBorder = needs ? FUND.AMBER : FUND.BORDER;
     const fieldBg = needs ? FUND.AMBER_BG : locked || row.auto ? FUND.FILL : '#fff';
 
-    // ── amount ───────────────────────────────────────────────────────────────
     const amountCell = (
       <>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -330,14 +227,7 @@ export function PaymentRowsGroup({
       </>
     );
 
-    // ── method ───────────────────────────────────────────────────────────────
     const methodCell = chip ? (
-      /**
-       * ⚠️ The CHIP takes the tap once the row is locked, because **Swap is hidden
-       * then** — so without this a settled line in the `plain` layout has no method
-       * control at all to press, and no way to ask why. `disabled` while unlocked, so
-       * an ordinary chip row behaves exactly as the plain `View` it replaced.
-       */
       <TouchableOpacity
         activeOpacity={locked ? 0.8 : 1}
         disabled={!locked}
@@ -370,13 +260,6 @@ export function PaymentRowsGroup({
     ) : (
       <TouchableOpacity
         activeOpacity={0.8}
-        /**
-         * ⚠️ **Deliberately NOT `disabled` any more.** A disabled control swallows the
-         * tap silently, so a rep who had collected a cheque and tried to change its
-         * method got no response at all and no reason — which is what was reported.
-         * It stays pressable so the press can EXPLAIN itself; `openLockedNote` never
-         * opens the catalogue.
-         */
         onPress={() => (locked ? openLockedNote(row.pid) : setOpenRowId(isOpen ? null : row.pid))}
         style={
           plain
@@ -390,17 +273,6 @@ export function PaymentRowsGroup({
         {row.decision && !plain ? (
           <StatusPill decision={row.decision} />
         ) : locked ? (
-          /**
-           * ⚠️ A LOCK, never a chevron. `disabled={locked}` already makes the control
-           * inert, but a chevron-down on a dead control reads as a dropdown that is
-           * simply refusing to open — which is exactly what a rep reported after
-           * collecting a cheque and trying to change its method.
-           *
-           * This is the `panel` layout's problem specifically: `chip` is
-           * `plain && showsChip(row)`, so on the Result Lead sheet EVERY row takes the
-           * dropdown branch, settled or not. In `plain` a settled row already draws the
-           * chip ("Collected" / "Charged") and never reaches here.
-           */
           <Ionicons name="lock-closed" size={13} color={FUND.MUTED} />
         ) : (
           <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={15} color={FUND.MUTED} />
@@ -408,7 +280,6 @@ export function PaymentRowsGroup({
       </TouchableOpacity>
     );
 
-    // ── archived shelf ───────────────────────────────────────────────────────
     const archivedBlock = archived.length > 0 && (
       <View style={{ marginTop: 8, marginBottom: 8, borderWidth: 1.5, borderStyle: 'dashed', borderColor: FUND.BORDER, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#FAFAFA' }}>
         <Text style={{ fontSize: FS.TINY, fontFamily: PS.extrabold, letterSpacing: 0.4, color: '#9CA3AF', marginBottom: 8 }}>ARCHIVED METHODS</Text>
@@ -431,9 +302,6 @@ export function PaymentRowsGroup({
             {!!onRestore && (
               <TouchableOpacity
                 onPress={() => onRestore(row.pid, a.archivedId)}
-                // `flexShrink: 0` — the plan name truncates before the button does.
-                // Restore is the only way back to an archived plan, so it is the last
-                // thing on the row that may be squeezed.
                 style={{ flexShrink: 0, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#EFF4FF' }}
               >
                 <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, color: '#2563EB' }}>Restore</Text>
@@ -444,16 +312,6 @@ export function PaymentRowsGroup({
       </View>
     );
 
-    /**
-     * Why this line is shut, shown where the rep tapped.
-     *
-     * ⚠️ **In flow, not a FlashMessage.** The Result Lead sheet is a native `<Modal>`
-     * and the app's only `<FlashMessage />` is mounted at the App root (`App.tsx`), so
-     * a banner raised from in here renders BEHIND the sheet — which is why every other
-     * native modal in this repo mounts its own `<RNFlashMessage>` instance. An in-flow
-     * note has no z-order to get wrong, and it lands under the control that was tapped
-     * rather than at the top of the screen.
-     */
     const lockedNote = lockedNoteId === row.pid && locked && (
       <View
         style={{
@@ -477,7 +335,6 @@ export function PaymentRowsGroup({
       </View>
     );
 
-    // ── the line ─────────────────────────────────────────────────────────────
     if (plain) {
       return (
         <View key={row.pid}>
@@ -514,9 +371,6 @@ export function PaymentRowsGroup({
       );
     }
 
-    // ⚠️ PANEL layout: every payment is its OWN card with the amount and the method in
-    // SEPARATE full-width boxes. They used to share one line, which truncated both
-    // ("$2,8…", "Check (Bank F…") and made several payments read as one.
     const fieldLabel = { fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT, marginBottom: 5 } as const;
     return (
       <View

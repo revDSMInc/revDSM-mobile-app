@@ -29,11 +29,6 @@ const YEARS = [2026, 2025, 2024];
 
 const money = (n: unknown) => `$${(Number(n) || 0).toLocaleString()}`;
 
-/**
- * The Overview table, one entry per column. The header and every row read the SAME `width`, so
- * they cannot drift (the old copy-pasted JSX had w-24 / w-28 mixed, which wrapped "Net Comm. per
- * Job" into its neighbour at larger font scales). All cells are centred.
- */
 const OVERVIEW_COLUMNS: { key: string; label: string; width: number; format: (r: any) => string }[] = [
   { key: 'month', label: 'Month ', width: 112, format: () => '' },
   { key: 'netSales', label: 'Net Sales', width: 112, format: (r) => money(r.netSales) },
@@ -133,11 +128,9 @@ export default function JobTrackerPage() {
   const formatPaymentMethod = (paymentMethod: string) => {
     if (!paymentMethod) return 'N/A';
 
-    // Check if it's in paymentPlans
     const plan = paymentPlans[paymentMethod];
     if (!plan) return paymentMethod;
 
-    // Basic Options
     const basicKeys = ['check', 'mcVisaDscvr', 'amex', 'lowes_ach', 'lowes_cc'];
     if (basicKeys.includes(paymentMethod)) {
       return plan.label;
@@ -151,7 +144,6 @@ export default function JobTrackerPage() {
       return plan.shortlabel;
     }
 
-    // Financing Plans (GreenSky / Wells Fargo)
     let planName = '';
     if (paymentMethod.startsWith('greensky')) planName = 'GreenSky';
     else if (paymentMethod.startsWith('wf')) planName = 'Wells Fargo';
@@ -208,17 +200,6 @@ export default function JobTrackerPage() {
 
   const online = useIsOnline();
 
-  /**
-   * Every Job Tracker WRITE goes through here.
-   *
-   * ⚠️ There is no offline path for these and there should not be one invented in passing: the
-   * tracker's rows are the office's record of a job's money, and a queued edit that lands hours
-   * later — over whatever the office has since changed — is worse than an edit that waited.
-   *
-   * What this replaces is the silent version. `JobService.updateStatus` failing offline showed
-   * "Failed to update status" (a fault the rep would retry), and the two modals opened, took a
-   * full form, and threw it away on Save.
-   */
   const blockedOffline = (): boolean => {
     const notice = offlineBlockFor('job-tracker-write', online);
     if (!notice) return false;
@@ -284,9 +265,6 @@ export default function JobTrackerPage() {
                 width: 32,
                 height: 32,
                 borderWidth: 1,
-                // Was a hardcoded `rgba(0,0,0,0.06)`, which is all but invisible on a
-                // dark background. `colors.border` is what the Profile header uses and
-                // is theme-aware.
                 borderColor: colors.border,
                 borderRadius: 8,
               }}

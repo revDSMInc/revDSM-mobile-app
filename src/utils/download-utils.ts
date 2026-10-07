@@ -2,10 +2,6 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 import { Platform, Share } from 'react-native';
 import { FlashMessage } from '../config/message';
 
-/**
- * Standard utility to download a PDF file to the device's Downloads folder
- * and optionally notify the system media scanner (Android) or open (iOS).
- */
 export const downloadPdfToDevice = async (uri: string, title?: string, showToast = true) => {
   if (!uri) return;
   try {
@@ -14,7 +10,6 @@ export const downloadPdfToDevice = async (uri: string, title?: string, showToast
     }
     const { dirs } = ReactNativeBlobUtil.fs;
     
-    // Clean file name keeping spaces
     const urlHash = uri.split('?')[0].split('/').pop() || `doc_${Date.now()}`;
     const safeName = urlHash.endsWith('.pdf') ? urlHash : `${urlHash}.pdf`;
     
@@ -25,7 +20,6 @@ export const downloadPdfToDevice = async (uri: string, title?: string, showToast
     const baseDir = Platform.OS === 'ios' ? dirs.DocumentDir : dirs.DownloadDir;
     const publicPath = `${baseDir}/${finalFileName}`;
 
-    // 1. Handle Local vs Remote files
     if (uri.startsWith('file://') || uri.startsWith('/')) {
       const cleanSourcePath = uri.replace('file://', '');
       
@@ -40,7 +34,6 @@ export const downloadPdfToDevice = async (uri: string, title?: string, showToast
           cleanSourcePath
         );
       } else {
-        // Remove existing file to prevent cp error
         const exists = await ReactNativeBlobUtil.fs.exists(publicPath);
         if (exists) {
           await ReactNativeBlobUtil.fs.unlink(publicPath);
@@ -53,7 +46,6 @@ export const downloadPdfToDevice = async (uri: string, title?: string, showToast
         });
       }
     } else {
-      // Remote URL - Use DownloadManager for Android
       if (Platform.OS === 'android') {
         await ReactNativeBlobUtil.config({
           addAndroidDownloads: {

@@ -1,19 +1,3 @@
-/**
- * SocketManager — Global persistent socket connection
- *
- * Architecture:
- *  - ONE socket per authenticated session, shared across ALL screens.
- *  - Connects on login, disconnects on logout.
- *  - ChatDetail joins/leaves "rooms" but never owns the socket.
- *  - AppState changes trigger reconnect without tearing down the socket.
- *
- * Why this matters for mobile:
- *  - Before: socket was created in useChatSession (per-screen). When user left
- *    ChatDetail, the socket was DESTROYED. On re-entry it had to reconnect from
- *    scratch — this window is where pin/react would fail.
- *  - Now: socket lives as long as the user is logged in.
- */
-
 import { io, Socket } from 'socket.io-client';
 import { AppState, AppStateStatus } from 'react-native';
 import { ENV } from '../config/env';
@@ -26,32 +10,14 @@ class SocketManager {
   private socket: Socket | null = null;
   private token: string | null = null;
 
-  // Track which rooms we've joined so we can re-join on reconnect
   private joinedRooms: Map<string, RoomEvent> = new Map();
 
-  /**
-   * The lead whose on-site watch room this session is in, if any.
-   *
-   * ⚠️ Tracked SEPARATELY from `joinedRooms` because that map is chat-shaped — its
-   * re-join path also asks for pinned messages, which is meaningless here.
-   *
-   * It has to be tracked at all for the same reason chat rooms are: a room lives on the
-   * SERVER's socket, so every reconnect starts with none. Before this the join was a
-   * bare `emit`, so the first dropped connection — a tunnel, a backgrounded app, an
-   * idle timeout — silently took the rep off the ops board's live list while they were
-   * still standing in the customer's house, and nothing ever put them back.
-   */
   private onsiteLeadId: string | null = null;
 
-  // Pending queue: emits that arrived while socket was reconnecting
   private pendingQueue: Array<{ event: string; payload?: any }> = [];
 
-  // AppState subscription
   private appStateSub: any = null;
 
-  // ─── Lifecycle ─────────────────────────────────────────────────────────────
-
-  /** Call on user login — starts the persistent connection */
   connect(token: string): void {
     if (this.socket?.connected && this.token === token) {
       console.log('[SocketManager] Already connected, skipping');
@@ -81,28 +47,22 @@ class SocketManager {
 
     this.socket.on('connect', () => {
       console.log('[SocketManager] Connected ✓', this.socket?.id);
-      // Re-join every room we were in before the reconnect
       this.rejoinAllRooms();
       this.rejoinLeadOnsiteWatch();
-      // Flush any emits that were queued during the reconnect window
       this.flushPendingQueue();
     });
 
     this.socket.on('disconnect', (reason) => {
       console.warn('[SocketManager] Disconnected:', reason);
-      // socket.io auto-reconnects for all reasons except 'io client disconnect'
-      // which is triggered by our own socket.disconnect() call
     });
 
     this.socket.on('connect_error', (err) => {
       console.warn('[SocketManager] Connection error:', err.message);
     });
 
-    // Watch AppState so we can reconnect when app comes to foreground
     this.startAppStateWatcher();
   }
 
-  /** Call on user logout — tears down everything */
   disconnect(): void {
     console.log('[SocketManager] Disconnecting (logout)');
     this.stopAppStateWatcher();
@@ -118,16 +78,11 @@ class SocketManager {
     }
   }
 
-  // ─── Room management ───────────────────────────────────────────────────────
-
-  /** Join a chat or channel room. Called by useChatSession on mount. */
   joinRoom(roomId: string, event: RoomEvent = 'join-chat', userId?: string): void {
-    // Always track room so it gets re-joined on reconnect
     this.joinedRooms.set(roomId, event);
 
     if (!this.socket?.connected) {
       console.log('[SocketManager] Socket not ready, room queued:', roomId);
-      // If socket exists but temporarily disconnected, trigger reconnect
       if (this.socket && !this.socket.connected) {
         this.socket.connect();
       }
@@ -142,7 +97,6 @@ class SocketManager {
       }
     });
 
-    // Fallback if server doesn't send ack
     setTimeout(() => {
       if (this.socket?.connected) {
         this.socket.emit('get-pinned-messages', roomId);
@@ -150,25 +104,11 @@ class SocketManager {
     }, 800);
   }
 
-  /**
-   * Leave a chat room. Called by useChatSession on unmount.
-   * NOTE: We do NOT disconnect the socket — it stays alive for the session.
-   */
   leaveRoom(roomId: string): void {
     this.joinedRooms.delete(roomId);
-    // The server does support this and takes a plain string (CHAT-MOBILE-API.md §3.1).
-    // Without it the socket stays in the room after the screen closes and keeps
-    // receiving every `new-message` for a chat nobody is looking at.
     this.socket?.emit('leave-chat', roomId);
   }
 
-  /**
-   * Announce the rep is on site for this lead — the room the ops board reads to show
-   * them LIVE. Paired with `leaveLeadOnsiteWatch` on the session pause.
-   *
-   * Unlike a bare emit this REMEMBERS the lead, so the join is re-sent on every
-   * reconnect for as long as the session lasts.
-   */
   joinLeadOnsiteWatch(leadId: string): void {
     if (!leadId) return;
     this.onsiteLeadId = leadId;
@@ -176,7 +116,6 @@ class SocketManager {
     this.emit('join-lead-onsite-watch', leadId);
   }
 
-  /** Stop watching — the rep left the lead. */
   leaveLeadOnsiteWatch(leadId: string): void {
     if (!leadId) return;
     if (this.onsiteLeadId === leadId) this.onsiteLeadId = null;
@@ -184,39 +123,30 @@ class SocketManager {
     this.emit('leave-lead-onsite-watch', leadId);
   }
 
-  // ─── Event emitters ────────────────────────────────────────────────────────
-
-  /** Emit an event. Queues if temporarily disconnected (e.g., brief network blip). */
   emit(event: string, payload?: any): void {
     if (this.socket?.connected) {
       this.socket.emit(event, payload);
     } else {
       console.warn(`[SocketManager] Not connected – queuing "${event}"`);
       this.pendingQueue.push({ event, payload });
-      // Kick off reconnect if socket exists but is disconnected
       if (this.socket && !this.socket.connected) {
         this.socket.connect();
       }
     }
   }
 
-  /** Subscribe to a socket event. Returns an unsubscribe function. */
   on(event: string, handler: (...args: any[]) => void): () => void {
     this.socket?.on(event, handler);
     return () => this.socket?.off(event, handler);
   }
 
-  /** Subscribe to a socket event only once. */
   once(event: string, handler: (...args: any[]) => void): void {
     this.socket?.once(event, handler);
   }
 
-  /** Remove a specific event handler. */
   off(event: string, handler: (...args: any[]) => void): void {
     this.socket?.off(event, handler);
   }
-
-  // ─── Accessors ─────────────────────────────────────────────────────────────
 
   getSocket(): Socket | null {
     return this.socket;
@@ -229,8 +159,6 @@ class SocketManager {
   get connected(): boolean {
     return this.isConnected();
   }
-
-  // ─── Private helpers ───────────────────────────────────────────────────────
 
   private rejoinAllRooms(): void {
     if (this.joinedRooms.size === 0) return;
@@ -280,5 +208,4 @@ class SocketManager {
   }
 }
 
-// Singleton — one socket for the entire app session
 export default new SocketManager();

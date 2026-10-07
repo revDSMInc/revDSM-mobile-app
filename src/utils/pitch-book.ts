@@ -1,25 +1,5 @@
-/**
- * Pure normalization for the DYNAMIC (portal-authored) pitch books.
- *
- * Kept out of the hook/screen deliberately: everything here is plain data, so it
- * can be reasoned about (and tested) without pulling in React Native — the same
- * split as `utils/inspection-photos.ts`.
- *
- * The goal of this module is to hand the Pitchbook screen a deck in EXACTLY the
- * shape the bundled static decks already use:
- *
- *     categories: [{ id, label }]
- *     images:     { [categoryId]: { [slideName]: ImageSource } }
- *
- * `<Image source>` accepts both a `require()` number and `{ uri }`, so once the
- * remote book is projected into that shape every downstream read on the screen
- * (slide count, global page number, analytics slide names, fullscreen viewer)
- * works unchanged against either deck.
- */
-
 export interface PitchBookSlide {
   id: string;
-  /** Display name, unique within its section — used as the images-map key. */
   name: string;
   filePath: string;
   bucketName?: string;
@@ -40,7 +20,6 @@ export interface PitchBookSummary {
   createdAt?: string;
   thumbnailPath?: string;
   thumbnailBucket?: string;
-  /** Resolved pre-signed url, filled in by `usePitchBooks`. */
   thumbnailUri?: string;
 }
 
@@ -52,7 +31,6 @@ export interface PitchBookDeck {
   slideCount: number;
 }
 
-/** A `{ filePath, bucketName }` pair as the secure-url endpoint expects it. */
 export interface S3Ref {
   filePath: string;
   bucketName?: string;
@@ -68,18 +46,10 @@ const sortByOrder = <T extends Record<string, any>>(rows: T[], key: string): T[]
       const bv = Number(b.row?.[key]);
       const an = Number.isFinite(av) ? av : Number.MAX_SAFE_INTEGER;
       const bn = Number.isFinite(bv) ? bv : Number.MAX_SAFE_INTEGER;
-      // Ties keep the server's order rather than being reshuffled arbitrarily.
       return an - bn || a.index - b.index;
     })
     .map((e) => e.row);
 
-/**
- * Make `name` unique within `taken`. Two slides in one section CAN carry the same
- * `slotDisplayName` (the portal derives it from the uploaded file name, and two
- * PDFs can both yield "Page 1.jpg"). The images map is keyed by name, so a
- * collision would silently swallow a slide — the rep would present a deck missing
- * a page with no error anywhere.
- */
 function uniqueName(name: string, taken: Set<string>): string {
   if (!taken.has(name)) {
     taken.add(name);
@@ -92,13 +62,6 @@ function uniqueName(name: string, taken: Set<string>): string {
   return out;
 }
 
-/**
- * `GET /pitch-books/sales-rep/:bookId` → ordered sections of ordered slides.
- *
- * Sections with no renderable slide are DROPPED: an empty section is a legitimate
- * portal state (created but not filled yet), and rendering it as a tab would give
- * the rep a blank slide mid-pitch with no way to tell it apart from a broken image.
- */
 export function normalizePitchBookSections(rawSections: any): PitchBookSection[] {
   const sections = sortByOrder(asArray(rawSections), 'sectionSortOrder');
 
@@ -137,7 +100,6 @@ export function normalizePitchBookSections(rawSections: any): PitchBookSection[]
     .filter(Boolean) as PitchBookSection[];
 }
 
-/** Every distinct S3 ref in a deck, ready for one batched secure-url call. */
 export function collectSlideRefs(sections: PitchBookSection[]): S3Ref[] {
   const seen = new Set<string>();
   const refs: S3Ref[] = [];
@@ -151,13 +113,6 @@ export function collectSlideRefs(sections: PitchBookSection[]): S3Ref[] {
   return refs;
 }
 
-/**
- * Project normalized sections into the static-deck shape.
- *
- * `resolveUri` maps a slide's `filePath` to a renderable url. A slide whose url
- * cannot be resolved is skipped rather than rendered as a blank frame; if that
- * empties a section, the section goes too, for the same reason as above.
- */
 export function buildPitchBookDeck(
   book: { bookId?: string; bookName?: string } | null | undefined,
   sections: PitchBookSection[],
@@ -189,7 +144,6 @@ export function buildPitchBookDeck(
   };
 }
 
-/** `GET /pitch-books/sales-rep` → the list rendered under the Lead Center card. */
 export function normalizePitchBookList(rawBooks: any): PitchBookSummary[] {
   return asArray(rawBooks)
     .map((book: any) => {

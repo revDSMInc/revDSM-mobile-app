@@ -79,7 +79,6 @@ export const LightingSection = ({
 
   const combinations = lightingState.combinations || [];
 
-  // Initialize combinations
   React.useEffect(() => {
     if (combinations.length === 0 && hasLightingFootage) {
       onUpdate('lighting', 'combinations', [
@@ -102,7 +101,6 @@ export const LightingSection = ({
     }
   }, [hasLightingFootage, combinations.length]);
 
-  // Sync locked extras
   React.useEffect(() => {
     const currentExtras = lightingState.extras || {};
     const needsSync = Object.keys(lockedExtras).some((key) => {
@@ -121,7 +119,6 @@ export const LightingSection = ({
     }
   }, [calculatorData, lightingState.extras]);
 
-  // Calculate allocated footage per story across all combinations
   const calculateAllocatedFootage = React.useCallback(
     (storyIndex: number) => {
       return combinations.reduce((total: number, combo: any) => {
@@ -236,7 +233,6 @@ export const LightingSection = ({
     return (combo.measurements || []).reduce((sum: number, val: any) => sum + n(val), 0);
   };
 
-  // Check complete
   const isComplete = React.useMemo(() => {
     if (!hasLightingFootage && hasExtrasValue) return true;
     if (!hasLightingFootage && !hasExtrasValue) return false;

@@ -47,7 +47,6 @@ export const ImageSlideshowModal = ({
 }: ImageSlideshowModalProps) => {
   const thumbnailListRef = useRef<FlatList>(null);
 
-  // Reanimated Zoom & Pan Shared Values
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -55,7 +54,6 @@ export const ImageSlideshowModal = ({
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
 
-  // Slide autoplay effect
   useEffect(() => {
     let timer: any = null;
     if (isPlaying && previewImages.length > 1) {
@@ -69,7 +67,6 @@ export const ImageSlideshowModal = ({
     };
   }, [isPlaying, previewImages.length]);
 
-  // Scroll active thumbnail to center
   useEffect(() => {
     if (previewImages.length > 0 && thumbnailListRef.current) {
       try {
@@ -79,12 +76,10 @@ export const ImageSlideshowModal = ({
           viewPosition: 0.5,
         });
       } catch (e) {
-        // Ignored if list not laid out yet
       }
     }
   }, [previewIndex, previewImages]);
 
-  // Gestures setup
   const pinchGesture = Gesture.Pinch()
     .onUpdate((e) => {
       scale.value = savedScale.value * e.scale;

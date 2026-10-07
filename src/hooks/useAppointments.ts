@@ -2,17 +2,6 @@ import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
 
-/**
- * Appointment management hook — web parity with `src/api/appointments.js`
- * (`useGetAppointments`, `addAppointment`, `updateAppointment`, `deleteAppointment`).
- *
- * Endpoints:
- *  - list   : GET    /appointments
- *  - create : POST   /appointments
- *  - update : PUT    /appointments/{id}
- *  - delete : DELETE /appointments/{id}
- */
-
 export interface Appointment {
   id?: string;
   _id?: string;
@@ -42,7 +31,6 @@ export function useAppointments() {
     queryKey: APPOINTMENTS_KEY,
     queryFn: async () => {
       const res = await LeadService.getAppointments();
-      // Backend returns { data: [...] }
       return (res.data?.data || res.data || []) as Appointment[];
     },
     staleTime: 30000,
@@ -66,7 +54,6 @@ export function useAppointments() {
     onSuccess: invalidate,
   });
 
-  // Newest first — web sorts by createdAt desc.
   const sortedAppointments = useMemo(() => {
     const list = query.data || [];
     return [...list].sort(

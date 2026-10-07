@@ -1,18 +1,3 @@
-/**
- * pricing-config-util.ts — company-authored pricing config (dynamic tier labels,
- * static fees, %-of-tier derivation) for the Dynamic Deal Center. Port of the web
- * `src/sections/deal-center/components/utils/pricing-config-util.js` +
- * `src/api/pricing-config.js` normalizer.
- *
- * WHY THIS EXISTS: portal schemas frequently price a field at ONE tier (usually
- * retail) and leave cost/par blank, expecting the company config's derivation rule
- * (e.g. "par = 65% of retail", "cost = 50% of retail") to fill them. Web bakes that
- * derivation into the schema at load; mobile previously read only the explicit
- * `price.par`/`price.cost`, so blank tiers came through as 0 and the rollout PAR/COST
- * tiles floored to $200 (and RETAIL could be off when it too was derived). These
- * helpers reproduce web's derivation so the tiles match.
- */
-
 export interface PricingTier {
   key: string;
   label?: string;
@@ -40,7 +25,6 @@ export const DEFAULT_TIERS: PricingTier[] = [
   { key: 'retail', label: 'Retail', order: 2 },
 ];
 
-/** Legacy markup token → stable tier key. */
 export const MARKUP_TO_TIER: Record<string, string> = { '50': 'cost', '65': 'par', '100': 'retail' };
 
 const TIER_LABEL_FALLBACK: Record<string, string> = { cost: 'Cost', par: 'Par', retail: 'Retail' };
@@ -62,11 +46,6 @@ export function resolveTierLabels(config?: PricingConfig | null): Record<string,
   return labels;
 }
 
-/**
- * Resolve a schema field's price for one tier: an explicit per-field value wins;
- * otherwise derive it as `percentOf% of` another tier via the config's derivation
- * rules (cycle-safe). Web `resolveFieldTierPrice`.
- */
 export function resolveFieldTierPrice(
   field: { price?: Record<string, any> } | undefined,
   tierKey: string,
@@ -96,7 +75,6 @@ export function sumFeesForTier(tierKey: string, config?: PricingConfig | null): 
   }, 0);
 }
 
-/** Add the static fees for a tier once per job (only when the job has line items). */
 export function applyFeesToTier(
   tierSum: number,
   tierKey: string,
@@ -107,11 +85,6 @@ export function applyFeesToTier(
   return tierSum + sumFeesForTier(tierKey, config);
 }
 
-/**
- * Preserve the authored blank-vs-value distinction (web `rawPriceMap`): a blank
- * tier stays '' so the derivation rule can fill it; a present value becomes a number
- * (thousands separators stripped).
- */
 function toPriceNumber(value: any): number {
   const num = Number(String(value ?? '').replace(/,/g, ''));
   return Number.isFinite(num) ? num : 0;
@@ -126,11 +99,6 @@ export function rawPriceMap(price: any): Record<string, number | ''> {
   return out;
 }
 
-/**
- * Resolve every tier of a field's price to a concrete number ONCE, at load — web
- * `normalizePrice`. An explicit per-field value wins; otherwise it's derived via
- * the company config. Baking it here keeps entries/totals/tiles reading plain numbers.
- */
 export function bakeFieldPrice(price: any, config?: PricingConfig | null): { retail: number; cost: number; par: number; [k: string]: number } {
   const raw = rawPriceMap(price);
   const fieldLike = { price: raw };
@@ -145,11 +113,6 @@ export function bakeFieldPrice(price: any, config?: PricingConfig | null): { ret
   return { retail: out.retail || 0, cost: out.cost || 0, par: out.par || 0, ...out };
 }
 
-/**
- * Normalize the raw `/company/v1/pricing-config/sales` payload. Returns null when
- * absent/unpublished (isActive === false) or with no tiers — the calc then falls
- * back to the default 3 tiers, no fees, no derivation (web `normalizeSalesPricingConfig`).
- */
 export function normalizeSalesPricingConfig(raw: any): PricingConfig | null {
   if (!raw || raw.isActive === false) return null;
   const tiers = Array.isArray(raw.tiers) ? raw.tiers : [];

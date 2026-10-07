@@ -3,19 +3,6 @@ import { View, Text } from 'react-native';
 import { FS, FUND, PS } from './funding-theme';
 import { coverageState, type CoverageTone } from '../../utils/funding';
 
-/**
- * "Does this add up?" — a one-line running total, tinted by whether it does.
- *
- * Reusable for any screen splitting a fixed figure across several lines: it takes
- * the two numbers and nothing else. The wording and the tone both come from
- * `coverageState` in `utils/funding`, so the copy is testable and a second caller
- * cannot invent a different phrasing for the same state.
- *
- * ⚠️ Amber for a shortfall, **red only for an overage**. A gap is the normal
- * mid-typing state and must not read as an error the moment the rep starts; being
- * over the contract price is a real mistake and gets the alarming colour.
- */
-
 const TONES: Record<CoverageTone, { bg: string; fg: string }> = {
   ok: { bg: FUND.GREEN_BG, fg: FUND.GREEN_TEXT },
   short: { bg: FUND.AMBER_BG, fg: FUND.AMBER_TEXT },
@@ -23,9 +10,7 @@ const TONES: Record<CoverageTone, { bg: string; fg: string }> = {
 };
 
 interface Props {
-  /** What the rows currently add up to. */
   assigned: number;
-  /** What they need to add up to. */
   target: number;
 }
 

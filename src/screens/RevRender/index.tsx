@@ -47,10 +47,6 @@ import { isOnline } from '../../services/connectivity';
 import { offlineBlockFor } from '../../utils/offline-capability';
 import { forgetWarmedUri, getWarmedLocalUri, warmToLocalCache } from '../../utils/imageFileCache';
 
-// ─── Dynamic (schema-driven) product picker helpers — port of web before.js ─────
-// Photos captured via the dynamic inspection flow are stored under a PRODUCT-SCOPED
-// category `"<productName> — <categoryLabel>"` (em dash). RevRender groups them by
-// product + schema tab, exactly like the web "before" picker.
 const GREEN = '#4CBB17';
 
 const scopeCategory = (productKey: string, label: string) =>
@@ -58,8 +54,6 @@ const scopeCategory = (productKey: string, label: string) =>
 const isAnnotatedRR = (p: any) =>
   String(p?.subcategory || '').toLowerCase().includes('(annotated)');
 
-/** Cards for the active product+tab: photos whose scoped category matches a leaf of
- *  the tab, labelled by their slot's display name (web buildPickerCardsForCategory). */
 function buildSchemaPickerCards(
   photos: any[],
   productKey: string,
@@ -94,11 +88,6 @@ function buildSchemaPickerCards(
       ...img,
       uri: url,
       label: displayLabel,
-      // Ticket: the logged viewId read "dynamic-1-back-right" — an index, not anything
-      // identifying the shot. `baseCategory` is the schema CATEGORY tab label (e.g.
-      // "HOME", matching the Manage Photos tab strip) — NOT `productKey`, which is a
-      // different, higher-level product name (e.g. "Gutters/Roofline") and produced
-      // "gutters/roofline-back-right" instead of the wanted "home-back-right".
       viewId: `${norm(baseCategory)}-${norm(img.subcategory)}`,
       viewLabel: displayLabel,
     });
@@ -106,8 +95,6 @@ function buildSchemaPickerCards(
   return cards;
 }
 
-/** {filled,total} for a tab: total = capturable slots under its leaves, filled = slots
- *  with a matching product-scoped photo (web countPhotosForTab). */
 function countPhotosForTab(
   tab: InspectionCategory,
   photos: any[],
@@ -135,7 +122,6 @@ function countPhotosForTab(
       total += 1;
       if (underLabel.some((p) => norm(p.subcategory) === norm(slot.storageName))) filled += 1;
     });
-    // Extras: captured subcategories that aren't one of the defined slots count too.
     const extras = new Set<string>();
     underLabel.forEach((p) => {
       const s = norm(p.subcategory);
@@ -148,8 +134,6 @@ function countPhotosForTab(
 }
 
 type RevRenderRouteProp = RouteProp<RootStackParamList, 'RevRender'>;
-
-// ─── Constants ────────────────────────────────────────────────────────────────
 
 const MATERIAL_SECTIONS = [
   {
@@ -195,16 +179,9 @@ const INITIAL_CONFIG = {
   downspoutChecked: false,
 };
 
-// ─── Payload Helpers ──────────────────────────────────────────────────────────
-
-/** Converts a UI type label to snake_case API value, stripping the section label suffix.
- *  e.g. toApiType('Hidden Vent Soffit', 'Soffit') → 'hidden_vent'
- *       toApiType('K-Style', 'Gutter')            → 'k_style'
- */
 const toApiType = (type: string | null, sectionLabel: string): string | null => {
   if (!type) return null;
   let cleaned = type.trim();
-  // Strip trailing section label word (case-insensitive)
   const suffix = sectionLabel.trim();
   if (cleaned.toLowerCase().endsWith(suffix.toLowerCase())) {
     cleaned = cleaned.slice(0, -(suffix.length)).trim();
@@ -212,19 +189,13 @@ const toApiType = (type: string | null, sectionLabel: string): string | null => 
   return cleaned.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || null;
 };
 
-/** Extracts relative S3 key from a full S3 URL or returns the value as-is for local URIs.
- *  e.g. 'https://bucket.s3.amazonaws.com/images/SelfGen/file.jpg' → 'images/SelfGen/file.jpg'
- */
 const extractS3Key = (url: string | undefined): string => {
   if (!url) return '';
-  // Match 'https://..../path' or 'http://..../path' and extract everything after the host
   const match = url.match(/^https?:\/\/[^/]+\/(.+)/);
   if (match && match[1]) return match[1];
-  // Not a full URL (device file:/// URI or already a relative path) — return as-is
   return url;
 };
 
-/** Extracts the filename from any URL or path. */
 const getFilename = (url: string | undefined): string => {
   if (!url) return '';
   const withoutQuery = url.split('?')[0];
@@ -234,13 +205,6 @@ const getFilename = (url: string | undefined): string => {
 
 const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; height?: number }) => {
   const { colors, isDark } = useTheme();
-  // ⚠️ Seeded SYNCHRONOUSLY from the file cache, and the spinner starts OFF when that hits.
-  // Coming back to this screen remounts every card, and asking `warmToLocalCache` even for
-  // a photo already on disk costs an async round trip — so the whole grid re-armed its
-  // spinners for a beat on every visit, which is what the rep read as "the images load
-  // again every time". `getWarmedLocalUri` answers from memory, so a warm photo paints on
-  // the first frame and nothing spins. It returns null the first time through; the effect
-  // below is still what fills the cache.
   const seeded = getWarmedLocalUri(uri);
   const [resolvedUri, setResolvedUri] = useState<string | null>(seeded);
   const [loading, setLoading] = useState(!seeded);
@@ -251,8 +215,6 @@ const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; he
     if (!uri) return;
     const known = getWarmedLocalUri(uri);
     if (known) {
-      // On disk already: adopt it and leave the spinner alone. Re-arming `loading` here
-      // would put the flicker straight back for the cached case this exists to fix.
       setResolvedUri(known);
       setLoading(false);
       setError(false);
@@ -275,9 +237,6 @@ const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; he
     setResolvedUri(null);
     setError(false);
     setLoading(true);
-    // Bin the cached FILE, not just our reference to it. A retry that kept the file would
-    // re-render the same unreadable bytes and fail again, forever. Re-arm only once the
-    // unlink has settled, so the re-warm can't race it and find the bad file still there.
     forgetWarmedUri(uri)
       .catch(() => {})
       .then(() => setRetryKey((k) => k + 1));
@@ -318,8 +277,6 @@ const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; he
   );
 };
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
 export default function RevRenderScreen() {
   const { colors, isDark } = useTheme();
   const navigation = useNavigation<any>();
@@ -328,31 +285,18 @@ export default function RevRenderScreen() {
 
   const { lead, sectionImages, onNavToDocs, onGenerate, onGenerateAll } = route.params;
 
-  // ── Status & State ─────────────────────────────────────────────────────────
   const [status, setStatus] = useState<'grid' | 'config' | 'queue'>('grid');
   const [selectedPhoto, setSelectedPhoto] = useState<any>(null);
-  // Full-screen viewer for the Configure Render photo — pinch-zoom + iMessage
-  // swipe-down-to-dismiss (via the shared ImageGalleryModal).
   const [photoViewerOpen, setPhotoViewerOpen] = useState(false);
   const [renderQueue, setRenderQueue] = useState<any[]>([]);
 
   const [config, setConfig] = useState<any>(INITIAL_CONFIG);
 
-  // ── Roofline Lighting (REVUIUX-483) ────────────────────────────────────────
-  // A render is Core OR Lighting, never both. Each mode keeps its own selection
-  // so switching back and forth does not lose work (483 §1).
   const [mode, setMode] = useState<RenderMode>('core');
   const [lighting, setLighting] = useState<LightingState>(emptyState());
 
-  // First-time photo guidance per mode. Dismissal is PER REP ACCOUNT and is
-  // seeded from `GET /preferences` by the effect below, so it must be declared
-  // ahead of it.
   const [guidanceSeen, setGuidanceSeen] = useState<Record<RenderMode, boolean>>({ core: false, lighting: false });
 
-  // Favourites, recents, CUSTOM LOOKS and guidance dismissal are all PER REP
-  // ACCOUNT, loaded once on mount. All four fields are live as of 2 Oct; the
-  // custom-look and guidance endpoints shipped after the first wiring, which
-  // only read `fav` and `recent`.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -362,24 +306,12 @@ export default function RevRenderScreen() {
         setLighting((st) => applyServerPreferences(st, data));
         setGuidanceSeen(guidanceDismissedFrom(data));
       } catch (e) {
-        // Non-fatal: the rep can still pick looks, they just start without
-        // their favourites. Failing the screen over this would be worse.
         logEvent('revrender_preferences_load_failed', { message: (e as Error)?.message });
       }
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // The look catalogue is server-owned. Read the device cache FIRST so the grid
-  // paints corrected looks with no signal, then refresh in the background.
-  //
-  // ⚠️ `refreshCatalogue()` returns true only when the list actually changed
-  // (not on a 304, and never on an empty response — np currently returns
-  // `count: 0` on an unseeded database, and treating that as truth would blank
-  // the grid). The bump forces the one re-render the synchronous accessors
-  // cannot trigger themselves.
-  // Value is never read — the setter exists purely to re-render once the
-  // synchronous catalogue accessors return something new. Hence the `_` name.
   const [, setCatalogueRev] = useState(0);
   useEffect(() => {
     let cancelled = false;
@@ -390,17 +322,6 @@ export default function RevRenderScreen() {
     return () => { cancelled = true; };
   }, []);
 
-  /**
-   * Persist a newly built custom look.
-   *
-   * ⚠️ `lookId` is OMITTED so the SERVER mints `custom-<24 hex>`. The sheet's
-   * local `custom-${Date.now()}` is fine as a temporary key for the optimistic
-   * tile, but two devices on one rep account can mint the same millisecond — and
-   * because the endpoint is an upsert keyed on `lookId`, a collision would have
-   * one look silently overwrite the other.
-   *
-   * ⚠️ `pattern` is not sent — the server derives it from the colour count.
-   */
   const handleSaveCustomLook = useCallback(async (look: Look) => {
     try {
       const { data } = await LeadService.saveRevRenderCustomLook({
@@ -408,14 +329,8 @@ export default function RevRenderScreen() {
         colors: look.colors,
       });
       if (!data?.success) throw new Error('save rejected');
-      // The server's list replaces the optimistic one, so the tile picks up the
-      // real id and a look built on another device appears too.
       setLighting((st) => applyServerPreferences(st, data));
     } catch (e) {
-      // ⚠️ The optimistic tile is LEFT IN PLACE. The rep just built this
-      // palette by hand; removing it under them because a POST failed loses
-      // real work, and the look still renders — it just will not survive a
-      // reinstall until a later save succeeds.
       FlashMessage.warning(
         'Saved on this device only',
         'We could not sync this custom look to your account.',
@@ -424,51 +339,24 @@ export default function RevRenderScreen() {
     }
   }, []);
 
-  /**
-   * Persist one favourite. Optimistic — the panel has already flipped the star.
-   *
-   * ⚠️ A TOGGLE call, not a whole-list write: two devices each sending
-   * their full list would have the later one silently wipe the other's change.
-   * The server returns the authoritative list and that is what we keep.
-   */
   const handleToggleFavourite = useCallback(async (lookId: string) => {
     try {
       const { data } = await LeadService.toggleRevRenderFavourite(lookId);
       if (!data?.success) throw new Error('toggle rejected');
       setLighting((st) => applyServerPreferences(st, data));
     } catch (e) {
-      // ⚠️ Revert, or the star stays filled against a list the server never
-      // took — the rep would believe the look was saved and lose it on reload.
       setLighting((st) => toggleFavourite(st, lookId));
       logEvent('revrender_favourite_toggle_failed', { lookId, message: (e as Error)?.message });
     }
   }, []);
 
   const [guidanceFor, setGuidanceFor] = useState<RenderMode | null>(null);
-  // Raised-this-visit, so a dismissed tip stays dismissed without claiming the
-  // rep opted out. A ref, not state: it must not itself re-run the effect below.
   const guidanceShown = useRef<Record<RenderMode, boolean>>({ core: false, lighting: false });
 
-  // The guidance is raised by the effect below, not here — a switch and a first
-  // landing are the same question ("is the rep now looking at a mode they have
-  // not been told about?"), and answering it in one place keeps them in step.
   const handleModeChange = (next: RenderMode) => {
     setMode(next);
   };
 
-  /**
-   * Analytics for a look tile tap — the Roofline Lighting counterpart to Core's
-   * `openPhoto` select log. Fired from `LightingPanel`'s shared tap handler, so
-   * every tab (Seasons/Teams/Themes/Custom) and the search result grid log the
-   * same way.
-   *
-   * ⚠️ `category`/`viewId` stay the PHOTO's (from `selectedPhoto`, same as every
-   * other event on this screen) — a look's own `category` is a catalogue taxonomy
-   * field (e.g. "NFL", "Marvel"), a different axis entirely, so it goes in its own
-   * `lookCategory` field rather than overloading the photo `category`/`viewId`
-   * meaning (this is the same mistake already made and fixed once on Core's
-   * `viewId` — see docs/claude/lead-center.md).
-   */
   const handleSelectLook = (look: Look, nowSelected: boolean) => {
     const userId = user?._id || user?.id;
     if (!userId) return;
@@ -491,54 +379,22 @@ export default function RevRenderScreen() {
     });
   };
 
-  /**
-   * Show the guidance for whichever mode the rep is ACTUALLY looking at, including
-   * the one they land on.
-   *
-   * ⚠️ This used to hang off `handleModeChange` alone, so it only ever fired on a
-   * SWITCH. Configure opens in Core, which is not a switch — so the Core tip, the
-   * one every rep meets first, never appeared at all. Lighting's looked fine
-   * because you can only reach it by switching, which is why this read as working.
-   *
-   * Keyed on `status` too: the tip belongs to the configure screen, and firing it
-   * while the rep is still on the photo grid would raise it over the wrong screen.
-   */
   useEffect(() => {
     if (status !== 'config') return;
-    // ⚠️ Two different "seen"s, and they are not interchangeable.
-    // `guidanceSeen` is the PERSISTENT "don't show me again"; `guidanceShown` is
-    // this visit only, set when the tip is raised and cleared when the rep leaves
-    // configure. Without the second one, plain "Got it" leaves `guidanceSeen`
-    // false — correct, they did not opt out — and the next change to that object
-    // (opting out of the OTHER mode) re-runs this effect and re-raises a tip they
-    // already closed.
     if (guidanceSeen[mode] || guidanceShown.current[mode]) return;
     guidanceShown.current[mode] = true;
     setGuidanceFor(mode);
   }, [status, mode, guidanceSeen]);
 
-  // Leaving configure arms the tips again, so picking a different photo gets the
-  // guidance afresh — the advice is about the photo, so it is worth repeating on
-  // a new one until the rep opts out for good.
   useEffect(() => {
     if (status !== 'config') guidanceShown.current = { core: false, lighting: false };
   }, [status]);
 
-  /** True when the rep has ticked at least one Core component. */
   const coreIsConfigured = useCallback(
     () => MATERIAL_SECTIONS.some((s) => config[`${s.key}Checked`]),
     [config],
   );
 
-  /**
-   * The Core queue item for whatever is currently ticked.
-   *
-   * ⚠️ Extracted so BOTH add paths build it the same way. It used to live
-   * inline in `handleAddToQueue`, which only the Core tab's button calls — so
-   * adding from the Lighting tab queued the looks and silently threw the rep's
-   * Core selection away. They ticked Soffit and Fascia, switched tab, pressed
-   * Add, and only the lighting render reached the queue.
-   */
   const buildCoreRender = useCallback(() => {
     const selections: any = {};
     const textureImageUrls: any = {};
@@ -549,12 +405,10 @@ export default function RevRenderScreen() {
       const color = config[`${s.key}Color`];
 
       if (isChecked) {
-        // API expects lowercase color name and snake_case type without section suffix
         selections[s.key] = color?.name?.toLowerCase() || null;
         selections[`${s.key}Type`] = toApiType(type, s.label);
         textureImageUrls[s.key] = color?.hex || null;
       } else {
-        // Always include all components; null for unchecked ones
         selections[s.key] = null;
         selections[`${s.key}Type`] = null;
       }
@@ -578,7 +432,6 @@ export default function RevRenderScreen() {
   }, [config, selectedPhoto]);
 
   const handleAddLighting = (looks: Look[]) => {
-    // One look = one queue item = one render.
     const items: any[] = looks.map((look) => ({
       id: `${Date.now()}-${look.id}`,
       mode: 'lighting' as const,
@@ -588,20 +441,6 @@ export default function RevRenderScreen() {
       viewLabel: selectedPhoto?.viewLabel,
     }));
 
-    /**
-     * ⚠️ The Core selection is queued HERE TOO, not just by Core's own button.
-     *
-     * The two modes share one photo, one Add button position and one queue, and
-     * each keeps its own selection so switching tabs does not lose work (483
-     * §1). But only the ACTIVE tab's button was wired, so a rep who ticked
-     * Soffit and Fascia, switched to Roofline Lighting, picked a look and
-     * pressed Add got the lighting render and nothing else — the Core work was
-     * discarded with no warning, and the queue showed one row where they
-     * expected two.
-     *
-     * A render is Core OR Lighting, never both, so this is a SECOND queue item
-     * rather than a merged one.
-     */
     if (coreIsConfigured()) {
       items.unshift(buildCoreRender());
       setConfig(INITIAL_CONFIG);
@@ -613,16 +452,10 @@ export default function RevRenderScreen() {
 
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
-  // ── Dynamic (schema-driven) product picker ─────────────────────────────────
-  // When the company uses the dynamic inspection flow, photos are product-scoped
-  // ("<product> — <label>"). Show a product dropdown + schema tabs (web before.js),
-  // falling back to the legacy REV_RENDER_VIEW_GROUPS grid otherwise.
   const { configuredProducts } = useInspectionSchema({ enabled: true });
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [dynTab, setDynTab] = useState(0);
   const [prodMenuOpen, setProdMenuOpen] = useState(false);
-  // Anchor the product menu directly under the trigger button: measure it in the
-  // window on open and position the menu absolutely at its bottom-left.
   const prodBtnRef = React.useRef<View>(null);
   const [prodMenuAnchor, setProdMenuAnchor] = useState<{ x: number; y: number; width: number } | null>(null);
   const openProdMenu = () => {
@@ -637,8 +470,6 @@ export default function RevRenderScreen() {
     }
   };
 
-  // Flatten the grouped sectionImages back into a raw photo array (category = the map
-  // key when a photo doesn't carry its own), so we can match by product-scoped category.
   const rawPhotos = useMemo(() => {
     const out: any[] = [];
     Object.entries(sectionImages || {}).forEach(([cat, imgs]) => {
@@ -647,17 +478,6 @@ export default function RevRenderScreen() {
     return out;
   }, [sectionImages]);
 
-  // Warm every RevRender photo into the local FILE cache shortly after mount, so the tabs
-  // the rep hasn't opened yet — and the full-res photo behind Configure — are already on
-  // disk by the time they get there.
-  //
-  // ⚠️ Do NOT put `Image.prefetch` back here. These are pre-signed S3 urls with no cache
-  // headers, so the OS image cache refuses to store them (the whole reason
-  // `utils/imageFileCache.ts` exists). Prefetching re-downloaded every photo on every
-  // mount, hit nothing, and stole bandwidth from the thumbnails actually on screen — it
-  // made the reload-every-visit complaint worse, not better. `warmToLocalCache` writes a
-  // real file, so the second visit costs nothing, and it holds its own 3-at-a-time
-  // semaphore. Deferred a beat so the visible grid thumbnails claim those slots first.
   useEffect(() => {
     const uris = Array.from(
       new Set(
@@ -688,7 +508,6 @@ export default function RevRenderScreen() {
       setSelectedProductId(configuredProducts[0].id as string);
     }
   }, [configuredProducts, selectedProductId]);
-  // Reset the active tab when the product changes.
   useEffect(() => setDynTab(0), [selectedProductId]);
 
   const selectedProduct = useMemo(
@@ -714,7 +533,6 @@ export default function RevRenderScreen() {
     [useSchemaPicker, dynActiveCategory, rawPhotos, productKey]
   );
 
-  // ── Analytics ──────────────────────────────────────────────────────────────
   useEffect(() => {
     const userId = user?._id || user?.id;
     if (!userId) return;
@@ -730,7 +548,6 @@ export default function RevRenderScreen() {
       };
     } else if (status === 'queue') {
       screenName = 'queue';
-      // Match web queue.js: include totalRenders + hasLeadContext
       extraMeta = {
         totalRenders: renderQueue.length,
         hasLeadContext: !!(lead?._id || lead?.id || lead?.leadId),
@@ -749,8 +566,6 @@ export default function RevRenderScreen() {
       },
     });
   }, [status, selectedPhoto?.viewId, selectedPhoto?.viewLabel, user?._id, user?.id, lead?._id, lead?.id, lead?.leadId, renderQueue.length]);
-
-  // ── Handlers ───────────────────────────────────────────────────────────────
 
   const handleAddToQueue = () => {
     const newRender = buildCoreRender();
@@ -775,17 +590,11 @@ export default function RevRenderScreen() {
     }
 
     setRenderQueue([...renderQueue, newRender]);
-    // Clear the ticks: they have been queued, and leaving them on makes the
-    // next add silently re-queue the same combo.
     setConfig(INITIAL_CONFIG);
     setStatus('queue');
   };
 
   const handleGenerateAll = async () => {
-    // ⚠️ The Lead Center already refuses to OPEN revRender offline; this is the connection
-    // dropping while the rep is in here with a queue built. Without it the generate is fired
-    // into a dead link and nothing on this screen reports a failure at all — the queue just
-    // sits there, which reads as the render still working.
     const blocked = offlineBlockFor('revrender', isOnline());
     if (blocked) {
       FlashMessage.info(blocked.title, blocked.message);
@@ -812,8 +621,6 @@ export default function RevRenderScreen() {
         const viewLabel = item.viewLabel || item.photo?.label || '';
 
         if (item.mode === 'lighting') {
-          // renderType 'look'. The backend fixes mount, channel colour, time of
-          // day and coverage, and REJECTS them if sent — so nothing else goes.
           return {
             ...toLookPayload(item.look, { houseImageUrl: extractS3Key(rawUrl), viewLabel, leadId }),
             sourceFileName: getFilename(rawUrl),
@@ -831,12 +638,6 @@ export default function RevRenderScreen() {
         };
       });
 
-      // ⚠️ Recently Rendered is NOT written from here any more. The server
-      // derives it from completed run rows, so recording it client-side too
-      // would be a second source of truth — and the two would disagree the
-      // first time a generate failed after the queue was built.
-
-      // Wrap in the envelope format the API expects
       const requestBody = { payloads, leadId, jobId: leadId };
 
       if (onGenerateAll) {
@@ -845,12 +646,6 @@ export default function RevRenderScreen() {
         payloads.forEach(p => onGenerate(p));
       }
       setRenderQueue([]);
-      // ⚠️ Straight back to Lead Center — do NOT add an in-screen results view.
-      // Lead Center OWNS this generation: `handleStartRevRenders` already raises the
-      // "Starting N render generation(s)…" flash, tracks per-render progress in
-      // `revRenderJobs` and persists it under `rev_render_jobs_<leadId>`, so the rep
-      // watches it finish there. A second results screen here duplicated that and
-      // polled the runs endpoint for state Lead Center was already holding.
       navigation.goBack();
     } catch (err) {
       console.error('Generate All Error:', err);
@@ -896,7 +691,6 @@ export default function RevRenderScreen() {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', handleBack);
     return () => backHandler.remove();
   }, [handleBack]);
-  // ── Renders ────────────────────────────────────────────────────────────────
 
   const renderEmptyState = () => (
     <View className="flex-1 items-center justify-center px-6">
@@ -927,7 +721,6 @@ export default function RevRenderScreen() {
     </View>
   );
 
-  // Dynamic (schema-driven) picker: product dropdown + schema tabs + per-tab grid.
   const renderSchemaPicker = () => {
     const activeIdx = Math.min(dynTab, Math.max(dynTopTabs.length - 1, 0));
     const openPhoto = (photo: any) => {
@@ -1119,7 +912,6 @@ export default function RevRenderScreen() {
       return false;
     };
 
-    // Collect all standard views across all groups to prevent extra/discovered view cross-pollution
     const allStandardSubcategories = new Set<string>();
     REV_RENDER_VIEW_GROUPS.forEach((group) => {
       group.views.forEach((view) => {
@@ -1143,17 +935,14 @@ export default function RevRenderScreen() {
       });
     });
 
-    // 1. Process each group individually first
     let renderGroups = REV_RENDER_VIEW_GROUPS.map((group) => {
       const discoveredViews: any[] = [];
       
-      // Map category ID to the key stored in sectionImages dynamically
       const matchingCategory = IMAGE_CATEGORIES.find(
         (c) => c.id === group.categoryId || c.name.toLowerCase() === group.categoryId?.toLowerCase()
       );
       let targetCategory = matchingCategory ? matchingCategory.name : group.categoryId;
 
-      // Fallback for legacy static group categoryIds
       if (group.categoryId === 'Front View' || group.categoryId === 'Side Views' || group.categoryId === 'Back View') {
         targetCategory = 'Home';
       } else if (group.categoryId === 'Gutter System') {
@@ -1164,7 +953,6 @@ export default function RevRenderScreen() {
         (p: any) => !p.subcategory?.toLowerCase().includes('(annotated)')
       );
 
-      // Add standard views
       group.views.forEach((view) => {
         const matchingPhotos = photosInCategory.filter((p: any) => isMatchingView(p, view.id, group.categoryId));
         matchingPhotos.forEach((photo: any) => {
@@ -1180,7 +968,6 @@ export default function RevRenderScreen() {
       return { ...group, discoveredViews, targetCategory };
     });
 
-    // 2. Distribute extras/uncategorized photos without duplicates
     const accountedPhotoUris = new Set<string>();
     renderGroups.forEach((group) => {
       group.discoveredViews.forEach((v) => accountedPhotoUris.add(v.uri));
@@ -1195,7 +982,6 @@ export default function RevRenderScreen() {
         if (!allStandardSubcategories.has(p.subcategory) && !accountedPhotoUris.has(p.uri)) {
           const subLower = p.subcategory?.toLowerCase() || '';
           
-          // If the category is 'Home', distribute extras based on keywords
           if (group.targetCategory === 'Home') {
             const isSide = subLower.includes('side') || subLower.includes('left') || subLower.includes('right');
             const isBack = subLower.includes('back');
@@ -1216,7 +1002,6 @@ export default function RevRenderScreen() {
       });
     });
 
-    // 3. Merge roofline-observation and roof-inspection into a single 'ROOFLINE' group
     const roofGroupIds = ['roof-inspection', 'roofline-observation'];
     const roofGroups = renderGroups.filter((g) => roofGroupIds.includes(g.categoryId));
     if (roofGroups.length > 0) {
@@ -1242,13 +1027,6 @@ export default function RevRenderScreen() {
       }
     }
 
-    // Photos not matched into any static view group — notably the DYNAMIC inspection
-    // photos, whose category is product-scoped ("{product} — {label}") and so never
-    // lands in a static IMAGE_CATEGORIES bucket. Web parity (before.js step 2):
-    // surface every unaccounted photo UNDER ITS OWN CATEGORY SECTION (not one flat
-    // "Additional Photos" dump), labeled by its slot (subcategory), so the RevRender
-    // picker groups them the same way the capture/manage views do. Runs AFTER the
-    // roofline merge so nothing already shown repeats.
     const accountedUris = new Set<string>();
     renderGroups.forEach((g) =>
       g.discoveredViews.forEach((v: any) => v?.uri && accountedUris.add(v.uri))
@@ -1271,8 +1049,6 @@ export default function RevRenderScreen() {
         });
       });
       if (views.length > 0) {
-        // The category key is the scoped category ("{product} — {label}") for dynamic
-        // inspection photos — a descriptive, per-product section header.
         renderGroups.push({
           sectionLabel: catKey,
           categoryId: `dyn-${catKey}`,
@@ -1477,8 +1253,6 @@ export default function RevRenderScreen() {
             <PhotoPeekPressable
               uri={selectedPhoto?.uri || selectedPhoto?.s3url}
               label={selectedPhoto?.label || selectedPhoto?.subcategory?.replace(/-/g, ' ') || 'Selected Photo'}
-              // Tap opens the full-screen viewer (pinch-zoom + swipe-to-dismiss);
-              // press-and-hold still peeks.
               onPress={() => {
                 if (selectedPhoto?.uri || selectedPhoto?.s3url) setPhotoViewerOpen(true);
               }}
@@ -1524,8 +1298,6 @@ export default function RevRenderScreen() {
               state={lighting}
               setState={setLighting}
               isDark={isDark}
-              // Core ticks are queued by `handleAddLighting` too, so the button
-              // must not sit disabled while they are waiting.
               corePending={coreIsConfigured()}
               onAdd={handleAddLighting}
               onToggleFavourite={handleToggleFavourite}
@@ -1771,11 +1543,6 @@ export default function RevRenderScreen() {
             onNeverShowAgain={() => {
               if (guidanceFor) {
                 setGuidanceSeen({ ...guidanceSeen, [guidanceFor]: true });
-                // ⚠️ Fire-and-forget, and NOT reverted on failure. The endpoint is
-                // idempotent, so a retry costs nothing — but re-raising a tip the
-                // rep explicitly dismissed, because a background POST failed, is
-                // the one outcome worse than it not persisting. It re-syncs on the
-                // next mount from `GET /preferences`.
                 LeadService.dismissRevRenderGuidance(guidanceFor).catch((e) =>
                   logEvent('revrender_guidance_dismiss_failed', {
                     key: guidanceFor,

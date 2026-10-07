@@ -4,7 +4,6 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface DropdownSelectProps {
   label?: string;
-  /** Options remaining after `getVisibleFieldOptions` (already rule-filtered). */
   options: string[];
   value?: string;
   onChange?: (val: string) => void;
@@ -14,26 +13,6 @@ interface DropdownSelectProps {
 
 const ACCENT = '#22C55E';
 
-/**
- * A real single-select dropdown — the control REVDSM-1063 is actually asking for
- * ("My deals - NEVER have text inputs - always should be a drop down with all
- * options"). Collapsed it shows the current selection; tapping it reveals the
- * option list; picking an option selects it and collapses again.
- *
- * ⚠️ The list expands INLINE — deliberately not a `Modal` and not an absolutely
- * positioned overlay.
- *
- *   - The Job Builder already renders inside a native `Modal`, and this repo's
- *     hard rule is never to stack them: iOS silently drops a presentation
- *     requested while another modal is still dismissing (that is what froze the
- *     CoC paper-fallback scanner).
- *   - An absolute overlay would not work either: a sibling `GestureDetector`
- *     swallows touches whatever its `zIndex`, because `zIndex` orders painting
- *     only — and these fields sit inside scrollable, gesture-driven combination
- *     cards.
- *
- * Expanding in flow costs a little scroll height and sidesteps both traps.
- */
 export function DropdownSelect({
   label,
   options,
@@ -92,8 +71,6 @@ export function DropdownSelect({
               <TouchableOpacity
                 key={opt}
                 onPress={() => {
-                  // Web parity with the chip grid it replaces: tapping the current
-                  // selection clears it, so a non-required field can be unanswered.
                   onChange?.(isSelected ? '' : opt);
                   setOpen(false);
                 }}

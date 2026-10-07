@@ -47,7 +47,6 @@ import { reportDisplayName } from '../../utils/report-name';
 
 const { width } = Dimensions.get('window');
 
-// Persisted slide position per lead, so the roofline deck resumes where the rep left off.
 const progressKey = (leadId?: string | null) => `rooflinedeck-progress-${leadId || 'default'}`;
 
 const CATEGORIES = [
@@ -68,7 +67,6 @@ export default function RooflineDeckScreen() {
   const leadId = lead?._id || lead?.id || null;
   const { user } = useAuth();
 
-  // Restore the last viewed slide for this lead (if any).
   const savedProgress = useMemo(() => {
     try {
       const raw = storage.getString(progressKey(leadId));
@@ -92,7 +90,6 @@ export default function RooflineDeckScreen() {
   const [loading, setLoading] = useState(true);
   const [fullLeadData, setFullLeadData] = useState<any>(null);
 
-  // Analytics refs to track exact slide position on unmount
   const activeCategoryRef = useRef(activeCategory);
   const currentSlideIndexRef = useRef(currentSlideIndex);
 
@@ -101,7 +98,6 @@ export default function RooflineDeckScreen() {
     currentSlideIndexRef.current = currentSlideIndex;
   }, [activeCategory, currentSlideIndex]);
 
-  // Persist the current slide position for this lead whenever it changes.
   useEffect(() => {
     try {
       storage.set(
@@ -122,7 +118,6 @@ export default function RooflineDeckScreen() {
 
   const { data: secureImages = {} } = useSecureUrls(activePhotos);
 
-  // Animation for tools drawer
   const toolsAnim = useRef(new Animated.Value(0)).current;
 
   const toggleTools = () => {
@@ -169,11 +164,8 @@ export default function RooflineDeckScreen() {
     return getGlobalPosition(activeCategory, currentSlideIndex);
   }, [activeCategory, currentSlideIndex]);
 
-  // Identity of the slide on screen — see the same constant in `screens/Pitchbook`.
-  // Handed to every `ZoomableImage` so advancing a slide snaps the zoom back to 1x.
   const slideResetKey = `${activeCategory}:${currentSlideIndex}`;
 
-  // Lifecycle events for deck open/close
   useEffect(() => {
     const userId = user?._id || user?.id;
     if (userId) {
@@ -210,9 +202,6 @@ export default function RooflineDeckScreen() {
 
   const pollInterval = useRef<any>(null);
 
-  // Hydrate the FULL lead — `salesPhotos` and `notes` are what this screen renders, and
-  // the lead it is navigated with now comes from the SLIM list (`view=summary`), which
-  // carries `salesPhotos: []`. Without this the Inspection tab is empty.
   const refetch = async () => {
     const lid = lead?._id || lead?.id;
     if (!lid) return;
@@ -224,26 +213,16 @@ export default function RooflineDeckScreen() {
         return;
       }
     } catch {
-      // Fall through to the deal endpoint below — see the same note in
-      // `screens/Pitchbook`: an API host that predates the sales-portal optimization
-      // has no such route and answers with an HTML error page.
     }
     try {
-      // Fallback: what this screen read before the detail endpoint existed, so
-      // preferring the new route can never be a regression.
       const response = await LeadService.getSalesDealById(lid);
       const body = response.data;
       setFullLeadData(body?.data?.lead || body?.data || body?.lead || body);
     } catch {
-      // Non-fatal: the deck still presents, falling back to whatever the navigation
-      // param carried.
     }
   };
 
   useEffect(() => {
-    // ⚠️ Runs for EVERY lead, not just sold/demo ones — see the same note in
-    // `screens/Pitchbook`: the old `sale`/`demo` gate left every non-resulted lead with
-    // no photos once the list went slim.
     refetch();
     return () => {
       if (pollInterval.current) clearInterval(pollInterval.current);
@@ -261,8 +240,6 @@ export default function RooflineDeckScreen() {
       StatusBar.setHidden(false, 'fade');
     };
   }, [isFullscreen, isLandscape]);
-
-  // Removed artificial loading state that caused permanent loaders for local images
 
   const [showPdfModal, setShowPdfModal] = useState(false);
   const [pdfPreviewData, setPdfPreviewData] = useState({ url: '', title: '' });
@@ -454,14 +431,6 @@ export default function RooflineDeckScreen() {
     }
   };
 
-  // `asModal` renders the drawer inside its OWN full-screen Modal. Outside
-  // fullscreen the drawer is mounted inside the screen's flex-1 body, so its
-  // StyleSheet.absoluteFill backdrop only ever reached the slide area - the
-  // toolbar and the navigator's MainHeader above it stayed undimmed while the
-  // sheet was open. A Modal is its own view tree over the whole window, so the
-  // backdrop now covers the header too. The FULLSCREEN path passes nothing:
-  // the drawer is already inside a Modal there (stacked native modals are
-  // unreliable) and that modal already owns the whole screen.
   const renderInteractiveTools = (asModal = false) => {
     if (viewMode !== 'rep' || !showTools) return null;
     const drawerHeight = isLandscape
@@ -870,9 +839,6 @@ export default function RooflineDeckScreen() {
           <StatusBar hidden={isLandscape} backgroundColor="transparent" translucent />
 
           {isLandscape ? (
-            /* ════════════════════════════════════════
-               LANDSCAPE LAYOUT
-               ════════════════════════════════════════ */
             <View style={{ flex: 1, backgroundColor: '#000', position: 'relative', paddingTop: insets.top }}>
 
               {/* ── Centre: image area + category tabs below image ── */}
@@ -1063,9 +1029,6 @@ export default function RooflineDeckScreen() {
               )}
             </View>
           ) : (
-            /* ════════════════════════════════════════
-               PORTRAIT LAYOUT
-               ════════════════════════════════════════ */
             <View style={{ flex: 1, backgroundColor: '#000' }}>
               {/* Top bar: page counter + exit button */}
               <View

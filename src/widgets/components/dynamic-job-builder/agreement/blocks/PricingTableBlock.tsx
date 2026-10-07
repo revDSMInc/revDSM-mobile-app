@@ -3,26 +3,12 @@ import { View, Text, Image, TouchableOpacity } from 'react-native';
 import { AgreementBlockProps } from './types';
 import { formatInstallDate as formatDate } from '../../../../../utils/install-date';
 
-/**
- * The Approximate Start Date cell.
- *
- * ⚠️ The rule lives in `utils/install-date.ts` and is SHARED with `DynamicAgreementDialog`, which
- * formats the same value into the payload the server template renders. Two copies is how the cell
- * and the contract came to disagree: the block was taught not to re-parse a `M/D/YYYY` string, but
- * the dialog upstream of it still ran one through `new Date` — which Hermes cannot parse — so the
- * block only ever received the literal `'TBD'` and dutifully printed it on a scheduled job.
- */
-
 const cellStyle = {
   borderWidth: 1,
   borderColor: '#000',
   padding: 8,
 } as const;
 
-// Faithful port of web `blocks/pricing-table-block.js`.
-// Contract price / start date / down payment / balance rows, optional CC + financing
-// note, and (in web) an initials SignaturePad. On mobile the initials pad is replaced
-// by an <Image> (when captured) or a "Tap to initial" area (onRequestInitials).
 export default function PricingTableBlock({
   block,
   paymentDetails,

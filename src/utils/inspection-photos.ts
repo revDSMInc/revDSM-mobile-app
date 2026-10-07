@@ -1,29 +1,7 @@
-/**
- * Grouping logic behind the "Property Inspection Photos" accordion (Pitchbook +
- * Roofline Deck). Port of web `src/sections/pitch-book/components/pb-inspection-photos.js`.
- *
- * Pure — no RN imports — so it stays unit-testable. The renderer lives in
- * `widgets/components/InspectionPhotosPanel.tsx`, which pulls in reanimated via
- * PhotoPeekPressable and therefore cannot be imported from a plain jest suite.
- *
- * ⚠️ Sections are derived from each photo's OWN `category`, never matched against a
- * fixed list. Both screens previously did
- * `IMAGE_CATEGORIES.filter((s) => secureImages[s.name]?.length > 0)`, which only ever
- * matched the four static names ("Home", "Inspection", "Measurements",
- * "Miscellaneous"). The dynamic capture flow scopes a photo's category to its product
- * — `useDynamicInspectionCapture.scopeCat` stores `"Gutters/Roofline — HOME"` — so
- * NOTHING matched and the tab rendered empty. Worse, the old empty-state test
- * (`Object.keys(secureImages).length === 0`) was false, so not even "No inspection
- * photos available" appeared: the rep just saw a heading over blank space.
- */
-
-// Annotated copies are presented elsewhere — never in the inspection grid.
 const isAnnotatedPhoto = (p: any) =>
   (p?.category || '').toLowerCase() === 'annotated' ||
   (p?.subcategory || '').toLowerCase().includes('(annotated)');
 
-// Title-case a label so an all-caps tab name ("HOME") reads nicely while an
-// already-cased legacy name ("Roofline Observation") survives intact.
 const prettify = (s: string) =>
   (s || '')
     .split(/\s+/)
@@ -31,14 +9,6 @@ const prettify = (s: string) =>
     .join(' ')
     .trim();
 
-/**
- * Derive a display section from a photo's `category`, covering BOTH storage formats:
- *   • dynamic capture — `"Gutters/Roofline — HOME"` → "Home"
- *   • legacy capture  — `"Home"` / `"Roofline Observation"` → as-is
- *
- * The FULL category string is the section id, so two products that share a tab name
- * (both have a "HOME") stay separate rather than merging into one accordion.
- */
 function sectionFromCategory(category: string) {
   const raw = (category || '').trim();
   if (!raw) return { id: '__other__', name: 'Other' };
@@ -56,12 +26,6 @@ const tsValue = (t: any) => {
   return Number.isNaN(n) ? 0 : n;
 };
 
-/**
- * "01:05 PM" — the capture time web prints in the caption bar.
- *
- * Formatted by hand rather than via `toLocaleTimeString('en-US', …)` (what web
- * uses) so it cannot depend on Intl being compiled into the JS engine.
- */
 export const formatCaptureTime = (t: any) => {
   if (!t) return '';
   const d = new Date(t);
@@ -83,16 +47,12 @@ export interface InspectionSection {
   photos: SectionPhoto[];
 }
 
-/** `useSecureUrls` output: signed urls grouped by the photo's category. */
 export type SecureImageMap = Record<string, Array<{ uri: string; s3url: string; subcategory: string }>>;
 
 export function buildInspectionSections(
   photos: any[],
   secureImages: SecureImageMap
 ): InspectionSection[] {
-  // `useSecureUrls` groups by category — the very axis that is unreliable here — so
-  // flatten it back into a plain s3url → signed-url lookup and re-group from the
-  // photo records themselves, which carry the metadata the grouping needs.
   const uriByS3: Record<string, string> = {};
   Object.values(secureImages || {}).forEach((list) =>
     (list || []).forEach((img) => {
@@ -104,14 +64,6 @@ export function buildInspectionSections(
 
   (photos || []).forEach((p: any) => {
     if (!p || p.deletedAt || isAnnotatedPhoto(p)) return;
-    /**
-     * ⚠️ `p.uri` is the third source, and leaving it out is what hid every photo shot at a door
-     * with no signal. A pending upload has NO `s3url` (the server has not issued one) and NO
-     * `secureUrl` (there is nothing to sign) — it carries only the local `file://` copy. Both
-     * lookups above miss, `uri` came back undefined, and the photo was dropped from the section
-     * entirely: the Roofline Deck's Inspection tab showed empty frames for photos the Lead
-     * Center was displaying on the screen beneath it.
-     */
     const uri = uriByS3[p.s3url] || p.secureUrl || p.uri;
     if (!uri) return;
 
@@ -127,10 +79,6 @@ export function buildInspectionSections(
   return [...secMap.values()].map((s) => ({
     id: s.id,
     name: s.name,
-    // Grouped by slot so repeat shots of one subcategory sit together, oldest first
-    // within the slot. Unlike web this renders EVERY photo rather than one card per
-    // slot with a "+N" badge — mobile's preview modal shows a single image and cannot
-    // page through a slot, so a badge would make the extra shots unreachable.
     photos: [...s.slots.values()].flatMap((slotPhotos) =>
       [...slotPhotos].sort((a, b) => tsValue(a.timestamp) - tsValue(b.timestamp))
     ),

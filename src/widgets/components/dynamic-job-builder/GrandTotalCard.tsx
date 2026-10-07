@@ -15,7 +15,6 @@ interface GrandTotalCombo {
   [key: string]: any;
 }
 
-/** One row of the tab-level grand total: a combo tied to the section it came from. */
 interface TabSummaryEntry {
   combo: GrandTotalCombo;
   section: any;
@@ -24,22 +23,15 @@ interface TabSummaryEntry {
 }
 
 interface GrandTotalCardProps {
-  // Section-scoped path (single combination section).
   combinations?: GrandTotalCombo[];
   fields?: any[];
   summaryField?: any;
   sectionLabel?: string;
-  // Tab-scoped path (web `TabCombinationsGrandTotalSummary`): aggregates combos
-  // across EVERY combination section in the tab. When provided, takes precedence
-  // over the section-scoped props — a Gutter+LeafFilter tab has two combination
-  // sections and the grand total must sum both, not just the last one.
   entries?: TabSummaryEntry[];
   tabLabel?: string;
   accentColor?: string;
 }
 
-// Matches the normal LeafFilter "Grand Total - All Combinations" card:
-// rounded-[32px], emerald border, per-combo slate cards, #22C55E totals.
 export function GrandTotalCard({
   combinations = [],
   fields = [],
@@ -49,8 +41,6 @@ export function GrandTotalCard({
   tabLabel,
   accentColor = '#22C55E',
 }: GrandTotalCardProps) {
-  // Tab-level aggregation (web parity) — render one row per entry, resolving
-  // columns against each entry's OWN section, and total across all of them.
   if (entries && entries.length) {
     return (
       <TabGrandTotalCard
@@ -95,7 +85,6 @@ export function GrandTotalCard({
   );
 }
 
-/** Tab-level grand total (port of web `TabCombinationsGrandTotalSummary`). */
 function TabGrandTotalCard({
   entries,
   tabLabel,
@@ -108,7 +97,6 @@ function TabGrandTotalCard({
   const total = computeTabCombinationsGrandTotal(entries);
   const totalUnit = getTabGrandTotalUnit(entries);
   const footerLabel = buildTabTotalLabel(tabLabel || '', '');
-  // Show a per-row section sub-label only when the entries span >1 section.
   const showSectionLabels =
     new Set(entries.map((entry) => entry.section?.id).filter(Boolean)).size > 1;
   const hasGridTotal = entries.some(({ section, summaryField }) =>
@@ -150,10 +138,8 @@ function TabGrandTotalCard({
   );
 }
 
-/** Gutter between grand-total columns (web `gap: { xs: 0.75 }` = 6px). */
 const COL_GAP = 8;
 
-/** A single combo row — a #N chip, an optional section sub-label, then the columns. */
 function ComboSummaryRow({
   combo,
   columns,

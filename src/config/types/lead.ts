@@ -24,16 +24,6 @@ export type Lead = {
   isSelfGen?: boolean;
   selfGen?: boolean;
   lowesLead?: boolean;
-  /**
-   * A second attempt at a lead the rep already worked — the marker carried by every
-   * row of `rehash/rep/v1/leads` (see `useRehashLeads`).
-   *
-   * It is NOT just a list tag. It changes three things downstream, all web parity:
-   * the result modal's Original Contract Price becomes editable (the carried-forward
-   * price is a starting point, not a commitment), the Result Lead button stops showing
-   * a price it no longer knows, and the job builder ASKS before reusing the prior
-   * build instead of silently applying it.
-   */
   isRehashed?: boolean;
   location?: {
     type: string;

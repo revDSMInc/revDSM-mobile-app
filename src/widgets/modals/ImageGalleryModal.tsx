@@ -34,9 +34,6 @@ const { width: SW, height: SH } = Dimensions.get('window');
 const THUMB = 52;
 const THUMB_GAP = 8;
 
-// Pre-signed S3 urls carry no cache headers, so `cache: 'force-cache'` alone leaves
-// a full-size decode re-downloading and the page blank for 2-3s. Warm a local file
-// and render that instead — the same mechanism revRender and the inspection grid use.
 export interface GalleryImage {
   uri: string;
   label?: string;
@@ -49,9 +46,6 @@ interface ImageGalleryModalProps {
   onClose: () => void;
 }
 
-// ─── One pinch/double-tap/pan-zoomable page ────────────────────────────────
-// Pinch or double-tap to zoom; pan (only while zoomed) to move around. Pan is
-// disabled at 1× so the parent pager keeps handling horizontal swipes.
 const ZoomablePage = React.memo(
   ({
     uri,
@@ -70,8 +64,6 @@ const ZoomablePage = React.memo(
     active: boolean;
     zoomed: boolean;
     onZoomChange: (z: boolean) => void;
-    // Shared drag offsets (owned by the parent so the backdrop/chrome can fade
-    // off the same value) driven by the iMessage-style drag-down-to-dismiss.
     dragX: SharedValue<number>;
     dragY: SharedValue<number>;
     onRequestClose: () => void;
@@ -82,12 +74,9 @@ const ZoomablePage = React.memo(
     const ty = useSharedValue(0);
     const savedTx = useSharedValue(0);
     const savedTy = useSharedValue(0);
-    // Fades the image in once it decodes (smooth arrival), and drives the loader.
     const opacity = useSharedValue(0);
     const [loading, setLoading] = useState(true);
 
-    // When this page scrolls off-screen, snap it back to 1× so it isn't still
-    // zoomed the next time it becomes active.
     useEffect(() => {
       if (!active) {
         scale.value = 1;
@@ -140,7 +129,6 @@ const ZoomablePage = React.memo(
     const pan = Gesture.Pan()
       .enabled(zoomed)
       .onUpdate((e) => {
-        // Keep the image within its own bounds so it can't be flung off-screen.
         const maxX = (width * (scale.value - 1)) / 2;
         const maxY = (height * (scale.value - 1)) / 2;
         tx.value = Math.min(Math.max(savedTx.value + e.translationX, -maxX), maxX);
@@ -151,13 +139,6 @@ const ZoomablePage = React.memo(
         savedTy.value = ty.value;
       });
 
-    // iMessage-style drag-DOWN-to-dismiss (only when NOT zoomed — while zoomed the
-    // pan above moves the image around instead). Activates on a downward drag and
-    // fails on horizontal movement so the pager keeps handling left/right swipes.
-    // The image follows the finger (and shrinks slightly); releasing past a
-    // threshold (or with enough downward velocity) closes the viewer, otherwise it
-    // springs back. `dragX/dragY` are the PARENT's shared values so the black
-    // backdrop and the header/filmstrip chrome fade off the same drag distance.
     const dismissPan = Gesture.Pan()
       .enabled(active && !zoomed)
       .activeOffsetY(14)
@@ -178,7 +159,6 @@ const ZoomablePage = React.memo(
     const composed = Gesture.Simultaneous(pan, pinch, doubleTap, dismissPan);
 
     const imgStyle = useAnimatedStyle(() => {
-      // Shrink toward the finger as it drags down (matches iMessage's peel-away).
       const dismissScale = interpolate(dragY.value, [0, 400], [1, 0.82], Extrapolation.CLAMP);
       return {
         opacity: opacity.value,
@@ -231,11 +211,6 @@ const ZoomablePage = React.memo(
   }
 );
 
-// Full-screen photo viewer for a chat album: swipe or use the ◀ ▶ arrows / the
-// bottom thumbnail filmstrip to move between images (WhatsApp-style), pinch or
-// double-tap to zoom. The image is laid out between the header and the
-// filmstrip so it never slips under either, and top/bottom safe-area insets are
-// respected.
 export const ImageGalleryModal = ({
   visible,
   images,
@@ -243,22 +218,14 @@ export const ImageGalleryModal = ({
   onClose,
 }: ImageGalleryModalProps) => {
   const insets = useSafeAreaInsets();
-  // Only warm while open — the gallery is mounted per message bubble, so warming
-  // on mount would download every conversation attachment in the thread.
   const warmed = useWarmedImageUris(visible ? images.map((i) => i.uri) : []);
   const srcOf = (uri: string) => warmed[uri] || uri;
   const pagerRef = useRef<FlatList>(null);
   const stripRef = useRef<FlatList>(null);
   const [index, setIndex] = useState(initialIndex);
   const [isZoomed, setIsZoomed] = useState(false);
-  // Height of the middle band (between header and filmstrip). The image is
-  // sized to exactly this so it never overlaps the chrome. Seeded with an
-  // estimate to avoid a blank first frame, then corrected on layout.
   const [mediaH, setMediaH] = useState(Math.max(1, SH - 220));
 
-  // Drag-to-dismiss offsets (shared with each ZoomablePage). The black backdrop
-  // fades out over a long drag; the header + filmstrip chrome fade quickly so only
-  // the image (following the finger) is left, like iMessage.
   const dragX = useSharedValue(0);
   const dragY = useSharedValue(0);
   const backdropStyle = useAnimatedStyle(() => ({
@@ -268,9 +235,6 @@ export const ImageGalleryModal = ({
     opacity: interpolate(dragY.value, [0, 100], [1, 0], Extrapolation.CLAMP),
   }));
 
-  // A Modal can report insets.top === 0 on Android even though the status bar
-  // is physically there — floor with StatusBar.currentHeight so the close
-  // button can never land inside the status bar.
   const topInset = Math.max(
     insets.top,
     Platform.OS === 'android' ? 0 : 0,
@@ -284,11 +248,9 @@ export const ImageGalleryModal = ({
     if (!visible) return;
     setIndex(initialIndex);
     setIsZoomed(false);
-    // Reset any leftover drag from a previous dismiss so it opens fully-shown.
     dragX.value = 0;
     dragY.value = 0;
     if (images.length > 1) {
-      // Center the active thumbnail once the strip has laid out.
       setTimeout(
         () =>
           stripRef.current?.scrollToIndex({

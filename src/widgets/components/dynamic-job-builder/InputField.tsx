@@ -11,11 +11,6 @@ interface InputFieldProps {
   editable?: boolean;
 }
 
-// Matches the normal Job Builder numeric inputs: h-12 rounded-2xl border-2
-// slate, font-black. Renders label + input + optional inline unit ONLY — web's
-// `input-field.js` echoes no "✓ value" line below (the entered value is already
-// visible in the input, so repeating it just duplicated it). The ✓ confirmation
-// belongs to the option/toggle/swatch widgets, where the value isn't otherwise shown.
 export function InputField({ label, placeholder, value, onChange, unit, editable = true }: InputFieldProps) {
   return (
     <View className="mb-3">

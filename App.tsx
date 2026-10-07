@@ -2,8 +2,6 @@ import './global.css';
 import React, { useState } from 'react';
 import { Text, TextInput, View, StyleSheet, StatusBar, Platform, Animated } from 'react-native';
 
-// Professional Global Font Injection for RN 0.84+
-// This ensures Public Sans is the baseline for EVERYTHING.
 const applyGlobalFont = (Component: any) => {
   const target = Component.render || Component.type?.render;
   if (!target) return;
@@ -43,8 +41,6 @@ import { queryClient } from './src/services/api/queryClient';
 import SplashScreen from './src/screens/Splash';
 import { useAuth } from './src/hooks/useAuth';
 
-// How long the splash will keep waiting for auth bootstrap after the animation
-// has finished, before handing over to the navigator's own loading state.
 const MAX_BOOTSTRAP_WAIT_MS = 8000;
 
 
@@ -52,13 +48,9 @@ function AppContent() {
   useAppInitialization();
   const { isDark, colors } = useTheme();
   const insets = useSafeAreaInsets();
-  // Connect the global socket once — persists across all screens
   useSocketManager();
   const { loading, isInitialized } = useAuth();
 
-  // Splash: play the logo animation, then continue into the normal navigation.
-  // We hold it a moment longer if auth bootstrap hasn't resolved yet, so the
-  // animation isn't followed by the navigator's bare spinner.
   const [animationDone, setAnimationDone] = useState(false);
   const [bootstrapTimedOut, setBootstrapTimedOut] = useState(false);
   const bootstrapReady = isInitialized && !loading;
@@ -70,10 +62,6 @@ function AppContent() {
     return () => clearTimeout(timer);
   }, [animationDone]);
 
-  // Splash dismissal is a FADE, not an instant cut: keep the overlay mounted
-  // (`splashMounted`) and, once it's ready to go away (animation done + bootstrap
-  // resolved, i.e. `showSplash` flips false), animate its opacity to 0 so the
-  // home screen behind it is revealed smoothly, then unmount.
   const [splashMounted, setSplashMounted] = useState(true);
   const splashOpacity = React.useRef(new Animated.Value(1)).current;
   React.useEffect(() => {
@@ -89,10 +77,6 @@ function AppContent() {
 
   const [currentRouteName, setCurrentRouteName] = useState<string | null>(null);
 
-  // Push notifications: foreground display, tap deep-links, cache refresh.
-  // Mounted once, at app level, so a notification is handled on every screen.
-  // The second argument is the chat the rep currently has open, used to suppress
-  // a banner for the thread they are already reading — wired in Module 3.
   usePushNotifications(currentRouteName, null);
 
   const statusBarBg = isDark ? colors.background : '#0E2A1C';
@@ -144,7 +128,6 @@ function AppContent() {
       <FlashMessage position="top" />
       {splashMounted && (
         <Animated.View
-          // Once fading (showSplash false), let touches through to the app below.
           pointerEvents={showSplash ? 'auto' : 'none'}
           style={[StyleSheet.absoluteFill, { zIndex: 10000, opacity: splashOpacity }]}
         >

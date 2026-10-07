@@ -9,7 +9,6 @@ export const getJobSummaryItems = (calculatorData: any) => {
   const extras = calculatorData.extras || {};
   const n = (v: any) => Number(v) || 0;
 
-  // Gutter items
   const gutterInputKeys = [
     'gutter5DsE',
     'gutter6Ft1',
@@ -35,7 +34,6 @@ export const getJobSummaryItems = (calculatorData: any) => {
     items.push({ category: 'Gutters' });
   }
 
-  // LeafFilter items
   const lfInputKeys = [
     'versaMaxFt1',
     'versaMaxFt2',
@@ -59,14 +57,12 @@ export const getJobSummaryItems = (calculatorData: any) => {
     items.push({ category: 'LeafFilter' });
   }
 
-  // Soffit items
   const hasSoffit = ['vinylSoffit', 'porchCeiling', 'nailerBuildOut'].some((k) => n(extras[k]) > 0);
 
   if (hasSoffit) {
     items.push({ category: 'Soffit' });
   }
 
-  // Fascia items
   const hasFascia = ['trimWrap', 'fasciaBoard', 'aluminumFasciaBoard'].some(
     (k) => n(extras[k]) > 0
   );
@@ -75,7 +71,6 @@ export const getJobSummaryItems = (calculatorData: any) => {
     items.push({ category: 'Fascia' });
   }
 
-  // Lighting items
   const hasLighting = [
     'lighting1stStory',
     'lighting2ndStory',
@@ -90,7 +85,6 @@ export const getJobSummaryItems = (calculatorData: any) => {
     items.push({ category: 'Lighting' });
   }
 
-  // Additional items
   const hasAdditional = n(inputs.extraLabor) > 0 || n(inputs.ckToInstallers) > 0;
 
   if (hasAdditional) {
@@ -114,10 +108,8 @@ export const getAvailableSteps = (calculatorData: any) => {
   ];
 
   return steps.map((step) => {
-    // MISC and SUMMARY are always unlocked
     if (step.step >= 6) return { ...step, isLocked: false };
 
-    // Check if this category exists in calculator items
     const isAvailable = jobSummaryItems.some((item) => item.category === step.categoryKey);
     return { ...step, isLocked: !isAvailable };
   });

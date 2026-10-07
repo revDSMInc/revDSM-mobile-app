@@ -20,22 +20,9 @@ export interface RehashLeadsParams {
   status?: string;
 }
 
-/** Web parity: `useGetRehashLeads` requests 200 rows and never pages past the first. */
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 200;
 
-/**
- * The signed-in rep's rehashed leads — `GET /rehash/rep/v1/leads`.
- *
- * Mirrors web `useGetRehashLeads` (`src/api/leads.js`), which is fetched ONLY while the
- * Rehash tab is open. Hence the required `enabled` argument rather than an options bag:
- * this is a tab-scoped list, and firing it from the Issued tab would be a request for a
- * list nothing is showing.
- *
- * ⚠️ Separate from `useLeadsData`. That hook reads `demo/v1/leads/sales-portal` with a
- * `status` filter; rehash is its own service with its own paging contract, so it cannot
- * be folded in as another `status` value.
- */
 export function useRehashLeads(enabled: boolean, params?: RehashLeadsParams) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -43,8 +30,6 @@ export function useRehashLeads(enabled: boolean, params?: RehashLeadsParams) {
   const page = params?.page ?? DEFAULT_PAGE;
   const limit = params?.limit ?? DEFAULT_LIMIT;
 
-  // Held in a memo so the key is referentially stable across renders — an inline object
-  // would be a new key every render and re-subscribe the observer each time.
   const queryKey = useMemo(
     () => [
       'rehashLeads',
@@ -76,10 +61,6 @@ export function useRehashLeads(enabled: boolean, params?: RehashLeadsParams) {
         user?.companyId
       );
 
-      // `{ code, message, data: { leads, pagination } }`. The `data.leads` fallback
-      // covers a server that answers with a bare array under `data`, which the
-      // sales-portal endpoint does — cheap insurance, since the documented empty
-      // response is the only shape confirmed so far.
       const payload = res.data?.data;
       const leads = Array.isArray(payload?.leads)
         ? payload.leads
@@ -92,18 +73,10 @@ export function useRehashLeads(enabled: boolean, params?: RehashLeadsParams) {
         pagination: (payload?.pagination ?? null) as RehashPagination | null,
       };
     },
-    // The rep must be resolved before asking: `companyId` scopes the response, and a
-    // request sent before the profile lands would be cached against a `companyId` of
-    // undefined and then re-used for the real one.
     enabled: enabled && !!user?._id,
     staleTime: 1000 * 60 * 5, // 5 minutes, matching useLeadsData
   });
 
-  /**
-   * Drop a lead from the cached list without a round trip — the archive/delete
-   * counterpart of `useLeadsData.removeLocalLead`, so a card removed from the Rehash
-   * tab disappears as immediately as it does on the other two.
-   */
   const removeLocalLead = useCallback(
     (id: string) => {
       queryClient.setQueryData(

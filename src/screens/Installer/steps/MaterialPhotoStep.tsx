@@ -15,31 +15,12 @@ interface Props {
   mode: 'pickup' | 'return';
   state: MaterialStepState;
   onAddPhoto: (photo: CapturedPhoto) => void;
-  /**
-   * Resolves once the photo is gone from the server as well as from state — the
-   * confirm dialog holds its spinner on this promise.
-   */
   onRemovePhoto: (photoId: string) => void | Promise<void>;
   onSkip: () => void;
-  /**
-   * Finish the step from the page itself.
-   *
-   * ⚠️ Wired to the SAME handler as `onBack`, deliberately: leaving a step is this
-   * module's save point (`handleCloseStep` logs the completion and PATCHes the step
-   * data), so Done must not become a second, slightly different way of saving. The
-   * button exists because backing out of a finished step does not read as finishing it.
-   */
   onDone: () => void;
   onBack: () => void;
 }
 
-/**
- * Material pickup / return hub.
- *
- * The step self-satisfies on the first photo — Inventory Center reconciles the
- * shots against what was issued, so there's no explicit "done" action. The skip
- * path covers "had material on truck" / "used all material".
- */
 export function MaterialPhotoStep({
   visible,
   mode,
@@ -58,9 +39,6 @@ export function MaterialPhotoStep({
   const isPickup = mode === 'pickup';
   const satisfied = state.photos.length > 0 || state.skipped;
 
-  // The capture itself is logged by the upload hook, once S3 has answered with the
-  // s3url and byte size the portal's payload needs. The removal is logged here, and
-  // only AFTER it lands — logging on the tap would record deletions that never happened.
   const del = usePhotoDeleteConfirm<{ photo: CapturedPhoto; index: number }>(
     async ({ photo, index }) => {
       await onRemovePhoto(photo.id);
@@ -85,9 +63,6 @@ export function MaterialPhotoStep({
     ? t('installer.materialSkipPickup')
     : t('installer.materialSkipReturn');
 
-  // Built from whole sentences per branch rather than by splicing "Pickup"/"Return" into
-  // one template — Spanish agreement ("Recogida completa" vs "Devolución completa")
-  // doesn't survive that kind of assembly.
   const satisfiedLabel = state.skipped
     ? isPickup
       ? t('installer.materialSkippedPickup')

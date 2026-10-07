@@ -3,36 +3,11 @@ import { View, Text, TouchableOpacity, useWindowDimensions, StyleSheet } from 'r
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { BlurView } from '@react-native-community/blur';
 
-/**
- * "Quick Tutorial — Presentation Gestures", over the Pitch Book's FULLSCREEN slide.
- *
- * ⚠️ The Swipe card's BODY deliberately diverges from the design mock, which read *"near
- * the screen borders"*. The swipe was built that way and the strips it needed ate every
- * tap on the arrows beneath them; it now works across the whole slide, and a tutorial has
- * to describe what the app does. The TITLE keeps the mock's "Swipe Edge-to-Edge", which
- * reads as the travel rather than the hit area.
- *
- * Ticket: *"open the app, create a new lead, open the lead detail page, go to the Tools
- * section and open the pitch book, then click on the full screen icon — when the full
- * screen is open we need to display these details."*
- *
- * Shown the first time a rep presents fullscreen and then never again once dismissed —
- * see `utils/presentation-tutorial.ts` for which of the two buttons remembers.
- *
- * ⚠️ It describes gestures that must actually WORK. The two cards are not decoration:
- * `Pitchbook/index.tsx` implements a centre tap that toggles the presentation chrome and
- * an edge swipe that changes slide, and this copy is the contract with them. If either is
- * ever removed, this card has to go with it — a tutorial teaching a gesture that does
- * nothing is worse than no tutorial.
- */
-
 const GREEN = '#72BD00';
 
 interface Props {
   visible: boolean;
-  /** "Got It, Dismiss" — closes for now, shows again next time. */
   onDismiss: () => void;
-  /** "Don't show me again" — closes and remembers. */
   onNeverAgain: () => void;
 }
 
@@ -59,30 +34,16 @@ function GestureCard({
 export function PresentationGesturesTutorial({ visible, onDismiss, onNeverAgain }: Props) {
   const { width } = useWindowDimensions();
 
-  /**
-   * ⚠️ `useWindowDimensions`, not a one-shot `Dimensions.get`. This sits inside the
-   * fullscreen presentation modal, which supports landscape on every device and is the
-   * orientation a rep actually presents in — a cached width would keep the stacked
-   * portrait layout after the phone turned.
-   */
   const wide = width >= 620;
 
   if (!visible) return null;
 
   return (
-    /**
-     * ⚠️ `StyleSheet.absoluteFill` INSIDE the existing fullscreen Modal, not a Modal of
-     * its own. Stacking a second native modal over one that is already up is unreliable
-     * on both platforms — the same rule the funding sheet and the CoC signature pad in
-     * this repo already follow. Rendered last, so it covers the slide and its chrome.
-     */
     <View style={[StyleSheet.absoluteFill, styles.layer]} pointerEvents="box-none">
       <BlurView
         style={StyleSheet.absoluteFill}
         blurType="dark"
         blurAmount={12}
-        // No blur at all with Reduce Transparency on, so the fallback has to hide the
-        // slide by itself — this overlay is unreadable over a bright presentation image.
         reducedTransparencyFallbackColor="rgba(8,10,8,0.96)"
       />
       <View style={styles.scrim} />
@@ -136,9 +97,6 @@ export function PresentationGesturesTutorial({ visible, onDismiss, onNeverAgain 
 }
 
 const styles = StyleSheet.create({
-  // Above every piece of chrome, so nothing can paint over the card even if a future
-  // control is added with a zIndex of its own. The chrome is hidden anyway; this is the
-  // belt to that braces.
   layer: { zIndex: 60 },
   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(6,8,6,0.72)' },
   body: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
@@ -186,7 +144,6 @@ const styles = StyleSheet.create({
   },
   swipeArt: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   swipeArrow: { marginHorizontal: 6 },
-  // Sits under the double arrow, as in the design — the hand is doing the swipe.
   swipeHand: { position: 'absolute', top: 26 },
 
   actions: { marginTop: 28, alignItems: 'center', justifyContent: 'center' },

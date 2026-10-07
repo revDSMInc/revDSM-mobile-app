@@ -31,7 +31,6 @@ export const useTheme = () => useContext(ThemeContext);
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const { setColorScheme } = useColorScheme();
 
-  // Temporarily force NativeWind's color scheme to 'light'
   useEffect(() => {
     setColorScheme('light');
   }, [setColorScheme]);

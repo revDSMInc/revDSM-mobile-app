@@ -22,17 +22,11 @@ export const logCalculatorCreated = async (opts: {
       ...(opts.isFirstCalculator && { isFirstCalculator: true }),
       action: opts.isFirstCalculator ? 'Created new calculator tab' : 'calculator_created',
       ...(opts.leadId && { leadId: opts.leadId }),
-      // Web sends `resetCycle` on every calculator log (0 when the calc has not been
-      // reset) — verified against the live web DB records.
       resetCycle: 0,
     },
   });
 };
 
-/**
- * Web parity (DealCenterContext.js:493 / VerticalsCalculatorView.js:566): a `view`
- * event fired ONCE per calculator per session when it becomes the active tab.
- */
 export const logCalculatorViewed = async (opts: {
   userId: string;
   calculatorId: string;
@@ -57,11 +51,6 @@ export const logCalculatorViewed = async (opts: {
 };
 
 
-/**
- * Web parity (DealCenterContext.js:218-234): a `calculator_field_entry` change per
- * edited calculator field. Fired by the dynamic calculator save engine, which
- * previously emitted no calculator activity events at all.
- */
 export const logCalculatorFieldEntry = async (opts: {
   userId: string;
   calculatorId: string;
@@ -141,11 +130,6 @@ export const logCalculatorRename = async (opts: {
   });
 };
 
-/**
- * Web parity (DealCenterContext.js:280-290 / 342-352): fired when a SAVE changes a
- * calculator's persisted title. The calc name is derived from its entries, so it
- * auto-renames as the rep edits — this records that against the calculator's own id.
- */
 export const logCalculatorAutoRenamed = async (opts: {
   userId: string;
   calculatorId: string;

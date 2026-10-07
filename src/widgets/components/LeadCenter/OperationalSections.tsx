@@ -14,12 +14,6 @@ import { FlashMessage } from '../../../config/message';
 import { RevRenderHistoryModal } from '../../modals/lead-center/RevRenderHistoryModal';
 import { getWarmedLocalUri, warmToLocalCache } from '../../../utils/imageFileCache';
 
-/**
- * Stands in for a server report on a form this device is still holding.
- *
- * ⚠️ It carries NO `reportPath`, deliberately — there is no filed document to open yet, and the
- * tool-action guard tells the rep so rather than handing a viewer an empty url.
- */
 const QUEUED_FORM = { reportType: 'queued-offline', __queuedOffline: true } as const;
 
 export const ToolsSection = ({
@@ -41,16 +35,11 @@ export const ToolsSection = ({
 }: any) => {
   const { colors, isDark } = useTheme();
 
-  // Calculator/rollout status for the Deal Center + Investment Center tiles.
-  // `allConfirmed` (web `allJobsConfirmed`) gates the Investment Center. Refetch on
-  // focus so returning from the Deal Center reflects a newly-confirmed rollout.
   const { data: calcStatus, refetch: refetchCalcStatus, isFetching: isCalcStatusFetching } =
     useLeadCalculatorStatus(lead);
   const hasCalc = !!calcStatus?.hasCalculator;
   const isLeadSold = lead?.status === 'sale';
   const allConfirmed = !!calcStatus?.allConfirmed || isLeadSold;
-  // Only while the tile is still locked — once it's open the rep has what they came
-  // for and a spinner would just be noise on a card they can already use.
   const investmentStatusPending = isCalcStatusFetching && !allConfirmed;
   useFocusEffect(
     React.useCallback(() => {
@@ -68,9 +57,6 @@ export const ToolsSection = ({
             generatedUrl: typeof r?.generatedUrl === 'string' ? r.generatedUrl.trim() : '',
             createdAt: r?.createdAt || null,
             runId: r?.runId || r?._id || null,
-            // Keep the backend's own key names too (`RevRenderHistoryModal`'s view-logged
-            // event reads these) — this pair shape used to drop them, so that log's
-            // originalS3url/generatedS3url fields always came back null on this screen.
             s3UrlOriginal: r?.s3UrlOriginal || null,
             s3UrlGenerated: r?.s3UrlGenerated || null,
             originalS3url: r?.s3UrlOriginal || null,
@@ -80,9 +66,6 @@ export const ToolsSection = ({
             category: r?.category || null,
             subcategory: r?.subcategory || null,
             viewLabel: r?.viewLabel || null,
-            // Color/component selections chosen when the render was created, so the
-            // before/after modal can show which colors were applied. Different
-            // backend shapes are all carried through; the modal picks whichever exists.
             selections: r?.selections || null,
             textureImageUrls: r?.textureImageUrls || r?.textureImages || null,
             components: r?.components || null,
@@ -106,13 +89,6 @@ export const ToolsSection = ({
     return [...pairs].reverse();
   }, [runs]);
 
-  // Pre-fetch all images into the persistent filesystem cache early when the lead loads.
-  //
-  // ⚠️ `warmToLocalCache`, NOT `prefetchToLocalCache`. Both write the same file, but only
-  // this one records it in the warmed-uri memo, which is what lets `ImageWithLoader` name
-  // the local copy SYNCHRONOUSLY on a remount. With the bare prefetch the strip still had
-  // to rediscover the file asynchronously every time, so it re-armed its spinners on every
-  // tab switch — the "the renders load again each time I come into Tools" report.
   React.useEffect(() => {
     if (orderedRuns && orderedRuns.length > 0) {
       orderedRuns.forEach((run: any) => {
@@ -134,7 +110,6 @@ export const ToolsSection = ({
 
   const findReport = (type: string) => {
     const keyword = type.split('_')[0].toLowerCase(); // 'consent', 'waiver', 'risk'
-    // Search in lead top-level, and common nested outcome paths
     const reports = [
       ...(lead?.generatedReports || []),
       ...(lead?.outcomeData?.generatedReports || []),
@@ -151,13 +126,6 @@ export const ToolsSection = ({
     );
   };
 
-  /**
-   * ⚠️ A form signed at a door counts as ON FILE here, exactly as it does for the Investment
-   * Center's own gate. `findReport` reads the SERVER's `generatedReports`, which offline says no
-   * however many forms are queued — so the rep signed a consent, walked back to Tools, and was
-   * shown an un-badged **Customer Consent Form** that re-opened blank when tapped. In front of
-   * the customer who had just signed it.
-   */
   const queuedForms = useQueuedConsentForms(lead);
   const consentReport = findReport('consent_form') || (queuedForms.consent ? QUEUED_FORM : undefined);
   const waiverReport = findReport('waiver_form') || (queuedForms.waiver ? QUEUED_FORM : undefined);
@@ -188,20 +156,14 @@ export const ToolsSection = ({
       <ToolCard
         title="Deal Center"
         desc=''
-        // Green status: "Calculator created" once a real calc exists, then
-        // "All jobs built" once every rollout is confirmed (web parity).
         statusText={allConfirmed ? 'All jobs built' : hasCalc ? '' : undefined}
         icon="cog"
         onPress={onShowDynamicDealCenter}
       />
       <ToolCard
         title="Investment Center"
-        // Locked until every rollout is confirmed (web `allJobsConfirmed`). Tapping
-        // while locked warns instead of opening.
         desc={isLeadSold ? 'View finalized proposal details' : (investmentStatusPending ? 'Checking job status…' : !allConfirmed ? 'Please Fully Build ALL jobs first' : 'Present quote & 1-yr free quote')}
         statusText={allConfirmed ? (isLeadSold ? 'Sale finalized' : (consentReport ? 'Consent on file — present quote' : 'Ready to present')) : undefined}
-        // "SOLD" (green) once finalized, else an "Already Generated" pill — same
-        // violet design as the Customer Consent Form tag — once consent is on file.
         badgeText={isLeadSold ? 'SOLD' : (allConfirmed && consentReport ? 'Already Generated' : undefined)}
         badgeVariant={isLeadSold ? undefined : 'violet'}
         locked={!allConfirmed}
@@ -209,8 +171,6 @@ export const ToolsSection = ({
         icon="chart-line"
         onPress={() => {
           if (investmentStatusPending) {
-            // Mid-check, so "you haven't built the jobs" would be a guess — and often
-            // a wrong one, since this is exactly the window after a confirm.
             FlashMessage.info('Investment Center', 'Checking job status — one moment.');
             return;
           }
@@ -436,7 +396,6 @@ export const ToolsSection = ({
       />
       <ToolCard
         title="Roof Waiver"
-        // desc={waiverReport ? 'View Signed Waiver' : 'Roof waiver documents'}
         icon={waiverReport ? 'file-check' : 'home-roof'}
         onPress={handleWaiverPress}
         isGenerated={!!waiverReport}
@@ -498,23 +457,7 @@ const PulsingSkeleton = ({ isDark, label = 'AI\nRendering' }: { isDark: boolean;
   );
 };
 
-/**
- * A render thumbnail in the revRender strip, served from the local file cache.
- *
- * ⚠️ It must NOT render the `uri` it is handed. Render urls are pre-signed S3 links with
- * no cache headers, so the OS image cache refuses to store them and every mount
- * re-downloads — and the Tools tab unmounts entirely on a switch to Job docs
- * (`activeTab === 'tools' && <ToolsSection/>`), so coming back re-downloaded every
- * render. Worse, the runs query re-signs the urls, so even RN's in-memory cache misses
- * on the way back. The file cache keys on the url with the query stripped, which is what
- * makes the second visit a hit.
- *
- * ⚠️ No `onLoadStart={() => setLoading(true)}` either. It re-armed the spinner on every
- * remount over an image that was about to paint from disk, which is most of what the rep
- * actually saw.
- */
 const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
-  // Seeded synchronously: a warmed render paints on the first frame, with no spinner.
   const seeded = getWarmedLocalUri(uri);
   const [localUri, setLocalUri] = useState<string | null>(seeded);
   const [loading, setLoading] = useState(!seeded);
@@ -566,30 +509,8 @@ const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
 };
 
 
-/**
- * Pitch Book tile — the entry point for the PORTAL-AUTHORED pitch books.
- *
- * A manager can now publish several books (uploaded as PDFs and parsed into slides
- * on the portal), so the rep has to choose one before presenting. The tile keeps the
- * usual `ToolCard` frame and adds a chevron that expands the published list in
- * place; picking a book hands its `bookId` to the Pitchbook screen.
- *
- * With nothing published — a company that hasn't configured any, or a failed list
- * read — the tile behaves exactly as it did before: one tap opens the bundled deck.
- * The dynamic list is an addition, never a way to end up with no pitch book at all.
- */
-/**
- * Every Tools tile is the same card: 12pt inner padding on all four sides, a 16pt gap
- * below, and this minimum height so a one-line tile (Roofline Deck) is not shorter than
- * a two-line one (Deal Center, Pitch Book). The content row inside is centred.
- */
 const TOOL_CARD_MIN_HEIGHT = 68;
 
-/**
- * The ONE icon badge every Tools tile uses (32pt grey circle). revRender used to draw its
- * own 48pt white square, so it was the odd one out in the list - route every tile through
- * this so the shape, size and colour cannot drift again.
- */
 const ToolIconCircle = ({ isDark, colors, children }: any) => (
   <View
     className="w-8 h-8 rounded-full items-center justify-center"
@@ -605,9 +526,6 @@ const PitchBookCard = ({ onOpen }: { onOpen: (book?: PitchBookSummary) => void }
   const { data: books = [], isLoading, isError, refetch, isFetching } = usePitchBooks();
   const hasBooks = books.length > 0;
 
-  // A failed list read must NOT read as "nothing published" — the fallback below is
-  // deliberately quiet (it still opens the bundled deck), so without this the two are
-  // indistinguishable on screen and a 404 looks like an empty, correctly-working card.
   const subtitle = hasBooks
     ? `${books.length} pitch book${books.length === 1 ? '' : 's'} available`
     : isLoading || isFetching
@@ -721,12 +639,7 @@ const PitchBookCard = ({ onOpen }: { onOpen: (book?: PitchBookSummary) => void }
 const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, badgeColor, badgeVariant, locked, blur, icon, onPress, onDownload, isGenerated, isLoading, busy }: any) => {
   const { colors, isDark } = useTheme();
   const green = statusColor || '#16A34A';
-  // A locked card stays tappable on purpose — the parent's onPress shows a toast
-  // (web parity: tapping the locked Investment Center warns "build all jobs first").
   const disabled = isLoading;
-  // The pills sit flush with the card's right padding (the same edge the revRender "AI"
-  // badge and the Pitch Book chevron end on). The old fixed `mr-2` pushed them 8pt in; a gap
-  // is only needed when the download button follows.
   const pillGap = onDownload ? 8 : 0;
   return (
     <View
@@ -782,8 +695,6 @@ const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, ba
             green tag (e.g. "SOLD"). */}
         {!!badgeText && !isLoading && (
           badgeVariant === 'violet' ? (
-            // `self-start` aligns the pill with the title line (the row is
-            // items-center, which would otherwise centre it against the 2-line block).
             <View className="bg-violet-100 px-2.5 py-1 rounded-xl border border-violet-200 shadow-sm" style={{ flexShrink: 0, marginRight: pillGap }}>
               <Text className="text-[11px] font-semibold text-violet-700" maxFontSizeMultiplier={1.1}>{badgeText}</Text>
             </View>

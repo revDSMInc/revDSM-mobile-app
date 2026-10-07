@@ -16,34 +16,12 @@ import {
 } from '../../../screens/DynamicDealCenter/utils/funding';
 import type { FundingPayment } from '../../../screens/DynamicDealCenter/utils/funding';
 
-/**
- * The lead's outstanding approvals, on the Lead Center — `GET /lead/v1/:leadId/approvals`
- * (REVDSM-1160, `TAYYAB-REFUND-HOLD-AND-REMINDERS.md` §2.4).
- *
- * ⚠️ **The rep has no Approvals queue — that is Command Center only** — so a refund they
- * raised was invisible to them the moment they left the wizard. This is where they see
- * that it is still sitting with somebody, how long it has been sitting, and (when the
- * server allows it) chase them.
- *
- * Renders **null** when the lead has no outstanding approvals, exactly as `AddendumsCard`
- * does, so it costs an ordinary lead nothing.
- */
-
 const ROSE = { BG: '#FFF1F2', BORDER: '#FDA4AF', LINE: '#FBCFE8', TEXT: '#9F1239', STRONG: '#BE123C' };
 
 interface Props {
   leadId?: string;
   companyId?: string;
-  /**
-   * The funding record's payment rows, when the host already has them.
-   *
-   * ⚠️ Optional, and the card works without it. It only adds the stage AFTER approval —
-   * the approval row itself carries no refund state, so "waiting on a manager to release
-   * the money" cannot be known from `/approvals` alone. Omit it and that line is simply
-   * absent rather than guessed at.
-   */
   payments?: FundingPayment[];
-  /** `false` on a lead that cannot have one — see the gate in `JobDocsSection`. */
   enabled?: boolean;
 }
 
@@ -51,14 +29,6 @@ export function LeadApprovalsCard({ leadId, companyId, payments, enabled = true 
   const feed = useLeadApprovals(leadId, enabled, companyId);
   const hasApprovals = feed.approvals.length > 0;
 
-  /**
-   * The funding record, for the two things the approval row does NOT carry: the refund's
-   * AMOUNT and its STATE. The row references it (`subject.refundId`) and embeds neither.
-   *
-   * ⚠️ **Chained, not parallel** — only asked for once the lead is known to HAVE an
-   * approval. A resulted lead with none makes one extra request on this screen and no
-   * more; the count here is watched closely.
-   */
   const fundingQuery = useQuery({
     queryKey: ['leadApprovalsFunding', leadId || 'none'],
     queryFn: async () => (await FundingService.getFunding(leadId!, companyId))?.data,
@@ -70,14 +40,6 @@ export function LeadApprovalsCard({ leadId, companyId, payments, enabled = true 
   const rows: FundingPayment[] =
     payments || (fundingQuery.data as any)?.data?.payments || (fundingQuery.data as any)?.payments || [];
 
-  /**
-   * Names for the assignees.
-   *
-   * ⚠️ The approval row carries `assignedToUserId` and **no name**, so without this the
-   * card could only say whether it was assigned, never to whom — and the doc's own
-   * example line is *"Waiting 3 days on Sam Patel."* Gated on there being an approval,
-   * and the query is company-keyed so the deal-edit screen's copy warms the same cache.
-   */
   const approverFeed = useRefundApprovers(enabled && hasApprovals, companyId);
   const namesById = React.useMemo(() => {
     const map: Record<string, string> = {};
@@ -85,13 +47,6 @@ export function LeadApprovalsCard({ leadId, companyId, payments, enabled = true 
     return map;
   }, [approverFeed.approvers]);
 
-  /**
-   * Refunds the approver has already passed, which are now with a manager.
-   *
-   * ⚠️ `refundsOnJob` deliberately keeps TERMINAL refunds too, so this filters to the
-   * two states that are actually waiting on a release. A refunded or declined one has
-   * nobody to chase and belongs nowhere on this card.
-   */
   const awaitingRelease = refundsOnJob(rows).filter(
     ({ refund }) => refund.state === 'customerSigned' || refund.state === 'issuing'
   );
@@ -124,12 +79,6 @@ export function LeadApprovalsCard({ leadId, companyId, payments, enabled = true 
         const who = approverNameOf(approval, namesById);
         const waiting = waitingLabel(reminder, who);
         const sending = feed.sendingId === id;
-        /**
-         * ⚠️ Driven ENTIRELY by the server's `canRemind` — never by a state test here.
-         * The window is two backend constants and the server also decides who may be
-         * chased at all, so the day it starts allowing a nudge at a later stage this
-         * button lights up with no app change.
-         */
         const canRemind = reminder?.canRemind === true && !!id;
 
         return (
@@ -188,8 +137,6 @@ export function LeadApprovalsCard({ leadId, companyId, payments, enabled = true 
                 </Text>
               </TouchableOpacity>
             ) : (
-              // ⚠️ The server's own wording, verbatim — it names the window ("You can send
-              // a reminder once this has been waiting 2 days."), which no client string can.
               !!reminder?.blockedReason && (
                 <Text style={{ fontSize: 11, fontWeight: '600', color: ROSE.TEXT, lineHeight: 15, marginTop: 8 }}>
                   {reminder.blockedReason}

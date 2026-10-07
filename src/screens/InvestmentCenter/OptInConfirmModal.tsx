@@ -9,15 +9,6 @@ import {
   MODAL_CARD_SHADOW,
 } from '../DynamicDealCenter/components/modal-chrome';
 
-/**
- * "Secure This Price" confirmation (web parity: `opt-in-confirm-modal.js`), styled
- * to match the dynamic deal center's centered modals (`DropOutcomeModal`): a frosted
- * BlurView backdrop + scrim, a `rounded-40` white card with `shadow-2xl`, a green
- * check header, the price with CK/CC (or ACH/CC) method badges, and the
- * Decline / Secure-This-Price actions. Shown when the customer opts into the In-Home
- * Pre-Order program; confirming proceeds to the Result Lead (Sale) flow.
- */
-
 const fmt = (n: number) => `$${Math.round(n || 0).toLocaleString()}`;
 
 interface Props {
@@ -26,7 +17,6 @@ interface Props {
   monthly?: number;
   planLabel?: string;
   downPayment?: number;
-  /** In-Home selected plan key — highlights the matching basic method badge. */
   method?: string;
   isLowesLead?: boolean;
   onConfirm: () => void;

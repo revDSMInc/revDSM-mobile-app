@@ -1,16 +1,5 @@
 import { LeadService } from '../../../services/api/leads';
 
-/**
- * Dynamic Job Builder product-data enrichment/extraction.
- *
- * Faithful port of the web portal's
- * `src/sections/lead-map/components/lead-details-modal/enrich-job-builder-product-data.js`.
- * Used by the mobile deal-edit flow to load a lead's saved job-builder state
- * from the PortalJobBuilder (with a calculator-outcome fallback), decide whether
- * it is dynamic, and hand a clean `dynamicJobState` to the deserializer.
- */
-
-/** System / document fields — never treated as product payload when merging portal data. */
 export const PORTAL_MERGE_METADATA_KEYS = new Set([
   '_id',
   '__v',
@@ -34,7 +23,6 @@ export const PORTAL_MERGE_METADATA_KEYS = new Set([
   '_productSource',
 ]);
 
-/** Legacy static sections at document root — not config-driven vertical keys. */
 const LEGACY_STATIC_PRODUCT_ROOT_KEYS = new Set([
   'gutter',
   'leaffilter',
@@ -57,7 +45,6 @@ const LEGACY_STATIC_PRODUCT_ROOT_KEYS = new Set([
   'aluminumFasciaBoard',
 ]);
 
-/** Keys excluded when extracting root-serialized dynamic vertical state. */
 const DYNAMIC_STATE_EXCLUDED_KEYS = new Set([
   ...PORTAL_MERGE_METADATA_KEYS,
   ...LEGACY_STATIC_PRODUCT_ROOT_KEYS,
@@ -95,10 +82,6 @@ function isEmptySummaryFieldValue(val: any) {
   return false;
 }
 
-/**
- * Remove stale colorValues entries when authoritative top-level field values exist.
- * Portal/socket payloads often store both; preview must not read outdated colorValues.
- */
 export function reconcileDynamicJobStateColorValues(state: any): any {
   if (!state || typeof state !== 'object') return state;
   if (Array.isArray(state)) {
@@ -129,9 +112,6 @@ export function reconcileDynamicJobStateColorValues(state: any): any {
   return next;
 }
 
-/**
- * Extract dynamic job state from job builder payloads (nested or root-serialized).
- */
 export function extractDynamicJobState(data: any): any | null {
   if (!data || typeof data !== 'object') return null;
 
@@ -164,9 +144,6 @@ export function isDynamicJobBuilderData(data: any): boolean {
   return Boolean(state && typeof state === 'object' && Object.keys(state).length > 0);
 }
 
-/**
- * PortalJobBuilder product fields win entirely; only UI context is kept from input.
- */
 export function buildProductDataFromPortalRecord(input: any = {}, portalRecord: any = {}) {
   const context = pickContextFromInput(input);
   const product = extractProductFieldsFromRecord(portalRecord);
@@ -188,9 +165,6 @@ export function buildProductDataFromPortalRecord(input: any = {}, portalRecord: 
   return merged;
 }
 
-/**
- * When no PortalJobBuilder exists, use JobBuilder (sales) product fields as fallback.
- */
 export function buildProductDataFromJobBuilderRecord(input: any = {}, jobBuilderRecord: any = {}) {
   const context = pickContextFromInput(input);
   const product = extractProductFieldsFromRecord(jobBuilderRecord);
@@ -224,7 +198,6 @@ function mergeDynamicFields(target: any = {}, source: any = {}) {
   return next;
 }
 
-/** Fallback when no PortalJobBuilder exists — read the calculator-scoped outcome. */
 async function fetchCalculatorOutcome(leadId?: string, calculatorId?: string) {
   if (!leadId || !calculatorId) return null;
   try {
@@ -247,11 +220,6 @@ function resolveApiSource(portalRes: any): 'portal' | 'jobBuilder' | null {
   return 'jobBuilder';
 }
 
-/**
- * Load product data: PortalJobBuilder first, JobBuilder API fallback, then
- * calculator-outcome/input. Returns an enriched object carrying `dynamicJobState`
- * + `isDynamic` when the deal is dynamic.
- */
 export async function enrichJobBuilderProductData(jobBuilderData: any, lead: any = null) {
   const leadId = lead?._id || lead?.leadId || jobBuilderData?.leadId;
 

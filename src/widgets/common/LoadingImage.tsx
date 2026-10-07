@@ -16,24 +16,15 @@ type ResizeMode = 'cover' | 'contain' | 'stretch' | 'center' | 'repeat';
 
 interface LoadingImageProps {
   uri: string;
-  /** Style for the <Image> itself. */
   style?: StyleProp<ImageStyle>;
   resizeMode?: ResizeMode;
-  /** Wrapper style that positions the image + spinner. Defaults to filling the parent. */
   containerStyle?: StyleProp<ViewStyle>;
   spinnerColor?: string;
   spinnerSize?: 'small' | 'large';
-  /** Caption shown when the image cannot be loaded. */
   unavailableLabel?: string;
-  /** Called when the rep taps the failed tile — e.g. to drop the cached copy and refetch. */
   onRetry?: () => void;
 }
 
-/**
- * An <Image> with a centered spinner overlay while it loads — so a (often pre-signed
- * S3 / remote) photo shows a loader instead of a blank/black box until it's ready.
- * Fills its parent by default; pass `containerStyle` to override (e.g. `{ flex: 1 }`).
- */
 export const LoadingImage: React.FC<LoadingImageProps> = ({
   uri,
   style,
@@ -47,17 +38,11 @@ export const LoadingImage: React.FC<LoadingImageProps> = ({
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
 
-  // A new uri is a new attempt — without this, swapping the source on a failed tile would keep
-  // showing the error for an image that might load perfectly well.
   useEffect(() => {
     setFailed(false);
     setLoading(true);
   }, [uri]);
 
-  // ⚠️ A spinner with no `onError` branch spins FOREVER. That is what a rep saw after clearing
-  // the photo cache: the grid still held presigned urls that had expired, every `<Image>` failed,
-  // and `onLoadEnd` never fired — so six tiles sat loading with no way to tell that nothing was
-  // coming. An honest dead end the rep can act on beats an animation that never resolves.
   if (failed) {
     return (
       <TouchableOpacity

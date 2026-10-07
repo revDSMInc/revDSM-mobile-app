@@ -1,16 +1,3 @@
-/**
- * dynamic-discount.ts — data-driven MSRP / program math for the Dynamic Deal
- * Center rollout result breakdown. Port of the web
- * `src/sections/deal-center/components/utils/discount-config-util.js`.
- *
- * Web derives MSRP and every program grand-total from the company's discount
- * config (`discounts[]` with `includeInMsrp`, and `programs[]` with
- * `linkedDiscountKeys`), NOT from a hardcoded "pre-order + senior/vet" formula.
- * These pure helpers reproduce that exactly so the mobile rollout matches web
- * for any configured discount set, and clamps MSRP at ≥100% total (web parity),
- * avoiding the divide-by-≤0 → Infinity the old hardcoded formula produced.
- */
-
 export const PRE_ORDER_DISCOUNT_KEY = 'pre_order';
 
 export interface DiscountOption {
@@ -60,18 +47,6 @@ export function getSelectableOptionsDiscount(discounts: Discount[] = []): Discou
   );
 }
 
-/**
- * The key the rep's selected percentage must be stored under for
- * `getDiscountPercent` to see it — i.e. the key of the discount the selector's
- * options actually came from (`getSelectableOptionsDiscount`), NOT the literal
- * `pre_order`.
- *
- * Callers used to hardcode `{ pre_order: pct }`. When a company's config keys its
- * selectable discount anything else, that matched no discount, `getDiscountPercent`
- * silently fell back to the config's DEFAULT option, and MSRP froze while the
- * selector's highlight still moved. Falls back to `pre_order` so a config with no
- * selectable discount behaves as before.
- */
 export function getSelectableDiscountKey(discounts: Discount[] = []): string {
   return getSelectableOptionsDiscount(discounts)?.key || PRE_ORDER_DISCOUNT_KEY;
 }

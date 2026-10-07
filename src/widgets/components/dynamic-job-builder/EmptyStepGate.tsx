@@ -3,22 +3,11 @@ import { View, Text, TouchableOpacity } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface EmptyStepGateProps {
-  /** The step's label, e.g. "LeafFilter" — shown in the heading. */
   stepLabel: string;
-  /** Reveal the real editable form for this step. */
   onAddDetails: () => void;
-  /** Advance to the next step. */
   onSkip: () => void;
 }
 
-/**
- * RN port of web's deal-edit empty-step gate (`dynamic-job-builder.js:749-783`).
- *
- * Shown in the My Deals / deal-edit builder when a step holds no rep-entered data:
- * a bordered card with a clipboard icon, a heading naming the step, guidance, and
- * two actions — "Add details" (green, reveals the form) and "Skip" (advances).
- * This gives clear feedback instead of dropping the rep into a blank form.
- */
 export function EmptyStepGate({ stepLabel, onAddDetails, onSkip }: EmptyStepGateProps) {
   return (
     <View style={{ padding: 16 }}>

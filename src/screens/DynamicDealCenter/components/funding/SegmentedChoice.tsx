@@ -3,44 +3,19 @@ import { View, Text, TouchableOpacity } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FS, FUND, PS } from './funding-theme';
 
-/**
- * A radio-card segmented control: two or more side-by-side cards, each a title
- * over a line of explanation, with the selected one filled green.
- *
- * Written as a **generic** control rather than as "the payment structure picker"
- * so any screen with a small, mutually-exclusive choice that needs explaining can
- * use it — the Result Lead sheet uses it for Down Payment vs Upfront, but nothing
- * about it knows that.
- *
- * ⚠️ An option can be `disabled` **while still being the selected one**. That is
- * the case this exists for: once money has started moving the structure is
- * settled, so the unpicked option greys out but the picked one keeps its full
- * treatment — greying both would read as "this control is broken" rather than
- * "this decision is made".
- */
-
 export interface SegmentedOption<T extends string> {
   value: T;
   title: string;
-  /** One line under the title. Keep it short — the cards are half-width. */
   subtitle?: string;
   disabled?: boolean;
 }
 
 interface Props<T extends string> {
-  /** Small uppercase caption above the row. Omit for no heading. */
   label?: string;
   options: SegmentedOption<T>[];
   value: T;
-  /**
-   * Fires for a DISABLED option too, with `allowed: false`, so the caller can
-   * explain the refusal instead of the tap silently doing nothing — a dead card
-   * with no feedback is the most common way this pattern goes wrong.
-   */
   onSelect: (value: T, allowed: boolean) => void;
-  /** Caption under the row. Renders nothing when empty. */
   hint?: string;
-  /** Tint the hint amber — used when it explains why a choice is unavailable. */
   hintTone?: 'muted' | 'warn';
 }
 
@@ -63,7 +38,6 @@ export function SegmentedChoice<T extends string>({
       <View style={{ flexDirection: 'row', gap: 9 }}>
         {options.map((o) => {
           const on = o.value === value;
-          // Only an option the rep could switch TO is dimmed. See the note above.
           const dim = !!o.disabled && !on;
           return (
             <TouchableOpacity

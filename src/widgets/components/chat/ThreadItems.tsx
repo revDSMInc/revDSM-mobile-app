@@ -9,7 +9,6 @@ import { buildJobNumber } from '../../../utils/office-initials';
 import { sortLeadThreadsByLeadTime } from '../../../utils/lead-thread-order';
 import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 
-// ─── MainTabOption ────────────────────────────────────────────────────────────
 export function MainTabOption({ label, active, onPress }: any) {
   const { colors } = useTheme();
   return (
@@ -31,7 +30,6 @@ export function MainTabOption({ label, active, onPress }: any) {
   );
 }
 
-// ─── StatusChip ───────────────────────────────────────────────────────────────
 export function StatusChip({ label, active, onPress, count, specialMode }: any) {
   const { colors, isDark } = useTheme();
 
@@ -78,7 +76,6 @@ export function StatusChip({ label, active, onPress, count, specialMode }: any) 
   );
 }
 
-// ─── DateSectionHeader ────────────────────────────────────────────────────────
 export function DateSectionHeader({ label }: { label: string }) {
   return (
     <View className="flex-row items-center my-3">
@@ -122,30 +119,17 @@ export function groupChatsByLeadDate(chats: any[]) {
     groups.get(label)!.data.push(chat);
   });
 
-  // Sections stay newest-day-first; the ROWS inside a day read forwards (9am, 11am, 1pm,
-  // 3pm) off each lead's own appointment time, self-gens taking their creation time. See
-  // `utils/lead-thread-order.ts` - `useChatThreads` sorts by chat recency, which bears no
-  // relation to the time printed on the card.
   return Array.from(groups.values())
     .sort((a, b) => b.sortKey - a.sortKey)
     .map(({ label, data }) => ({ title: label, data: sortLeadThreadsByLeadTime(data) }));
 }
 
-/** `MM.dd.yy`, or '' for a missing / unparseable date (web uses date-fns `format`). */
 function formatShortDate(value: any): string {
   if (!value) return '';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '' : format(date, 'MM.dd.yy');
 }
 
-/**
- * Card heading, ported 1:1 from web `chat-thread-item.js`:
- *   sale               → office-prefixed job number (e.g. "STN/A", "FL803")
- *   installer assigned → "{jobNumber} {lastName} {date}"
- *   otherwise          → "Lead {leadDate} {leadTime}"  e.g. "Lead 07.22.26 9am"
- * The sale branch prefixes the office initials via `buildJobNumber` exactly like
- * web (`buildJobNumber(assignedRepDetails, jobNumber || leadId)`).
- */
 function buildLeadHeading(leadDetails: any, leadId: string): string {
   const status = leadDetails?.status;
   const installerAssignment = leadDetails?.installerAssignment;
@@ -170,52 +154,25 @@ function buildLeadHeading(leadDetails: any, leadId: string): string {
   return `Lead ${formatShortDate(leadDetails?.leadDate)} ${leadTime}`.trim();
 }
 
-/**
- * The INSTALLER's heading: `{jobNumber} {lastName} {timeWindow}` - e.g.
- * "1272 test two 8AM-12PM". All three come off the job the crew is being sent to:
- * `installerAssignment.jobNumber`, `customerDetails.lastName` and
- * `installerAssignment.timeWindow`.
- *
- * WARNING deliberate divergence from web, and it is NOT enough to reorder
- * `buildLeadHeading`'s branches. That function already carries a
- * `{jobNumber} {lastName} {date}` arm, but the `status === 'sale'` arm above it
- * catches every install job (an installer only ever sees sold leads), so the arm is
- * unreachable in practice. Web has the same ordering on purpose - a sales rep reads
- * the office-prefixed job number ("OR1272") - so the installer gets its own builder
- * rather than the shared one being re-ordered underneath sales.
- *
- * Each segment is dropped when missing rather than rendering a blank or "N/A", so an
- * unassigned or window-less job degrades to what IS known instead of reading as a
- * broken row.
- */
 export function buildInstallerLeadHeading(leadDetails: any, leadId: string): string {
   const assignment = leadDetails?.installerAssignment;
-  // `leadId` is the same fallback the sale branch uses, so a job whose number has not
-  // been issued yet is still identified rather than opening with the customer name.
   const jobNumber = String(assignment?.jobNumber || leadId || "").trim();
   const lastName = String(leadDetails?.customerDetails?.lastName || "").trim();
   const timeWindow = String(assignment?.timeWindow || "").trim();
 
   const heading = [jobNumber, lastName, timeWindow].filter(Boolean).join(" ");
-  // Nothing known at all - fall back to the shared builder rather than an empty row.
   return heading || buildLeadHeading(leadDetails, leadId);
 }
 
-/** Status chip label + colours, via web's `STATUS_CONFIG` (unmapped → notResulted). */
 function getStatusProps(status?: string) {
   const config = STATUS_CONFIG[status || ''] || STATUS_CONFIG.notResulted;
   return { label: config.label, color: config.color, textColor: config.textColor };
 }
 
-/** Human lead id — issued leads carry `leadId`, self-gens carry `selfGenLeadId`. */
 export function getLeadIdDisplay(leadDetails: any) {
   return leadDetails?.leadId || leadDetails?.selfGenLeadId || 'N/A';
 }
 
-/**
- * "4 days ago" relative stamp of the last message — shown top-right of each row,
- * same as the previous list UI (and the web `chat-thread-item.js`).
- */
 function formatLastMessageAgo(lastMessageAt?: string | null) {
   if (!lastMessageAt) return '';
   const date = new Date(lastMessageAt);
@@ -237,8 +194,6 @@ function LeadThreadThumbnail({ leadDetails }: { leadDetails: any }) {
     );
   }
 
-  // No preview image or street-view on the lead yet → home-outline placeholder,
-  // matching web's `mdi:home-outline` in the disabled-text colour.
   return (
     <View
       className="rounded-lg items-center justify-center"
@@ -249,7 +204,6 @@ function LeadThreadThumbnail({ leadDetails }: { leadDetails: any }) {
   );
 }
 
-// ─── LeadChatThreadItem ───────────────────────────────────────────────────────
 export function LeadChatThreadItem({ chat, onPress, installerView }: any) {
   const { colors } = useTheme();
   const { leadDetails, unreadCount, recentMessages, lastMessageAt } = chat;
@@ -265,8 +219,6 @@ export function LeadChatThreadItem({ chat, onPress, installerView }: any) {
     [lastMessageAt, chat?.updatedAt, chat?.createdAt]
   );
 
-  // Web `renderMessagePreview`: sender first name in green, an attachment-only
-  // message falls back to "Sent an attachment" rather than reading "No Messages".
   const senderName = lastMsg?.senderDetails?.firstName || 'User';
   const messageContent = lastMsg?.message?.trim() || 'Sent an attachment';
 
@@ -367,7 +319,6 @@ const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
   Questions: { icon: '❓', color: '#9775FA' },
 };
 
-// ─── ChannelThreadItem ────────────────────────────────────────────────────────
 export function ChannelThreadItem({ channel, onPress }: any) {
   const { colors, isDark } = useTheme();
   const { title, name, unreadCount, channelConfig } = channel;

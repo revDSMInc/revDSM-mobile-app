@@ -8,10 +8,8 @@ const WebViewComponent = WebView as any;
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useVoiceNote, formatMs } from '../../../hooks/useVoiceNote';
 
-// In-memory cache: signed URI → local path (for native formats)
 const localFileCache: Record<string, string> = {};
 
-/** Returns true if the URI or mimeType is WebM format */
 function detectWebm(uri: string, mimeType?: string): boolean {
   if (mimeType && (mimeType.includes('webm') || mimeType.includes('ogg') || mimeType.includes('opus'))) return true;
   return uri.split('?')[0].toLowerCase().endsWith('.webm');
@@ -34,7 +32,6 @@ export function VoiceNotePlayer({
   const [speed, setSpeed] = useState(1);
   const [isDownloading, setIsDownloading] = useState(false);
 
-  // ── nitro-sound (M4A, MP3, WAV, local files) ────────────────────────────────
   const {
     playbackState,
     playbackPos,
@@ -44,7 +41,6 @@ export function VoiceNotePlayer({
     setPlaybackSpeed,
   } = useVoiceNote();
 
-  // ── react-native-webview (WebM / unsupported fallback) ──────────────────────
   const webviewRef = useRef<any>(null);
   const [videoUri, setVideoUri]         = useState<string | null>(null);
   const [videoPaused, setVideoPaused]   = useState(true);
@@ -52,7 +48,6 @@ export function VoiceNotePlayer({
   const [videoDuration, setVideoDuration] = useState(0);        // ms
   const [videoError, setVideoError]     = useState<string | null>(null);
 
-  // ── Derived state ────────────────────────────────────────────────────────────
   const isRemote   = typeof uri === 'string' && (uri.startsWith('http://') || uri.startsWith('https://'));
   const isWebm     = detectWebm(uri, mimeType);
   const usingVideo = !!videoUri;
@@ -63,11 +58,9 @@ export function VoiceNotePlayer({
   const totalDur   = usingVideo ? videoDuration : playbackDuration;
   const progress   = totalDur > 0 ? currentPos / totalDur : 0;
 
-  // ── WebM: stream directly via WebView using the signed URL ───────────────────
   const playAsVideo = useCallback(() => {
     setVideoError(null);
     if (videoUri === uri) {
-      // Toggle pause state
       const nextPaused = !videoPaused;
       setVideoPaused(nextPaused);
       webviewRef.current?.injectJavaScript(`
@@ -76,7 +69,6 @@ export function VoiceNotePlayer({
         true;
       `);
     } else {
-      // Init stream
       setVideoUri(uri);
       setVideoPaused(false);
       setVideoPos(0);
@@ -84,7 +76,6 @@ export function VoiceNotePlayer({
     }
   }, [uri, videoUri, videoPaused]);
 
-  // ── Native formats: download then play via nitro-sound ───────────────────────
   const downloadAndPlayNative = useCallback(async () => {
     try {
       if (localFileCache[uri]) {
@@ -116,7 +107,6 @@ export function VoiceNotePlayer({
         throw new Error('Downloaded file is empty');
       }
 
-      // If it turns out to be WebM from the content-type, switch to Webview player
       if (ct.includes('webm') || ct.includes('ogg') || ct.includes('opus')) {
         await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => {});
         console.log('[VNP] WebM detected in Content-Type — switching to Webview player');
@@ -124,7 +114,6 @@ export function VoiceNotePlayer({
         return;
       }
 
-      // Determine file extension
       let ext = 'm4a';
       if (ct.includes('m4a') || ct.includes('x-m4a') || ct.includes('mp4') || ct.includes('aac')) {
         ext = 'm4a';
@@ -155,7 +144,6 @@ export function VoiceNotePlayer({
     }
   }, [uri, mimeType, startPlayback, playAsVideo]);
 
-  // ── Main press handler ───────────────────────────────────────────────────────
   const handlePress = useCallback(() => {
     if (isDownloading) return;
 

@@ -45,12 +45,6 @@ import {
 import { logRolloutAndDropSummary } from '../../utils/activity-log/rollout-summary';
 import { convertJpegToPdf as sharedConvertJpegToPdf } from '../../utils/jpeg-to-pdf';
 
-/**
- * The one definition lives in `utils/jpeg-to-pdf`. Inlined copies of this used to
- * sit in three screens, and all three declared the PAGE size as the image's pixel
- * size — which Android's PDF renderer reads literally and Quartz ignores, so a
- * converted scan opened as a giant top-left crop on Android only.
- */
 const convertJpegToPdf = (jpegBase64: string, width = 595, height = 842): string =>
   sharedConvertJpegToPdf(jpegBase64, width, height);
 
@@ -167,7 +161,6 @@ export default function JobBuilderScreen() {
     orderSheets: any[];
   }>({ agreements: [], orderSheets: [] });
 
-  // Set initial step to first unlocked step
   useEffect(() => {
     if (availableStepsInfo[currentStepIndex]?.isLocked) {
       const firstUnlocked = availableStepsInfo.findIndex((s: any) => !s.isLocked);
@@ -234,9 +227,6 @@ export default function JobBuilderScreen() {
     [user, calculatorData, leadId, markSectionLogged]
   );
 
-  // Hydrate autoFieldsLogged from backend (web parity)
-  // Hoisted so the dependency list can name it (the outcome endpoint is
-  // calculator-scoped, so the id is part of what this read depends on).
   const loggedSectionsCalcId = calculatorData?._id;
   useEffect(() => {
     if (!leadId || !loggedSectionsCalcId) return;
@@ -248,7 +238,6 @@ export default function JobBuilderScreen() {
       .catch((err) => console.warn('[JobBuilder] Failed to fetch autoFieldsLogged:', err));
   }, [leadId, loggedSectionsCalcId]);
 
-  // 1. Mount event logging (job_builder_opened)
   useEffect(() => {
     const uId = user?._id || user?.id;
     if (uId && !openedLoggedRef.current) {
@@ -270,7 +259,6 @@ export default function JobBuilderScreen() {
     }
   }, [user, leadId, calculatorData, leadData, outcomeForm]);
 
-  // Init-time auto-populated logs — first available step + lighting (web parity)
   useEffect(() => {
     const uId = user?._id || user?.id;
     if (!uId || !calculatorData || initDoneRef.current) return;
@@ -283,7 +271,6 @@ export default function JobBuilderScreen() {
     fireAutoPopulatedSection('lighting');
   }, [user, calculatorData, fireAutoPopulatedSection, availableStepsInfo]);
 
-  // 2. Active step view and auto-populated logging
   useEffect(() => {
     if (!activeStep) return;
     const uId = user?._id || user?.id;
@@ -328,7 +315,6 @@ export default function JobBuilderScreen() {
     return availableStepsInfo[currentStepIndex]?.category || 'unknown';
   }, [currentStepIndex, availableStepsInfo]);
 
-  // 3. Field change debounced tracking
   const debouncedFieldLog = useCallback(
     (fieldInfo: any) => {
       if (fieldLogTimerRef.current) {
@@ -386,11 +372,9 @@ export default function JobBuilderScreen() {
       });
     };
 
-    // ─── 1. GUTTER SECTION ───
     const prevGutter = prev.gutter || {};
     const currGutter = curr.gutter || {};
 
-    // gutterSizeAndProfile
     if (JSON.stringify(prevGutter.gutterSizeAndProfile) !== JSON.stringify(currGutter.gutterSizeAndProfile)) {
       logFieldChange({
         fieldName: 'gutter_gutterSizeAndProfile',
@@ -401,7 +385,6 @@ export default function JobBuilderScreen() {
       });
     }
 
-    // partial (global Yes/No — single log, not per combo)
     if (String(prevGutter.partial ?? '') !== String(currGutter.partial ?? '') && currGutter.partial) {
       logFieldChange({
         fieldName: 'gutter_partial',
@@ -412,7 +395,6 @@ export default function JobBuilderScreen() {
       });
     }
 
-    // gutterColorsMulti combinations
     const prevGutterCombos = prevGutter.gutterColorsMulti || [];
     const currGutterCombos = currGutter.gutterColorsMulti || [];
     const maxGutterCombos = Math.max(prevGutterCombos.length, currGutterCombos.length);
@@ -443,7 +425,6 @@ export default function JobBuilderScreen() {
         }
       });
 
-      // Gutter measurements
       const prevMeas = prevCombo.measurements || [];
       const currMeas = currCombo.measurements || [];
       const maxMeas = Math.max(prevMeas.length, currMeas.length);
@@ -466,7 +447,6 @@ export default function JobBuilderScreen() {
       }
     }
 
-    // downspoutsMulti array
     const prevDS = prevGutter.downspoutsMulti || [];
     const currDS = currGutter.downspoutsMulti || [];
     const maxDS = Math.max(prevDS.length, currDS.length);
@@ -499,7 +479,6 @@ export default function JobBuilderScreen() {
       });
     }
 
-    // modifyHeightLocations
     if (JSON.stringify(prevGutter.modifyHeightLocations) !== JSON.stringify(currGutter.modifyHeightLocations)) {
       const nextVal = Array.isArray(currGutter.modifyHeightLocations) ? currGutter.modifyHeightLocations.join(', ') : currGutter.modifyHeightLocations || '';
       const oldVal = Array.isArray(prevGutter.modifyHeightLocations) ? prevGutter.modifyHeightLocations.join(', ') : prevGutter.modifyHeightLocations || '';
@@ -512,11 +491,9 @@ export default function JobBuilderScreen() {
       });
     }
 
-    // ─── 2. LEAFFILTER SECTION ───
     const prevLF = prev.leaffilter || {};
     const currLF = curr.leaffilter || {};
 
-    // leaffilter combinations
     const prevLFCombos = prevLF.combinations || [];
     const currLFCombos = currLF.combinations || [];
     const maxLFCombos = Math.max(prevLFCombos.length, currLFCombos.length);
@@ -547,7 +524,6 @@ export default function JobBuilderScreen() {
         }
       });
 
-      // measurements (LeafFilter)
       const prevMeas = prevCombo.measurements || [];
       const currMeas = currCombo.measurements || [];
       const maxMeas = Math.max(prevMeas.length, currMeas.length);
@@ -570,7 +546,6 @@ export default function JobBuilderScreen() {
       }
     }
 
-    // LeafFilter extras
     const prevLFExtras = prevLF.extras || {};
     const currLFExtras = currLF.extras || {};
     const extraFields = ['csr', 'cornersFilter', 'sawzallHanger', 'removeProtection', 'ribbedRoof'];
@@ -586,7 +561,6 @@ export default function JobBuilderScreen() {
       }
     });
 
-    // ─── 3. SOFFIT SECTION ───
     const prevSoffit = prev.soffit || {};
     const currSoffit = curr.soffit || {};
     const soffitSubsections = ['vinyl', 'porch', 'nailer'] as const;
@@ -616,7 +590,6 @@ export default function JobBuilderScreen() {
       });
     });
 
-    // ─── 4. FASCIA SECTION ───
     const prevFascia = prev.fascia || {};
     const currFascia = curr.fascia || {};
     const fasciaSubsections = ['wrap', 'boards'] as const;
@@ -642,11 +615,9 @@ export default function JobBuilderScreen() {
       });
     });
 
-    // ─── 5. LIGHTING SECTION ───
     const prevLighting = prev.lighting || {};
     const currLighting = curr.lighting || {};
 
-    // lighting combinations
     const prevLightCombos = prevLighting.combinations || [];
     const currLightCombos = currLighting.combinations || [];
     const maxLightCombos = Math.max(prevLightCombos.length, currLightCombos.length);
@@ -676,7 +647,6 @@ export default function JobBuilderScreen() {
         }
       });
 
-      // measurements (Lighting)
       const prevMeas = prevCombo.measurements || [];
       const currMeas = currCombo.measurements || [];
       const maxMeas = Math.max(prevMeas.length, currMeas.length);
@@ -699,7 +669,6 @@ export default function JobBuilderScreen() {
       }
     }
 
-    // ─── 6. ADDITIONAL (MISC) SECTION ───
     const prevAdd = prev.additional || {};
     const currAdd = curr.additional || {};
     const miscFields = [
@@ -746,20 +715,14 @@ export default function JobBuilderScreen() {
     };
   }, []);
 
-  // Auto-save logic
-
   const sentImageIds = useRef(new Set());
   const isExitingRef = useRef(false);
-  // Blocks the 2s debounce auto-save while a document upload is in progress
-  // to avoid MongoDB write conflicts on the outcome record.
   const isDocUploadingRef = useRef(false);
 
   useEffect(() => {
     if (!leadId) return;
 
     const timer = setTimeout(async () => {
-      // Skip auto-save while a document upload (agreement/orderSheet) is in progress
-      // to prevent MongoDB write conflicts on the outcome record.
       if (isDocUploadingRef.current) {
         console.log('[JobBuilder] Auto-save skipped — document upload in progress.');
         return;
@@ -768,9 +731,6 @@ export default function JobBuilderScreen() {
       try {
         setIsSaving(true);
 
-        // Strip documents from the auto-save payload — they are managed strictly
-        // by SummarySection via the outcome PUT. Sending large base64 payloads
-        // here would hit API size limits and cause write conflicts.
         const { agreements: _a, orderSheets: _o, ...jobStateWithoutDocs } = jobState as any;
 
         const payload = {
@@ -791,7 +751,6 @@ export default function JobBuilderScreen() {
           selectedAppointmentId: calculatorData?.appointmentId || leadId,
           appointmentId: calculatorData?.appointmentId || leadId,
         };
-        // Calculator-scoped write — the bare lead-scoped outcome route is deprecated.
         if (calculatorData?._id) {
           await LeadService.updateLeadOutcomeByCalculator(leadId, calculatorData._id, payload);
         }
@@ -851,12 +810,10 @@ export default function JobBuilderScreen() {
         appointmentId: calculatorData?.appointmentId || leadId,
       };
 
-      // Calculator-scoped write — the bare lead-scoped outcome route is deprecated.
       if (calculatorData?._id) {
         await LeadService.updateLeadOutcomeByCalculator(leadId, calculatorData._id, payload);
       }
 
-      // Clear local new files after successful manual force save
       setJobState((prev: any) => {
         const cleanedState = { ...prev };
         if (cleanedState.agreements) {
@@ -1108,7 +1065,6 @@ export default function JobBuilderScreen() {
         }
       });
 
-      // Pre-fetch outcome documents to retrieve existing base64Data
       let preFetchedAppendedDocs: any[] = [];
       try {
         if (leadId) {
@@ -1123,7 +1079,6 @@ export default function JobBuilderScreen() {
         console.warn('[JobBuilder] Failed to pre-fetch outcome documents', err);
       }
 
-      // finalJobState does NOT include base64 docs — those go as top-level payload fields
       const finalJobState = {
         ...jobState,
         gutter: {
@@ -1133,15 +1088,9 @@ export default function JobBuilderScreen() {
         status: 'submitted',
       };
 
-      // ── Build top-level agreements / orderSheets arrays (web app parity) ──
-      // All scanned/local files come from jobState; server-side files come from resolvedDocuments.
-      // The web app sends docs as top-level payload.agreements / payload.orderSheets.
-
-      // Collect all flat file objects
       const allLocalAgreementFiles = (jobState.agreements || []).flatMap((doc: any) => doc.files || []);
       const allLocalOrderSheetFiles = (jobState.orderSheets || []).flatMap((doc: any) => doc.files || []);
 
-      // Merge with server-resolved docs, deduplicating by serverId or uri
       const mergedAgreementFiles = [
         ...(resolvedDocuments.agreements || []),
         ...allLocalAgreementFiles,
@@ -1160,8 +1109,6 @@ export default function JobBuilderScreen() {
         )
       );
 
-      // Convert each file to base64 PDF — matches web app's generatePdfFromImages/toBase64
-      // Web app sends name: '' for all docs; the backend assigns the stored filename.
       const convertFilesToPayload = async (files: any[], docType: string) => {
         const results: any[] = [];
         for (let i = 0; i < files.length; i++) {
@@ -1170,7 +1117,6 @@ export default function JobBuilderScreen() {
           if (isLocal && f.uri) {
             try {
               const rawBase64 = await RNFS.readFile(f.uri, 'base64');
-              // Convert any image (jpg, jpeg, png, heic) to PDF — only skip conversion for actual PDFs
               const lowerUri = f.uri.toLowerCase();
               const isPdf = lowerUri.endsWith('.pdf');
               const pdfBase64 = isPdf ? rawBase64 : convertJpegToPdf(rawBase64);
@@ -1183,7 +1129,6 @@ export default function JobBuilderScreen() {
               console.warn('[JobBuilder] File read failed:', f.uri, e);
             }
           } else if (f.serverId || f.id || f._id) {
-            // Server doc — fetch base64 from pre-fetched list
             const docId = f.serverId || f.id || f._id;
             const serverDoc = preFetchedAppendedDocs.find(
               (d: any) => String(d._id) === String(docId)
@@ -1209,13 +1154,11 @@ export default function JobBuilderScreen() {
         convertFilesToPayload(mergedOrderSheetFiles, 'orderSheet'),
       ]);
 
-      // Web app parity: for Demo, move agreements → orderSheets if orderSheets is empty
       if (isDemo && agreementsPayload.length > 0 && orderSheetsPayload.length === 0) {
         orderSheetsPayload = agreementsPayload;
         agreementsPayload = [];
       }
 
-      // Web app payload structure: agreements / orderSheets are TOP-LEVEL, not inside jobState
       const payload = {
         leadData: {
           ...outcomeForm,
@@ -1241,7 +1184,6 @@ export default function JobBuilderScreen() {
           downPaymentMethod: outcomeForm?.downPaymentMethod,
         },
         jobState: finalJobState,
-        // Top-level arrays — matches web app's TabbedCalculator.js payload structure
         agreements: agreementsPayload,
         orderSheets: orderSheetsPayload,
       };
@@ -1343,7 +1285,6 @@ export default function JobBuilderScreen() {
           LeadService.updateLeadTimelineProgress(leadId, { jobBuild: 'complete' }),
         ]);
 
-        // ── Auto-add to Job Tracker on Sale ──────────────────────────
         const isSale = (outcomeForm?.result || leadData?.result || '').toLowerCase() === 'sale';
         if (isSale) {
           try {
@@ -1365,7 +1306,6 @@ export default function JobBuilderScreen() {
               leadNum = leadId;
             }
 
-            // Exactly mirrors web app's TabbedCalculator.js jobTrackerPayload
             const jobTrackerPayload = {
               jobNumber,
               salesPrice: rawPrice,
@@ -1382,17 +1322,14 @@ export default function JobBuilderScreen() {
 
             await JobService.createJob(jobTrackerPayload);
           } catch (jobTrackerError) {
-            // Non-fatal — job builder already submitted successfully
             console.warn('[JobBuilder] Job tracker auto-add failed:', jobTrackerError);
           }
         }
 
-        // Invalidate queries to update Leads page and Lead Center data
         queryClient.invalidateQueries({ queryKey: ['leads'] });
         queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
 
         FlashMessage.success('Job Complete', 'Job builder submitted successfully');
-        // Signal DealCenter to close OutcomeModal and switch to Rollout (Summary) view
         if (onComplete) {
           onComplete(finalJobState);
         } else {
@@ -1408,9 +1345,6 @@ export default function JobBuilderScreen() {
   };
 
   const saveDraftProgress = useCallback(async () => {
-    // Lightweight draft save — no loader, no timeline update
-    // Only persist the jobBuilder progress; do NOT touch LFCalculator to avoid
-    // triggering the Mongoose "title required" validation on an incomplete calculator.
     try {
       if (leadId) {
         const gutterExtras: any[] = [];
@@ -1426,7 +1360,6 @@ export default function JobBuilderScreen() {
           }
         });
 
-        // Build the LFCalculator object, always ensuring title is a non-empty string to satisfy backend validation.
         const lfCalculatorPayload = {
           ...(calculatorData || {}),
           createdBy: user?._id || user?.id || calculatorData?.createdBy,
@@ -1437,7 +1370,6 @@ export default function JobBuilderScreen() {
         };
 
         const draftPayload: any = {
-          // Spread outcomeForm and ensure LFCalculator has a valid title
           ...outcomeForm,
           LFCalculator: lfCalculatorPayload,
           jobBuilder: {
@@ -1448,8 +1380,6 @@ export default function JobBuilderScreen() {
           appointmentId: calculatorData?.appointmentId || leadId,
         };
 
-        // Fire-and-forget draft save — don't await, don't block navigation
-        // Calculator-scoped write — the bare lead-scoped outcome route is deprecated.
         if (calculatorData?._id) {
           LeadService.updateLeadOutcomeByCalculator(leadId, calculatorData._id, draftPayload).catch((e) =>
             console.warn('[JobBuilder] Draft save failed silently:', e)
@@ -1697,8 +1627,3 @@ export default function JobBuilderScreen() {
     </SafeAreaView>
   );
 }
-
-/**
- * Reusable validation alert modal moved outside main component to prevent
- * expensive re-renders and potential navigation context loss.
- */

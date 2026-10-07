@@ -24,13 +24,6 @@ const TABS: { key: LookTab; label: string }[] = [
   { key: 'custom', label: 'Custom' },
 ];
 
-/**
- * The Lighting configuration area (483 §2). Swaps in below the mode switch;
- * the photo, header and bottom action bar above and below stay put.
- *
- * The rep picks a look and nothing else — no components, cover type, channel
- * colour, time of day or Lights Off anywhere on this screen.
- */
 export function LightingPanel({
   state,
   setState,
@@ -43,13 +36,9 @@ export function LightingPanel({
   state: LightingState;
   setState: (s: LightingState) => void;
   isDark: boolean;
-  // Adding is `LightingFooter`'s job, below — the panel only selects.
   onOpenCustomBuilder?: () => void;
-  /** Persists the favourite to the rep's account. Optimistic — see `favourite`. */
   onToggleFavourite?: (lookId: string) => void;
-  /** Persists a newly built custom look to the rep's account. */
   onSaveCustomLook?: (look: Look) => void;
-  /** Analytics hook — fires on every tap, with the look and its post-toggle selected state. */
   onSelectLook?: (look: Look, nowSelected: boolean) => void;
 }) {
   const [tab, setTab] = useState<LookTab>('seasons');
@@ -70,13 +59,6 @@ export function LightingPanel({
     onSelectLook?.(look, isSelected(nextState, look.id));
   };
 
-  /**
-   * ⚠️ Optimistic, then the server's list wins.
-   *
-   * A favourite is one tap and has to feel instant — waiting on a round trip
-   * to fill the star reads as broken. `onToggleFavourite` is what reaches the
-   * backend; it reverts the local change itself if the call fails.
-   */
   const favourite = (id: string) => {
     setState(toggleFavourite(state, id));
     onToggleFavourite?.(id);
@@ -92,18 +74,12 @@ export function LightingPanel({
       tag={showTag ? tagForLook(look) : null}
       onPress={() => select(look)}
       onLongPress={(frame) => {
-        // Confirms the hold registered, before the bubble animates in.
         Vibration.vibrate(18);
         setPopover({ lookId: look.id, ...frame });
       }}
     />
   );
 
-  /**
-   * justify-between spreads a partial row across the full width, so a group of 3
-   * (Everyday) would not share columns with a group of 18 (Holidays) below it.
-   * Pad to a multiple of 4 with invisible tiles so every grid lines up.
-   */
   const grid = (looks: Look[], render: (l: Look) => React.ReactNode) => {
     const pad = (TILE_COLUMNS - (looks.length % TILE_COLUMNS)) % TILE_COLUMNS;
     return (
@@ -121,12 +97,6 @@ export function LightingPanel({
   const quickFavourites = state.fav.map((id) => findLook(id, state.customs)).filter((l): l is Look => Boolean(l));
   const quickRecents = recentsToShow(state).map((id) => findLook(id, state.customs)).filter((l): l is Look => Boolean(l));
 
-  /**
-   * A section heading, optionally with a right-aligned hint.
-   *
-   * ⚠️ The hint is NOT uppercased and NOT bold — it reads as a note about how
-   * the list is ordered, not as a second heading competing with the first.
-   */
   const SectionLabel = ({ children, hint }: { children: React.ReactNode; hint?: string }) => (
     <View className="flex-row items-baseline justify-between mb-3">
       <Text className="text-[11px] font-black tracking-widest uppercase" style={{ color: sub }}>
@@ -296,8 +266,6 @@ export function LightingPanel({
             >
               <View
                 className="items-center justify-center rounded-[14px] border-2"
-                // Height tracks the strip in `LookTile`, so the dashed "new"
-                // tile sits level with the real looks beside it.
                 style={{ height: 64, borderStyle: 'dashed', borderColor: GREEN }}
               >
                 <Icon name="plus" size={22} color={GREEN} />
@@ -330,12 +298,9 @@ export function LightingPanel({
       <CustomLookSheet
         visible={builderOpen}
         isDark={isDark}
-        // Numbers the next "Custom look N" off what the rep already has.
         existing={state.customs}
         onClose={() => setBuilderOpen(false)}
         onSave={(look) => {
-          // Optimistic: the tile appears immediately, then the server's list
-          // (with its own minted `lookId`) replaces it.
           setState({ ...state, customs: [...state.customs, look] });
           onSaveCustomLook?.(look);
         }}
@@ -367,15 +332,6 @@ export function LightingPanel({
   );
 }
 
-/**
- * Selected list + Add button.
- *
- * ⚠️ Deliberately NOT part of `LightingPanel`. The panel renders inside the
- * green bordered card; this sits BELOW it on the page background, as the mock
- * has it — the card frames "what you can pick", and the basket and its action
- * are the step after. Folding them back into the panel is the obvious
- * simplification and it is the thing that puts them back inside the border.
- */
 export function LightingFooter({
   state,
   setState,
@@ -387,18 +343,8 @@ export function LightingFooter({
   state: LightingState;
   setState: (s: LightingState) => void;
   isDark: boolean;
-  /**
-   * The rep has Core components ticked on the other tab, so there is something
-   * to add even with no look selected.
-   *
-   * ⚠️ Without this the button stays disabled and the Core selection is
-   * stranded: the rep ticks Soffit, switches tab to compare lighting, decides
-   * against a look, and the only enabled Add button is on the tab they are no
-   * longer looking at.
-   */
   corePending?: boolean;
   onAdd: (looks: Look[]) => void;
-  /** Same persistence path as the grid's hold gesture — both must reach the server. */
   onToggleFavourite?: (lookId: string) => void;
 }) {
   const sub = isDark ? '#919EAB' : '#637381';
@@ -413,7 +359,6 @@ export function LightingFooter({
     .map((id) => findLook(id, state.customs))
     .filter((l): l is Look => Boolean(l));
 
-  // A ticked Core selection is enough on its own — `onAdd` queues it.
   const enabled = canAdd(state) || corePending;
 
   return (

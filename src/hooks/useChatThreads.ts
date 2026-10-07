@@ -39,14 +39,10 @@ export const useChatThreads = (
       SocketManager.emit('get-team-channels');
     };
 
-    // Initial load and connection sync
     if (SocketManager.isConnected()) refreshData();
     const unsubConnect = SocketManager.on('connect', refreshData);
 
     const unsubChats = SocketManager.on('all-lead-chats-response', (data: any) => {
-      // ── Chat socket debug ──────────────────────────────────────────────────
-      // Full response + a per-lead preview summary (the fields that drive the
-      // Recent-Leads / chat-header thumbnails). Remove once verified.
       console.log('[ChatSocket] all-lead-chats-response:', JSON.stringify(data, null, 2));
       console.log('[ChatSocket] chats:', data?.chats?.length ?? 0, 'totalUnread:', data?.totalUnreadCount ?? 0);
       (data?.chats || []).forEach((c: any, i: number) => {
@@ -73,7 +69,6 @@ export const useChatThreads = (
       setChannelsLoading(false);
     });
 
-    // Refresh on new messages from others
     const handleNewMsg = (data: any) => {
       const senderId =
         data?.senderId ||
@@ -87,7 +82,6 @@ export const useChatThreads = (
     const unsubNewMsg = SocketManager.on('new-message', handleNewMsg);
     const unsubNewChanMsg = SocketManager.on('new-channel-message', handleNewMsg);
 
-    // CRITICAL: Refresh list when messages are marked as read
     const unsubChanRead = SocketManager.on('channel-read', refreshData);
     const unsubMsgSeen = SocketManager.on('message-seen', refreshData);
     const unsubLeadRead = SocketManager.on('lead-chat-read', refreshData);
@@ -109,8 +103,6 @@ export const useChatThreads = (
   const filteredChats = useMemo(() => {
     let result = [...chats];
     
-    // We don't filter out N/A leadIds strictly anymore as it was hiding valid chats
-    // that the web app displays properly.
     const query = searchQuery.toLowerCase();
 
     if (query) {
@@ -151,9 +143,6 @@ export const useChatThreads = (
         new Date(c.leadDetails.installationDate) < now
       );
     } else if (statusFilter === 'nosales') {
-      // "No Sales" = every resulted-but-not-sold outcome. `reset` and `demo` were
-      // missing, so those leads were dropped from the list even though the backend
-      // returns them for the "No Sales" filter (QA: Reset/Demo not showing).
       const noSaleStatuses = ['noSale', 'demoNoSale', 'noDemo', 'notHome', 'cancelled', 'notHit', 'reset', 'demo'];
       result = result.filter((c) => noSaleStatuses.includes(c.leadDetails?.status || ''));
     } else if (statusFilter !== 'all') {
@@ -162,7 +151,6 @@ export const useChatThreads = (
 
     if (filterUnread) result = result.filter((c) => c.unreadCount > 0);
 
-    // Sort by most recent date descending (on top basis of date)
     result.sort((a, b) => {
       const timeA = new Date(a.lastMessageAt || a.updatedAt || a.createdAt || a.leadDetails?.createdAt || 0).getTime();
       const timeB = new Date(b.lastMessageAt || b.updatedAt || b.createdAt || b.leadDetails?.createdAt || 0).getTime();

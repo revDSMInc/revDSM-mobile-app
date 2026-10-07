@@ -14,8 +14,6 @@ export function ensureVerticalSummaryTabs(config: any) {
       const hasSummary = vertical.tabs?.some((tab: any) => tab.isSummary);
       if (hasSummary) return vertical;
 
-      // Web parity: never append a summary tab to a vertical that has no
-      // product (non-summary) tabs — such verticals get dropped downstream.
       const nonSummaryTabs = (vertical.tabs || []).filter((tab: any) => !tab.isSummary);
       if (!nonSummaryTabs.length) return vertical;
 

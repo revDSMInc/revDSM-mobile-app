@@ -22,20 +22,12 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 import { findLook } from '../../../utils/revrender-lighting/catalog';
 import { forgetWarmedUri, getLocalCachePath, getWarmedLocalUri, prefetchToLocalCache, warmToLocalCache } from '../../../utils/imageFileCache';
 
-// The local-file image cache used to live here. It moved to `utils/imageFileCache`
-// so leaf widgets (PhotoPeekPressable) can warm images without importing this
-// modal; these re-exports keep the existing import sites working.
 export { getLocalCachePath, prefetchToLocalCache };
 
 
-// High-performance CachedImage component targeting pre-signed S3 URLs (atomic write)
 type RenderChip = { label: string; colorName: string; colorHex: string; swatches?: string[] };
 
 const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {
-  // ⚠️ Seeded SYNCHRONOUSLY from the warmed-uri memo. This component renders `null` until
-  // it knows which uri to use, and it used to learn that only from an async
-  // `fs.exists` — so every open of the gallery, and every swipe back to a render already
-  // seen, went blank for a beat over a file sitting on disk the whole time.
   const [sourceUri, setSourceUri] = useState<string | null>(() => getWarmedLocalUri(uri));
 
   useEffect(() => {
@@ -55,10 +47,6 @@ const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {
       return;
     }
 
-    // Paint the network url NOW and warm the file underneath it. ⚠️ Deliberately does not
-    // swap `sourceUri` when the download lands — changing the source mid-load trips native
-    // image-loader hangs. The next mount picks the file up from the memo instead, which is
-    // also why nothing here needs an unmount guard any more.
     setSourceUri(uri);
     warmToLocalCache(uri).catch(() => {});
   }, [uri]);
@@ -72,10 +60,6 @@ const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {
       resizeMode={resizeMode}
       onLoad={onLoad}
       onError={() => {
-        // A local copy that won't decode: bin the FILE and the memo entry together, then
-        // fall back to the network. ⚠️ Unlinking without `forgetWarmedUri` would leave the
-        // memo pointing at a path that no longer exists, and every later reader would be
-        // handed a dead `file://`.
         if (sourceUri.startsWith('file://')) {
           forgetWarmedUri(uri).catch(() => {});
           setSourceUri(uri);
@@ -94,12 +78,6 @@ interface RevRenderHistoryModalProps {
   leadId?: string;
   onDeleteSuccess?: () => void;
   showDelete?: boolean;
-  /**
-   * Activity-log module this gallery's events belong to. Defaults to `rev_render`
-   * (the Lead Center RevRender tool). When the modal is opened from the Investment
-   * Center it is passed `investment_center`, so those views/navigations/deletes are
-   * attributed to the presentation's audit trail rather than the RevRender module.
-   */
   moduleType?: string;
 }
 
@@ -120,7 +98,6 @@ export const RevRenderHistoryModal = ({
   const [deleteReason, setDeleteReason] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Persistent cache of loaded image runs
   const [loadedImages, setLoadedImages] = useState<Record<number, { before: boolean; after: boolean }>>({});
   const [beforeLoaded, setBeforeLoaded] = useState(false);
   const [afterLoaded, setAfterLoaded] = useState(false);
@@ -129,7 +106,6 @@ export const RevRenderHistoryModal = ({
     setCurrentIndex(initialIndex);
   }, [initialIndex, visible]);
 
-  // Clean up any incomplete/corrupted temp files from the cache directory on mount
   useEffect(() => {
     if (visible) {
       const cacheDir = ReactNativeBlobUtil.fs.dirs.CacheDir;
@@ -151,15 +127,9 @@ export const RevRenderHistoryModal = ({
   const beforeImage = currentRun ? (currentRun.originalUrl || currentRun.s3UrlOriginal) : null;
   const afterImage = currentRun ? (currentRun.generatedUrl || currentRun.s3UrlGenerated) : null;
 
-  // The colors/components the rep selected when generating this render, shown as
-  // swatch chips below the header. Supports every backend shape: an explicit
-  // `summary`/`components` array, or the raw `selections` + `textureImageUrls` maps.
   const renderColors = useMemo(() => {
     const run = currentRun;
     if (!run) return [] as RenderChip[];
-    // Roofline Lighting runs carry a LOOK (`selections.lookName` + `colors`), not
-    // components. Show it as one chip — the look's name with its colours — the same
-    // way core products show "Soffit: <colour>", so the rep sees what was rendered.
     const lookSel = run.selections && typeof run.selections === 'object' ? run.selections : null;
     const lookName = lookSel?.lookName || run.lookName;
     if (typeof lookName === 'string' && lookName.trim()) {
@@ -167,8 +137,6 @@ export const RevRenderHistoryModal = ({
       const swatches = Array.isArray(lookColors)
         ? lookColors.filter((h): h is string => typeof h === 'string' && h.startsWith('#'))
         : [];
-      // The server does not echo the month, so read it off the catalogue by id
-      // (seasonal looks only — Everyday / team / theme looks have none).
       const month = findLook(String(lookSel?.lookId || run.lookId || ''))?.month;
       return [{ label: '', colorName: month ? `${lookName.trim()} · ${month}` : lookName.trim(), colorHex: swatches[0] || '', swatches }];
     }
@@ -209,16 +177,12 @@ export const RevRenderHistoryModal = ({
     return [];
   }, [currentRun]);
 
-  // ⚠️ ISO date read as TEXT (YYYY-MM-DD), never through `new Date()` — a timezone
-  // offset would shift the calendar day.
   const renderedOn = useMemo(() => {
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(currentRun?.createdAt || ''));
     if (!m) return '';
-    // M/D/YYYY (no zero padding), the app's date format — was "Oct 6, 2026".
     return `${Number(m[2])}/${Number(m[3])}/${m[1]}`;
   }, [currentRun]);
 
-  // Track if current slide is fully loaded (prioritizing persistent cache)
   useEffect(() => {
     const cached = loadedImages[currentIndex];
     setBeforeLoaded(!beforeImage || !!cached?.before);
@@ -233,7 +197,6 @@ export const RevRenderHistoryModal = ({
     opacity: fadeOpacity.value,
   }));
 
-  // Trigger smooth fade-in whenever current index or its loaded state updates
   useEffect(() => {
     if (isCurrentLoaded) {
       fadeOpacity.value = withTiming(1, { duration: 300 });
@@ -248,7 +211,6 @@ export const RevRenderHistoryModal = ({
     }
   }, [runs, visible, onClose]);
 
-  // Preload ONLY adjacent render images (prev and next) to keep network pipeline clear
   useEffect(() => {
     if (visible && runs && runs.length > 0) {
       const adjacentIndices = [currentIndex - 1, currentIndex + 1];
@@ -268,7 +230,6 @@ export const RevRenderHistoryModal = ({
   }, [visible, runs, currentIndex]);
 
 
-  // ── render_result: view — fires on open and when the user navigates to a new render ──
   useEffect(() => {
     if (!visible) return;
     const userId = user?._id || user?.id;
@@ -287,9 +248,6 @@ export const RevRenderHistoryModal = ({
         totalRenders: runs.length,
         beforeImageUrl: run.originalUrl || run.s3UrlOriginal || null,
         afterImageUrl: run.generatedUrl || run.s3UrlGenerated || null,
-        // `run` comes from different pair-builders depending on which screen opened this
-        // modal (Lead Center Tools vs Investment Center vs Deal Center), and they don't all
-        // use the same key name for the same value — read both so neither path logs null.
         originalS3url: run.s3UrlOriginal || run.originalS3url || null,
         generatedS3url: run.s3UrlGenerated || run.generatedS3url || null,
         s3url: run.s3url || null,
@@ -375,12 +333,10 @@ export const RevRenderHistoryModal = ({
   const imageWidth = screenWidth - 40;
   const imageHeight = "75%";
 
-  // ── Pinch / pan for zooming ───────────────────────────────────────────
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
-  // Measured height of the clipping frame (it is a % of the screen), for the pan bounds.
   const boxHeight = useSharedValue(0);
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
@@ -414,7 +370,6 @@ export const RevRenderHistoryModal = ({
   const zoomPan = Gesture.Pan()
     .onUpdate((e) => {
       if (scale.value > 1) {
-        // Keep the picture covering the frame: at most half of the extra size on each side.
         const maxX = ((scale.value - 1) * imageWidth) / 2;
         const maxY = ((scale.value - 1) * boxHeight.value) / 2;
         translateX.value = Math.max(-maxX, Math.min(maxX, savedTranslateX.value + e.translationX));
@@ -436,19 +391,15 @@ export const RevRenderHistoryModal = ({
     ],
   }));
 
-  // ── Comparison slider ─────────────────────────────────────────────────
-  // sliderX lives in Reanimated so the handle moves without a JS bridge round-trip.
   const sliderX = useSharedValue(imageWidth / 2);
   const savedSliderX = useSharedValue(imageWidth / 2);
 
-  // Reset whenever the card changes
   useEffect(() => {
     sliderX.value = imageWidth / 2;
     savedSliderX.value = imageWidth / 2;
   }, [currentIndex, imageWidth, savedSliderX, sliderX]);
 
   const sliderPan = Gesture.Pan()
-    // Only activate on clear horizontal swipes so vertical scrolls pass through
     .activeOffsetX([-6, 6])
     .failOffsetY([-12, 12])
     .onUpdate((e) => {
@@ -467,7 +418,6 @@ export const RevRenderHistoryModal = ({
     width: sliderX.value,
   }));
 
-  // ── Nav ───────────────────────────────────────────────────────────────
   const handlePrev = () => { if (currentIndex > 0) setCurrentIndex(currentIndex - 1); };
   const handleNext = () => {
     if (currentIndex < runs.length - 1) {
@@ -560,11 +510,6 @@ export const RevRenderHistoryModal = ({
                 {/* AFTER — background */}
                 {afterImage && (
                   <CachedImage
-                    // Key by the render so navigating REMOUNTS the image instead of
-                    // swapping `source.uri` on a live <Image> — React Native doesn't
-                    // reliably re-fire `onLoad` on a source swap (loader hangs forever)
-                    // and keeps painting the previous render's frame (one wrap "overtook"
-                    // the others). A fresh mount per render fixes both.
                     key={`after-${currentIndex}-${afterImage}`}
                     uri={afterImage}
                     style={{
@@ -607,7 +552,6 @@ export const RevRenderHistoryModal = ({
                     ]}
                   >
                     <CachedImage
-                      // Remount per render (see the AFTER image note above).
                       key={`before-${currentIndex}-${beforeImage}`}
                       uri={beforeImage}
                       style={{ width: imageWidth, height: "100%" }}

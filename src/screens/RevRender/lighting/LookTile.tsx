@@ -6,21 +6,9 @@ import { LightStrip } from './LightStrip';
 
 const GREEN = '#2EDE56';
 
-/**
- * Three per row, not four.
- *
- * ⚠️ The grid padding in `LightingPanel` must use the SAME number — import
- * these rather than retyping a percentage, or a partial row silently spreads
- * across the full width and stops lining up with the grid above it.
- */
 export const TILE_COLUMNS = 3;
 export const TILE_WIDTH = '31%';
 
-/**
- * One look in a grid. Selected state must match everywhere the same look
- * appears — Quick picks, its own tab, and the selected box — so it is driven by
- * id from one piece of state rather than held locally.
- */
 export function LookTile({
   look,
   selected,
@@ -36,10 +24,6 @@ export function LookTile({
   tag?: 'now' | 'next' | null;
   isDark: boolean;
   onPress: () => void;
-  /**
-   * Hold reports WHERE the tile is, in window coordinates, so the caller can
-   * anchor the Favorite bubble to it — it does not toggle anything itself.
-   */
   onLongPress?: (frame: { x: number; y: number; bottom: number }) => void;
 }) {
   const ref = useRef<View>(null);
@@ -48,8 +32,6 @@ export function LookTile({
     if (!onLongPress) return;
     ref.current?.measureInWindow((x, y, width, height) => {
       if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-      // Centre-x and both edges: the popover prefers to sit above the tile and
-      // flips below it near the top of the screen.
       onLongPress({ x: x + width / 2, y, bottom: y + height });
     });
   };
@@ -59,13 +41,11 @@ export function LookTile({
       ref={ref}
       onPress={onPress}
       onLongPress={reportFrame}
-      // 483 §3: hold 450ms to favourite. Below the RN default of 500.
       delayLongPress={450}
       activeOpacity={0.85}
       accessibilityRole="button"
       accessibilityLabel={look.name}
       accessibilityState={{ selected }}
-      // 44pt minimum tap target (483 §11).
       style={{ width: TILE_WIDTH, minHeight: 44, marginBottom: 14 }}
     >
       {/*

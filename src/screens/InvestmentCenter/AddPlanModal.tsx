@@ -10,28 +10,16 @@ import {
 } from '../DynamicDealCenter/hooks/useDealPricing';
 import { FlashMessage } from '../../config/message';
 
-/**
- * "+ Add Plan" financing-plan picker for the Investment Center's In-Home Monthly
- * shortlist (web parity: `ProgramCard`'s `PaymentPlanSelect` with `excludeBasic`).
- * A centered card grouped by provider (GreenSky / Wells Fargo / …) — financing
- * plans only (cash/card can't carry a monthly) — each row showing its full label,
- * its `$X/mo` on the current base, and a below-minimum guard. Mirrors the dynamic
- * rollout's DropAddPlanModal so the two pickers look and behave the same.
- */
-
 const fmt = (n: number) => `$${Math.round(n || 0).toLocaleString()}`;
 
 interface Props {
   visible: boolean;
-  /** Base used for the below-minimum gate + the $/mo preview (In-Home end price − down). */
   price: number;
   plans: Record<string, DealPlan>;
   categories: PayCategory[];
   added: string[];
   onAdd: (key: string) => void;
   onClose: () => void;
-  /** Render as an absolute overlay instead of a native Modal — used from INSIDE the spotlight
-   *  Modal so the enlarged card stays open (never stack native Modals). */
   inline?: boolean;
 }
 

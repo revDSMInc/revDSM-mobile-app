@@ -8,17 +8,6 @@ interface Props {
   onNavigate?: (route: any) => void;
 }
 
-/**
- * Header bell + unread badge for the Notification Center.
- *
- * Deliberately shaped like `ChatThreadsManager`, which sits beside it — same
- * 32pt circle, same badge geometry, so the two read as one control group rather
- * than two separately-designed buttons.
- *
- * ⚠️ The count comes from `GET /notifications/push/v1/unread-count`, NOT from the
- * chat socket. The two are different numbers: the chat badge counts unread
- * MESSAGES, this counts unread NOTIFICATIONS across all nine event types.
- */
 export function NotificationBell({ onNavigate }: Props) {
   const { colors, isDark } = useTheme();
   const { unreadCount } = useUnreadNotificationCount();

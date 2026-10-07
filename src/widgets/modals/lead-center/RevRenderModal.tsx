@@ -25,10 +25,7 @@ interface RevRenderModalProps {
   onGenerate: (payload: any) => Promise<string | null>;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
 const COLORS_LIST = [
-  // Row 1
   { name: 'White', hex: '#FFFFFF' },
   { name: 'Linen', hex: '#F0EAD6' },
   { name: 'Eggshell', hex: '#F0EAD6' },
@@ -36,7 +33,6 @@ const COLORS_LIST = [
   { name: 'Sand', hex: '#C2B280' },
   { name: 'Clay', hex: '#A0785A' },
   { name: 'Gray', hex: '#808080' },
-  // Row 2
   { name: 'Beige', hex: '#F5F5DC' },
   { name: 'Almond', hex: '#EFDECD' },
   { name: 'Heather', hex: '#9AA7B0' },
@@ -44,7 +40,6 @@ const COLORS_LIST = [
   { name: 'Champagne', hex: '#F7E7CE' },
   { name: 'Pebble', hex: '#A9A9A9' },
   { name: 'Fawn', hex: '#E5D3BF' },
-  // Row 3
   { name: 'Slate', hex: '#708090' },
   { name: 'Evergreen', hex: '#2E473B' },
   { name: 'Copper', hex: '#B87333' },
@@ -77,8 +72,6 @@ const MATERIAL_SECTIONS = [
   },
 ];
 
-// ─── Payload Helpers ──────────────────────────────────────────────────────────
-
 const toApiType = (type: string | null, sectionLabel: string): string | null => {
   if (!type) return null;
   let cleaned = type.trim();
@@ -103,8 +96,6 @@ const getFilename = (url: string | undefined): string => {
   return parts[parts.length - 1] || '';
 };
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
 export const RevRenderModal = ({
   visible,
   onClose,
@@ -115,12 +106,10 @@ export const RevRenderModal = ({
 }: RevRenderModalProps) => {
   const { colors, isDark } = useTheme();
 
-  // ── Status & State ─────────────────────────────────────────────────────────
   const [status, setStatus] = useState<'grid' | 'config' | 'queue'>('grid');
   const [selectedPhoto, setSelectedPhoto] = useState<any>(null);
   const [renderQueue, setRenderQueue] = useState<any[]>([]);
 
-  // Flatten sectionImages for the grid
   const allPhotos = React.useMemo(() => {
     return Object.values(sectionImages).flat();
   }, [sectionImages]);
@@ -143,7 +132,6 @@ export const RevRenderModal = ({
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [generatedImg, setGeneratedImg] = useState<string | null>(null);
 
-  // Before/After slider
   const screenWidth = Dimensions.get('window').width;
   const imageWidth = screenWidth - 32;
   const imageHeight = 240;
@@ -169,8 +157,6 @@ export const RevRenderModal = ({
       },
     })
   ).current;
-
-  // ── Handlers ───────────────────────────────────────────────────────────────
 
   const handleAddToQueue = () => {
     const selections: any = {};
@@ -268,8 +254,6 @@ export const RevRenderModal = ({
     onClose();
   };
 
-  // ── Helper Components ──────────────────────────────────────────────────────
-
   const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; height?: number }) => {
     return (
       <View style={[{ height, backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8' }, style]}>
@@ -283,8 +267,6 @@ export const RevRenderModal = ({
       </View>
     );
   };
-
-  // ── Renders ────────────────────────────────────────────────────────────────
 
   const renderEmptyState = () => (
     <View className="flex-1 items-center justify-center px-6">
@@ -316,13 +298,11 @@ export const RevRenderModal = ({
   );
 
   const renderGrid = () => {
-    // Group photos based on REV_RENDER_VIEW_GROUPS logic (parity with web before.js)
     const discoveredGroups = REV_RENDER_VIEW_GROUPS.map((group) => {
       const discoveredViews: any[] = [];
       const photosInCategory = sectionImages[group.categoryId] || [];
 
       group.views.forEach((view) => {
-        // Find photos matching this subcategory/view ID
         const photo = photosInCategory.find((p) => p.subcategory === view.id);
         if (photo) {
           discoveredViews.push({
@@ -332,7 +312,6 @@ export const RevRenderModal = ({
         }
       });
 
-      // Also pick up any photos in this category that didn't match a specific view ID
       const matchedIds = new Set(group.views.map((v) => v.id));
       photosInCategory.forEach((p) => {
         if (!matchedIds.has(p.subcategory)) {
@@ -418,8 +397,6 @@ export const RevRenderModal = ({
           newConfig[`${s.key}Color`] = color;
         });
       } else {
-        // If sameColorForAll is off, we still use the top picker as a "master" if no section is expanded?
-        // Actually, screenshot shows it as "Same Color for All", so let's stick to that.
         newConfig.soffitColor = color; // Fallback
       }
       setConfig(newConfig);
@@ -429,7 +406,6 @@ export const RevRenderModal = ({
       const newChecked = !config[`${key}Checked`];
       const newConfig = { ...config, [`${key}Checked`]: newChecked };
 
-      // If turning ON and sameColorForAll is active, sync with global color (using soffitColor as ref)
       if (newChecked && sameColorForAll) {
         newConfig[`${key}Color`] = config.soffitColor;
       }

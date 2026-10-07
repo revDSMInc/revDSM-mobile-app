@@ -1,16 +1,3 @@
-/**
- * "In My Deals, only show a LeafFilter combination whose colour has been chosen."
- *
- * A combination the rep never finished — no colour picked — is noise in the edit
- * wizard: it cannot be reviewed or signed off, and on a multi-combination deal it
- * pushes the finished ones off screen.
- *
- * ⚠️ This is a DISPLAY filter for the edit flow only. It must never drop a
- * combination from job state: the data still round-trips untouched, so nothing is
- * destroyed by hiding it and the create flow is unaffected.
- */
-
-/** Field types the renderer draws as a colour control. */
 const COLOR_FIELD_TYPES = new Set([
   'swatch',
   'color',
@@ -22,16 +9,9 @@ const COLOR_FIELD_TYPES = new Set([
 export function isColorField(field: any): boolean {
   if (!field) return false;
   if (COLOR_FIELD_TYPES.has(field.type)) return true;
-  // `renderField` also draws a plain `text`/`locked` field as a SwatchPicker when
-  // it carries a palette or an explicit colour list, so type alone is not enough.
   return Boolean(field.palette || field.colors?.length || field.colorKey);
 }
 
-/**
- * A combination's colour value, checked everywhere the engine stores one: the
- * field id, the field key, and the `colorValues` side-map (which is how a picked
- * colour survives the save round-trip for `inputWithColor` / `colorKey` fields).
- */
 export function resolveComboColorValue(field: any, combo: any = {}): any {
   const colorValues = combo?.colorValues || {};
   const candidates = [
@@ -45,19 +25,6 @@ export function resolveComboColorValue(field: any, combo: any = {}): any {
   return candidates.find((v) => v !== undefined && v !== null && v !== '') ?? '';
 }
 
-/**
- * Flattens container fields (`stack`, `accordion`, anything else holding `fields`).
- *
- * ⚠️ Load-bearing. A LeafFilter colour is authored INSIDE a stack — the amber
- * "INCOMPLETE - Color Required" card is that stack — so the row-field list the
- * renderer passes contains the STACK, not the colour. Searching that list
- * unflattened found no colour field at all, fell through to the "no colour field →
- * always show" rule, and every unfinished combination stayed on screen.
- *
- * Container children live FLAT in the combination's state (same convention
- * `buildDefaultItemFromFields` uses), so a nested colour's value is still read
- * straight off `combo[field.id]`.
- */
 function flattenFields(fields: any[] = []): any[] {
   const out: any[] = [];
   (fields || []).forEach((field) => {
@@ -71,47 +38,14 @@ function flattenFields(fields: any[] = []): any[] {
   return out;
 }
 
-/**
- * True when the combination may be shown.
- *
- * ⚠️ A combination carrying NO colour field at all is always shown. The rule is
- * "an unanswered colour hides it", not "a colour is required" — gating on a field
- * the config never put there would blank out whole verticals.
- *
- * Where a combination has several colour fields, every one must be answered. They
- * are all part of the same finished combination, so a half-filled one is exactly
- * the unfinished case this exists to hide.
- */
 export function comboHasSelectedColor(combo: any, fields: any[] = []): boolean {
   const colorFields = flattenFields(fields).filter(isColorField);
   if (!colorFields.length) return true;
   return colorFields.every((field) => !!resolveComboColorValue(field, combo));
 }
 
-/**
- * Session-only marker on a combination the rep ADDED in the My Deals edit wizard.
- *
- * A new combination starts with no colour, so the colour filter hid it the instant
- * "Add Combination" made it: the button looked dead. A combination carrying this key
- * is always shown.
- *
- * ⚠️ Never persisted: `ensureTabStateShape` (run by `serializeDynamicJobStateForStorage`)
- * rebuilds each combination from its row fields plus `_combinationNumber`, which drops
- * it on save. Every combination-key walker skips it (activity logs, empty-step gate,
- * storage `comboHasEnteredData`, the deal diff's `SKIP_LEAF_KEYS`).
- */
 export const ADDED_IN_EDIT_KEY = '_addedInEdit';
 
-/**
- * THE My Deals visibility rule, shared by every surface that renders a combination
- * (cards, Grand Total card, Summary step, numbering).
- *
- * ⚠️ Nothing is hidden any more. The rep asked for a free hand: a combination with no
- * colour picked stays visible next to the finished ones so they can fill it in. The
- * function (and its three call sites) is kept as the single choke point, so the
- * colour rule can be brought back by restoring the old body:
- * `editMode && !combo[ADDED_IN_EDIT_KEY] && !comboHasSelectedColor(combo, fields)`.
- */
 export function isComboHiddenInDealEdit(_combo: any, _fields: any[] = [], _editMode?: boolean): boolean {
   return false;
 }

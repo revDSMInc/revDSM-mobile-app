@@ -1,12 +1,3 @@
-/**
- * offlineLeadStatus.ts — the device half of `utils/offline-lead-status.ts`.
- *
- * ⚠️ NOT wiped with the rep's queued WORK, but IS wiped with their session: a check-in mark is a
- * record of what this rep did on this shift, and replaying it onto whoever signs in next would put
- * another rep's card in the resumed state. `sessionScope` clears the key; the hook below is what
- * stops the in-memory copy writing it straight back.
- */
-
 import { Storage } from '../utils/storage';
 import { registerSessionResetHook } from './sessionScope';
 import {
@@ -46,7 +37,6 @@ const persist = (): void => {
     try {
       l();
     } catch {
-      /* a bad listener must not break the write */
     }
   });
 };
@@ -66,14 +56,6 @@ export const subscribeOfflineWorkflow = (listener: () => void): (() => void) => 
   return () => listeners.delete(listener);
 };
 
-/**
- * The rep started (or resumed) this appointment with no signal.
- *
- * ⚠️ This mark is the DISPLAY half only, and it is deliberately local: it colours the card
- * immediately, ages out after a day, and is re-addressed by `rekeyLeadWorkflow` when the lead
- * gets its real id. The server is told separately, by the `work` upload step — see the note on
- * that step for why replaying the call was originally refused and what changed.
- */
 export const markLeadCheckedInOffline = (leadId: unknown): void => {
   load();
   const next = markOfflineCheckIn(store, leadId);
@@ -82,12 +64,6 @@ export const markLeadCheckedInOffline = (leadId: unknown): void => {
   persist();
 };
 
-/**
- * Move a mark onto the id the server issued, once the create has landed.
- *
- * Called from the `lead` upload step beside `uploadQueueManager.rekeyLead`, and for the same
- * reason — see `rekeyOfflineWorkflow`.
- */
 export const rekeyLeadWorkflow = (fromId: unknown, toId: unknown): void => {
   load();
   const next = rekeyOfflineWorkflow(store, fromId, toId);

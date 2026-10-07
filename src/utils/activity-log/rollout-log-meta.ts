@@ -3,11 +3,6 @@ import { paymentPlans } from '../calculator/payment-plans';
 import { getCalculationResult } from '../calculator/calculator-calculation';
 import { sanitizeCalculatorLogTitle } from './job-builder-auto-log';
 
-// A zero markup is shown as just the tier — "PAR", not "PAR + 0%". Fresh computes
-// already omit it (see `calculateMarkupLabel` below), but a STORED/legacy `pricemarkup`
-// reused for a log can still carry "+ 0%". Strip a trailing "+ 0%" / "- 0%" so every
-// rollout log records the tier alone at creation; a real premium ("PAR + 10%",
-// "RETAIL + 100%") is left untouched — only a whole-number ZERO percent is removed.
 export const stripZeroMarkup = (val?: number | string): number | string | undefined =>
   typeof val === 'string' ? val.replace(/\s*[+-]\s*0+\s*%\s*$/, '').trim() : val;
 
@@ -73,7 +68,6 @@ const resolveTierPrices = (
   };
 };
 
-/** Mirrors web ViewAllCalculators fireRolloutLog — tier prices computed inline when omitted */
 export const fireRolloutLog = async (
   userId: string,
   calculator: any,
@@ -175,13 +169,6 @@ export const logPaymentMethodInherited = async (opts: {
 
 export const getPaymentPlanLabel = (key: string) => paymentPlans[key]?.label || key;
 
-/**
- * Per-ACTION rollout/drop activity event — web parity with `fireRolloutLog`
- * (ViewAllCalculators.js:245). Fired for discrete rollout/drop actions: rollout
- * confirmed, drop price secured/declined/plan-selected/unselected, etc. The
- * caller supplies the calculator, its cost/par/retail tiers, and the change
- * descriptor (fieldLabel/fieldValue/oldValue/newValue/action + any extras).
- */
 export const logRolloutChange = async (opts: {
   userId: string;
   leadId?: string;
@@ -207,9 +194,6 @@ export const logRolloutChange = async (opts: {
       parPrice: Math.round(opts.tiers.par || 0),
       retailPrice: Math.round(opts.tiers.retail || 0),
       ...(opts.percentageOfRollout !== undefined && { percentageOfRollout: stripZeroMarkup(opts.percentageOfRollout) }),
-      // The transition (yellow "old → new" arrow) log's OLD-price markup — stripped of a
-      // whole "+ 0%" exactly like the new-price markup, so neither end of the arrow ever
-      // reads "PAR + 0%".
       ...(oldPercentageOfRollout !== undefined && { oldPercentageOfRollout: stripZeroMarkup(oldPercentageOfRollout) }),
       ...(opts.leadId && { leadId: opts.leadId }),
       ...restChange,

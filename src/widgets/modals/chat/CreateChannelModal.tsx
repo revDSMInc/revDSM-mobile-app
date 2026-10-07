@@ -1,12 +1,3 @@
-/**
- * CreateChannelModal — mobile port of the web `create-channel-dialog.js`.
- *
- * Lets a user create a new team channel: pick one of the six fixed channel types
- * (each carrying its own icon/color/description/restrictedPosting default), enter a
- * name + optional description, and toggle restricted posting. On submit it builds the
- * SAME payload the web dialog builds and hands it to `onCreate`, which the caller wires
- * to `ChatService.createChannel` (socket `create-team-channel`).
- */
 import React, { useState } from 'react';
 import {
   View,
@@ -24,8 +15,6 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { useAuth } from '../../../hooks/useAuth';
 import { FlashMessage } from '../../../config/message';
 
-// Channel types and configs strictly mirror the web Implementation Guide
-// (`src/components/team-channels/constants.js` / `create-channel-dialog.js`).
 export const CHANNEL_TYPES = [
   { value: 'announcements', label: 'Announcements', icon: '📢', color: '#FF6B6B', description: 'Management announcements', restrictedPosting: true },
   { value: 'sales-wins', label: 'Sales Wins', icon: '🎉', color: '#51CF66', description: 'Celebrate deal closures', restrictedPosting: false },
@@ -71,7 +60,6 @@ export default function CreateChannelModal({ visible, onClose, onCreate }: Creat
 
   const handleSelectType = (type: ChannelType) => {
     setChannelType(type.value);
-    // Follow web: selecting a type applies its default restrictedPosting + description hint.
     setRestrictedPosting(type.restrictedPosting);
   };
 

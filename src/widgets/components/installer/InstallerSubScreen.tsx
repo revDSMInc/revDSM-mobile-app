@@ -11,23 +11,10 @@ interface Props {
   subtitle?: string;
   onBack: () => void;
   children: React.ReactNode;
-  /** Sticky action rendered above the bottom inset. */
   footer?: React.ReactNode;
-  /**
-   * Full-bleed layer (e.g. the camera) rendered outside the inset container and
-   * the ScrollView, so `absoluteFill` covers the whole screen including the
-   * insets rather than being trapped inside scroll content.
-   */
   overlay?: React.ReactNode;
 }
 
-/**
- * Full-screen shell for the install timeline's sub-flows.
- *
- * Presented as a `Modal` (matching LeadCenter's SubModalWrap) so sub-flows stack
- * over the job detail screen without needing their own navigator routes. The
- * header mirrors LeadCenter's local header: bordered square back button + title.
- */
 export function InstallerSubScreen({
   visible,
   title,
