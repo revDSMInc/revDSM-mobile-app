@@ -25,7 +25,6 @@ const CLUSTER_STYLES: Record<ClusterSize, { outer: string; inner: string; text: 
   },
 };
 
-/** Double-circle cluster bubble with count — matches web zone-canvasser. */
 export function ClusterMapMarker({ count, size }: Props) {
   const colors = CLUSTER_STYLES[size];
   const label = count > 999 ? '999+' : String(count);

@@ -76,7 +76,6 @@ export const ManagePhotosModal = ({
 }: ManagePhotosModalProps) => {
   const { user } = useAuth();
 
-  // Local preview slideshow state
   const [localPreviewImages, setLocalPreviewImages] = React.useState<{ uri: string; label: string }[]>([]);
   const [localPreviewIndex, setLocalPreviewIndex] = React.useState<number>(0);
   const [localIsPlaying, setLocalIsPlaying] = React.useState<boolean>(false);

@@ -11,11 +11,6 @@ interface TextareaFieldProps {
   incompleteMessage?: string;
 }
 
-// Matches the normal Job Builder textarea. Two looks:
-//  • Complete/optional → a plain slate label + rounded-2xl bordered input.
-//  • Required-but-empty → the amber "INCOMPLETE" card (web IncompleteWarning + the
-//    legacy MiscSection reason card): an amber-bordered / amber-tinted wrapper with
-//    the ⚠️ warning on top, the field label, then a neutral input box.
 export function TextareaField({ label, placeholder, value, onChange, rows = 3, incomplete, incompleteMessage }: TextareaFieldProps) {
   if (incomplete) {
     return (

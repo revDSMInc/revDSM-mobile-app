@@ -27,7 +27,6 @@ import { useNavigation } from '@react-navigation/native';
 import { Header } from '../../widgets/common/MainHeader';
 import Feather from 'react-native-vector-icons/Feather';
 
-// Modular Imports
 import { CalculatorForm } from '../../widgets/components/dealcenter/CalculatorForm';
 import { CalculatorSummary } from '../../widgets/components/dealcenter/CalculatorSummary';
 import {
@@ -145,7 +144,6 @@ export default function LFCalculator({ route }: any) {
 
   useEffect(() => {
     if (activeIdx >= 0 && calculators.length > 0) {
-      // Auto-scroll so the active tab is in view
       const tabWidth = 90;
       const targetOffset = Math.max(0, (activeIdx - 1) * tabWidth);
       tabsScrollViewRef.current?.scrollTo({ x: targetOffset, animated: true });
@@ -206,7 +204,6 @@ export default function LFCalculator({ route }: any) {
   const prefilledJob = useMemo(() => {
     if (!currentLead || !active) return null;
 
-    // If it's already in the tracker, return the existing job so we can edit it
     const existing = trackerJobs.find((j) => j.calculatorId === active._id);
     if (existing) return existing;
 
@@ -214,7 +211,6 @@ export default function LFCalculator({ route }: any) {
       ? `${currentLead.customerDetails.firstName} ${currentLead.customerDetails.lastName}`
       : currentLead.title || '';
 
-    // Map calculator payment plan to JobTracker payment method
     const paymentMethod = active.inputs?.paymentPlan || 'check';
 
     return {
@@ -245,7 +241,6 @@ export default function LFCalculator({ route }: any) {
             calculatorType: active?.type,
           });
         }
-        // Ensure the native Outcome modal unmounts before navigating (critical on iOS).
         setCurrentView('summary');
         InteractionManager.runAfterInteractions(() => {
           navigation.navigate('JobBuilder', {
@@ -256,25 +251,19 @@ export default function LFCalculator({ route }: any) {
             leadId: activeLeadId,
             isLowesLead: currentLead?.lowesLead === true,
             outcomeForm: { ...outcomeForm, result: outcomeStatus },
-            // Called when user closes JobBuilder WITHOUT completing
             onGoBack: (updatedJobState: any) => {
               setJobState(updatedJobState);
               setCurrentView('outcome');
             },
-            // Called when user COMPLETES the job — close modal, go to Rollout view, and refresh data
             onComplete: (updatedJobState: any) => {
               if (updatedJobState) {
-                // Update local lead state with the completed job builder data
                 setCurrentLead((prev: any) => ({
                   ...prev,
                   jobBuilder: updatedJobState,
                 }));
               }
-              // Clear jobState so we don't show "Reset Job Builder" if we ever come back
               setJobState({});
 
-              // Reset the navigation stack to LeadCenter (with Job Docs tab) and Leads list
-              // This properly removes JobBuilder and DealCenter from the history
               navigation.reset({
                 index: 1,
                 routes: [
@@ -325,7 +314,6 @@ export default function LFCalculator({ route }: any) {
     const leadId = currentLead?._id || currentLead?.leadId || currentLead?.id;
     if (!leadId || !user?._id) return null;
     try {
-      // Mirror the 'entry' logic by using workLead API
       const res = await LeadService.workLead(leadId, user._id);
       const freshLead = res.data?.data || res.data;
       if (freshLead) {
@@ -367,8 +355,6 @@ export default function LFCalculator({ route }: any) {
             try {
               const leadId = currentLead?._id || currentLead?.leadId || currentLead?.id;
               if (leadId) await LeadService.resetLead(leadId);
-              // Immediately clear local jobState so the UI reflects the reset
-              // without waiting for the async re-fetch to complete
               setJobState({});
               setCurrentLead((prev: any) => ({
                 ...prev,
@@ -439,7 +425,6 @@ export default function LFCalculator({ route }: any) {
     try {
       setLoading(true);
       if (!currentLead?._id) return;
-      // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
       const calcId = resolveLeadCalculatorId(currentLead);
       if (!calcId) return;
       const res = await LeadService.getLeadOutcomeByCalculator(currentLead._id, calcId);

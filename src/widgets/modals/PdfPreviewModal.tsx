@@ -52,10 +52,6 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
       return;
     }
 
-    // data:<mime>;base64,<...> — the native <Pdf>/<Image> viewers can't consume a
-    // data URI directly, and the remote-download path below can't HTTP-GET one, so
-    // decode it to a temp file first. This is how a SAVED agreement / order-sheet
-    // fetched as base64 (downloadOutcomeDocuments) gets previewed.
     if (uri.startsWith('data:')) {
       const writeInlineDoc = async () => {
         try {
@@ -96,14 +92,12 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
     const isImg = isImageUri(uri);
     setIsImage(isImg);
 
-    // If already a local file path, use it directly
     if (uri.startsWith('file://') || uri.startsWith('/')) {
       const formatted = uri.startsWith('file://') ? uri : `file://${uri}`;
       setLocalUri(formatted);
       return;
     }
 
-    // Remote URL — pre-download to DocumentDir to avoid ENOENT cache errors
     const downloadPdf = async () => {
       try {
         setDownloading(true);
@@ -144,7 +138,6 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
             isValid = await checkIsPDF(filePath);
           }
           if (isValid) {
-            // Android requires file:/// (3 slashes) for absolute paths
             const formattedPath = Platform.OS === 'android' ? `file://${filePath}` : filePath;
             console.log('[PdfPreviewModal] Cache hit, file valid:', formattedPath);
             setLocalUri(formattedPath);
@@ -213,11 +206,9 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
       const publicPath = `${baseDir}/${fileName}`;
       const mimeType = isImage ? `image/${ext === 'png' ? 'png' : 'jpeg'}` : 'application/pdf';
 
-      // 1. Handle Local vs Remote files
       if (sourceUri.startsWith('file://') || sourceUri.startsWith('/')) {
         const cleanSourcePath = sourceUri.replace('file://', '');
 
-        // Remove existing file to prevent cp error
         const exists = await ReactNativeBlobUtil.fs.exists(publicPath);
         if (exists) {
           await ReactNativeBlobUtil.fs.unlink(publicPath);
@@ -226,7 +217,6 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
         await ReactNativeBlobUtil.fs.cp(cleanSourcePath, publicPath);
 
         if (Platform.OS === 'android') {
-          // Add to DownloadManager and scan so it appears in 'Downloads' app
           ReactNativeBlobUtil.fs.scanFile([{ path: publicPath, mime: mimeType }]);
           FlashMessage.success('Document downloaded successfully!', 'Downloaded');
         } else {
@@ -236,7 +226,6 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
           });
         }
       } else {
-        // Remote URL - Use DownloadManager for Android
         if (Platform.OS === 'android') {
           await ReactNativeBlobUtil.config({
             addAndroidDownloads: {
@@ -406,8 +395,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: 'rgba(0,0,0,0.03)',
   },
-  // Report titles are long ("Lead | Address | Date | Time"): small enough to wrap onto two
-  // lines inside the fixed 60pt header rather than truncating with an ellipsis.
   title: {
     fontSize: 13,
     lineHeight: 17,

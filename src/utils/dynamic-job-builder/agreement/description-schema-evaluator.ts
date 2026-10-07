@@ -1,32 +1,3 @@
-/**
- * Description Schema Evaluation Engine (generic, config-driven)
- *
- * Faithful RN port of web
- * `src/components/dynamic-job-builder/agreement/description-schema-evaluator.js`.
- * Turns a saved description schema (authored per-vertical in the portal Agreement
- * Config module) into an ordered list of "Description of Work" lines, evaluated
- * against the dynamic job builder's runtime `verticalState`.
- *
- * Keep in sync with the web copy — the two must produce identical output.
- *
- * Schema shape (see backend DescriptionSchemaEntity):
- *   - calculatedLogic[]:  { variableName, formula: { type:'sum', fields:[fieldId] } }
- *   - primaryMappings[]:  { component, scope:'simple'|'combination', sectionId,
- *                          condition:{ type:'all'|'any', rules:[{fieldId,operator,value}] },
- *                          logicTriggerId, logicTriggerCondition, valueReferenceId, outputTemplate }
- *   - conditionalDescriptions[]: { name, condition, outputDescription }
- *
- * Runtime lookup paths (per the dynamic job builder):
- *   simple section:      verticalState[tabId].sectionFields[sectionId][fieldId]
- *   combination row:     verticalState[tabId].comboGroups[sectionId].combinations[n][fieldId]
- *   section-scoped:      verticalState[tabId].comboGroups[sectionId].sectionState[fieldId]
- *   grid/locationGrid:   ...[gridFieldId][rowKey][colKey]  (object of objects → summed)
- *   swatch/color:        value at [fieldId] is the color name string
- */
-
-// ----------------------------------------------------------------------
-// value coercion helpers
-
 function parseNum(val: any): number {
   if (val === undefined || val === null || val === '') return 0;
   if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
@@ -38,7 +9,6 @@ function isPlainObject(val: any): boolean {
   return val && typeof val === 'object' && !Array.isArray(val);
 }
 
-/** A grid value is an object whose values are themselves objects ({ row: { col: n } }). */
 function isGridValue(val: any): boolean {
   return isPlainObject(val) && Object.values(val).some((v) => isPlainObject(v));
 }
@@ -69,9 +39,6 @@ function looksNumeric(value: any): boolean {
   return s !== '' && /^-?\d*\.?\d+/.test(s.replace(/[^\d.-]/g, '')) && /\d/.test(s);
 }
 
-// ----------------------------------------------------------------------
-// reading values out of a "scope" (a sectionFields[secId] map, a combo, or sectionState)
-
 function readScopeValue(scopeObj: any, fieldId: string): any {
   if (!isPlainObject(scopeObj)) return undefined;
   if (scopeObj[fieldId] !== undefined) return scopeObj[fieldId];
@@ -81,11 +48,6 @@ function readScopeValue(scopeObj: any, fieldId: string): any {
   return undefined;
 }
 
-/**
- * Collect a field's value across the entire verticalState.
- * Returns { number, text, found } — number aggregates numeric occurrences (grids summed);
- * text is the first non-empty scalar (used for merges / string comparisons).
- */
 function collectField(fieldId: string, verticalState: any): { number: number; text: string; found: boolean } {
   let number = 0;
   let text = '';
@@ -127,7 +89,6 @@ function collectField(fieldId: string, verticalState: any): { number: number; te
   return { number, text, found };
 }
 
-/** Find the combination group (with its combinations[]) for a sectionId anywhere in verticalState. */
 function findComboGroup(sectionId: string, verticalState: any): any {
   if (!sectionId || !isPlainObject(verticalState)) return null;
   for (const tabState of Object.values(verticalState) as any[]) {
@@ -138,14 +99,12 @@ function findComboGroup(sectionId: string, verticalState: any): any {
   return null;
 }
 
-/** Find a simple section's field map (sectionFields[sectionId]) anywhere in verticalState. */
 function findSimpleSection(sectionId: string, verticalState: any): any {
   if (!sectionId || !isPlainObject(verticalState)) return null;
   for (const tabState of Object.values(verticalState) as any[]) {
     if (isPlainObject(tabState?.sectionFields) && tabState.sectionFields[sectionId]) {
       return tabState.sectionFields[sectionId];
     }
-    // section-scoped combination header fields live under comboGroups[sectionId].sectionState
     if (isPlainObject(tabState?.comboGroups?.[sectionId]?.sectionState)) {
       return tabState.comboGroups[sectionId].sectionState;
     }
@@ -153,7 +112,6 @@ function findSimpleSection(sectionId: string, verticalState: any): any {
   return null;
 }
 
-/** Active location labels of a grid value ({ row: { col: n } }) — rows whose total > 0. */
 function gridLocations(grid: any): string {
   if (!isGridValue(grid)) return '';
   return Object.entries(grid)
@@ -163,9 +121,6 @@ function gridLocations(grid: any): string {
     .map(([rowKey]) => rowKey)
     .join(', ');
 }
-
-// ----------------------------------------------------------------------
-// evaluation context
 
 function createContext(schema: any, verticalState: any) {
   const vars: Record<string, any> = {};
@@ -178,7 +133,6 @@ function createContext(schema: any, verticalState: any) {
     return res;
   };
 
-  // Pre-compute calculatedLogic variables (currently only 'sum').
   (schema?.calculatedLogic || []).forEach((calc: any) => {
     if (!calc?.variableName) return;
     if (calc.formula?.type === 'sum') {
@@ -217,9 +171,6 @@ function createContext(schema: any, verticalState: any) {
 
   return { vars, getNumber, getText, getRaw };
 }
-
-// ----------------------------------------------------------------------
-// condition evaluation
 
 function evaluateRule(rule: any, ctx: any, scope: any): boolean {
   if (!rule || !rule.fieldId) return false;
@@ -263,7 +214,6 @@ function evaluateCondition(condition: any, ctx: any, scope: any): boolean {
     : condition.rules.every((r: any) => evaluateRule(r, ctx, scope));
 }
 
-/** Legacy single-trigger form: logicTriggerId + logicTriggerCondition. */
 function evaluateTrigger(mapping: any, ctx: any, scope: any): boolean {
   if (!mapping.logicTriggerId) return true;
   const cond = mapping.logicTriggerCondition || {};
@@ -280,9 +230,6 @@ function mappingPasses(mapping: any, ctx: any, scope: any): boolean {
   }
   return evaluateTrigger(mapping, ctx, scope);
 }
-
-// ----------------------------------------------------------------------
-// template merge
 
 function formatValue(v: any): string {
   if (v === undefined || v === null) return '';
@@ -301,14 +248,12 @@ function substitute(template: string, mapping: any, ctx: any, scope: any): strin
       const text = ctx.getText(ref, scope);
       return formatValue(text !== '' && !looksNumeric(text) ? text : num);
     }
-    // [loc:FIELDID] → active grid location labels for that field in the current scope
     if (key.startsWith('loc:')) {
       const fid = key.slice(4).trim();
       const raw = scope ? readScopeValue(scope, fid) : undefined;
       return gridLocations(raw);
     }
     if (ctx.vars[key] !== undefined) return formatValue(ctx.vars[key]);
-    // treat as a field id — prefer text (color/type), fall back to number
     const text = ctx.getText(key, scope);
     if (text !== '') return text;
     const num = ctx.getNumber(key, scope);
@@ -316,11 +261,7 @@ function substitute(template: string, mapping: any, ctx: any, scope: any): strin
   });
 }
 
-// ----------------------------------------------------------------------
-// main
-
 export function evaluateDescriptionSchema(schema: any, jobState: any, verticalState: any): string[] {
-  // jobState kept for signature compatibility; evaluation uses verticalState.
   const state = verticalState || jobState || {};
   if (!schema) return [];
 

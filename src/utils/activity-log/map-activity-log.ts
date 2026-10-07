@@ -1,7 +1,6 @@
 import { logEvent } from '../../services/api/LoggerService';
 import { calculateDistance } from '../location-util';
 
-/** Mirrors web map.js sales_map view log */
 export const logSalesMapView = async (user: any) => {
   const userId = user?._id || user?.id;
   if (!userId) return;
@@ -12,7 +11,6 @@ export const logSalesMapView = async (user: any) => {
   });
 };
 
-/** Mirrors web map.js favorite_job click log */
 export const logFavoriteJobClick = async (user: any, job: any, added: boolean) => {
   const userId = user?._id || user?.id;
   if (!userId) return;
@@ -35,7 +33,6 @@ export interface MapPinSelectedOpts {
   currentLead?: any;
 }
 
-/** Mirrors web map.js map_interaction pin select log */
 export const logMapPinSelected = async (user: any, opts: MapPinSelectedOpts) => {
   const userId = user?._id || user?.id;
   if (!userId || !opts.job) return;

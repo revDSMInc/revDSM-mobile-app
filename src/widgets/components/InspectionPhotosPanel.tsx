@@ -21,10 +21,8 @@ import {
 } from '../../utils/inspection-photos';
 
 export interface InspectionPhotosPanelProps {
-  /** Raw `salesPhotos` off the lead — carries category/subcategory/deletedAt. */
   photos: any[];
   secureImages: SecureImageMap;
-  /** Optional analytics hook - reports every tap inside the panel. */
   onAction?: (action: string, meta?: Record<string, unknown>) => void;
 }
 
@@ -39,23 +37,9 @@ interface ViewerProps {
   onAction?: (action: string, meta?: Record<string, unknown>) => void;
 }
 
-/**
- * Full-screen pageable viewer — the mobile counterpart of web's lightbox: swipe or
- * use the chevrons to move between a section's photos, with a title, an "n / total"
- * counter and a tappable thumbnail strip.
- *
- * Rendered from inside the panel on purpose. The Pitchbook / Roofline Deck tool
- * drawer is mounted either INSIDE the screen's fullscreen `Modal` or outside it
- * depending on `isFullscreen`, so a `Modal` rendered here nests correctly in both
- * cases automatically — which is why each screen previously needed two duplicate
- * preview modals gated on `isFullscreen`.
- */
 export function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose, onAction }: ViewerProps) {
   const { width, height } = useWindowDimensions();
   const bottomInset = useBottomInset();
-  // Height of the area under the header, and each photo's height/width ratio (learned from its
-  // own load). Together they size the photo to what it actually displays at, so the thumbnails
-  // sit directly under the picture instead of far below it across a wide black gap.
   const [slotHeight, setSlotHeight] = useState(0);
   const [ratios, setRatios] = useState<Record<string, number>>({});
   const hasStrip = photos.length > 1;
@@ -83,7 +67,6 @@ export function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClo
     [photos.length, sectionName, onAction]
   );
 
-  // Keep the active thumbnail on screen when paging by swipe or chevron.
   useEffect(() => {
     if (photos.length > 1) {
       stripRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
@@ -154,7 +137,6 @@ export function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClo
             pagingEnabled
             showsHorizontalScrollIndicator={false}
             initialScrollIndex={initialIndex}
-            // Required for `initialScrollIndex` / `scrollToIndex` on a horizontal pager.
             getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
             keyExtractor={(item, i) => `${item.uri}-${i}`}
             onMomentumScrollEnd={(e) => {
@@ -173,17 +155,12 @@ export function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClo
               <View
                 style={{
                   width,
-                  // ⚠️ Sized to the photo's own proportions, capped by the room left above the
-                  // strip - a fixed fraction of the window either overlapped the thumbnails
-                  // on short phones or left a huge black gap above them on tall ones.
                   height: photoHeight,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
               >
                 <Image
-                  // Keyed on the resolved source so swapping the network url for the
-                  // warmed file remounts rather than leaving the old decode up.
                   key={srcOf(item)}
                   source={{ uri: srcOf(item) }}
                   style={{ width, height: '100%' }}
@@ -214,9 +191,6 @@ export function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClo
           </View>
 
         {hasStrip && (
-          // PINNED to the bottom of the black area, in flow under the photo slot, so it has
-          // its own band instead of floating over the picture. The area's bottom padding
-          // clears the Android nav bar. The row is centred when it is shorter than the screen.
           <View style={{ paddingTop: 12, paddingBottom: 16 }}>
             <FlatList
               ref={stripRef}
@@ -276,8 +250,6 @@ function ChevronButton({
       style={{
         position: 'absolute',
         top: '50%',
-        // RN has no `translateY(-50%)`, so pull the button up by half its height —
-        // `top: '50%'` alone puts its TOP edge at the midline, not its centre.
         marginTop: -22,
         [side]: 12,
         width: 44,
@@ -294,15 +266,27 @@ function ChevronButton({
   );
 }
 
-/**
- * "Property Inspection Photos" — the accordion of captured lead photos shown in the
- * Pitchbook and Roofline Deck tool drawers. Grouping lives in
- * `utils/inspection-photos.ts`; this file is presentation only.
- */
 export function InspectionPhotosPanel({ photos, secureImages, onAction }: InspectionPhotosPanelProps) {
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
   const [viewer, setViewer] = useState<{ sectionId: string; index: number } | null>(null);
   const sections = useMemo(() => buildInspectionSections(photos, secureImages), [photos, secureImages]);
+
+  /**
+   * ⚠️ The GRID needs the warmed copies too, and its absence is the reported bug.
+   *
+   * The viewer below resolves through `srcOf` (`warmed[uri] || uri`); this accordion rendered
+   * `img.uri` RAW. Those urls are pre-signed S3 links with no cache headers (CLAUDE.md §6), so
+   * offline every thumbnail painted nothing while tapping one opened a full-screen image that
+   * worked perfectly — the same photo, two code paths, one of them warmed.
+   *
+   * Hoisted to the panel rather than per section: one hook for every photo on screen, and the
+   * map is seeded synchronously, so a cached thumbnail paints on the first frame.
+   */
+  const gridUris = useMemo(
+    () => sections.flatMap((s) => s.photos.map((p) => p.uri)).filter(Boolean),
+    [sections]
+  );
+  const gridWarmed = useWarmedImageUris(gridUris);
 
   const viewerSection = viewer ? sections.find((s) => s.id === viewer.sectionId) : null;
 
@@ -325,9 +309,6 @@ export function InspectionPhotosPanel({ photos, secureImages, onAction }: Inspec
         const count = section.photos.length;
 
         return (
-          // Two nested Views on purpose: iOS CLIPS a shadow when the same view sets
-          // `overflow: hidden`, so the shadow lives on the outer wrapper and the
-          // rounding/clipping on the inner one.
           <View
             key={section.id}
             className="mb-4 rounded-xl bg-white"
@@ -365,17 +346,10 @@ export function InspectionPhotosPanel({ photos, secureImages, onAction }: Inspec
               </TouchableOpacity>
 
               {isExpanded && (
-                // `space-between` rather than a pixel `gap`: two 48% columns plus a
-                // fixed gap can exceed 100% on a narrow drawer and wrap to one card
-                // per row. An odd last card is left-aligned, which is what web does.
                 <View className="flex-row flex-wrap px-3 pb-3" style={{ justifyContent: 'space-between' }}>
                   {section.photos.map((img, i) => {
                     const time = formatCaptureTime(img.timestamp);
                     return (
-                      // Hold to peek full-screen, exactly like revRender: the peek warms a
-                      // local file:// copy, so the enlarged image is instant instead of
-                      // blank for 2–3s while a pre-signed S3 url re-downloads. A tap opens
-                      // the pageable viewer at this photo.
                       <PhotoPeekPressable
                         key={`${img.uri}-${i}`}
                         uri={img.uri}
@@ -391,7 +365,6 @@ export function InspectionPhotosPanel({ photos, secureImages, onAction }: Inspec
                         }}
                         className="rounded-xl overflow-hidden bg-slate-50"
                         style={{
-                          // Two per row (web `xs={6}`) at web's 4/3 crop.
                           width: '48%',
                           aspectRatio: 4 / 3,
                           marginBottom: 12,
@@ -399,7 +372,13 @@ export function InspectionPhotosPanel({ photos, secureImages, onAction }: Inspec
                           borderColor: '#E2E8F0',
                         }}
                       >
-                        <Image source={{ uri: img.uri }} className="w-full h-full" resizeMode="cover" />
+                        <Image
+                          // ⚠️ The warmed local copy first — see `gridWarmed`. Falling back to
+                          // the raw url keeps this no worse than before it was cached.
+                          source={{ uri: gridWarmed[img.uri] || img.uri }}
+                          className="w-full h-full"
+                          resizeMode="cover"
+                        />
 
                         {/* Eye affordance, top-left (web `mdi:eye`). */}
                         <View
@@ -462,7 +441,6 @@ export function InspectionPhotosPanel({ photos, secureImages, onAction }: Inspec
 
       {viewer && viewerSection && (
         <InspectionPhotoViewer
-          // Remount when the section changes so `initialScrollIndex` is re-applied.
           key={viewer.sectionId}
           sectionName={viewerSection.name}
           photos={viewerSection.photos}

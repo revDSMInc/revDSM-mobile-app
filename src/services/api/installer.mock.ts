@@ -1,10 +1,3 @@
-/**
- * Placeholder Installer data.
- *
- * The installer endpoints are not built yet. `InstallerService` serves this while
- * `INSTALLER_USE_MOCKS` is true; flip that flag off once the API ships and this
- * file can be deleted outright.
- */
 import type { InstallerJob } from '../../config/types/installer';
 
 export const MOCK_INSTALLER_JOBS: InstallerJob[] = [
@@ -122,5 +115,4 @@ export const MOCK_INSTALLER_JOBS: InstallerJob[] = [
   },
 ];
 
-/** Tomorrow's schedule — intentionally empty to exercise the empty state. */
 export const MOCK_INSTALLER_JOBS_TOMORROW: InstallerJob[] = [];

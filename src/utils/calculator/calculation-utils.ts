@@ -16,8 +16,6 @@ export const calculateMonthlyPayment = (principal: number, apr: number, months: 
   );
 };
 
-// Legacy field IDs that are already handled by the gutter/filter/extras paths below.
-// These also exist in verticalInputs but we skip them there to avoid double-counting.
 const LEGACY_FIELD_IDS = new Set([
   'gutter5DsE', 'gutter6Ft1', 'gutter7DsE',
   'versaMaxFt1',
@@ -45,7 +43,6 @@ export const calculateQuote = (
   const breakdownResult: any = {};
   const breakdownWithNumberNotPrice: any = {};
 
-  // ── Merge vertical tab values into inputs/extras for legacy fields ──
   const mergedInputs = { ...inputs };
   const mergedExtras = { ...extras };
   if (verticalInputs && typeof verticalInputs === 'object') {
@@ -58,7 +55,6 @@ export const calculateQuote = (
     });
   }
 
-  // All stories gutters (5", 6" and 7")
   const gutter5Val =
     (Number(mergedInputs?.gutter5DsE) || 0) * (pricing?.gutters?.['5_inch_all_stories'] || 0);
   const gutter6Val =
@@ -72,7 +68,6 @@ export const calculateQuote = (
   breakdownWithNumberNotPrice.gutter6All = Number(mergedInputs?.gutter6Ft1) || 0;
   breakdownWithNumberNotPrice.gutter7All = Number(mergedInputs?.gutter7DsE) || 0;
 
-  // Versa Max (all stories)
   const versaMaxVal =
     (Number(mergedInputs?.versaMaxFt1) || 0) * (pricing?.filters?.versa_max_all_stories || 0);
   breakdownResult.versaMax = versaMaxVal;
@@ -81,7 +76,6 @@ export const calculateQuote = (
   let versaMaxTotal = versaMaxVal;
   let guttersTotal = gutter5Val + gutter6Val + gutter7Val;
 
-  // Per-story filters
   const sCount = Number(storyCount) || 0;
   for (let s = 1; s <= sCount; s += 1) {
     const v6Key = `versa6Ft${s}`;
@@ -114,7 +108,6 @@ export const calculateQuote = (
   );
   base += breakdownResult.extras;
 
-  // ── Vertical product items (skip legacy IDs to avoid double-counting) ──
   let verticalTotal = 0;
   if (verticalInputs && typeof verticalInputs === 'object') {
     Object.entries(verticalInputs).forEach(([id, qty]) => {
@@ -165,7 +158,6 @@ export const calculateQuote = (
     const loanPrincipal = afterDiscounts * (1 + (plan.pf || 0));
 
     if (plan.deferredMonths && plan.deferredMonths > 0) {
-      // Deferred interest plan
       const monthlyRateAfterDeferred = (plan.aprAfterDeferred || 0) / 12;
       const deferredInterest =
         loanPrincipal * ((1 + monthlyRateAfterDeferred) ** plan.deferredMonths - 1);
@@ -212,7 +204,6 @@ export const calculateQuote = (
       monthlyPaymentResult = 0; // $0 during promo period
       planDurationResult = plan.displayMonths;
     } else {
-      // Regular financing plan
       monthlyPaymentResult = calculateMonthlyPayment(
         loanPrincipal,
         plan.apr || 0,
@@ -224,7 +215,6 @@ export const calculateQuote = (
 
   const savingsAmountResult = afterMarkup - afterDiscounts;
 
-  // Parity with web: Payment plan business rules/checks
   const warnings: string[] = [];
   const wellsFargoHighKeys = ['wf3672', 'wf3667', 'wf3668', 'wf3669', 'wf3670', 'wf3671'];
   if (wellsFargoHighKeys.includes(paymentPlan) && final < 7500) {

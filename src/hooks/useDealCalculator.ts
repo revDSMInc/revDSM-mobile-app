@@ -75,7 +75,6 @@ export const useDealCalculator = (lead: any) => {
   const active = calculators[activeIdx] || calculators[0];
   const { inputs, extras, discounts } = active;
 
-  // --- Web Parity Telemetry Refs & Helpers ---
   const pendingChangesRef = useRef<Array<{
     fieldName: string;
     fieldLabel: string;
@@ -94,7 +93,6 @@ export const useDealCalculator = (lead: any) => {
     hasLoggedCalculatorViewRef.current = false;
   }, [leadId]);
 
-  // Save previous active calculator immediately upon tab switch if there are pending changes
   const prevActiveIdxRef = useRef(activeIdx);
   useEffect(() => {
     const prevIdx = prevActiveIdxRef.current;
@@ -177,7 +175,6 @@ export const useDealCalculator = (lead: any) => {
     });
   };
 
-  // Log calculator viewed on active calculator change to match Web parity
   useEffect(() => {
     if (active?._id && user?._id) {
       logEvent('view', {
@@ -197,7 +194,6 @@ export const useDealCalculator = (lead: any) => {
   }, [active?._id, user?._id, appointmentId, leadId]);
 
 
-  // Clean up and flush pending change logs on active calculator switch or unmount
   useEffect(() => {
     return () => {
       if (fieldLogTimerRef.current) {
@@ -297,7 +293,6 @@ export const useDealCalculator = (lead: any) => {
         'test user';
 
       const findMyAppt = (list: any[]) => {
-        // 1. Try strict ID match first to prevent collision/leak between leads with same name
         const strictMatch = list.find(
           (a: any) =>
             (a.selfGenLeadId && a.selfGenLeadId === activeLead._id) ||
@@ -306,7 +301,6 @@ export const useDealCalculator = (lead: any) => {
         );
         if (strictMatch) return strictMatch;
 
-        // 2. Fallback to title matching only if no ID matches
         return list.find(
           (a: any) =>
             a.title?.trim().toLowerCase() === targetTitle.trim().toLowerCase()
@@ -441,7 +435,6 @@ export const useDealCalculator = (lead: any) => {
           appointmentId: c.appointmentId || apptId,
         }));
 
-        // Apply dynamic naming/warnings on load
         const getRetailPrice = (calc: any) => {
           const res = calculateQuote(
             calc.inputs,
@@ -528,7 +521,6 @@ export const useDealCalculator = (lead: any) => {
         return next;
       });
 
-      // Only log when auto-adding control box (story footage entered) — not on open/normalize
       const userId = user?._id || user?.id;
       if (userId && activeCalc._id && hasStoryFt && expectedControlBox === '1') {
         logEvent('change', {
@@ -565,7 +557,6 @@ export const useDealCalculator = (lead: any) => {
         if (!next[idx]) return prev;
         const current = { ...next[idx] };
 
-        // Queue field changes for web parity logging
         const userId = user?._id || user?.id;
         if (userId) {
           if (patch.inputs) {
@@ -1060,7 +1051,6 @@ export const useDealCalculator = (lead: any) => {
       const defaultPay = defaultCalc ? defaultCalc.inputs?.paymentPlan : (user?.defaultPaymentMethod || getDefaultPaymentMethod(isLowesLead));
       const shouldSetDefaultToggle = defaultCalc ? true : false;
 
-      // Mirror web: seed default discount from user.defaultPercentage
       const defaultDiscount = user?.defaultPercentage || INITIAL_INPUTS.discountPercentage;
       const shouldSetDefaultDiscount = !!user?.defaultPercentage;
 
@@ -1132,15 +1122,12 @@ export const useDealCalculator = (lead: any) => {
         await saveCalculator(latestActiveRef.current);
       }
 
-      // Check if there is an existing default calculator settings
       const defaultCalc = calculators.find((c) => c.isDefaultPayment);
       const defaultPay = defaultCalc ? defaultCalc.inputs?.paymentPlan : (user?.defaultPaymentMethod || getDefaultPaymentMethod(isLowesLead));
 
-      // Inherit paymentPlan and default status
       const paymentPlanToUse = defaultCalc ? defaultPay : (duplicate?.inputs?.paymentPlan || defaultPay);
       const isDefaultPaymentToUse = defaultCalc ? true : (duplicate?.isDefaultPayment || false);
 
-      // Mirror web: derive isDefaultDiscount from user.defaultPercentage vs duplicated discount
       const isDefaultDiscountToUse =
         !!user?.defaultPercentage &&
         user.defaultPercentage === duplicate.inputs.discountPercentage;
@@ -1186,7 +1173,6 @@ export const useDealCalculator = (lead: any) => {
         ckToInstallers: duplicate.inputs.ckToInstallers,
         extraLabor: duplicate.inputs.extraLabor,
 
-        // Send snake_case keys as well to ensure backend compatibility
         gutter_footage: duplicate.inputs.gutter5DsE,
         gutter_6_footage: duplicate.inputs.gutter6Ft1,
         gutter_7_footage: duplicate.inputs.gutter7DsE,
@@ -1392,7 +1378,6 @@ export const useDealCalculator = (lead: any) => {
       setCalculators((prev) => {
         const remaining = prev.filter((_, i) => i !== idx);
 
-        // Re-calculate pricing/names to clear duplicate warning signs if no duplicate exists anymore
         const getRetailPrice = (calc: any) => {
           const res = calculateQuote(
             calc.inputs,
@@ -1414,7 +1399,6 @@ export const useDealCalculator = (lead: any) => {
           if (titles[key] !== undefined) c.name = titles[key];
         });
 
-        // Save new positions and names to database
         Promise.all(
           remaining.map((c, i) => {
             if (!c._id) return Promise.resolve();

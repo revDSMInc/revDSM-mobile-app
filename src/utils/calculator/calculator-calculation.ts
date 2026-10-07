@@ -25,10 +25,6 @@ export const getCalculationResult = (
     ckToInstallers: options.ckToInstallers ?? 0,
   });
 
-/**
- * Web parity: displayed tiers use the selected plan; markup anchors use check (0% fee).
- * ckToInstallers is NOT included in tier prices — only in total/final rollout calc.
- */
 export const getTierResults = (
   details: any,
   options: {

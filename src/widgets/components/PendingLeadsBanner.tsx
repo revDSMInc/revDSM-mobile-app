@@ -1,16 +1,3 @@
-/**
- * PendingLeadsBanner — the leads that are queued on the device and not yet on the server.
- *
- * ⚠️ This exists because a queued lead that is INVISIBLE is worse than one that failed loudly. This
- * repo has already shipped that exact failure once with offline photos — see
- * `utils/pending-inspection-photos.ts`: *"The photos were never lost; they were queued and
- * invisible, which is worse, because a rep who cannot see them will shoot them again."* A rep who
- * cannot see a queued lead re-knocks the door, or assumes the app ate it.
- *
- * Rendered as the Leads list header, so it sits exactly where the rep looks for the lead they just
- * created and disappears the moment the queue is empty.
- */
-
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -34,11 +21,7 @@ interface Props {
   isDark: boolean;
 }
 
-/** Copy per status. The `needs-review` line is the one that has to tell the rep what to DO. */
 const STATUS_TEXT: Record<WorkStatus, { label: string; tone: string; detail?: string }> = {
-  // ⚠️ Only true OFFLINE — see `draftLabel`. Saying "waiting for signal" to a rep holding a phone
-  // with five bars tells them the app has not noticed, and there is nothing on the row to correct
-  // it: a record that has already failed twice looks identical to one never attempted.
   draft: { label: 'Waiting for signal', tone: '#64748B' },
   uploading: { label: 'Uploading…', tone: '#2563EB' },
   uploaded: { label: 'Uploaded', tone: '#16A34A' },
@@ -46,13 +29,11 @@ const STATUS_TEXT: Record<WorkStatus, { label: string; tone: string; detail?: st
   'needs-review': {
     label: 'Needs your check',
     tone: '#D97706',
-    // Deliberately explicit: we genuinely do not know, and the rep is the only one who can look.
     detail:
       'This may already be on the server. Check the list below first — only retry if it is missing.',
   },
 };
 
-/** What a `draft` row is actually doing, which depends on whether there is a connection. */
 const draftLabel = (item: OfflineLeadWork, online: boolean): string => {
   if (!online) return 'Waiting for signal';
   return item.attempts > 0 ? 'Retrying…' : 'Waiting to sync';
@@ -139,8 +120,6 @@ export const PendingLeadsBanner: React.FC<Props> = ({ colors, isDark }) => {
           const base = STATUS_TEXT[item.status] || STATUS_TEXT.draft;
           const meta =
             item.status === 'draft' ? { ...base, label: draftLabel(item, online) } : base;
-          // A whole lead uploads in several steps, so show it advancing rather than sitting on one
-          // word for the length of six requests.
           const progress = uploadProgress(item);
           const needsAction = item.status === 'needs-review' || item.status === 'failed';
           return (

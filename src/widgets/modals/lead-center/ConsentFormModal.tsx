@@ -47,11 +47,6 @@ const formatLeadTime = (leadTime: string) => {
   return leadTime;
 };
 
-// A prefilled (OCR / paper-fallback) Lead ID only OVERRIDES what's shown when the
-// paperwork actually carried one. An empty/whitespace scan must NOT blank the field:
-// it should keep the Lead ID already showing — the lead's own id, or 'N/A' for a
-// SelfGen lead that has no id. OCR used to return '' here, which won `??` and blanked
-// the field, so this normalizes a blank scan back to `undefined` so the fallback wins.
 const cleanLeadId = (v: any): string | undefined => {
   const s = typeof v === 'string' ? v.trim() : v;
   return s ? s : undefined;
@@ -200,10 +195,6 @@ export const ConsentFormModal = ({
   });
   const [generatedPdf, setGeneratedPdf] = useState<string | null>(null);
 
-  // Cancel / header-✕ don't dismiss straight away — they raise a confirmation so a
-  // rep can't lose a half-filled form with a stray tap. Only "Exit to Tools" runs
-  // the real `onClose`. Programmatic closes (after a successful submit / PDF step)
-  // still call `onClose` directly and never hit this prompt.
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const isWaiver = type === 'roof_waiver';
 
@@ -242,7 +233,6 @@ export const ConsentFormModal = ({
     }
   }, [prefilledData]);
 
-  // Signature state
   const [showSigPad, setShowSigPad] = useState(false);
   const [savedPaths, setSavedPaths] = useState<string[]>([]);
   const [livePaths, setLivePaths] = useState<string[]>([]);
@@ -253,7 +243,6 @@ export const ConsentFormModal = ({
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        // Capture touches immediately — prevents ScrollView from stealing the gesture
         onStartShouldSetPanResponder: () => true,
         onStartShouldSetPanResponderCapture: () => true,
         onMoveShouldSetPanResponder: () => true,
@@ -306,7 +295,6 @@ export const ConsentFormModal = ({
       FlashMessage.error('Validation Error', 'First name is required.');
       return;
     }
-    // Phone number is required; email is optional.
     const hasPhone = !!formData.phoneNumber && !!formData.phoneNumber.replace(/\D/g, '');
     if (!hasPhone) {
       FlashMessage.error('Validation Error', 'Phone number is required.');
@@ -366,7 +354,6 @@ export const ConsentFormModal = ({
       console.log(res, 'resssss');
 
       if (typeof res === 'string') {
-        // Automatically trigger final upload to S3 and close
         if (onFinalUpload) {
           await onFinalUpload(res);
         }
@@ -913,7 +900,6 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   fieldInput: { flex: 1, fontSize: 12, padding: 0 },
-  // ── Exit confirmation overlay ──
   exitOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
@@ -921,7 +907,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     zIndex: 1002,
   },
-  // Dims the frosted blur so the card stands out (over the BlurView, non-interactive).
   exitScrim: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.25)',

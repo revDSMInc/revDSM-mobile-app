@@ -275,7 +275,6 @@ export const InspectionFormModal = ({
         finalNotes: sections.observations?.[0]?.description || '',
       };
 
-      // Map sections to items, items2, items3, etc.
       const mapping: Record<SectionKey, string> = {
         gutters: 'items',
         fascia: 'items2',
@@ -458,11 +457,6 @@ export const InspectionFormModal = ({
     );
   };
 
-  // ── Inspection Report form ────────────────────────────────────────────────
-  // The schema-driven photo-capture flow (`DynamicInspectionView`) deliberately
-  // does NOT live here: this tool generates the report. Photo capture/management
-  // belongs to Job Docs → Manage Photos, matching web, where `job-docs-tab.js`
-  // — not the report — owns the dynamic inspection dialogs.
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={styles.backdrop}>
@@ -571,7 +565,6 @@ const styles = StyleSheet.create({
     paddingTop: 20,
     backgroundColor: 'white',
   },
-  // Floating label fields
   fieldWrap: {
     marginBottom: 20,
     position: 'relative',
@@ -604,7 +597,6 @@ const styles = StyleSheet.create({
     color: '#1C252E',
     padding: 0,
   },
-  // Sections
   section: {
     marginBottom: 20,
   },
@@ -618,7 +610,6 @@ const styles = StyleSheet.create({
   issueCard: {
     marginBottom: 12,
   },
-  // Photo box
   photoBox: {
     width: '100%',
     height: 150,
@@ -646,7 +637,6 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
-  // Add/Remove row
   addRemoveRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -674,7 +664,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FF4842',
   },
-  // Footer
   footer: {
     flexDirection: 'row',
     gap: 12,

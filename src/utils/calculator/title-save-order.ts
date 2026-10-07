@@ -17,28 +17,23 @@ export function computeTitleSaveOrder({
 }: ComputeTitleSaveOrderParams) {
   if (!allCalculators?.length || !changedCalcId) return [];
 
-  // 1. Snapshot: replace the changed calc's data with the new values
   const snapshot = allCalculators.map((c) =>
     c._id === changedCalcId ? { ...c, ...changedCalcData } : c
   );
 
-  // 2. Compute all new titles from the snapshot
   const newTitles = getTitles(snapshot, getRetailPrice);
 
-  // 3. currentTitle (DB) → calcId
   const currentTitleToId: Record<string, string> = {};
   allCalculators.forEach((c) => {
     const t = c.title || c.name;
     if (t) currentTitleToId[t] = c._id;
   });
 
-  // 4. calcId → currentTitle (DB)
   const idToCurrentTitle: Record<string, string> = {};
   allCalculators.forEach((c) => {
     idToCurrentTitle[c._id] = c.title || c.name || '';
   });
 
-  // 5. calcId lookup
   const payloadById: Record<string, any> = {};
   allCalculators.forEach((c) => {
     payloadById[c._id] = c;
@@ -47,7 +42,6 @@ export function computeTitleSaveOrder({
   const calcById = { ...payloadById };
   calcById[changedCalcId] = { ...calcById[changedCalcId], ...changedCalcData };
 
-  // Helper: build a save entry
   const makeEntry = (id: string, title: string) => {
     const base = id === changedCalcId ? calcById[id] : payloadById[id];
     return {
@@ -58,7 +52,6 @@ export function computeTitleSaveOrder({
     };
   };
 
-  // 6. Follow the displacement chain from the changed calculator
   const chain: string[] = [];
   const visited = new Set<string>();
   let cursor: string | null = changedCalcId;
@@ -79,7 +72,6 @@ export function computeTitleSaveOrder({
     }
   }
 
-  // 7. Detect a cycle
   const cycleStartId = visited.has(cursor || '') && chain.includes(cursor || '') ? cursor : null;
 
   if (cycleStartId) {
@@ -105,6 +97,5 @@ export function computeTitleSaveOrder({
     return result;
   }
 
-  // 8. LINEAR case
   return [...chain].reverse().map((id) => makeEntry(id, newTitles[id]));
 }

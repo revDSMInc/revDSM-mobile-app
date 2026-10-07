@@ -1,10 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Modal, PanResponder, Text, TextInput, TouchableOpacity, View } from 'react-native';
-// ⚠️ BOTH from `react-native-keyboard-controller`, not React Native's own.
-// `KeyboardProvider` (App.tsx) puts the app edge-to-edge, after which Android
-// stops resizing the window and RN's `KeyboardAvoidingView` has nothing to
-// react to. The controller reads the keyboard height directly and its context
-// crosses the Modal boundary, the same way `useSafeAreaInsets` does.
 import { KeyboardAvoidingView, KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Svg, { Defs, G, Path, RadialGradient, Stop, Circle } from 'react-native-svg';
@@ -19,10 +14,8 @@ const WHEEL = 224;
 const R = WHEEL / 2;
 const KNOB = 26;
 
-/** Preview pucks across the run. 18 in the mock; it reads as a roofline, not a few dots. */
 const PREVIEW_PUCKS = 18;
 
-/** Hue sectors drawn as pie slices; the white radial overlay gives saturation. */
 function HueWheel({ size = WHEEL }: { size?: number }) {
   const r = size / 2;
   const slices = useMemo(() => {
@@ -53,13 +46,6 @@ function HueWheel({ size = WHEEL }: { size?: number }) {
   );
 }
 
-/**
- * The dusk preview: the look as it will actually be rendered, on a dusk sky
- * with the channel and a wash of light on the wall below.
- *
- * ⚠️ This is the point of the sheet. Swatches say which colours were picked;
- * only this says what the homeowner will see, which is what the rep is selling.
- */
 function DuskPreview({ colors, pattern }: { colors: string[]; pattern: 'single' | 'alternating' }) {
   const pucks = puckColors(colors, pattern, PREVIEW_PUCKS);
   const unlit = colors.length === 0;
@@ -129,17 +115,6 @@ function DuskPreview({ colors, pattern }: { colors: string[]; pattern: 'single' 
   );
 }
 
-/**
- * Custom look builder (483 §6). The only place a rep can invent a look —
- * the mockup positions it for high schools, which the catalogue does not cover.
- *
- * No pattern control: one colour renders single, two or more alternating.
- *
- * ⚠️ Colour picking is a SEPARATE card that opens on demand, not a wheel that
- * is always on screen. The sheet's job is the look (name, preview, swatches);
- * the wheel is a detour into one swatch, and leaving it permanently open pushed
- * the preview and the Save button off the bottom of a small phone.
- */
 export function CustomLookSheet({
   visible,
   isDark,
@@ -149,18 +124,15 @@ export function CustomLookSheet({
 }: {
   visible: boolean;
   isDark: boolean;
-  /** Looks the rep already has — only their names are read, to number the next auto-name. */
   existing?: { name?: string }[];
   onSave: (look: CustomLook) => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState('');
   const [colors, setColors] = useState<string[]>([]);
-  /** Which swatch the open picker is editing — `null` means it is adding a new one. */
   const [editing, setEditing] = useState<number | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [hsv, setHsv] = useState({ h: 20, s: 0.9, v: 1 });
-  /** True while the wheel or brightness knob is held — freezes the ScrollView. */
   const [dragging, setDragging] = useState(false);
 
   const sub = isDark ? '#919EAB' : '#637381';
@@ -170,18 +142,6 @@ export function CustomLookSheet({
   const tooDark = !canGlow(current);
   const full = colors.length >= MAX_CUSTOM_COLORS;
 
-  /**
-   * ⚠️ Both gestures below are driven by PAGE coordinates measured against the
-   * view's own frame, not by `nativeEvent.locationX/Y`.
-   *
-   * `locationX` is only meaningful while the touch is inside the view. Drag off
-   * the wheel or past the end of the slider — which is exactly what happens
-   * when you grab the knob and keep going — and it can arrive `undefined`.
-   * `undefined / width` is NaN, and ⚠️ `Math.max(0, NaN)` is **NaN**, so a
-   * min/max clamp does not catch it. The NaN reached a style as
-   * `backgroundColor: "#NANNANNAN"` and `left: "NaN%"`, and Android throws on
-   * an unparseable colour: that was the crash on dragging the brightness bar.
-   */
   const wheelRef = useRef<View>(null);
   const barRef = useRef<View>(null);
   const wheelFrame = useRef({ x: 0, y: 0 });
@@ -205,7 +165,6 @@ export function CustomLookSheet({
     const dist = Math.min(Math.sqrt(dx * dx + dy * dy), R);
     let angle = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
     if (angle < 0) angle += 360;
-    // Saturation is clamped; hue is already normalised by the angle maths.
     setHsv((p) => ({ ...p, h: angle, s: clamp01(dist / R, p.s) }));
   };
 
@@ -215,14 +174,6 @@ export function CustomLookSheet({
     setHsv((p) => ({ ...p, v: clamp01((pageX - x) / width, p.v) }));
   };
 
-  /**
-   * ⚠️ The `Capture` variants, and `true` from the start.
-   *
-   * Without capture the enclosing `ScrollView` wins any gesture with vertical
-   * movement, so dragging the wheel — or nudging the brightness knob slightly
-   * off-axis — scrolled the sheet instead of changing the colour. Capturing
-   * claims the touch before the ScrollView is offered it.
-   */
   const wheelPan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponderCapture: () => true,
@@ -234,14 +185,11 @@ export function CustomLookSheet({
         applyWheel(e.nativeEvent.pageX, e.nativeEvent.pageY);
       },
       onPanResponderMove: (e) => applyWheel(e.nativeEvent.pageX, e.nativeEvent.pageY),
-      // ⚠️ Both release AND terminate, or an interrupted gesture (a call, the
-      // sheet dismissing) leaves the ScrollView permanently frozen.
       onPanResponderRelease: () => setDragging(false),
       onPanResponderTerminate: () => setDragging(false),
     }),
   ).current;
 
-  /** Brightness track: drag anywhere along it, Darker → Brighter. */
   const brightnessPan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponderCapture: () => true,
@@ -276,13 +224,6 @@ export function CustomLookSheet({
   };
 
   const usable = colors.filter(canGlow);
-  /**
-   * ⚠️ The NAME is not required — only a usable colour is.
-   *
-   * Requiring it stalled the rep at a disabled Save after they had already done
-   * the real work of picking colours, with nothing on screen saying why. A
-   * blank name is now a request to be named automatically.
-   */
   const canSave = usable.length > 0;
   const autoName = defaultCustomLookName(existing ?? []);
   const pattern = patternFor(usable.length ? usable : colors);
@@ -291,9 +232,6 @@ export function CustomLookSheet({
     setName(''); setColors([]); setEditing(null); setPickerOpen(false);
   };
 
-  // The knob sits on the wheel at the current hue/saturation.
-  // `clamp01` on the saturation keeps a bad value out of a layout style; the
-  // state setters already guard it, and this is the last line of defence.
   const knobAngle = ((hsv.h - 90) * Math.PI) / 180;
   const knobSat = clamp01(hsv.s);
   const knobLeft = R + Math.cos(knobAngle) * knobSat * R - KNOB / 2;
@@ -455,10 +393,6 @@ export function CustomLookSheet({
                   <View
                     {...wheelPan.panHandlers}
                     ref={wheelRef}
-                    // Measured in window coordinates because the gesture is
-                    // tracked by pageX/pageY — see the responders above. Measured
-                    // on layout AND on each grant, since the sheet scrolls and a
-                    // stale origin would offset every hue by the scroll distance.
                     onLayout={measureWheel}
                     style={{ width: WHEEL, height: WHEEL }}
                   >
@@ -553,7 +487,6 @@ export function CustomLookSheet({
                   id: `custom-${Date.now()}`,
                   group: 'custom',
                   category: 'Custom',
-                  // Blank falls back to the auto-name the placeholder promised.
                   name: name.trim() || autoName,
                   colors: usable,
                   pattern: patternFor(usable),

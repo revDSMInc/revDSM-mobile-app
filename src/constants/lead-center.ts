@@ -21,7 +21,6 @@ export const BALANCE_PAYMENT_METHOD_OPTIONS = [
   { label: 'Check', value: 'check' },
   { label: 'MC/VISA/DSCVR', value: 'mcVisaDscvr' },
   { label: 'AMEX', value: 'amex' },
-  // financing plans
   { label: '2511 (GreenSky)', value: 'greensky2511' },
   { label: '2521 (GreenSky)', value: 'greensky2521' },
   { label: '2531 (GreenSky)', value: 'greensky2531' },
@@ -503,7 +502,6 @@ export const INSPECTION_ISSUES = {
   ],
 };
 
-// Rev Render view groups (same structure as web app REV_RENDER_VIEW_GROUPS)
 export const REV_RENDER_VIEW_GROUPS = [
   {
     sectionLabel: 'HOME',
@@ -617,7 +615,6 @@ export const REV_RENDER_VIEW_GROUPS = [
     ],
   },
 ];
-// Rev Render color palettes (ported from web app)
 export const REV_RENDER_COLORS = {
   fascia: [
     { name: 'White', hex: '#E7E7E2' },

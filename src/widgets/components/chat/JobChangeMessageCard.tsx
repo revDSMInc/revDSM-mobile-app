@@ -8,21 +8,6 @@ import {
   getJobChangeTitle,
 } from '../../../utils/job-change-summary';
 
-/**
- * The addendum lifecycle card in the lead chat (spec `SALES-APP-ADDENDUM-CHAT.md` §3).
- *
- * ⚠️ Rendered INSTEAD of a chat bubble, with no avatar, no sender name and no
- * me/them alignment. `senderId` on these messages is a populated user reference
- * (the schema requires one, so there is no `"system"` sentinel) and it is always
- * the REP who owns the addendum — including on the customer's own approve /
- * decline, which arrives on a public no-auth endpoint where there is no user at
- * all. Applying the normal `isMe` styling would therefore draw
- * "Customer has approved job changes" as an outgoing message the rep typed.
- *
- * Reactions, reply, forward, edit, pin, the long-press menu and the read-receipt
- * row are all suppressed by construction — none of them are rendered here.
- */
-
 const ICON_BY_ACTION: Record<AddendumAction, { name: string; fg: string; bg: string }> = {
   PROPOSED: { name: 'file-document-outline', fg: '#16A34A', bg: '#DCFCE7' },
   ACCEPTED: { name: 'check-bold', fg: '#FFFFFF', bg: '#16A34A' },
@@ -32,13 +17,7 @@ const ICON_BY_ACTION: Record<AddendumAction, { name: string; fg: string; bg: str
 interface Props {
   message: any;
   meta: JobChangeMeta;
-  /**
-   * `cardId` is the MESSAGE id, not the draft id — one addendum posts up to three
-   * cards (proposed → approved/declined) that all carry the SAME `draftId`, so the
-   * caller needs the message to tell which card was tapped.
-   */
   onView: (meta: JobChangeMeta, cardId: string) => void;
-  /** True only while THIS card's View tap is resolving (PDF generation can take seconds). */
   isLoading?: boolean;
   colors: any;
   isDark: boolean;

@@ -53,7 +53,6 @@ export const BeforeAfterPresentModal = ({
     }
   }, [visible, user, job, beforeImages.length, afterImages.length]);
 
-  // Number of slides is determined by the number of complete pairs
   const numSlides = Math.min(beforeImages.length, afterImages.length);
 
   const logSlideChange = (fromIdx: number, toIdx: number) => {

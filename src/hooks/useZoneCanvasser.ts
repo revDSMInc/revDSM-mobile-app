@@ -54,7 +54,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
 
   const [mapType, setMapType] = useState<'standard' | 'satellite'>('satellite');
   const [userLocation, setUserLocation] = useState<MapCoordinate | null>(null);
-  // Continuous live GPS position for the blue-dot marker (web parity: live-location-layer.js).
   const [liveLocation, setLiveLocation] = useState<{
     latitude: number;
     longitude: number;
@@ -67,12 +66,10 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
   const [isDrawingMode, setIsDrawingMode] = useState(false);
   const [drawType, setDrawType] = useState<'polygon' | 'rectangle'>('polygon');
   const [drawCoordinates, setDrawCoordinates] = useState<MapCoordinate[]>([]);
-  // Web zone-canvasser-search-context: the committed search (address + pin coords).
   const [searchAddress, setSearchAddress] = useState('');
   const [searchCoords, setSearchCoords] = useState<MapCoordinate | null>(null);
   const [isEditingGoBack, setIsEditingGoBack] = useState(false);
   const [legendOpen, setLegendOpen] = useState(false);
-  // Single show/hide toggle for the Sales Map lead/job pins overlay (default on).
   const [showLeadPins, setShowLeadPins] = useState(true);
   const [startPoint, setStartPoint] = useState<any>(null);
 
@@ -94,13 +91,10 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
   >({});
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Archived zones (web archived-zones-panel + useGetArchivedZones).
   const [archivedZones, setArchivedZones] = useState<any[]>([]);
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [archivedOpen, setArchivedOpen] = useState(false);
-  // Web `unarchivingZoneId` — scopes the row spinner to the zone being restored.
   const [unarchivingZoneId, setUnarchivingZoneId] = useState<string | null>(null);
-  // Web `isZoneActionProcessing` — the stats popup's delete / archive in flight.
   const [isZoneActionProcessing, setIsZoneActionProcessing] = useState(false);
 
   const fetchZones = useCallback(async () => {
@@ -127,7 +121,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     }
   }, []);
 
-  /** Animate the Mapbox camera to a react-native-maps-style Region (lat/lng + deltas). */
   const animateToRegion = useCallback((region: Region, duration = 500) => {
     const latDelta = region.latitudeDelta > 0 ? region.latitudeDelta : 0.05;
     const zoom = Math.max(0, Math.min(20, Math.log2(360 / latDelta)));
@@ -168,8 +161,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     if (!visible) {
       hasRestoredRef.current = false;
       pendingRestoreRef.current = null;
-      // Web `closeZoneMap` clears the search — the modal stays MOUNTED while hidden,
-      // so without this the last search pin would still be on the map next time.
       setSearchAddress('');
       setSearchCoords(null);
       setArchivedOpen(false);
@@ -183,8 +174,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     if (saved) pendingRestoreRef.current = saved;
   }, [visible, fetchZones, fetchArchived, handleGetCurrentLocation]);
 
-  // Continuous live-location watch (web parity: useUserLocation in live-location-layer.js).
-  // Runs only while the map is visible and NOT while drawing a zone; cleaned up on unmount.
   useEffect(() => {
     const stopWatch = () => {
       if (watchIdRef.current != null) {
@@ -222,10 +211,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     return stopWatch;
   }, [visible, isDrawingMode]);
 
-  // The blue-dot cone shows which way the rep is FACING, so it must come from the
-  // device compass (updates while standing still), not the GPS course above (which
-  // only changes while moving). Gated to the visible, non-drawing map to save
-  // battery; falls back to the GPS heading when no compass module is linked.
   const compassHeading = useDeviceHeading(visible && !isDrawingMode);
   const liveLocationWithHeading = useMemo(() => {
     if (!liveLocation) return null;
@@ -239,7 +224,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     mapRegionRef.current = region;
   }, []);
 
-  /** Web handleSaveMapState — persist camera + building before navigating to Lead Center. */
   const saveMapStateForAppointment = useCallback(async () => {
     if (!selectedBuilding) return;
     const region =
@@ -319,7 +303,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     return list;
   }, [zones, buildingStatusOverrides]);
 
-  /** Keep selected building lead in sync after zones refetch (e.g. workflowState → resume after Start Appointment). */
   useEffect(() => {
     if (!visible || !selectedBuilding?.id) return;
     const fresh = allBuildings.find((b) => String(b.id) === String(selectedBuilding.id));
@@ -345,7 +328,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     }
   }, [allBuildings, visible, selectedBuilding?.id]);
 
-  // Restore map + building popup after returning from Lead Center (web sessionStorage parity)
   useEffect(() => {
     if (!visible || hasRestoredRef.current) return;
 
@@ -399,7 +381,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     };
   }, [visible, allBuildings]);
 
-  /** Web `updateSearch` + the map's `easeTo({ zoom: 17 })` on new search coords. */
   const updateSearch = useCallback((address: string, coords: MapCoordinate) => {
     setSearchAddress(address);
     setSearchCoords(coords);
@@ -410,7 +391,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     });
   }, []);
 
-  /** Web `clearSearch` — removes the pin and its address. */
   const clearSearch = useCallback(() => {
     setSearchAddress('');
     setSearchCoords(null);
@@ -475,7 +455,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     } catch (err) {
       console.warn('Touch move error:', err);
     } finally {
-      // Small delay to prevent bridge flooding
       setTimeout(() => {
         isConvertingRef.current = false;
       }, 16);
@@ -485,19 +464,14 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
   const handleTouchEnd = () => setStartPoint(null);
 
   const handleMapPress = (e: any) => {
-    // Web archived-zones-panel ClickAwayListener: tapping the map dismisses the panel.
     if (archivedOpen) setArchivedOpen(false);
     if (!isDrawingMode || drawType !== 'polygon') return;
-    // Extract coordinate synchronously before setState — React's event pooling
-    // nullifies e.nativeEvent by the time the updater callback runs, causing
-    // "Cannot read property 'coordinate' of null" on the 3rd dot.
     const coordinate = e?.nativeEvent?.coordinate;
     if (!coordinate) return;
     setDrawCoordinates((prev) => [...prev, coordinate]);
   };
 
   const handleSaveZone = async () => {
-    // Web `handleZoneCreated`: [lat, lng] pairs, the duplicate closing vertex dropped.
     const coordinates = toZoneCoordinates(drawCoordinates);
     if (coordinates.length < 3) {
       Alert.alert('Invalid Zone', 'Please draw a valid area');
@@ -506,10 +480,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
 
     setIsProcessing(true);
     try {
-      // Web `fetchBuildingsInPolygon` — a failed read yields NO buildings rather than
-      // aborting, and the create call below reports it. The extra mirrors are mobile-only
-      // resilience: a field rep on a weak connection hits the primary's rate limit far
-      // more often than a desk browser does. Same query, same element mapping.
       const polygonString = coordinates.map((c) => `${c[0]} ${c[1]}`).join(' ');
       const overpassQuery = `
         [out:json];
@@ -576,8 +546,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
         }
       } catch (error: any) {
         console.error('Error creating zone:', error);
-        // One alert, not web's two stacked snackbars: a native Alert queued behind
-        // another is easy to miss, and the building read is usually WHY create failed.
         const message = resolveZoneCreateError(error?.message);
         Alert.alert(
           'Error',
@@ -589,7 +557,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     }
   };
 
-  /** Web `handleZoneDelete` — only offered for a zone with no knocked doors. */
   const handleZoneDelete = async (zone: any) => {
     const zoneId = zoneApiId(zone);
     if (!zoneId) return;
@@ -600,8 +567,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
         setZoneStatsPopupOpen(false);
         setSelectedZone(null);
         fetchZones();
-        // Raised once the stats sheet has dismissed — an Alert presented while a
-        // native Modal is still animating out is dropped on iOS.
         setTimeout(() => Alert.alert('Success', 'Zone deleted successfully'), 400);
       } else {
         Alert.alert('Error', response?.message || 'Failed to delete zone');
@@ -614,7 +579,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     }
   };
 
-  /** Web `handleZoneArchive` — only offered for a zone WITH knock history. */
   const handleZoneArchive = async (zone: any) => {
     const zoneId = zoneApiId(zone);
     if (!zoneId) return;
@@ -638,7 +602,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     }
   };
 
-  /** Web `handleZoneUnarchive`. */
   const handleZoneUnarchive = async (zone: any) => {
     const zoneId = zoneApiId(zone);
     if (!zoneId) return;
@@ -661,7 +624,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     }
   };
 
-  /** Web: opening the archived panel closes the legend, and vice versa. */
   const toggleArchivedOpen = () => {
     setArchivedOpen((v) => !v);
     setLegendOpen(false);
@@ -800,7 +762,6 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     }
   };
 
-  /** Optimistic + persisted lead patch after setLeadWork (preview → resume on web). */
   const patchBuildingLeadAfterWork = useCallback(
     (buildingId: string | number, patch: Record<string, any>) => {
       console.log('[ZoneCanvasser] patchBuildingLeadAfterWork', { buildingId, patch });

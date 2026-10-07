@@ -1,14 +1,3 @@
-// ─── DynamicMovePhotoModal.tsx ───────────────────────────────────────────────
-// Re-tag a stored inspection photo into a different slot, without re-shooting it.
-// Mobile port of the web reference
-//   src/sections/job/components/dynamic-inspection-photos/move-photo-dialog.js
-//
-// The whole design point (web's too) is that it REUSES the capture grid
-// (`CategoryTabStrip` + `CategoryBody`), so re-filing looks exactly like tagging:
-// the rep sees the same slot pills and taps the destination. `moveFromKey` marks
-// the source slot so it reads as the "FROM" tile.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image, Modal } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -30,15 +19,7 @@ export interface MoveState {
   photo: CapturedPhoto;
   fromCategory: InspectionCategory;
   fromSlot: InspectionSlot;
-  /** The manage-card key, so the spinner shows on the originating card. */
   key: string;
-  /**
-   * `fromCategory.label` is the photo's REAL stored category, not a schema label to be scoped.
-   *
-   * Set for "+ UNSORTED" orphans, whose stored category belongs to no configured product (a
-   * legacy `"Home"`, a renamed product, a pre-schema capture). Everything else leaves it unset
-   * and is scoped as before.
-   */
   fromIsAbsoluteCategory?: boolean;
 }
 
@@ -49,9 +30,6 @@ interface DynamicMovePhotoModalProps {
   capture: any;
   onClose: () => void;
   onDelete?: () => void;
-  /** Fired after the rep picks a destination slot and the move is dispatched (NOT on
-   *  a plain close/cancel). The inspection-capture flow uses this to reopen the camera
-   *  for continuous capture once the re-home is done. */
   onMoved?: () => void;
 }
 
@@ -75,11 +53,8 @@ export function DynamicMovePhotoModal({
       : uiKey(fromCategory.id as string, fromSlot.id as string);
   }, [moveState]);
 
-  // Open on the tab that contains the source slot (web parity), so the rep starts
-  // where the photo currently lives rather than always on tab 0.
   const initialTab = useMemo(() => {
     if (!moveState) return 0;
-    // An orphan lives in no configured tab, so there is no "where it currently is" to open on.
     if (moveState.fromIsAbsoluteCategory) return 0;
     const idx = topTabs.findIndex((tab) => {
       const leafs = indexSchema([tab]).leafCategories;
@@ -89,7 +64,6 @@ export function DynamicMovePhotoModal({
   }, [topTabs, moveState]);
 
   const [activeTab, setActiveTab] = useState(initialTab);
-  // Re-seat the tab whenever a new move begins.
   const [seededFor, setSeededFor] = useState<string | null>(null);
   if (moveState && seededFor !== moveState.key) {
     setSeededFor(moveState.key);
@@ -106,7 +80,6 @@ export function DynamicMovePhotoModal({
       : uiKey(category.id as string, slot.id as string);
     if (targetKey === fromKey) return; // same slot — no-op
 
-    // Close first so the rep sees the manage grid update, then fire the move.
     onClose();
     capture.movePhoto({
       photo: moveState.photo,
@@ -119,8 +92,6 @@ export function DynamicMovePhotoModal({
         ? { fromCategoryAbsolute: moveState.fromCategory.label as string }
         : null),
     });
-    // Re-home done → let the host reopen the camera for the next shot (continuous
-    // capture). The move itself is optimistic + queued, so this never blocks on upload.
     onMoved?.();
   };
 

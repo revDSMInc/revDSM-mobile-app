@@ -2,9 +2,6 @@ import React from 'react';
 import { View, Text } from 'react-native';
 import { AgreementBlockProps } from './types';
 
-// Faithful port of web `blocks/work-description-block.js`.
-// Bordered box: optional title, optional preBlockText, a bulleted list of jobScope
-// lines, optional postBlockText. Web has no null guard here — it always renders.
 export default function WorkDescriptionBlock({ block, jobScope = [] }: AgreementBlockProps) {
   const preBlockText: string = block?.settings?.preBlockText || '';
   const postBlockText: string = block?.settings?.postBlockText || '';

@@ -17,35 +17,12 @@ interface Props {
   entries: Record<string, PECEntry>;
   onSetHasConditions: (value: boolean | null) => void;
   onSetEntry: (areaId: string, entry: PECEntry | null) => void;
-  /**
-   * Fired after a condition shot lands in state, so the parent can upload it.
-   * Photos reach state through `onSetEntry` (whole-entry replace), which gives the
-   * parent no way to tell which shot is new — hence the explicit callback.
-   */
   onPhotoCaptured?: (area: PECArea, photo: CapturedPhoto) => void;
-  /**
-   * Fired when the installer taps a photo's ✕.
-   *
-   * The parent removes it from state as well as deleting it server-side — the same
-   * split as the material step, and it has to be that way round: the photo's `s3url`
-   * may still be arriving, and only the parent can drain the upload before reading it.
-   * Dropping it from `entries` here first would leave that upload nothing to write to.
-   * No handler → no ✕ is rendered. Resolves once the photo is gone from the server as
-   * well as from state — the confirm dialog holds its spinner on this promise.
-   */
   onRemovePhoto?: (area: PECArea, photo: CapturedPhoto) => void | Promise<void>;
   onComplete: () => void;
   onBack: () => void;
 }
 
-/**
- * Pre-existing conditions capture.
- *
- * Documents damage that predates the crew, which is what protects the installer
- * and the company from liability. Every flagged area must carry at least one photo
- * AND a note — a photo without context is not defensible, so the step won't close
- * until both exist.
- */
 export function PECStep({
   visible,
   hasConditions,
@@ -89,19 +66,12 @@ export function PECStep({
     else onSetEntry(area.id, null);
   };
 
-  // The shot itself is logged by the upload hook, once S3 has answered with the
-  // s3url and byte size the portal's payload needs.
   const addPhoto = (area: PECArea, photo: CapturedPhoto) => {
     const current = entries[area.id] ?? { areaId: area.id, note: '', photos: [] };
     onSetEntry(area.id, { ...current, photos: [...current.photos, photo] });
     onPhotoCaptured?.(area, photo);
   };
 
-  /**
-   * The ✕ on a condition photo — opens a confirmation, then hands off. State and the
-   * server are the parent's job (see `onRemovePhoto`); this only reports it, and only
-   * once the removal has actually landed.
-   */
   const del = usePhotoDeleteConfirm<{
     area: PECArea;
     photo: CapturedPhoto;
@@ -124,7 +94,6 @@ export function PECStep({
     onSetEntry(areaId, { ...current, note });
   };
 
-  /** Notes log on blur, not per keystroke — one entry per area, not one per letter. */
   const commitNote = (area: PECArea) => {
     const note = (entries[area.id]?.note ?? '').trim();
     if (note) log.pecNoteEntered(area, note);
@@ -323,9 +292,6 @@ export function PECStep({
                             {!!onRemovePhoto && (
                               <TouchableOpacity
                                 onPress={() => del.request({ area, photo: p, index: i })}
-                                // The tile is 52 px, so the ✕ is smaller than the
-                                // material step's and sits tight to the corner; the
-                                // hitSlop keeps it thumb-sized on a roof regardless.
                                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                                 className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full items-center justify-center"
                                 style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
@@ -343,10 +309,6 @@ export function PECStep({
                       onBlur={() => commitNote(area)}
                       placeholder={t('installer.pecNotePlaceholder')}
                       placeholderTextColor="#919EAB"
-                      // ⚠️ A TextInput with no `font-*` class gets NO fontFamily from this
-                      // tailwind config, so the note rendered in the SYSTEM font while every
-                      // label around it was Public Sans — the one thing on this screen that
-                      // did. `font-semibold` puts it back on the same face as its own row.
                       className="rounded-lg px-2.5 py-2.5 text-sm font-semibold mb-2"
                       style={{
                         borderWidth: 1,

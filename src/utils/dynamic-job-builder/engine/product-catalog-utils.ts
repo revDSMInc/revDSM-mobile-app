@@ -41,21 +41,11 @@ export function sanitizeColorFields(config: any) {
   return config;
 }
 
-/**
- * Product colors (port of web `product-catalog-utils.js`).
- *
- * Saved color fields are stripped of their palette on the backend, so the real
- * color list lives on the PRODUCT (`product.categories[].images[]`). We attach it
- * to each tab as `tab.productColors` at load time so the swatch picker can list
- * every color and resolve a secure product image per color (web parity — colors
- * come from Product Management, not the saved field config).
- */
 export interface ProductColor {
   id?: string;
   name: string;
   hex: string;
   imageUrl: string;
-  // S3 reference so the picker can resolve a secure URL directly from the config.
   bucketName: string;
   filePath: string;
 }
@@ -96,7 +86,6 @@ export function getProductColorsForTab(product: any, categoryName: string): Prod
   return mapCategoryImagesToProductColors(findProductCategory(product, categoryName));
 }
 
-/** Attach runtime product colors to a saved config (web `enrichConfigWithProductColors`). */
 export function enrichConfigWithProductColors(config: any, products: any[] = []) {
   if (!config?.verticals?.length) return config;
 
@@ -125,7 +114,6 @@ export function enrichConfigWithProductColors(config: any, products: any[] = [])
   };
 }
 
-/** Resolve a field's color list from the tab's product colors, then legacy field config. */
 export function resolveColorsForField(field: any, tab: any, products: any[] = []): ProductColor[] {
   if (tab?.productColors?.length) {
     return tab.productColors.map((color: any) => ({
@@ -154,9 +142,6 @@ export function resolveColorsForField(field: any, tab: any, products: any[] = []
     return field.customColors.map((c: any) => ({
       name: c.name || c.hex,
       hex: c.hex,
-      // Preserve the second hex of a two-colour COMBINATION swatch (e.g. Wire
-      // Color White/Black) so the SwatchPicker can render the 135° split (web
-      // `color-value-utils.js` `isDualColor`). Dropping it rendered a solid swatch.
       ...(c.hex2 ? { hex2: c.hex2 } : {}),
       imageUrl: c.imageUrl || '',
       bucketName: c.bucketName || '',

@@ -1,7 +1,3 @@
-/**
- * Validation utilities for Job Builder sections
- */
-
 type ValidationResult = { valid: boolean; error?: string };
 
 const n = (v: any) => parseFloat(v) || 0;
@@ -66,7 +62,6 @@ export const validateGutter = (data: any, calculatorData: any): ValidationResult
     };
   }
 
-  // Combinations
   for (const combo of data.gutterColorsMulti || []) {
     const hasMeas = (combo.measurements || []).some((m: any) => n(m) > 0);
     if (hasMeas) {
@@ -82,7 +77,6 @@ export const validateGutter = (data: any, calculatorData: any): ValidationResult
     }
   }
 
-  // Downspouts
   for (const ds of data.downspoutsMulti || []) {
     const hasVal = [
       'footage',
@@ -98,7 +92,6 @@ export const validateGutter = (data: any, calculatorData: any): ValidationResult
     }
   }
 
-  // Extras — use getVal so they are found in extras/inputs/root
   if (getVal('replaceCorner') > 0 && !data.extrasColors?.replaceCorner)
     return { valid: false, error: 'Replace Corner Color required' };
   if (getVal('extendedSplashGuard') > 0 && !data.extrasColors?.extendedSplashGuard)
@@ -171,7 +164,6 @@ export const validateLeafFilter = (data: any, calculatorData: any): ValidationRe
     }
   }
 
-  // Check allocations
   const used = {
     '4 & 5"': [0, 0, 0],
     '6"': [0, 0, 0],
@@ -196,7 +188,6 @@ export const validateLeafFilter = (data: any, calculatorData: any): ValidationRe
     }
   });
 
-  // Verify matches
   for (const width of ['4 & 5"', '6"', '7"'] as const) {
     for (let s = 0; s < 3; s++) {
       const avail = availableFootage[width][s];
@@ -250,16 +241,13 @@ export const validateSoffit = (data: any, calculatorData: any): ValidationResult
   const getExtrasVal = (key: string) => {
     if (!calculatorData) return 0;
     const lower = key.toLowerCase();
-    // root
     const rk = Object.keys(calculatorData).find((k) => k.toLowerCase() === lower);
     const rv = rk ? n(calculatorData[rk]) : 0;
     if (rv > 0) return rv;
-    // extras (soffit keys live here)
     const extras = calculatorData.extras || {};
     const ek = Object.keys(extras).find((k) => k.toLowerCase() === lower);
     const ev = ek ? n(extras[ek]) : 0;
     if (ev > 0) return ev;
-    // inputs
     const inputs = calculatorData.inputs || {};
     const ik = Object.keys(inputs).find((k) => k.toLowerCase() === lower);
     return ik ? n(inputs[ik]) : 0;
@@ -269,7 +257,6 @@ export const validateSoffit = (data: any, calculatorData: any): ValidationResult
   const porchFootage = getExtrasVal('porchCeiling');
   const nailerFootage = getExtrasVal('nailerBuildOut');
 
-  // If no footage at all, section is optional – pass
   if (vinylFootage === 0 && porchFootage === 0 && nailerFootage === 0) return { valid: true };
 
   if (vinylFootage > 0) {
@@ -296,16 +283,13 @@ export const validateFascia = (data: any, calculatorData: any): ValidationResult
   const getExtrasVal = (key: string) => {
     if (!calculatorData) return 0;
     const lower = key.toLowerCase();
-    // root
     const rk = Object.keys(calculatorData).find((k) => k.toLowerCase() === lower);
     const rv = rk ? n(calculatorData[rk]) : 0;
     if (rv > 0) return rv;
-    // extras (fascia keys live here)
     const extras = calculatorData.extras || {};
     const ek = Object.keys(extras).find((k) => k.toLowerCase() === lower);
     const ev = ek ? n(extras[ek]) : 0;
     if (ev > 0) return ev;
-    // inputs
     const inputs = calculatorData.inputs || {};
     const ik = Object.keys(inputs).find((k) => k.toLowerCase() === lower);
     return ik ? n(inputs[ik]) : 0;
@@ -315,7 +299,6 @@ export const validateFascia = (data: any, calculatorData: any): ValidationResult
   const boardFootage = getExtrasVal('fasciaBoard');
   const aluminumFootage = getExtrasVal('aluminumFasciaBoard');
 
-  // If no footage at all, section is optional – pass
   if (wrapFootage === 0 && boardFootage === 0 && aluminumFootage === 0) return { valid: true };
 
   if (wrapFootage > 0) {
@@ -330,14 +313,12 @@ export const validateFascia = (data: any, calculatorData: any): ValidationResult
     if (!b.size) return { valid: false, error: 'Fascia Boards: Size required' };
     if (!b.boardType) return { valid: false, error: 'Fascia Boards: Board Type required' };
   }
-  // aluminumBoards only requires footage (auto-locked) — no extra user fields needed
   return { valid: true };
 };
 
 export const validateMisc = (data: any, calculatorData: any): ValidationResult => {
   const n = (v: any) => parseFloat(v) || 0;
   
-  // Extract labor from various potential locations in calculatorData
   const inputs = calculatorData?.inputs || {};
   const extras = calculatorData?.extras || {};
   const calcLabor = n(inputs.extraLabor) || n(extras.extraLabor) || n(calculatorData?.extraLabor) || 

@@ -32,9 +32,6 @@ import type {
   PhotoTag,
 } from '../../../config/types/installer';
 
-// Dark "tagger" theme — deliberately distinct from the light app chrome. Shooting
-// happens outdoors against bright surfaces, so the capture surface stays dark to
-// keep the reference photo the brightest thing on screen.
 const T_BG = '#0e1c16';
 const T_BAR = '#122019';
 const T_CARD = '#1a2b22';
@@ -49,22 +46,8 @@ interface Props {
   phase: PhotoPhase;
   matched: Record<string, CapturedPhoto>;
   extras: Record<string, CapturedPhoto[]>;
-  /** Pre-install shots, shown as the reference during the post pass. */
   preMatched?: Record<string, CapturedPhoto>;
-  /**
-   * Tagger layout + rep reference photos. Built from the job's real
-   * `preInstallPhotos` (`buildRepPhotoSections`); falls back to the static mock.
-   */
   sections?: PhotoSection[];
-  /**
-   * The job shipped no rep photos, so `sections` is the static stand-in and none of its
-   * tags has a reference image.
-   *
-   * With nothing to match against, the tag list stops being a checklist and becomes a
-   * way to LABEL shots: the installer takes as many or as few as the job warrants, and
-   * one is enough to finish the step. Demanding all 16 placeholder tags was demanding
-   * ghost-matches against references that do not exist.
-   */
   freeform?: boolean;
   onMatch: (tagId: string, photo: CapturedPhoto) => void;
   onAddExtra: (sectionId: string, photo: CapturedPhoto) => void;
@@ -72,13 +55,6 @@ interface Props {
   onBack: () => void;
 }
 
-/**
- * Ghost-overlay photo matching.
- *
- * Tag-first: pick a tag, view the reference shot, tap to open the ghost camera,
- * confirm. Pre-install ghosts against the rep's sale photos; post-install ghosts
- * against the installer's own pre-install shots, so the pair is directly comparable.
- */
 export function PhotoMatchStep({
   visible,
   phase,
@@ -96,45 +72,13 @@ export function PhotoMatchStep({
   const { t } = useTranslation();
   const log = useInstallerActivityLog();
 
-  // Data-driven from the rep's real capture set when provided; static mock otherwise.
   const sections = sectionsProp?.length ? sectionsProp : PHOTO_SECTIONS;
 
-  /**
-   * Does this tag OWE a shot in this phase — the set the counter and the Done button
-   * are measured against?
-   *
-   * **Pre** — the rep photographed it (`hasRep`), so there is a reference to ghost against.
-   *
-   * **Post** — the installer photographed it in the PRE pass. Post-install exists to be
-   * compared against pre-install, so a post shot with no pre counterpart has nothing to
-   * compare to. Note what decides this: what the installer actually shot, not what the
-   * rep supplied. Match only Back-Left in pre and Back-Left is the only tag post owes.
-   */
   const isTagRequired = useCallback(
     (tag: PhotoTag): boolean => (phase === 'post' ? !!preMatched?.[tag.id] : tag.hasRep),
     [phase, preMatched]
   );
 
-  /**
-   * Is this tag SHOOTABLE — a superset of what it owes.
-   *
-   * **Pre — every tag, whether the rep supplied a reference or not.** What the sale side
-   * sent is a FLOOR, not a quota: a rep who shot one elevation has documented one
-   * elevation, and the crew standing at the house routinely needs the other sides on
-   * record (damage, access, an obstruction the sale visit never saw). Those tags used to
-   * render dimmed as `N/A` and refuse the tap, so the only way to file the shot was as an
-   * untagged "Extra" — evidence with no side attached to it. Now the tag takes it and the
-   * shot is labelled Back-Left in the portal like any other.
-   *
-   * A tag with no rep photo simply has no ghost: the camera falls back to the line-art
-   * house, exactly as it does for a job that shipped no rep set at all.
-   *
-   * **Post — unchanged, still only what the pre pass shot.** Post is a comparison, and a
-   * post shot with no before is not one. This needs no special case for the extra tags
-   * above: shoot Back-Left in pre and post opens it too, because `preMatched` is what
-   * decides. `useInstallProgress` reads the same set, so every pre shot — required or
-   * added — is owed its after.
-   */
   const isTagOpen = useCallback(
     (tag: PhotoTag): boolean => (phase === 'post' ? !!preMatched?.[tag.id] : true),
     [phase, preMatched]
@@ -145,11 +89,6 @@ export function PhotoMatchStep({
     [sections, isTagRequired]
   );
 
-  /**
-   * Shots taken on tags nothing was owed on. Reported beside the fraction as `+N` rather
-   * than folded into it — they are not progress toward the rep's set, and inflating
-   * `done` past `total` would read as a bug.
-   */
   const optionalMatchedTotal = useMemo(
     () =>
       sections
@@ -158,17 +97,6 @@ export function PhotoMatchStep({
     [sections, isTagRequired, matched]
   );
 
-  /**
-   * Tags are tracked by ID, never by holding the object.
-   *
-   * `useRepPhotoSections` resolves the rep photos' signed URLs asynchronously and rebuilds
-   * every tag when they land, so a `PhotoTag` captured in state is a SNAPSHOT — it keeps
-   * whatever `repPhotoUrl` it had at the moment it was stored (often none), and a later
-   * re-sign never reaches it. That is what left the review pane's reference frame blank
-   * while the same photo showed in the viewfinder: two copies of one tag, resolved at
-   * different times. Looking each one up on every render means there is only ever the
-   * current tag.
-   */
   const [sectionId, setSectionId] = useState(() => sections[0]?.id ?? '');
   const [selectedId, setSelectedId] = useState<string>(
     () =>
@@ -181,7 +109,6 @@ export function PhotoMatchStep({
 
   const section = sections.find((s) => s.id === sectionId) ?? sections[0];
 
-  /** Current object for a tracked id — always the freshest copy `sections` holds. */
   const tagById = useCallback(
     (id?: string | null): PhotoTag | undefined =>
       id ? sections.flatMap((s) => s.tags).find((t) => t.id === id) : undefined,
@@ -200,50 +127,20 @@ export function PhotoMatchStep({
     [extras]
   );
 
-  /**
-   * Everything shot in this phase, tagged or not.
-   *
-   * Free-form mode counts extras alongside matches: with no rep tag to attach to, an
-   * "extra" is the same evidence as a match — only the label differs.
-   */
   const takenTotal = Object.keys(matched).length + extrasTotal;
 
-  /**
-   * Free-form applies to the PRE pass only — and only while there is genuinely nothing
-   * to work from.
-   *
-   * Post is never the installer's choice of shots: it is the pre pass replayed, so the
-   * open tags below already say exactly what it owes. The one exception is a pre pass
-   * that produced no tagged shots at all (free-form, everything filed as an extra) —
-   * then post has no open tag either, and without this it could never be finished. Post
-   * gates CoC, Return and job completion, so that would be a hard lockout.
-   */
   const isFreeform = requiredTags.length === 0 || (freeform && phase === 'pre');
 
-  // Free-form: ONE shot finishes the step, however it was filed. Otherwise every open
-  // tag has to be answered.
   const allDone = isFreeform
     ? takenTotal > 0
     : requiredTags.length > 0 && matchedTotal === requiredTags.length;
 
-  /**
-   * "Scroll down for Done" hint.
-   *
-   * The Done button is the LAST thing in the tag picker, and the picker is only 32% of
-   * the screen — so on any section with more than a couple of tag rows it sits below the
-   * fold with nothing on screen to say it exists. The hint is a floating pill pinned to
-   * the bottom of the picker: it shows only while there IS something below the fold, and
-   * tapping it scrolls to the button rather than making the installer hunt for it.
-   */
   const tagScrollRef = useRef<ScrollView>(null);
   const viewportH = useRef(0);
   const contentH = useRef(0);
   const scrollY = useRef(0);
   const [moreBelow, setMoreBelow] = useState(false);
 
-  // 8px of slack: content that overflows by a hair, or a scroll resting a rounding
-  // error short of the end, is "at the bottom" — a hint that never goes away reads as
-  // broken.
   const syncMoreBelow = useCallback(() => {
     const overflow = contentH.current - viewportH.current;
     setMoreBelow(overflow > 8 && scrollY.current < overflow - 8);
@@ -259,30 +156,16 @@ export function PhotoMatchStep({
 
   const sectionCount = (sid: string) => {
     const tags = sections.find((s) => s.id === sid)?.tags ?? [];
-    // No denominator in free-form mode — there is no quota for this section, so a
-    // "1/7" would be reporting a requirement that isn't being made.
     if (isFreeform) return String(tags.filter((t) => matched[t.id]).length);
     const req = tags.filter(isTagRequired);
-    // Added shots are reported outside the fraction, for the reason in
-    // `optionalMatchedTotal` — the tab reads "1/1 +3".
     const added = tags.filter((t) => !isTagRequired(t) && matched[t.id]).length;
     const done = req.filter((t) => matched[t.id]).length;
     return `${done}/${req.length}${added ? ` +${added}` : ''}`;
   };
 
-  /** Reference shot for a tag: rep photo on the pre pass, own pre shot on the post pass. */
   const referenceUri = (tag: PhotoTag): string | undefined =>
     phase === 'pre' ? tag.repPhotoUrl : preMatched?.[tag.id]?.uri ?? tag.repPhotoUrl;
 
-  /**
-   * Next tag that still OWES a shot — prefers the current section, then falls through
-   * globally.
-   *
-   * Deliberately blind to the added-shot tags: jumping the installer onto a tag nothing
-   * was asked of would present optional work as the next thing due. When nothing is
-   * outstanding the selection stays where it is, on the shot just taken, which is also
-   * what puts it into its "tap to review" state.
-   */
   const advance = (fromId: string) => {
     const inSection = (section?.tags ?? []).filter(
       (t) => isTagRequired(t) && !matched[t.id] && t.id !== fromId
@@ -297,12 +180,6 @@ export function PhotoMatchStep({
     }
   };
 
-  /**
-   * Owed-and-pending first, then the tags that can be added to, then anything already
-   * shot, then what this phase can't shoot at all. The order is the priority: what the
-   * job demands stays at the top of the picker, and the optional tags sit under it as an
-   * offer rather than a checklist.
-   */
   const orderedTags = useMemo(() => {
     const rank = (t: PhotoTag) => {
       if (!isTagOpen(t)) return 3;
@@ -315,56 +192,15 @@ export function PhotoMatchStep({
   const isSelectedMatched = !!(selected && matched[selected.id]);
   const selectedRef = selected ? referenceUri(selected) : undefined;
 
-  /**
-   * What the big pane actually shows: the installer's OWN shot once this tag has one,
-   * otherwise the reference, otherwise the line-art house.
-   *
-   * The reference is what the shot has to match, so it owns the pane right up until
-   * there is a shot — at which point the thing worth looking at is what was taken. Both
-   * halves stay reachable: `MATCHED — tap to review` opens the two-up comparison, which
-   * is unchanged, and re-shooting still ghosts against `referenceUri`.
-   *
-   * ⚠️ Written as `??` on the captured uri rather than as a branch on `phase`, so it
-   * reads the same in both passes: pre ghosts against the rep's sale photo, post against
-   * the installer's own pre shot, and either way the pane flips to the new shot.
-   */
   const capturedUri = selected ? matched[selected.id]?.uri : undefined;
   const heroUri = capturedUri ?? selectedRef;
 
-  /**
-   * A signed URL is genuinely on its way: the tag carries an S3 key that
-   * `useRepPhotoSections` hasn't exchanged yet.
-   *
-   * Gated on the KEY, not on `hasRep`. The static fallback sections (used when a job
-   * arrives with `preInstallPhotos.products: []`) claim `hasRep: true` but carry no
-   * key, so keying off `hasRep` left a spinner up forever on a photo that was never
-   * coming.
-   */
   const awaitingReference = !!selected?.repPhotoS3Url && !selectedRef;
 
-  /** Shootable in this phase — see `isTagOpen`. */
   const selectedOpen = !!selected && isTagOpen(selected);
 
-  /**
-   * Shootable, but with nothing to ghost against — the rep never covered this tag.
-   *
-   * Two ways in: a tag the rep skipped (now shootable, see `isTagOpen`), and the static
-   * fallback sections, whose tags claim `hasRep` but carry no key. Both mean the same
-   * thing to the installer, so both get the same pane: the line-art house and an invite
-   * to shoot rather than a "match" prompt.
-   */
   const referenceUnavailable = selectedOpen && !selected?.repPhotoS3Url && !selectedRef;
 
-  /**
-   * Keep the selection on a tag that can actually be shot in this phase.
-   *
-   * Both passes stay mounted with `visible` toggling, so the initial selection is picked
-   * long before the post pass is opened — at which point `preMatched` was still empty and
-   * the chosen tag is very likely one post has since closed. Landing on a dead tag would
-   * show a disabled reference pane and look broken.
-   *
-   * Guarded on the selection being INVALID, so it can never override a manual pick.
-   */
   useEffect(() => {
     if (!visible || (selected && isTagOpen(selected))) return;
     const next = requiredTags.find((tag) => !matched[tag.id]) ?? requiredTags[0];
@@ -378,14 +214,10 @@ export function PhotoMatchStep({
     if (s.id === sectionId) return;
     log.photoSectionChanged(phase, { id: s.id, name: s.name });
     setSectionId(s.id);
-    // A new section starts at its first tag. Without this the picker keeps the previous
-    // section's offset, so a shorter list can open already scrolled past its own tags.
     tagScrollRef.current?.scrollTo({ y: 0, animated: false });
     scrollY.current = 0;
   };
 
-  // Captures are logged by the upload hook once S3 answers — it is the only place
-  // that knows the s3url, bucket and byte size the portal's payload carries.
   const handleGhostCapture = (tag: PhotoTag, photo: CapturedPhoto) => {
     onMatch(tag.id, photo);
     setCameraTagId(null);
@@ -399,8 +231,6 @@ export function PhotoMatchStep({
   const handleComplete = () => {
     log.photoPhaseCompleted(phase, {
       matched: matchedTotal,
-      // 0 in free-form mode — and that is the useful record: it says the job had no rep
-      // capture set, so the shot count was the installer's call.
       total: isFreeform ? 0 : requiredTags.length,
       extras: extrasTotal,
     });
@@ -429,8 +259,6 @@ export function PhotoMatchStep({
         style={[
           styles.root,
           {
-            // Floored — see `headerTopPadding`. Inside a Modal `insets.top` can come
-            // back 0, which put the back arrow on the status bar.
             paddingTop: headerTopPadding(insets.top),
             paddingBottom: insets.bottom,
             paddingLeft: insets.left,
@@ -572,7 +400,6 @@ export function PhotoMatchStep({
                 ? t('installer.selectTagFree')
                 : phase === 'pre'
                 ? // Says outright that the rep's tags aren't the limit — the previously
-                  // dead N/A rows give an installer no reason to try tapping one.
                   t('installer.selectTagRepPlus')
                 : t('installer.selectTagPre')}
             </Text>
@@ -593,8 +420,6 @@ export function PhotoMatchStep({
             }}
             contentContainerStyle={{
               paddingHorizontal: 12,
-              // The root already clears the system bar, so this is only breathing room
-              // under the last row.
               paddingBottom: 16,
             }}
           >
@@ -602,16 +427,9 @@ export function PhotoMatchStep({
               {orderedTags.map((t) => {
                 const m = !!matched[t.id];
                 const sel = selected?.id === t.id;
-                // Closed in this phase: no pre shot to compare against (post only).
-                // Untappable, dimmed, and marked N/A below.
                 const open = isTagOpen(t);
-                // Owed. Everything else that is open can still be shot — it just isn't
-                // asked for, so it carries no amber edge and no N/A.
                 const required = isTagRequired(t);
                 const pending = required && !m;
-                // Shootable, nothing recorded, nothing owed — the "you may add this"
-                // state. The plus is what says the row is live; without it a tag with no
-                // rep photo looks exactly like the disabled N/A rows it replaced.
                 const addable = open && !required && !m;
 
                 return (
@@ -626,7 +444,6 @@ export function PhotoMatchStep({
                       backgroundColor: sel ? '#24382d' : m ? 'rgba(125,219,70,0.07)' : T_CARD,
                       borderWidth: 1.5,
                       borderColor: sel ? '#ffffff' : T_BORDER,
-                      // Amber edge = still needs a shot (same semantic as the timeline).
                       borderLeftWidth: sel ? 2 : 4,
                       borderLeftColor: sel ? '#ffffff' : pending ? AMBER : 'transparent',
                     }}
@@ -638,9 +455,6 @@ export function PhotoMatchStep({
                     <Text
                       className="text-xs font-bold text-center"
                       style={{
-                        // Optional tags read one step back from the owed ones, but stay
-                        // legible — they are tappable, so the near-invisible closed grey
-                        // would be a lie about what the row does.
                         color: !open ? '#44554b' : m ? '#8fae87' : required ? T_TEXT : '#9db3a6',
                         textDecorationLine: m ? 'line-through' : 'none',
                       }}
@@ -714,8 +528,6 @@ export function PhotoMatchStep({
                 onPress={() => tagScrollRef.current?.scrollToEnd({ animated: true })}
                 style={[
                   styles.scrollHintPill,
-                  // Green once Done is actually down there; neutral while it is just
-                  // more tags, so the colour never promises a button that isn't rendered.
                   allDone
                     ? { backgroundColor: T_GREEN, borderColor: T_GREEN }
                     : { backgroundColor: T_CARD, borderColor: T_BORDER },
@@ -778,7 +590,6 @@ export function PhotoMatchStep({
   );
 }
 
-/** Two-up review of a matched tag: reference beside the shot just taken. */
 function ReviewPair({
   tag,
   phase,
@@ -844,16 +655,11 @@ function ReviewPair({
             {referenceUri ? (
               <TaggerImage uri={referenceUri} tint={tagTint(tag.id)} />
             ) : tag.repPhotoS3Url ? (
-              // ⚠️ The photo EXISTS and its key is still being signed (`awaitingReference`).
-              // Saying "no photo" here would be a lie that resolves itself a second later,
-              // so this arm stays a spinner and carries no message.
               <TaggerImageSpinner />
             ) : (
               <View className="flex-1 items-center justify-center px-6">
                 <Text
                   className="text-center text-sm font-bold text-white/70"
-                  // ⚠️ Phase-dependent: in POST the reference is the installer's OWN pre
-                  // shot, not the rep's, so naming the sale side there would be wrong.
                 >
                   {phase === 'pre'
                     ? t('installer.noRepSalePhoto')
@@ -878,8 +684,6 @@ function ReviewPair({
 
       <View
         className="flex-row px-3.5 pt-3"
-        // Same footer as `InstallerCamera`'s review, so it clears the nav bar by the
-        // same amount — see `footerBottomPadding` there for why the inset alone isn't it.
         style={{ gap: 10, paddingBottom: footerBottomPadding(insets.bottom) }}
       >
         <TouchableOpacity
@@ -918,8 +722,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    // Lifts the pill off the tag rows it floats over — without it the neutral variant
-    // reads as just another card.
     shadowColor: '#000',
     shadowOpacity: 0.45,
     shadowRadius: 6,

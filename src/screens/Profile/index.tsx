@@ -62,15 +62,9 @@ export default function ProfilePage() {
   const navigation = useNavigation<any>();
   const { isInstaller } = useUserRole();
   const [activeTab, setActiveTab] = useState<TabType>('profile');
-  // Offline photo storage — what the device is holding so a rep can see their leads with no
-  // signal, and a way to reclaim it. Without this the cache is invisible: it grows to its
-  // budget and the only lever a rep has is reinstalling the app.
   const [offlineUsage, setOfflineUsage] = useState<CacheUsage | null>(null);
   const [clearingCache, setClearingCache] = useState(false);
 
-  // ---------------------------------------------------------------------------
-  // Offline map packs
-  // ---------------------------------------------------------------------------
   const [mapPacks, setMapPacks] = useState<OfflinePackRecord[]>([]);
   const [downloadingMap, setDownloadingMap] = useState(false);
   const [clearingMaps, setClearingMaps] = useState(false);
@@ -83,14 +77,12 @@ export default function ProfilePage() {
     if (activeTab === 'profile') loadMapPacks();
   }, [activeTab, loadMapPacks]);
 
-  // Subscribe to progress updates while the Profile is open so the UI refreshes.
   const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
     if (activeTab !== 'profile' || mapPacks.length === 0) return;
 
     const unsub = offlineMapManager.onPackProgress(() => loadMapPacks());
 
-    // Also poll every 3 s in case a download finishes between events.
     progressTimer.current = setInterval(loadMapPacks, 3_000);
 
     return () => {
@@ -123,8 +115,6 @@ export default function ProfilePage() {
     [loadMapPacks],
   );
 
-  // Street detail for every lead area in one go — the Profile shows them as ONE row, not a row per
-  // area, so this is the only delete that row needs.
   const handleDeleteMapAreas = useCallback(() => {
     Alert.alert(
       'Delete lead area maps?',
@@ -145,7 +135,6 @@ export default function ProfilePage() {
 
   const mapSummary = React.useMemo(
     () => offlineMapManager.getSummary(),
-    // `mapPacks` is re-read on every progress tick; the summary is derived from the same registry.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [mapPacks],
   );
@@ -205,15 +194,7 @@ export default function ProfilePage() {
             setClearingCache(true);
             try {
               await clearImageCache();
-              // ⚠️ The presigned-url snapshots must go WITH the files, not survive them.
-              // `useSecureUrls` keeps them deliberately past their 1 h expiry because
-              // `getLocalCachePath` strips the query, so an expired url still names the right
-              // file on disk. Once the files are deleted it names nothing — and the grid was
-              // handed a dead url it could neither render nor refetch, so every tile sat on a
-              // spinner until the query happened to refetch. Keyed per photo SET, hence the
-              // prefix clear.
               clearOfflineCacheByPrefix(OFFLINE_CACHE.SECURE_URLS, user?._id || user?.id);
-              // Drop the in-memory copies too, or React Query re-serves the map it already has.
               queryClient.removeQueries({ queryKey: ['secureUrls'] });
             } finally {
               setClearingCache(false);
@@ -225,13 +206,6 @@ export default function ProfilePage() {
     );
   }, [loadOfflineUsage, user?._id, user?.id]);
 
-  // This screen is shared by both dashboards, but the sales landing route is NOT
-  // registered in the installer stack (`navigation/index.tsx`), so the hardcoded
-  // `navigate('Leads')` this screen used to do was a dead end for an installer —
-  // and the global `<Header />` carries no back affordance, so there was no way
-  // out of Account Settings at all. Prefer popping the stack (the screen is
-  // always pushed from the header popover); fall back to whichever landing route
-  // the signed-in account actually has.
   const homeRoute = isInstaller ? 'InstallerDashboard' : 'Leads';
   const handleBack = useCallback(() => {
     if (navigation.canGoBack()) navigation.goBack();
@@ -240,7 +214,6 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(false);
   const [imageLoading, setImageLoading] = useState(false);
 
-  // Profile Form State
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
@@ -257,7 +230,6 @@ export default function ProfilePage() {
 
   const { refreshUser } = useAuth();
 
-  // Sync formData with user from auth hook
   useEffect(() => {
     if (user) {
       setFormData((prev) => ({
@@ -275,7 +247,6 @@ export default function ProfilePage() {
     }
   }, [user]);
 
-  // 2FA State from API
   const [tfaSettings, setTfaSettings] = useState({
     enabled: false,
     method: null as string | null,
@@ -285,24 +256,20 @@ export default function ProfilePage() {
     usedBackupCodesCount: 0,
   });
 
-  // Local state for choosing method before enabling
   const [selectionMethod, setSelectionMethod] = useState<'email' | 'authenticator'>('email');
   const [showPassword, setShowPassword] = useState(false);
 
-  // New Modal States
   const [emailModalVisible, setEmailModalVisible] = useState(false);
   const [backupCodesModalVisible, setBackupCodesModalVisible] = useState(false);
   const [disableModalVisible, setDisableModalVisible] = useState(false);
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
 
-  // Authenticator Setup State
   const [authModalVisible, setAuthModalVisible] = useState(false);
   const [authStep, setAuthStep] = useState(0); // 0: Scan, 1: Verify
   const [authQrCode, setAuthQrCode] = useState('');
   const [authSecret, setAuthSecret] = useState('');
   const [authCode, setAuthCode] = useState('');
 
-  // Trusted Devices State
   const [trustedDevicesModalVisible, setTrustedDevicesModalVisible] = useState(false);
   const [trustedDevices, setTrustedDevices] = useState<any[]>([]);
   const [revokingDeviceId, setRevokingDeviceId] = useState<string | null>(null);
@@ -409,7 +376,6 @@ export default function ProfilePage() {
       const headers: any = {};
 
       if (isUploadingImage) {
-        // Use FormData for image upload
         const data = new FormData();
         data.append('firstName', formData.firstName);
         data.append('lastName', formData.lastName);
@@ -436,7 +402,6 @@ export default function ProfilePage() {
         payload = data;
         headers['Content-Type'] = 'multipart/form-data';
       } else {
-        // Use JSON for simple field updates (more reliable on some Android environments)
         payload = {
           firstName: formData.firstName,
           lastName: formData.lastName,
@@ -455,22 +420,18 @@ export default function ProfilePage() {
       const res = await SettingsService.updateProfile(payload, headers);
 
 
-      // Check for backend-specific success code if returned as 200 OK body
       if (res.data?.code && res.data.code !== 200) {
         throw res.data;
       }
 
       const updatedUser = res.data?.data?.data || res.data?.data || res.data;
 
-      // Resolve profile picture to a usable URL from the upload response
       if (updatedUser?.profilePicture) {
         await resolveAvatarUrl(updatedUser.profilePicture);
       }
 
-      // Refresh global user state to sync across app
       await refreshUser();
 
-      // Check if the user's profilePicture needs resolving, then update Redux
       const freshUser = store.getState().auth.user;
       const pic = freshUser?.profilePicture;
       if (pic && !(typeof pic === 'string' && pic.startsWith('http'))) {
@@ -490,7 +451,6 @@ export default function ProfilePage() {
       ]);
     } catch (error: any) {
       console.error('Update Profile Error:', error);
-      // The interceptor rejects error.response.data, so 'error' is the payload
       const errorMessage = error?.message || error?.error || 'Update failed';
       Alert.alert('Error', errorMessage);
     } finally {
@@ -520,7 +480,6 @@ export default function ProfilePage() {
       if (result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
 
-        // Check file size (max 3.1 MB as mentioned in UI)
         if (asset.fileSize && asset.fileSize > 3100000) {
           Alert.alert('Error', 'Image size exceeds 3.1 MB limit');
           return;
@@ -576,7 +535,6 @@ export default function ProfilePage() {
         setBackupCodesModalVisible(true);
         fetchTfaSettings();
       } else {
-        // Fallback if setup didn't return codes
         const backupRes = await SettingsService.regenerateBackupCodes();
         if (backupRes.data?.data) {
           setBackupCodes(backupRes.data.data);
@@ -641,10 +599,8 @@ export default function ProfilePage() {
       if (Platform.OS === 'android') {
         const path = `${ReactNativeBlobUtil.fs.dirs.DownloadDir}/${fileName}`;
 
-        // Write the file first
         await ReactNativeBlobUtil.fs.writeFile(path, content, 'utf8');
 
-        // Add to Download Manager to make it appear in the Downloads app and notifications
         ReactNativeBlobUtil.android.addCompleteDownload({
           title: fileName,
           description: 'RevDSM Backup Codes',
@@ -652,11 +608,8 @@ export default function ProfilePage() {
           path: path,
           showNotification: true,
         });
-
-        // No alert as requested
       } else {
 
-        // On iOS, we write to a temp file and share it so user can "Save to Files"
         const path = `${RNFS.TemporaryDirectoryPath}/${fileName}`;
         await RNFS.writeFile(path, content, 'utf8');
 
@@ -720,7 +673,6 @@ export default function ProfilePage() {
     }
   };
 
-  // Web parity: trusted-devices-dialog.js "Revoke All" (confirm → revokeAllTrustedDevices → refresh)
   const handleRevokeAllDevices = () => {
     Alert.alert(
       'Revoke All Devices?',

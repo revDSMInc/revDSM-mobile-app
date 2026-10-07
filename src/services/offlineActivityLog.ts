@@ -1,14 +1,3 @@
-/**
- * offlineActivityLog.ts — the device half of the held activity-log queue.
- *
- * Storage, the drain and the reconnect subscription. Every rule lives in
- * `utils/offline-activity-log.ts`, which is testable without MMKV.
- *
- * ⚠️ It does NOT import `LoggerService`, and must not: that module imports this one to decide
- * whether a log can be held, so an import back would be a cycle. The POST is INJECTED instead
- * (`setActivityLogSender`), the same shape as `registerSessionResetHook`.
- */
-
 import { Storage } from '../utils/storage';
 import { isOnline, onReconnect } from './connectivity';
 import { getSessionOwner, registerSessionResetHook } from './sessionScope';
@@ -26,7 +15,6 @@ let store: QueuedActivityLog[] = [];
 let loaded = false;
 let draining = false;
 
-/** Injected by `LoggerService`. Returns a promise that rejects when the POST failed. */
 type LogSender = (entry: QueuedActivityLog) => Promise<unknown>;
 let sender: LogSender | null = null;
 
@@ -55,14 +43,6 @@ const persist = (): void => {
   }
 };
 
-/**
- * ⚠️ Cleared with the session, unlike the rep's queued WORK.
- *
- * A queued lead is a door the rep knocked and must survive them signing out; a held log is
- * telemetry about a session that has ended. Keeping it would replay one rep's movements under
- * whoever signs in next — and `sessionScope` wipes the key anyway, so this only keeps the
- * in-memory copy from writing it back.
- */
 registerSessionResetHook(() => {
   store = [];
   loaded = false;
@@ -71,33 +51,19 @@ registerSessionResetHook(() => {
 let seq = 0;
 const nextId = (): string => `log-${Date.now()}-${(seq += 1)}`;
 
-/** Hold one log until there is a connection. */
 export const queueActivityLog = (
   entry: Omit<QueuedActivityLog, 'id' | 'ownerId' | 'attempts'>
 ): void => {
   load();
   const ownerId = getSessionOwner();
-  // No session means nothing can own the row, and an unowned one is never replayed — holding it
-  // would only grow the store. `LoggerService` already holds pre-auth logs in memory.
   if (!ownerId) return;
   store = appendQueuedLog(store, { ...entry, id: nextId(), ownerId, attempts: 0 });
   persist();
 };
 
-/**
- * Re-address this device's held logs once the lead they describe has a server id.
- *
- * ⚠️ Called from the `lead` upload step beside `uploadQueueManager.rekeyLead` and
- * `rekeyLeadWorkflow`, and it is the same rule: anything addressed by the client id this device
- * minted has to be moved on in the same breath, or it is filed against an id the server will
- * never know. For a held log that means the row lands ORPHANED — the portal cannot attach it to
- * the lead, so the Forever Record reads "Awaiting Check-In" on a door the rep worked.
- */
 export const rekeyActivityLogs = (fromId: string, toId: string): void => {
   load();
   const next = rekeyQueuedLogs(store, fromId, toId);
-  // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. `matched=0` means the held log did not
-  // carry this client id, so the re-key could not help it.
   console.log(
     '[CheckInTrace] rekey logs %s -> %s held=%s matched=%s',
     fromId,
@@ -110,20 +76,11 @@ export const rekeyActivityLogs = (fromId: string, toId: string): void => {
   persist();
 };
 
-/** How many of this rep's rows are waiting — for a banner, or a device check. */
 export const queuedActivityLogCount = (): number => {
   load();
   return replayableLogs(store, getSessionOwner()).length;
 };
 
-/**
- * Send everything held, oldest first.
- *
- * ⚠️ SEQUENTIAL and in order, for the reason `LoggerService` chains its POSTs at all: the backend
- * stamps `createdAt` on receipt and the portal renders in arrival order, so a parallel drain would
- * file the rep's day scrambled. `occurredAt` records the truth either way, but arrival order is
- * what the timeline actually shows today.
- */
 export const drainActivityLogs = async (): Promise<void> => {
   load();
   if (draining || !isOnline() || !sender) return;
@@ -134,8 +91,6 @@ export const drainActivityLogs = async (): Promise<void> => {
       if (!next || !isOnline()) return;
       let outcome: 'sent' | 'failed' = 'sent';
       try {
-        // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. The id printed here is the one the
-        // portal will try to attach the row to; a `work-…` here means it lands ORPHANED.
         console.log(
           '[CheckInTrace] replay %s leadId=%s attempts=%s',
           next.payload?.module_type || next.eventType,
@@ -151,7 +106,6 @@ export const drainActivityLogs = async (): Promise<void> => {
       const before = store.length;
       store = settleQueuedLog(store, next.id, outcome);
       persist();
-      // A row that neither sent nor was dropped would spin this loop forever.
       if (store.length === before && outcome === 'failed') return;
     }
   } finally {
@@ -159,7 +113,6 @@ export const drainActivityLogs = async (): Promise<void> => {
   }
 };
 
-/** Whether a drain is mid-flight. Lets the background loop tell "stuck" from "busy". */
 export const isActivityLogDraining = (): boolean => draining;
 
 export const runActivityLogDrain = (): void => {
@@ -168,7 +121,6 @@ export const runActivityLogDrain = (): void => {
 
 let syncStarted = false;
 
-/** Idempotent — a remount cannot double-subscribe the drain. */
 export const startActivityLogSync = (): void => {
   if (syncStarted) return;
   syncStarted = true;

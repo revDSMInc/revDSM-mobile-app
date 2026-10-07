@@ -36,16 +36,13 @@ export const SoffitSection = ({
   const getVal = (baseKey: string) => {
     if (!calculatorData) return 0;
     const lowerKey = baseKey.toLowerCase();
-    // Check root
     const topKey = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
     const topVal = topKey ? n(calculatorData[topKey]) : 0;
     if (topVal > 0) return topVal;
-    // Check extras (soffit/fascia keys live here)
     const extras = calculatorData.extras || {};
     const extrasKey = Object.keys(extras).find((k) => k.toLowerCase() === lowerKey);
     const extrasVal = extrasKey ? n(extras[extrasKey]) : 0;
     if (extrasVal > 0) return extrasVal;
-    // Check inputs
     const inputs = calculatorData.inputs || {};
     const inputKey = Object.keys(inputs).find((k) => k.toLowerCase() === lowerKey);
     return inputKey ? n(inputs[inputKey]) : 0;
@@ -153,10 +150,6 @@ export const SoffitSection = ({
                   onChange(opt);
                 }
               }}
-              // Fixed 48.5% inline width → exactly two option boxes per row (a clean
-              // 2-column grid). The old NativeWind `w-[48.5%]` arbitrary class (decimal
-              // percent) didn't reliably compile, so buttons fell back to content width
-              // and packed 3 short options into one row.
               style={{ width: '48.5%' }}
               className={`py-3 rounded-xl border-2 items-center justify-center flex-row ${
                 selected ? 'bg-[#22C55E] border-[#22C55E]' : 'bg-white border-slate-100'
@@ -344,7 +337,6 @@ export const SoffitSection = ({
   };
 
   React.useEffect(() => {
-    // Fetch images for existing colors independently
     if (data.vinyl.color) {
       const hex =
         COLORS['Soffit(Hidden vent)'].find((c) => c.name === data.vinyl.color)?.hex ||

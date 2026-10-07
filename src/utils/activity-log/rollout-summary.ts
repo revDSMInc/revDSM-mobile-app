@@ -14,24 +14,6 @@ const calculateDelta = (current: number, previous: number) => {
   return Number.isFinite(pct) ? Number(pct.toFixed(1)) : 0;
 };
 
-/**
- * COST / PAR / RETAIL for one calculator.
- *
- * ⚠️ `calculateResultUtil` is the LEGACY calculator: it prices the hardcoded
- * `gutter5DsE` / `versa6Ft1` / … columns. A DYNAMIC calculator stores nothing there —
- * its quantities live in `entries` and are priced from the company's schema — so every
- * dynamic job came back with the same floored tiers, which put all of them in the
- * `atRetail` bucket and logged `resultedJobCost/Par/Retail` that no screen agrees with.
- *
- * Web has no such problem: its `calculateTiers` passes `schemas: schema`, so the same
- * function prices a dynamic calculator. Mobile's port is not schema-aware, so the
- * dynamic caller opts into the tiers the calculator ALREADY carries — `totals` is the
- * pure tier sum the deal center computed and persisted (`computeTotals`), i.e. the same
- * numbers the rollout tiles are derived from.
- *
- * Opt-in, never inferred: the classic flow's calculators can carry a `totals` object
- * too, and there the legacy computation IS the right one.
- */
 const calculateTiers = (calculator: any, isLowesLead: boolean, preferStoredTotals = false) => {
   if (preferStoredTotals) {
     const t = calculator?.totals;
@@ -68,8 +50,6 @@ export const logRolloutAndDropSummary = async (opts: {
   selectedCalculator: any;
   leadData: any;
   isLowesLead?: boolean;
-  /** Dynamic deal center: take each calculator's tiers from its stored `totals`
-   *  instead of the legacy column pricing. See `calculateTiers`. */
   preferStoredTotals?: boolean;
 }) => {
   const { userId, leadId, allCalculators, selectedCalculator, leadData, isLowesLead, preferStoredTotals } = opts;

@@ -3,30 +3,9 @@ import { View, Text, Modal, TextInput, TouchableOpacity, FlatList, ActivityIndic
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-/**
- * Pick a person from a server-supplied list.
- *
- * Built for the refund approver picker, and general on purpose — the app has **no**
- * searchable user picker at all, and the only other user list in it is the chat
- * participant sheet, which is a different set entirely (everyone on a thread, not
- * everyone with a permission).
- *
- * Chrome is `ParticipantsModal`'s (bottom sheet, drag handle, count chip), rows are
- * `MentionSuggestions`' (initials avatar, name, subtitle), and the filter is the one
- * from `Chat.tsx` — so this reads like the rest of the app rather than like a new
- * component that happens to list people.
- *
- * ⚠️ **The caller supplies the list; this never fetches and never filters by role.**
- * For approvals that list comes from `/lead/v1/approvals/approvers`, which is the
- * join between the company's configured ROLE ids and actual people, and is the same
- * rule the server's decide guard enforces. Anything assembled client-side would offer
- * choices the server then refuses.
- */
-
 export interface PickableUser {
   id: string;
   name: string;
-  /** Shown under the name — a role for an approver, anything for another caller. */
   roleName?: string;
   email?: string;
 }
@@ -37,7 +16,6 @@ interface Props {
   selectedId?: string;
   title?: string;
   subtitle?: string;
-  /** Shown in place of the list when there is nothing to pick. */
   emptyText?: string;
   isLoading?: boolean;
   onSelect: (user: PickableUser) => void;
@@ -65,24 +43,12 @@ export function UserPickerModal({
   onClose,
 }: Props) {
   const [query, setQuery] = useState('');
-  /**
-   * ⚠️ The sheet has to clear the system navigation bar itself.
-   *
-   * `KeyboardProvider` (App.tsx) puts the app edge-to-edge, so on Android the window
-   * extends UNDER the three-button nav bar — a flat `paddingBottom` left the last row
-   * of the list sitting behind it, half visible and un-tappable. Insets travel by
-   * React context, which crosses a `Modal` even though its native view tree does not,
-   * so reading them here is enough. Same `Math.max(insets.bottom, …)` shape the deal
-   * edit screen's own sticky footer uses.
-   */
   const insets = useSafeAreaInsets();
   const bottomPad = Math.max(insets.bottom, 12);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return users;
-    // Same expression the chat mention filter uses — name OR the subtitle, so a rep
-    // who knows the ROLE but not the person can still find them.
     return users.filter(
       (u) =>
         String(u.name || '').toLowerCase().includes(q) ||

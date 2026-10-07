@@ -43,10 +43,6 @@ import {
   GEOFENCE_RADIUS_MILES,
 } from '../../utils/location-util';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Types & Constants (web parity: job-card.js CARD_COLOR)
-// ─────────────────────────────────────────────────────────────────────────────
-
 interface Props {
   lead: Lead;
   colors?: any;
@@ -78,12 +74,7 @@ const CARD_COLOR = {
   UPCOMING: '#2196f3', // Blue    — Preview Appointment
 };
 
-// Non-resulted API statuses — web parity: job-card.js NON_RESULTED_STATUSES
 const NON_RESULTED_STATUSES = ['lfLead', 'selfGenerated', 'scheduled'];
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 const formatTime = (leadTime: string) => {
   if (!leadTime || leadTime === 'N/A') return 'N/A';
@@ -117,10 +108,6 @@ const getLastCheckInTime = (actionlogs: any[]) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RESULTED status label map — web parity
-// ─────────────────────────────────────────────────────────────────────────────
-
 const RESULTED_LABELS: Record<string, string> = {
   resulted: 'Resulted',
   sale: 'Sale',
@@ -152,18 +139,12 @@ const RESULTED_COLORS: Record<string, string> = {
   default: '#94a3b8',
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// State machine — exact port of web app job-card.js getJobStatus()
-// Priority order follows the web's documented comments exactly.
-// ─────────────────────────────────────────────────────────────────────────────
-
 function getLeadState(
   lead: Lead,
   userLocation: { latitude: number; longitude: number } | null,
   isTomorrow: boolean,
   actionCounts: { lead_check_in: number; lead_resume: number; lead_review: number }
 ): LeadState {
-  // ── Resulted (non-active) leads — dimmed card ────────────────────────────
   const isResulted = !NON_RESULTED_STATUSES.includes(lead.status || '');
   if (isResulted) {
     const label = RESULTED_LABELS[lead.status || ''] || lead.status || 'Resulted';
@@ -177,14 +158,9 @@ function getLeadState(
     };
   }
 
-  // ── Manager-applied bypass overrides (web parity: job-card-utils.js) ─────
-  // gpsBypass  → replaces the physical geofence check
-  // earlyStart → replaces the time-window gate
   const gpsBypassActive = isGpsBypassActive(lead);
   const earlyStartBypassActive = isEarlyStartBypassActive(lead);
 
-  // ── Tomorrow-issued view — locked to Preview UNLESS BOTH bypasses active ──
-  // Web parity: getJobStatus() isTomorrowIssuedView override
   if (isTomorrow && !(gpsBypassActive && earlyStartBypassActive)) {
     return {
       status: 'UPCOMING',
@@ -196,7 +172,6 @@ function getLeadState(
     };
   }
 
-  // ── Geo check ────────────────────────────────────────────────────────────
   const rawInRange =
     userLocation && lead.location?.coordinates
       ? calculateDistance(
@@ -206,22 +181,15 @@ function getLeadState(
         lead.location.coordinates[0]  // lng is index 0
       ) <= GEOFENCE_RADIUS_MILES
       : false;
-  // GPS bypass replaces the physical geofence check
   const isInRange = rawInRange || gpsBypassActive;
 
   const isSelfGen = isSelfGeneratedLead(lead);
   const isResumeLead = isResumeAppointment(lead);
 
-  // Helper: get review/resume counts for button text
   const getCount = (action: 'lead_check_in' | 'lead_resume' | 'lead_review') =>
     actionCounts[action] || 0;
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // BRANCH A: Self-Generated Leads — location only (no time windows)
-  // Web parity: job-card-utils.js getSelfGenJobStatus()
-  // ─────────────────────────────────────────────────────────────────────────
   if (isSelfGen) {
-    // Resume: checked in before + on-site (or GPS bypass)
     if (isResumeLead && isInRange) {
       const resumeCount = getCount('lead_resume');
       return {
@@ -234,7 +202,6 @@ function getLeadState(
       };
     }
 
-    // Start: never checked in + on-site (or GPS bypass)
     if (!isResumeLead && isInRange) {
       return {
         status: 'ACTIVE',
@@ -246,7 +213,6 @@ function getLeadState(
       };
     }
 
-    // Review: checked in before but now off-site
     if (isResumeLead && !isInRange) {
       const reviewCount = getCount('lead_review');
       return {
@@ -259,7 +225,6 @@ function getLeadState(
       };
     }
 
-    // Preview: never checked in + off-site (default — NEVER Review)
     return {
       status: 'UPCOMING',
       color: CARD_COLOR.UPCOMING,
@@ -270,18 +235,11 @@ function getLeadState(
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // BRANCH B: Regular (Issued/LF) Leads — time + location
-  // Web parity: job-card-utils.js getRegularJobStatus()
-  // ─────────────────────────────────────────────────────────────────────────
   const scheduledDateTime = getScheduledDateTime(lead);
   const beforeTimeWindow = isBeforeTimeWindow(scheduledDateTime);
-  // Early-start bypass replaces the time-window gate (only meaningful on-site)
   const earlyStartActive =
     ((lead as any)?.earlyStart === true || earlyStartBypassActive) && isInRange;
 
-  // Has checked in before → Resume/Review.
-  // Time window does NOT apply — once checked in, only GPS decides Resume vs Review.
   if (isResumeLead) {
     if (isInRange) {
       const resumeCount = getCount('lead_resume');
@@ -306,9 +264,6 @@ function getLeadState(
     };
   }
 
-  // ── Never checked in → time window + GPS gate ────────────────────────────
-
-  // Preview: before the time window and no early-start bypass
   if (beforeTimeWindow && !earlyStartActive) {
     return {
       status: 'UPCOMING',
@@ -320,8 +275,6 @@ function getLeadState(
     };
   }
 
-  // Start: on-site (or GPS bypass) + not too early (or early-start bypass).
-  // No upper time bound — rep can start even hours late if GPS confirms presence.
   if (isInRange && (!beforeTimeWindow || earlyStartActive)) {
     return {
       status: 'ACTIVE',
@@ -333,7 +286,6 @@ function getLeadState(
     };
   }
 
-  // Preview: never checked in — off-site OR time expired (NEVER Review)
   return {
     status: 'UPCOMING',
     color: CARD_COLOR.UPCOMING,
@@ -343,10 +295,6 @@ function getLeadState(
     shouldPulse: false,
   };
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Component
-// ─────────────────────────────────────────────────────────────────────────────
 
 export const LeadCard = React.memo(
   function LeadCard({
@@ -373,7 +321,6 @@ export const LeadCard = React.memo(
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // ── Action counts — prioritise server-sent actionCounts, fallback to logs
   const actionCounts = useMemo(() => {
     if (lead.actionCounts) return lead.actionCounts as any;
     const logs = Array.isArray(lead.actionlogs) ? lead.actionlogs : [];
@@ -384,13 +331,11 @@ export const LeadCard = React.memo(
     };
   }, [lead.actionCounts, lead.actionlogs]);
 
-  // ── Compute display state via the web-parity state machine ──────────────
   const leadState = useMemo(
     () => getLeadState(lead, userLocation ?? null, isTomorrow, actionCounts),
     [lead, userLocation, isTomorrow, actionCounts]
   );
 
-  // ── Pulse animation (only for ACTIVE state) ──────────────────────────────
   useEffect(() => {
     if (leadState.shouldPulse) {
       Animated.loop(
@@ -405,14 +350,6 @@ export const LeadCard = React.memo(
     }
   }, [leadState.shouldPulse]);
 
-  /**
-   * Is this lead beyond the reach of a request right now?
-   *
-   * ⚠️ A CLIENT id disqualifies a lead as surely as no signal does. A door created at the
-   * door is addressed by an id this device minted, so `PATCH lead/v1/lead-1773…/archive` 404s
-   * however good the connection is — the same rule the agreement dialog and the consent queue
-   * already apply.
-   */
   const mustQueue = () => !isOnline() || isClientId(String(lead._id || ''));
 
   const handleArchive = () => {
@@ -459,14 +396,6 @@ export const LeadCard = React.memo(
 
   const isResulted = leadState.status === 'RESULTED';
 
-  /**
-   * Reset is offered on a SALE and nothing else.
-   *
-   * Every other result — Demo, No Demo, Not Home, Cancelled, Rescheduled — is an
-   * outcome the rep recorded and moved on from; there is no sold work to undo, so a
-   * reset alongside them only invites a lead to be reopened by mistake. A sale is the
-   * one result with something behind it worth taking back.
-   */
   const isSaleResult =
     isResulted && String(lead.status ?? '').trim().toLowerCase() === 'sale';
 
@@ -482,10 +411,6 @@ export const LeadCard = React.memo(
     FlashMessage.success(msg);
   };
 
-  // ── Contact customer (Call / Text / Copy) ───────────────────────────────
-  // Gated purely by TIME, regardless of GPS: reps can only reach the customer
-  // starting 15 minutes before the appointment start — so a running-late rep can
-  // give a heads-up, but nobody can contact the customer hours ahead of the appt.
   const contactWindowStart = useMemo(() => {
     const t = getScheduledDateTime(lead);
     return t ? t.getTime() - 15 * 60 * 1000 : null;
@@ -534,7 +459,6 @@ export const LeadCard = React.memo(
     setShowPhoneOptions(false);
   };
 
-  // ── Card press handler — UPCOMING shows info snackbar, others navigate ───
   const handleCardPress = () => {
     if (leadState.status === 'UPCOMING') {
       handlePreviewPress();
@@ -709,9 +633,6 @@ export const LeadCard = React.memo(
         {/* ── Action Button ─────────────────────────────────────────────── */}
         <View>
           {isResulted ? (
-            // Resulted: review button, plus reset ONLY on a sale (web parity
-            // ResultedActionBar). Without a reset the review button takes the full
-            // width rather than leaving a gap where the icon used to be.
             <View className="flex-row gap-2">
               <TouchableOpacity
                 onPress={onActionPress}
@@ -738,7 +659,6 @@ export const LeadCard = React.memo(
               )}
             </View>
           ) : (
-            // Normal: single animated action button
             <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
               <TouchableOpacity
                 onPress={

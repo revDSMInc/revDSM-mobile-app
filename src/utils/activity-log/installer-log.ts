@@ -1,27 +1,3 @@
-/**
- * Installer activity log.
- *
- * One named helper per app event, mirroring the shape the sales side already uses
- * (`src/utils/lead-activity-log.ts`, `./calculator-log.ts`): a pure function that
- * takes the signed-in `user`, builds the meta, and hands off to `logEvent`. Nothing
- * here throws or awaits the caller's critical path — a log must never be able to
- * break a step.
- *
- * Two conventions the portal depends on:
- *
- *  - **A job visit is a session.** The first open of a job logs `click` /
- *    `job_check_in`, backing out logs `pause` / `job_session`, and coming back logs
- *    `click` / `job_resume`. Which one applies is decided by whether the job id has
- *    been seen before (persisted, so it survives an app restart).
- *  - **Step work is logged under its step.** `module_type` is the step's own name
- *    (`pickup`, `pre_existing_conditions`, `pre_install_photos`, `verify_jobs`,
- *    `post_install_photos`, `coc`, `return`), not a generic installer module.
- *
- * Job context (jobId / leadId / customer / address) is captured once when a job is
- * opened (`persistActiveInstallerJob`) and merged into every subsequent log, so the
- * deeply-nested step screens don't have to thread the job down through props.
- */
-
 import { Storage } from '../storage';
 import { logEvent } from '../../services/api/LoggerService';
 import {
@@ -45,16 +21,10 @@ import type {
   SoldProduct,
 } from '../../config/types/installer';
 
-/** Where the active job's log context lives between screens. */
 const ACTIVE_JOB_KEY = 'installer:activeJob';
 
-/** Job ids this device has already checked into — drives check-in vs resume. */
 const VISITED_JOBS_KEY = 'installer:visitedJobs';
 
-/**
- * Key the LoggerService reads to auto-attach `meta.leadId`. Shared with the sales
- * flow on purpose — the portal links a log row to a record through this field.
- */
 const ACTIVE_LEAD_KEY = 'leadId';
 
 export interface InstallerJobContext {
@@ -82,17 +52,11 @@ const contextOf = (job?: InstallerJob | null): InstallerJobContext => ({
   address: job?.fullAddress,
 });
 
-/** Strips undefined so the payload stays clean for the portal. */
 const compact = <T extends Record<string, any>>(obj: T): T =>
   Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
 
-/** `'pec'` → `'pre_existing_conditions'`. */
 export const stepModule = (step: InstallStepKey): string =>
   INSTALLER_STEP_MODULES[step] ?? step;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Job context + visit tracking
-// ─────────────────────────────────────────────────────────────────────────────
 
 const readVisitedJobs = (): string[] => {
   try {
@@ -104,45 +68,33 @@ const readVisitedJobs = (): string[] => {
   }
 };
 
-/** True the first time a job is opened on this device, false on every return. */
 export const isFirstJobVisit = (jobId?: string): boolean =>
   !!jobId && !readVisitedJobs().includes(jobId);
 
-/** Records a job as visited, so the next open logs a resume rather than a check-in. */
 export const markJobVisited = (jobId?: string): void => {
   if (!jobId) return;
   try {
     const visited = readVisitedJobs();
     if (visited.includes(jobId)) return;
-    // Bounded so a long-lived install account can't grow this without limit; the tail
-    // is the oldest jobs, which will never be reopened.
     const next = [...visited, jobId].slice(-200);
     Storage.setItem(VISITED_JOBS_KEY, JSON.stringify(next));
   } catch {
-    // A storage failure just means the next open logs a check-in again.
   }
 };
 
-/**
- * Remembers the job an installer just opened so every downstream log carries it.
- * Also writes `leadId` to the key the LoggerService auto-attaches from.
- */
 export const persistActiveInstallerJob = (job?: InstallerJob | null): void => {
   if (!job?._id) return;
   try {
     Storage.setItem(ACTIVE_JOB_KEY, JSON.stringify(compact(contextOf(job))));
     if (job.leadId) Storage.setItem(ACTIVE_LEAD_KEY, job.leadId);
   } catch {
-    // Never let a storage failure take down the screen that opened the job.
   }
 };
 
-/** Called on sign-out, or when the installer leaves the job for the schedule. */
 export const clearActiveInstallerJob = (): void => {
   try {
     Storage.removeItem(ACTIVE_JOB_KEY);
   } catch {
-    // no-op
   }
 };
 
@@ -155,10 +107,6 @@ export const getActiveInstallerJobContext = (): InstallerJobContext => {
   }
 };
 
-/**
- * Core emitter. `job` is optional — when omitted the stored context is used, which
- * is what the step screens rely on.
- */
 const emit = (
   user: any,
   action: string,
@@ -171,8 +119,6 @@ const emit = (
 
   const context = job ? compact(contextOf(job)) : getActiveInstallerJobContext();
 
-  // Fire-and-forget: logEvent already swallows transport errors, this guards the
-  // synchronous portion (storage reads, JSON) as well.
   try {
     Promise.resolve(
       logEvent(action, {
@@ -187,11 +133,6 @@ const emit = (
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dashboard
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Installer schedule rendered. Not lead-scoped. */
 export const logInstallerDashboardViewed = (
   user: any,
   meta: { period: string; jobCount: number; companyName?: string }
@@ -204,7 +145,6 @@ export const logInstallerDashboardViewed = (
     null
   );
 
-/** Today / Tomorrow tab. */
 export const logInstallerPeriodChanged = (user: any, period: string) =>
   emit(
     user,
@@ -223,20 +163,6 @@ export const logInstallerJobsRefreshed = (user: any, period: string) =>
     null
   );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Job session — check in / pause / resume
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Check-in + `status: inProgress` succeeded; the working payload is in hand.
- *
- * An ACTIVE manager bypass is attached with the reason it was filed under, mirroring what
- * the sales card records (`utils/lead-activity-log.ts`). A check-in that skipped the
- * geofence or the arrival window has to say so in the Forever Record — otherwise it is
- * indistinguishable from one made on site and on time, and the reviewer has no way to tell
- * an authorised exception from a rule that silently failed. Absent keys on an ordinary
- * check-in, so nothing is claimed about jobs with no override.
- */
 export const logInstallerJobStarted = (user: any, job: InstallerJob) =>
   emit(
     user,
@@ -273,12 +199,6 @@ export const logInstallerJobStartFailed = (user: any, job: InstallerJob, error?:
     job
   );
 
-/**
- * The installer opened the job detail screen.
- *
- * First visit → `click` / `job_check_in`. Every later visit → `click` / `job_resume`.
- * The job is marked visited here, so a re-open in the same session already resumes.
- */
 export const logInstallerJobOpened = (
   user: any,
   job: InstallerJob,
@@ -295,10 +215,6 @@ export const logInstallerJobOpened = (
   markJobVisited(job?._id);
 };
 
-/**
- * Backing out to the schedule. The job isn't finished — it's paused — so this is
- * deliberately not a "close".
- */
 export const logInstallerJobPaused = (
   user: any,
   job: InstallerJob,
@@ -312,7 +228,6 @@ export const logInstallerJobPaused = (
     job
   );
 
-/** The installer signed the job off — every step done and `status: completed` sent. */
 export const logInstallerJobCompleted = (
   user: any,
   job: InstallerJob,
@@ -326,7 +241,6 @@ export const logInstallerJobCompleted = (
     job
   );
 
-/** Every capture, note and selection wiped — the crew is starting the job over. */
 export const logInstallerJobReset = (user: any, job: InstallerJob) =>
   emit(user, LOG_ACTIONS.RESET, INSTALLER_MODULES.JOB, { action: 'job_reset' }, job);
 
@@ -338,7 +252,6 @@ export const logInstallerCustomerContact = (user: any, method: CustomerContactMe
     method,
   });
 
-/** Address tapped — the installer is handing off to Google / Apple Maps. */
 export const logInstallerAddressOpened = (user: any, address?: string) =>
   emit(user, LOG_ACTIONS.CLICK, INSTALLER_MODULES.JOB, {
     action: 'address_map_opened',
@@ -351,20 +264,6 @@ export const logInstallerPacketViewed = (user: any, fileName?: string) =>
 export const logInstallerOpsChatOpened = (user: any) =>
   emit(user, LOG_ACTIONS.CLICK, INSTALLER_MODULES.JOB, { action: 'ops_chat_opened' });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Timeline steps
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Prose `meta.action` for a step's open / close, replacing the generic `step_opened`
- * and `step_closed` codes.
- *
- * The portal renders `meta.action` straight into the activity feed, so a step listed
- * here reads as a sentence instead of a code. Only listed steps are overridden —
- * anything absent keeps the generic code, which is what every other step still sends.
- * `action_type` (`view` / `close`) and `module_type` are untouched, so existing
- * filters on those keep working.
- */
 const STEP_ACTION_LABELS: Partial<
   Record<InstallStepKey, { opened?: string; closed?: string }>
 > = {
@@ -402,25 +301,12 @@ export const logInstallStepCompleted = (
     action: 'step_completed',
   });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Photos
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Everything the portal needs to render one install photo, matching the sales
- * `inspection_photo` payload field for field — `imageData` is what the portal reads
- * to show the thumbnail, the outer copies are what it filters and sorts on.
- */
 export interface InstallerPhotoLogMeta {
-  /** Which timeline step the shot belongs to — becomes `module_type`. */
   step: InstallStepKey;
-  /** Grouping label, e.g. the rep category "Flooring — EXT". */
   category?: string;
-  /** The slot / tag / area this shot documents, e.g. "Back-Left". */
   subcategory?: string;
   timestamp: string;
   coordinates?: GeoCoordinates | null;
-  /** Bytes on disk. 0 when the file could not be stat'd. */
   size?: number;
   s3url?: string;
   bucketName?: string;
@@ -434,8 +320,6 @@ const photoMeta = (meta: InstallerPhotoLogMeta, action: string) =>
     coordinates: meta.coordinates ?? null,
     size: meta.size ?? 0,
     action,
-    // Only present once the upload came back with a key — a CoC page never has one,
-    // and a failed upload must not claim it does.
     imageData: meta.s3url
       ? compact({
           s3url: meta.s3url,
@@ -448,31 +332,23 @@ const photoMeta = (meta: InstallerPhotoLogMeta, action: string) =>
       : undefined,
   });
 
-/** A new shot landed in S3. */
 export const logInstallerPhotoUploaded = (user: any, meta: InstallerPhotoLogMeta) =>
   emit(user, LOG_ACTIONS.ADD, stepModule(meta.step), photoMeta(meta, 'photo_uploaded'));
 
-/** A retake — the shot replaces one already matched to this tag. */
 export const logInstallerPhotoReplaced = (user: any, meta: InstallerPhotoLogMeta) =>
   emit(user, LOG_ACTIONS.UPDATE, stepModule(meta.step), photoMeta(meta, 'photo_replaced'));
 
 export const logInstallerPhotoRemoved = (user: any, meta: InstallerPhotoLogMeta) =>
   emit(user, LOG_ACTIONS.DELETE, stepModule(meta.step), photoMeta(meta, 'photo_removed'));
 
-/** The upload failed — the capture is on the device but not in S3. */
 export const logInstallerPhotoFailed = (user: any, meta: InstallerPhotoLogMeta) =>
   emit(user, LOG_ACTIONS.ADD, stepModule(meta.step), {
     ...photoMeta(meta, 'photo_upload_failed'),
     success: false,
   });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Material pickup / return
-// ─────────────────────────────────────────────────────────────────────────────
-
 export type MaterialMode = 'pickup' | 'return';
 
-/** "Had material on truck" / "Used all material". */
 export const logMaterialSkipped = (user: any, mode: MaterialMode) =>
   emit(user, LOG_ACTIONS.SUBMIT, stepModule(mode), {
     mode,
@@ -480,10 +356,6 @@ export const logMaterialSkipped = (user: any, mode: MaterialMode) =>
     reason: mode === 'pickup' ? 'had_material_on_truck' : 'used_all_material',
     action: `${mode}_skipped`,
   });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Pre-existing conditions
-// ─────────────────────────────────────────────────────────────────────────────
 
 const PEC = INSTALLER_STEP_MODULES.pec;
 
@@ -521,10 +393,6 @@ export const logPecConfirmed = (
   meta: { hasConditions: boolean | null; areaCount: number; photoCount: number; areas: string[] }
 ) => emit(user, LOG_ACTIONS.SUBMIT, PEC, { ...meta, action: 'pec_confirmed' });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pre / post install photo matching
-// ─────────────────────────────────────────────────────────────────────────────
-
 export const logPhotoSectionChanged = (
   user: any,
   step: InstallStepKey,
@@ -541,10 +409,6 @@ export const logPhotoPhaseCompleted = (
   step: InstallStepKey,
   meta: { matched: number; total: number; extras: number }
 ) => emit(user, LOG_ACTIONS.SUBMIT, stepModule(step), { ...meta, action: 'photos_completed' });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Scope verification & discrepancies
-// ─────────────────────────────────────────────────────────────────────────────
 
 const SCOPE = INSTALLER_STEP_MODULES.measure;
 
@@ -599,13 +463,8 @@ export const logDiscrepancyReported = (
     action: 'discrepancy_reported',
   });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Certificate of Completion
-// ─────────────────────────────────────────────────────────────────────────────
-
 const COC = INSTALLER_STEP_MODULES.coc;
 
-/** The three attestations, by the key they are filed under in `stepData.coc`. */
 type CocConfirmationKey =
   | 'is18OrOlder'
   | 'isHomeownerOrAuthorized'
@@ -616,88 +475,46 @@ type CocSignatureSlot = 'installer' | 'customer';
 export const logCocCompleted = (user: any, totalPages: number) =>
   emit(user, LOG_ACTIONS.SUBMIT, COC, { totalPages, action: 'coc_completed' });
 
-/**
- * The certificate form was opened, and how it was reached.
- *
- * `source` is the useful half: `auto` is the step opening on it, `edit` is a rep going
- * back into a certificate that already exists, and `scan_cancelled` is the form coming
- * back after the scanner was dismissed with nothing captured. A run of `edit`s on one
- * job is a signature that would not take.
- */
 export const logCocFormOpened = (
   user: any,
   source: 'auto' | 'edit' | 'scan_cancelled' | 'scan'
 ) => emit(user, LOG_ACTIONS.OPEN, COC, { source, action: 'coc_form_opened' });
 
-/**
- * The form was left without submitting.
- *
- * `via` separates the two ways out — the footer Cancel and the header ✕ — and `signed`
- * says whether a certificate was already on file, which is the difference between
- * "changed their mind" and "walked away from an unsigned job".
- */
 export const logCocFormDismissed = (
   user: any,
   meta: { via: 'cancel' | 'close'; signed: boolean }
 ) => emit(user, LOG_ACTIONS.CLOSE, COC, { ...meta, action: 'coc_form_dismissed' });
 
-/** One of the certificate's three attestations was ticked or un-ticked. */
 export const logCocConfirmationToggled = (
   user: any,
   meta: { confirmation: CocConfirmationKey; checked: boolean }
 ) => emit(user, LOG_ACTIONS.TOGGLE, COC, { ...meta, action: 'coc_confirmation_toggled' });
 
-/**
- * Who the signer said they are.
- *
- * `relationship: null` is the box being UN-ticked — the certificate goes back to having
- * no answer, which is a real state and blocks submit.
- */
 export const logCocRelationshipSelected = (
   user: any,
   meta: { relationship: CocRelationshipType | null; otherRelationship?: string }
 ) => emit(user, LOG_ACTIONS.SELECT, COC, { ...meta, action: 'coc_relationship_selected' });
 
-/** The signature pad was opened for one of the two lines. */
 export const logCocSignaturePadOpened = (user: any, who: CocSignatureSlot) =>
   emit(user, LOG_ACTIONS.OPEN, COC, { who, action: 'coc_signature_pad_opened' });
 
-/**
- * A signature was SAVED on the pad.
- *
- * Distinct from the image upload that follows it (`logInstallerPhotoUploaded`, which
- * carries the s3url and byte size): this is the moment it was drawn, and it is the one
- * that still appears if the upload never lands.
- */
 export const logCocSignatureSaved = (
   user: any,
   meta: { who: CocSignatureSlot; strokes: number; replaced: boolean }
 ) => emit(user, LOG_ACTIONS.SAVE, COC, { ...meta, action: 'coc_signature_saved' });
 
-/** Cleared the pad mid-signature — the line is still unsigned afterwards. */
 export const logCocSignatureCleared = (user: any, who: CocSignatureSlot) =>
   emit(user, LOG_ACTIONS.DELETE, COC, { who, action: 'coc_signature_cleared' });
 
-/** Left the pad without saving — whatever was drawn is discarded. */
 export const logCocSignaturePadCancelled = (user: any, who: CocSignatureSlot) =>
   emit(user, LOG_ACTIONS.CLOSE, COC, { who, action: 'coc_signature_pad_cancelled' });
 
-/** Paper Fallback — the crew went to the scanner instead of signing on the device. */
 export const logCocPaperFallback = (user: any) =>
   emit(user, LOG_ACTIONS.CLICK, COC, { action: 'coc_paper_fallback' });
 
-/** A scanner pass, and what it produced. `pages: 0` is a cancelled scan. */
 export const logCocScanned = (user: any, meta: { pages: number; totalPages: number }) =>
   emit(user, LOG_ACTIONS.ADD, COC, { ...meta, action: 'coc_pages_scanned' });
 
-/**
- * The certificate signed on the device.
- *
- * The two signature IMAGES log themselves through the upload path
- * (`logInstallerPhotoUploaded`, which carries the s3url and byte size). This is the
- * form itself: what was attested, by whom, and against which job number — none of
- * which appears in a photo log.
- */
 export const logCocSigned = (
   user: any,
   meta: {
@@ -708,10 +525,6 @@ export const logCocSigned = (
     signatureCount: number;
   }
   ) => emit(user, LOG_ACTIONS.SUBMIT, COC, { ...meta, action: 'coc_signed' });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Result
-// ─────────────────────────────────────────────────────────────────────────────
 
 export const logInstallerResultOpened = (user: any, result: InstallerResultType) =>
   emit(user, LOG_ACTIONS.OPEN, INSTALLER_MODULES.RESULT, {

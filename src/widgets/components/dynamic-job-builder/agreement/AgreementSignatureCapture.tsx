@@ -17,14 +17,6 @@ interface AgreementSignatureCaptureProps {
   onCapture: (dataUri: string) => void;
 }
 
-/**
- * Self-contained signature/initials drawing surface. The drawn paths are rasterized
- * to a PNG data-URI via react-native-svg's own `Svg.toDataURL()` — NOT view-shot.
- * view-shot can't snapshot react-native-svg content on Android (it renders in a
- * separate texture and comes back blank); toDataURL rasterizes the SVG natively and
- * works on both platforms. The resulting <Image> is then captured fine inside the
- * full-agreement view-shot snapshot.
- */
 export function AgreementSignatureCapture({
   visible,
   title = 'Draw Your Signature',
@@ -41,7 +33,6 @@ export function AgreementSignatureCapture({
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      // Keep the stroke: don't let a parent (Modal/ScrollView) steal the touch mid-draw.
       onPanResponderTerminationRequest: () => false,
       onShouldBlockNativeResponder: () => true,
       onStartShouldSetPanResponderCapture: () => true,
@@ -57,9 +48,6 @@ export function AgreementSignatureCapture({
         setCurrent(currentRef.current);
       },
       onPanResponderRelease: () => {
-        // Capture the finished stroke FIRST: setPaths' updater runs later (on flush),
-        // and reading currentRef there would see '' because we clear it below → the
-        // stroke would vanish the moment the finger lifts. Use the captured value.
         const finished = currentRef.current;
         currentRef.current = '';
         setCurrent('');
@@ -68,7 +56,6 @@ export function AgreementSignatureCapture({
         }
       },
       onPanResponderTerminate: () => {
-        // Same commit path if another responder steals the gesture on lift.
         const finished = currentRef.current;
         currentRef.current = '';
         setCurrent('');
@@ -97,7 +84,6 @@ export function AgreementSignatureCapture({
       handleClose();
       return;
     }
-    // toDataURL returns raw base64 (no data: prefix); rasterizes the drawn paths.
     ref.toDataURL((base64: string) => {
       if (base64) onCapture(`data:image/png;base64,${base64}`);
       clear();

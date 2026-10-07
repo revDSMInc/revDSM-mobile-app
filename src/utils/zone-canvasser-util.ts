@@ -1,4 +1,3 @@
-/** Haversine distance in miles */
 export function distanceMiles(
   lat1: number,
   lon1: number,

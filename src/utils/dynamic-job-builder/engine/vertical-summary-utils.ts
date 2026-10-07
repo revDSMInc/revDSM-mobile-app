@@ -25,16 +25,11 @@ import { resolveLocationGridConfig } from './location-grid-utils';
 import { resolveSchemaColor } from '../../../screens/DynamicDealCenter/utils/icon-color';
 import { stateHasContent, collectLockedFieldIds } from './empty-step-gate';
 
-// Web's `theme.palette.primary.main` — the fallback `resolveSchemaColorValue` uses.
 const PALETTE_PRIMARY = '#4CBB17';
 
-// Web `PRODUCT_UI_COLORS` (product-catalog-utils.js) — the index fallback must be
-// the SAME list in the SAME order, or tab N falls back to a different colour than web.
 const PRODUCT_PALETTE_COLORS = ['#22c55e', '#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899'];
 
 const SKIPPED_FIELD_TYPES = new Set(['sectionLabel', 'combinationSummary', 'allocation']);
-
-// ─── Color resolution ─────────────────────────────────────────────────────────
 
 function normalizeComparableName(value: any): string {
   return String(value || '')
@@ -43,14 +38,12 @@ function normalizeComparableName(value: any): string {
     .replace(/[\s_-]+/g, '');
 }
 
-/** Web `findProductForVertical` (product-catalog-utils.js). */
 function findProductForVertical(vertical: any, products: any[] = []) {
   const verticalProductId = String(vertical?.productId || vertical?.id || '');
   if (!verticalProductId) return null;
   return (products || []).find((product: any) => String(product?.id) === verticalProductId) || null;
 }
 
-/** Web `findSchemasForVertical` (vertical-summary-utils.js). */
 function findSchemasForVertical(vertical: any, schemas: any[] = []) {
   const verticalProductId = String(vertical?.productId || vertical?.id || '');
   const verticalLabel = normalizeComparableName(vertical?.label);
@@ -71,7 +64,6 @@ function findSchemasForVertical(vertical: any, schemas: any[] = []) {
   return matched.length ? matched : schemas || [];
 }
 
-/** Web `extractAllCategories` (calculator-items-format-util.js). */
 function extractAllCategories(schemasOrCategories: any[]): any[] {
   if (!Array.isArray(schemasOrCategories) || schemasOrCategories.length === 0) return [];
 
@@ -87,12 +79,6 @@ function extractAllCategories(schemasOrCategories: any[]): any[] {
   return schemasOrCategories;
 }
 
-/**
- * Web `findTabCategoryColorFromSchemas`. Matches the TAB (e.g. GUTTERS / LEAFFILTER
- * / SOFFIT) to its calculator-schema CATEGORY and takes that category's colour.
- * This is the branch that gives each summary card its own colour — without it every
- * tab in a vertical falls through to the single `vertical.color` and they all match.
- */
 function findTabCategoryColorFromSchemas(tab: any, vertical: any, schemas: any[] = []) {
   const tabCategory = normalizeComparableName(tab?.productCategory || tab?.label);
   if (!tabCategory || !schemas?.length) return null;
@@ -105,16 +91,6 @@ function findTabCategoryColorFromSchemas(tab: any, vertical: any, schemas: any[]
   return match?.color || null;
 }
 
-/**
- * Resolve the summary card header colour from runtime config only.
- * Web parity (`resolveTabAccentColor`) — priority:
- *   tab.summaryColor/tab.color → calculator schema category colour → vertical.color
- *   → product.color → palette index fallback.
- * Colours may be a hex OR an MUI token ('info', 'error.main'); `resolveSchemaColor`
- * resolves both, mirroring web's `resolveSchemaColorValue`. The previous
- * `startsWith('#')` guards silently DISCARDED token colours and skipped both the
- * schema-category and product branches entirely.
- */
 export function resolveTabAccentColor(
   tab: any,
   vertical: any,
@@ -139,8 +115,6 @@ export function resolveTabAccentColor(
 
   return PRODUCT_PALETTE_COLORS[tabIndex % PRODUCT_PALETTE_COLORS.length];
 }
-
-// ─── Section / field visibility ───────────────────────────────────────────────
 
 function buildFlatTabState(tabState: any, tab: any) {
   const state: any = {};
@@ -192,17 +166,10 @@ function getSectionCombos(section: any, tabState: any) {
   return [{ ...(section.defaultItem || {}) }];
 }
 
-// ─── Field display state ──────────────────────────────────────────────────────
-
 function buildComboDisplayState(combo: any = {}, colorValues: any = {}) {
   const displayState = { ...combo, colorValues: combo.colorValues || colorValues };
   Object.entries(colorValues || {}).forEach(([key, val]) => {
     if (val === '' || val === null || val === undefined) return;
-    // colorValues only FILLS a field the direct state lacks — it must never
-    // override a present direct value. The deal-center save hydrates colorValues
-    // with every field's value (colorKey defaults to field.id), so it becomes a
-    // stale mirror; overriding from it would clobber a fresh edit to the direct
-    // field value (e.g. Gutter Opening Width "2.5 - 3.4" masked by a stale "> 7").
     const direct = (combo as any)[key];
     if (direct === undefined || direct === null || direct === '') {
       (displayState as any)[key] = val;
@@ -222,8 +189,6 @@ function buildFieldDepCtx(ctx: any, overrides: any = {}) {
     ...overrides,
   };
 }
-
-// ─── Location grid ────────────────────────────────────────────────────────────
 
 function buildLocationRowsFromGrid(field: any, combo: any) {
   const grid = combo?.[field.id];
@@ -246,8 +211,6 @@ function buildLocationRowsFromGrid(field: any, combo: any) {
   return rows;
 }
 
-// ─── Merge helpers ────────────────────────────────────────────────────────────
-
 function mergeSummaryContent(target: any, source: any) {
   target.parts.push(...(source.parts || []));
   target.extras.push(...(source.extras || []));
@@ -268,27 +231,15 @@ function isDisplayableFieldSummary(field: any, formatted: any) {
   return true;
 }
 
-// ─── Field value formatting ───────────────────────────────────────────────────
-
 function formatFieldSummaryValue(field: any, state: any = {}, options: any = {}) {
   const { dealCenterData, editMode, fields } = options;
   const colorValues = state?.colorValues || {};
   const resolvedState = { ...state };
 
-  // A locked colour whose paired quantity is empty is not on the job, so it must
-  // not reach the summary either — the same rule the tab's locked row applies
-  // (`locked-color-defaults.ts`). Without this an Extras pair whose quantity is 0
-  // (dropped by `isDisplayableFieldSummary`) still rendered as "Ground Spout —
-  // Black", the colour surviving alone on a row named after the missing quantity.
   if (isPairedQuantityEmpty(field, { fields, state, dealCenterData })) {
     return { text: '', variant: 'missing' };
   }
 
-  // Web parity (`vertical-summary-utils.js:247-255`): in deal-EDIT mode a "locked"
-  // field is editable, so the rep's live value must win. Fall back to the
-  // deal-center value only when they left it blank. Without this guard the summary
-  // silently reverted every edited locked field to the calculator's value — the
-  // rep's change was saved but never shown back to them.
   const liveValue = state?.[field.id];
   const hasLiveValue = liveValue !== undefined && liveValue !== null && liveValue !== '';
 
@@ -305,23 +256,6 @@ function formatFieldSummaryValue(field: any, state: any = {}, options: any = {})
     }
   }
 
-  // Ticket 1063 — a DISABLED dropdown is answered by the config, not the rep.
-  //
-  // ⚠️ Its value is DISPLAY-ONLY in the builder: `DropdownField` resolves it for the
-  // box but deliberately never writes it into job state (re-saving every submitted
-  // deal because a portal default changed is not something a render should do). The
-  // summary reads job state, so without this branch the row was simply MISSING —
-  // reported as "Gutter Opening Width shows for Combination #2 but not #1", the
-  // difference being only that #2 happened to carry a stored value.
-  //
-  // Kept separate from the locked branch above rather than folded into it: that one
-  // is load-bearing for the deal-edit flow and passes the RAW `field.defaultValue`,
-  // and this one must gate on `dependencies.defaultWhen` the same way the builder
-  // box does, so a default is never shown past its own condition. Nothing about the
-  // locked path changes.
-  //
-  // `editMode && hasLiveValue` defers to the rep for the same reason as above: in
-  // the deal-edit wizard a disabled dropdown is unlocked, so their value wins.
   if (!isFieldLocked(field) && field?.disabled && !(editMode && hasLiveValue)) {
     const configValue = resolveLockedValue(field, dealCenterData || {}, {
       fallbackDefault: resolveConditionalDefault(field, state, { dealCenterData }),
@@ -388,14 +322,6 @@ function buildSingleFieldDetailRow(field: any, state: any, ctx: any): any {
   return { label: field.label || field.key || '', text: formatted.text, variant: formatted.variant };
 }
 
-/**
- * Merge a bordered stack's paired children into ONE row — web parity
- * (`vertical-summary-utils.js` `buildStackRowSummary`, commit 5a54070). For an
- * "Extras" group `[Ground Spout = 4, Color = Black]` this returns
- * `{ label: 'Ground Spout', text: '4 · Black' }`: the label comes from the first
- * non-color child (the color field's own "Color" label is skipped) and the
- * formatted values are joined with " · ". Was rendering as two separate rows.
- */
 function buildStackRowSummary(children: any[] = [], state: any, ctx: any): any {
   const values: string[] = [];
   let rowLabel = '';
@@ -433,11 +359,6 @@ function buildStackRowSummary(children: any[] = [], state: any, ctx: any): any {
   return { label: rowLabel, text: values.join(' · '), variant: 'value' };
 }
 
-/**
- * A bordered, multi-column stack groups its children into rows of `columns`
- * (each group merged by `buildStackRowSummary`). A single-column / non-bordered
- * stack keeps one row per child — the original behaviour.
- */
 function processStackFieldSummary(stackField: any, state: any, ctx: any): any {
   const result = { parts: [], extras: [], detailRows: [], locationRows: [] };
   const children = (stackField.fields || []).filter((child: any) =>
@@ -476,7 +397,6 @@ function processContainerFieldSummary(field: any, state: any, ctx: any): any {
   if (field?.type === 'stack') {
     return processStackFieldSummary(field, state, ctx);
   }
-  // accordion (and any other container): one row per child, no grouping.
   const result = { parts: [], extras: [], detailRows: [], locationRows: [] };
   (field.fields || []).forEach((child: any) => {
     if (!isSummaryFieldVisible(child, state, ctx)) return;
@@ -529,24 +449,6 @@ function processSummaryFields(fields: any[] = [], state: any = {}, ctx: any = {}
     if (!isDisplayableFieldSummary(field, formatted)) return;
 
     if (inCombination && !isContainerFieldType(field.type)) {
-      // ⚠️ A combination's fields are ROWS, like every other field in the summary — not a
-      // run-on sentence. They used to be flattened into `parts` and joined with " · ", so a
-      // gutter combination rendered as `Gutter Type: 6" K-Style · Yes · 49 Longest Gutter Run
-      // · 6 # of Miters (Outside) · …` while the Downspout section directly beneath it showed
-      // tidy label/value rows. Reported as *"the right side for this whole summary should be
-      // rows, not a bounding text box"*, with the portal's own table as the reference.
-      //
-      // The label was always known here — each branch below was building it into the string.
-      // Emitting `{ label, text }` instead lets `SummaryFieldRow` lay it out in the same
-      // 40%/60% columns it already uses for `comboFieldRows`, so this needs no new component
-      // and no change to the renderer.
-      //
-      // ⚠️ A `number` field keeps its label as the ROW LABEL, dropping the
-      // `${value} ${label}` word order (`6 # of Miters (Outside)`). The label already reads
-      // as a noun (`# of Miters (Outside)`), which is what belongs in a label column.
-      //
-      // ⚠️ An unlabelled field still emits a row — `SummaryFieldRow` renders a blank label as
-      // a full-width value, so nothing is lost.
       result.detailRows.push({
         label: field.label || field.key || '',
         text: formatted.text,
@@ -561,18 +463,6 @@ function processSummaryFields(fields: any[] = [], state: any = {}, ctx: any = {}
   return result;
 }
 
-/**
- * Ticket: *"is there any safeguards we can do that if product is <1 foot or <1 unit
- * measurement we have it so it doesn't get thru to job summary full build?"* A rep who
- * picked `Gutter Type: 6" K-Style`, left the Measurements grid on all zeros and walked
- * on to Downspouts still got a `Combination #1 - Gutter Type: 6" K-Style` card on the Job
- * Builder Summary: a line item for a product with no footage behind it.
- *
- * A selection alone was enough because `parts.length > 0` was the whole test - the grid
- * contributed nothing (`buildLocationRowsFromGrid` already drops zero cells) and a 0
- * number is already dropped by `isDisplayableFieldSummary`, so an unmeasured combination
- * looked exactly like one carrying only a colour.
- */
 const MIN_MEASURED_QUANTITY = 1;
 
 function sumGridValues(grid: any): number {
@@ -585,24 +475,7 @@ function sumGridValues(grid: any): number {
   }, 0);
 }
 
-/**
- * How much this ONE combination measures, and whether it declares a measurement at all.
- *
- * The field precedence is `computeGroupUsed`'s verbatim - the same rule that decides how
- * much of an allocation a combination consumes - so "measured" cannot come to mean two
- * different things on the allocator bar and on the summary: grids define the quantity
- * when the section has one, and sibling numbers (miters, end caps) are add-ons that must
- * never stand in for the footage.
- *
- * WARNING: only `locationGrid` and `number` count. A footage box authored as a `text`
- * field is NOT gated - a text field holding `Versa` is a profile, not a measurement, and
- * a blank one is indistinguishable from a blank descriptive field, so treating it as a
- * measurement would hide selection-only combinations that are legitimately on the job.
- */
 function measureCombo(section: any, state: any, ctx: any) {
-  // Hidden fields are excluded, so a measurement a condition has switched off can never
-  // hold a combination out of the summary. That is deliberately the SAFE direction: with
-  // every measurement hidden the combination declares none and renders as it always did.
   const rowFields = getFlattenedCombinationSectionRowFields(section).filter((field: any) =>
     isSummaryFieldVisible(field, state, ctx)
   );
@@ -615,8 +488,6 @@ function measureCombo(section: any, state: any, ctx: any) {
   if (!measured.length) return { declared: false, total: 0 };
 
   const total = measured.reduce((sum: number, field: any) => {
-    // The value may sit under the field id, its `key`, or (grids only) the legacy `grid`
-    // slot - the same three places `computeGroupUsed` looks.
     const raw = state?.[field.id] ?? (field.key ? state?.[field.key] : undefined);
     if (field.type === 'locationGrid') return sum + sumGridValues(raw ?? state?.grid);
     return sum + (Number(raw) || 0);
@@ -629,8 +500,6 @@ function comboHasMeaningfulData(section: any, combo: any, ctx: any) {
   const displayState = buildComboDisplayState(combo, combo?.colorValues);
   const sectionFields = getCombinationSectionFields(section);
 
-  // A combination that DECLARES a measurement has to carry one. A section that authors
-  // none (colour-only, selection-only) is untouched and still renders on its content.
   const measurement = measureCombo(section, displayState, {
     ...ctx, section, summaryMode: 'combination', sectionFields,
   });
@@ -675,10 +544,6 @@ function buildCombinationSectionSummary(
 
   const combinations: any[] = [];
   sectionCombos.forEach((combo: any, index: number) => {
-    // My Deals: a combination whose colour was never picked is hidden on the tab
-    // (`combination-color-filter.ts`), so it must not reappear in the summary
-    // either — `comboHasMeaningfulData` is a different, looser rule and lets it
-    // through. Edit-mode only; the create flow is untouched.
     if (isComboHiddenInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), ctx?.editMode)) {
       return;
     }
@@ -769,12 +634,6 @@ export function buildTabSummaryEntries(tab: any, tabState: any, ctx: any = {}) {
 export function buildTabSummarySection(tab: any, tabState: any = {}, ctx: any = {}) {
   const { dealCenterData = {}, applyConditions = true, vertical, tabIndex = 0, editMode = false, lockedFieldIds = null } = ctx;
 
-  // Deal-EDIT parity with the "No details yet" step gate (`stateHasContent`): a tab
-  // whose only state is deal-center-seeded (locked) values holds NO rep input, so it
-  // must summarize as empty. Otherwise the summary lists auto-defined calculator
-  // values (e.g. Gutters "Ground Spout", LeafFilter combinations) the rep never
-  // entered — the very inconsistency where the step shows "No details yet" but the
-  // summary shows data. Only user-entered values reach the summary.
   if (editMode && lockedFieldIds && !stateHasContent(tabState, lockedFieldIds)) {
     return {
       tabId: tab.id,
@@ -815,8 +674,6 @@ export function buildTabSummarySection(tab: any, tabState: any = {}, ctx: any = 
   return {
     tabId: tab.id,
     tabLabel: tab.label || tab.id,
-    // Web parity: `products` + `schemas` MUST reach the resolver — the schema
-    // category branch is what colours each tab card individually.
     accentColor: resolveTabAccentColor(tab, vertical, null, {
       tabIndex,
       products: ctx?.products,
@@ -834,8 +691,6 @@ export function buildVerticalSummarySections(vertical: any, verticalState: any =
   const locked = new Set(lockedTabIds || []);
   const tabs = vertical?.tabs || [];
 
-  // In deal-edit, precompute the locked (deal-center-seeded) field ids so each tab's
-  // summary can drop to empty when the rep entered nothing (see buildTabSummarySection).
   const lockedFieldIds = editMode && vertical ? collectLockedFieldIds({ verticals: [vertical] }) : null;
 
   return tabs
@@ -845,20 +700,6 @@ export function buildVerticalSummarySections(vertical: any, verticalState: any =
     );
 }
 
-/**
- * One story's measurement line for the summary table — `Left Side: 1ft, Front: 2ft (3ft total)`.
- *
- * ⚠️ The COLON after each location is required. Without it the line reads
- * `Left Side 1ft, Front 2ft`, and at a glance "Side" and the number run together
- * so the pairs are hard to separate — reported against both the Job Builder and
- * the My Deals edit wizard, which render this through the same component.
- *
- * The run total is only appended when there is more than one side to add up:
- * `Left Side: 22ft (22ft total)` restates itself.
- *
- * Pure, and here rather than in `VerticalSummaryTab`, so the string can be tested
- * — that component pulls in React Native and cannot load under jest.
- */
 export function formatStoryMeasurementLine(
   items: { location?: string; value?: unknown; unit?: string }[],
   fallbackUnit = 'ft',

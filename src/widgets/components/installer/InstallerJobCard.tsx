@@ -15,36 +15,14 @@ import type { InstallerJob } from '../../../config/types/installer';
 
 interface Props {
   job: InstallerJob;
-  /** The Upcoming tab — those jobs are preview-only. */
   isUpcoming?: boolean;
-  /** Starting the job — the card waits on the API before the detail screen opens. */
   loading?: boolean;
-  /** Another card is starting; this one stays tappable-looking but inert. */
   disabled?: boolean;
-  /**
-   * The device fix matches neither this job's coordinates nor a company office, so the
-   * action reads "Preview Appointment" instead of offering a check-in that would be
-   * refused. False while the position is still unknown.
-   */
   offSite?: boolean;
-  /**
-   * Clock the arrival window is judged against. Supplied by the dashboard's ticker rather
-   * than read here, so a card sitting on screen as noon passes actually re-renders —
-   * `new Date()` inside the component would be re-read only when something else already
-   * caused a render, which is exactly when it isn't needed.
-   */
   now?: Date;
   onPress: () => void;
 }
 
-/**
- * Job card for the installer schedule.
- *
- * Follows LeadCard's visual contract — `rounded-2xl border-2` with a `color + '10'`
- * tinted wash and a full-width `h-12 rounded-xl` action button. The accent colour and
- * the action label come from `resolveJobCardState`: the job's `workflowState`, downgraded
- * to a preview when the arrival window hasn't opened or the crew isn't on site.
- */
 export function InstallerJobCard({
   job,
   isUpcoming = false,
@@ -61,126 +39,28 @@ export function InstallerJobCard({
   const inert = loading || disabled;
   const state = resolveJobCardState(job, { isUpcoming, loading, offSite, now });
 
-  /**
-   * Where a Can't Do Work / Not Hit / Reset request on this job has got to, in
-   * the API's own words — "Pending Install Not Hit", "Rescheduled Reset".
-   *
-   * Read off `workflowState`, which carries the phrase in place of its base
-   * state on a job that has one. Composed server-side rather than here: a job
-   * whose request is still in flight stays `inProgress`, so half of these
-   * phrases cannot be derived from anything the card holds.
-   */
   const workflowPhrase = installStatusPhrase(job);
 
-  /**
-   * The request phrase rides on the ACTION BUTTON, not in a chip above the lead id.
-   *
-   * Ticket: *"these status are shown on top on the installer side but we need to show
-   * these status on the button instead"*. The button is where the crew's eye lands, and
-   * it gives the phrase a full row to itself — "Pending Install Can't Do Work" is nearly
-   * thirty characters, which is why the chip needed a row of its own in the first place.
-   * That row is now pure vertical cost on a card that already carries five.
-   *
-   * ⚠️ **There is no chip at all any more, on any card.** It first survived for RESULTED
-   * jobs, whose button was spoken for by the outcome — and that is exactly the card the
-   * reporter came back on: an `INSTALL CAN'T DO WORK` chip sitting above a
-   * `Resulted - Cant Do Work!` button, the same sentence twice.
-   *
-   * ⚠️ **A RESULTED job is no exception, and `workflowState` OUTRANKS the outcome label
-   * on it.** Requested directly: *"get the button status from this object —
-   * `workflowState: "Install Can't Do Work"`"*. So that card reads `Install Can't Do
-   * Work`, not `resultedActionLabel`'s `Resulted - Cant Do Work!`, and the two are not
-   * interchangeable: the phrase is composed server-side from where the REQUEST has got
-   * to, while the outcome is derived here from `job.status`. Dropping the `Resulted -`
-   * prefix loses nothing — the card already carries the RESULTED badge top-right.
-   *
-   * `resultedActionLabel` still answers every resulted job that carries no phrase, which
-   * is most of them (`installStatusPhrase` returns null for a `resulted` workflowState).
-   *
-   * The one state that keeps the phrase book is **loading** — the button is a spinner +
-   * "Starting Job…" for that instant.
-   *
-   * The card goes GREY while it carries a phrase — see `accent` below.
-   */
   const showPhraseOnAction = !!workflowPhrase && !loading;
 
-  /**
-   * ⚠️ A status phrase REPLACES the workflow accent for the WHOLE card — border, wash,
-   * arrival time, address pin, button and its label all move together, to the RESULTED
-   * grey. Requested directly: *"use the same colour for the card that is used for the
-   * resulted lead — no need to use the yellow, blue and other colour"*.
-   *
-   * ⚠️ A per-status TONE was tried twice — on the button, then on the whole card (amber
-   * pending / red can't-do-work / blue rescheduled) — and sent back both times: a list
-   * where every card is a different hue is a list with no signal in it. These jobs share
-   * the one fact that matters — the office is holding them, so they are not the crew's
-   * ordinary work — and `JOB_CARD_COLORS` already has the word for that: the grey a
-   * resulted job wears. The old `workflowPhraseColor` helper went with the chip.
-   *
-   * ⚠️ Grey the COLOUR, not the resulted TREATMENT. The card keeps its ordinary `+ '1A'`
-   * wash and full opacity — the resulted card's `#F4F6F8` ground and 0.85 dim say "this
-   * visit is over", which a pending-reset job flatly is not: its button still starts or
-   * resumes the job.
-   *
-   * ⚠️ The start/resume distinction is NOT lost with the colour: only `state.color` is
-   * overridden. `state` still decides what the tap does, the accent bar still draws for
-   * the two live states, and a phrase card that is not yet startable still resolves to
-   * PREVIEW — it just previews in grey.
-   */
   const accent = showPhraseOnAction ? JOB_CARD_COLORS.RESULTED : state.color;
 
-  // A literal label wins over the phrase book — a resulted job reports the API's own
-  // outcome string (`Resulted - Cant Do Work`), which has no translation key.
   const actionLabel = state.actionLabel ?? t(state.actionLabelKey);
 
   const buttonLabel = showPhraseOnAction ? (workflowPhrase as string) : actionLabel;
 
-  /**
-   * Preview is styled DOWN, deliberately — it sits in the card's OWN colour rather than
-   * shouting in it.
-   *
-   * A saturated blue button reads as the thing to press, and preview is the one state
-   * where pressing does nothing useful: the job is not due yet, or the crew is not at
-   * the address. It has to look secondary to the Start / Resume cards beside it, so a
-   * rep scanning the list is drawn to the job they can actually work.
-   *
-   * The tint is the SAME hue as the card, one step deeper — the wash is `accent + '1A'`
-   * (10 %) and the button `+ '33'` (20 %), so it reads as a slightly raised area of the
-   * card instead of a separate control laid on top of it. A neutral grey was tried first
-   * and looked like a foreign element dropped onto a blue card.
-   *
-   * The label takes the accent itself, which is already how this card tints its arrival
-   * time over the same wash — so the two agree instead of introducing a third colour.
-   *
-   * It stays TAPPABLE — `disabled` is not set. The tap is what explains WHY it isn't
-   * open ("This opens on 08/12/2026", "You're 1.4 km away"), and a truly dead button
-   * would leave the rep with a card that answers nothing.
-   */
   const isPreview = state.key === 'UPCOMING';
 
-  /**
-   * ⚠️ A phrase button is always SOLID, even on a preview card: *"the button should not
-   * be transparent type, the button's look should be same as the previous"*. The washed
-   * form reads as a disabled or secondary control, and a status report is neither
-   * optional nor secondary — it is the thing the card exists to say.
-   *
-   * The preview signal survives on the card itself: such a card still resolves to
-   * UPCOMING, so it loses the accent bar exactly as before, and its tap still explains
-   * why it will not open.
-   */
   const solidAction = !isPreview || showPhraseOnAction;
   const actionBg = solidAction ? accent : accent + '33';
   const actionFg = solidAction ? '#fff' : accent;
 
-  // The pin belongs to an action that takes the installer somewhere. A status report
-  // doesn't go anywhere — the same reasoning that dropped it from the resulted bar.
   const showActionIcon = !loading && !resulted && !showPhraseOnAction;
 
   const name =
     job.customerName ||
     [job.customerDetails?.firstName, job.customerDetails?.lastName].filter(Boolean).join(' ');
 
-  // The API sends "N/A" for leads without a human-facing number; fall back to the job number.
   const displayId = job.leadDisplayId || job.jobNumber || job.leadId;
 
   const date = job.leadDate ? new Date(job.leadDate) : null;
@@ -196,8 +76,6 @@ export function InstallerJobCard({
         disabled={inert}
         className="mb-4 rounded-2xl overflow-hidden border-2"
         style={{
-          // `+ '1A'` is web's `alpha(color, 0.1)`; resulted falls back to web's `grey.100`
-          // (the app's own surface in dark mode, which `grey.100` would blind).
           backgroundColor: resulted ? (isDark ? colors.surface : '#F4F6F8') : accent + '1A',
           borderColor: accent,
           opacity: disabled && !loading ? 0.6 : resulted ? 0.85 : 1,
@@ -224,7 +102,6 @@ export function InstallerJobCard({
               </Text>
             </View>
             {resulted && (
-              // Web's self-gen resulted chip — `#9ca3af`, white, bold.
               <View className="px-3 py-1.5 rounded-lg" style={{ backgroundColor: '#9ca3af' }}>
                 <Text className="text-[11px] font-black text-white tracking-widest">
                   {t('installer.resulted')}

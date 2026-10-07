@@ -2,9 +2,6 @@ import { calculateRetail } from './calculate-retail-util';
 import { getVerticalItemRetail } from './verticals-data';
 import { normalizeCalculatorData } from './data-normalization-util';
 
-/**
- * AUTHORITATIVE RESULT CALCULATOR — matches web calculation-results-util.js
- */
 export const calculateResultUtil = ({
   details,
   markupKey,

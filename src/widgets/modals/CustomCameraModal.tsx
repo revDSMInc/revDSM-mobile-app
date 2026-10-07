@@ -22,21 +22,6 @@ import { useSafeAreaInsets, SafeAreaView as SafeAreaViewContext } from 'react-na
 
 const ReanimatedCamera = Reanimated.createAnimatedComponent(Camera);
 
-/**
- * ⚠️ CAMERA ONLY. There is deliberately no gallery import here.
- *
- * A QA-only import button lived beside the shutter under an `ALLOW_GALLERY_IMPORT`
- * flag so a render could be tested against a known sample house. It was removed
- * before release, flag and all, rather than switched off — a disabled flag is one
- * edit away from shipping, and this one reached a rep's device once already.
- *
- * ⚠️ Do not re-add it to this modal. The inspection flow is camera-only BY DESIGN:
- * the photo has to be the house the rep is standing in front of, stamped with the
- * location and time it was actually taken. An imported photo satisfies none of
- * that and the record cannot tell the two apart afterwards. If QA needs a known
- * photo again, give the harness its own entry point — not this one.
- */
-
 interface CustomCameraModalProps {
   visible: boolean;
   onClose: () => void;
@@ -68,9 +53,6 @@ export const CustomCameraModal = ({
   } | null>(null);
 
   const insets = useSafeAreaInsets();
-  // ⚠️ `useWindowDimensions`, not `Dimensions.get('window')`: iPad allows landscape
-  // (`UISupportedInterfaceOrientations~ipad`) and the one-shot read never updated on
-  // rotation, so the viewfinder kept its portrait geometry after turning the device.
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
 
   const device = useCameraDevice('back', { physicalDevices: ['ultra-wide-angle-camera', 'wide-angle-camera', 'telephoto-camera'] });
@@ -132,13 +114,8 @@ export const CustomCameraModal = ({
     zoom: zoom.value,
   }), [zoom]);
 
-  // Request permissions
   useEffect(() => {
     if (visible) {
-      // Warm the location fix while the rep is still framing the shot, so the coordinates
-      // recorded against the photo come from a cache at shutter time rather than making the
-      // capture wait on the GPS radio. See `utils/capture-location.ts` for why the fix must be
-      // taken here and not at upload.
       warmCaptureCoords();
       (async () => {
         const cameraPermission = await Camera.getCameraPermissionStatus();
@@ -152,7 +129,6 @@ export const CustomCameraModal = ({
     }
   }, [visible]);
 
-  // Reset states and clear interval when visibility changes
   useEffect(() => {
     if (!visible) {
       if (timerIntervalRef.current) {
@@ -174,7 +150,6 @@ export const CustomCameraModal = ({
     };
   }, [visible]);
 
-  // Handle countdown animation
   useEffect(() => {
     if (countdown !== null) {
       countdownScale.setValue(0);
@@ -237,11 +212,6 @@ export const CustomCameraModal = ({
         flash: flash === 'auto' ? 'auto' : flash === 'on' ? 'on' : 'off',
       });
 
-      // Vision-camera writes the photo to iOS's VOLATILE tmp/ dir, which the OS purges
-      // (and an app restart clears). If the upload doesn't happen immediately — a review
-      // delay, offline queue, or the app being backgrounded — the file is gone and the
-      // upload fails with NSCocoa 260 "no such file". Copy it into a DURABLE app dir now,
-      // the instant it's captured, so the uri always resolves to a real file.
       let durablePath = photo.path;
       try {
         const fs = ReactNativeBlobUtil.fs;
@@ -298,16 +268,6 @@ export const CustomCameraModal = ({
 
   const viewfinderTop = insets.top + 20 + (Platform.OS === 'android' ? insets.top + 20 : 0);
 
-  // ⚠️ The 4:3 viewfinder is capped by the HEIGHT THAT IS LEFT, not derived from the
-  // width alone. `screenWidth * 4/3` silently assumes a phone: on an 11" iPad it comes
-  // to 1093pt of a 1180pt screen, leaving 43pt for a shutter bar that needs ~200, and on
-  // a 12.9" it overshoots the screen entirely (-43pt) so the shutter sits below the
-  // bottom edge and cannot be tapped at all. Small phones (SE) were squeezed by the same
-  // sum. Landscape iPad is the same story with even less height.
-  //
-  // Both sides are derived from whichever dimension binds, so the box stays a TRUE 4:3
-  // and is centred rather than stretched; on a phone the width still binds, so the
-  // geometry there is unchanged to the pixel.
   const maxViewfinderHeight = Math.max(
     0,
     screenHeight - viewfinderTop - insets.bottom - BOTTOM_CONTROLS_MIN_HEIGHT,
@@ -343,17 +303,6 @@ export const CustomCameraModal = ({
                   photo={true}
                   animatedProps={animatedProps}
                   resizeMode="cover"
-                  // ⚠️ Ticket: a photo taken with the phone physically rotated to landscape
-                  // displayed SIDEWAYS everywhere (Manage Photos full-screen viewer, etc.) —
-                  // the rep had to rotate the phone back to see it upright. This screen's
-                  // viewfinder never itself rotates (it is a fixed portrait layout sized off
-                  // `screenWidth`), so with `outputOrientation="preview"` vision-camera tagged
-                  // every photo's EXIF orientation as "portrait" (matching the never-rotating
-                  // PREVIEW), regardless of which way the phone was actually held — wrong for
-                  // a landscape shot, even though the pixels themselves were captured fine.
-                  // `"device"` tags the EXIF from the PHONE'S physical rotation sensor instead,
-                  // independent of the preview UI, which is what every downstream `<Image>`
-                  // (which correctly honours EXIF orientation) needs to display it upright.
                   outputOrientation="device"
                 />
               </View>
@@ -431,7 +380,6 @@ export const CustomCameraModal = ({
                 </View>
               </View>
             ) : (
-              /* ACTIVE CAMERA STATE */
               <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
                 {/* TOP BAR CONTROLS (iOS Style) */}
                 <View style={[
@@ -610,11 +558,6 @@ export const CustomCameraModal = ({
   );
 };
 
-/**
- * What the bottom bar needs before the shutter starts being clipped: the zoom pills
- * (36 + 24 padding), the shutter row (76 + 5 margin) and the section's own padding
- * (12 + 12 + 20). Measured from the styles below — keep the two in step.
- */
 const BOTTOM_CONTROLS_MIN_HEIGHT = 200;
 
 const styles = StyleSheet.create({

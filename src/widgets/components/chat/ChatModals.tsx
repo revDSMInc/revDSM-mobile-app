@@ -44,10 +44,8 @@ export const PinnedMessagesArea = ({
   };
 
   const getThumbnail = (msg: any) => {
-    // Check direct fields
     let p = msg.image || msg.imageUrl || msg.video || msg.videoUrl;
 
-    // Check files array if direct fields are empty
     if (!p && msg.files?.length > 0) {
       const f = msg.files[0];
       p = f.url || f.path || f.filePath;

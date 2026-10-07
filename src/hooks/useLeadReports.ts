@@ -10,6 +10,10 @@ import { reportDisplayName } from '../utils/report-name';
 import { ENV } from '../config/env';
 import { useAuth } from './useAuth';
 import { logEvent } from '../services/api/LoggerService';
+import {
+  isWaitingForSignal,
+  shouldAnnouncePollFailure,
+} from '../utils/report-job-connectivity';
 
 
 export interface RiskJob {
@@ -18,10 +22,11 @@ export interface RiskJob {
   status: string;
   step: string;
   error?: string | null;
+  /** Set when a poll died on transport: the server job is very likely still running. */
+  waiting?: boolean;
 }
 
 
-// Shared global state for active risk jobs across hook instances to keep them perfectly synced in real-time
 const activeRiskJobs: Record<string, RiskJob | null> = {};
 const riskJobListeners: Record<string, Set<(job: RiskJob | null) => void>> = {};
 const activePolls = new Set<string>();
@@ -52,20 +57,6 @@ const triggerGlobalRefetch = (leadId: string) => {
   }
 };
 
-/**
- * The real reason a batch failed — ticket: the backend's own message ("This model is
- * currently experiencing high demand...") was never shown; the rep only ever saw the
- * generic "Generation failed".
- *
- * Each failed `batch.jobs[]` entry's `error` is a STRINGIFIED JSON blob a level deeper
- * than it looks: `"{\"error\":{\"code\":503,\"message\":\"...\",\"status\":\"...\"}}"`.
- * Picks the first failed job (a batch of 1 is the overwhelmingly common case; a rep
- * rendering several views at once still gets an actionable message rather than none).
- *
- * ⚠️ Never throws — a batch whose shape doesn't match (a future backend change, or a
- * `cancelled` batch with no per-job error at all) falls back to a plain, still-useful
- * generic message rather than crashing the poll loop.
- */
 const extractBatchFailureMessage = (batch: any): string => {
   const failedJob = Array.isArray(batch?.jobs)
     ? batch.jobs.find((j: any) => j?.status === 'failed' && j?.error)
@@ -77,7 +68,6 @@ const extractBatchFailureMessage = (batch: any): string => {
     const parsed = typeof failedJob.error === 'string' ? JSON.parse(failedJob.error) : failedJob.error;
     backendMessage = parsed?.error?.message || parsed?.message || null;
   } catch {
-    // `error` wasn't JSON — fall through and use it as plain text below.
     backendMessage = typeof failedJob.error === 'string' ? failedJob.error : null;
   }
 
@@ -104,7 +94,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     }
   }, [leadId]);
 
-  // Synchronize state across all instances of this hook using a listener pattern
   useEffect(() => {
     if (!leadId) return;
 
@@ -133,7 +122,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     
     riskJobListeners[leadId].add(listener);
 
-    // Register this instance's refetch callback
     if (!globalRefetchListeners[leadId]) {
       globalRefetchListeners[leadId] = new Set();
     }
@@ -148,7 +136,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     };
   }, [leadId, refetch]);
 
-  // Resolve secure S3 URLs for generated reports
   const refreshSecureUrls = async () => {
     const reports = [
       ...(lead?.generatedReports || []),
@@ -206,6 +193,8 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             status: data.status,
             step: data.step,
             error: data.error || null,
+            // Reached the server: whatever `waiting` said before, it is stale now.
+            waiting: false,
           };
           updateRiskJob(updatedJob);
 
@@ -213,7 +202,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             console.log('[Risk] Job completed, final sync...');
             updateRiskJob(null);
 
-            // Log successful report generation
             const address = lead?.fullAddress || lead?.address || '';
             const street = address?.split(',')[0] || '';
             if (user?._id || user?.id) {
@@ -231,12 +219,10 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
               });
             }
             
-            // Invalidate React Query cache to update other screens (MapDetail, LeadCenter, etc.)
             queryClient.invalidateQueries({ queryKey: ['mapJobs'] });
             queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
             queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] });
             
-            // Poll/retry refetch a few times to ensure the server has finalized and linked the report
             let attempts = 0;
             const maxAttempts = 4;
             const refetchWithRetry = async () => {
@@ -255,7 +241,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             console.warn('[Risk] Job failed:', data.error);
             updateRiskJob(null);
 
-            // Log report generation error
             const address = lead?.fullAddress || lead?.address || '';
             const street = address?.split(',')[0] || '';
             if (user?._id || user?.id) {
@@ -277,14 +262,24 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
           }
         }
       } catch (err) {
-        console.error('[Risk] Status check failed:', err);
+        // ⚠️ Losing signal is NOT the report failing — it is generated on the SERVER and is very
+        // probably still going. Flag the card as waiting (which replaces the frozen server `step`
+        // with an honest line and stops the bar reading as live work) and keep polling: the first
+        // tick after reconnect clears it. Returning `false` deliberately keeps the interval alive.
+        if (isWaitingForSignal(err)) {
+          updateRiskJob({
+            ...(activeRiskJobs[leadId] || { jobId, progress: 0, status: 'running', step: '' }),
+            waiting: true,
+          });
+        } else {
+          console.error('[Risk] Status check failed:', err);
+        }
       }
       return false;
     },
     [leadId, refetch, updateRiskJob]
   );
 
-  // Coordinated Risk Report Polling Effect: only one polling interval runs per leadId/jobId
   useEffect(() => {
     let interval: any;
     const jobId = riskJob?.jobId;
@@ -318,7 +313,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     };
   }, [riskJob?.jobId, riskJob?.status, pollRiskStatus, leadId]);
 
-  // Initial check for existing rev render jobs
   useEffect(() => {
     const initJobs = () => {
       const savedRev = Storage.getItem(`rev_render_jobs_${leadId}`);
@@ -350,7 +344,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
       updateRiskJob(null);
       FlashMessage.error('Error', 'Failed to start report generation');
 
-      // Log report generation start error
       const address = lead?.fullAddress || lead?.address || '';
       const street = address?.split(',')[0] || '';
       if (user?._id || user?.id) {
@@ -376,7 +369,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
         report ? reportDisplayName(report, 'Risk Report') : `RiskReport_${lead?.leadId || 'lead'}`
       );
     } catch (err) {
-      // Error handled in utility
     }
   };
 
@@ -384,7 +376,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     try {
       await downloadPdfToDevice(url, `${type}_${lead?.leadId || 'lead'}`);
     } catch (err) {
-      // Error handled in utility
     }
   };
 
@@ -394,7 +385,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
       await LeadService.resetWeatherReport(reportId);
       updateRiskJob(null);
       
-      // Invalidate React Query cache
       queryClient.invalidateQueries({ queryKey: ['mapJobs'] });
       queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
       queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] });
@@ -442,6 +432,8 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     const runRender = async (job: any, index: number) => {
       let mockTimer: any = null;
       let isCompleted = false;
+      // Set by the poll loop below when a status check dies on transport.
+      let unreachable = false;
 
       const startMockProgress = () => {
         let elapsed = 0;
@@ -450,6 +442,12 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             clearInterval(mockTimer);
             return;
           }
+          // ⚠️ This progress is a TIMER, not a measurement — it advances 0→20→67→80% on elapsed
+          // seconds alone, with no server contact. Offline that made the bar climb while nothing
+          // was happening, which is the 67% in the reported screenshot. While unreachable it must
+          // hold its last number: a bar that keeps filling is a stronger (and falser) promise than
+          // any label can undo.
+          if (unreachable) return;
           elapsed += 1;
           let nextProgress = 0;
           if (elapsed >= 15) {
@@ -491,9 +489,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
                         resData?.data?.batch?.batchId ||
                         resData?.batch?.id;
 
-        // A single payload's batch can render MORE than one image; capture the count
-        // so the Tools card shows one "AI Rendering" placeholder PER render (not one
-        // per job). Set as early as the create response exposes it.
         const initialTotal = Number(
           resData?.batch?.total ?? resData?.data?.batch?.total ?? resData?.total ?? 0
         ) || 0;
@@ -527,12 +522,18 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
           await new Promise<void>(resolve => setTimeout(() => resolve(), 3000));
           try {
             const statusRes = await LeadService.getRevRenderBatchStatus(batchId);
+            if (unreachable) {
+              unreachable = false;
+              updateJobStateAndPersistence(prev => {
+                const next = [...prev];
+                if (next[index]) next[index].waiting = false;
+                return next;
+              });
+            }
             const batch = statusRes.data?.batch || statusRes.data;
             const batchStatus = batch?.status;
             const batchTotal = batch?.total || 1;
 
-            // Keep the job's render count in sync so the Tools card shows one
-            // placeholder per render while the batch is still generating.
             if (batchTotal > 1) {
               updateJobStateAndPersistence(prev => {
                 const next = [...prev];
@@ -543,13 +544,6 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
               });
             }
 
-            // ⚠️ `status: 'done'` means the batch finished processing — it is NOT a success
-            // verdict on its own. A batch can finish `'done'` with every job FAILED
-            // (`succeeded: 0, failed: 1`), and reading `'done'` as success here reported a
-            // fully-failed render as a completed one, with no error shown at all — worse than
-            // the generic message this ticket originally complained about. `'done'` must be
-            // checked against the actual counts; `'completed'`/`'succeeded'` are a currently-
-            // unseen API shape kept as a secondary unconditional-success check for safety.
             const batchFinished = batchStatus === 'done' || batchStatus === 'completed' || batchStatus === 'succeeded';
             const anySucceeded = batchStatus === 'completed' || batchStatus === 'succeeded' || (batch?.succeeded || 0) > 0;
             const anyFailed = (batch?.failed || 0) > 0;
@@ -587,9 +581,22 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
               }
             }
           } catch (pollErr: any) {
-            // Re-throw deliberate failures (failed/cancelled status) so the outer catch handles them
             if (isDone) throw pollErr;
-            console.error('Polling error:', pollErr);
+            // ⚠️ A render is generated on the SERVER; losing signal does not cancel it. Hold the
+            // bar, mark the card waiting, and keep looping — the first successful tick after
+            // reconnect clears the flag and the real progress takes over.
+            if (isWaitingForSignal(pollErr)) {
+              if (!unreachable) {
+                unreachable = true;
+                updateJobStateAndPersistence(prev => {
+                  const next = [...prev];
+                  if (next[index]) next[index].waiting = true;
+                  return next;
+                });
+              }
+            } else if (shouldAnnouncePollFailure(pollErr)) {
+              console.error('Polling error:', pollErr);
+            }
           }
         }
 
@@ -610,14 +617,20 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
         // backend text when the failure came from `extractBatchFailureMessage` above;
         // the `err?.error` parse stays as a fallback for a differently-shaped error
         // (e.g. a raw axios error from `generateRevRender` itself failing to start).
-        let errorMsg = err?.message || 'Generation failed';
+        // ⚠️ A render that never REACHED the server is a real failure — nothing was submitted and
+        // nothing is coming — but it must not be reported in axios' own words. "Network Error" over
+        // a render tells a rep mid-sale that the app is broken; this says what happened and that
+        // retrying later is the fix. (A render already accepted and merely unreachable never gets
+        // here — the poll loop holds it as `waiting` instead.)
+        let errorMsg = isWaitingForSignal(err)
+          ? 'No connection — this render was not started. Try again once you have signal.'
+          : err?.message || 'Generation failed';
         try {
           const errorBody = typeof err?.error === 'string' ? JSON.parse(err.error) : err?.error;
           if (errorBody?.error?.code === 503 || errorBody?.code === 503) {
             errorMsg = errorBody?.error?.message || errorBody?.message || 'AI Model is currently busy. Please try again in a few minutes.';
           }
         } catch {
-          // `err.error` wasn't JSON — `errorMsg` already holds `err.message` from above.
         }
 
         updateJobStateAndPersistence(prev => {

@@ -22,7 +22,6 @@ export type PaymentPlanCategory = {
   plans: string[];
 };
 
-/** Plan disabled when end/drop price is below plan minimum (web PaymentPlanSelect / DropPriceModal). */
 export function isPlanBelowMinPrice(planKey: string, price: number): boolean {
   const plan = paymentPlans[planKey];
   if (!plan?.minPrice) return false;
@@ -41,7 +40,6 @@ export function getBelowMinMessage(planKey: string, price: number): string {
   return `This plan requires a minimum cost price of $${plan.minPrice.toLocaleString()} (cost: $${numericPrice.toLocaleString()}).`;
 }
 
-/** Default payment method for new rollouts (web tab-action-utils). */
 export function getDefaultPaymentMethod(isLowesLead: boolean, existing?: string): string {
   if (isLowesLead) {
     if (!existing || existing === 'check') return 'lowes_ach';
@@ -50,25 +48,7 @@ export function getDefaultPaymentMethod(isLowesLead: boolean, existing?: string)
   return existing || 'check';
 }
 
-/** Rollout summary payment picker categories. */
-export function getRolloutPaymentCategories(isLowesLead: boolean): PaymentPlanCategory[] {
-  if (isLowesLead) {
-    return [
-      {
-        title: "",
-        bg: 'bg-slate-50',
-        text: 'text-slate-900',
-        plans: [...LOWES_BASIC_KEYS],
-      },
-      {
-        title: "Lowe's Plan",
-        bg: 'bg-[#e8f4fd]',
-        text: 'text-slate-900',
-        plans: [...LOWES_FINANCING_KEYS],
-      },
-    ];
-  }
-
+function getStandardPaymentCategories(): PaymentPlanCategory[] {
   return [
     {
       title: 'Basic Options',
@@ -107,7 +87,28 @@ export function getRolloutPaymentCategories(isLowesLead: boolean): PaymentPlanCa
   ];
 }
 
-/** Drop modal "+ Add Plan" list — Lowe's leads only see Lowe's financing plans. */
+export function getRolloutPaymentCategories(isLowesLead: boolean): PaymentPlanCategory[] {
+  const standard = getStandardPaymentCategories();
+  if (isLowesLead) {
+    return [
+      {
+        title: "",
+        bg: 'bg-slate-50',
+        text: 'text-slate-900',
+        plans: [...LOWES_BASIC_KEYS],
+      },
+      {
+        title: "Lowe's Plan",
+        bg: 'bg-[#e8f4fd]',
+        text: 'text-slate-900',
+        plans: [...LOWES_FINANCING_KEYS],
+      },
+      ...standard.filter((c) => c.title !== 'Basic Options'),
+    ];
+  }
+  return standard;
+}
+
 export function getDropAddPlanCategories(isLowesLead: boolean): PaymentPlanCategory[] {
   if (isLowesLead) {
     return [
@@ -117,12 +118,12 @@ export function getDropAddPlanCategories(isLowesLead: boolean): PaymentPlanCateg
         text: 'text-slate-900',
         plans: [...LOWES_FINANCING_KEYS],
       },
+      ...getRolloutPaymentCategories(false).filter((cat) => cat.title !== 'Basic Options'),
     ];
   }
   return getRolloutPaymentCategories(false).filter(cat => cat.title !== 'Basic Options');
 }
 
-/** Outcome modal down-payment methods (web contract-details basic vs lowesBasic). */
 export function getOutcomeDownPaymentMethods(isLowesLead: boolean) {
   if (isLowesLead) {
     return [

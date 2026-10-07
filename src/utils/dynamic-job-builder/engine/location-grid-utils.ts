@@ -1,7 +1,4 @@
 import { LOCATIONS, STORIES } from '../constants/color-palettes';
-// Canonical rule evaluator (matches web location-grid-utils.js). The
-// dependency-engine <-> location-grid-utils import cycle is safe: both bindings
-// are only invoked at runtime, never at module-load. Web has the identical cycle.
 import { evaluateRuleGroup } from './dependency-engine';
 
 export function createDefaultLocationGridConfig(singleStory = false) {

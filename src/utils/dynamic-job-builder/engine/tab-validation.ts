@@ -23,13 +23,6 @@ import { filterVisibleToggleOptions } from './toggle-utils';
 import { isRequiredFieldValueMissing } from './field-value-utils';
 import { getWarningConfig } from './field-layout-utils';
 
-// Ported to full web parity. Previously this file was a heavily stripped
-// reimplementation that omitted section-visibility gating, per-field visibleWhen
-// skipping, allocation-balance gating, toggle option-visibility skipping and
-// warningConfig blocking — so tabs (esp. gutter/leaffilter) could report complete
-// while allocations were unbalanced or conditionally-hidden fields were empty.
-// Web ref: src/components/dynamic-job-builder/engine/tab-validation.js
-
 const SKIPPED_FIELD_TYPES = new Set([
   'locked',
   'lockedWithColor',
@@ -38,10 +31,6 @@ const SKIPPED_FIELD_TYPES = new Set([
   'sectionLabel',
 ]);
 
-// mobile bridge: web sources these from field-blocks-renderer.js (absent here).
-// getCombinationSectionComboFields === getCombinationSectionRowFields; and the
-// section allocation set is the section's top-level allocation fields — their
-// visibility/exclusion gating happens inside isAllocationComplete below.
 const getCombinationSectionComboFields = (section: any) => getCombinationSectionRowFields(section);
 const getCombinationSectionAllocations = (section: any) =>
   (section?.fields || []).filter(isAllocationField);
@@ -145,17 +134,11 @@ function isEmptyRequiredValue(field: any, state: any, colorValues: any = {}, dep
     case 'textarea':
       return !value;
     case 'number':
-      // Field-aware: a required number of 0 is missing EXCEPT for miters/end caps,
-      // where an explicitly-entered 0 is a valid count (blank still blocks). Same
-      // helper the render warning uses, so the `*`/banner and the gate agree.
       return isRequiredFieldValueMissing(field, value);
     case 'roomPicker':
       return !Array.isArray(value) || value.length === 0;
     case 'swatch':
     case 'colorSelection': {
-      // Web parity: a field with a configured (active) default color counts as
-      // filled even when the rep hasn't tapped a swatch yet — otherwise required
-      // gutter/leaffilter color swatches with a default block the tab forever.
       if (value) return false;
       return !isDefaultColorActive(field, state, depCtx);
     }
@@ -183,14 +166,7 @@ function buildDepCtx(ctx: any, state: any) {
     section: ctx.section,
     sectionState: ctx.sectionState ?? state,
     combos: ctx.combos,
-    // Ticket 1063 §3.1 — must match the renderer's `depCtx` exactly. If validation
-    // and the renderer disagreed about which options exist, the field would render
-    // fine while Next stayed disabled, which is the worst of both worlds.
     sections: ctx.sections ?? ctx.tab?.sections,
-    // ⚠️ Same flag the renderer uses, so Next cannot disagree with what is on
-    // screen. Wiring only the renderer is a real bug, not a cosmetic one: the
-    // option list would come from one flag and the completeness check from another
-    // — the same class of failure as the original `tab-validation` depCtx gap.
     editMode: ctx.editMode,
   };
 }
@@ -206,28 +182,16 @@ export function isFieldValueComplete(field: any, state: any, ctx: any = {}) {
   }
 
   if (field.type === 'toggle' || field.type === 'optionList' || field.type === 'dropdown') {
-    // ⚠️ `depCtx`, NOT `dealCenterData` — an optionVisibility rule that references a
-    // field by key / another section / an allocation metric silently resolves to
-    // `undefined` against the stripped context, hides every option, and then this
-    // exemption would never fire.
     const visibleOptions = filterVisibleToggleOptions(field, depCtx, state, applyConditions);
 
-    // Ticket 1063 added `dropdown` here: a required dropdown whose options are all
-    // ruled out renders nothing, so without this Next is disabled with nothing on
-    // screen to fix.
     if (!visibleOptions.length) {
       return true;
     }
 
-    // The rep is not allowed to open it, so it can never be the blocker.
     if (field.type === 'dropdown' && field.disabled) {
       return true;
     }
 
-    // An ACTIVE default is already the answer — but only when its option is
-    // actually on offer. ⚠️ A default whose option is currently ruled out is NOT an
-    // answer: the renderer will not show it and `resolveDropdownSync` will not seed
-    // it, so counting it here would enable Next over a field that reads blank.
     if (
       field.type === 'dropdown' &&
       isDefaultColorActive(field, state, depCtx) &&
@@ -370,9 +334,6 @@ function isAllocationComplete(field: any, ctx: any = {}) {
   if (!status) return true;
   const ok = status.type === 'success';
   if (!ok && typeof __DEV__ !== 'undefined' && __DEV__) {
-    // Prime suspect for "filled everything but tab won't complete": the budget
-    // (available) resolves to 0 because dealCenterData lacks the dcField key(s)
-    // this allocation references — so remaining can never reach zero.
     const dcRefs = field?.dcFields?.length ? field.dcFields : field?.dcField ? [field.dcField] : [];
     const dcPresent = dcRefs.filter((k: string) => dealCenterData && dealCenterData[k] !== undefined);
     console.log(
@@ -494,8 +455,6 @@ export function isTabComplete(tab: any, tabState: any = {}, ctx: any = {}) {
     products: ctx.products,
     tab,
     tabState,
-    // Reaches every `buildDepCtx` call below, so `flow` rules resolve the same way
-    // here as in the renderer.
     editMode: ctx.editMode,
   };
 

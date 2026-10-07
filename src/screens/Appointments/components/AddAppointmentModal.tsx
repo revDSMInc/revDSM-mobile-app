@@ -33,8 +33,6 @@ interface AddAppointmentModalProps {
   submitting?: boolean;
 }
 
-// Port of web `add-appointment.js`. Address uses Google Places autocomplete + a
-// reverse-geocode prefill of the rep's current location for new appointments.
 export const AddAppointmentModal: React.FC<AddAppointmentModalProps> = ({
   visible,
   onClose,
@@ -56,7 +54,6 @@ export const AddAppointmentModal: React.FC<AddAppointmentModalProps> = ({
   const [searching, setSearching] = useState(false);
   const skipSearch = useRef(false);
 
-  // ── Reset / hydrate on open ────────────────────────────────────────────────
   useEffect(() => {
     if (!visible) return;
     setNameError('');
@@ -108,7 +105,6 @@ export const AddAppointmentModal: React.FC<AddAppointmentModalProps> = ({
     );
   };
 
-  // ── Autocomplete search ────────────────────────────────────────────────────
   useEffect(() => {
     if (!visible) return;
     if (skipSearch.current) {
@@ -148,8 +144,6 @@ export const AddAppointmentModal: React.FC<AddAppointmentModalProps> = ({
 
   const handleAddressChange = (text: string) => {
     setAddressInput(text);
-    // Keep formattedAddress in sync so a typed (not-picked) address is still saved,
-    // matching web where the raw input is used as the address on submit.
     setFormattedAddress(text);
   };
 

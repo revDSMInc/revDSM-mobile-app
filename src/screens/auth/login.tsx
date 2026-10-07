@@ -131,12 +131,8 @@ export default function LoginScreen() {
         }
       }
     } catch (err: any) {
-      // Keep the raw cause visible — the messages below are deliberately vague.
       console.warn('[login] failed', err);
 
-      // The credentials were fine; the account simply has no mobile dashboard
-      // permission. Shown verbatim and BEFORE the wording below, which would
-      // otherwise reduce a permission problem to "incorrect email or password".
       if (isMobileAccessDenied(err)) {
         FlashMessage.error('Access Denied', NO_MOBILE_ACCESS_MESSAGE);
         return;
@@ -146,14 +142,8 @@ export default function LoginScreen() {
         (typeof err?.message === 'string' && err.message) ||
         err?.response?.data?.message ||
         '';
-      // No message at all means the rejection wasn't an API error object — a
-      // misconfigured API_URL answering 405/HTML, or the request never landing.
-      // Blaming the password there sends people hunting the wrong problem.
       let cleanMsg = 'Could not reach revDSM. Check your connection and try again.';
       if (isNetworkError(err)) {
-        // Nothing reached the server (airplane mode, dead wifi, DNS, timeout).
-        // `err.message` here is axios' untranslated "Network Error" / "timeout of
-        // 0ms exceeded", which tells a rep nothing actionable.
         cleanMsg = isTimeoutError(err)
           ? 'The request timed out. Check your connection and try again.'
           : 'No internet connection. Check your network and try again.';

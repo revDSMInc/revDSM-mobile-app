@@ -14,35 +14,20 @@ interface ProgressTrackerProps {
   steps?: ProgressTrackerStep[];
   activeStepId?: string;
   onStepPress?: (index: number) => void;
-  // Web parity: web's stepper is DISPLAY-ONLY — tapping a step never navigates; the
-  // footer Next (gated on `canProceed`) is the only way forward. When true the steps
-  // are non-interactive, so the rep advances only via the bottom Next button.
   disableNavigation?: boolean;
 }
 
-// The stepper scrolls horizontally when the steps don't fit and AUTO-SCROLLS to keep
-// the active step centred (so jumping to the Summary reveals the last step instead of
-// staying pinned at step 1). Steps and connectors use FIXED widths so the gap is small
-// and consistent (the previous `flex: 1` connectors stretched into long lines). Fixed
-// dp keeps the layout identical on Android and iOS.
 const CIRCLE = 40;
 const STEP_WIDTH = 54; // just wider than the circle so labels have room, gaps stay tight
 const CONNECTOR_WIDTH = 12; // short connector line between two steps
-// Connector aligns with the circle centre (CIRCLE / 2), minus half the line height.
 const CONNECTOR_TOP = CIRCLE / 2 - 1;
 const PADDING_LEFT = 8; // must match contentContainerStyle.paddingHorizontal
-// Left edge of step `i`: paddingLeft + i steps + i connectors before it.
 const stepOffset = (i: number) => PADDING_LEFT + i * (STEP_WIDTH + CONNECTOR_WIDTH);
 
 export function ProgressTracker({ steps = [], activeStepId, onStepPress, disableNavigation }: ProgressTrackerProps) {
   const scrollRef = useRef<ScrollView>(null);
   const [viewportWidth, setViewportWidth] = useState(0);
 
-  // Auto-scroll the strip so the ACTIVE step is centred (or as close as the content
-  // allows — scrollTo clamps). Fires whenever the active step changes, e.g. after
-  // "Skip to Summary" jumps to the last step: the strip follows to reveal it instead
-  // of staying pinned at step 1. `scrollTo` clamps out-of-range x, so the first/last
-  // steps settle flush at each end.
   const activeIndex = steps.findIndex((s) => s.id === activeStepId || s.active);
   useEffect(() => {
     if (activeIndex < 0 || viewportWidth <= 0) return;
@@ -63,11 +48,6 @@ export function ProgressTracker({ steps = [], activeStepId, onStepPress, disable
         {steps.map((step, index) => {
           const isActive = step.id === activeStepId || step.active;
 
-          // ⚠️ Locked is a NEUTRAL state (a step this deal simply hasn't configured), not
-          // an error — ticket: "Red means wrong" reported against Lighting / Additional
-          // Services reading red on a deal that never used those verticals. Grey, matching
-          // the same "not reached yet" tone already used for an un-complete numbered step
-          // (`#94a3b8` label / `#e2e8f0` border), not a new colour of its own.
           const bgColor = isActive
             ? '#0EA5E9'
             : step.complete

@@ -47,7 +47,6 @@ export const JobImageUploadModal = ({
   const [jobDetails, setJobDetails] = useState<any>(null);
   const [offlinePendingImages, setOfflinePendingImages] = useState<any[]>([]);
 
-  // Reset state when modal opens
   useEffect(() => {
     if (visible) {
       resetState();
@@ -120,11 +119,9 @@ export const JobImageUploadModal = ({
         return;
       }
 
-      // Phase 1: Set fallback URIs instantly
       const fallbacks = imgs.map((img: any) => img.secureUrl || img.s3url || img.url || img.filePath || img).filter(Boolean);
       setSignedUris(fallbacks);
 
-      // Phase 2: Silently sign in background
       try {
         const filePaths = imgs.map((img: any) => ({
           bucketName: img.bucketName || ENV.S3_BUCKET,
@@ -254,7 +251,6 @@ export const JobImageUploadModal = ({
     try {
       const isOnline = await checkOnlineStatus();
       if (!isOnline) {
-        // Enqueue offline upload
         await enqueueOfflineUpload({
           jobNumber: selectedJob.jobNumber,
           companyId: selectedJob.companyId,
@@ -309,7 +305,6 @@ export const JobImageUploadModal = ({
       formData.append('jobNumber', selectedJob.jobNumber);
       formData.append('companyId', selectedJob.companyId);
 
-      // Additional fields web sends
       formData.append('houseNumber', selectedJob.address?.houseNumber || '');
       formData.append('streetName', selectedJob.address?.streetName || '');
       formData.append('city', selectedJob.address?.city || '');
@@ -360,9 +355,6 @@ export const JobImageUploadModal = ({
 
         Alert.alert('Success', 'Images uploaded successfully');
         onUploadSuccess?.(response.data?.data || response.data);
-        // Return to selection screen instead of just closing if preferred, 
-        // but typically we close and let parent handle refresh.
-        // Based on user request: "again intialized to the before and after screen"
         resetState();
         onClose();
       }

@@ -3,38 +3,17 @@ import { View, Image, ActivityIndicator, StyleSheet, type ImageResizeMode } from
 
 const T_GREEN = '#7ddb46';
 
-/** Give up on the spinner after this long and show whatever loaded. */
 const LOAD_TIMEOUT_MS = 15000;
 
-/**
- * URIs that have finished decoding at least once this session.
- *
- * Without this, every return to an already-viewed tag re-flashes the spinner: RN
- * fires `onLoadStart` again even when the image comes straight from its cache.
- */
 const loadedUris = new Set<string>();
 
 interface Props {
   uri: string;
-  /** Colour behind the image while it decodes, so the frame is never plain black. */
   tint?: string;
   resizeMode?: ImageResizeMode;
-  /** Rendered under the image — e.g. the ghost house placeholder. */
   children?: React.ReactNode;
 }
 
-/**
- * Absolute-fill photo with a spinner until it is on screen.
- *
- * Rep reference shots are private S3 objects fetched over a signed URL, so on a job
- * site they can take seconds and the frame would otherwise sit empty.
- *
- * The spinner is a small centred badge, NOT a full-bleed scrim: a scrim that fails to
- * clear hides the very photo it is waiting on, and there are several ways for the
- * "loaded" signal to be missed (a cached decode that skips `onLoadEnd`, the component
- * instance being reused for a different tag). A badge degrades to a harmless dot on
- * top of a visible image instead.
- */
 export const TaggerImage = React.memo(function TaggerImage({
   uri,
   tint,
@@ -45,9 +24,6 @@ export const TaggerImage = React.memo(function TaggerImage({
   const [failed, setFailed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // The tagger reuses one instance as the installer moves between tags, so the state
-  // has to be re-derived per uri — `useState`'s initializer only runs on mount, which
-  // is what left the spinner up over an image that had already loaded.
   useEffect(() => {
     setLoading(!loadedUris.has(uri));
     setFailed(false);
@@ -75,8 +51,6 @@ export const TaggerImage = React.memo(function TaggerImage({
         source={{ uri }}
         style={StyleSheet.absoluteFill}
         resizeMode={resizeMode}
-        // Both fire on success and either can be the one that lands first depending
-        // on platform and whether the decode came from cache — clear on either.
         onLoad={settle}
         onLoadEnd={settle}
         onError={(event) => {
@@ -84,8 +58,6 @@ export const TaggerImage = React.memo(function TaggerImage({
           setLoading(false);
           setFailed(true);
           if (__DEV__) {
-            // A signed URL that 403s (expired, wrong bucket/region) fails silently
-            // otherwise, and looks identical to a slow network from the outside.
             console.warn(
               '[TaggerImage] Image failed to load:',
               event?.nativeEvent?.error ?? 'unknown error',
@@ -104,7 +76,6 @@ export const TaggerImage = React.memo(function TaggerImage({
   );
 });
 
-/** Spinner for the state *before* a URL exists — the signed URL is still resolving. */
 export function TaggerImageSpinner() {
   return (
     <View style={styles.badge} pointerEvents="none">
@@ -114,7 +85,6 @@ export function TaggerImageSpinner() {
 }
 
 const styles = StyleSheet.create({
-  // Centred badge rather than a covering layer — see the component doc.
   badge: {
     position: 'absolute',
     top: '50%',

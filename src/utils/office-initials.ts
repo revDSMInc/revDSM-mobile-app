@@ -1,17 +1,3 @@
-/**
- * Office-initials helpers — 1:1 port of the web `src/utils/office-initials.js`.
- *
- * Used to prefix a resulted lead's job/lead number with its office abbreviation
- * (e.g. "FL803", "STN/A"), matching the web job builder and chat thread list.
- *
- * Logic (mirrors the web `agreement-dialog.js`):
- *  1. Office name from `repDetails.office[0].name` or `repDetails.officeName`.
- *  2. Look it up in the US-state abbreviations map (e.g. "Florida" → "FL").
- *  3. If not in the map, take the first 2 chars uppercased (e.g. "Tampa" → "TA").
- *  4. If no name at all, fall back to `office[0].code`.
- *  5. Final fallback: empty string.
- */
-
 const STATE_ABBREVIATIONS: Record<string, string> = {
   alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA',
   colorado: 'CO', connecticut: 'CT', delaware: 'DE', florida: 'FL', georgia: 'GA',
@@ -26,7 +12,6 @@ const STATE_ABBREVIATIONS: Record<string, string> = {
   'west virginia': 'WV', wisconsin: 'WI', wyoming: 'WY',
 };
 
-/** e.g. "FL", "TA", "GA" — empty string when nothing resolvable. */
 export function getOfficeInitials(repDetails: any): string {
   const officeName = repDetails?.office?.[0]?.name || repDetails?.officeName || '';
   if (officeName) {
@@ -36,7 +21,6 @@ export function getOfficeInitials(repDetails: any): string {
   return repDetails?.office?.[0]?.code || '';
 }
 
-/** officeInitials + leadId/jobNumber, e.g. "FL803", "STN/A" (bare number when no initials). */
 export function buildJobNumber(repDetails: any, leadNum: string | number): string {
   const initials = getOfficeInitials(repDetails);
   return initials ? `${initials}${leadNum}` : String(leadNum ?? 'N/A');

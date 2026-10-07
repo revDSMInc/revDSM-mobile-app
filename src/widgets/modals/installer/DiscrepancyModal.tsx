@@ -24,19 +24,11 @@ export interface JobPhotoRef {
 interface Props {
   visible: boolean;
   product: SoldProduct | null;
-  /** Shots captured so far, attachable as evidence. */
   jobPhotos: JobPhotoRef[];
   onClose: () => void;
   onSend: (payload: { issue: string; note: string; attachments: string[] }) => void;
 }
 
-/**
- * Reports a mismatch between the sold spec and what's actually on site.
- *
- * Installers can't self-serve edits to the scope — a discrepancy is routed to the
- * Install Manager and the originating rep to resolve, which is why this sends
- * rather than saves.
- */
 export function DiscrepancyModal({ visible, product, jobPhotos, onClose, onSend }: Props) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -79,10 +71,6 @@ export function DiscrepancyModal({ visible, product, jobPhotos, onClose, onSend 
           className="w-full rounded-t-[32px] px-6 pt-5"
           style={{
             backgroundColor: isDark ? colors.surface : colors.background,
-            // Clears the system bar the sheet now paints UNDER (`EDGE_TO_EDGE_MODAL` on the
-            // Modal above). The bar overlays this padding rather than sitting below it, so what
-            // the installer SEES under the last button is the same on a 3-button bar, a gesture
-            // pill and an iOS home indicator alike.
             paddingBottom: footerBottomPadding(insets.bottom),
             maxHeight: '85%',
           }}
@@ -102,11 +90,6 @@ export function DiscrepancyModal({ visible, product, jobPhotos, onClose, onSend 
           <ScrollView
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
-            // Replaces the `KeyboardAvoidingView` that used to wrap this sheet — an
-            // ancestor with no height of its own, sitting between the backdrop and the
-            // sheet, which was the one way this sheet's hierarchy differed from the
-            // Result Job sheet. iOS-only either way: the KAV passed `undefined` on
-            // Android, so nothing is lost there.
             automaticallyAdjustKeyboardInsets
           >
             <Text className="text-sm font-semibold mb-2" style={{ color: colors.text }}>
@@ -145,9 +128,6 @@ export function DiscrepancyModal({ visible, product, jobPhotos, onClose, onSend 
               multiline
               placeholder='e.g. "Rear run measures 82 ft, sold at 76 ft"'
               placeholderTextColor="#919EAB"
-              // Same trap as the PEC note: no `font-*` class means no fontFamily from this
-              // tailwind config, so the typed detail came out in the SYSTEM font under a
-              // Public Sans label.
               className="rounded-xl px-3 py-2.5 text-sm font-semibold mb-4"
               style={{
                 minHeight: 72,

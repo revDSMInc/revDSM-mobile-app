@@ -53,7 +53,6 @@ const getNativeModules = () => {
   }
 };
 
-// Subcomponents
 import { ContractDetailsCard } from './ContractDetailsCard';
 import { AddendumsCard } from './AddendumsCard';
 import { LeadApprovalsCard } from './LeadApprovalsCard';
@@ -105,21 +104,9 @@ interface JobDocsSectionProps {
   onOpenPdf?: (url: string, title?: string) => void;
   secureUrls?: Record<string, string>;
   isRefreshing?: boolean;
-  /**
-   * The lead's addendum drafts (`GET lead/v1/{id}/job-builder-drafts`), fetched once in
-   * `LeadCenter` and shared with the status banners so the two render from ONE request —
-   * the same reason web keeps them in a single `useJobBuilderDrafts` hook.
-   */
   drafts?: any[];
-  /** True once the drafts query has settled — see `AddendumRecipientCard`. */
   draftsReady?: boolean;
-  /** Refetch the drafts after the rep re-sends / re-addresses a pending addendum. */
   onDraftsChanged?: () => void;
-  /**
-   * Override for the Contract Details pencil. Supplied when the Lead Center is opened
-   * from My Deals, where the pencil must launch the dynamic deal-edit wizard instead of
-   * the inline Edit Contract Details modal. Omitted on the normal lead path.
-   */
   onEditContract?: () => void;
 }
 
@@ -166,46 +153,16 @@ export const JobDocsSection = ({
   const navigation = useNavigation<any>();
   const { user } = useAuth();
 
-  /**
-   * Refunds, for the contract card's own figures and the approvals card below it.
-   *
-   * ⚠️ **CHAINED, not parallel, and read ONCE for both cards.** The approvals list is
-   * gated on a resulted lead (an approval only exists against a refund, and a refund
-   * only against a deal that collected money and was re-priced), and the funding record
-   * is only asked for once that list comes back non-empty. So an ordinary lead makes no
-   * request at all, a resulted lead with no approvals makes one, and only a lead that
-   * actually has one makes two. Both hooks are keyed per lead, so `LeadApprovalsCard`
-   * re-reading them costs nothing and the two cards can never disagree.
-   */
   const leadApprovals = useLeadApprovals(lead?._id, isLeadResulted(lead), lead?.companyId);
   const leadFunding = useLeadFunding(
     lead?._id,
     isLeadResulted(lead) && leadApprovals.approvals.length > 0,
     lead?.companyId
   );
-  /**
-   * The contract card's refund figures — what the job was worth, what goes back, what it
-   * is worth now. `null` on any lead with nothing to say, so the card renders it
-   * unconditionally and an ordinary deal is untouched.
-   *
-   * ⚠️ **`before` is the fragile one**, and it is fed THREE candidates because no single
-   * source survives every deal: once the customer signs, the addendum's `current.pricing`
-   * has caught up to the new price, and a lead whose `originalContractPrice` was rewritten
-   * keeps no record of the old one either. `resolveBeforePrice` takes the largest that is
-   * genuinely ABOVE the price now and omits the row when none is — which is what stops the
-   * same number being labelled both "before" and "after".
-   *
-   * ⚠️ No draft is fetched for this. `downPayment + balance` is the last-resort record of
-   * the original sale and costs nothing, and it is what recovers the reported deal
-   * ($8,500 collected, re-priced to $8,065). Pass `draftSummary` here if a caller ever
-   * already holds one.
-   */
   const refundSummary = React.useMemo(
     () =>
       buildContractRefundSummary({
         payments: leadFunding.payments,
-        // `outcomeData` is a later alias of `lead`, so the lead is read directly here
-        // rather than moving this block below it.
         currentContractPrice:
           Number(
             String(lead?.originalContractPrice ?? lead?.leadData?.originalContractPrice ?? 0).replace(/[^0-9.-]/g, '')
@@ -231,27 +188,20 @@ export const JobDocsSection = ({
   const [showResultModal, setShowResultModal] = useState(false);
   const [pendingResult, setPendingResult] = useState<string>('noDemo');
 
-  // Scanner states for direct upload
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scannerType, setScannerType] = useState<'agreement' | 'orderSheet' | 'downPaymentReceipt'>('agreement');
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // Slideshow preview states
   const [previewImages, setPreviewImages] = useState<{ uri: string; label: string }[]>([]);
   const [previewIndex, setPreviewIndex] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Manage components states
   const [showEditModal, setShowEditModal] = useState(false);
   const [, setUploadingSlots] = useState<{ [key: string]: boolean }>({});
   const outcomeData = lead;
 
-  // Upload queue state — persisted to MMKV
   const [queueItems, setQueueItems] = useState<UploadQueueItem[]>(() => uploadQueueManager.getQueue());
-  // Photos deleted offline. The server still returns them until the queue drains, so both the
-  // slot progress and the "Manage Photos (N)" button must subtract them — or the rep deletes a
-  // photo inside and comes back to a Lead Center that still counts it.
   const [deletedUrls, setDeletedUrls] = useState<Set<string>>(() =>
     offlinePhotoDeleteQueue.deletedUrls(lead?._id)
   );
@@ -265,36 +215,10 @@ export const JobDocsSection = ({
   const [showTagModal, setShowTagModal] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
   const [showDynamicCapture, setShowDynamicCapture] = useState(false);
-  // Schema-driven ("dynamic") inspection photos — web parity: `job-docs-tab.js`
-  // owns BOTH dynamic dialogs. When the company has configured an inspection
-  // schema, capture AND manage must both run through it: the dynamic flow stores
-  // photos under product-scoped categories (`{product} — {label}`), while the
-  // static flow stores them under IMAGE_CATEGORIES names. Mixing the two means
-  // photos captured statically are invisible to the dynamic manage view (they
-  // fail its `expectedCats` filter), which is exactly the "count shows but no
-  // images" bug. Fetched eagerly because the capture CTA also branches on it.
   const { configuredProducts, productsLoading, schemaResolved } = useInspectionSchema({ enabled: true });
   const isDynamicInspection = configuredProducts.length > 0;
   const isOnline = useIsOnline();
 
-  // ⚠️ `configuredProducts.length === 0` answers TWO different questions and they must not be
-  // conflated — that conflation is exactly what produced the "+ UNSORTED" orphans.
-  //
-  //   schema resolved, zero products  → this company configured nothing. The legacy flow IS
-  //                                     the right answer. Carry on.
-  //   schema NOT resolved             → we never got to ask. Offline after a cold start, the
-  //                                     query cache is gone and there is nothing to fall back
-  //                                     on, so `isDynamicInspection` reads false and capture
-  //                                     drops to the LEGACY flow — which stores a photo's
-  //                                     category UNSCOPED (`"Home"`, not
-  //                                     `"Gutters/Roofline — HOME"`). Back online those photos
-  //                                     match no configured slot, land in "+ UNSORTED",
-  //                                     don't count towards the tab totals, and cannot be
-  //                                     re-filed. Silently writing the wrong format is worse
-  //                                     than declining, so decline.
-  //
-  // Only blocks when BOTH are true: unresolved AND offline. Online, an unresolved schema is a
-  // request still in flight or a server problem the rep can retry.
   const inspectionSchemaUnavailable = !schemaResolved && !isOnline;
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -308,16 +232,13 @@ export const JobDocsSection = ({
 
   const pendingUploadRef = useRef<Promise<any> | null>(null);
 
-  // Register queue listener — sync React state with MMKV queue state and trigger refetch
   useEffect(() => {
     const unsubscribe = uploadQueueManager.addListener(() => {
       const currentQueue = uploadQueueManager.getQueue();
       setQueueItems([...currentQueue]);
-      // Refresh lead data from server on any queue state change (e.g. each step of countdown)
       refetch();
     });
 
-    // On mount: resume any incomplete uploads that survived app restart
     if (uploadQueueManager.getQueue().length > 0) {
       console.log('[JobDocsSection] Resuming', uploadQueueManager.getQueue().length, 'pending uploads from MMKV queue.');
       uploadQueueManager.processQueue();
@@ -336,11 +257,9 @@ export const JobDocsSection = ({
     }
   }, []);
 
-  // Annotation multiselect states
   const [isAnnotationSelectMode, setIsAnnotationSelectMode] = useState<boolean>(false);
   const [selectedAnnotationPhotos, setSelectedAnnotationPhotos] = useState<SectionImage[]>([]);
 
-  // Contract outcome states
   const [resolvedDocuments, setResolvedDocuments] = useState<{ agreements: any[]; orderSheets: any[]; downPaymentReceipts: any[] }>({
     agreements: [],
     orderSheets: [],
@@ -353,23 +272,8 @@ export const JobDocsSection = ({
   });
   const [leadDraft, setLeadDraft] = useState<any>(null);
 
-  /**
-   * A Down Payment Receipt upload whose analytics event is still waiting on the
-   * document's stored `filePath` / `bucketName`.
-   *
-   * Those two are generated server-side, so they can only be read back. The submit
-   * response is tried first (free); when it does not carry the new rows the request
-   * parks here and the effect below settles it off the lead refetch this screen
-   * already performs — so naming the document never costs an extra request.
-   */
   const pendingReceiptLogRef = useRef<{ knownIds: Set<string>; added: number } | null>(null);
 
-  /**
-   * Web `contract-details.js` › `handleDownPaymentReceiptUpload` logs this event,
-   * and mobile did not log it at all. `filePath` / `bucketName` are the deliberate
-   * addition on top of web's payload: without them the portal has an event saying a
-   * receipt was uploaded and no way to open the receipt.
-   */
   const logDownPaymentReceiptUpload = useCallback(
     (refs: DocumentRef[], added: number) => {
       const userId = user?._id || user?.id;
@@ -382,9 +286,6 @@ export const JobDocsSection = ({
           leadId: lead._id,
           action: 'upload_down_payment_receipts',
           downPaymentReceipt: added,
-          // One scan can file SEVERAL receipts (each page becomes its own PDF), so
-          // the paths are a LIST and only a list — a singular `filePath`/`bucketName`
-          // beside it would repeat `documents[0]` and imply the rest do not exist.
           documents: refs,
         },
       });
@@ -392,11 +293,6 @@ export const JobDocsSection = ({
     [user, lead?._id]
   );
 
-  // Settles a parked receipt log once the refetched lead carries the uploaded rows.
-  // Keyed on the same `jobBuilderDocuments` change the document list re-resolves
-  // from, so it is free; the handler's delayed refetches cover backend lag. It can
-  // only fire on a receipt id the lead did not have before the upload, so an
-  // unrelated document change never triggers it.
   useEffect(() => {
     const pending = pendingReceiptLogRef.current;
     if (!pending) return;
@@ -442,7 +338,6 @@ export const JobDocsSection = ({
 
     if (!searchStr) return [];
 
-    // Resolve the canonical key from sectionImages
     let s3Images: SectionImage[] = [];
     if (sectionImages[searchStr]) {
       s3Images = sectionImages[searchStr];
@@ -460,7 +355,6 @@ export const JobDocsSection = ({
       }
     }
 
-    // Merge pending optimistic items for this lead+category from the MMKV queue
     const pendingForSection = queueItems
       .filter((item) =>
         item.leadId === lead?._id &&
@@ -473,19 +367,6 @@ export const JobDocsSection = ({
         isOptimistic: true,
       }));
 
-    // Don't duplicate. Matching on `uri` never worked — a queue item's uri is a
-    // local `file://` path while a server image's is a signed S3 URL, so they can
-    // never be equal. Instead, per subcategory, only surface as many optimistic
-    // entries as the server has NOT yet accounted for:
-    //
-    //   server 0 / pending 1 → 1 optimistic  (photo taken, not yet uploaded)
-    //   server 1 / pending 1 → 0 optimistic  (uploaded; server copy is the truth)
-    //   server 1 / pending 0 → 0 optimistic  (queue item retired)
-    //
-    // so the count holds steady at 1 across the whole handover instead of dipping
-    // to 0 (item retired before data landed) or spiking to 2 (counted twice).
-    // Counting rather than flag-matching keeps multi-photo slots correct: a real
-    // second photo in the same slot still shows while it uploads.
     const serverCountBySub = new Map<string, number>();
     s3Images.forEach((img) => {
       const k = (img.subcategory || '').toLowerCase();
@@ -533,8 +414,6 @@ export const JobDocsSection = ({
     setUploadingSlots((prev) => ({ ...prev, [slotKey]: true }));
 
     const categoryObj = IMAGE_CATEGORIES.find((cat) => cat.name === categoryName);
-    // Compute the extra-slot index matching the web formula:
-    // nextIndex = baseSubcatCount + existingExtraCount + 1  (1-based absolute)
     const baseSubcatCount = categoryObj?.subCategories?.length ?? 0;
     const existingExtraCount = getImagesForSection(categoryName).filter(
       (img) => img.subcategory?.includes(`${categoryName} - Extra`)
@@ -551,12 +430,8 @@ export const JobDocsSection = ({
       isOptimistic: true,
     };
 
-    // --- Instant Optimistic UI: show the photo immediately in its slot ---
-    // We use functional update on sectionImages to avoid stale closure overwrites
-    // when multiple photos are taken in quick succession.
     onSectionImagesChange((prev: Record<string, SectionImage[]>) => {
       const prevList = prev[categoryName] || [];
-      // Only add if not already in the list (guard against double-fire)
       if (prevList.some((img) => img.uri === asset.uri)) return prev;
       return {
         ...prev,
@@ -564,9 +439,6 @@ export const JobDocsSection = ({
       };
     });
 
-    // --- Push to persistent MMKV-backed background upload queue ---
-    // ⚠️ Coordinates resolved HERE, not by the queue at upload time — offline that can be hours
-    // later and miles away. Same rule as the dynamic capture path; see `utils/capture-location.ts`.
     void getCaptureCoords().then((coords) => {
       uploadQueueManager.addToQueue({
         leadId: lead._id,
@@ -580,7 +452,6 @@ export const JobDocsSection = ({
       });
     });
 
-    // Clear the per-slot uploading spinner (queue handles the real upload)
     setUploadingSlots((prev) => ({ ...prev, [slotKey]: false }));
   };
 
@@ -635,8 +506,6 @@ export const JobDocsSection = ({
     if (!movingImage || !lead?._id) return;
 
     const targetCategoryObj = IMAGE_CATEGORIES.find((cat) => cat.name === targetCatName);
-    // Compute the extra-slot index matching the web formula:
-    // nextIndex = baseSubcatCount + existingExtraCount + 1  (1-based absolute)
     const targetBaseSubcatCount = targetCategoryObj?.subCategories?.length ?? 0;
     const targetExtraCount = getImagesForSection(targetCatName).filter(
       (img) => img.subcategory?.includes(`${targetCatName} - Extra`)
@@ -658,7 +527,6 @@ export const JobDocsSection = ({
       },
     };
 
-    // Optimistic local state update
     const currentCategory = movingImage.categoryName;
     const currentImgs = sectionImages[currentCategory] || [];
     const photoToMove = currentImgs.find(
@@ -685,7 +553,6 @@ export const JobDocsSection = ({
       });
     }
 
-    // Await the actual upload/move mutation
     await waitForPendingUpload();
     try {
       await updateImagePositionMutation.mutateAsync({ leadId: lead._id, payload });
@@ -693,14 +560,12 @@ export const JobDocsSection = ({
     } catch (e) {
       console.error('Move photo failed', e);
     } finally {
-      // Clear moving image state
       setMovingImage(null);
     }
   };
 
   const handleUpdateContract = async (updatedOutcome: any) => {
     try {
-      // Calculator-scoped write — the bare lead-scoped outcome route is deprecated.
       const calcId = resolveLeadCalculatorId(lead);
       if (!calcId) {
         console.warn('[JobDocsSection] no calculator on the lead — contract update skipped');
@@ -718,19 +583,10 @@ export const JobDocsSection = ({
     setScannerOpen(true);
   };
 
-  /**
-   * The one definition lives in `utils/jpeg-to-pdf`. Inlined copies of this used to
-   * sit in three screens, and all three declared the PAGE size as the image's pixel
-   * size — which Android's PDF renderer reads literally and Quartz ignores, so a
-   * converted scan opened as a giant top-left crop on Android only.
-   */
   const convertJpegToPdf = (jpegBase64: string, width = 595, height = 842): string =>
     sharedConvertJpegToPdf(jpegBase64, width, height);
 
   const handleSaveScannedDocument = async (pages: any[]) => {
-    // Backend job-builder document category (matches web `submitJobBuilder`):
-    // agreement / orderSheet / downPaymentReceipt. The state (submit) field mirrors
-    // web too — agreements / orderSheets / downPaymentReceipt.
     const scannerCategory = scannerType;
     const stateField =
       scannerCategory === 'agreement' ? 'agreements'
@@ -743,11 +599,9 @@ export const JobDocsSection = ({
       return;
     }
 
-    // Only submit pages if there are newly added pages
     const newPages = pages.filter((p) => p.isNew === true);
 
     if (newPages.length === 0) {
-      // Nothing new to upload, just close the scanner
       setScannerOpen(false);
       return;
     }
@@ -755,7 +609,6 @@ export const JobDocsSection = ({
     try {
       setIsGenerating(true);
 
-      // Pre-fetch outcome documents to retrieve existing base64Data
       let preFetchedAppendedDocs: any[] = [];
       try {
         const response = await LeadService.downloadOutcomeDocuments(leadId);
@@ -786,7 +639,6 @@ export const JobDocsSection = ({
             type: scannerCategory,
           });
         } else {
-          // If it's an existing document, find its base64 content
           const docId = p.serverId || p.id || p._id;
           const serverDoc = preFetchedAppendedDocs.find(
             (d) => String(d._id) === String(docId)
@@ -812,8 +664,6 @@ export const JobDocsSection = ({
         [stateField]: filePayloads,
       };
 
-      // Snapshot the receipts already on the lead, so whichever source names the
-      // stored documents below can tell this upload's rows from the existing ones.
       const knownReceiptIds =
         scannerCategory === 'downPaymentReceipt'
           ? collectDocumentIds(readDocumentGroup(lead, 'downPaymentReceipt'))
@@ -822,9 +672,6 @@ export const JobDocsSection = ({
       const submitRes = await LeadService.submitJobBuilder(leadId, payload);
 
       if (knownReceiptIds) {
-        // Prefer the submit response — it is immediate and free. It is not known to
-        // return the filed rows, so a miss is expected rather than an error: park
-        // the log and let the effect settle it off the refetch below.
         const fromResponse = pickNewDocuments(
           knownReceiptIds,
           readDocumentGroup(submitRes, 'downPaymentReceipt')
@@ -839,7 +686,6 @@ export const JobDocsSection = ({
 
       setScannerOpen(false);
       await refetch();
-      // Trigger delayed refetches in case of minor backend processing/DB replication lag
       setTimeout(() => refetch(), 1000);
       setTimeout(() => refetch(), 3000);
     } catch (error: any) {
@@ -890,7 +736,6 @@ export const JobDocsSection = ({
 
   const hasAndroidPermission = async () => {
     const version = Number(Platform.Version);
-    // Android 13+ (API 33+) saves to the gallery via MediaStore with no storage permission.
     if (version >= 33) return true;
     return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
   };
@@ -907,8 +752,6 @@ export const JobDocsSection = ({
 
     let permissionRequested = false;
 
-    // Only legacy Android (<=32) reaches here; hasAndroidPermission() returns true on 33+,
-    // which saves to the gallery via MediaStore with no storage permission.
     if (Platform.OS === 'android' && !(await hasAndroidPermission())) {
       permissionRequested = true;
       const granted = await PermissionsAndroid.request(
@@ -941,18 +784,12 @@ export const JobDocsSection = ({
     }
 
     if (permissionRequested) {
-      // Small delay to allow native modules to synchronize permission state
       await new Promise<void>((resolve) => setTimeout(resolve, 1000));
     }
 
     setIsDownloading(true);
     setDownloadProgress(0);
 
-    // Iterate EVERY sectionImages bucket, not just the static IMAGE_CATEGORIES ones.
-    // Dynamic-inspection photos live under product-scoped category keys (e.g.
-    // "Windows — Front", built by useLeadCenterData), so the old IMAGE_CATEGORIES-only
-    // loop downloaded 0 images for a dynamic-inspection lead. Dedupe by uri so a photo
-    // that appears under multiple keys isn't saved twice.
     const imagesToDownload: SectionImage[] = [];
     const seenDownloadUris = new Set<string>();
     Object.values(sectionImages || {}).forEach((imgs) => {
@@ -1039,9 +876,6 @@ export const JobDocsSection = ({
   };
 
   const handleStartTakingPhotos = () => {
-    // See `inspectionSchemaUnavailable`. Capturing here would file the photos through the
-    // legacy flow under unscoped categories, and the rep would only find out days later when
-    // they turned up as un-refilable "+ UNSORTED" orphans.
     if (inspectionSchemaUnavailable) {
       Alert.alert(
         'Photo tagging needs to sync first',
@@ -1049,9 +883,6 @@ export const JobDocsSection = ({
       );
       return;
     }
-    // With a configured inspection schema the whole capture flow lives in the
-    // dynamic view (photo-first: shoot, then tag into a schema slot), so capture
-    // and Manage Photos write/read the same product-scoped categories.
     if (isDynamicInspection) {
       setShowDynamicCapture(true);
       return;
@@ -1065,13 +896,6 @@ export const JobDocsSection = ({
     setShowTagModal(true);
   };
 
-  /**
-   * The LEGACY tag/capture flow's other door.
-   *
-   * `ManagePhotosModal` lets a rep shoot straight into an empty slot, which reaches the same
-   * unscoped-category write as the CTA — so it needs the same guard, or the block above is
-   * simply routed around. Passed to that modal in place of the raw `setShowTagModal`.
-   */
   const openLegacyTagModal = useCallback(
     (next: boolean) => {
       if (next && inspectionSchemaUnavailable) {
@@ -1373,11 +1197,9 @@ export const JobDocsSection = ({
     const leadId = lead?._id;
     if (!leadId) return;
 
-    // Join the room for real-time draft updates
     console.log('[Socket] Joining lead draft room:', leadId);
     SocketManager.emit('join-lead-draft', leadId);
 
-    // Set up listener
     const unsubscribe = SocketManager.on('lead-draft-update', (payload: any) => {
       if (!payload || String(payload.leadId) !== String(leadId)) return;
 
@@ -1388,7 +1210,6 @@ export const JobDocsSection = ({
       }
 
       if (payload.lead && typeof payload.lead === 'object') {
-        // Trigger a fresh fetch of the lead to update the UI instantly
         refetch();
       }
     });
@@ -1403,8 +1224,6 @@ export const JobDocsSection = ({
   useEffect(() => {
     let cancelled = false;
 
-    // Map each doc, preferring a signed URL when available, else a directly
-    // resolvable S3 URL. `urls` may be null on the first (instant) pass.
     const mapWith = (allDocs: any[], urls: any[] | null) =>
       allDocs.map((doc: any) => {
         const urlObj = urls?.find((u: any) => u.filePath === doc.filePath);
@@ -1425,8 +1244,6 @@ export const JobDocsSection = ({
       downPaymentReceipts: mappedAll.filter((d: any) => d.documentType === 'downPaymentReceipt'),
     });
 
-    // Flatten a `{ agreements, orderSheets, downPaymentReceipt }` bag into a tagged
-    // list. Web parity (contract-details.js): receipts live under `downPaymentReceipt`.
     const flatten = (bag: any) => [
       ...(bag?.agreements || []).map((d: any) => ({ ...d, _sourceGroup: 'agreement' })),
       ...(bag?.orderSheets || []).map((d: any) => ({ ...d, _sourceGroup: 'orderSheet' })),
@@ -1434,10 +1251,6 @@ export const JobDocsSection = ({
     ];
 
     const keyOf = (d: any) => d.filePath || d._id || '';
-    // Secondary identity: same type + same byte size. Collapses the same PDF stored
-    // under two different filePaths — e.g. the eagerly-signed agreement (sign endpoint)
-    // and the copy re-sent by the lead-scoped outcome write on Complete Job — so a
-    // re-send can never show as a duplicate card.
     const contentKeyOf = (d: any) => {
       const size = d.fileData?.size ?? d.size ?? d.fileSize ?? d.length ?? d.contentLength;
       const type = d.documentType || d._sourceGroup || '';
@@ -1446,26 +1259,10 @@ export const JobDocsSection = ({
 
     const resolveDocs = async () => {
       const leadId = lead?._id;
-      // Source A — the lead's `jobBuilderDocuments` (scanned/uploaded docs land here).
       const jbAllDocs = flatten(lead?.jobBuilderDocuments);
 
-      // Phase 1 — render instantly with best-effort S3 URLs (no network wait), so a
-      // just-uploaded doc appears the moment the lead refetches.
       if (!cancelled) setResolvedDocuments(split(mapWith(jbAllDocs, null)));
 
-      // Source B — the OUTCOME documents. A SIGNED / generated agreement is filed by
-      // the sign endpoint as a LeadOutcomeDocument and is NOT re-sent to the
-      // JobBuilderDocument collection on Complete Job (that would duplicate it) — and
-      // the backend returns `jobBuilderDocuments` EMPTY for this flow, so it never
-      // appears there. It lives in the outcome instead: a signed agreement is filed
-      // LEAD-scoped (`GET /lead/{id}/outcome` → `leadOutcomeDocuments.agreements[]`,
-      // each with filePath + bucketName), while an uploaded doc may be CALCULATOR-scoped
-      // (`GET /lead/{id}/outcome/{calcId}`). Read BOTH and merge whatever they hold —
-      // deduped by filePath/_id — so the agreement surfaces regardless of scope.
-      // Display-only, no write change → zero duplicate-row risk.
-      // Collapse duplicates across ALL sources by filePath/_id AND by type+size, so a
-      // re-sent or eagerly-filed agreement (and any duplicate the backend may store)
-      // can never render twice. jobBuilderDocuments entries win priority (listed first).
       const dedupeDocs = (docs: any[]) => {
         const seen = new Set<string>();
         const seenContent = new Set<string>();
@@ -1483,28 +1280,6 @@ export const JobDocsSection = ({
 
       let mergedAllDocs = dedupeDocs(jbAllDocs);
 
-      // Web renders Contract Details documents from `lead.jobBuilderDocuments` ALONE —
-      // the record it already has from the sales-portal list
-      // (`contract-details.js`: `lead?.jobBuilderDocuments?.agreements`). It makes NO
-      // outcome call on this screen at all.
-      //
-      // Mobile used to ALWAYS merge the two outcome reads on top, and that is what
-      // listed one agreement twice: the same signed agreement exists as a
-      // JobBuilderDocument AND as a LeadOutcomeDocument, in different collections, so
-      // the copies share neither `_id` nor `filePath` — and their byte sizes differ
-      // slightly (68 KB vs 66 KB in the ticket), so the `type:size` content key misses
-      // too. Neither dedupe key can join them, so both rendered.
-      //
-      // So the outcome reads are now a FALLBACK, not a merge: they run only when the
-      // lead carries no documents of its own. That keeps web parity (and drops two
-      // requests per open) while preserving the case they were added for — a signed /
-      // generated agreement is filed ONLY as a LeadOutcomeDocument, and for that flow
-      // the backend returns `jobBuilderDocuments` empty, so without this the agreement
-      // would not appear anywhere.
-      // ⚠️ The lead-scoped `getLeadOutcome` arm of this fallback is GONE — that route is
-      // deprecated and 404s, so it contributed nothing but a wasted request. The
-      // calculator-scoped read remains, and `downloadOutcomeDocuments` covers the
-      // lead-scoped case (a remotely signed agreement) that the calc read cannot see.
       if (leadId && mergedAllDocs.length === 0) {
         try {
           const calcId = resolveLeadCalculatorId(lead);
@@ -1530,12 +1305,8 @@ export const JobDocsSection = ({
         return;
       }
 
-      // Re-render with the merged set (still best-effort URLs, instant).
       if (!cancelled) setResolvedDocuments(split(mapWith(mergedAllDocs, null)));
 
-      // Phase 2 — swap in signed URLs for actual opening. On failure the best-effort
-      // docs stay visible (the old code left the list EMPTY here, which is why an
-      // uploaded doc could "never show" when this call was slow or errored).
       try {
         const allPaths = mergedAllDocs.map((doc: any) => ({
           filePath: doc.filePath,
@@ -1552,8 +1323,6 @@ export const JobDocsSection = ({
     return () => {
       cancelled = true;
     };
-    // Re-run when the lead's own doc bag changes or the lead id changes; the outcome
-    // merge is refetched alongside so a newly-signed agreement surfaces on refresh.
   }, [lead?.jobBuilderDocuments, lead?._id]);
 
 
@@ -1569,18 +1338,12 @@ export const JobDocsSection = ({
     return { captured: totalCaptured, total: totalSlots };
   }, [getTabCounts]);
 
-  // When the company has a configured inspection schema, photos are captured
-  // under product-scoped categories (`{product} — {label}`) that the static
-  // IMAGE_CATEGORIES counters can't see — so the "Manage Photos (N)" number and
-  // the progress bar read 0. Recount slots + photos straight from the schema and
-  // the lead's salesPhotos, exactly the way the dynamic capture/manage views do.
   const dynamicCounts = useMemo(() => {
     if (!isDynamicInspection) return null;
     const photos = (Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [])
       .filter(Boolean)
       .filter((p: any) => !deletedUrls.has(p?.s3url));
 
-    // scopedSubKey (`norm(category)||norm(subcategory)`) → deduped photo count.
     const seen = new Set<string>();
     const countBySub = new Map<string, number>();
     let totalPhotos = 0;
@@ -1597,12 +1360,6 @@ export const JobDocsSection = ({
       totalPhotos += 1;
     });
 
-    // OPTIMISTIC: fold in photos still uploading from the offline queue so the
-    // number jumps the instant a photo is tagged, instead of waiting for the
-    // upload + lead refetch. A queue item that has already landed on the server
-    // is not double-counted — per slot we only add pending BEYOND what the server
-    // already shows (the same handover rule the section image list uses), so the
-    // count rises 0→1 and holds at 1 through the upload, never 0→1→0→1.
     const pendingBySub = new Map<string, number>();
     (queueItems || []).forEach((it: any) => {
       if (it.leadId !== lead?._id) return;
@@ -1669,8 +1426,6 @@ export const JobDocsSection = ({
           unchanged and the contract card keeps its green LEAD RESULTED header. */}
       <AddendumRecipientCard
         lead={lead}
-        // Carries each draft’s own `customerPhone`/`customerEmail`, which is the
-        // address that addendum was actually sent to.
         drafts={drafts}
         draftsReady={draftsReady}
         isDark={isDark}
@@ -1699,7 +1454,6 @@ export const JobDocsSection = ({
       <LeadApprovalsCard
         leadId={lead?._id}
         companyId={lead?.companyId}
-        // Handed down rather than re-fetched — one read serves both cards.
         payments={leadFunding.payments}
         enabled={isLeadResulted(lead)}
       />
@@ -1715,8 +1469,6 @@ export const JobDocsSection = ({
         resolvedDocuments={resolvedDocuments}
         expandedDocs={expandedDocs}
         setExpandedDocs={setExpandedDocs}
-        // From My Deals the pencil launches the deal-edit wizard; everywhere else it
-        // opens the inline Edit Contract Details modal (unchanged).
         setShowEditModal={onEditContract ? () => onEditContract() : setShowEditModal}
         onOpenPdf={onOpenPdf}
         onImagePreview={(uri) => handleOpenPreviewSingle(uri)}
@@ -1892,10 +1644,6 @@ export const JobDocsSection = ({
         initialFiles={
           resolvedDocuments[scannerType === 'agreement' ? 'agreements' : scannerType === 'orderSheet' ? 'orderSheets' : 'downPaymentReceipts'] || []
         }
-        // A document already filed against this lead cannot be removed from here —
-        // web parity for the Contract Details card. Pages scanned in THIS session
-        // keep their ✕, so a misscan is never stuck; only what is already on the
-        // server is protected.
         allowRemoveExisting={false}
         onSave={handleSaveScannedDocument}
       />
@@ -2028,9 +1776,6 @@ export const JobDocsSection = ({
       {/* Dynamic capture (web `DynamicInspectionPhotosDialog`) — the schema-driven
           replacement for the static camera → TagPhotoModal flow. */}
       {showDynamicCapture && isDynamicInspection && (
-        // No slide animation + black backdrop: the camera is launched immediately
-        // on open, so a sliding green panel must not flash before it. The view
-        // itself paints its own chrome once the first photo starts the tag flow.
         <Modal visible animationType="none" onRequestClose={() => setShowDynamicCapture(false)}>
           <View style={{ flex: 1, backgroundColor: '#000' }}>
             <DynamicInspectionView

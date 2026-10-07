@@ -7,8 +7,6 @@ import { formatCurrency } from '../../../utils/currency';
 import { ProductScopeCard } from './ProductScopeCard';
 import type { ContractDetails, JobPacket, SoldProduct } from '../../../config/types/installer';
 
-// Same output as the old `toLocaleString('en-US')` call, minus the dependency on the
-// engine shipping Intl data — see `utils/currency`.
 const currency = (n?: number) => formatCurrency(n);
 
 interface Props {
@@ -16,17 +14,9 @@ interface Props {
   contract?: ContractDetails;
   products?: SoldProduct[];
   onViewPacket?: () => void;
-  /** True while the packet's signed URL is being fetched. */
   packetLoading?: boolean;
 }
 
-/**
- * Read-only job reference: packet, contract and sold products.
- *
- * Installers get visibility, not edit rights — scope changes go through the
- * discrepancy flow in Verify Job Scope, so nothing here is interactive beyond
- * opening the packet.
- */
 export function JobReferenceCards({
   packet,
   contract,
@@ -38,8 +28,6 @@ export function JobReferenceCards({
   const { t } = useTranslation();
   const surface = isDark ? colors.surface : '#F4F6F8';
 
-  // `id` is the stable React key — the label changes with the language, so keying on it
-  // would remount every row on a switch.
   const contractRows = [
     { id: 'contract', k: t('installer.contract'), v: currency(contract?.contractPrice) },
     {

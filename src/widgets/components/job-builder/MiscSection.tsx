@@ -59,7 +59,6 @@ export const MiscSection = ({
   };
 
   const isAnyFieldEmpty = () => {
-    // Reason required if labor > 0
     if (parseFloat(data.extraLabor) > 0 && !data.extraLaborReason) return true;
     return false;
   };

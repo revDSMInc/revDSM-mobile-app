@@ -3,25 +3,6 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-nati
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTabStripAutoScroll } from '../../../hooks/useTabStripAutoScroll';
 
-/**
- * The floating dock at the bottom of the Pitch Book's fullscreen presentation.
- *
- * Ticket: *"update the bottom bar like this style … remove the interactive button and add
- * that functionality when pressing the new icon. Actually adding two new icons on the
- * bottom: one is a layer icon that will open the bottom bar in which LeafFilter Story,
- * Problems & Risk, Rules & Elimination etc are shown, and the other icon press shows the
- * bar that is currently shown on pressing Interactive Tools."*
- *
- * ONE bar with TWO modes, chosen by the leading icon pair:
- *
- *   layers (⬓)  → `slides` — the deck's category tabs
- *   wand   (✨) → `tools`  — Inspection / Risk / Videos / Notes, over their content
- *
- * ⚠️ **The two leading icons are always visible, in both modes.** They are the only way
- * between them, so hiding either behind its own mode would strand the rep — which is
- * exactly what the old right-edge "Interactive Tools" tab did once it was replaced.
- */
-
 export const GREEN = '#72BD00';
 
 export type DockMode = 'slides' | 'tools';
@@ -37,7 +18,6 @@ export interface DockTool {
   icon: string;
 }
 
-/** The tool tabs, in the order the design shows them. */
 export const DOCK_TOOLS: DockTool[] = [
   { id: 'inspection', label: 'Inspection', icon: 'camera' },
   { id: 'risk', label: 'Risk', icon: 'alert' },
@@ -53,21 +33,8 @@ interface Props {
   onSelectCategory: (id: string) => void;
   activeTool: string;
   onSelectTool: (id: string) => void;
-  /** Rendered under the tool tabs, in `tools` mode only. */
   toolContent: React.ReactNode;
-  /**
-   * Hide the tool half entirely — Homeowner mode has no interactive tools, so the wand
-   * would open an empty panel. The layers half, and the deck, stay.
-   */
   showTools: boolean;
-  /**
-   * The tool panel's height — FIXED, not a cap.
-   *
-   * ⚠️ Every tool gets the same area, so switching tabs never resizes the dock: a short
-   * body (Notes, Risk) used to collapse the panel while Inspection filled it, which read
-   * as four differently-sized screens. Tall content scrolls inside this height instead.
-   * It is still well under the slide, so the deck is never swallowed.
-   */
   toolHeight: number;
   left: number;
   right: number;
@@ -117,14 +84,6 @@ export function PresentationDock({
   const toolsMode = showTools && mode === 'tools';
   const activeId = toolsMode ? activeTool : activeCategory;
 
-  /*
-    ── The bar follows the deck ──────────────────────────────────────────────────
-    Paging past a section's last slide advances `activeCategory` (`handleNext` in the
-    screen), but the tab row is a horizontal scroller and nothing moved it — so a rep on
-    page 15 saw the bar still parked on the FIRST section with the live tab off-screen.
-    The `scope` argument matters here: this ONE scroller renders categories or tools
-    depending on the mode.
-  */
   const strip = useTabStripAutoScroll(activeId, toolsMode ? 'tool' : 'cat');
 
   return (
@@ -299,13 +258,6 @@ const styles = StyleSheet.create({
 
   tabStrip: { flex: 1, justifyContent: 'center' },
   tabScrollContent: { alignItems: 'center', paddingRight: 4 },
-  /*
-    Every tab — tool or category — is sized to its OWN label with the same tight padding,
-    so the gap between any two neighbours is identical and the neighbours of the selected
-    tab stay on screen. ⚠️ The earlier equal-width clamp (a 128pt `minWidth` + `flexGrow`)
-    padded `Risk` / `Notes` out to `Inspection`'s width, which left one pill hogging a phone's
-    whole strip with the next title cut off — do not reintroduce it.
-  */
   tab: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -321,10 +273,6 @@ const styles = StyleSheet.create({
 
   close: { width: 32, height: 34, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
 
-  /*
-    Solid in the card's own colour so a label passing underneath is hidden rather than
-    showing through the chevron — a half-visible word beneath an arrow reads as clutter.
-  */
   edgeArrow: {
     position: 'absolute',
     top: 0,

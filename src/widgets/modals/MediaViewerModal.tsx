@@ -53,15 +53,9 @@ const getNativeModules = () => {
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// Drag-down-to-dismiss tuning (shared by image + video), mirroring
-// ImageGalleryModal so both viewers feel identical.
 const DISMISS_DISTANCE = 120; // px dragged before release dismisses
 const DISMISS_VELOCITY = 900; // or a fast enough downward fling
 
-// ─── Pinch/double-tap/pan-zoomable image (+ drag-down-to-dismiss) ────────────
-// Same zoom behaviour as ImageGalleryModal's ZoomablePage. Pinch or double-tap
-// to zoom; pan (only while zoomed) to move around; while NOT zoomed, a downward
-// drag follows the finger and dismisses past a threshold (iMessage-style).
 const ZoomableImage = React.memo(
   ({
     uri,
@@ -77,8 +71,6 @@ const ZoomableImage = React.memo(
     uri: string;
     width: number;
     height: number;
-    // Shared drag offsets owned by the parent so the backdrop + chrome fade off
-    // the same value the image follows.
     dragX: SharedValue<number>;
     dragY: SharedValue<number>;
     onRequestClose: () => void;
@@ -92,9 +84,7 @@ const ZoomableImage = React.memo(
     const ty = useSharedValue(0);
     const savedTx = useSharedValue(0);
     const savedTy = useSharedValue(0);
-    // Fades the image in once it decodes, for a smooth arrival.
     const opacity = useSharedValue(0);
-    // Drives which of pan (zoomed) vs dismiss-pan (not zoomed) is live.
     const [zoomed, setZoomed] = useState(false);
 
     const pinch = Gesture.Pinch()
@@ -135,8 +125,6 @@ const ZoomableImage = React.memo(
         }
       });
 
-    // Pan the zoomed image within its own bounds; disabled at 1× so the
-    // dismiss-drag below takes over.
     const pan = Gesture.Pan()
       .enabled(zoomed)
       .onUpdate((e) => {
@@ -150,8 +138,6 @@ const ZoomableImage = React.memo(
         savedTy.value = ty.value;
       });
 
-    // iMessage-style drag-DOWN-to-dismiss (only while NOT zoomed). Activates on a
-    // downward drag and fails on horizontal movement.
     const dismissPan = Gesture.Pan()
       .enabled(!zoomed)
       .activeOffsetY(14)
@@ -172,7 +158,6 @@ const ZoomableImage = React.memo(
     const composed = Gesture.Simultaneous(pan, pinch, doubleTap, dismissPan);
 
     const imgStyle = useAnimatedStyle(() => {
-      // Shrink toward the finger as it drags down (matches iMessage's peel-away).
       const dismissScale = interpolate(dragY.value, [0, 400], [1, 0.82], Extrapolation.CLAMP);
       return {
         opacity: opacity.value,
@@ -214,11 +199,6 @@ const ZoomableImage = React.memo(
   }
 );
 
-// ─── Drag-down-to-dismiss wrapper for the video ──────────────────────────────
-// The video has no zoom (nothing to zoom into), so it only needs the iMessage
-// swipe. `activeOffsetY(14)` + `failOffsetX` keeps the native player controls
-// (tap play/pause, horizontal scrub) working — only a clear downward drag
-// dismisses. The video follows the finger and shrinks slightly.
 const DismissibleVideo = ({
   dragX,
   dragY,
@@ -273,11 +253,6 @@ interface MediaViewerModalProps {
   fileName?: string;
 }
 
-// Single-media viewer (one image or video from a chat bubble). Shares the
-// ImageGalleryModal look and gestures — pinch/double-tap/pan zoom on images and
-// an iMessage-style drag-DOWN-to-dismiss on both images and videos: the black
-// backdrop fades to reveal the chat behind, the header chrome fades quickly, and
-// the media follows the finger, dismissing past a threshold or springing back.
 export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   isVisible,
   onClose,
@@ -291,13 +266,8 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   const [imageLoading, setImageLoading] = useState(true);
   const [paused] = useState(false);
   const videoRef = useRef<any>(null);
-  // Height of the middle band (between header and bottom inset). The image is
-  // sized to exactly this so it never overlaps the chrome.
   const [mediaH, setMediaH] = useState(Math.max(1, SCREEN_HEIGHT - 220));
 
-  // Drag-to-dismiss offsets, shared with the zoomable image / video wrapper. The
-  // black backdrop fades over a long drag; the header chrome fades quickly so
-  // only the media (following the finger) is left, like iMessage.
   const dragX = useSharedValue(0);
   const dragY = useSharedValue(0);
   const backdropStyle = useAnimatedStyle(() => ({
@@ -307,26 +277,20 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
     opacity: interpolate(dragY.value, [0, 100], [1, 0], Extrapolation.CLAMP),
   }));
 
-  // A Modal can report insets.top === 0 on Android even though the status bar is
-  // physically there — floor so the close button never lands in the status bar.
   const topInset = Math.max(insets.top, Platform.OS === 'android' ? 0 : 0, 12);
   const bottomInset = Math.max(insets.bottom);
 
   useEffect(() => {
     if (isVisible) {
       setImageLoading(true);
-      // Reset any leftover drag from a previous dismiss so it opens fully-shown.
       dragX.value = 0;
       dragY.value = 0;
     }
-    // dragX/dragY are stable useSharedValue refs — not real deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isVisible, mediaUri]);
 
-  // ─── Permissions ────────────────────────────────────────────────────────────
   const hasAndroidPermission = async () => {
     const version = Number(Platform.Version);
-    // Android 13+ (API 33+) saves to the gallery via MediaStore with no storage permission.
     if (version >= 33) return true;
     return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
   };
@@ -340,8 +304,6 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
     } = getNativeModules();
     if (!ReactNativeBlobUtil || !CameraRoll) return;
 
-    // Only legacy Android (<=32) needs a runtime storage request; hasAndroidPermission()
-    // already returns true on 33+ so this block only runs for older devices.
     if (Platform.OS === 'android' && !(await hasAndroidPermission())) {
       await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
     }

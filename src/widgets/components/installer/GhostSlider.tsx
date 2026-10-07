@@ -11,12 +11,6 @@ interface Props {
   onChange: (value: number) => void;
 }
 
-/**
- * Minimal drag slider for the ghost-overlay opacity.
- *
- * Hand-rolled on PanResponder because the project has no slider dependency and
- * this is the only place one is needed.
- */
 export function GhostSlider({ value, min = 0.1, max = 0.7, onChange }: Props) {
   const [width, setWidth] = useState(0);
   const widthRef = useRef(0);
@@ -42,7 +36,6 @@ export function GhostSlider({ value, min = 0.1, max = 0.7, onChange }: Props) {
         onPanResponderGrant: (e) => emit(e.nativeEvent.locationX),
         onPanResponderMove: (e) => emit(e.nativeEvent.locationX),
       }),
-    // `emit` only reads refs/props that are stable for the gesture's lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );

@@ -1,12 +1,3 @@
-/**
- * Thin wrappers over the Google Places / Geocoding REST APIs.
- *
- * The same three calls were being written inline in every screen that needed an
- * address box (MapFiltersModal, LeadCreate, AddAppointmentModal, …); this keeps
- * the URL building, key handling and error swallowing in one place.
- *
- * Note: no country restriction — customer addresses are not US-only.
- */
 import axios from 'axios';
 import { ENV } from '../config/env';
 
@@ -26,11 +17,6 @@ export interface ResolvedPlace extends PlaceCoords {
   formattedAddress: string | null;
 }
 
-/**
- * Address suggestions for what the user has typed so far. Never throws.
- * `types` restricts the prediction kind (e.g. `'address'`, as web's Places Autocomplete
- * uses for the zone canvasser search); omit it for no restriction.
- */
 export const fetchPlacePredictions = async (
   input: string,
   options?: { types?: string }
@@ -56,7 +42,6 @@ export const fetchPlacePredictions = async (
   }
 };
 
-/** Coordinates for a place the user picked from the suggestions. */
 export const geocodePlaceId = async (placeId: string): Promise<PlaceCoords | null> => {
   if (!placeId) return null;
 
@@ -75,11 +60,6 @@ export const geocodePlaceId = async (placeId: string): Promise<PlaceCoords | nul
   }
 };
 
-/**
- * Coordinates for an address the rep TYPED and never picked from the suggestions. Null when
- * Google cannot place it (or the request fails), so the caller decides what to do instead of
- * silently keeping some other location. Never throws.
- */
 export const geocodeAddress = async (address: string): Promise<PlaceCoords | null> => {
   const query = address?.trim();
   if (!query) return null;
@@ -99,11 +79,6 @@ export const geocodeAddress = async (address: string): Promise<PlaceCoords | nul
   }
 };
 
-/**
- * Coordinates AND the formatted address for a picked place — web's `place_changed`
- * reads both (`geometry.location` + `formatted_address`). Null when either is missing,
- * matching web, which ignores a place that lacks them.
- */
 export const resolvePlace = async (placeId: string): Promise<ResolvedPlace | null> => {
   if (!placeId) return null;
 
@@ -127,7 +102,6 @@ export const resolvePlace = async (placeId: string): Promise<ResolvedPlace | nul
   }
 };
 
-/** Street address for a GPS fix — used by "use my current location". */
 export const reverseGeocode = async (coords: PlaceCoords): Promise<string | null> => {
   try {
     const url =

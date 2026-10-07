@@ -9,7 +9,6 @@ interface ReplyBarProps {
   onCancel: () => void;
 }
 
-// Shown above the input when the user is replying — matches web ReplyPreview
 export function ChatReplyBar({ replyingTo, currentUserId, onCancel }: ReplyBarProps) {
   const { colors, isDark } = useTheme();
   if (!replyingTo) return null;
@@ -109,7 +108,6 @@ interface EditBarProps {
   onCancel: () => void;
 }
 
-// Shown above input when the user is editing a sent message
 export function ChatEditBar({ editingMessage, onCancel }: EditBarProps) {
   const { colors, isDark } = useTheme();
   if (!editingMessage) return null;

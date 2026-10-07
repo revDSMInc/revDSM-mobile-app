@@ -2,25 +2,9 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { View, Animated, Easing, StyleSheet } from 'react-native';
 import { ShapeSource, FillLayer, LineLayer, MarkerView } from '@rnmapbox/maps';
 
-/**
- * UserLocationMarker (Mapbox / React Native)
- *
- * Google-Maps-style "blue dot" live-location marker — the RN counterpart of web's
- * `sections/map/zone-canvasser/user-location-marker.js`:
- *   - Semi-transparent accuracy ring (GeoJSON circle polygon, metres)
- *   - Directional heading cone (rotated by compass heading)
- *   - Pulsing blue dot
- *
- * Props:
- *   latitude / longitude – required
- *   heading  – degrees (0 = north, clockwise) | null → cone hidden
- *   accuracy – metres | null → default 20m ring
- */
-
 const BLUE = '#0D47A1';
 const RING_BLUE = '#1565C0';
 
-// GeoJSON circle polygon of `radiusM` metres around [lng, lat].
 function circlePolygon(lng: number, lat: number, radiusM: number, points = 64) {
   const coords: [number, number][] = [];
   const earth = 6378137; // metres
@@ -132,7 +116,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // Full-size square centred on the dot; rotated by heading.
   coneContainer: {
     position: 'absolute',
     top: 0,
@@ -142,8 +125,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-start',
   },
-  // Down-pointing triangle: wide base at the top (north), apex at the container
-  // centre where the dot sits — a "flashlight" cone emanating from the dot.
   coneTriangle: {
     width: 0,
     height: 0,

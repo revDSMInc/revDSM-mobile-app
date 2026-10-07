@@ -60,8 +60,6 @@ function collectAllocationFieldsDeep(fields: any[] | undefined, out: any[]) {
       out.push(field);
       return;
     }
-    // Descend into container fields (stack / accordion) whose nested `fields`
-    // may hold allocations — config-driven, no field-type hardcoding.
     if (Array.isArray(field?.fields) && field.fields.length) {
       collectAllocationFieldsDeep(field.fields, out);
     }
@@ -113,9 +111,6 @@ export function getTabLevelUsed(tabState: any, tabConfig: any) {
     return computeFieldsUsed(tabConfig?.fields, tabState);
   }
 
-  // Legacy top-level combinations. Derive the consumed quantity generically from
-  // the combo fields (grids preferred, else every numeric input) so the tracker
-  // works for any field naming, not only sqft/sq/count.
   const combos = tabState?.combinations || [];
   const comboFields = flattenLeafFields(tabConfig.combinations.fields || []);
 
@@ -218,9 +213,6 @@ export function isFieldLocked(field: any) {
   return Boolean(field?.locked) || field?.type === 'locked';
 }
 
-/** A dcField that resolves to zero counts as "nothing entered" — web parity
- * (allocation-utils.js:226), so a zero-resolving locked field falls back to its
- * (conditional) default instead of persisting a 0 the portal would otherwise read. */
 function isZeroQuantity(value: any): boolean {
   if (typeof value === 'number') return value === 0;
   if (typeof value === 'string') {
@@ -239,11 +231,6 @@ export function resolveLockedValue(field: any, dealCenterData: any = {}, options
       ? [field.dcField]
       : [];
 
-  // The default is only a fallback for when nothing resolves from the deal center.
-  // Callers that evaluate the field's conditions (e.g. a field whose
-  // `dependencies.defaultWhen` is not met) pass the already-resolved default via
-  // `options.fallbackDefault` — '' for a not-included product — so an inactive
-  // default is never leaked here. Web parity: allocation-utils.js:237.
   const fallbackDefault =
     options.fallbackDefault !== undefined ? options.fallbackDefault : field.defaultValue;
 

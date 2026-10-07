@@ -10,17 +10,6 @@ import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../../widge
 import { LoadingImage } from '../../../widgets/common/LoadingImage';
 import { prefetchToLocalCache, getLocalCachePath } from '../../../widgets/modals/lead-center/RevRenderHistoryModal';
 
-/**
- * "Add Renders" field on the rollout quote card (web parity:
- * `src/sections/deal-center/components/AddRendersField.js`). The rep associates the
- * before/after renders they generated with THIS calculator's job build; the
- * selection persists as `selectedRenders[]` and the Investment Center reads it back.
- *
- * Collapsed → a dashed "Add Renders" card that opens a picker modal.
- * Modal      → a "JOB PHOTOS" grid of every generated render; tap to select.
- * Expanded   → the chosen render thumbnails (remove with ✕) + an "Add" tile.
- */
-
 export interface RenderPair {
   runId: string;
   originalUrl: string;
@@ -37,16 +26,12 @@ const keyOf = (p: any) => String(p?.runId || p?._id || p?.generatedUrl || '');
 const imgOf = (p: any) =>
   p?.generatedUrl || (p?.s3UrlGenerated ? resolveS3Url(p.s3UrlGenerated) : '') || '';
 const labelOf = (p: any) => p?.viewLabel || p?.subcategory || p?.category || 'Render';
-// The S3 object path (last two segments, minus any `?signature` query) — stable across
-// re-fetches even as the pre-signed query string rotates, so it can match a stale saved
-// render to its freshly-signed counterpart.
 const pathKey = (url?: string): string => {
   if (!url) return '';
   const noQuery = String(url).split('?')[0];
   return noQuery.split('/').slice(-2).join('/');
 };
 
-/** Normalize raw rev-render runs into deduped before/after pairs (web `buildRevRenderPairs`). */
 export function buildRenderPairs(runs: any[]): RenderPair[] {
   const seen = new Set<string>();
   const pairs: RenderPair[] = [];
@@ -76,7 +61,6 @@ interface Props {
   leadId?: string;
   selected?: any[];
   onChange: (renders: RenderPair[]) => void;
-  /** kept for API compatibility — renders stay editable even on a confirmed rollout. */
   locked?: boolean;
 }
 
@@ -98,11 +82,6 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
   const selectedKeys = useMemo(() => new Set(selectedList.map(keyOf)), [selectedList]);
   const [modalVisible, setModalVisible] = useState(false);
 
-  // A persisted `selectedRenders[]` keeps the pre-signed S3 URL it was saved with,
-  // which EXPIRES — so a returning rep sees blank thumbnails. Re-resolve each selected
-  // pair against the freshly-fetched runs so the thumbnail always uses a live URL. Match
-  // by key first, then by the S3 object PATH (stable even as the `?signature` rotates),
-  // and only fall back to the persisted url when the run is no longer present.
   const freshIndex = useMemo(() => {
     const byKey = new Map<string, RenderPair>();
     const byPath = new Map<string, RenderPair>();
@@ -123,14 +102,6 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
     [freshIndex],
   );
 
-  // Download every hold-to-peekable render to a LOCAL file so the enlarged preview opens
-  // instantly from disk instead of blanking for a few seconds while it re-fetches the S3
-  // image. (Pre-signed S3 URLs carry no cache headers, so the OS image cache misses when
-  // the peek decodes the full image at a larger size — even though the thumbnail already
-  // loaded — and re-downloads it.) The thumbnail keeps using the network URL it already
-  // loaded; only the peek switches to the cached file once ready. Selected thumbnails are
-  // always peekable on the rollout card; the full grid is peekable only while the picker
-  // modal is open.
   const warmedRef = useRef<Set<string>>(new Set());
   const [localUris, setLocalUris] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -161,8 +132,6 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
     };
   }, [selectedList, pairs, modalVisible, resolveImg]);
 
-  // The URL to hand the hold-to-peek preview: the cached local file when it's ready
-  // (instant), else the network URL (the thumbnail already has it on screen either way).
   const peekUri = useCallback(
     (pair: any) => {
       const remote = resolveImg(pair);
@@ -183,7 +152,6 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
   return (
     <View style={{ marginHorizontal: 14, marginBottom: 14 }}>
       {hasSelection ? (
-        // ── Expanded: chosen renders + Add tile ──
         <View style={{ borderWidth: 1.5, borderStyle: 'dashed', borderColor: GREEN, borderRadius: 16, backgroundColor: '#F8FAFC', padding: 14 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <IconBox />
@@ -231,7 +199,6 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
           </View>
         </View>
       ) : (
-        // ── Collapsed: Add Renders prompt ──
         <TouchableOpacity
           activeOpacity={0.85}
           onPress={() => setModalVisible(true)}
@@ -286,7 +253,6 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
                   {pairs.map((pair) => {
                     const isSel = selectedKeys.has(keyOf(pair));
                     return (
-                      // Tap toggles selection; hold peeks the render full-screen.
                       <PhotoPeekPressable
                         key={keyOf(pair)}
                         uri={peekUri(pair)}

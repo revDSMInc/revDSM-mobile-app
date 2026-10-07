@@ -27,7 +27,6 @@ import { getCalculationResult } from '../../../utils/calculator/calculator-calcu
 import { calculateMarkupLabel } from '../../../utils/activity-log/rollout-log-meta';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 
-// Human-readable labels for each field — used in change logs
 const labelMap: Record<string, string> = {
   reason: 'Reason',
   explain: 'Explain',
@@ -60,8 +59,6 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface EditContractDetailsModalProps {
   visible: boolean;
   onClose: () => void;
@@ -71,15 +68,11 @@ interface EditContractDetailsModalProps {
   onSendSuccess?: () => void;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
 const downPaymentMethods = [
   { label: 'Check (0% Fee)', value: 'check' },
   { label: 'MC/VISA/DSCVR (3.00% Fee)', value: 'card' },
   { label: 'AMEX (5.00% Fee)', value: 'amex' },
 ];
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmt(val: any): string {
   if (val == null || val === '') return '';
@@ -93,8 +86,6 @@ function normalise(v: any): number | null {
   return isFinite(n) ? n : null;
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
 export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> = ({
   visible,
   onClose,
@@ -106,7 +97,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
 
-  // ── Analytics & Parity refs ────────────────────────────────────────────────
   const pendingLogChangesRef = useRef<any[]>([]);
   const [logChangeTrigger, setLogChangeTrigger] = useState<any>(null);
   const debouncedLogChange = useDebounce(logChangeTrigger, 1000);
@@ -114,18 +104,15 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
   const initialFieldsRef = useRef<Record<string, any>>({});
   const fetchedCalculatorRef = useRef<any>(null);
 
-  // ── View state ─────────────────────────────────────────────────────────────
   const [view, setView] = useState<'menu' | 'pricing'>('menu');
   const [schedulerOpen, setSchedulerOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
-  // ── Lead meta ──────────────────────────────────────────────────────────────
   const rawStatus = (lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '');
   const isSale = rawStatus === 'sale';
   const isDemo = rawStatus === 'demo' || rawStatus === 'demonosale';
 
-  // ── Form state ─────────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     originalContractPrice: '0',
@@ -137,7 +124,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     reason: '',
   });
 
-  // ── Amendment state ────────────────────────────────────────────────────────
   const [amendmentOpen, setAmendmentOpen] = useState(false);
   const [amendmentChanges, setAmendmentChanges] = useState<AmendmentChange[]>([]);
   const [amendmentSubmitting, setAmendmentSubmitting] = useState(false);
@@ -243,7 +229,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     });
   };
 
-  // Flush queued changes when debounce settles
   useEffect(() => {
     if (!debouncedLogChange || !user?._id) return;
     flushQueuedLogs();
@@ -293,7 +278,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  // ── Sync form with fresh data whenever modal opens ─────────────────────────
   React.useEffect(() => {
     if (visible) {
       const price = outcomeData?.originalContractPrice || outcomeData?.leadData?.originalContractPrice || lead?.originalContractPrice || 0;
@@ -368,7 +352,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     }
   }, [visible, outcomeData, lead, user?._id, user?.id]);
 
-  // ── field-change detection → queue log ─────────────────────────────────────
   useEffect(() => {
     const userId = user?._id || user?.id;
     if (!visible || !userId || !leadId) return;
@@ -413,7 +396,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     );
   }, [formData, visible, user?._id, user?.id, leadId]);
 
-  // ── Auto-compute balance & queue special logging fields ─────────────────────
   React.useEffect(() => {
     const price = normalise(formData.originalContractPrice) || 0;
     const dp = normalise(formData.downPayment) || 0;
@@ -462,7 +444,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
   }, [formData.originalContractPrice, formData.downPayment, user?._id, user?.id, visible]);
 
 
-  // ── Save pricing ────────────────────────────────────────────────────────────
   const handleSavePricing = async () => {
     const leadId = lead?._id || lead?.id;
     if (!leadId) return;
@@ -485,11 +466,9 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
 
     setLoading(true);
     try {
-      // 1. Fetch existing job state so we preserve all other fields
       let existingJobState: any = {};
       let existingLeadData: any = {};
       try {
-        // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
         const ecdCalcId = resolveLeadCalculatorId(lead);
         const current = ecdCalcId
           ? await LeadService.getLeadOutcomeByCalculator(leadId, ecdCalcId)
@@ -498,10 +477,8 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
         existingJobState = inner?.jobBuilder || inner?.jobState || {};
         existingLeadData = inner?.leadData || {};
       } catch {
-        // non-fatal – proceed with empty base
       }
 
-      // 2. Build final leadData
       const editedLeadData = {
         ...existingLeadData,
         result: lead?.result || lead?.status || outcomeData?.result || outcomeData?.status || '',
@@ -523,7 +500,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
           existingLeadData.selectedAppointmentId ?? lead?.selectedAppointmentId ?? null,
       };
 
-      // 3. Non-sale: save directly (no amendment required)
       if (!isSale) {
         await LeadService.submitJobBuilder(leadId, {
           leadData: editedLeadData,
@@ -535,7 +511,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
         return;
       }
 
-      // 4. Sale: detect changes vs current lead data
       const oldLead = lead || {};
       const changes: AmendmentChange[] = [];
       const addChange = (key: string, label: string, oldVal: any, newVal: any) => {
@@ -560,7 +535,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
         oldLead.balancePaymentMethod || outcomeData?.balancePaymentMethod || '',
         editedLeadData.balancePaymentMethod);
 
-      // 5. Create/update leadDraft so the customer can sign remotely if needed
       try {
         const draftRes = await LeadService.upsertLeadDraft(leadId, {
           originalContractPrice: editedLeadData.originalContractPrice,
@@ -576,10 +550,8 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
           null;
         setDraftId(newDraftId);
       } catch {
-        // draft creation is non-fatal; proceed to amendment modal
       }
 
-      // 6. Store pending data & open amendment modal
       pendingSubmitRef.current = { leadId, editedLeadData, existingJobState };
       setAmendmentChanges(changes);
       setAmendmentOpen(true);
@@ -590,7 +562,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     }
   };
 
-  // ── Amendment submit (after signature) ────────────────────────────────────
   const handleAmendmentSubmit = async ({ signature }: { signature: string }) => {
     const pending = pendingSubmitRef.current;
     if (!pending?.leadId) return;
@@ -626,7 +597,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
             customerSignature: signature || null,
           });
         } catch {
-          // non-fatal
         }
       }
       flushQueuedLogs();
@@ -641,7 +611,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     }
   };
 
-  // ── Schedule confirm ───────────────────────────────────────────────────────
   const handleScheduleConfirm = async (data: any) => {
     setLoading(true);
     const leadId = lead?._id || lead?.id;
@@ -657,11 +626,9 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
         }
       }
 
-      // Fetch existing job state to preserve other fields
       let existingJobState: any = {};
       let existingLeadData: any = {};
       try {
-        // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
         const ecdCalcId = resolveLeadCalculatorId(lead);
         const current = ecdCalcId
           ? await LeadService.getLeadOutcomeByCalculator(leadId, ecdCalcId)
@@ -689,13 +656,11 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
         },
       };
 
-      // Non-sale or no change: save directly
       await LeadService.submitJobBuilder(leadId, {
         leadData: editedLeadData,
         jobState: editedJobState,
       });
 
-      // Log installDate and timeWindow edits
       const oldInstallDate = lead?.installDate || outcomeData?.installDate;
       const oldTimeWindow = lead?.timeWindow || outcomeData?.timeWindow;
       const userId = user?._id || user?.id;
@@ -740,7 +705,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
       };
       await onUpdate(outcomePayload);
 
-      // Sync with JobTracker if it exists
       try {
         const jobs = await JobService.getJobs();
         const apptId = lead?.appointmentId || outcomeData?.appointmentId || leadId;
@@ -781,7 +745,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     }
   };
 
-  // ── Dropdown helpers ───────────────────────────────────────────────────────
   const handleToggleExpand = (field: string) => {
     const isExpanding = expanded !== field;
     setExpanded(isExpanding ? field : null);
@@ -1051,8 +1014,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
       </View>
     );
   };
-
-  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <>
@@ -1365,7 +1326,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
           setAmendmentChanges([]);
         }}
         onSendSuccess={() => {
-          // Customer will sign remotely — close both modals
           setAmendmentOpen(false);
           setAmendmentChanges([]);
           onClose();

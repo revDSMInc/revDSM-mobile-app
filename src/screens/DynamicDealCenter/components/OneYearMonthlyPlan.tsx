@@ -9,16 +9,6 @@ import {
   isFinancing,
 } from '../hooks/useDealPricing';
 
-/**
- * 1-Year Program monthly-payment selector (web parity: the `OneYearMonthlyPlan`
- * sub-component in `PricingSharedUI.js`). The 1-Year card can now show a monthly
- * payment that either **matches** the In-Home selected plan or uses the rep's
- * **default** 1-Year financing plan — and the rep may override it with ANY
- * financing plan (it is allowed to be "worse" than the In-Home plan). The chosen
- * plan persists on the calculator as `oneYearMonthlyPlan` so the Investment Center
- * shows the same monthly.
- */
-
 export type OneYearMonthlyValue = {
   mode: 'match' | 'default' | 'custom';
   planKey?: string;
@@ -31,11 +21,8 @@ export type OneYearMonthlyValue = {
 interface Props {
   plans: Record<string, DealPlan>;
   categories: PayCategory[];
-  /** The In-Home selected plan key — used by `match` mode. */
   inHomeMethod: string;
-  /** The rep's default 1-Year financing plan key — used by `default` mode. */
   defaultKey: string;
-  /** The 1-Year program grand total (financing base). */
   base: number;
   value: OneYearMonthlyValue;
   onChange: (v: OneYearMonthlyValue) => void;
@@ -44,7 +31,6 @@ interface Props {
 
 const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
-/** Catalog aprs are stored as fractions (0.0999 = 9.99%); tolerate a whole percent. */
 const aprPercent = (apr: any): number => {
   const n = Number(apr) || 0;
   if (n <= 0) return 0;
@@ -77,8 +63,6 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
     });
   };
 
-  // Financing plans grouped exactly like the payment-method picker, but only the
-  // financing ones (cash/card can't carry a monthly on the 1-Year program).
   const financingCategories = useMemo(
     () =>
       (categories || [])
@@ -175,7 +159,6 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                     )}
                     {cat.plans.map((key) => {
                       const m = calcMonthly(plans, base, key);
-                      // Selected when this is the active plan (match/default resolve to a key too).
                       const isSel = mode === 'custom' ? value?.planKey === key : resolvedKey === key;
                       return (
                         <TouchableOpacity

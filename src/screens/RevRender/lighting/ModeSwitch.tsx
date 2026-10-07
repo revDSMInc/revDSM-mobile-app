@@ -6,13 +6,6 @@ const GREEN = '#2EDE56';
 
 export type RenderMode = 'core' | 'lighting';
 
-/**
- * Core Products | Roofline Lighting, sitting directly under the photo.
- *
- * Core is the default and its screen below stays pixel-identical to production
- * (483 §1) — switching swaps only the configuration area, never the photo,
- * header or bottom action bar.
- */
 export function ModeSwitch({
   mode,
   onChange,

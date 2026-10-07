@@ -14,25 +14,6 @@ import {
 } from '../../utils/funding';
 import type { FundingApprovalReminder, FundingRefund } from '../../../../services/api/FundingService';
 
-/**
- * The refund's approval status — the bar the rep reads to answer "where has my
- * money-back request got to, and who is holding it".
- *
- * ⚠️ **A refund is the one thing on this screen a third party decides**, and it is
- * decided twice: an approver unlocks the customer's signature, and only then does a
- * manager release the funds. So the rail runs Raised → Approved → Customer Signs →
- * Refunded and "Approved" sits SECOND of four. Any shorter reading of it — a
- * two-step approved/not, or a rail that ends on approval — tells the rep the money
- * has gone back when it has not.
- *
- * The rail itself is `StepRail`, the same renderer the payment cards use, so a
- * finished step looks identical whether it is a charged card or a signed refund.
- *
- * ⚠️ The rose palette here is deliberately the SAME set of hexes the refund blocks in
- * `DynamicDealEditScreen` already use — this component is dropped inside them, and a
- * second rose would read as a nested, unrelated card.
- */
-
 const ROSE = {
   BG: '#FFF1F2',
   BORDER: '#FDA4AF',
@@ -41,7 +22,6 @@ const ROSE = {
   STRONG: '#BE123C',
 } as const;
 
-/** The state chip's colours. Mirrors `refundStateTone`, which owns the rule. */
 function chipColors(refund?: FundingRefund | null): { bg: string; fg: string; label: string } {
   if (!refund?.state) return { bg: '#E2E8F0', fg: '#475569', label: 'Not raised yet' };
   const label = REFUND_STATE_LABELS[refund.state] || refund.state;
@@ -53,36 +33,19 @@ function chipColors(refund?: FundingRefund | null): { bg: string; fg: string; la
     case 'muted':
       return { bg: '#E2E8F0', fg: '#475569', label };
     default:
-      // ⚠️ Amber, and this is the one that matters: an approved request waiting on
-      // the customer is the NORMAL resting state. Green would say the money is back.
       return { bg: '#FEF3C7', fg: '#92400E', label };
   }
 }
 
 interface RailProps {
-  /**
-   * What goes back. The rep's own arithmetic before a request exists, the SERVER's
-   * figure after — the two are the same number until the rep re-prices again, and
-   * the one the approver was actually sent is the one that counts.
-   */
   amount: number;
   refund?: FundingRefund | null;
-  /**
-   * The reminder window, straight off the approval row (REVDSM-1160). Omitted where
-   * there is nothing to chase, so the block renders nothing rather than guessing.
-   */
   reminder?: FundingApprovalReminder | null;
-  /** Who is being waited on — the "on Sam Patel" half of the waiting line. */
   approverName?: string;
-  /** Omit and the wait is still REPORTED, just not actionable — the right degradation. */
   onRemind?: () => void;
   reminding?: boolean;
 }
 
-/**
- * The status block without card chrome, for dropping into a refund card that already
- * exists. `RefundApprovalCard` is the same thing with its own border.
- */
 export function RefundStatusRail({ amount, refund, reminder, approverName, onRemind, reminding }: RailProps) {
   const chip = chipColors(refund);
   const states = refundApprovalStates(refund);
@@ -132,23 +95,6 @@ export function RefundStatusRail({ amount, refund, reminder, approverName, onRem
   );
 }
 
-/**
- * "Waiting 3 days on Sam Patel" + **Remind approver** (REVDSM-1160).
- *
- * ⚠️ **Only while the request is `pendingApproval`.** The server's `canRemind` already
- * refuses a decided request — there is nobody left to chase — but rendering its
- * `blockedReason` under an APPROVED refund would put "This request is already
- * approved" on a card whose rail says exactly that one line above.
- *
- * ⚠️ **`canRemind` and `blockedReason` are the SERVER's, and are never recomputed
- * here.** The window is two backend constants (48 h, then one reminder a day) and 48
- * is the backend's own assumption pending Lance's confirmation — serving it is
- * precisely what lets it change with no app release. A device that did its own
- * arithmetic would offer a button the endpoint then refuses.
- *
- * A row carrying no `reminder` at all renders nothing: a deployment predating this
- * feature must not show a button whose endpoint 404s.
- */
 function RefundReminderBlock({
   refund,
   reminder,
@@ -178,13 +124,6 @@ function RefundReminderBlock({
 
       {canRemind ? (
         <TouchableOpacity
-          /**
-           * ⚠️ Called through an arrow, NEVER passed straight in. `onPress` hands its
-           * handler a `GestureResponderEvent`, and the hook's `remind(note?)` takes an
-           * optional first argument — so `onPress={onRemind}` would post the touch
-           * event to the API as the reminder's `note`. The prop type `() => void`
-           * hides that from tsc.
-           */
           onPress={() => onRemind?.()}
           disabled={reminding}
           activeOpacity={0.8}
@@ -212,8 +151,6 @@ function RefundReminderBlock({
           </Text>
         </TouchableOpacity>
       ) : (
-        // ⚠️ The server's own wording, verbatim — it names the window ("You can send a
-        // reminder once this has been waiting 2 days."), which no client-side string can.
         !!reminder.blockedReason && (
           <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, lineHeight: 15, color: ROSE.TEXT }}>
             {reminder.blockedReason}
@@ -224,7 +161,6 @@ function RefundReminderBlock({
   );
 }
 
-/** The same block with its own card, for a screen that has no refund card already. */
 export function RefundApprovalCard({ amount, refund, reminder, approverName, onRemind, reminding }: RailProps) {
   const sent = Number(refund?.amount) || 0;
   const shown = sent > 0 ? sent : amount;
@@ -250,41 +186,15 @@ export function RefundApprovalCard({ amount, refund, reminder, approverName, onR
 
 interface ApproverRowProps {
   label?: string;
-  /** The chosen approver's name, or empty for the placeholder. */
   selectedName?: string;
   isLoading?: boolean;
-  /** `false` means nobody in the company may approve, so the request would 409. */
   isConfigured: boolean;
-  /**
-   * The list could not be READ. ⚠️ A completely different thing from
-   * `isConfigured: false`, and it must not borrow that message: one says "ask your
-   * admin to set approvers up", the other says "the app could not reach the server".
-   * Telling a rep to chase their admin over a dropped request sends them somewhere
-   * nobody can help them.
-   */
   isError?: boolean;
   onRetry?: () => void;
-  /**
-   * The request is out with this person and they have not answered.
-   *
-   * ⚠️ The approver is then FIXED. Re-picking here would only change a local field —
-   * the request the approver is looking at is already filed against them server-side,
-   * and moving it needs `POST /approvals/:id/reassign`, which is `pending`-only and
-   * is not wired. A picker that silently changed nothing would be worse than one that
-   * says why it is closed.
-   */
   locked?: boolean;
   onPress: () => void;
 }
 
-/**
- * "Send for approval to" — the one control that decides who this refund lands on.
- *
- * ⚠️ Its own component because it is rendered TWICE: on the pricing step, where the
- * rep has just dropped the price and is being told a refund follows, and again on
- * Review beside "Send Addendum To". Both drive the same `approverId`, so a second
- * implementation would be two controls able to disagree about who was chosen.
- */
 export function RefundApproverRow({
   label = 'Send for approval to',
   selectedName,

@@ -1,7 +1,3 @@
-/**
- * Normalize property API responses to a single property record.
- * The /property/v1/properties endpoint returns an array of matches (web parity).
- */
 export function normalizePropertyResponse(data: unknown): Record<string, any> | null {
   if (data == null) return null;
 

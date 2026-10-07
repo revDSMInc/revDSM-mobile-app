@@ -22,7 +22,6 @@ import { getOfflineImagesForJob } from '../../../services/api/offlineUploadManag
 
 const { width, height } = Dimensions.get('window');
 
-// ─── Shimmer skeleton for a single image slot ───────────────────────────────
 const ImageSkeleton = () => {
   const shimmer = useRef(new RNAnimated.Value(0)).current;
 
@@ -50,7 +49,6 @@ const ImageSkeleton = () => {
   );
 };
 
-// ─── Single image with its own load state ───────────────────────────────────
 const GalleryImage = React.memo(({ uri, onExpand, onDelete, canDelete }: {
   uri: string;
   onExpand: () => void;
@@ -133,7 +131,6 @@ export const MapGalleryModal = ({
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
   const [imageToDelete, setImageToDelete] = useState<{ type: 'before' | 'after'; index: number } | null>(null);
 
-  // Gesture state for full-screen viewer
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -174,7 +171,6 @@ export const MapGalleryModal = ({
     savedTranslateX.value = 0; savedTranslateY.value = 0;
   };
 
-  // ─── PHASE 1: Instantly show any direct URLs available on the image objects
   const setFallbackUris = useCallback((bImages: any[], aImages: any[]) => {
     const extractFallback = (img: any): string =>
       img.secureUrl || img.s3url || img.url || '';
@@ -190,7 +186,6 @@ export const MapGalleryModal = ({
     setAfterUris(aFallback);
   }, [job?.jobNumber]);
 
-  // ─── PHASE 2: Silently upgrade to fresh signed URLs in the background
   const fetchSignedUrls = useCallback(async (bImages: any[], aImages: any[]) => {
     try {
       setSigningUrls(true);
@@ -218,14 +213,12 @@ export const MapGalleryModal = ({
       const offlineBefore = getOfflineImagesForJob(job?.jobNumber, 'before').map(img => img.uri);
       const offlineAfter = getOfflineImagesForJob(job?.jobNumber, 'after').map(img => img.uri);
 
-      // Only update if we have signed URLs or offline pending images
       setBeforeUris(signedBefore.length > 0 ? signedBefore : bImages.map((img: any) => img.secureUrl || img.s3url || img.url || '').filter(Boolean));
       setAfterUris(signedAfter.length > 0 ? signedAfter : aImages.map((img: any) => img.secureUrl || img.s3url || img.url || '').filter(Boolean));
       
       setOfflineBeforeUris(offlineBefore);
       setOfflineAfterUris(offlineAfter);
     } catch {
-      // Keep fallback URLs — no-op on error
     } finally {
       setSigningUrls(false);
     }
@@ -242,10 +235,8 @@ export const MapGalleryModal = ({
     setNewBeforeImages([]);
     setNewAfterImages([]);
 
-    // Phase 1: show fallback URLs instantly (no spinner, no delay)
     setFallbackUris(bImages, aImages);
 
-    // Phase 2: upgrade to signed URLs silently in the background
     fetchSignedUrls(bImages, aImages);
   }, [job, setFallbackUris, fetchSignedUrls]);
 
@@ -309,7 +300,6 @@ export const MapGalleryModal = ({
     return () => sub.remove();
   }, [job?.jobNumber, refreshJobImages]);
 
-  // ─── Local delete (staged until Save Changes) ────────────────────
   const handleLocalDelete = (type: 'before' | 'after', index: number) => {
     if (type === 'before' && beforeUris.length <= 1) {
       FlashMessage.warning('At least 1 before image is required.'); return;
@@ -388,7 +378,6 @@ export const MapGalleryModal = ({
     }
   };
 
-  // ─── Save pending deletions and new uploads ────────
   const handleSaveChanges = async () => {
     if (pendingDeletions.length === 0 && newBeforeImages.length === 0 && newAfterImages.length === 0) {
       onClose();
@@ -397,7 +386,6 @@ export const MapGalleryModal = ({
     try {
       setSaving(true);
 
-      // 1. Deletions
       if (pendingDeletions.length > 0) {
         const beforePaths = pendingDeletions.filter(d => d.imgType === 'before').map(d => d.filePath).filter(Boolean);
         const afterPaths = pendingDeletions.filter(d => d.imgType === 'after').map(d => d.filePath).filter(Boolean);
@@ -409,7 +397,6 @@ export const MapGalleryModal = ({
         });
       }
 
-      // 2. New Before images
       let updatedBefore = [];
       if (newBeforeImages.length > 0) {
         const formData = new FormData();
@@ -422,7 +409,6 @@ export const MapGalleryModal = ({
         updatedBefore = res.data?.data?.images?.beforeImages || res.data?.images?.beforeImages || [];
       }
 
-      // 3. New After images
       let updatedAfter = [];
       if (newAfterImages.length > 0) {
         const formData = new FormData();
@@ -517,8 +503,6 @@ export const MapGalleryModal = ({
   const allBeforeUris = [...beforeUris, ...offlineBeforeUris];
   const allAfterUris = [...afterUris, ...offlineAfterUris];
   const hasNoImages = allBeforeUris.length === 0 && allAfterUris.length === 0;
-  // iOS can fail to present a Modal over another active Modal.
-  // Hide the base gallery modal while any child modal is open.
   const mainModalVisible =
     visible &&
     !showBeforeModal &&
@@ -641,7 +625,6 @@ export const MapGalleryModal = ({
                       ))}
                     </View>
                   ) : (
-                    /* Skeleton placeholder while URIs are loading */
                     job?.images?.beforeImages?.length > 0 ? (
                       <View className="gap-4">
                         {(job.images.beforeImages as any[]).map((_: any, idx: number) => (

@@ -1,16 +1,3 @@
-/**
- * Gutter/Roofline Description Generator
- *
- * Generates description lines for gutters/roofline components based on job state.
- * Reads from the actual dynamic job builder vertical state using correct tab IDs,
- * section IDs, and field IDs from the job builder config.
- *
- * Faithful TS port of web `gutter-roofline-description-generator.js`.
- *
- * @param verticalState - The current vertical state keyed by tab IDs
- * @returns Array of description lines for the "Description of Work"
- */
-
 const SEC = {
   vinylSoffit: 'section_1781849987288',
   porchCeiling: 'section_1782132023135',
@@ -297,7 +284,6 @@ export function generateGutterRooflineDescriptions(verticalState: any): string[]
   const TAB = buildTab(extractVerticalId(vs));
   const descriptions: string[] = [];
 
-  // ==================== SOFFIT ====================
   const soffitFt = getSectionNumber(vs, TAB.soffit, SEC.vinylSoffit, F.soffitFootage);
   if (soffitFt > 0) {
     const color = getSectionColor(vs, TAB.soffit, SEC.vinylSoffit, F.soffitColor);
@@ -321,7 +307,6 @@ export function generateGutterRooflineDescriptions(verticalState: any): string[]
     descriptions.push(`Install Nailer Build Out — ${nailerFt}'`);
   }
 
-  // ==================== FASCIA ====================
   const boardFt = getSectionNumber(vs, TAB.fascia, SEC.fasciaBoards, F.fasciaBoardFootage);
   if (boardFt > 0) {
     const size = getSectionString(vs, TAB.fascia, SEC.fasciaBoards, F.fasciaBoardSize);
@@ -340,7 +325,6 @@ export function generateGutterRooflineDescriptions(verticalState: any): string[]
     descriptions.push(`Install Aluminum 2"x2" Fascia Board — ${alumFt}'`);
   }
 
-  // ==================== GUTTERS ====================
   const rrFt = getSectionNumber(vs, TAB.gutters, SEC.gutterExtras, F.modifyHeight);
   const hasRR = rrFt > 0;
   if (hasRR) {
@@ -378,7 +362,6 @@ export function generateGutterRooflineDescriptions(verticalState: any): string[]
     }
   }
 
-  // ==================== DOWNSPOUTS ====================
   const dsFt = getSectionNumber(vs, TAB.gutters, SEC.downspoutAccessories, F.downspoutFootage);
   if (dsFt > 0) {
     const size = getSectionString(vs, TAB.gutters, SEC.downspoutAccessories, F.downspoutSize);
@@ -392,7 +375,6 @@ export function generateGutterRooflineDescriptions(verticalState: any): string[]
     descriptions.push(`Total Elbows — A: ${elbowsA}, B: ${elbowsB}`);
   }
 
-  // ==================== GUTTER EXTRAS ====================
   const groundspoutCount = getSectionNumber(vs, TAB.gutters, SEC.gutterExtras, F.groundspout);
   if (groundspoutCount > 0) {
     descriptions.push(`Install ${groundspoutCount} Groundspouts`);
@@ -420,7 +402,6 @@ export function generateGutterRooflineDescriptions(verticalState: any): string[]
     descriptions.push(`Install Roof Straps — ${strapFt}'`);
   }
 
-  // ==================== GUARDS ====================
   if (anyGuardHasData(vs, TAB)) {
     const guardTotalFt = getGuardTotalFt(vs, TAB);
     const guardColor = getGuardColor(vs, TAB);
@@ -434,7 +415,6 @@ export function generateGutterRooflineDescriptions(verticalState: any): string[]
     }
   }
 
-  // SpecGuard (Micro Mesh Special)
   const specGuardFt = getGridTotal(vs, TAB.gutterGuards, SEC.guardSpecial, F.guardSpecialGrid);
   if (specGuardFt > 0) {
     const color = getComboColor(vs, TAB.gutterGuards, SEC.guardSpecial, F.guardSpecialColor);
@@ -451,13 +431,11 @@ export function generateGutterRooflineDescriptions(verticalState: any): string[]
     descriptions.push("Includes No Clog and No Leak Guarantee and Lifetime Transferable Warranty on Guard");
   }
 
-  // CSR
   const csrFt = getSectionNumber(vs, TAB.gutterGuards, SEC.guardExtras, F.csr);
   if (csrFt > 0) {
     descriptions.push(`Clean, Seal and Reinforce: Clean interior of Gutter and Downspouts, Seal each seam with 50yr Silicone, Install Hidden Hangers to reinforce — ${csrFt}'`);
   }
 
-  // ==================== ADDITIONAL SERVICES ====================
   const extraLabor = getSectionString(vs, TAB.additionalServices, SEC.additionalMain, F.extraLabor);
   if (extraLabor && parseNum(extraLabor) > 0) {
     const notes = getSectionString(vs, TAB.additionalServices, SEC.additionalMain, F.additionalNotes);

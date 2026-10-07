@@ -1,5 +1,4 @@
 export const JobDocsThumbnails = {
-  // Views
   front_view: require('./front_view.jpg'),
   front_left: require('./front_left.jpg'),
   front_right: require('./front_right.jpg'),
@@ -9,12 +8,10 @@ export const JobDocsThumbnails = {
   back_left: require('./back_left.jpg'),
   back_right: require('./back_right.jpg'),
 
-  // Gutters
   gutter_kstyle: require('./inside_k_styler_gutter_run.jpg'),
   gutter_box: require('./box_gutter_run.jpg'),
   gutter_super: require('./inside_super_gutter.jpg'),
 
-  // Measurements
   box_gutter_width: require('./box_gutter_width_measurement.jpg'),
   super_gutter_width: require('./super_gutter_width_measurement.jpg'),
   fascia_width: require('./fascia_board_width.jpg'),
@@ -23,7 +20,6 @@ export const JobDocsThumbnails = {
   soffit_panel: require('./soffit_panel_measurement.jpg'),
   k_style_width: require('./k_styler_gutter_width_measurement.jpg'),
 
-  // Misc
   pool_screens: require('./pool_screens.jpg'),
   misc1: require('./misc-1.jpg'),
   misc2: require('./misc-2.jpg'),
@@ -31,10 +27,8 @@ export const JobDocsThumbnails = {
   misc4: require('./misc-4.jpg'),
   misc: require('./misc.jpg'),
 
-  // Roofline
   roof_edge: require('./roof_edge.jpg'),
 
-  // Roof Inspection
   algae_coverage: require('./roof-inspection/algae-coverage.jpg'),
   bare_spots: require('./roof-inspection/bare-spots.jpg'),
   blistered_shingles: require('./roof-inspection/blistered-shingles.jpg'),

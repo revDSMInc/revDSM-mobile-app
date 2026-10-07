@@ -51,8 +51,6 @@ import {
   resolveRetryDecision,
 } from '../../../utils/offline-lead-queue';
 
-/** Capitalize just the first character as the rep types — leaves the rest untouched so a
- *  legitimately mixed-case name (McDonald, O'Brien) isn't forced to lowercase mid-entry. */
 const capitalizeFirst = (text: string): string =>
   text.length ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 
@@ -83,9 +81,6 @@ export default function LeadCreateModal({
 }: Props) {
   const { colors, isDark } = useTheme();
   const createLeadMutation = useCreateLeadMutation();
-  // For RENDER only. Every imperative read inside an async callback calls `isOnline()` directly,
-  // so a connection that drops mid-fix is judged on what is true when the callback runs rather
-  // than on what was true when the closure was created.
   const online = useIsOnline();
   const initialFormState: {
     firstName: string;
@@ -122,7 +117,6 @@ export default function LeadCreateModal({
   const [form, setForm] = useState(initialFormState);
 
   const scrollViewRef = useRef<ScrollView>(null);
-  // The custom pad is up: the KeyboardAvoidingView must stand down (see GlobalKeyboardAvoidingView).
   const [numPadActive, setNumPadActive] = useState(false);
   const flashRef = useRef<any>(null);
   const [addressFieldY, setAddressFieldY] = useState(0);
@@ -163,12 +157,6 @@ export default function LeadCreateModal({
           setLocation(null);
         }
       } else {
-        // Default to the rep's current location: reverse-geocode the device GPS
-        // into Full Address on open. The rep can overtype to search a different
-        // address via the Places autocomplete (which also updates the coordinates),
-        // or re-fetch their location via the pin icon. The auto-fetch is SILENT —
-        // if permission is denied/unavailable it just leaves the field blank for
-        // manual entry instead of alerting on every open.
         setForm(initialFormState);
         setLocation(null);
         setSuggestions([]);
@@ -178,10 +166,6 @@ export default function LeadCreateModal({
     }
   }, [visible]);
 
-  // `silent` (used by the auto-fetch on open) suppresses the permission-denied
-  // alerts so a rep without location access just gets a blank field to type into,
-  // instead of an alert every time the form opens. Manual taps on the pin pass
-  // silent=false and keep the full "enable in Settings" prompts.
   const handleGetCurrentLocation = async (silent = false) => {
     if (Platform.OS === 'android') {
       const hasLocation = await PermissionsAndroid.check(
@@ -189,8 +173,6 @@ export default function LeadCreateModal({
       );
       let granted = hasLocation ? PermissionsAndroid.RESULTS.GRANTED : null;
       if (!hasLocation) {
-        // Don't trigger the OS permission dialog on the silent auto-fetch — only
-        // use already-granted access; the rep can tap the pin to grant it.
         if (silent) return;
         granted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
@@ -229,22 +211,12 @@ export default function LeadCreateModal({
       async (position) => {
         const { latitude, longitude } = position.coords;
         const coords = { latitude, longitude };
-        // Never overwrite an address the rep has already typed — theirs outranks anything we
-        // derive from a fix that is only accurate to within several metres.
         const fillAddress = (text: string) =>
           setForm((prev) => (prev.address.trim() ? prev : { ...prev, address: text }));
 
         try {
-          // ⚠️ Store the fix BEFORE anything that can throw. This line used to sit inside the
-          // reverse-geocode's success branch, so with no signal the GPS lock succeeded, the axios
-          // call threw, and a perfectly good position was discarded — the lead then went up with
-          // `location: undefined`. The coordinates are the half that needs no network; nothing
-          // network-shaped may gate them.
           if (isValidCoords(coords)) setLocation(coords);
 
-          // Offline there is no reverse-geocoder to reach: iOS CLGeocoder and Android Geocoder
-          // both call a web service. Show the coordinates so the rep can see the fix landed, and
-          // let them type the address off the door — `resolveSyncAddress` resolves it at submit.
           if (!isOnline()) {
             if (isValidCoords(coords)) fillAddress(formatCoordsPlaceholder(coords));
             return;
@@ -259,8 +231,6 @@ export default function LeadCreateModal({
             fillAddress(formatCoordsPlaceholder(coords));
           }
         } catch (e) {
-          // A geocode that fails on a live-looking connection is the same situation as offline:
-          // we hold a real fix and no address for it. Show the fix rather than an empty box.
           console.warn('Geocoding failed', e);
           if (isValidCoords(coords)) fillAddress(formatCoordsPlaceholder(coords));
         } finally {
@@ -271,7 +241,6 @@ export default function LeadCreateModal({
         console.warn('Location error', error);
         setIsLocating(false);
         if (error.code === 1 && !silent) {
-          // PERMISSION_DENIED
           Alert.alert(
             'Location Permission Required',
             'Please enable location services in your device settings to use this feature.',
@@ -282,25 +251,14 @@ export default function LeadCreateModal({
           );
         }
       },
-      // Offline the chip has no A-GPS almanac and no Wi-Fi triangulation to lean on, so a cold
-      // fix takes 30-60 s. The online 15 s timeout would abort nearly every one of them.
       geolocationOptions(isOnline())
     );
   };
 
   const handleAddressSearch = async (text: string) => {
     setForm({ ...form, address: text });
-    // ⚠️ The stored coordinates belong to the address they were captured for — the GPS
-    // fix that filled this box on open, or the suggestion that was picked. Once the rep
-    // types over it they describe a DIFFERENT place, and were being saved with the new
-    // address (a Davenport lead pinned on the rep's own GPS position, i.e. Lahore).
-    // Dropped here; `handleSelectSuggestion` sets the picked place's, and submit looks up
-    // the typed address when no suggestion was picked.
     setLocation(null);
     if (text.length > 3) {
-      // Places autocomplete is a network call whose failure is swallowed, so offline it leaves the
-      // rep typing into a box that never responds. Suppress it outright and let them type the
-      // address straight through; the GPS fix is already attached to the lead either way.
       if (!isOnline()) {
         setSuggestions([]);
         setShowSuggestions(false);
@@ -376,7 +334,6 @@ export default function LeadCreateModal({
       }
     };
 
-    // Base validation for all leads
     if (!form.firstName || !form.lastName || !form.address) {
       showError('Missing Info', 'Please fill all required customer fields marked with *');
       return;
@@ -399,20 +356,17 @@ export default function LeadCreateModal({
         return;
       }
     } else {
-      // If fromZone is true, phone is optional, but if entered, it must be complete
       if (rawPhone.length > 1 && rawPhone.length !== 11) {
         showError('Invalid Phone', 'Please enter a complete 10-digit phone number');
         return;
       }
     }
 
-    // Email validation (optional but must be valid if provided)
     if (form.email && (!form.email.includes('@') || !form.email.toLowerCase().includes('.com'))) {
       showError('Invalid Email', 'Email must contain "@" and ".com"');
       return;
     }
 
-    // Additional validation for Issued Leads (backend key `lfLead`/`isLF` unchanged)
     if (isLF) {
       if (!form.lfLeadId || !form.leadCode || !form.lfLeadDate || !form.lfLeadTime) {
         showError('Metadata Required', 'Issued Leads require ID, Code, Date, and Time slot.');
@@ -420,22 +374,11 @@ export default function LeadCreateModal({
       }
     }
 
-    // Declared out here so the catch below can read it: whether a FAILED create may be safely
-    // queued for replay depends on the lead's own shape (see `resolveRetryDecision`).
     let payload: Record<string, any> | null = null;
 
     try {
       Keyboard.dismiss();
 
-      // The address box may still hold the coordinate placeholder from a fix taken with no signal.
-      // Resolving it HERE — at the moment of sending, not at capture — is the whole shape of the
-      // offline flow: the coordinates are captured the instant the rep is at the door, and the
-      // street address is derived later, whenever a connection exists to derive it with.
-      //
-      // ⚠️ `resolveSyncAddress` guarantees a rep-typed address is never replaced by the geocode.
-      // A fix is accurate to +/-5-20 m and a reverse-geocode snaps it to the nearest address it
-      // knows, which on an ordinary street is regularly the NEIGHBOUR. What the rep read off the
-      // mailbox is better data than anything we can infer from a scatter of metres.
       let reverseGeocoded: string | null = null;
       if (isOnline() && needsAddressResolution(form.address, location)) {
         const fix = isValidCoords(location) ? location : parseCoordsPlaceholder(form.address);
@@ -447,11 +390,6 @@ export default function LeadCreateModal({
         reverseGeocoded,
       });
 
-      // The pin is placed from these coordinates, so they must match the address filed. With
-      // none (the rep typed the address without picking a suggestion) look the typed address up;
-      // if Google can't place it, send none rather than somebody else's location.
-      // ⚠️ The look-up is a network call: offline there is nothing to ask, so it is skipped and
-      // the lead goes up with the GPS fix alone (or none) rather than failing the submit.
       const leadLocation =
         (isValidCoords(location) ? location : null) ||
         parseCoordsPlaceholder(form.address) ||
@@ -463,7 +401,6 @@ export default function LeadCreateModal({
           lfLeadId: form.lfLeadId,
           leadCode: form.leadCode,
           lfLeadDate: (() => {
-            // Parse MM-DD-YYYY
             const parts = form.lfLeadDate.split('-');
             if (parts.length !== 3) return new Date().toISOString();
             const m = parseInt(parts[0]) - 1;
@@ -520,9 +457,6 @@ export default function LeadCreateModal({
             longitude: leadLocation?.longitude,
           }),
         };
-      // With no signal, park the lead rather than failing. It carries the GPS fix taken at the
-      // door and whatever address the rep typed; `resolveSyncAddress` above has already settled
-      // which of those gets filed, so the queued body is the exact one that would have been sent.
       if (!isOnline()) {
         enqueueOfflineLead(payload);
         showSuccess(
@@ -560,15 +494,10 @@ export default function LeadCreateModal({
       onSuccess(createdLead, form.leadType);
       handleClose();
     } catch (err: any) {
-      // A create can fail on a connection that LOOKED live — one bar at the door, a tunnel. Rather
-      // than losing the rep's work, run the failure through the same decision table the replay
-      // queue uses and act on its verdict.
       const outcome = classifyCreateOutcome(err);
       const decision = resolveRetryDecision(outcome, payload);
 
       if (payload && decision === 'retry') {
-        // Provably never sent, or an Issued Lead whose `lfLeadId` the server would refuse a second
-        // time — either way a replay cannot duplicate it.
         enqueueOfflineLead(payload);
         showSuccess(
           'Saved offline',
@@ -580,7 +509,6 @@ export default function LeadCreateModal({
       }
 
       if (decision === 'done') {
-        // The server refused a duplicate lead id, which means an earlier attempt already landed.
         showSuccess('Already created', 'This lead is already on the server.');
         onSuccess(null, form.leadType);
         handleClose();
@@ -588,10 +516,6 @@ export default function LeadCreateModal({
       }
 
       if (decision === 'needs-review') {
-        // ⚠️ The honest answer, and the reason this branch exists at all. The request may have been
-        // processed and may not have been, and a self-gen lead has NO unique field the server would
-        // refuse — so replaying it could file a second real lead. A human checking the list is
-        // slower than a guess and is never wrong.
         showError(
           "Couldn't confirm",
           'The lead may or may not have saved. Check your Leads list before entering it again.',
@@ -649,9 +573,6 @@ export default function LeadCreateModal({
           <ScrollView
             ref={scrollViewRef}
             showsVerticalScrollIndicator={false}
-            // 24pt gutter on every side - the same as the header's p-6 - so the title, the
-            // close button and the fields share one left/right edge. Padding lives HERE, not
-            // on the ScrollView's own style, where the vertical part shrinks the frame.
             contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 24, paddingBottom: 80 }}
             scrollEnabled={!showSuggestions}
             keyboardShouldPersistTaps="handled"
@@ -692,8 +613,6 @@ export default function LeadCreateModal({
                   setForm({ ...form, phone: formatted });
                 }}
                 placeholder="+1 (123) 456-7890"
-                // Same keyboard as the Lead ID: `phone-pad` is a DIFFERENT layout (letters, `* + #`) and
-                // the form showed two keyboards. The formatter adds the +1 ( ) - punctuation itself.
                 keyboardType={NUMBER_PAD_KEYBOARD}
                 maxLength={17}
               />
@@ -780,11 +699,6 @@ export default function LeadCreateModal({
                           : 'Locating by GPS — this can take a minute...'
                         : '123 Main St, City, State'
                     }
-                    // ⚠️ MULTILINE and growing, not a fixed 56pt single line: a full address
-                    // ("829 Old 9 Foot Rd, Winter Haven, FL 33880, USA") overflowed and the
-                    // tail was cut off. It now wraps and the box grows (min 50, same as the
-                    // other fields). `scrollEnabled={false}` keeps it from scrolling inside
-                    // itself; the Return key submits instead of inserting a newline.
                     multiline
                     scrollEnabled={false}
                     submitBehavior="blurAndSubmit"
@@ -836,9 +750,6 @@ export default function LeadCreateModal({
                         </TouchableOpacity>
                       ) : null
                     ) : (
-                      // Opt-in current-location fill: tapping the pin reverse-
-                      // geocodes the device GPS into the address (disabled for
-                      // zone leads, whose address is fixed to the picked building).
                       <TouchableOpacity
                         disabled={fromZone}
                         onPress={() => handleGetCurrentLocation(false)}
@@ -1035,9 +946,6 @@ export default function LeadCreateModal({
                     flushLabel
                     label="Lead ID*"
                     value={form.lfLeadId}
-                    // A Lead ID is whole digits only. `numeric` is the DECIMAL pad (Android
-                    // shows blank keys plus `. - ,`); `number-pad` is the clean 0-9 pad, and
-                    // the strip below also drops anything pasted in.
                     onChangeText={(t) => setForm({ ...form, lfLeadId: t.replace(/\D/g, '') })}
                     placeholder="Enter ID"
                     keyboardType={NUMBER_PAD_KEYBOARD}
@@ -1168,7 +1076,6 @@ export default function LeadCreateModal({
   );
 }
 
-/** Every field on this form - label sizes live in the shared `text-sm font-semibold`. */
 const INPUT_FONT_SIZE = 14;
 
 const styles = StyleSheet.create({

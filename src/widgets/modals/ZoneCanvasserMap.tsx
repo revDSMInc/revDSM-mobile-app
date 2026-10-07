@@ -38,7 +38,6 @@ export default function ZoneCanvasserMap({
 }: ZoneCanvasserMapProps) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  // The bottom edge the map's controls must clear (see the hook for the Android nav-bar trap).
   const bottomInset = useBottomInset();
   const workMutation = useWorkLeadMutation();
   const z = useZoneCanvasser({ visible, user });
@@ -61,13 +60,6 @@ export default function ZoneCanvasserMap({
 
     let targetLead = lead;
 
-    // ⚠️ The offline branch of the SAME flow, and its absence was the bug. Online this call
-    // opens the lead's chat thread as a side-effect of `work`; offline `workMutation` can only
-    // time out, the catch below logged a warning, and the rep walked into a lead with no
-    // thread, no check-in log and a card still offering Start Appointment.
-    //
-    // Mirrors `Leads/index.tsx` exactly — same plan, same two halves (local card mark, queued
-    // server state), so the two entry points cannot drift.
     if (isOfflineLead(lead) || !isOnline()) {
       try {
         await persistActiveLeadId(leadId);
@@ -76,8 +68,6 @@ export default function ZoneCanvasserMap({
           if (plan.logModule) {
             void logLeadActionClick(user, plan.logModule, lead);
           }
-          // A REVIEW is off-site — the rep never arrived — so it opens no thread, matching
-          // `shouldCreateChat` on the online plan.
           if (plan.logModule !== 'lead_review') {
             markLeadCheckedInOffline(leadId);
             queueLeadWorkStart(lead, String(user?._id || user?.id || ''));
@@ -148,13 +138,10 @@ export default function ZoneCanvasserMap({
           <View style={{ height: insets.top, backgroundColor: isDark ? colors.background : '#0E2A1C' }} />
         )}
         <Header
-          // Web's zone-map header funnel opens the address search. The search bar is
-          // always on the map here, so the funnel just puts the cursor in it.
           onFilterPress={() => {
             if (z.isDrawingMode) return;
             searchInputRef.current?.focus();
           }}
-          // A location search, not the map's filter set — never an applied-filter badge.
           filterCount={0}
           onNavigate={(route: string) => {
             if (route === 'Leads') {

@@ -15,33 +15,17 @@ import { EDGE_TO_EDGE_MODAL, footerBottomPadding } from '../../../utils/installe
 
 export type ConfirmTone = 'primary' | 'danger';
 
-/**
- * How the confirmation is presented.
- *
- * `dialog` — centred card, fades in. For a decision that has to interrupt: it sits over
- * the middle of the screen and there is nowhere to tap but the two buttons.
- * `sheet` — slides up from the bottom edge, dismissible by tapping above it. For a
- * decision taken in the flow of work, where the reason list is the substance of it.
- */
 export type ConfirmPresentation = 'dialog' | 'sheet';
 
 interface Props {
   visible: boolean;
-  /** MaterialCommunityIcons glyph shown in the tinted circle. */
   icon: string;
   title: string;
-  /** Optional — omit for dialogs where the title plus the reason list say it all. */
   description?: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  /** `danger` paints the confirm button red — for actions that destroy work. */
   tone?: ConfirmTone;
-  /** Centred dialog (default) or bottom sheet. Same content either way. */
   presentation?: ConfirmPresentation;
-  /**
-   * When supplied, the dialog asks for one of these before it will confirm, and
-   * passes the choice to `onConfirm`. Used where the API requires a reason.
-   */
   reasons?: string[];
   reasonLabel?: string;
   submitting?: boolean;
@@ -49,17 +33,6 @@ interface Props {
   onConfirm: (reason?: string) => void;
 }
 
-/**
- * Yes/Cancel confirmation for the installer's one-way actions.
- *
- * Completing a job and resetting one are both irreversible from the phone, so
- * neither fires straight off its button. Shared rather than duplicated so the two
- * read identically — only the wording, the accent and the presentation change.
- *
- * The two presentations render the SAME body, deliberately: the reason picker, the
- * disabled-until-chosen confirm and the in-flight lockout must behave identically
- * whichever way the confirmation arrives.
- */
 export function ConfirmActionModal({
   visible,
   icon,
@@ -82,7 +55,6 @@ export function ConfirmActionModal({
 
   const [reason, setReason] = useState<string | null>(null);
 
-  // A choice must not survive the dialog closing and reopening for a different job.
   useEffect(() => {
     if (!visible) setReason(null);
   }, [visible]);
@@ -196,8 +168,6 @@ export function ConfirmActionModal({
         transparent
         animationType="slide"
         {...EDGE_TO_EDGE_MODAL}
-        // Ignore the hardware back button mid-request, so the action can't be left in
-        // an unknown state from the installer's point of view.
         onRequestClose={submitting ? undefined : onCancel}
       >
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
@@ -213,10 +183,6 @@ export function ConfirmActionModal({
               backgroundColor: isDark ? colors.surface : colors.background,
               borderTopLeftRadius: 24,
               borderTopRightRadius: 24,
-              // Clears the system bar the sheet now paints UNDER (`EDGE_TO_EDGE_MODAL` on the
-              // Modal above). The bar overlays this padding rather than sitting below it, so what
-              // the installer SEES under the last button is the same on a 3-button bar, a gesture
-              // pill and an iOS home indicator alike.
               paddingBottom: footerBottomPadding(insets.bottom),
             }}
           >
@@ -244,8 +210,6 @@ export function ConfirmActionModal({
       visible={visible}
       transparent
       animationType="fade"
-      // Ignore the hardware back button mid-request, so the action can't be left in
-      // an unknown state from the installer's point of view.
       onRequestClose={submitting ? undefined : onCancel}
     >
       <View

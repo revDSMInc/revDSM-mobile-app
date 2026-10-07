@@ -1,18 +1,3 @@
-/**
- * Reusable "Important Notice" helpers (port of web `engine/notice-utils.js`).
- *
- * Any field can carry an optional notice popup:
- *   field.notice = {
- *     enabled: boolean,
- *     head: string,             // popup title
- *     dealsDescription: string, // popup body
- *     triggerValue?: string,    // value that triggers it (empty = any non-empty value)
- *   }
- *
- * Field-type agnostic so it can be wired into dropdowns, toggles, or any other
- * widget. Used e.g. for LeafFilter Versa Max + gutter opening width `< 2.5`.
- */
-
 export interface FieldNotice {
   enabled: boolean;
   head: string;
@@ -45,11 +30,6 @@ function valueMatchesTrigger(value: any, triggerValue: string): boolean {
   return current !== '';
 }
 
-/**
- * Returns the notice content to show for a field's current value, or null.
- * - With a triggerValue: shows only when the value matches it.
- * - Without a triggerValue: shows for any non-empty value.
- */
 export function resolveFieldNotice(
   field: any,
   value: any,

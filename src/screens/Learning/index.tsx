@@ -22,7 +22,6 @@ export default function LearningPage() {
     try {
       const userId = user?._id || user?.id;
 
-      // Log LMS login event (web parity: account-popover logs a `login` / `lms` event)
       if (userId) {
         try {
           await logEvent('login', {
@@ -36,12 +35,10 @@ export default function LearningPage() {
             },
           });
         } catch (err) {
-          // Log silently so we never block the redirect
           console.error('Failed to log LMS login event:', err);
         }
       }
 
-      // Build the redirect URL exactly like web: ?token=<jwt>&redirectingFrom=<origin>
       const token = Storage.getItem('accessToken');
       const base = ENV.LMS_REDIRECT_URL;
       let fullPath = base;

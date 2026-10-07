@@ -582,3 +582,19 @@ Ticket: *"make the custom num pad global - every digit field in the app, restric
 - ⚠️ **Keep the two platform checks in step** (`NumPadProvider` and `useNumPadField`). If only the hook stayed Android-gated, iOS would still mount hosts; if only the provider were, iOS fields would suppress their system keyboard with no pad to type on - **a field the rep cannot type into**.
 - ⚠️ **`utils/keyboard-type.ts` is back to its original** (iPad -> `numbers-and-punctuation`, `NUMERIC_KEYBOARD_HAS_RETURN_KEY = IS_IPAD || android`), because iOS needs it again. On Android the constants are plain `numeric` / `number-pad` (distinct, which is what the pad reads), and the return-key flag is `true`, so the Done check commits exactly once - `RolloutView`'s blur commit stays disarmed there and armed on iPhone only, as before.
 - The Android-specific traps above (Done submits then blurs, Android `keyboardDidShow` guard, in-flow default, `fill`) are unchanged; the iOS-only notes in them (QuickType bar, stale keyboard height) no longer apply.
+
+### Number pad: `useNumPadTarget` + `useNumPadScrollIntoView` (focused field hidden under the pad)
+
+Ticket: *job-builder field half hidden by the number pad.* The in-flow pad emits no keyboard events, so `KeyboardAwareScrollView` never scrolls for it (raising `bottomOffset` changed nothing).
+- `widgets/common/keyboard/NumPad/index.tsx`: new `NumPadTargetContext` + exported `useNumPadTarget()` (the field that owns the pad, `null` when down), provided in both the in-flow and pan branches next to `NumPadActiveContext`. The target's identity changes per field, so an effect keyed on it re-runs on every focus move.
+- `hooks/useNumPadScrollIntoView.ts` consumes it: after 260 ms it measures the focused input against the scroll view's window bottom and `scrollTo`s the shortfall + 64pt (24pt left the bordered field box touching the pad's top edge: the measured rect is the TextInput, and the box extends ~40pt below it - ⚠️ don't shrink the margin back). Offset is derived from a `collapsable={false}` content wrapper's window y, not `onScroll`.
+- ⚠️ Any form with numeric fields in a scroll view needs this hook; tuning `bottomOffset` does nothing for the pad. Wired so far into `DynamicTabRenderer` only; see the follow-up in `deal-center.md`. Not verified on device.
+
+### Comment cleanup (all of `src/` + root app files)
+
+Ticket: *long JSDoc / multi-line `//` blocks above every class, hook and block.* Removed ~15.8k comments across 556 files with a TypeScript-AST pass (not regex), so strings, template literals, JSX text and regexes were never touched.
+
+- Kept: lint / TS directives (`eslint-disable*`, `@ts-*`, `/// <reference>`), and a few single-line (<= 90 chars) comments that flag a trap (`⚠`, `do not`, `TODO`, `workaround`). Multi-line blocks are always dropped.
+- Verified: the comment-free emit (`transpileModule`, `removeComments`) of every file is byte-identical to HEAD; `tsc` reports the same 45 pre-existing errors (line numbers only shifted); jest is unchanged (the same 5 suites fail before and after); CRLF/LF endings are unchanged per file.
+- ⚠️ The "why" that used to live in code comments is now in `git log -p` / `git blame` (commit before this cleanup) and in the part files here. Re-explain a non-obvious rule in a part file, not as a comment block above the code.
+- Native code (`ios/`, `android/`) and `__tests__/` were not touched.

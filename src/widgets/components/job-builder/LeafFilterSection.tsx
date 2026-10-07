@@ -71,16 +71,13 @@ export const LeafFilterSection = ({
     (baseKey: string) => {
       if (!calculatorData) return 0;
       const lowerKey = baseKey.toLowerCase();
-      // Check root level
       const topKey = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
       const topVal = topKey ? n(calculatorData[topKey]) : 0;
       if (topVal > 0) return topVal;
-      // Check inputs (LF footage keys: versa6Ft1, versa7Ft1, etc.)
       const inputs = calculatorData.inputs || {};
       const inputKey = Object.keys(inputs).find((k) => k.toLowerCase() === lowerKey);
       const inputVal = inputKey ? n(inputs[inputKey]) : 0;
       if (inputVal > 0) return inputVal;
-      // Check extras (csr, cornersFilter, sawzallHanger, removeProtection, ribbedRoof)
       const extras = calculatorData.extras || {};
       const extrasKey = Object.keys(extras).find((k) => k.toLowerCase() === lowerKey);
       return extrasKey ? n(extras[extrasKey]) : 0;
@@ -88,7 +85,6 @@ export const LeafFilterSection = ({
     [calculatorData]
   );
 
-  // Extract story-based footage per gutter opening width
   const storyFootageByWidth = useMemo(() => {
     const footage: any = { '6"': [0, 0, 0], '7"': [0, 0, 0], '4 & 5"': [0, 0, 0], 'Versa Max': 0 };
     for (let s = 1; s <= 3; s++) {
@@ -151,7 +147,6 @@ export const LeafFilterSection = ({
     return (leaffilterState.combinations || []).reduce((total: number, combo: any) => {
       if (combo.lfProfile !== 'Versa Max') return total;
       const w = normalizeWidth(combo.gutterOpeningWidth || '');
-      // If width is standard, it already counted in calculateAllocated
       if (['4&5"', '6"', '7"'].includes(w)) return total;
       return total + combo.measurements.reduce((sum: number, val: any) => sum + n(val), 0);
     }, 0);
@@ -194,7 +189,6 @@ export const LeafFilterSection = ({
     onUpdate('leaffilter', 'isComplete', isComplete);
   }, [isComplete, onUpdate]);
 
-  // Exact Web Logic: Initialization and Smart Preservation
   useEffect(() => {
     if (!calculatorData || Object.keys(calculatorData).length === 0) return;
     const current = leaffilterState.combinations || [];
@@ -224,7 +218,6 @@ export const LeafFilterSection = ({
 
     const nextCombinations = [...initialLocked, ...manualCombos];
 
-    // Only update if there's a structural change or story mapping change
     const hasChanged =
       nextCombinations.length !== current.length ||
       initialLocked.some((c: any, i: number) => {
@@ -238,7 +231,6 @@ export const LeafFilterSection = ({
     }
   }, [availableSizes, onUpdate, leaffilterState.combinations]);
 
-  // Sync extras from calculatorData
   useEffect(() => {
     if (!calculatorData) return;
     const extras = {
@@ -249,7 +241,6 @@ export const LeafFilterSection = ({
       ribbedRoof: getVal('ribbedRoof'),
     };
 
-    // Only update if changed to avoid loop
     if (JSON.stringify(extras) !== JSON.stringify(leaffilterState.extras)) {
       onUpdate('leaffilter', 'extras', extras);
     }

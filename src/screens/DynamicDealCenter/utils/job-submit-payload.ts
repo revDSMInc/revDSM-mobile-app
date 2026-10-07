@@ -1,39 +1,3 @@
-/**
- * The `POST /lead/v1/{leadId}/job-builder` body, built to the shape the backend
- * documents (`payload.dynamic.json`) and the web app actually sends
- * (`web-job-builder.txt`, a capture of a real web submit).
- *
- * ```
- * {
- *   leadData: {
- *     oneLeg, result, reason, explain, lastPriceQuoted, originalContractPrice,
- *     downPayment, paymentMethod, balancePaymentMethod, balance,
- *     LFCalculator,                 // the FULL calculator document
- *     selectedCalculatorId, selectedAppointmentId,
- *     jobBuilder,                   // web sends this on its outcome save too
- *   },
- *   isDynamic, configId, configSnapshotId,
- *   jobState,                  // serialized dynamic job state
- *   agreements: [{ name, file, type }],
- *   orderSheets: [], paperWork: [], downPaymentReceipt: [],
- * }
- * ```
- *
- * Pure and RN-free so the assembly is testable — `DynamicJobBuilderScreen` is
- * not (same reason `utils/uploaded-document-refs.ts` and
- * `utils/addendum-drafts.ts` exist).
- *
- * ⚠️ MONEY FIELDS GO OUT AS STRINGS. Both reference payloads carry
- * `"originalContractPrice": "24900"` / `"balance": "21900"` — web's `formData`
- * holds them as typed text — while mobile's result modal produces numbers.
- * A field with no value is `''`, never `0` and never omitted: `0` reads as a
- * real quoted amount on the portal.
- *
- * ⚠️ `lastPriceQuoted` is DEMO-only and `originalContractPrice` is SALE-only
- * (web `result-lead-modal.js`: `formData.result === 'Demo' ? … : ''`). The other
- * one is blanked, not carried over from the modal's state.
- */
-
 export interface SubmitDocumentPayload {
   name: string;
   file: string;
@@ -52,7 +16,6 @@ export interface JobSubmitPayload {
   downPaymentReceipt: SubmitDocumentPayload[];
 }
 
-/** Numbers/nulls → the reference payload's string form; nothing entered → `''`. */
 export function toPayloadAmount(value: any): string {
   if (value === undefined || value === null || value === '') return '';
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
@@ -60,22 +23,11 @@ export function toPayloadAmount(value: any): string {
   return text;
 }
 
-/** Free-text fields: never `undefined`/`null` in the payload. */
 export function toPayloadText(value: any): string {
   if (value === undefined || value === null) return '';
   return String(value);
 }
 
-/**
- * The calculator document out of a `GET /lfcalculators/{id}` response body.
- *
- * ⚠️ The wrapper shape varies by deployment — the repo already reads it four
- * ways (`DynamicDealEditScreen`: `body?.data?.calculator ?? body?.data ??
- * body?.calculator ?? body`). A wrapper sent as the calculator is exactly what
- * "LFCalculator is not appended" looks like from the outside, so the unwrap is
- * shared and verified rather than re-guessed per call site: anything without an
- * `_id` is treated as UNRESOLVED so the caller falls back to the local tab.
- */
 export function extractCalculatorDocument(responseBody: any): any | null {
   const candidates = [
     responseBody?.data?.calculator,
@@ -91,21 +43,6 @@ export function extractCalculatorDocument(responseBody: any): any | null {
   return null;
 }
 
-/**
- * The calculator document `leadData.LFCalculator` carries.
- *
- * ⚠️ The SERVER copy is authoritative — it is the only source with `_id`,
- * `createdBy`, `appointmentId`, `createdAt`/`updatedAt` and the full 40-entry
- * `entries` array the reference payload shows. Mobile used to attach its
- * in-memory `CalcTab`, which has none of those (its `entries` is a MAP keyed by
- * field id, not an array), and then dropped the whole key whenever the tab
- * lacked `createdBy`/`appointmentId` — so in practice the submit went out with
- * no calculator at all.
- *
- * The local tab is a FALLBACK only, for when the read-back fails; every field
- * the server would have supplied is filled from what the tab knows so the shape
- * is never partial.
- */
 export function buildCalculatorDocument(
   serverDocument: any,
   tab: any,
@@ -115,8 +52,6 @@ export function buildCalculatorDocument(
   const local = tab && typeof tab === 'object' ? tab : null;
   if (!doc && !local) return null;
 
-  // A saved calculator stores `entries` as an ARRAY; the in-memory tab keys them
-  // by field id, so a fallback has to flatten the map back out.
   const entriesOf = (source: any): any[] => {
     const raw = source?.entries;
     if (Array.isArray(raw)) return raw;
@@ -162,30 +97,6 @@ export function buildCalculatorDocument(
   };
 }
 
-/**
- * `leadData`, assembled to web's `cleanLeadData`
- * (`sections/job/components/result-lead-modal.js`) key for key.
- *
- * ⚠️ Everything the result modal ALSO carries (`versatile`, `pineapple`,
- * `resultType`, `demoReason`, …) is deliberately NOT spread in: the contract has
- * a fixed key set, and those fields still reach the backend through the
- * lead-scoped outcome mirror that runs right after this POST.
- *
- * ⚠️ The calculator goes out ONLY as `LFCalculator` — web's spelling, and what
- * web normalizes a stored `lfCalculator` back to on read (`result-lead-modal.js`).
- * A lowercase alias carrying the same object shipped briefly and was removed on
- * request: two copies of one document in one payload is a duplicate, not a
- * safety net. If the backend ever turns out to read the lowercase key, RENAME
- * this one — do not add the second.
- *
- * ⚠️ It is NEVER null. Web's last line before saving is *"ensure LFCalculator is
- * at least an empty object for backend validation"* — an absent/null calculator
- * is what the validator rejects.
- *
- * ⚠️ `selectedAppointmentId` prefers the CALCULATOR's own `appointmentId`
- * (web: `targetCalc?.appointmentId || formData.selectedAppointmentId`) — the
- * calculator is the record that actually knows which appointment it belongs to.
- */
 export function buildSubmitLeadData({
   resultData = {},
   result,
@@ -225,12 +136,6 @@ export function buildSubmitLeadData({
   };
 }
 
-/**
- * The whole request body. `agreements` / `orderSheets` / `paperWork` /
- * `downPaymentReceipt` are ALWAYS present, empty arrays included — the backend
- * contract lists all four groups, and an absent key is not the same as an empty
- * one for a partial-update handler.
- */
 export function buildJobSubmitPayload({
   leadData,
   jobState,

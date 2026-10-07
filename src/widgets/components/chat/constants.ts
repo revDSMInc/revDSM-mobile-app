@@ -1,11 +1,3 @@
-// Status chip config, kept 1:1 with web `chat-threads/chat-thread-item.js`
-// `STATUS_CONFIG` so the Recent-Leads card shows the exact same badges. Any
-// unmapped status falls back to `notResulted`, matching web.
-//
-// Note: the `lf`/`lfLead` status is a black chip labelled "Issued Lead" — the
-// product renamed the user-facing term from "LF Lead" to "Issued Lead" (the
-// backend status key stays `lfLead`/`lf`, unchanged), matching the "ISSUE LEAD"
-// classification in the Add-New-Lead form and web's renamed labels.
 export const STATUS_CONFIG: any = {
   sale: { label: 'Sale', color: '#10B981', textColor: '#fff' },
   notResulted: { label: 'Not Resulted', color: '#EAB308', textColor: '#000' },

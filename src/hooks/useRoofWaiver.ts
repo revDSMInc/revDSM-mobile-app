@@ -266,7 +266,6 @@ export const useRoofWaiver = (
     }
 
     try {
-      // Use dynamic viewBox width/height matching the recorded layout coordinates to prevent clipping
       const svgContent = `<?xml version="1.0" encoding="UTF-8" standalone="no"?><svg width="500" height="260" viewBox="0 0 320 260" xmlns="http://www.w3.org/2000/svg">${savedPaths
         .map(
           (p) =>

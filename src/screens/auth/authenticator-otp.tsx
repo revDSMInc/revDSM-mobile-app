@@ -75,7 +75,6 @@ export default function AuthenticatorOTPScreen() {
       });
       FlashMessage.success('Verified', 'Authenticator PIN verified');
     } catch (err: any) {
-      // Correct PIN, but the account has no mobile dashboard permission.
       if (isMobileAccessDenied(err)) {
         FlashMessage.error('Access Denied', NO_MOBILE_ACCESS_MESSAGE);
         navigation.navigate('Login');

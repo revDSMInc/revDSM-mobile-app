@@ -1,16 +1,3 @@
-/**
- * build-outcome-payload.ts — pure builder for the calculator-scoped LeadOutcome
- * payload (`PUT lead/v1/{leadId}/outcome/{calculatorId}`). Ports the field set the
- * web result modal persists (`result-lead-modal.js` handleUpdateJobBuilder /
- * JobBuilderContext.buildSavePayload), closing these mobile gaps:
- *   - `LFCalculator`: the full calculator snapshot (web always sends it, with a
- *     `{}` fallback for backend validation). Mobile previously omitted it.
- *   - `selectedAppointmentId`: web sends `targetCalc?.appointmentId || formData.selectedAppointmentId`.
- *   - Demo `lastPriceQuoted`: web persists the last price quoted for a Demo; mobile
- *     dropped it (passed `undefined`) because the modal cleared contractPrice for demos.
- *   - `versatile` / `pineapple`: mobile-only extras — now included so they rehydrate on reopen.
- */
-
 export interface ResultData {
   resultType?: 'sale' | 'demo';
   result?: string;
@@ -22,14 +9,6 @@ export interface ResultData {
   balance?: number;
   downPaymentMethod?: string;
   balancePaymentMethod?: string;
-  /**
-   * The multi-method breakdown (`ResultJobModal` → `paymentAllocations`), persisted
-   * BESIDE the four scalars above rather than replacing them.
-   *
-   * ⚠️ This builder is a WHITELIST — anything not named here is silently dropped,
-   * which is exactly how a saved split contract would come back as one row of the
-   * summed total on the next open.
-   */
   downPayments?: { method: string; amount: number; label?: string; type?: string }[];
   balancePayments?: { method: string; amount: number; label?: string; type?: string }[];
   demoReason?: string;
@@ -49,11 +28,6 @@ export function normalizeResult(rd: ResultData): 'Sale' | 'Demo' | undefined {
   return undefined;
 }
 
-/**
- * Build the calculator-scoped outcome payload. `jobBuilder` is the serialized
- * job-builder wrapper (draft or submitted). `fallbackAppointmentId` (usually the
- * leadId) is used when neither the calculator nor the result data carries one.
- */
 export function buildCalculatorOutcomePayload(args: {
   rd: ResultData;
   calcId: string;
@@ -64,22 +38,10 @@ export function buildCalculatorOutcomePayload(args: {
   const result = normalizeResult(rd);
   const isDemo = result === 'Demo';
 
-  // Web: lastPriceQuoted is the demo's quoted price; contractPrice drives it for
-  // sales' originalContractPrice. Demo's contractPrice is cleared in the modal, so
-  // prefer the explicit lastPriceQuoted field.
   const lastPriceQuoted = isDemo
     ? rd.lastPriceQuoted ?? rd.contractPrice
     : rd.lastPriceQuoted ?? rd.contractPrice;
 
-  // Web parity (JobBuilderContext.buildSavePayload): ONLY include `LFCalculator`
-  // when it is a FULL backend calculator doc. The backend's `LFCalculator` is a
-  // Mongoose subdocument whose `createdBy`/`appointmentId`/`title` are all required
-  // — sending an empty `{}` (or a partial local tab that lacks them) triggers those
-  // required-field validators and 500s the whole PUT ("Validation failed:
-  // LFCalculator.createdBy is required, ..."). Web always has the real doc from
-  // `GET /appointments/{id}/lfcalculators`, so its snapshot passes; mobile's in-memory
-  // `CalcTab` does NOT carry `createdBy`/`appointmentId`, so it must be omitted and the
-  // backend stores null (which the reopen / summary / edit paths all tolerate).
   const lf = rd.LFCalculator;
   const hasLFCalculator =
     lf && typeof lf === 'object' && lf.createdBy && lf.appointmentId && lf.title;
@@ -93,20 +55,13 @@ export function buildCalculatorOutcomePayload(args: {
     lastPriceQuoted,
     originalContractPrice: rd.contractPrice ?? rd.originalContractPrice,
     downPayment: rd.downPayment,
-    // Web outcome uses `paymentMethod` for the down-payment method (not `downPaymentMethod`).
     paymentMethod: rd.downPaymentMethod,
     balancePaymentMethod: rd.balancePaymentMethod,
     balance: rd.balance,
-    // Additive to the four scalars above, which stay written as a derived mirror.
-    // ⚠️ Spread conditionally: the backend's `default: undefined` is what tells a
-    // record that PREDATES multi-method apart from one that genuinely has no rows,
-    // and writing `undefined` explicitly on a demo would blank a saved allocation.
     ...(rd.downPayments ? { downPayments: rd.downPayments } : {}),
     ...(rd.balancePayments ? { balancePayments: rd.balancePayments } : {}),
-    // Web parity — the associated calculator snapshot (only when present).
     ...(hasLFCalculator && { LFCalculator: rd.LFCalculator }),
     selectedAppointmentId: rd.selectedAppointmentId || rd.LFCalculator?.appointmentId || fallbackAppointmentId,
-    // Mobile-only extras (harmless additional keys; rehydrate on reopen).
     versatile: rd.versatile,
     pineapple: rd.pineapple,
     jobBuilder,

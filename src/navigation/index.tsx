@@ -39,10 +39,6 @@ export type RootStackParamList = {
     fromZoneCanvasser?: boolean;
     appointmentStarted?: boolean;
     tab?: string;
-    // Opened from My Deals: the screen is identical to the sold-lead Lead Center,
-    // except the header reads "Deal" and the Contract Details pencil keeps the My
-    // Deals edit flow (the 4-step dynamic deal-edit wizard) instead of the inline
-    // Edit Contract Details modal.
     fromMyDeals?: boolean;
   };
   Profile: undefined;
@@ -59,19 +55,11 @@ export type RootStackParamList = {
     description?: string;
     chatType?: 'lead' | 'channel';
     initialParticipants?: any[];
-    // Full lead photo array, handed straight from an already-loaded lead
-    // (LeadCenter) so the Appointment Photos picker doesn't have to refetch.
     salesPhotos?: any[];
-    // Lead preview thumbnail source, handed from the already-loaded lead so the
-    // chat header shows the same street-view image as the Recent-Leads row (web
-    // parity: `quick-chat-dialog.js`).
     previewImage?: any;
     previewImages?: any;
   };
   MapDetail: { currentLead?: any };
-  // `bookId` selects a PORTAL-AUTHORED pitch book (Lead Center card → book list);
-  // omit it for the bundled deck. `bookName` is only a title placeholder shown
-  // while the book is still loading — the fetched name wins once it lands.
   Pitchbook: { lead: any; bookId?: string; bookName?: string };
   RooflineDeck: { lead: any };
   DealCenter: { lead: any };
@@ -118,35 +106,15 @@ export type RootStackParamList = {
   DynamicDealCenter: {
     lead?: any;
     initialVerticalId?: string;
-    // 'edit' opens a saved deal straight in the dynamic job builder (My Deals /
-    // LeadCenter Products → Edit). `calculatorResultData` carries the calculatorId.
     mode?: 'new' | 'edit';
     calculatorResultData?: any;
-    // Opt-in handoff from the Investment Center → open Result Lead (Sale).
     resultOptIn?: { calculatorId?: string; price?: number; paymentMethod?: string; downPayment?: number };
-    /**
-     * Open straight on the dynamic Job Builder (its Summary step), skipping the
-     * calculator and rollout steps. Set by the `agreement-signed` notification:
-     * the customer has signed, so the rep's next action is Complete Job.
-     *
-     * ⚠️ Honoured only once the calculators and config have loaded — the builder
-     * mounted early would render an empty summary. See the effect in
-     * `DynamicDealCenterScreen`.
-     */
     openJobBuilder?: boolean;
   };
   MyDeals: undefined;
-  // Deal Detail — opened from My Deals; hosts the contract summary + the Edit
-  // pencil that launches the 4-step dynamic edit wizard (DynamicDealCenter edit).
   DealDetail: { lead?: any; leadId?: string };
-  // Installer role — landing screen + per-job install timeline. Gated on the
-  // `installer_dashboard` dashboard permission (see useUserRole).
   InstallerDashboard: undefined;
-  // `checkedIn` is set only when the dashboard opened a work session for this job —
-  // it is what tells the detail screen to check out again on the way back.
   InstallerJobDetail: { job: any; checkedIn?: boolean };
-  // Investment Center — the in-home presentation step opened from Lead Center tools.
-  // Consent-gated; shows per-calculator renders + dynamic job scope + program cards.
   InvestmentCenter: { lead?: any };
 };
 
@@ -172,28 +140,6 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
     filterCount?: number | null;
   }>({});
 
-  /**
-   * MERGES, and that is the whole point — it used to hand the raw `useState` setter out,
-   * which REPLACED the object.
-   *
-   * Every screen registers its own keys on focus and nulls them on blur, but the two
-   * effects belong to DIFFERENT screens and React Navigation does not promise which runs
-   * first. Leaving Lead Center for the map, a whole-object replace meant Lead Center's
-   * blur cleanup (`{ onNavigate: null }`) landing after Map Detail's focus setup wiped
-   * `onFilterPress` / `onListPress` with it — so the map opened with no filter or list
-   * icon in the header, and only got them back once something re-focused the screen
-   * (tapping the bell or the chat icon navigates away and back, which is exactly the
-   * "click an icon and they appear" in the report). The ordering is not deterministic,
-   * which is why it was intermittent.
-   *
-   * Merging makes each screen's cleanup touch only the keys it owns, so no screen can
-   * clear another's. An explicit `null` still clears, so nothing about the blur contract
-   * changes.
-   *
-   * ⚠️ It must stay referentially STABLE (`useCallback` with no deps): both consumers
-   * list it in a `useFocusEffect` dependency array, so a new identity per render would
-   * re-run those effects on every render of this navigator.
-   */
   const setHeaderActions = useCallback(
     (actions: {
       onFilterPress?: (() => void) | null;
@@ -254,10 +200,6 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                 <Stack.Screen name="AuthenticatorOTP" component={AuthenticatorOTPScreen} />
               </>
             ) : isInstaller ? (
-              // Installers get a dedicated screen set. Their permissions carry no
-              // leads/deal access, so the sales screens are not registered at all
-              // rather than merely hidden — and InstallerDashboard being first makes
-              // it the landing route without needing an explicit initialRouteName.
               <>
                 <Stack.Screen name="InstallerDashboard" component={InstallerDashboard} />
                 <Stack.Screen

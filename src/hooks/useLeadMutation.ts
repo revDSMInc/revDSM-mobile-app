@@ -17,14 +17,10 @@ export const useCreateLeadMutation = () => {
       return res.data;
     },
     onSuccess: () => {
-      // Invalidate leads queries to refresh data
       queryClient.invalidateQueries({ queryKey: ['leads'] });
     },
   });
 };
-
-// `useUpdateLeadOutcomeMutation` was REMOVED (2026-08-12): it wrapped the deprecated
-// lead-scoped `PUT lead/v1/{leadId}/outcome` and had no call sites anywhere in the app.
 
 export const useSubmitJobBuilderMutation = () => {
   const queryClient = useQueryClient();
@@ -109,9 +105,6 @@ export const useResetLeadMutation = () => {
 export const useSubmitDigitalConsentMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    // ⚠️ The multipart build lives in `services/api/consent-forms.ts`, NOT here, because the
-    // offline queue posts the very same body when the connection returns. Two copies of a legal
-    // form's payload builder drifting apart would file two different-shaped records for one act.
     mutationFn: async (data: any) => {
       const payload = data?.payload ? { ...data.payload } : { ...data };
       return submitConsentForm({

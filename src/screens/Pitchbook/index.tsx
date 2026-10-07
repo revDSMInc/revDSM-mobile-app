@@ -45,6 +45,7 @@ import {
 } from '../../widgets/common/PhotoPeekScrollLock';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { jobWaitState, WAITING_AMBER } from '../../utils/report-job-connectivity';
 import IonIcon from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../widgets/common/MainHeader';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -61,6 +62,7 @@ import { downloadPdfToDevice } from '../../utils/download-utils';
 import { storage } from '../../utils/storage';
 import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
+import { useLeadPhotosWithPending } from '../../hooks/useLeadPhotosWithPending';
 import { usePitchBookDeck } from '../../hooks/usePitchBooks';
 import { useIsOnline } from '../../hooks/useIsOnline';
 import { useTabStripAutoScroll } from '../../hooks/useTabStripAutoScroll';
@@ -71,10 +73,6 @@ import { reportDisplayName } from '../../utils/report-name';
 
 const { width } = Dimensions.get('window');
 
-// Persisted slide position per lead, so the pitchbook resumes where the rep left off.
-// A portal-authored book is scoped by its id as well: its sections are unrelated to
-// the bundled deck's (and to another book's), so one shared key would restore a rep
-// into a tab that doesn't exist in the deck they just opened.
 const progressKey = (leadId?: string | null, bookId?: string | null) =>
   `pitchbook-progress-${leadId || 'default'}${bookId ? `-${bookId}` : ''}`;
 
@@ -90,11 +88,6 @@ const DEFAULT_CATEGORIES = [
 export default function PitchbookScreen() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
-  // Company-scoped deck swap — web parity (`pitch-book.js` `isGreenRooflines`). For
-  // the Green Rooflines company the pitchbook is a single-tab 12-slide deck; every
-  // other company keeps the default LeafFilter deck. `CATEGORIES` and
-  // `pitchBookImages` below shadow the module defaults so all downstream reads are
-  // deck-aware with no further changes. No schema/API — the choice is companyId only.
   const isGreenRooflines = (user?.companyId || '') === GREEN_ROOFLINES_COMPANY_ID;
   const insets = useSafeAreaInsets();
   const { width: winWidth, height: winHeight } = useWindowDimensions();
@@ -105,10 +98,6 @@ export default function PitchbookScreen() {
   const { lead, bookId, bookName } = (route.params as any) || {};
   const leadId = lead?._id || lead?.id || null;
 
-  // A `bookId` param means the rep picked a PORTAL-AUTHORED book from the Lead
-  // Center card; without one the screen keeps its previous behaviour and serves the
-  // bundled deck. `deck.images` / `deck.categories` arrive in exactly the static
-  // decks' shape, so everything below reads from one pair of variables either way.
   const {
     data: remoteDeck,
     isLoading: isDeckLoading,
@@ -136,8 +125,6 @@ export default function PitchbookScreen() {
         : pitchBookImagesDefault,
     [isRemoteDeck, remoteDeck, isGreenRooflines]
   );
-  // Remote decks have no fixed first tab — it is whatever the portal ordered first,
-  // and it isn't known until the fetch lands (see the reconcile effect below).
   const defaultCategoryId = isRemoteDeck
     ? remoteDeck?.categories?.[0]?.id || ''
     : isGreenRooflines
@@ -145,7 +132,6 @@ export default function PitchbookScreen() {
     : 'leafFilter_story';
   const deckTitle = (isRemoteDeck && (remoteDeck?.bookName || bookName)) || 'Pitch Book';
 
-  // Restore the last viewed slide for this lead (if any).
   const savedProgress = useMemo(() => {
     try {
       const raw = storage.getString(progressKey(leadId, bookId));
@@ -160,9 +146,6 @@ export default function PitchbookScreen() {
 
   const [viewMode, setViewMode] = useState<'rep' | 'homeowner'>('rep');
   const [activeCategory, setActiveCategory] = useState(() => {
-    // Only restore a saved tab that exists in THIS deck — a lead pitched on the
-    // default deck must not restore into a Green Rooflines-only tab (or vice versa),
-    // which would render a blank slide. Otherwise start on the deck's first tab.
     const saved = savedProgress?.category;
     return saved && CATEGORIES.some((c) => c.id === saved) ? saved : defaultCategoryId;
   });
@@ -170,96 +153,21 @@ export default function PitchbookScreen() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showTools, setShowTools] = useState(false);
 
-  /**
-   * The fullscreen gesture tutorial, and the chrome the centre tap toggles.
-   *
-   * `chromeVisible` starts TRUE: a rep who has dismissed the tutorial (or never saw it)
-   * must still land on a screen with its page counter, arrows and exit button, or the
-   * only way out of fullscreen would be a gesture they have not been told about.
-   */
   const [showGestureTutorial, setShowGestureTutorial] = useState(false);
   const [chromeVisible, setChromeVisible] = useState(true);
 
-  /**
-   * Bumped by every deliberate interaction, purely to RE-ARM the auto-hide below.
-   *
-   * ⚠️ A counter rather than a timestamp: the effect only needs to know that something
-   * happened, and a changing number is the cheapest dependency that says so. A timestamp
-   * would work identically and read as though the VALUE mattered.
-   */
   const [chromeNudge, setChromeNudge] = useState(0);
 
-  /**
-   * Which half of the fullscreen dock is open.
-   *
-   * ⚠️ Reset to `slides` on every fullscreen open, for the same reason `chromeVisible`
-   * is: the deck's section tabs live in this bar, so landing in `tools` would hide the
-   * navigation a rep opens the presentation to use.
-   */
   const [dockMode, setDockMode] = useState<DockMode>('slides');
 
-  /**
-   * What the fullscreen chrome actually renders on.
-   *
-   * ⚠️ **The tutorial hides it outright** — *"when the gesture screen is displayed, no
-   * need to show the bottom bar also."* It is not only tidier: the dock carries
-   * `zIndex: 20` and the tutorial's own root did not, and in React Native zIndex beats
-   * document order among siblings, so the dock painted OVER the card and sat across its
-   * two buttons. Gating the chrome fixes the overlap at its cause rather than starting a
-   * zIndex war, and it leaves the rep looking at the thing they are being asked to read.
-   *
-   * The tutorial teaches what this chrome does, so there is nothing to demonstrate
-   * against while it is up — the centre tap is swallowed for the same reason.
-   */
   const chromeShown = chromeVisible && !showGestureTutorial;
 
-  /**
-   * The chrome gets out of the way on its own after three seconds.
-   *
-   * Ticket: *"the cross icon, page number, forward and backward buttons and also the
-   * bottom UI controls automatically hide after 3 seconds, and when the user taps on the
-   * screen show all the controls and hide automatically after 3 seconds."*
-   *
-   * ⚠️ **Held open while the TOOL panel is showing** (`dockMode === 'tools'`). That panel
-   * is content the rep is reading — inspection photos, the risk report — and timing it
-   * out from under them would be the one case where hiding is destructive rather than
-   * tidy. It resumes the moment they go back to the slide tabs.
-   *
-   * ⚠️ **Also held while the tutorial is up.** The chrome is force-hidden there anyway
-   * (`chromeShown`), so arming a timer against it would only fire a state change nobody
-   * can see and re-arm on dismissal a beat late.
-   *
-   * Re-arms on `chromeNudge`, which every interaction bumps — see below.
-   */
   useEffect(() => {
     if (!isFullscreen || !chromeVisible || showGestureTutorial || dockMode === 'tools') return;
     const timer = setTimeout(() => setChromeVisible(false), CHROME_AUTO_HIDE_MS);
     return () => clearTimeout(timer);
   }, [isFullscreen, chromeVisible, showGestureTutorial, dockMode, chromeNudge]);
 
-  /**
-   * A tap on the slide TOGGLES the chrome.
-   *
-   *   hidden  → tap → shown, and it hides itself again after three seconds
-   *   shown   → tap → hidden IMMEDIATELY, without waiting out the countdown
-   *
-   * Ticket: *"when the user taps, the UI is displayed and after 3 seconds automatically
-   * hides — but when the user taps again the UI hides immediately."*
-   *
-   * ⚠️ This SUPERSEDES the previous pass, where a tap only ever revealed. The worry then
-   * was that a rep could not tell which state they were in; in practice the chrome is
-   * plainly on screen or plainly not, and a rep who has finished pointing at a control
-   * wants it gone NOW rather than three seconds from now, in front of the customer.
-   *
-   * Showing bumps `chromeNudge` so the countdown always restarts from a full three
-   * seconds; hiding needs nothing, because the auto-hide effect keys on `chromeVisible`
-   * and its cleanup cancels the pending timer the moment it flips false.
-   *
-   * ⚠️ **A SWIPE still cannot reach this.** The swipe is a `Gesture.Pan` with
-   * `activeOffsetX`, and once a pan activates RNGH cancels the tap composed beside it — so
-   * paging through slides never flashes the chrome on OR knocks it off. A drag too small to
-   * activate the pan is a tap by any reasonable reading, so toggling there is correct.
-   */
   const toggleChrome = useCallback(() => {
     if (showGestureTutorial) return;
     if (chromeVisible) {
@@ -270,106 +178,43 @@ export default function PitchbookScreen() {
     setChromeNudge((n) => n + 1);
   }, [showGestureTutorial, chromeVisible]);
 
-  /**
-   * Restart the countdown WITHOUT forcing the chrome back on.
-   *
-   * ⚠️ For presses on the chrome itself — an arrow, a category tab, the mode icons. A rep
-   * working the controls must not have them vanish mid-reach, but this must never reveal
-   * anything either: `handlePrev` / `handleNext` are shared with the SWIPE, so a reveal
-   * here would put the controls back on every swipe, which is exactly what the ticket
-   * rules out.
-   */
   const keepChromeAlive = useCallback(() => setChromeNudge((n) => n + 1), []);
 
-  /**
-   * Top clearance for the fullscreen slide's chrome.
-   *
-   * ⚠️ **`insets.top` reports 0 inside the fullscreen `Modal`** — a Modal is its own
-   * native view tree, so it sits outside the `SafeAreaProvider`'s host view and the hook
-   * has no window to measure. `Math.max(insets.top + 8, 20)` therefore resolved to a flat
-   * 20, which put the ✕ and the page count straight through the notch and across the
-   * clock, which is what was reported.
-   *
-   * The floor is the fix rather than a nested provider: one number, no new context inside
-   * a modal whose children already read `insets` for other things and would all shift.
-   *
-   * ⚠️ **44 is the notch, not the status bar.** Hiding the status bar (above) does NOT
-   * reclaim the notch or the Dynamic Island — iOS still refuses to draw there — so the
-   * clearance is needed even with nothing to collide with.
-   *
-   * ⚠️ **LANDSCAPE IGNORES `insets.top` ENTIRELY — a fixed 12.** Not just a smaller floor:
-   * `insets` is a value the modal re-reads across a rotation, and on the FIRST rotation it
-   * still holds the PORTRAIT top inset (~59). Taking the larger of the two therefore
-   * inherited that stale number and dropped the chrome down the screen until something
-   * else forced a re-render, which is the "on the first attempt they are not in their
-   * place" report. The landscape top inset is genuinely near-zero on every device — the
-   * cutout moves to the SIDE — so a constant is both correct and immune to the staleness.
-   * `insets.left` / `landscapeRightInset` are what guard the sides.
-   */
   const fullscreenTopInset = (isLandscape ? 12 : Math.max(insets.top, 44)) + 8;
 
-  /**
-   * Side clearance for the fullscreen chrome — the CAMERA CUTOUT, which lives on a side
-   * in landscape.
-   *
-   * ⚠️ A FLOOR of 44, not `Math.max(insets.left, 16)`, and for the same reason the top
-   * needed one: on the FIRST rotation `insets` still holds the PORTRAIT values, where the
-   * side insets are `0`. The old expression therefore resolved to 16pt and put the ✕ (or
-   * the page count, depending on which way the phone was turned) **underneath the camera
-   * module** — reported as *"one icon is hidden below the camera module."* Once the
-   * rotation settles `insets` reports the real 44–59, which is why it looked correct on
-   * the second attempt.
-   *
-   * ⚠️ Applied to BOTH sides. Which side the cutout is on depends on the rotation
-   * DIRECTION, and the only value that would tell us is the one that is unreliable here,
-   * so the clearance has to be symmetric. On a device with no cutout it costs a little of
-   * the black letterbox and nothing of the slide.
-   *
-   * The Android navigation bar still raises the right side beyond the floor where it
-   * applies (`landscapeRightInset` has its own 48 minimum).
-   */
   const fullscreenLeftInset = isLandscape ? Math.max(insets.left || 0, 44) : 12;
   const fullscreenRightInset = isLandscape ? Math.max(landscapeRightInset, 44) : 12;
 
-  /**
-   * The same zero-inset problem at the bottom, where the HOME INDICATOR is.
-   *
-   * ⚠️ A smaller floor than the top, and not for symmetry's sake: the indicator is a thin
-   * bar the OS draws over whatever is beneath it, not a region iOS refuses to render in
-   * like the notch. It needs clearing, not avoiding. Landscape's is shorter still.
-   */
   const fullscreenBottomInset = Math.max(insets.bottom, isLandscape ? 12 : 24);
   const [activeToolTab, setActiveToolTab] = useState('inspection');
   const [loading, setLoading] = useState(true);
   const [fullLeadData, setFullLeadData] = useState<any>(null);
 
-  const activePhotos = useMemo(() => {
+  const serverPhotos = useMemo(() => {
     return fullLeadData?.outcome?.salesPhotos || fullLeadData?.salesPhotos || lead?.salesPhotos || [];
   }, [fullLeadData, lead]);
 
-  const { data: secureImages = {} } = useSecureUrls(activePhotos);
+  /**
+   * ⚠️ Plus the shots still in the UPLOAD QUEUE. `salesPhotos` is the server's list, so a photo
+   * captured at a door with no signal is not in it — the rep saw three photos in Manage Photos
+   * marked "Saved on device" and this screen said "No inspection photos available".
+   */
+  const activePhotos = useLeadPhotosWithPending(
+    serverPhotos,
+    (lead as any)?._id || (lead as any)?.id
+  );
 
-  /*
-    The dock decides the Inspection tab's EMPTY state itself rather than letting
-    `InspectionPhotosPanel` draw its own: the panel's is a light-theme block (themed grey,
-    `opacity-50`, a bold title over a 10px hint) and it sat beside the Videos tab's regular
-    single line, so the two empty tabs read as different typography. Same pure builder the
-    panel uses, so the two cannot disagree about whether there is anything to show.
-  */
+  // ⚠️ The SERVER photos only. A queued shot has no `s3url` to sign, and passing it would
+  // change the set key on every capture, re-fetching every url for nothing.
+  const { data: secureImages = {} } = useSecureUrls(serverPhotos);
+
   const hasInspectionPhotos = useMemo(
     () => buildInspectionSections(activePhotos, secureImages).length > 0,
     [activePhotos, secureImages]
   );
 
-  // Animation for tools drawer
   const toolsAnim = useRef(new Animated.Value(0)).current;
 
-  /**
-   * One logger for the Interactive Tools sheet / dock panel. Logged under its own
-   * `interactive_tool` module (not `pitch_book`) with `interactive_tool_*` actions.
-   * Opening the sheet/dock is a `view`, closing it a `close`, everything else a `click`.
-   * `surface` says which UI the event came from.
-   */
   const logTool = (
     action: string,
     meta: Record<string, unknown> = {},
@@ -414,27 +259,9 @@ export default function PitchbookScreen() {
     setShowTools(!showTools);
   };
 
-  /**
-   * Raise the tutorial the first time a rep presents fullscreen.
-   *
-   * ⚠️ Keyed on the fullscreen OPEN, not on mount — the inline card has neither of these
-   * gestures, so teaching them on the screen where they do nothing would be worse than
-   * not teaching them at all. The chrome is restored on every open too, so leaving a
-   * presentation with it hidden never strands the next one.
-   */
   useEffect(() => {
     if (!isFullscreen) return;
 
-    /**
-     * ⚠️ Imperative as WELL as the `<StatusBar hidden />` inside the modal, because the
-     * declarative one does not reliably win there: a `Modal` is presented by its own
-     * native controller, and the component's value is applied against the screen's stack
-     * entry rather than the modal's — the clock, wifi and battery stayed over the slide
-     * on device even with `hidden` set. `setHidden` goes straight to the module.
-     *
-     * Restored on the way out rather than on unmount, so leaving fullscreen puts the bar
-     * back even though the screen behind it is still mounted.
-     */
     StatusBar.setHidden(true, 'fade');
     setChromeVisible(true);
     setDockMode('slides');
@@ -445,7 +272,6 @@ export default function PitchbookScreen() {
     return () => StatusBar.setHidden(false, 'fade');
   }, [isFullscreen]);
 
-  // "Got It, Dismiss" — closes for now. Deliberately writes nothing; see the util.
   const dismissGestureTutorial = useCallback(() => setShowGestureTutorial(false), []);
 
   const neverShowGestureTutorial = useCallback(() => {
@@ -453,26 +279,6 @@ export default function PitchbookScreen() {
     setShowGestureTutorial(false);
   }, []);
 
-  /**
-   * Centre tap → toggle the presentation chrome.
-   *
-   * ⚠️ Swallowed while the tutorial is up, so the tap that dismisses it cannot also hide
-   * the controls behind it — the rep would be left on a bare slide having pressed a
-   * button that said "Got It".
-   */
-  /**
-   * A swipe anywhere on the slide changes it.
-   *
-   * ⚠️ Handed to `ZoomableImage` as `onSwipe` rather than laid over the image as its own
-   * detector. An overlay swallows the touch whether or not its gesture activates, which
-   * is why the edge strips this replaces ate taps on the prev/next arrows sitting at
-   * those very edges — and why swiping only worked in an 18 % band. `swipeDirection`
-   * still decides what counts, so a vertical or half-hearted drag changes nothing.
-   */
-  /**
-   * The arrows, wrapped so a PRESS keeps the chrome alive — `handlePrev` / `handleNext`
-   * are shared with the swipe and must stay free of any chrome behaviour themselves.
-   */
   const handleArrowPrev = useCallback(() => {
     keepChromeAlive();
     handlePrev();
@@ -519,11 +325,6 @@ export default function PitchbookScreen() {
     [keepChromeAlive, activeToolTab, activeCategory, currentSlideIndex]
   );
 
-  /*
-    The inline card's own category bar has the same duty as the dock's: it gained swipe and
-    arrows in an earlier pass, so paging through a section rolls into the next one and the
-    strip has to follow. Same hook, so the two bars cannot drift.
-  */
   const inlineTabStrip = useTabStripAutoScroll(activeCategory);
 
   const handleSlideSwipe = useCallback(
@@ -532,12 +333,6 @@ export default function PitchbookScreen() {
       if (direction === 'next') handleNext();
       else if (direction === 'prev') handlePrev();
     },
-    /**
-     * ⚠️ Deliberately NOT listing `currentGlobalPageNumber` — it is declared further down
-     * the component and referencing it here is a use-before-declaration. The two handlers
-     * below read the live state through the same refs the arrows do, so the identity of
-     * this callback does not need to track the page at all.
-     */
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeCategory, currentSlideIndex]
   );
@@ -559,21 +354,6 @@ export default function PitchbookScreen() {
     return Object.keys(imagesObj)[slideIndex] || '';
   }, [pitchBookImages]);
 
-  /**
-   * ⚠️ Resolved through the local FILE cache, and without this the deck was blank offline.
-   *
-   * `warmDeckSlides` already copies every slide to disk the first time the book is opened with
-   * signal — but nothing READ that copy back. The source stayed the pre-signed S3 url, which
-   * CLAUDE.md §6 records as defeating `Image.prefetch` and `cache: 'force-cache'`, so with no
-   * connection each slide rendered as an empty frame. The rep had the book, the bytes were on the
-   * device, and the screen showed nothing.
-   *
-   * ⚠️ `getWarmedLocalUri` is a MEMORY lookup, so this stays a cheap `useMemo` — it must not
-   * become async or the deck would flash blank on every tab change.
-   *
-   * ⚠️ A bundled deck's slide is a `require()` NUMBER, not an object. Those pass through
-   * untouched; only a remote slide has a `uri` to swap.
-   */
   const currentCategoryImages = useMemo(() => {
     const imagesObj = pitchBookImages[activeCategory] || {};
     return Object.values(imagesObj).map((source: any) => {
@@ -591,15 +371,8 @@ export default function PitchbookScreen() {
     return getGlobalPosition(activeCategory, currentSlideIndex);
   }, [activeCategory, currentSlideIndex, getGlobalPosition]);
 
-  // Identity of the slide on screen. Handed to every `ZoomableImage` so moving to the
-  // next slide snaps it back to 1x — otherwise the rep advances mid-pitch and lands on
-  // a slide already scrolled to some corner of the previous one's zoom.
   const slideResetKey = `${activeCategory}:${currentSlideIndex}`;
 
-  // Reconcile the selected tab with the deck actually in hand. A remote deck's
-  // sections aren't known at mount, so `activeCategory` starts empty and lands here
-  // once the fetch resolves; this also covers a book EDITED on the portal since the
-  // rep last presented it (saved tab deleted → fall back to the first one).
   useEffect(() => {
     if (!CATEGORIES.length) return;
     if (CATEGORIES.some((c) => c.id === activeCategory)) return;
@@ -609,8 +382,6 @@ export default function PitchbookScreen() {
     setCurrentSlideIndex(restorable ? savedProgress?.slideIndex || 0 : 0);
   }, [CATEGORIES, activeCategory, savedProgress]);
 
-  // …and with the slides in that tab. Restoring slide 8 of a section the portal has
-  // since trimmed to 5 would leave the rep on a blank frame with working arrows.
   useEffect(() => {
     if (!currentCategoryImages.length) return;
     if (currentSlideIndex < currentCategoryImages.length) return;
@@ -663,9 +434,6 @@ export default function PitchbookScreen() {
     };
   }, [user?._id, user?.id, leadId, bookId, totalGlobalPages, getCurrentSlideName]);
 
-  // Persist the current slide position for this lead whenever it changes. Skipped
-  // while the tab is still empty (a remote deck's first render), otherwise opening a
-  // book would immediately overwrite the position saved on the last visit.
   useEffect(() => {
     if (!activeCategory) return;
     try {
@@ -683,9 +451,6 @@ export default function PitchbookScreen() {
 
   const pollInterval = useRef<any>(null);
 
-  // Hydrate the FULL lead — `salesPhotos` and `notes` are what this screen renders, and
-  // the lead it is navigated with now comes from the SLIM list (`view=summary`), which
-  // carries `salesPhotos: []`. Without this the Inspection tab is empty.
   const refetch = async () => {
     const lid = lead?._id || lead?.id;
     if (!lid) return;
@@ -697,29 +462,16 @@ export default function PitchbookScreen() {
         return;
       }
     } catch {
-      // Fall through to the deal endpoint below. This is NOT only the documented
-      // "rep isn't assigned to this lead" 404 — an API host that predates the
-      // sales-portal optimization has no such ROUTE and answers with an HTML error
-      // page, which is exactly what a not-yet-deployed environment does.
     }
     try {
-      // Fallback: what this screen read before the detail endpoint existed. Keeps the
-      // Inspection tab populated on an API that hasn't shipped the optimization yet,
-      // so preferring the new route can never be a regression.
       const response = await LeadService.getSalesDealById(lid);
       const body = response.data;
       setFullLeadData(body?.data?.lead || body?.data || body?.lead || body);
     } catch {
-      // Non-fatal: the deck still presents, falling back to whatever the navigation
-      // param carried.
     }
   };
 
   useEffect(() => {
-    // ⚠️ Runs for EVERY lead, not just sold/demo ones. It was gated on
-    // `result === 'sale' || 'demo'` back when the list row already carried the photos
-    // and this call only added outcome data — under `view=summary` that gate left every
-    // non-resulted lead with no photos at all.
     refetch();
     return () => {
       if (pollInterval.current) clearInterval(pollInterval.current);
@@ -737,8 +489,6 @@ export default function PitchbookScreen() {
       StatusBar.setHidden(false, 'fade');
     };
   }, [isFullscreen, isLandscape]);
-
-  // Removed artificial loading state that caused permanent loaders for local images
 
   const [showPdfModal, setShowPdfModal] = useState(false);
   const [pdfPreviewData, setPdfPreviewData] = useState({ url: '', title: '' });
@@ -947,28 +697,7 @@ export default function PitchbookScreen() {
     }
   };
 
-  // `asModal` renders the drawer inside its OWN full-screen Modal. Outside
-  // fullscreen the drawer is mounted inside the screen's flex-1 body, so its
-  // StyleSheet.absoluteFill backdrop only ever reached the slide area - the
-  // pitch-book toolbar and the navigator's MainHeader above it stayed undimmed
-  // while the sheet was open. A Modal is its own view tree over the whole
-  // window, so the backdrop now covers the header too. The FULLSCREEN path
-  // passes nothing: the drawer is already inside a Modal there (stacked native
-  // modals are unreliable) and that modal already owns the whole screen.
-  /**
-   * The tool bodies as the fullscreen DOCK shows them — dark, and inside a bar rather
-   * than a bottom sheet.
-   *
-   * ⚠️ Separate from `renderInteractiveTools`, which still serves the NON-fullscreen
-   * drawer unchanged. The bodies could not simply be shared: that sheet is a themed
-   * surface and its headings use `text-text-primary`, which in LIGHT theme is near-black
-   * — invisible on the dock's dark panel. The two shared panels below
-   * (`InspectionPhotosPanel`, `RiskContent`) draw their own cards and read correctly on
-   * either ground; only the copy this screen owns needs the explicit colour.
-   */
   const renderDockToolContent = () => (
-    // The peek holds a finger down over an enlarged preview; without the lock a stray
-    // drag scrolls this list, steals the touch and dismisses the peek mid-hold.
     <PhotoPeekScrollLockProvider>
       <PeekAwareScrollView
         showsVerticalScrollIndicator={false}
@@ -1192,22 +921,6 @@ export default function PitchbookScreen() {
     );
   };
 
-  // A portal-authored deck has to be fetched (and its slides signed) before any of
-  // the presentation UI means anything — page counters, tabs and the fullscreen
-  // viewer all read the same two variables. Gating the whole screen here covers all
-  // of them at once rather than teaching each render site an empty state.
-  /**
-   * ⚠️ "No slides published yet" is a claim about the PORTAL, and offline we cannot make it.
-   *
-   * Reported with a screenshot: a book whose slides ARE published read "No slides published yet.
-   * Ask your manager to publish it." at a door. An empty `CATEGORIES` offline means only that
-   * this device has no copy — the deck was never opened with signal, so `cachedFetch` had nothing
-   * saved. Sending the rep to their manager over a download they can fix themselves is worse than
-   * saying nothing.
-   *
-   * ⚠️ Only when OFFLINE. Online an empty deck really is an unpublished one, and that message
-   * must survive — it is the only thing that tells the rep to chase the portal.
-   */
   const notDownloaded = !isPitchbookOnline && !isDeckError && !CATEGORIES.length;
 
   if (isRemoteDeck && (isDeckLoading || isDeckError || !CATEGORIES.length)) {
@@ -1249,8 +962,6 @@ export default function PitchbookScreen() {
                   ? isPitchbookOnline
                     ? 'Check your connection and try again.'
                     : // A book is kept for offline use the first time it is OPENED with signal, so
-                      // "no connection" is only half the story — this names the thing the rep can
-                      // actually act on, rather than leaving them tapping Try Again at a door.
                       "You're offline and this book hasn't been downloaded yet. Open it once with a connection and it will be available here."
                   : notDownloaded
                     ? "You're offline and this book hasn't been downloaded to this device. Open it once with a connection and it will be available at every door after that."
@@ -1596,14 +1307,6 @@ export default function PitchbookScreen() {
             <StatusBar hidden backgroundColor="transparent" translucent />
 
             {isLandscape ? (
-              /* ════════════════════════════════════════
-                 LANDSCAPE LAYOUT
-                 ════════════════════════════════════════ */
-              /* ⚠️ NO `paddingTop: insets.top` here. It used to hold the content below the
-                 status bar — which is now hidden for the whole presentation — and the
-                 chrome inside positions itself with `fullscreenTopInset`, so keeping it
-                 counted the inset TWICE and pushed the ✕ and the page count a third of
-                 the way down the screen. It also cost the slide that much height. */
               <View style={{ flex: 1, backgroundColor: '#000', position: 'relative' }}>
 
                 {/* ── Centre: image area + category tabs below image ── */}
@@ -1661,9 +1364,6 @@ export default function PitchbookScreen() {
 
               </View>
             ) : (
-              /* ════════════════════════════════════════
-                 PORTRAIT LAYOUT
-                 ════════════════════════════════════════ */
               <View style={{ flex: 1, backgroundColor: '#000' }}>
                 {/* ⚠️ The page count and the exit control are an OVERLAY here now, not a
                     flow row at the top — they used to push the slide down by their own
@@ -1730,11 +1430,7 @@ export default function PitchbookScreen() {
                 activeTool={activeToolTab}
                 onSelectTool={handleDockTool}
                 toolContent={renderDockToolContent()}
-                // Homeowner mode has no interactive tools, so the wand is not offered —
-                // the same gate the old right-edge tab carried.
                 showTools={viewMode === 'rep'}
-                /* Capped so the panel never swallows the slide the rep is presenting;
-                   landscape has far less height to give, hence the two fractions. */
                 toolHeight={isLandscape ? winHeight * 0.52 : winHeight * 0.46}
                 left={fullscreenLeftInset}
                 right={fullscreenRightInset}
@@ -1796,15 +1492,6 @@ function ToolTab({ label, icon, active, onPress }: any) {
   );
 }
 
-/**
- * ⚠️ Rendered on TWO grounds — the fullscreen dock (dark, always) and the non-fullscreen
- * drawer (themed, usually white) — so every surface and every text colour comes from `t`
- * below. `dark` defaults false, which is byte-for-byte the drawer's previous look.
- *
- * The reported bug was the Risk Report bar (the one carrying the 1-5 YEAR picker): it
- * painted `colors.background`, i.e. WHITE in light theme, so a white slab sat in the
- * middle of the dark presentation panel in front of a customer.
- */
 const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = false }: any) => {
   const { colors, isDark } = useTheme();
   const { riskJob, handleStartRiskReport, handleResetRiskReport } = useLeadReports(lead, refetch);
@@ -1953,7 +1640,11 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
               )}
               {riskJob && riskJob.status !== 'completed' && (
                 <View className="flex-row items-center gap-2">
-                  <ActivityIndicator size="small" color={colors.primary.main} />
+                  {riskJob.waiting ? (
+                    <Icon name="cloud-off-outline" size={14} color={WAITING_AMBER} />
+                  ) : (
+                    <ActivityIndicator size="small" color={colors.primary.main} />
+                  )}
                   <Text className="text-[10px] font-bold" style={{ color: t.hint }}>
                     {riskJob.progress}%
                   </Text>
@@ -1970,13 +1661,23 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
             >
               <View
                 className="h-full"
-                style={{ width: `${riskJob.progress}%`, backgroundColor: DOCK_TAB_GREEN }}
+                style={{
+                  width: `${riskJob.progress}%`,
+                  // ⚠️ Both colours are explicit values, not Tailwind classes: this sheet also
+                  // renders over the dark presentation theme, where a utility colour pair reads
+                  // wrong. DOCK_TAB_GREEN is the brand green shared with the presentation dock;
+                  // WAITING_AMBER marks a job paused because the device lost signal.
+                  backgroundColor: riskJob.waiting ? WAITING_AMBER : DOCK_TAB_GREEN,
+                }}
               />
             </View>
           )}
           {riskJob && riskJob.status !== 'completed' && (
-            <Text className="text-[10px] mt-1 italic" style={{ color: t.hint }}>
-              {riskJob.step || 'Processing...'}
+            <Text
+              className={`text-[10px] mt-1 ${riskJob.waiting ? 'font-semibold' : 'italic'}`}
+              style={{ color: riskJob.waiting ? WAITING_AMBER : t.hint }}
+            >
+              {jobWaitState(riskJob.step, !!riskJob.waiting).label}
             </Text>
           )}
         </View>
@@ -2026,33 +1727,12 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
   );
 };
 
-/**
- * The fullscreen dock's tool panel is dark by design, so the copy this screen owns
- * carries explicit colours rather than the themed `text-text-primary` classes the
- * non-fullscreen drawer uses — those are near-black in light theme and would be
- * invisible here. See `renderDockToolContent`.
- */
-/**
- * The dock's THREE text roles. Every tool body reads from these, so a heading is the same
- * weight and colour on all four tabs and a hint is the same grey — the tabs used to carry
- * three different greys and two heading sizes between them, which read as four screens
- * built by different people.
- *
- * ⚠️ Risk is the one that needed the most work: it is a shared component rendered on BOTH
- * the dark dock and the light drawer, so it takes these through a `dark` prop rather than
- * hardcoding them. See `RiskContent`.
- */
 export const DOCK_TEXT = {
-  /** Tool title — one per tab. */
   heading: '#FFFFFF',
-  /** Primary copy: the note body, a report's name. */
   body: 'rgba(255,255,255,0.86)',
-  /** Secondary copy: empty states, dates, captions, progress steps. */
   hint: 'rgba(255,255,255,0.55)',
-  /** Card fill + hairline for any surface the dock owns. */
   surface: 'rgba(255,255,255,0.06)',
   surfaceBorder: 'rgba(255,255,255,0.10)',
-  /** A glyph well (the round icon badges). */
   glyphWell: 'rgba(255,255,255,0.10)',
   glyph: 'rgba(255,255,255,0.72)',
 } as const;
@@ -2065,12 +1745,6 @@ const DOCK_HEADING_TEXT = {
 
 const DOCK_HINT_TEXT = { color: DOCK_TEXT.hint, fontSize: 13, lineHeight: 20 } as const;
 
-/**
- * The ONE empty state every dock tool uses — icon, a bold title, a regular hint. Before this
- * the Inspection tab drew the shared panel's own light-theme block (bold, dimmed to 50%) and
- * Videos drew a single regular line, so two empty tabs side by side read as two different
- * fonts. Any tool that can be empty should render this rather than its own.
- */
 function DockEmptyState({ icon, title, hint }: { icon: string; title: string; hint?: string }) {
   return (
     <View style={dockStyles.emptyState}>
@@ -2082,15 +1756,9 @@ function DockEmptyState({ icon, title, hint }: { icon: string; title: string; hi
 }
 
 const dockStyles = StyleSheet.create({
-  /*
-    `flex: 1` so the scroller fills the dock's now-FIXED tool panel rather than sizing to
-    its own body — otherwise a short tool (Notes, Risk) would leave dead panel beneath it
-    that does not take a drag. `flexGrow` on the content keeps a short body at the top.
-  */
   toolScroll: { flex: 1 },
   toolScrollContent: { padding: 16, flexGrow: 1 },
   heading: { ...DOCK_HEADING_TEXT, marginBottom: 14 },
-  /* Risk's heading sits inside a row that already owns the gap below it. */
   headingRow: DOCK_HEADING_TEXT,
   notesCard: {
     backgroundColor: DOCK_TEXT.surface,
@@ -2099,7 +1767,6 @@ const dockStyles = StyleSheet.create({
     borderRadius: 12,
     padding: 14,
   },
-  /* One body style and one hint style, shared by every tab. */
   bodyText: { color: DOCK_TEXT.body, fontSize: 13.5, lineHeight: 22 },
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 44 },
   emptyTitle: {

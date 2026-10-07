@@ -18,17 +18,9 @@ interface VerticalTabBarProps {
   onVerticalChange?: (id: string) => void;
   onChange?: (id: string) => void;
   jobState?: any;
-  /**
-   * VERTICAL ids that are locked because none of their steps are configured for
-   * this deal (web `verticalHasUnlockedSteps === false`). A locked vertical shows a
-   * padlock, greys out and can't be opened — only the configured Job Builder(s) are
-   * navigable in a multi-product deal.
-   */
   lockedVerticalIds?: string[];
 }
 
-// Product/vertical selector — slate pills, font-black, #22C55E (or vertical color)
-// when active, MCIcon lock when locked. Consistent with the normal JB palette.
 export function VerticalTabBar({
   verticals = [],
   selectedVerticalId,

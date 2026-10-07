@@ -25,13 +25,6 @@ interface Props {
   onBack: () => void;
 }
 
-/**
- * Verify the sold scope against what's on site.
- *
- * The installer confirms or flags each product — they never edit the spec directly.
- * A flagged product sits `pending` until the Install Manager resolves it, and a
- * pending item blocks the step from closing, because the scope isn't settled yet.
- */
 export function VerifyScopeStep({
   visible,
   products,
@@ -51,15 +44,6 @@ export function VerifyScopeStep({
   const resolved = products.filter((p) => scope[p.id]?.state === 'resolved').length;
   const confirmed = products.filter((p) => scope[p.id]?.state === 'confirmed').length;
 
-  /**
-   * The job arrived with no sold products — its check-in response carried no
-   * `productDetails.products`, which means the rep's job build never reached this job.
-   *
-   * There is nothing to confirm, so the step closes on acknowledgement alone. Blocking
-   * it instead would be a dead end: `measure` gates Post-Install, CoC and Return, so
-   * the whole install would be uncompletable over missing paperwork the installer has
-   * no way to supply from site.
-   */
   const nothingToVerify = products.length === 0;
 
   const allSettled =
@@ -93,8 +77,6 @@ export function VerifyScopeStep({
     onBack();
   };
 
-  // One name for it, so the footer below and the sheet at the bottom of this file can
-  // never disagree about whether the sheet is up.
   const showDiscrepancySheet = !!sheetFor;
 
   return (
@@ -103,19 +85,6 @@ export function VerifyScopeStep({
       title={t('installer.scopeTitle')}
       subtitle={t('installer.scopeSub')}
       onBack={onBack}
-      /*
-       * No footer while the discrepancy sheet is up.
-       *
-       * The sheet is a separate window that ends above the system bar, so whatever the
-       * screen draws at ITS bottom shows in the strip underneath — which was the whole
-       * "Done — Scope Reviewed" bar sitting below the sheet, dimmed but perfectly legible,
-       * and reading as dead space the sheet had failed to cover.
-       *
-       * ⚠️ It has to be UNMOUNTED, not hidden. `InstallerSubScreen` wraps the footer in a
-       * bar of its own (border, padding, background, bottom inset); leaving that behind with
-       * empty contents swaps one visible strip for another. Passing undefined also hands the
-       * screen back its no-footer scroll padding, so nothing underneath is left mid-cut.
-       */
       footer={
         showDiscrepancySheet ? undefined : (
         <>

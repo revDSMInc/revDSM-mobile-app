@@ -71,12 +71,6 @@ import { LeadService } from '../../services/api/leads';
 import { triggerThresholdCrossing, prepareHaptic } from '../../utils/haptics';
 import { logEvent } from '../../services/api/LoggerService';
 
-/**
- * How long a just-filed lead may be held on the list while its server row is fetched.
- *
- * Generous — it is a backstop for a refetch that never settles, not a timing knob: the hold is
- * released by the refetch itself in the ordinary case, which is well under a second.
- */
 const LEAD_HANDOFF_MAX_MS = 15000;
 
 export default function LeadsPage() {
@@ -147,19 +141,13 @@ export default function LeadsPage() {
     null
   );
 
-  // Rehash is served by its OWN endpoint (`rehash/rep/v1/leads`), not by a `status`
-  // filter on the sales-portal list — see `useRehashLeads`.
   const isRehash = currentTab === 'rehash';
 
   const apiParams = useMemo(() => {
-    // Unused while the Rehash tab is open: the sales-portal query is disabled below,
-    // exactly as web nulls its SWR key for this tab. The object is still returned so
-    // the query key stays stable across the tab switch rather than churning.
     if (currentTab === 'rehash') return {};
     if (currentTab === 'issued') return { status: 'lfLead', period: issuedSubTab };
     if (currentTab === 'selfGen') {
       if (selfGenSubTab === 'archived') return { status: 'archive' };
-      // Web parity (job-list.js): the Sold sub-tab lists resulted self-gen leads.
       if (selfGenSubTab === 'sold') return { status: 'resulted' };
       return { status: 'selfGenerated', period: 'today' };
     }
@@ -176,31 +164,12 @@ export default function LeadsPage() {
     removeLocalLead: removeLocalRehashLead,
   } = useRehashLeads(isRehash);
 
-  // The rest of the screen — search, count chip, list, refresh, archive/delete — is
-  // written against these three, so the Rehash tab reuses all of it instead of getting
-  // a parallel branch that can drift.
-  // Leads the rep created with no signal. They exist only on this device until the uploader files
-  // them, so nothing on the server can return them and they have to be merged in here.
   const [offlineWork, setOfflineWork] = useState(() => getOfflineWork());
   useEffect(() => subscribeOfflineWork(() => setOfflineWork([...getOfflineWork()])), []);
 
-  /**
-   * Records whose upload landed since this screen mounted, held on screen until the refetch that
-   * replaces them with the server's own row settles. See the effect below.
-   *
-   * ⚠️ Seeded EMPTY and driven by an observed transition, never by the record's current status.
-   * A record that was already `uploaded` when the screen mounted must not be held — its server row
-   * is in the list we are about to draw, and holding it would print the door twice.
-   */
   const [justLandedIds, setJustLandedIds] = useState<string[]>([]);
   const seenWorkRef = useRef(offlineWork);
 
-  /**
-   * Appointments the rep started with no signal.
-   *
-   * Offline the Leads screen skips the `work` call entirely, so nothing moved `workflowState` and
-   * the card still offered **Start Appointment** on a door the rep was already standing at.
-   */
   const [offlineWorkflow, setOfflineWorkflow] = useState(() => getOfflineWorkflow());
   useEffect(
     () => subscribeOfflineWorkflow(() => setOfflineWorkflow({ ...getOfflineWorkflow() })),
@@ -209,54 +178,33 @@ export default function LeadsPage() {
 
   const serverLeads = isRehash ? rehashLeads : leads;
 
-  /** What the server already carries, so the projection can stand down for those doors. */
   const serverLeadIds = useMemo(
     () => (serverLeads || []).map((l: any) => String(l?._id || '')).filter(Boolean),
     [serverLeads]
   );
 
-  /**
-   * Doors the rep archived or deleted with no signal.
-   *
-   * ⚠️ The list has no other defence against these. `removeLocalLead` prunes the query cache,
-   * which the next refetch — or the cached list a relaunch serves — simply refills, so without a
-   * standing suppression a lead the rep deleted comes straight back in front of them. Both sets
-   * clear themselves the moment the change reaches the server, and the upload awaits the list
-   * refetch before it lets go, so there is no frame where the old row is back.
-   */
   const deletedOffline = useMemo(() => pendingLeadDeletes(offlineWork), [offlineWork]);
   const archivedOffline = useMemo(() => pendingLeadArchives(offlineWork), [offlineWork]);
   const isArchivedTab = currentTab === 'selfGen' && selfGenSubTab === 'archived';
 
   const sourceLeads = useMemo(() => {
-    /** Drop what this device knows is gone, and what it knows belongs on another tab. */
     const applyOfflineActions = (list: any[] | null | undefined) =>
       (list || []).filter((l) => {
         const id = String(l?._id || l?.id || '');
         if (!id) return true;
         if (deletedOffline.has(id)) return false;
         const archived = archivedOffline.get(id);
-        // No pending change: the server's own answer stands, whichever tab this is.
         if (archived === undefined) return true;
         return archived === isArchivedTab;
       });
-    // ⚠️ Applied to the REHASH tab too. The mark is keyed by lead id and `applyOfflineWorkflow`
-    // returns the same reference when there is nothing to paint, so this costs a tab that never
-    // sees one exactly nothing.
     const withWorkflow = (list: any[] | null | undefined) =>
       applyOfflineActions(list).map((l) => applyOfflineWorkflow(l, offlineWorkflow));
     if (isRehash) return withWorkflow(serverLeads);
-    // ⚠️ A lead archived with no signal is in NEITHER server list — not Today, which no longer
-    // offers it, and not Archived, which was fetched before the change. Left to the sync it would
-    // simply be gone, which reads to the rep as the delete they did not perform, so the device
-    // draws its own snapshot here until the PATCH lands.
     if (isArchivedTab) {
       const archivedHere = offlineArchivedLeads(offlineWork, { serverLeadIds });
       if (!archivedHere.length) return withWorkflow(serverLeads);
       return withWorkflow([...archivedHere, ...(serverLeads || [])]);
     }
-    // ⚠️ Only on the tab a NEW lead would land on. Showing it under Archived or Sold would say the
-    // lead has a history it does not have yet.
     const onCurrentTab =
       currentTab === 'issued' ? issuedSubTab === 'today' : selfGenSubTab === 'today';
     if (!onCurrentTab) return withWorkflow(serverLeads);
@@ -267,7 +215,6 @@ export default function LeadsPage() {
       { serverLeadIds, keepUploaded: justLandedIds }
     );
     if (!pending.length) return withWorkflow(serverLeads);
-    // First: they carry no scheduled time, and it is the lead the rep just knocked.
     return withWorkflow([...pending, ...(serverLeads || [])]);
   }, [
     isRehash,
@@ -288,25 +235,11 @@ export default function LeadsPage() {
     () => (isRehash ? refreshRehash() : refresh()),
     [isRehash, refreshRehash, refresh]
   );
-  // A card archived or deleted from the Rehash tab lives in the rehash cache, not the
-  // sales-portal one — pruning the wrong list would leave the row on screen.
   const removeActiveLead = useCallback(
     (id: string) => (isRehash ? removeLocalRehashLead(id) : removeLocalLead(id)),
     [isRehash, removeLocalRehashLead, removeLocalLead]
   );
 
-  /**
-   * A queued lead has just been filed — pull the server's copy in before letting go of ours.
-   *
-   * The drain runs in the background on reconnect and nothing here was watching it, so the list
-   * kept serving the copy it fetched before the lead existed. The rep saw their lead disappear the
-   * moment it uploaded and come back only on a manual pull-to-refresh, which reads as the app
-   * having lost it — the client flagged it as "weird" for exactly that reason.
-   *
-   * ⚠️ The row is HELD (`justLandedIds`) across the refetch rather than dropped and re-added.
-   * Invalidating alone still blinks: `uploaded` removes the projection in the same tick, and the
-   * server row is a round trip behind it.
-   */
   useEffect(() => {
     const seen = seenWorkRef.current;
     seenWorkRef.current = offlineWork;
@@ -324,13 +257,8 @@ export default function LeadsPage() {
     const release = () =>
       setJustLandedIds((prev) => prev.filter((id) => !landed.includes(id)));
 
-    // ⚠️ A hard cap as well as the promise. A refetch that never settles (the signal that came
-    // back is gone again) must not pin a filed lead to the list forever — the record is uploaded,
-    // so once the hold lapses the server list is the only honest source for it.
     const cap = setTimeout(release, LEAD_HANDOFF_MAX_MS);
 
-    // The whole `['leads']` prefix, not just the tab on screen: a lead lands on one tab but the
-    // others are cached for five minutes, so switching to one would serve a list that predates it.
     queryClient
       .invalidateQueries({ queryKey: ['leads'] })
       .catch((err) => console.warn('[Leads] post-upload refresh failed:', err))
@@ -371,7 +299,6 @@ export default function LeadsPage() {
     }
   }, []);
 
-  // ── Location: permission + watchPosition (kept for movement updates) ──────
   React.useEffect(() => {
     let watchId: number | undefined;
     let cancelled = false;
@@ -399,17 +326,12 @@ export default function LeadsPage() {
           if (currentAuth !== 'granted' || cancelled) return;
         }
 
-        // Web parity: always get a fresh fix immediately (maximumAge:0).
-        // watchPosition with distanceFilter:20 never fires when the rep is
-        // already standing at the lead — this one-shot call mirrors what the
-        // web does with getCurrentPosition({ maximumAge: 0 }) per card.
         Geolocation.getCurrentPosition(
           (pos) => { if (!cancelled) setUserLocation(pos.coords); },
           (err) => console.warn('[Location] Initial fix error:', err),
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
 
-        // Keep the watch running for ongoing movement updates
         watchId = Geolocation.watchPosition(
           (pos) => {
             if (!cancelled) setUserLocation(pos.coords);
@@ -437,24 +359,16 @@ export default function LeadsPage() {
     };
   }, []);
 
-  // ── Web parity: on every focus (e.g. returning from LeadCenter) —
-  // 1. fresh GPS fix (maximumAge:0) so isInRange is never stale
-  // 2. refresh() so workflowState in the list matches what LeadCenter changed
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
 
-      // Fresh GPS fix — mirrors web's getCurrentPosition({ maximumAge: 0 }) per card
       Geolocation.getCurrentPosition(
         (pos) => { if (!cancelled) setUserLocation(pos.coords); },
         (err) => console.warn('[Location] Focus fix error:', err),
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
 
-      // Re-fetch leads so workflowState (resume/preview/complete) is in sync
-      // with whatever changed in the LeadCenter (footstep) session. Only the list
-      // actually on screen — refetching the disabled one would defeat the point of
-      // disabling it.
       refreshActive().catch((err) => console.warn('[Leads] Focus refresh error:', err));
 
       return () => { cancelled = true; };
@@ -468,9 +382,6 @@ export default function LeadsPage() {
     const filtered = sourceLeads.filter((l) => {
       const name = `${l.customerDetails?.firstName || ''} ${l.customerDetails?.lastName || ''
         }`.toLowerCase();
-      // Coerce to string before toLowerCase — leadId/leadCode/fullAddress can come
-      // back as numbers (or objects) from the API, where `?.` doesn't guard and
-      // `(123).toLowerCase()` throws "undefined is not a function".
       const addr = String(l.fullAddress ?? '').toLowerCase();
       const lid = String(l.leadId ?? '').toLowerCase();
       const lcode = String(l.leadCode ?? '').toLowerCase();
@@ -482,17 +393,12 @@ export default function LeadsPage() {
       );
     });
 
-    // Web parity (job-list.js): the Archived + Sold self-gen tabs are shown
-    // as-returned by the API (not time-sorted). Rehash likewise — web's `rehashJobs`
-    // only maps and search-filters, and the rehash service returns its own ordering,
-    // which a client-side sort by lead time would throw away.
     if (
       isRehash ||
       (currentTab === 'selfGen' && (selfGenSubTab === 'archived' || selfGenSubTab === 'sold'))
     ) {
       return filtered;
     }
-    // Otherwise sort by time (earliest first)
     return filtered.sort((a, b) => {
       const timeA = getScheduledDateTime(a)?.getTime() || 0;
       const timeB = getScheduledDateTime(b)?.getTime() || 0;
@@ -517,19 +423,6 @@ export default function LeadsPage() {
     }, [filteredLeads, user])
   );
 
-  /**
-   * Read each visible lead's quote while there is still signal.
-   *
-   * ⚠️ This is the Leads list's job, not the Deal Center's, and that is the whole point. The Deal
-   * Center caches what it opens, which only ever helps a lead the rep has already worked — a lead
-   * knocked for the FIRST time out of coverage still met "This quote isn't saved on your device",
-   * and the rep could do nothing about it at the door. Here they are usually still in the truck.
-   *
-   * A no-op offline, while a pass is running, or when every lead already holds a fresh snapshot,
-   * and it never creates an appointment — see `dealCenterWarmer`.
-   */
-  // …and the company's Deal Center setup those quotes are rendered with. Without it an offline
-  // Deal Center reads "isn't configured yet" on a device that never opened it online.
   useWarmDealCenterConfig();
 
   useFocusEffect(
@@ -556,15 +449,7 @@ export default function LeadsPage() {
   const handleActionPress = async (item: Lead) => {
     setSelectedLead(item);
     setNavigatingLeadId(item._id!);
-    // NOTE: no `lead_card` / `view_lead_details` log here. Web fires that event only
-    // from the MAP job-card click (`useJobCard.handleCardClick`), NOT when a lead is
-    // opened from the leads list — so firing it on list-open was a mobile-only event
-    // that showed up on lead entry. Removed for web parity.
 
-    // ⚠️ The start-appointment flow is a WRITE. Offline it can only time out, and the rep would
-    // watch a spinner for the length of that timeout before the catch below opens the screen
-    // anyway — so go straight there. A lead with no server record has no appointment to start.
-    // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
     console.log(
       '[CheckInTrace] tap id=%s offlineLead=%s online=%s workflowState=%s status=%s',
       item._id,
@@ -574,29 +459,10 @@ export default function LeadsPage() {
       (item as any)?.status
     );
     if (isOfflineLead(item) || !isOnline()) {
-      // …but the ARRIVAL still happened, and it used to leave no trace at all: no log for the
-      // office, and a card that went on offering **Start Appointment** on a door the rep was
-      // standing at. Both are recorded here — the log is held and replayed on reconnect
-      // (carrying `occurredAt`), the card state is local and never uploaded.
-      //
-      // ⚠️ Gated on the SAME plan the online path runs, so an out-of-range tap that would not
-      // have checked in online does not check in here either.
       try {
         await persistActiveLeadId(item._id);
         const plan = planStartAppointment(item, userLocation);
-        // ⚠️ A lead the rep CREATED at this door is its own arrival evidence, and without this
-        // the check-in was silently dropped. `shouldCallWork` needs `isLeadInGeofence`, which
-        // needs both a device fix and `lead.location.coordinates` — offline neither is
-        // guaranteed (no network location provider, and `LeadCreate` files `location: null`
-        // rather than guessing when it cannot geocode). So the rep stood at the door, opened the
-        // lead they had just typed, and it queued no `work` and therefore no `chat`: the lead
-        // uploaded with no check-in log and `GET chat/v1/lead/{id}` answered 404.
-        //
-        // Only ever true for a create that has not uploaded yet — see `createdAtTheDoor`. It does
-        // not relax the geofence for any lead the rule already covers.
         const atTheDoor = createdAtTheDoor(findOfflineWorkForLead(item));
-        // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. If `shouldCallWork` is false and
-        // `atTheDoor` is false, NOTHING below runs: no log, no queued work, no chat.
         console.log(
           '[CheckInTrace] plan shouldCallWork=%s logModule=%s inRange=%s atTheDoor=%s hasRecord=%s',
           plan.shouldCallWork,
@@ -606,22 +472,13 @@ export default function LeadsPage() {
           !!findOfflineWorkForLead(item)
         );
         if (plan.shouldCallWork || atTheDoor) {
-          // With no fix the plan has no module; the door we are standing at is a check-in.
           const logModule = plan.logModule || (atTheDoor ? 'lead_check_in' : '');
           if (logModule) {
-            // Not awaited: it is held on disk, and the rep should not wait on a write to open
-            // the lead they are standing in front of.
             void logLeadActionClick(user, logModule, item);
           }
-          // A REVIEW is off-site — the rep never arrived — so it must not colour the card as
-          // resumed. Online the same distinction is made by what `work` returns.
-          // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
           console.log('[CheckInTrace] resolved logModule=%s', logModule || 'NONE');
           if (logModule !== 'lead_review') {
             markLeadCheckedInOffline(item._id || (item as any).id);
-            // …and the SERVER half. The mark above only colours this device's card; without
-            // this the office never learns the door was worked, and once the mark ages out
-            // the lead reads **Start Appointment** again as though nobody had been.
             queueLeadWorkStart(item, String(user?._id || (user as any)?.id || ''));
           }
         }
@@ -656,7 +513,6 @@ export default function LeadsPage() {
       {/* Search Bar & Add Button */}
       <View
         className="px-4 pt-6 pb-3 flex-row items-center"
-      // style={{ borderBottomColor: isDark ? colors.border : '#F4F6F8' }}
       >
         <View
           className="flex-1 py-2 rounded-lg flex-row items-center px-3"
@@ -672,7 +528,6 @@ export default function LeadsPage() {
             placeholderTextColor={colors.textSecondary}
             value={searchQuery}
             onChangeText={setSearchQuery}
-            // `text-base` is gone from here on purpose — see `styles.searchInput`.
             className="flex-1 ml-2"
             style={[styles.searchInput, { color: colors.text,fontSize:Platform.OS==='android'?17:16 }]}
           />
@@ -720,7 +575,6 @@ export default function LeadsPage() {
               ]}
             >
               <Text
-                // `text-base` is gone from here on purpose — see `styles.tabLabel`.
                 className="font-medium"
                 style={[
                   styles.tabLabel,
@@ -837,14 +691,9 @@ export default function LeadsPage() {
       ) : (
         <FlatList
           data={filteredLeads}
-          // Web's rehash list falls back the same way (`_id || id || leadId ||
-          // jobNumber`) — a rehash row is not guaranteed to carry the sales-portal's
-          // `_id`, and an undefined key silently collapses the list to one row.
           keyExtractor={(item, index) =>
             String(item._id ?? (item as any).id ?? item.leadId ?? index)
           }
-          // Leads queued on the device sit ABOVE the server's list — that is where the rep looks
-          // for the one they just created, and the banner renders nothing when the queue is empty.
           ListHeaderComponent={<PendingLeadsBanner colors={colors} isDark={isDark} />}
           windowSize={15}
           initialNumToRender={8}
@@ -912,12 +761,6 @@ export default function LeadsPage() {
         visible={createModalVisible}
         onClose={() => setCreateModalVisible(false)}
         onSuccess={(createdLead, leadType) => {
-          // A created lead is always Issued or Self-Gen, never Rehash — and the tab it
-          // belongs to is switched to on the next line. Invalidating by PREFIX marks
-          // every sales-portal list stale, including the one currently disabled behind
-          // the Rehash tab, so the tab being switched to refetches instead of serving a
-          // cache that predates the lead. (`refresh()` would only cover the key mounted
-          // right now, which may not be the destination.)
           queryClient.invalidateQueries({ queryKey: ['leads'] });
           if (leadType === 'selfGen') {
             setCurrentTab('selfGen');
@@ -944,43 +787,13 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
   },
-  /**
-   * The leads search field, matched across platforms.
-   *
-   * It used to be styled by the `text-base` class alone, which supplies `lineHeight: 24`
-   * as well as the size — and a TextInput is not a Text. iOS lays the glyphs out inside
-   * that taller line box and sits them HIGH in it, so the tail of a `q` was clipped at
-   * the bottom edge and the whole string read as sitting above centre. Android reserved
-   * its own font padding on top of the container's, landing the text somewhere else
-   * again, so the two platforms disagreed about both size and position.
-   *
-   * ⚠️ Do NOT put `lineHeight` back on this input. It is the cause of the clipping, and
-   * a single-line field has no use for one: the height comes from `minHeight` plus the
-   * wrapper's own `py-2`, which is what keeps the bar the same height as before.
-   */
   searchInput: {
     fontSize: 16,
-    // Zeroes the platform default input padding so the wrapper's `py-2` is the only
-    // vertical padding in play, on both platforms.
     padding: 0,
-    // Android-only, ignored by iOS: drop the reserved metric padding and centre what is
-    // left, so the text sits on the same line as iOS instead of riding low.
     includeFontPadding: false,
     textAlignVertical: 'center',
-    // Room for the descender — without it the box can collapse to the glyph and clip
-    // the tail again.
     minHeight: 24,
   },
-  /**
-   * The Issued / Self Gens / Rehash tab labels.
-   *
-   * Same cause as `searchInput`, different symptom: `text-base` also supplies
-   * `lineHeight: 24`, and on Android that line box cuts the descender off the `g` in
-   * "Self Gens" — the client's "hiding from bottom". iOS renders the same label
-   * correctly, so the line height is KEPT there rather than changing the platform that
-   * already looks right; only Android drops it and measures the label by its own font
-   * metrics instead. The pill's `paddingVertical: 8` supplies the height either way.
-   */
   tabLabel: {
     fontSize: 16,
     ...Platform.select({ ios: { lineHeight: 24 }, default: {} }),

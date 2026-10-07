@@ -1,20 +1,3 @@
-// ─── DynamicInspectionView.tsx ───────────────────────────────────────────────
-// Schema-driven ("dynamic") inspection photos capture for the mobile lead-center.
-// Mobile port of the web reference
-//   src/sections/job/components/dynamic-inspection-photos/dynamic-inspection-photos-dialog.js
-//
-// Flow (photo-first, mirrors web):
-//   1. Rep taps the camera banner → camera/gallery → a pending photo appears.
-//   2. Pending photo shows in the banner ("Tag this photo below").
-//   3. Rep taps a slot to tag/upload the photo there (via the offline upload queue).
-// Product is chosen from a top pill row; categories are a tab strip.
-//
-// Implemented: per-product tabs, dynamic categories (all types), multi-photo
-// slots, capture (camera + gallery), categorized display, delete, replace-confirm,
-// and tag-as-extra. Deferred vs web (see the web files above): move-photo across
-// slots and the annotated-photos section.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
@@ -59,7 +42,6 @@ interface PreviewState {
   categoryLabel?: string;
   subcategory?: string;
   key?: string;
-  /** True when previewing the just-shot PENDING photo (offers Discard&Retake / Keep&Tag). */
   pending?: boolean;
 }
 
@@ -70,9 +52,6 @@ interface ReplaceConfirm {
   asset: PendingPhoto;
 }
 
-// A single-capacity slot already holds a photo and the rep is tagging a new one.
-// Port of the static `renderConflictScreen` (TagPhotoModal.tsx:129) — offers
-// Move existing / Keep both / Discard & Replace instead of a bare "Replace?" prompt.
 interface ConflictState {
   category: InspectionCategory;
   slot: InspectionSlot;
@@ -120,8 +99,6 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     refreshLeadData: refetch ? () => refetch() : undefined,
   });
 
-  // Refresh the lead (photos) whenever the upload queue changes so freshly
-  // uploaded photos resolve into their slots.
   useEffect(() => {
     if (!refetch) return undefined;
     const unsubscribe = uploadQueueManager.addListener(() => {
@@ -134,45 +111,18 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   const [previewState, setPreviewState] = useState<PreviewState | null>(null);
   const [replaceConfirm, setReplaceConfirm] = useState<ReplaceConfirm | null>(null);
   const [conflict, setConflict] = useState<ConflictState | null>(null);
-  // "Discard new photo" inside the conflict screen confirms first ("Discard this
-  // photo?"). Rendered as an in-modal overlay (not a nested Modal) to avoid the
-  // iOS modal-over-modal bug, matching the static preview-discard pattern.
   const [conflictDiscardConfirm, setConflictDiscardConfirm] = useState(false);
-  // Web parity (dynamic-inspection-photos-dialog.js:763-870 "Discard this photo?"):
-  // deleting a stored photo from the full-screen preview must confirm first.
   const [deleteConfirm, setDeleteConfirm] = useState<PreviewState | null>(null);
-  // Discarding the just-shot PENDING (un-tagged) photo also confirms first — static
-  // TagPhotoModal parity (`showDiscardConfirm`). Same "Discard this photo?" sheet as
-  // delete, but it throws away the un-tagged capture and reopens the camera.
   const [discardPending, setDiscardPending] = useState(false);
   const [showExtraPicker, setShowExtraPicker] = useState(false);
-  // Conflict "Move it somewhere else" → the displaced (existing) photo enters
-  // pick-a-new-slot mode, reusing the move-photo grid (static TagPhotoModal parity).
   const [moveExisting, setMoveExisting] = useState<MoveState | null>(null);
   const captureTargetRef = useRef<{ categoryLabel: string; subcategory: string; key: string } | null>(null);
-  // Holds the pending "move existing photo" until the conflict Modal has finished
-  // dismissing — presenting the move Modal while the conflict one is still animating
-  // out shows a black screen on iOS (RN can't have two Modals transition at once).
   const pendingMoveRef = useRef<MoveState | null>(null);
   const autoOpenedRef = useRef(false);
-  // The inspection UI (header / banner / slots) stays HIDDEN until the first photo
-  // is captured — web's `flowStarted`. Until then the rep sees ONLY the camera, so
-  // opening this flow lands straight on the camera, not on the tagging screen.
   const [flowStarted, setFlowStarted] = useState(false);
-  // True while the native camera is on screen. The RN view underneath must stay
-  // BLACK the whole time it's up — otherwise the camera's dismiss animation (on
-  // cancel) reveals the tagging UI for a few frames before our callback fires,
-  // which is the "I see the inspection view when I close the camera" flash. With
-  // this, closing the camera goes straight to a black backdrop → Job Docs.
   const [cameraActive, setCameraActive] = useState(false);
-  // Branded in-app camera (flash / self-timer / zoom pills / ultra-wide / retake),
-  // the SAME `CustomCameraModal` the static TagPhotoModal uses — replaces the plain
-  // native `launchCamera` so the dynamic flow has full capture-feature parity.
   const [customCameraVisible, setCustomCameraVisible] = useState(false);
 
-  // Photo-first (web parity): launch the camera immediately on open so the rep
-  // shoots first and tags after. The view content is gated on `flowStarted`, so
-  // nothing but the camera is visible until that first shot lands.
   useEffect(() => {
     if (autoOpenedRef.current) return;
     autoOpenedRef.current = true;
@@ -188,16 +138,10 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
       capture.captureToSlot({ ...target, asset });
     } else {
       setPendingPhoto(asset);
-      // First shot taken → reveal the tagging UI (web `setFlowStarted(true)`).
       setFlowStarted(true);
     }
   };
 
-  // Closing the camera ends the WHOLE flow and returns to Job Docs — web parity
-  // (`cancelCapture → handleClose`), for the first shot AND mid-loop. Blank the
-  // tagging UI FIRST (setFlowStarted(false) → black backdrop) so it never flashes
-  // while the modal dismisses: the inspection view visually closes, then the
-  // camera/modal tears down.
   const closeFlow = () => {
     captureTargetRef.current = null;
     setCameraActive(false);
@@ -206,24 +150,18 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   };
 
 
-  // Photo-first, matching web: capture goes STRAIGHT to the camera (web's mobile
-  // `openCaptureUI` → `setCameraOpen(true)`). We open the branded `CustomCameraModal`
-  // (flash/timer/zoom/retake) instead of the native picker — `cameraActive` blanks
-  // the tagging UI to a black backdrop behind it so nothing flashes.
   const openCapture = (target?: { categoryLabel: string; subcategory: string; key: string }) => {
     captureTargetRef.current = target || null;
     setCameraActive(true);
     setCustomCameraVisible(true);
   };
 
-  // Branded camera confirmed a shot ("Use Photo") → tag it just like a native capture.
   const handleCameraCapture = (asset: { uri: string; fileName?: string; type?: string }) => {
     setCustomCameraVisible(false);
     setCameraActive(false);
     onCapturedAsset({ uri: asset.uri, type: asset.type, fileName: asset.fileName });
   };
 
-  // Branded camera closed (X) → end the whole flow, back to Job Docs (web parity).
   const handleCameraClose = () => {
     setCustomCameraVisible(false);
     closeFlow();
@@ -247,14 +185,8 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
           asset: pendingPhoto,
         });
         clearPending();
-        // Continuous capture (web parity): the moment a photo is tagged, its
-        // upload is already running in the background via the queue, so reopen
-        // the camera instantly for the next shot instead of making the rep tap
-        // the banner again. The just-tagged slot fills optimistically and holds.
         setTimeout(() => openCapture(), 120);
       } else {
-        // Slot occupied → rich conflict screen (Move / Keep both / Discard), the
-        // static TagPhotoModal behaviour, instead of a bare Replace prompt.
         const occupant = capture.getPhotos(category.label, slot.storageName).find((p) => p.s3url) || photos[0];
         if (occupant) {
           setConflict({ category, slot, key, asset: pendingPhoto, existing: occupant });
@@ -265,8 +197,6 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
       return;
     }
 
-    // No pending photo: empty (or multi w/ room) → capture into this slot;
-    // otherwise preview the existing photo.
     if (hasRoom) {
       openCapture({ categoryLabel: category.label, subcategory: slot.storageName, key });
     } else {
@@ -286,7 +216,6 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     if (!replaceConfirm) return;
     const { category, slot, key, asset } = replaceConfirm;
     setReplaceConfirm(null);
-    // Delete the existing photo(s) in the slot, then upload the new one.
     const existing = capture.getPhotos(category.label, slot.storageName).filter((p) => p.s3url);
     for (const p of existing) {
       // eslint-disable-next-line no-await-in-loop
@@ -296,18 +225,12 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     clearPending();
   };
 
-  // ── Slot-conflict resolution (static TagPhotoModal parity) ──────────────────
-  // Keep both: the existing photo stays in its slot; the incoming photo becomes an
-  // Extra — the rep picks which category via the extra picker (static parity:
-  // handleKeepBothOption → setShowExtraPicker(true), keeping the pending photo).
   const handleConflictKeepBoth = () => {
     if (!conflict) return;
     setConflict(null);
     setShowExtraPicker(true); // consumes the still-pending photo
   };
 
-  // Open the deferred move once the conflict Modal has actually dismissed. Guarded
-  // so the iOS onDismiss and the Android setTimeout fallback never double-fire.
   const flushPendingMove = () => {
     if (pendingMoveRef.current) {
       const next = pendingMoveRef.current;
@@ -316,25 +239,16 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     }
   };
 
-  // Move it somewhere else: the incoming photo takes THIS slot immediately, and the
-  // existing photo enters pick-a-new-slot mode (the move-photo grid) so the rep
-  // chooses where it goes — static parity (handleMoveOption → setMovingImage).
   const handleConflictMove = () => {
     if (!conflict) return;
     const { category, slot, key, asset, existing } = conflict;
-    // Queue the move; it opens only after the conflict Modal finishes dismissing
-    // (via onDismiss on iOS, setTimeout on Android) to avoid the black-screen race.
     pendingMoveRef.current = { photo: existing, fromCategory: category, fromSlot: slot, key };
     setConflict(null);
-    // Incoming takes the slot (optimistic/queued). movePhoto below relocates ONLY
-    // the existing photo (by id), so the two never collide.
     capture.captureToSlot({ categoryLabel: category.label, subcategory: slot.storageName as string, key, asset });
     clearPending();
     setTimeout(flushPendingMove, 450);
   };
 
-  // Discard: confirm first ("Discard this photo?"), then throw away the incoming
-  // photo and reopen the camera. The existing photo in the slot is left untouched.
   const handleConflictDiscard = () => {
     if (!conflict) return;
     setConflictDiscardConfirm(true);
@@ -347,15 +261,11 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     setTimeout(() => openCapture(), 120);
   };
 
-  // Close the conflict screen without discarding (X / "Pick different slot" / back),
-  // also dismissing any open discard-confirm overlay so it can't linger on reopen.
   const closeConflict = () => {
     setConflictDiscardConfirm(false);
     setConflict(null);
   };
 
-  // Ask before deleting — matches web's "Discard this photo?" confirm and the
-  // manage-view delete modal (which already confirms).
   const requestDeleteFromPreview = () => {
     if (previewState?.deletable && previewState?.photo) {
       setDeleteConfirm(previewState);
@@ -375,8 +285,6 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     setDeleteConfirm(null);
   };
 
-  // Confirmed discard of the pending photo → throw it away and reopen the camera
-  // (continuous capture), matching the static "Discard & Retake" flow.
   const confirmDiscardPending = () => {
     setDiscardPending(false);
     setPendingPhoto(null);
@@ -396,16 +304,11 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     setShowExtraPicker(false);
     capture.tagAsExtraInCategory({ category: pickerItem.category, asset: pendingPhoto });
     clearPending();
-    // Continuous capture — reopen the camera after tagging as extra too.
     setTimeout(() => openCapture(), 120);
   };
 
   const showProductRow = products.length > 1;
 
-  // Render only a plain black backdrop while the camera is up (or before the first
-  // shot). The native camera sits on top, so the rep lands straight on the camera
-  // and — critically — closing it reveals only black, never the tagging UI, so a
-  // cancel goes straight back to Job Docs with no inspection-view flash.
   if (!flowStarted || cameraActive) {
     return (
       <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -565,8 +468,6 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
             <View style={{ position: 'absolute', bottom: insets.bottom + 24, left: 16, right: 16, flexDirection: 'row', gap: 12 }}>
               <TouchableOpacity
                 onPress={() => {
-                  // Close the preview, then confirm before throwing the shot away
-                  // (static "Discard this photo?" parity).
                   setPreviewState(null);
                   setDiscardPending(true);
                 }}
@@ -774,10 +675,6 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
         categories={activeCategories}
         capture={capture}
         onClose={() => setMoveExisting(null)}
-        // Re-home done → reopen the camera for the next shot (continuous capture,
-        // matching the tag / discard / keep-both paths). Deferred so the move Modal
-        // finishes dismissing before the camera Modal presents (iOS modal-race guard);
-        // the move upload is queued, so nothing is lost while the camera comes back.
         onMoved={() => setTimeout(() => openCapture(), 350)}
       />
     </View>

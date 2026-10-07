@@ -28,48 +28,18 @@ const PREVIEW_W = SW * 0.86;
 const PREVIEW_H = SH * 0.6;
 
 interface PhotoPeekPressableProps {
-  /** Image URI to peek. If empty/null the peek is disabled but onPress still fires. */
   uri?: string | null;
-  /** Optional caption shown under the peek preview. */
   label?: string;
-  /**
-   * Normal tap handler (opens gallery / annotation etc.).
-   *
-   * Receives the WARMED uri — the local `file://` copy once cached, else the
-   * original url — so a full-screen viewer opened by tapping is instant for the
-   * same reason the peek is. Existing callers that take no argument are unaffected.
-   */
   onPress?: (peekUri?: string | null) => void;
-  /** Disables both the tap and the peek. */
   disabled?: boolean;
-  /** Disables only the hold-to-peek, while leaving `onPress` (tap) active. */
   peekDisabled?: boolean;
-  /** Hold duration before the peek opens (ms). Defaults to 260. */
   minDurationMs?: number;
   style?: StyleProp<ViewStyle>;
-  /** NativeWind class string forwarded to the wrapper (auto-interop'd View). */
   className?: string;
   children: React.ReactNode;
 }
 
-/**
- * Resolve the uri the enlarged preview should render: a local `file://` copy once
- * it has been downloaded, else the original url.
- *
- * Our photo urls are pre-signed S3 links with no cache headers, so the OS image
- * cache refuses to store them. The thumbnail being on screen therefore does NOT
- * mean the peek is free — the full-size decode misses and re-downloads, leaving
- * the preview blank for 2–3 seconds. Warming a real file in CacheDir and handing
- * the peek `file://…` makes it open instantly.
- *
- * Warming lives HERE rather than in each screen so every consumer gets it (and no
- * new one can forget it). It is capped to a few concurrent downloads inside
- * `imageFileCache`, so a 20+ thumbnail grid doesn't starve the visible images.
- */
 function usePeekCachedUri(uri?: string | null): string | null {
-  // Seeded from the cache synchronously: a grid remount (navigating back to a photo
-  // screen) would otherwise drop every card to null and re-await, so the peek is
-  // briefly cold again on a photo that never left the disk.
   const [localUri, setLocalUri] = useState<string | null>(() => getWarmedLocalUri(uri));
 
   useEffect(() => {
@@ -90,14 +60,6 @@ function usePeekCachedUri(uri?: string | null): string | null {
   return localUri;
 }
 
-// iMessage-style "peek": hold a photo to pop up an enlarged preview with haptic
-// feedback; release to dismiss. A quick tap still fires `onPress`. Reusable
-// anywhere a thumbnail is shown (manage photos, rev render, etc.).
-//
-// Implemented with a plain <Pressable> (onLongPress opens the peek, onPressOut
-// dismisses it) rather than gesture-handler composition — the RN press system
-// keeps the normal tap 100% reliable inside ScrollViews / nested modals, which
-// a Tap+LongPress GestureDetector did not.
 export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
   uri,
   label,
@@ -113,9 +75,6 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
   const progress = useSharedValue(0);
   const peekedRef = useRef(false);
 
-  // Freeze the surrounding scroll while peeking so finger movement can't turn into a
-  // scroll — a scroll steals the touch, terminates this Pressable, and would dismiss
-  // the peek mid-hold. No-op when there's no PhotoPeekScrollLockProvider above us.
   const scrollLock = usePhotoPeekScrollLock();
   const lockedByThisRef = useRef(false);
   const releaseScrollLock = useCallback(() => {
@@ -124,17 +83,12 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
       scrollLock?.unlock();
     }
   }, [scrollLock]);
-  // Safety net: if this thumbnail unmounts mid-peek, drop its lock. Runs ONLY on real
-  // unmount (empty deps) via a ref — a deps array would re-run every time the lock
-  // toggles the provider and prematurely release the lock mid-peek.
   const releaseRef = useRef(releaseScrollLock);
   releaseRef.current = releaseScrollLock;
   useEffect(() => () => releaseRef.current(), []);
 
   const canPeek = !!uri && !disabled && !peekDisabled;
 
-  // The enlarged preview reads the cached file the moment it's ready; until then
-  // it falls back to the network url, so the peek is never worse than before.
   const cachedUri = usePeekCachedUri(canPeek ? uri : null);
   const peekUri = cachedUri || uri;
 
@@ -181,12 +135,6 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
         onLongPress={canPeek ? openPeek : undefined}
         onPressOut={closePeek}
         delayLongPress={minDurationMs}
-        // While peeking, the finger slides around over the enlarged preview.
-        // By default RN cancels the press (firing onPressOut) as soon as the
-        // finger leaves the thumbnail's small bounds, which would dismiss the
-        // peek mid-hold. A screen-sized retention offset keeps the press alive
-        // no matter how far the finger moves, so the peek only closes on a
-        // real finger-lift ("hold off").
         pressRetentionOffset={{ top: SH, bottom: SH, left: SW, right: SW }}
         style={style}
         className={className}
@@ -236,8 +184,6 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
           >
             {!!peekUri && (
               <Animated.Image
-                // Keyed on the uri so swapping the network url for the cached
-                // file remounts the image instead of leaving the old decode up.
                 key={peekUri}
                 source={{ uri: peekUri, cache: 'force-cache' }}
                 style={{ width: '100%', height: '100%' }}

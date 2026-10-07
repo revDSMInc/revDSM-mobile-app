@@ -1,47 +1,14 @@
-/**
- * Sales-map pin rules (REVUIUX-439). Every job returned by `POST /job/v1/find` is a
- * company pin, from one of two sources:
- *   - a CSV upload (`source: 'csv'`)     → `pinCategory: 'uploaded'` (historical install)
- *   - a lead marked Sale (`source: 'sale'`) → `'pendingInstall'` until the installer
- *     completes it, then `'installed'`.
- *
- * Kept pure (no React Native) so it can be tested under jest — `LeadMap`,
- * `MapJobCard`, `MapDetail` and the Zone Canvasser pins all pull in RN / Mapbox.
- */
-
 export type PinCategory = 'uploaded' | 'pendingInstall' | 'installed';
 export type PinStatusFilter = 'all' | 'pendingInstall' | 'installed';
 
 export const PIN_CATEGORIES: PinCategory[] = ['uploaded', 'installed', 'pendingInstall'];
 
-/**
- * Ticket: "change the pending-install pin from purple to yellow, and make the installed
- * pin the same colour as the uploaded pin (green)." Reverses the earlier spring-mint
- * decision on `installed` — see the "Installed pin colour" follow-up in
- * `docs/claude/maps-zone-canvasser.md` for why that one was picked, and why it no longer
- * applies now that the two are meant to read as one colour.
- *
- * ⚠️ `installed` and `uploaded` are now the SAME value on purpose — both the hex here and
- * the marker PNGs (`marker-installed*.png` was recoloured to `#4CBB17` pixel-for-pixel,
- * not re-pointed at `marker-green*.png`, so the two categories keep independent asset
- * files that happen to render identically — easier to tell apart in a future diff).
- */
 export const PIN_CATEGORY_META: Record<PinCategory, { label: string; color: string }> = {
   uploaded: { label: 'Uploaded', color: '#4CBB17' },
   installed: { label: 'Installed', color: '#4CBB17' },
   pendingInstall: { label: 'Pending Install', color: '#FFD400' },
 };
 
-/**
- * Stacking order of overlapping pins (higher = drawn on top), keyed by the GeoJSON
- * `category` each map puts on its features. `default` is LeadMap's name for an
- * uploaded pin.
- *
- * ⚠️ Without it every pin shares one SymbolLayer with `iconAllowOverlap`, and Mapbox
- * then stacks overlapping pins by screen Y — so the handful of purple pending-install
- * pins sat INSIDE the dense green clusters of ~2,500 uploaded pins and were painted
- * over: the legend said 18, the map showed none. The rarer, actionable pins must win.
- */
 export const PIN_DRAW_ORDER: Record<string, number> = {
   default: 0,
   uploaded: 0,
@@ -51,7 +18,6 @@ export const PIN_DRAW_ORDER: Record<string, number> = {
   searched: 4,
 };
 
-/** Mapbox `symbolSortKey` expression for `PIN_DRAW_ORDER` (ascending = drawn first). */
 export const pinSortKeyExpression = (): any => [
   'match',
   ['get', 'category'],
@@ -65,19 +31,11 @@ export const PIN_STATUS_FILTER_LABELS: Record<PinStatusFilter, string> = {
   installed: 'Installed',
 };
 
-/**
- * The pin's category. A job from an older backend (no `pinCategory`) is an uploaded
- * pin, which is exactly how it was drawn before.
- */
 export const getPinCategory = (job: any): PinCategory => {
   const c = job?.pinCategory;
   return c === 'pendingInstall' || c === 'installed' ? c : 'uploaded';
 };
 
-/**
- * Web parity: pending = `pinCategory === 'pendingInstall'`; installed = anything else,
- * because uploaded pins are historical installs.
- */
 export const matchesPinStatusFilter = (job: any, filter: PinStatusFilter | undefined | null): boolean => {
   if (!filter || filter === 'all') return true;
   const isPending = getPinCategory(job) === 'pendingInstall';
@@ -90,12 +48,6 @@ export const countPinCategories = (jobs: any[]): Record<PinCategory, number> => 
   return counts;
 };
 
-/**
- * Legend row for the Sales Map's pin-colour legend key.
- *
- * ⚠️ `key` is a legend-row id, NOT necessarily a `PinCategory` — `installed` here covers
- * BOTH `uploaded` and `installed` pins, see `legendRows` below.
- */
 export interface LegendRow {
   key: string;
   label: string;
@@ -103,24 +55,6 @@ export interface LegendRow {
   count: number;
 }
 
-/**
- * Ticket: "remove the Uploaded title, merge the pins into the Installed title, because
- * both pins are the same — installed and uploaded [pins]." Uploaded and installed pins
- * are now colour- and shape-identical on the map (the two design-match follow-ups above
- * in `docs/claude/maps-zone-canvasser.md`), so a legend that still split them into two
- * rows was explaining a distinction the rep can no longer see: one pin style, two counts.
- *
- * Returns exactly the two rows the legend now shows — `installed` merges `uploaded` +
- * `installed`, `pendingInstall` is unchanged.
- *
- * ⚠️ This merges the LEGEND DISPLAY ONLY. `PinCategory` itself stays three-valued —
- * `getPinCategory` / `countPinCategories` / the GeoJSON `category` / `PIN_DRAW_ORDER` are
- * all untouched, and none of them read this function. The merge is safe precisely because
- * nothing else needed to change: the status filter (`MapFiltersModal`) already treats
- * "installed" as `!== pendingInstall` — i.e. uploaded OR installed — per the ⚠️ in the
- * REVUIUX-439 section above, so the legend is the only place still presenting them as two
- * separate things.
- */
 export const legendRows = (counts: Record<PinCategory, number>): LegendRow[] => [
   {
     key: 'installed',
@@ -138,18 +72,6 @@ export const legendRows = (counts: Record<PinCategory, number>): LegendRow[] => 
 
 const idText = (v: any): string => (v == null ? '' : String(v).trim());
 
-/**
- * The yellow pending-install pin that belongs to `lead`, or `null`.
- *
- * Used when the Sales Map is opened FROM a lead (Lead Center -> Map): a lead that has just
- * been sold should open the map on its own pin, not only on the rep's GPS fix.
- *
- * A pin is linked to its lead by id OR by job number — a sold job's own `jobNumber` IS the
- * lead number (`SG-XXXXXX` for a self-generated lead; `displayJobNumber` is the separate
- * installer `T…` number, so it is compared against the lead's number too). Only a
- * `pendingInstall` pin with usable coordinates counts: an uploaded / installed pin with the
- * same number is history, and a pin with no location cannot be framed.
- */
 export const findPendingInstallPinForLead = (jobs: any[] | null | undefined, lead: any): any | null => {
   if (!lead || !Array.isArray(jobs)) return null;
   const ids = [lead._id, lead.id, lead.leadId].map(idText).filter(Boolean);
@@ -168,13 +90,11 @@ export const findPendingInstallPinForLead = (jobs: any[] | null | undefined, lea
   );
 };
 
-/** A sold job's own `jobNumber` is the lead number; `displayJobNumber` is the one to show. */
 export const getDisplayJobNumber = (job: any): string => {
   const n = job?.displayJobNumber || job?.jobNumber;
   return n == null || n === '' ? '' : String(n);
 };
 
-/** True when `search` matches either the displayed or the raw job number. */
 export const jobNumberMatches = (job: any, search: string, exact = false): boolean => {
   const s = String(search ?? '').toLowerCase().trim();
   if (!s) return false;
@@ -185,7 +105,6 @@ export const jobNumberMatches = (job: any, search: string, exact = false): boole
   });
 };
 
-/** Rep label — `repDisplayName` is never empty for a known rep, even one with no account. */
 export const getRepDisplayName = (job: any): string => {
   const rep = job?.salesRep;
   return (
@@ -198,10 +117,6 @@ export const getRepDisplayName = (job: any): string => {
   );
 };
 
-/**
- * The API field is `products` (string or array); the card used to read `product`,
- * which does not exist, so it always showed N/A.
- */
 export const getProductsText = (job: any): string => {
   const raw = job?.products ?? job?.product;
   const list = (Array.isArray(raw) ? raw : [raw])
@@ -218,12 +133,6 @@ export const getProductsCount = (job: any): number => {
 
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})(?:T00:00:00(?:\.0+)?(?:Z|[+-]00:?00)?)?$/;
 
-/**
- * `MM/dd/yyyy`, or `null` for a missing / invalid value — a null date must never be
- * formatted (it prints 1/1/1970). A calendar date (`YYYY-MM-DD`, or that at UTC
- * midnight) is read as TEXT, because `new Date()` shifts it to the previous day in
- * US timezones. A real timestamp is shown in local time.
- */
 export const formatPinDate = (value: any): string | null => {
   if (value == null || value === '') return null;
   if (typeof value === 'string') {
@@ -237,28 +146,11 @@ export const formatPinDate = (value: any): string | null => {
   return `${mm}/${dd}/${d.getFullYear()}`;
 };
 
-/**
- * The card / list date line.
- *   - pending install: "Install scheduled {date}", else just "Sold {date}".
- *   - otherwise: the install date, falling back to the lead / created date as before.
- *
- * ⚠️ Ticket: "still status is on the card — pending install — I want to remove the
- * status from the card." Used to append `· pending install` to the sold date (and,
- * with no sale date either, return the bare word "Pending install" as the whole line).
- * The pin's status is now shown by its COLOUR alone (the pin itself, the legend, the
- * on-map `INS` / `PI` toggles — all `PIN_CATEGORY_META`) — this text line is a DATE, and
- * saying the status a second time in words was the thing asked to go. Do not re-add it;
- * a status BADGE was also tried on the card and separately reverted for the same reason
- * (`docs/claude/maps-zone-canvasser.md`).
- */
 export const getPinDateLabel = (job: any): string => {
   if (getPinCategory(job) === 'pendingInstall') {
     const scheduled = formatPinDate(job?.scheduledInstallDate);
     if (scheduled) return `Install scheduled ${scheduled}`;
     const sold = formatPinDate(job?.saleDate);
-    // No sale date either — genuinely no date to show (a pending-install pin implies a
-    // sale happened, so this is effectively unreachable on real data). Empty rather than
-    // falling back to a bare status word, per the same ticket.
     return sold ? `Sold ${sold}` : '';
   }
   return (
@@ -269,17 +161,9 @@ export const getPinDateLabel = (job: any): string => {
   );
 };
 
-/**
- * The date a pin is sorted and date-range filtered by. A pending job has no install
- * date, so it is dated by its sale date (the backend's `dateFilter` does the same)
- * instead of dropping to `createdAt`.
- */
 export const getPinSortDate = (job: any): any =>
   job?.installationDate || job?.saleDate || job?.createdAt || 0;
 
-// ─── Distance (Sales List ▸ "Filter by distance / results should also have distance") ──
-
-/** Earth's mean radius in miles. */
 const EARTH_RADIUS_MILES = 3958.8;
 
 const toRadians = (deg: number) => (deg * Math.PI) / 180;
@@ -289,28 +173,17 @@ export interface Coords {
   longitude: number;
 }
 
-/**
- * A job's position, or null when it has none.
- *
- * ⚠️ `location.coordinates` is GeoJSON: **[longitude, latitude]** — the opposite order from
- * every `{ latitude, longitude }` object in the app. Reading it the obvious way round puts a
- * Florida job (27.95, -82.46) at -82.46, 27.95, which is in the Southern Ocean; the distance
- * would be wrong by thousands of miles rather than visibly broken. Same trap as
- * `offline-lead-location.ts`.
- */
 export const getJobCoords = (job: any): Coords | null => {
   const raw = job?.location?.coordinates;
   if (!Array.isArray(raw) || raw.length < 2) return null;
   const longitude = Number(raw[0]);
   const latitude = Number(raw[1]);
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-  // 0,0 is "Null Island" — what a zeroed struct looks like, never a real job site.
   if (latitude === 0 && longitude === 0) return null;
   if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
   return { latitude, longitude };
 };
 
-/** Great-circle distance in miles (haversine). */
 export const distanceInMiles = (from: Coords, to: Coords): number => {
   const dLat = toRadians(to.latitude - from.latitude);
   const dLon = toRadians(to.longitude - from.longitude);
@@ -323,12 +196,6 @@ export const distanceInMiles = (from: Coords, to: Coords): number => {
   return EARTH_RADIUS_MILES * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-/**
- * Miles from `origin` to this job, or null when either side has no position.
- *
- * Null is a real answer and callers must honour it: a job with no coordinates is not
- * "0 miles away", and showing 0 would put it at the top of a distance sort.
- */
 export const getJobDistanceMiles = (job: any, origin: Coords | null | undefined): number | null => {
   if (!origin || !Number.isFinite(origin.latitude) || !Number.isFinite(origin.longitude)) return null;
   const coords = getJobCoords(job);
@@ -336,25 +203,12 @@ export const getJobDistanceMiles = (job: any, origin: Coords | null | undefined)
   return distanceInMiles(origin, coords);
 };
 
-/**
- * The distance label for a list card — `0.4 mi`, `12.7 mi`, `103 mi`.
- *
- * One decimal under 100 miles and none above it: a tenth of a mile matters when the rep is
- * deciding which door to knock next, and reads as false precision at three digits.
- */
 export const formatDistanceMiles = (miles: number | null | undefined): string => {
   if (miles === null || miles === undefined || !Number.isFinite(miles)) return '—';
   if (miles < 100) return `${miles.toFixed(1)} mi`;
   return `${Math.round(miles)} mi`;
 };
 
-/**
- * Order jobs nearest-first (or farthest-first with `descending`).
- *
- * ⚠️ Jobs with NO position sort to the END, whichever direction is asked for — they are
- * unknown, not near/far. Returning them first (which a `null → 0` coercion would) puts the
- * least useful rows at the top of the one sort that exists to surface the closest door.
- */
 export const compareByDistance = (
   a: any,
   b: any,

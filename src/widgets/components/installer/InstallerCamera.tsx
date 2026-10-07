@@ -20,35 +20,16 @@ import type { CapturedPhoto } from '../../../config/types/installer';
 const GREEN = '#4CBB17';
 
 export interface InstallerCameraProps {
-  /** Chip shown at the top of the viewfinder, e.g. "PRE • Back-Left". */
   label: string;
   hint?: string;
-  /** "N taken" badge for multi-shot hubs. */
   count?: number;
-  /**
-   * Reference shot to ghost over the viewfinder.
-   *
-   * ⚠️ When the backend supplied no reference, NOTHING is drawn over the viewfinder —
-   * there used to be a line-art house stand-in here, and installers read it as a real
-   * (broken) photo burnt into their shot. No reference ⇒ a plain camera.
-   */
   ghostUri?: string | null;
-  /** Ask for the ghost overlay + opacity slider + hold-to-peek control. */
   withGhost?: boolean;
-  /** Side-by-side review after capture instead of a single preview. */
   compareLabels?: { left: string; right: string };
   onCancel: () => void;
   onCapture: (photo: CapturedPhoto) => void;
 }
 
-/**
- * Full-screen capture surface for the installer flow.
- *
- * Two modes:
- *  - plain (material / CoC / PEC / extras): capture → preview → Use or Retake
- *  - ghost (`withGhost`): the rep's shot is underlaid at adjustable opacity so the
- *    installer can line up the same vantage point, then review side-by-side.
- */
 export function InstallerCamera({
   label,
   hint,
@@ -85,8 +66,6 @@ export function InstallerCamera({
       const photo = await cameraRef.current!.takePhoto({ flash: 'off' });
       setCaptured(`file://${photo.path}`);
     } catch {
-      // Simulators have no camera — fall back to a stand-in so the flow stays
-      // reviewable. Mirrors CustomCameraModal's behaviour.
       setCaptured('https://picsum.photos/800/600');
     } finally {
       setIsCapturing(false);
@@ -103,15 +82,8 @@ export function InstallerCamera({
     setCaptured(null);
   };
 
-  /**
-   * Every ghost affordance hangs off this, not off `withGhost`: the overlay, the opacity
-   * slider, the hold-to-peek button, the "line up the ghost" hint and the side-by-side
-   * compare. With no reference photo there is nothing to line up against or compare to,
-   * so the whole apparatus drops out rather than pointing at a placeholder.
-   */
   const hasGhost = withGhost && !!ghostUri;
 
-  /** Null-safe by construction: no reference photo ⇒ nothing is drawn, ever. */
   const renderGhost = (opacity: number) =>
     ghostUri ? (
       <Image
@@ -121,11 +93,7 @@ export function InstallerCamera({
       />
     ) : null;
 
-  // ── Review ────────────────────────────────────────────────────────────────
   if (captured) {
-    /* A compare needs two photos. Without a reference the left pane held the line-art
-       house, so the installer was asked to judge their framing against a drawing —
-       fall back to the plain single-photo review instead. */
     const showCompare = !!compareLabels && !!ghostUri;
 
     return (
@@ -141,10 +109,6 @@ export function InstallerCamera({
         )}
 
         {showCompare && compareLabels ? (
-          /* Stacked, not side by side — same as the Matched review in `PhotoMatchStep`.
-             Two half-width columns left each photo barely wider than a thumb and portrait-
-             tall, so `cover` cropped away most of the frame the installer is meant to be
-             judging. Full width each, scrolling as a pair, keeps the framing comparable. */
           <ScrollView
             className="flex-1"
             contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 4, gap: 12 }}
@@ -209,7 +173,6 @@ export function InstallerCamera({
     );
   }
 
-  // ── Viewfinder ────────────────────────────────────────────────────────────
   return (
     <View style={[StyleSheet.absoluteFill, styles.root]}>
       <View style={styles.viewfinder}>
@@ -304,7 +267,6 @@ export function InstallerCamera({
 
 const styles = StyleSheet.create({
   root: { backgroundColor: '#0c1118', zIndex: 9999 },
-  /** One photo in the stacked compare view — see the `compareLabels` branch. */
   comparePane: { aspectRatio: 4 / 3 },
   viewfinder: { flex: 1, overflow: 'hidden', backgroundColor: '#1a2432' },
   noCamera: { alignItems: 'center', justifyContent: 'center' },

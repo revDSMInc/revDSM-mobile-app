@@ -1,27 +1,15 @@
 import React from 'react';
 import { View } from 'react-native';
 
-/**
- * The glow, as three stacked translucent halos — widest and faintest first.
- * Values from the handover; they read as a soft falloff rather than three rings.
- */
 const HALOS = [
   { scale: 3.2, opacity: 0.1 },
   { scale: 2.2, opacity: 0.16 },
   { scale: 1.5, opacity: 0.3 },
 ];
 
-/** The channel track behind the pucks. */
 const CHANNEL_HEIGHT = 6;
 const CHANNEL_BLEED = 24;
 
-/**
- * The mini light strip on every look tile: a dark panel with LED pucks in the
- * look's colours, cycling in pattern order.
- *
- * Dark regardless of app theme — it is standing in for the product at dusk, so
- * a light background would misrepresent what the rep is selling.
- */
 export function LightStrip({
   colors,
   pucks = 7,
@@ -37,7 +25,6 @@ export function LightStrip({
   size?: number;
   radius?: number;
   height?: number;
-  /** false = solid pucks, no halos (picker tiles). */
   glow?: boolean;
 }) {
   const palette = colors.length ? colors : ['#FFD9A0'];
@@ -71,8 +58,6 @@ export function LightStrip({
 
           <View className="flex-row justify-center">
             {Array.from({ length: pucks }).map((_, i) => {
-              // Continue the sequence across rows so a 3-colour look does not
-              // repeat the same column twice — it should read as one long run.
               const color = palette[(row * pucks + i) % palette.length];
               return (
                 <View
@@ -126,7 +111,6 @@ export function LightStrip({
   );
 }
 
-/** Lights Off: daylight panel, unlit grey lenses. */
 export function UnlitStrip({ pucks = 7, rows = 2, size = 8, radius = 12, height }: {
   pucks?: number; rows?: number; size?: number; radius?: number; height?: number;
 }) {

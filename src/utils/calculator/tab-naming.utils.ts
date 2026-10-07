@@ -1,7 +1,3 @@
-/**
- * Utility to determine the automatic tab name for LF Calculators
- */
-
 const ORDER = [
   'G',
   'Versa',
@@ -16,22 +12,15 @@ const ORDER = [
   'Lighting',
 ];
 
-/**
- * Checks if a value is selected (numeric > 0)
- */
 const hasValue = (val: any) => {
   if (val === null || val === undefined || val === '') return false;
   const num = Number(val);
   return !isNaN(num) && num > 0;
 };
 
-/**
- * Determines which base components are present in the calculator data
- */
 export const getPresentComponents = (details: any) => {
   const present = new Set();
 
-  // Gutters (G)
   const p = details.inputs || details;
   const e = details.extras || details;
 
@@ -39,7 +28,6 @@ export const getPresentComponents = (details: any) => {
     present.add('G');
   }
 
-  // Versa
   if (
     hasValue(p.versa6Ft1) ||
     hasValue(p.versa6Ft2) ||
@@ -54,37 +42,30 @@ export const getPresentComponents = (details: any) => {
     present.add('Versa');
   }
 
-  // VMax
   if (hasValue(p.versaMaxFt1)) {
     present.add('VMax');
   }
 
-  // Soffit (S)
   if (hasValue(e.vinylSoffit) || hasValue(e.porchCeiling) || hasValue(e.nailerBuildOut)) {
     present.add('S');
   }
 
-  // FWrap
   if (hasValue(e.trimWrap)) {
     present.add('FWrap');
   }
 
-  // FBoard
   if (hasValue(e.fasciaBoard)) {
     present.add('FBoard');
   }
 
-  // ABoard
   if (hasValue(e.aluminumFasciaBoard)) {
     present.add('FAluminum');
   }
 
-  // Labor
   if (hasValue(p.extraLabor) || hasValue(e.extraLabor)) {
     present.add('Labor');
   }
 
-  // LF Misc
   const hasLFMisc =
     hasValue(e.cornersFilter) ||
     hasValue(e.sawzallHanger) ||
@@ -96,7 +77,6 @@ export const getPresentComponents = (details: any) => {
     present.add('LF Misc');
   }
 
-  // G Misc
   const hasGMisc =
     hasValue(e.wedges) ||
     hasValue(e.straps) ||
@@ -110,7 +90,6 @@ export const getPresentComponents = (details: any) => {
     present.add('G Misc');
   }
 
-  // Lighting
   const hasLighting =
     hasValue(e.lighting1stStory) ||
     hasValue(e.lighting2ndStory) ||
@@ -126,13 +105,9 @@ export const getPresentComponents = (details: any) => {
   return present;
 };
 
-/**
- * Gets the base tab name
- */
 export const getCalculatorBaseName = (details: any) => {
   const present = getPresentComponents(details);
 
-  // Full Package Detection
   const isFullPackage =
     present.has('G') &&
     present.has('S') &&
@@ -161,9 +136,6 @@ export const getCalculatorBaseName = (details: any) => {
   return baseName;
 };
 
-/**
- * Sizing suffixes based on sorted price
- */
 const SIZING_LABELS = ['SM', 'MD', 'LG', 'XL', 'XXL', 'XXL-2', 'XXL-3', 'XXL-4', 'XXL-5'];
 
 export const getSizingSuffix = (index: number, total: number) => {
@@ -173,9 +145,6 @@ export const getSizingSuffix = (index: number, total: number) => {
   return ` (${label})`;
 };
 
-/**
- * Processes all calculators to determine their final names
- */
 export const getUpdatedCalculatorTitles = (
   calculators: any[],
   getRetailPrice: (calc: any) => number
@@ -203,13 +172,11 @@ export const getUpdatedCalculatorTitles = (
   Object.keys(groups).forEach((baseName) => {
     const group = groups[baseName];
 
-    // 1. Get price frequencies
     const priceCounts: any = {};
     group.forEach((item: any) => {
       priceCounts[item.price] = (priceCounts[item.price] || 0) + 1;
     });
 
-    // 2. Get unique price levels for suffix ranking
     const uniquePriceLevels = [...new Set(group.map((item: any) => item.price))].sort(
       (a: any, b: any) => a - b
     );
@@ -217,7 +184,6 @@ export const getUpdatedCalculatorTitles = (
     group.forEach((item: any) => {
       const isDuplicatePrice = priceCounts[item.price] > 1;
 
-      // If it's an empty calculator (no items)
       if (!item.baseName) {
         if (emptyCount > 1) {
           finalTitles[item._id] = `Rollout ${item.globalIndex + 1}`;
@@ -227,13 +193,11 @@ export const getUpdatedCalculatorTitles = (
         return;
       }
 
-      // Confirmed rollouts never show as warnings, even if duplicates exist
       if (isDuplicatePrice && !item.isRolloutConfirmed) {
         const priceIndex = uniquePriceLevels.indexOf(item.price);
         const suffix = getSizingSuffix(priceIndex, uniquePriceLevels.length);
         finalTitles[item._id] = `⚠️ ${item.baseName}${suffix} ⚠️`;
       } else {
-        // Unique price: Assign suffix based on price rank
         if (uniquePriceLevels.length > 1) {
           const priceIndex = uniquePriceLevels.indexOf(item.price);
           const suffix = getSizingSuffix(priceIndex, uniquePriceLevels.length);

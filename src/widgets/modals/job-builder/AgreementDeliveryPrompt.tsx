@@ -26,35 +26,18 @@ import {
 interface AgreementDeliveryPromptProps {
   visible: boolean;
   leadId: string;
-  /** The lead's own contact — used only when the preference GET fails or is empty. */
   customerDetails?: any;
-  /** Back / close. The agreement is NOT generated. */
   onCancel: () => void;
-  /** The answer is saved on the lead; the caller may now generate the agreement. */
   onConfirmed: () => void;
-  /**
-   * Render as an absolute overlay inside the caller instead of its own native `Modal`.
-   * ⚠️ Required when the caller is itself a `Modal` (DynamicAgreementDialog) — stacked native
-   * modals drop presentations on iOS and orphan a backdrop on teardown.
-   */
   inline?: boolean;
 }
 
-// Same palette and type scale as the other agreement-signing sheets (AgreementRemoteSignModal).
 const GREEN = '#4CBB17';
 const INK = '#1C252E';
 const MUTED = '#637381';
 const FIELD_BORDER = '#919EAB33';
 const ERROR = '#FF5630';
 
-/**
- * REVUIUX-391 — "How would <homeowner> like a copy of the signed agreement?"
- *
- * Asked ONCE, at Generate Agreement and before the document exists, in the classic and the
- * dynamic job builder alike. The answer is PUT to the lead so whichever finalize path happens
- * later (in-person on the rep's phone, or remote on the homeowner's) already knows where the
- * signed copy goes. Generation is gated on the save succeeding.
- */
 export function AgreementDeliveryPrompt({
   visible,
   leadId,
@@ -70,10 +53,6 @@ export function AgreementDeliveryPrompt({
   const [serverError, setServerError] = useState('');
   const [touched, setTouched] = useState(false);
   const inputRef = useRef<TextInput>(null);
-  // ⚠️ Tracked by hand: RN's KeyboardAvoidingView does nothing on Android here (behavior was
-  // undefined) and a `Modal` is its own window, so `adjustResize` never reaches it — the keyboard
-  // simply covered the field. Padding the backdrop by the keyboard height re-centres the card in
-  // the space that is left, and its ScrollView absorbs the rest on a short screen.
   const [kbHeight, setKbHeight] = useState(0);
   useEffect(() => {
     if (!visible) return;
@@ -107,7 +86,6 @@ export function AgreementDeliveryPrompt({
         setName(deliveryRecipientName(body?.prefill?.name, customerDetails?.firstName));
       })
       .catch(() => {
-        // Optional call — the lead's own contact already seeded the fields above.
       })
       .finally(() => !cancelled && setLoading(false));
     return () => {
@@ -327,8 +305,6 @@ const styles = StyleSheet.create({
   },
   fieldError: { borderColor: ERROR },
   prefix: { fontSize: 14, fontWeight: '700', color: MUTED, marginRight: 6, includeFontPadding: false },
-  // ⚠️ Typed text is regular weight, not bold. `fontWeight: 'normal'` is paired with the face
-  // on purpose — see the Public Sans note in CLAUDE.md §6.
   input: { flex: 1, fontSize: 14, fontWeight: 'normal', color: INK, paddingVertical: 0 },
   errorText: { marginTop: 6, fontSize: 11, color: ERROR, fontWeight: '700' },
   actions: { flexDirection: 'row', gap: 12, marginTop: 28 },

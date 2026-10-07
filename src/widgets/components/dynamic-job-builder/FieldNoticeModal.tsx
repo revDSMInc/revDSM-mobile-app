@@ -8,12 +8,6 @@ interface NoticeContent {
   dealsDescription: string;
 }
 
-/**
- * Controlled "Important Notice" popup for any widget (port of web
- * `field-notice-modal.js`). It renders whatever `notice` it is given and its
- * visibility is owned by `open` — it never inspects the field value itself, so it
- * can only ever open when something explicitly asks it to.
- */
 export function FieldNoticeModal({
   notice,
   open,
@@ -59,17 +53,6 @@ export function FieldNoticeModal({
   );
 }
 
-/**
- * Wires a notice popup to a field (port of web `useFieldNotice`).
- *
- * Returns `{ noticeModal, handleValueChange }`:
- *   - Render `noticeModal` inside the widget.
- *   - Call `handleValueChange(newValue)` from the widget's onChange handler.
- *
- * The popup opens ONLY in response to `handleValueChange` — a real user
- * interaction. It is never driven by the current value on render, so an initial
- * load / DB hydration that restores a saved matching value will NOT reopen it.
- */
 export function useFieldNotice(field: any) {
   const [state, setState] = useState<{ open: boolean; notice: NoticeContent | null }>({
     open: false,

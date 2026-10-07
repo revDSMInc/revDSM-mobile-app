@@ -76,15 +76,7 @@ import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
 import { validateEmail } from '../../../utils/validation';
 import { readLeadPhone, readLeadEmail } from '../../../utils/addendum-recipients';
 import { toPayloadText } from '../utils/job-submit-payload';
-// Handles keyboard avoidance on BOTH platforms (its `KeyboardProvider` is mounted in
-// App.tsx). `automaticallyAdjustKeyboardInsets` is iOS-only, and on Android the
-// manifest's `adjustResize` no longer shrinks the window once KeyboardProvider goes
-// edge-to-edge — so the phone field stayed hidden behind the keypad there.
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
-// The Job Price step is now the Deal Center's pricing + funding flow, built from the
-// SAME components the Result Lead sheet uses (`ResultJobModal`). Nothing here is a
-// second implementation: an addendum's payment split and a fresh sale's are literally
-// the same screen, so a change to either lands on both.
 import { FUND } from './funding/funding-theme';
 import { useRefundApproval } from '../hooks/useRefundApproval';
 import { useRefundApprovers } from '../hooks/useRefundApprovers';
@@ -155,56 +147,15 @@ import {
 } from '../../../utils/activity-log/funding-log';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 
-/**
- * 4-step DYNAMIC deal-edit wizard. Faithful port of web
- * `src/sections/deal/components/dynamic-deal-edit-modal.js` (`DynamicDealEditModal`).
- * Reached from Deal Detail → Edit (web: ContractDetails pencil → isDynamicDeal
- * branch). Steps mirror `STEP_LABELS`:
- *
- *   0 Install Date  — reschedule the install appointment via an inline calendar +
- *                     propose-a-time card (web parity), or skip to keep the current
- *   1 Job Build     — embed the DYNAMIC job builder in edit mode (unlockAll, no
- *                     allocation trackers), streaming edited state up
- *   2 Job Price     — reconfirm rollout tiers + contract price + payment methods
- *   3 Review&Submit — diff the build/schedule/price and submit a pending-signature
- *                     ADDENDUM draft (submitJobBuilderDraft + sendDraftSubmitEmail).
- *                     Editing does NOT re-run /job-builder or upsert the portal record.
- */
-
 const STEP_LABELS = ['Install Date', 'Job Build', 'Job Price', 'Review & Submit'];
 
-// Shown under an amber contract price on the Job Price step. Deliberately not a
-// lock: the price stays editable, the tint only says the number needs a second
-// look because a lender decision moved what this job can fund.
 const PRICE_ATTENTION_HINT =
   'A lender decision changed what this job can fund — the balance no longer matches what was approved. Re-check the price and the split below.';
 
 const fmtMoney = (n: any) => `$${Math.round(Number(n) || 0).toLocaleString()}`;
 
-/**
- * How long an edit settles before it is logged. Matches web
- * (`FIELD_LOG_DEBOUNCE_MS`): a contract price - or a phone number - typed digit by
- * digit is ONE decision, and a row per keystroke would bury the value the rep
- * settled on, as well as filing every incomplete one on the deal.
- */
 const FIELD_LOG_DEBOUNCE_MS = 1000;
 
-/**
- * Report what the rep changed on one wizard screen, once the edit settles.
- *
- * Shared by Job Price and Review & Submit rather than written twice: both are a
- * baseline plus a debounce, and two copies of that would drift - one screen would
- * quietly stop reporting, or start reporting its opening values as edits.
- *
- * WARNING The FIRST snapshot while a screen is active is the BASELINE and logs
- * nothing: it is what the deal was saved with, not something the rep did. It is
- * dropped when the screen is left, so coming back re-baselines against what is on
- * screen then.
- *
- * Returns a `flush` with a STABLE identity, so callers can put it in a dependency
- * array. Call it before navigating away or submitting - the timer is cleared on
- * unmount, so an edit made in the last second would otherwise never be reported.
- */
 function useScreenChangeLog(
   active: boolean,
   values: ScreenValues,
@@ -213,8 +164,6 @@ function useScreenChangeLog(
   const snapshotRef = useRef<Record<string, string> | null>(null);
   const valuesRef = useRef(values);
   valuesRef.current = values;
-  // Held in a ref so `flush` never changes identity when the emitter closes over
-  // fresh state.
   const emitRef = useRef(emit);
   emitRef.current = emit;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -234,7 +183,6 @@ function useScreenChangeLog(
 
   useEffect(() => {
     if (!active) {
-      // Leaving the screen: flush anything still pending, then drop the baseline.
       if (timerRef.current) flush();
       snapshotRef.current = null;
       return;
@@ -257,8 +205,6 @@ function useScreenChangeLog(
   return flush;
 }
 
-// The two install windows offered on the confirm-time step, in order (web parity:
-// `TIME_SLOTS`). "Doesn't Work" walks this list, then returns to the calendar.
 const INSTALL_WINDOWS = [
   { period: 'Morning', value: '8:00 AM - 12:00 PM' },
   { period: 'Afternoon', value: '12:00 PM - 4:00 PM' },
@@ -291,7 +237,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const { configuredSchemas, isLoading: isSchemasLoading, pricingConfig } = useCalculatorSchema();
   const pricing = useDealPricing(lead);
 
-  // ── step + edit state ──────────────────────────────────────────────────────
   const [step, setStep] = useState(0);
   const [editedJobState, setEditedJobState] = useState<any>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -299,88 +244,37 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   const [scheduleDate, setScheduleDate] = useState<string | null>(null);
   const [scheduleTimeWindow, setScheduleTimeWindow] = useState('');
-  // Inline install-date rescheduler (web parity: `dynamic-deal-edit-modal.js`
-  // `showCalendar`/`showProposal`/`showSuccess`). Step 0 has four sub-views that all
-  // live in the step itself, not a modal:
-  //   intro    — the "Edit Job Build / Install Date" card with the current install
-  //              date and the Modify / Skip / Cancel actions (the landing view).
-  //   calendar — "Select Install Date": pick a date, then confirm with "Use <date>"
-  //              (or set TBD). Tapping a day only SELECTS it, matching web.
-  //   time     — "Confirm Time Window" for the selected date, one window at a time.
-  //   success  — the confirmation card ("Install Date Updated" / "Set to TBD") whose
-  //              "Done — Next →" advances to Job Build.
   const [dateStep, setDateStep] = useState<'intro' | 'calendar' | 'time' | 'success'>('intro');
   const [proposedDate, setProposedDate] = useState<Date | null>(null);
   const [proposedSlotIdx, setProposedSlotIdx] = useState(0);
 
   const [contractPrice, setContractPrice] = useState(0);
 
-  // ── Job Price: pricing rows + funding ──────────────────────────────────────
-  /**
-   * Step 2 is TWO screens behind one wizard step, exactly as the Deal Center's
-   * Result Lead sheet is: `price` splits the contract across as many payment
-   * methods as the deal needs, and `funding` drives each of those payments to the
-   * end of its own life cycle.
-   *
-   * ⚠️ The old single `Down Payment` / `Down Pmt Method` / `Balance Method` fields
-   * are GONE. They could only ever describe a one-method deal, and re-pricing a job
-   * is precisely when the split changes — so the scalars they held are now DERIVED
-   * from the rows (see `downTotal` / `primaryDownMethod`), which is what keeps the
-   * addendum payload byte-compatible with every consumer that still reads them.
-   */
   const [priceScreen, setPriceScreen] = useState<'price' | 'funding'>('price');
-  /** Down Payment + Balance, or the whole contract collected now. */
   const [payMode, setPayMode] = useState<PayMode>('split');
-  /** "No Down Payment": split with the Down Payment group hidden and unfunded. */
   const [noDown, setNoDown] = useState(false);
-  /** The rep tried to switch structure after money started moving. */
   const [structureNudge, setStructureNudge] = useState(false);
-  /** The editable pricing lines. One down row + one auto balance row to start. */
   const [rows, setRows] = useState<PaymentRow[]>([]);
-  /** Messages a lender decision left above the Balance group. */
   const [banners, setBanners] = useState<DecisionBanner[]>([]);
-  /** A decision changed what the job can fund, so the contract price reads amber. */
   const [priceUnlocked, setPriceUnlocked] = useState(false);
 
-  /**
-   * ── refund & approval (REVDSM-1159 / 1160) ─────────────────────────────
-   *
-   * A refund exists on this screen for exactly one reason: the rep re-priced the
-   * deal BELOW what has already been collected, so money has to go back. Every
-   * other change an addendum can carry — install date, scope, materials, a price
-   * that goes UP — needs no approval and creates none of this.
-   *
-   * ⚠️ `refundAcknowledged` is the gate. The refund appears on the funding screen
-   * and on the addendum only after the rep answers YES to Lance's warning; until
-   * then the price is simply a number they are still typing.
-   */
   const [refundAcknowledged, setRefundAcknowledged] = useState(false);
   const [refundMethod, setRefundMethod] = useState<'card' | 'check' | ''>('');
   const [refundReason, setRefundReason] = useState<FundingRefundReason | ''>('priceDrop');
   const [refundNote, setRefundNote] = useState('');
   const [approverId, setApproverId] = useState('');
   const [showApproverPicker, setShowApproverPicker] = useState(false);
-  /** `bank_decline` is only reachable once a lender has actually declined. */
   const [resultChoice, setResultChoice] = useState<'sale' | 'bank_decline'>('sale');
-  /** Payment pid whose share sheet is open, plus the url `POST …/link` returned. */
   const [linkTarget, setLinkTarget] = useState<string | null>(null);
   const [linkUrl, setLinkUrl] = useState('');
   const [isLoadingLink, setIsLoadingLink] = useState(false);
 
   const [customerPhone, setCustomerPhone] = useState('');
-  // The addendum's SECOND delivery channel. The submit used to hardcode
-  // `lead.customerDetails.email`, so the rep could neither see nor correct the address
-  // it was mailed to — a stale or misspelt one failed silently, with only the SMS
-  // actually reaching the customer.
   const [customerEmail, setCustomerEmail] = useState('');
-  // Free-text note shown to the customer on the addendum. Persists to the draft and,
-  // on signature, to Lead.note / LeadOutcome.note (backend `note` field). `''` clears it.
   const [note, setNote] = useState('');
 
   const seededRef = useRef(false);
 
-  // The calculator whose outcome this edit session belongs to. DealDetail passes
-  // it on the pencil tap; fall back to the lead's own reference.
   const editCalculatorId =
     calculatorResultData?.calculatorId ||
     lead?.selectedCalculatorId ||
@@ -390,17 +284,10 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     lead?.leadData?.selectedCalculatorId ||
     null;
 
-  // ── load the authoritative saved outcome ───────────────────────────────────
-  // Web parity: a resulted deal is scoped to ONE calculator, so read
-  // `GET lead/v1/{leadId}/outcome/{calculatorId}` when we know which calculator
-  // is being edited. Only fall back to the lead-wide
-  // `GET lead/v1/{leadId}/outcome` for legacy deals that carry no calculator id.
   const { data: savedOutcome, isFetched: outcomeFetched } = useQuery({
     queryKey: ['dealEditOutcome', leadId, editCalculatorId],
     queryFn: async () => {
       try {
-        // No lead-scoped fallback: that route is deprecated and 404s, so a deal
-        // with no calculator id simply has no saved outcome to read.
         const res = editCalculatorId
           ? await LeadService.getLeadOutcomeByCalculator(leadId!, editCalculatorId)
           : null;
@@ -414,19 +301,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     staleTime: 30_000,
   });
 
-  // ── load the REAL saved calculator (accurate COST/PAR/RETAIL) ───────────────
-  // Web reads the deal's stored `LFCalculator` (with its `entries`/`totals`) and
-  // prices the Previous/New tiers from it — those are the accurate figures shown
-  // when the lead was created. Mobile's outcome comes back with `lfCalculator: null`
-  // (it never persists the subdoc), so without this the tiers fall back to pricing
-  // the build through the schema against a lead-polluted `dealCenterData`, which
-  // produces the garbage values (e.g. $134k retail on a $200 job). The calculator
-  // itself IS saved on the backend at `GET /lfcalculators/{id}` — fetch it so the
-  // stored path (`computeStoredTiers`) yields the SAME accurate tiers as the web.
-  // ⚠️ `isLoading`, not `isPending`. This query is `enabled`-gated, and in TanStack v5
-  // a DISABLED query stays `isPending` forever — gating on that would hang the Review
-  // step for every deal that carries no calculator id. `isLoading` is
-  // `isPending && isFetching`, so it is false unless a request is actually in flight.
   const { data: fetchedCalculator, isLoading: isCalculatorLoading } = useQuery({
     queryKey: ['dealEditCalculator', editCalculatorId],
     queryFn: async () => {
@@ -442,16 +316,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     staleTime: 30_000,
   });
 
-  // ── load the PORTAL job builder — the third place a build can live ──────
-  //
-  // ⚠️ REQUIRED, not an optimisation. `savedDynamicJobState` below used to read
-  // only the OUTCOME and `lead.jobBuilder`, and for a large class of deals the
-  // build is in neither — it is on `GET /portal-job-builder/{leadId}`. Those
-  // deals hit "This deal can't be edited here" every single time, with no race
-  // involved: the data the screen needed was never requested.
-  //
-  // `getPortalJobBuilder` swallows its own errors to `null`, so a lead with no
-  // portal record resolves cleanly rather than throwing.
   const { data: portalRecord, isLoading: isPortalLoading } = useQuery({
     queryKey: ['dealEditPortalJobBuilder', leadId],
     queryFn: async () => (leadId ? LeadService.getPortalJobBuilder(leadId) : null),
@@ -459,7 +323,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     staleTime: 30_000,
   });
 
-  // Seed schedule/price/method state from the lead once, on first load.
   useEffect(() => {
     if (seededRef.current) return;
     seededRef.current = true;
@@ -467,39 +330,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setScheduleDate(sched.date || null);
     setScheduleTimeWindow(sched.timeWindow || '');
     setContractPrice(parsePrice(lead?.originalContractPrice));
-    // The down payment and BOTH payment methods are no longer single fields — they
-    // are the multi-method PAYMENT ROWS, seeded by their own effect below. That one
-    // has to wait for the payment-plan catalogue (a saved row carries its catalogue
-    // LABEL and is mapped back to a plan key through it) and for the lead's own
-    // funding record, neither of which is available on this first pass.
-    // Seed already dash-formatted — the stored value may be raw digits or E.164
-    // (`+14438784937`), and the field renders its own "+1", so only the local part
-    // belongs in the value.
     setCustomerPhone(formatLocalUSPhone(readLeadPhone(lead)));
-    // Seed the address the submit previously hardcoded, so the field opens on what the
-    // addendum will really be mailed to. TRIMMED — a stored value carrying whitespace
-    // would otherwise fail the format check on a field the rep never touched, which is
-    // the same trap the phone seed's `formatLocalUSPhone` normalization avoids.
     setCustomerEmail(readLeadEmail(lead));
-    // Pre-fill with the lead's existing note so the rep sees the current value and
-    // edits from it; a matching value then reads as "no change".
     setNote(lead?.note != null ? String(lead.note) : '');
   }, [lead]);
 
-  // ── derive: saved dynamic state, calculator, dealCenterData, initial state ──
-  /**
-   * The saved build, from whichever of the THREE places holds it.
-   *
-   * ⚠️ The portal record is a real source, not a fallback of last resort —
-   * for many deals it is the ONLY one. Reading just the outcome and the lead is
-   * what made "This deal can't be edited here" appear on editable deals.
-   *
-   * ⚠️ `extractDynamicJobState` is used for the portal record rather than a
-   * hand-written `?.dynamicJobState` chain: a build can be ROOT-SERIALIZED
-   * (verticals at the top level beside `_storageVersion`, no wrapper key at
-   * all), and a property chain cannot see that shape. Same trap as the Lead
-   * Center pencil — see `lead-center.md`.
-   */
   const savedDynamicJobState = useMemo(
     () =>
       savedOutcome?.jobBuilder?.dynamicJobState ||
@@ -514,8 +349,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   const calculatorData = useMemo(
     () =>
-      // Prefer the freshly-fetched calculator (real entries/totals) so the tiers are
-      // accurate; fall back to whatever the outcome/lead carried (usually empty).
       (fetchedCalculator && Object.keys(fetchedCalculator).length ? fetchedCalculator : null) ||
       savedOutcome?.LFCalculator ||
       savedOutcome?.lfCalculator ||
@@ -529,13 +362,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const dealCenterData = useMemo(
     () =>
       buildDealCenterData({
-        // Feed the saved calculator's per-field entries (the LFCalculator `entries`
-        // array of { fieldId, inputValue }) — same as the ORIGINAL build
-        // (DynamicDealCenterScreen). Passing `{}` here left dealCenterData without
-        // any calculator field values, so every calculator-driven LOCKED field
-        // (LeafFilter/Gutter Extras: C-S-R, Corners, footage, …) resolved blank via
-        // resolveLockedValue on reopen. `buildDealCenterData` reads this with
-        // Object.values, so an array is accepted.
         entries: (calculatorData as any)?.entries || {},
         resultData: calculatorData || {},
         schemas: configuredSchemas,
@@ -548,25 +374,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     if (!jobBuilderConfig || !savedDynamicJobState) return null;
     try {
       const deserialized = deserializeDynamicJobStateFromStorage(savedDynamicJobState, jobBuilderConfig);
-      // `preserveExisting = true` — REQUIRED here, and this is exactly what the flag
-      // exists for (see hydrateFieldValue in dynamic-job-state-storage.ts). Without
-      // it, every LOCKED (calculator-driven) field is re-resolved from
-      // `dealCenterData` and the saved value is overwritten by whatever
-      // resolveLockedValue returns — which is the field's blank `defaultValue`
-      // whenever the dcField can't be resolved.
-      //
-      // It usually CAN'T be resolved on this path: dealCenterData is built from
-      // `calculatorData.entries`, sourced from `savedOutcome.LFCalculator`, but
-      // mobile deliberately never sends LFCalculator (buildCalculatorOutcomePayload
-      // omits it — the in-memory CalcTab lacks the backend subdoc's required
-      // createdBy/appointmentId), so the outcome comes back with
-      // `lfCalculator: null`. dealCenterData is therefore empty and every locked
-      // field resolves blank. That is why the Gutters "Extras" section — which is
-      // almost entirely locked fields — reopened empty in the My Deals reschedule
-      // flow, while combo-group sections (ordinary unlocked fields) survived.
-      //
-      // In edit mode the saved value is the authoritative one regardless: the rep is
-      // reopening their own entered data, not re-deriving it from the calculator.
       return hydrateJobStateForPersistence(deserialized, jobBuilderConfig, dealCenterData, true);
     } catch (err) {
       console.warn('[DynamicDealEdit] deserialize failed:', err);
@@ -574,32 +381,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     }
   }, [jobBuilderConfig, savedDynamicJobState, dealCenterData]);
 
-  /**
-   * The state handed to the embedded builder — a DEEP COPY, never `initialState`
-   * itself.
-   *
-   * ⚠️ This is the "48 shows as 4" bug. `hydrateJobStateForPersistence` SHARES object
-   * references with the state it is given — a field's value object is carried across
-   * by reference, not cloned (verified: `hydrated…grid === saved…grid`) — and
-   * `useDynamicJobBuilderSession` seeds its `useState` with that exact object. So the
-   * diff's ORIGINAL and the rep's live build were one object graph, and any in-place
-   * write anywhere in the ~4k-line engine rewrote the "previous value" the Addendum
-   * Review prints. A locationGrid losing one column that way turns a saved total of
-   * 48 into 4 — which is what the review showed.
-   *
-   * It stayed wrong until something recomputed this memo, which is exactly why a Fast
-   * Refresh of THIS file "fixed" it and why no amount of device speed changed it.
-   *
-   * ⚠️ Not just a display bug: `buildChangeGroups` is submitted as
-   * `buildChangeSummary`, so the corrupted original was written onto the addendum the
-   * customer signs.
-   *
-   * A JSON round-trip is the correct clone here: this state is exactly what gets PUT
-   * to the API, so it is plain JSON by construction — no Dates, functions or cycles.
-   * Memoized on `initialState` so its identity changes at exactly the same cadence as
-   * before (the session's re-apply is keyed by `draftToken` = (leadId, calcId), not by
-   * this object's identity, so a fresh copy can never clobber the rep's edits).
-   */
   const builderInitialState = useMemo(
     () => (initialState ? JSON.parse(JSON.stringify(initialState)) : null),
     [initialState]
@@ -607,9 +388,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   const effectiveJobState = editedJobState || initialState;
 
-  // ── payment options (web useGetPaymentPlans → paymentOptions) ───────────────
-  // Full catalog — used for key coercion + the Balance Method picker (financing
-  // plans allowed on the balance, web parity: PaymentPlanSelect).
   const paymentOptions = useMemo(() => {
     const plans = pricing?.plans || {};
     const arr = Object.values(plans)
@@ -624,9 +402,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         ];
   }, [pricing]);
 
-  // Down Pmt Method: cash/card ONLY (Check / MC-VISA-DSCVR / AMEX) — never the
-  // financing plans. Web parity (`downPaymentOptions`: p.type === 'cash' || 'card').
-  // `pricing.outcomeDownPaymentMethods` is already that Lowe's-aware basics subset.
   const downPaymentOptions = useMemo(() => {
     const basics = (pricing?.outcomeDownPaymentMethods || [])
       .filter((o: any) => o && o.value)
@@ -655,25 +430,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [paymentOptions]
   );
 
-  // NOTE: `balanceMethodKey` / `downPaymentMethodKey` are defined further down, once
-  // the payment ROWS they are now derived from exist. Neither is picker state any
-  // more — each is the first FUNDED row of its half (see `primaryBalanceMethod`).
-
-  /**
-   * Coerce a stored value to a DOWN-PAYMENT key, which must be one of the cash/card
-   * basics the picker offers.
-   *
-   * ⚠️ Deliberate divergence from web. `lead.paymentMethod` is the down-payment
-   * field, but a sold deal often has the ROLLOUT's plan written into it — i.e. a
-   * financing plan like `2521`. Web coerces against the FULL catalog and then
-   * splices whatever comes out into the Down Pmt options, so the picker ends up
-   * offering a balance/financing plan as a way to pay a down payment. It isn't one:
-   * financing is how the BALANCE is carried. Anything outside the basics resolves to
-   * blank here, so the picker shows its placeholder and the rep picks a real method.
-   *
-   * Used for the live selection AND for the change-flag baseline — if only one side
-   * were filtered, opening the wizard and touching nothing would read as a change.
-   */
   const toDownPaymentKey = useCallback(
     (stored: any) => {
       const key = stored ? coerceToPlanKey(stored, '') : '';
@@ -682,36 +438,15 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [coerceToPlanKey, downPaymentOptions]
   );
 
-  // ── funding record + the rows that price it ────────────────────────────────
-  /**
-   * The Funding API, reached through the SAME hook the Result Lead sheet uses. It
-   * owns ONE piece of truth — the record the server last returned — and
-   * ⚠️ **nothing on the funding screen ever ticks a step locally**: every action is
-   * an endpoint, and the screen redraws from the record it answers with.
-   *
-   * `source` is `my_deals`, which is exactly what `resolveFundingSource` answers for
-   * `mode: 'edit'` — so every funding row this wizard writes is filed under the My
-   * Deals flow while `module_type` stays `funding`. Resolved through that helper
-   * rather than passed literally, so the three flows can never answer the question
-   * differently.
-   */
   const fundingSource = resolveFundingSource({ lead, mode: 'edit' });
   const funding = useFunding(leadId, lead?.companyId || user?.companyId, {
     userId: user?._id || user?.id,
     calculatorId: editCalculatorId || undefined,
     calculatorTitle: (calculatorData as any)?.title || undefined,
     source: fundingSource,
-    // ⚠️ The CUSTOMER document, not the lead — it is what a corrected phone or
-    // email is written back to when a rep fixes a mistyped destination.
     customerId: lead?.customerDetails?._id || lead?.customerDetails?.id || undefined,
   });
 
-  /**
-   * Identity for the funding events this screen fires DIRECTLY — the ones that are
-   * pure UI and never reach an endpoint (structure, rows, method picks, moving
-   * between the two screens). Everything endpoint-driven is logged inside
-   * `useFunding`, which is the only place the outcome exists.
-   */
   const fundingLog = useMemo(
     () => ({
       userId: user?._id || user?.id,
@@ -725,12 +460,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   const contractNum = Number(contractPrice) || 0;
 
-  /**
-   * Both structures' rows live in one list, so switching back and forth keeps
-   * whatever the rep already typed on the other side. ⚠️ **Every calculation runs on
-   * `activeRows`**, never on `rows` — the inactive structure's lines are still in
-   * state, and counting them would double the contract.
-   */
   const activeRows = useMemo(
     () => rows.filter((r) => (payMode === 'upfront' ? r.kind === 'up' : r.kind !== 'up')),
     [rows, payMode]
@@ -738,7 +467,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const upRows = useMemo(() => activeRows.filter((r) => r.kind === 'up'), [activeRows]);
   const downRows = useMemo(() => activeRows.filter((r) => r.kind === 'down'), [activeRows]);
   const balRows = useMemo(() => activeRows.filter((r) => r.kind === 'bal'), [activeRows]);
-  /** Everything collected at the table: the down payment, or the whole upfront contract. */
   const collectNowRows = useMemo(() => activeRows.filter((r) => r.kind !== 'bal'), [activeRows]);
 
   const downTotal = useMemo(
@@ -750,31 +478,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [balRows, activeRows, contractNum]
   );
 
-  /**
-   * The single-method scalars the addendum draft still carries. With a split
-   * contract there is no ONE method, so the FIRST funded row of each half stands in
-   * — and the summed totals stay exact. The full breakdown rides alongside in
-   * `downPayments` / `balancePayments`.
-   *
-   * ⚠️ **Never a joined "Check + AMEX".** Every consumer resolves this value against
-   * the company's plan catalogue, and `resolveTierPaymentMethod` SUBSTRING-SNIFFS it
-   * to pick the bank fee that grosses up the whole contract — a joined string
-   * containing `amex` would silently reprice a signed deal.
-   */
-  /**
-   * ⚠️ **Deliberate divergence from the Result Lead sheet, and it is not cosmetic.**
-   * There the mirror is strictly "the first FUNDED row", because an unfunded line has
-   * no claim to name the deal's method. Here that rule produces a PHANTOM CHANGE: a
-   * deal sold with `$0` down and `paymentMethod: 'check'` seeds a down row holding a
-   * method and no money, so the funded-only read returns `''` while the baseline this
-   * is compared against reads `check` — and the Review step lists a "Down Pmt Method"
-   * edit on a wizard the rep opened and did not touch, with Submit enabled behind it.
-   * The same happens to the balance on a contract paid in full at the table.
-   *
-   * So a funded row still wins; a methodless-but-funded contract still reads blank;
-   * and a named line with no money falls back to naming itself. The payload is
-   * unaffected either way — it already falls back to `lead.paymentMethod`.
-   */
   const primaryDownMethod = useMemo(
     () =>
       collectNowRows.find((r) => r.method && effectiveRowAmount(r, activeRows, contractNum) > 0)?.method ||
@@ -790,47 +493,15 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [balRows, activeRows, contractNum]
   );
 
-  // Web parity (dynamic-deal-edit-modal.js): the BALANCE always resolves — it falls
-  // back to `check`, because every sold deal has a balance to collect. The DOWN
-  // PAYMENT may legitimately be unset (a deal with no money down), so it stays blank.
-  // Both sides of every change flag below coerce the same way, so a deal reopened and
-  // left alone still reads as "no change".
   const balanceMethodKey = coerceToPlanKey(primaryBalanceMethod, 'check');
   const downPaymentMethodKey = toDownPaymentKey(primaryDownMethod);
 
-  /**
-   * The full allocation, persisted alongside those scalars so a split contract
-   * survives a reload as three rows rather than as one row of the summed total.
-   * Built from `activeRows` for the same reason `goFunding` saves from them: the
-   * inactive structure's lines are still in `rows`, and including them would file the
-   * contract twice over.
-   */
   const allocations = useMemo(
     () => paymentAllocations(activeRows, contractNum, pricing.plans),
     [activeRows, contractNum, pricing.plans]
   );
 
   const rowsSeededRef = useRef(false);
-  /**
-   * Seed the pricing rows from the sold deal, then fold in whatever funding this
-   * lead already has.
-   *
-   * ⚠️ **Held until the payment-plan catalogue has settled.** `hydrateRowsFromRecord`
-   * maps each saved row's catalogue LABEL back to a plan key through it, and the
-   * static fallback catalogue would map a dynamic company's financing plans to
-   * nothing — the rows would come back methodless and read as a change the rep never
-   * made.
-   *
-   * ⚠️ **Hydrating rather than re-seeding is what keeps `pid` STABLE.** It is the
-   * server's merge key, so minting fresh ids on every open would file a second set of
-   * rows for the same deal on the next save.
-   *
-   * ⚠️ The CONTRACT PRICE is deliberately NOT taken from the funding record here (the
-   * sale sheet does prefer it). On this screen the lead's `originalContractPrice` is
-   * the figure the addendum is edited FROM, and the Review step's diff compares
-   * against it — taking the funding record's copy would make an untouched deal read
-   * as a price change.
-   */
   useEffect(() => {
     if (rowsSeededRef.current) return;
     if (pricing.isLoading || !outcomeFetched) return;
@@ -844,8 +515,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         amount: seededDown > 0 ? String(Math.round(seededDown)) : '',
         method: toDownPaymentKey(lead?.paymentMethod),
       },
-      // The auto row absorbs whatever the down payment leaves, so the two halves can
-      // never silently stop adding up to the contract.
       {
         pid: newPaymentId(),
         kind: 'bal',
@@ -860,9 +529,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     funding.load().then((record) => {
       if (cancelled || !record) return;
       const saved = hydrateRowsFromRecord(record, pricing.plans);
-      // The structure is not a stored field — `inferPayMode` reads it back off the
-      // saved rows, and BOTH reads come from that one function so the mode and the
-      // rows it produced can never describe different structures.
       if (saved.length) {
         setRows(saved);
         setPayMode(inferPayMode(record));
@@ -876,18 +542,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pricing.isLoading, outcomeFetched]);
 
-  // ── pricing-row editing ────────────────────────────────────────────────────
-
   const updateRow = useCallback((pid: string, patch: Partial<PaymentRow>) => {
     setRows((prev) => prev.map((r) => (r.pid === pid ? { ...r, ...patch } : r)));
   }, []);
 
   const removeRow = useCallback(
     (pid: string) => {
-      // ⚠️ Read and logged BEFORE the state update, never inside the updater — React
-      // may invoke an updater more than once, which would double-log. After this the
-      // row is gone, and the event is the only record that money was ever assigned to
-      // that method.
       const gone = rows.find((r) => r.pid === pid);
       if (gone) {
         logFundingRowRemoved({
@@ -905,9 +565,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   const addRow = useCallback(
     (kind: PaymentKind) => {
-      // Same reason as removeRow: logged outside the updater, which React may run
-      // more than once. `rowCount` is the count AFTER this add, so the timeline reads
-      // "the contract is now split three ways".
       logFundingRowAdded({
         ...fundingLog,
         kind,
@@ -915,8 +572,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       });
       setRows((prev) => {
         const next = [...prev];
-        // A new line goes AFTER the last row of its own half so the two groups stay
-        // contiguous — `rows` is one flat list and the groups render from filters.
         let insertAt = next.length;
         for (let i = next.length - 1; i >= 0; i -= 1) {
           if (next[i].kind === kind) {
@@ -931,17 +586,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [activeRows, fundingLog]
   );
 
-  /**
-   * A method was picked on one line.
-   *
-   * Amounts are deliberately NOT logged as they are typed — that would be a row per
-   * keystroke — so the method pick and the Confirm save (which carries every final
-   * amount) are the two events that describe the split.
-   */
   const selectRowMethod = useCallback(
     (pid: string, key: string) => {
       const row = rows.find((r) => r.pid === pid);
-      // Only when it actually changes: re-picking the same plan is not an event.
       if (row && key && key !== row.method) {
         logFundingMethodSelected({
           ...fundingLog,
@@ -951,27 +598,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           amount: effectiveRowAmount(row, activeRows, contractNum),
         });
       }
-      // ⚠️ NOT a plain `updateRow({ method })`. On a chip row this is the **Swap**
-      // control, and swapping has to shelve the plan it replaces — that is the mockup's
-      // whole archive/restore behaviour, and without it the ARCHIVED METHODS block only
-      // ever showed what the SERVER had archived, so a swap the rep just made left no
-      // trace and could not be undone. `swapRowMethod` is a no-op beyond setting the
-      // method for the ordinary dropdown on an untouched line.
       setRows((prev) => swapRowMethod(prev, pid, key, pricing.plans));
     },
     [rows, activeRows, contractNum, pricing.plans, fundingLog]
   );
 
-  /**
-   * Put an archived plan back.
-   *
-   * ⚠️ Two different mechanisms behind one button, and they must not be confused. A
-   * plan the SERVER archived is restored through `POST …/restore`, which is the only
-   * thing that can move it on the record. A plan THIS SESSION archived (the rep swapped
-   * away from it a moment ago, before any save) has no `archivedId` the server knows —
-   * sending it would 404 — so it is restored in state, symmetrically, exactly as the
-   * mockup does it.
-   */
   const restorePlan = useCallback(
     (pid: string, archivedId: string) => {
       const row = rows.find((r) => r.pid === pid);
@@ -985,27 +616,14 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [rows, pricing.plans, funding]
   );
 
-  /**
-   * Switch between Down Payment and Upfront.
-   *
-   * ⚠️ Refused once money has started moving (`structureLocked`): an upfront row the
-   * processor has already charged cannot be re-cast as a down payment against a
-   * balance that does not exist. The refusal is EXPLAINED rather than silent — a card
-   * that does nothing on tap reads as a bug.
-   */
   const switchPayMode = useCallback(
     (next: PayMode, allowed: boolean) => {
-      // Identity FIRST: when the structure is locked the selected card is disabled
-      // too, and tapping the option you are already on must not scold you for it.
       if (next === payMode) return;
       if (!allowed) {
         setStructureNudge(true);
         return;
       }
       setStructureNudge(false);
-      // Logged only once the switch is actually ALLOWED — a refused tap changed
-      // nothing about the deal, and recording it would put a structure change in the
-      // timeline that never happened.
       logFundingStructureChanged({ ...fundingLog, from: payMode, to: next });
       setRows((prev) => {
         const wantUpfront = next === 'upfront';
@@ -1033,7 +651,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [payMode, contractNum, fundingLog]
   );
 
-  /** The dropdown's choice: `none` / `split` are both `payMode === 'split'`. */
   const selectStructure = useCallback(
     (next: PayStructure, allowed: boolean) => {
       if (next === payStructureOf(payMode, noDown)) return;
@@ -1054,18 +671,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [payMode, noDown, switchPayMode]
   );
 
-  /**
-   * Re-open the auto (remainder) row when money comes unassigned again.
-   *
-   * The rep can dismiss the auto row once it is holding $0, but lowering a down
-   * payment — or raising the contract price, which is what this whole screen is for
-   * — would leave the gap invisible. Rather than restoring a deleted row, the LAST
-   * balance row without a lender decision takes the auto flag back, which is where
-   * the remainder belongs anyway.
-   *
-   * Upfront has no remainder row by design: every amount there is typed and the
-   * CoverageBar is what surfaces a gap.
-   */
   useEffect(() => {
     if (contractNum <= 0 || payMode === 'upfront') return;
     const hasAuto = activeRows.some((r) => r.auto);
@@ -1074,21 +679,14 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     const candidates = activeRows.filter((r) => r.kind === 'bal' && !r.decision);
     const target = candidates[candidates.length - 1];
     if (!target) return;
-    // Only reclaim a row the rep has not typed into — never overwrite an amount.
     if (parseFloat(target.amount || '0') > 0) return;
     updateRow(target.pid, { auto: true });
   }, [activeRows, contractNum, payMode, updateRow]);
 
   const needsRowId = useMemo(() => needsAttentionRowId(activeRows, banners, payMode), [activeRows, banners, payMode]);
-  /** Has money moved? Then the structure is settled — see switchPayMode. */
   const structureIsLocked = useMemo(() => structureLocked(funding.payments), [funding.payments]);
   const totalAssigned = useMemo(() => assignedTotal(activeRows, contractNum), [activeRows, contractNum]);
 
-  /**
-   * Lender decisions, explained immediately above the group that carries the
-   * remainder — that is where the rep has to act, and it is the row `needsRowId`
-   * highlights amber.
-   */
   const decisionBanners = banners.map((b) => (
     <View
       key={b.id}
@@ -1106,27 +704,14 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     </View>
   ));
 
-  // ── funding screen state ───────────────────────────────────────────────────
-
   const covered = useMemo(() => coverageOK(funding.payments, contractNum), [funding.payments, contractNum]);
-  /**
-   * The live checklist. The SERVER's list replaces it the moment a submit is refused
-   * — that one is authoritative and already ordered — but showing the local mirror
-   * beforehand means the rep works the list instead of discovering it by tapping a
-   * button that says no.
-   */
   const localFundingBlockers = useMemo(
-    // The charges_enabled gate joins the checklist as ONE line: it is why the link
-    // steps below it cannot be finished, and repeating it per card would say the same
-    // company-wide thing three times on a three-card job.
     () => fundingBlockers(funding.payments, contractNum, { setupBlocked: !!funding.paymentsSetupError }),
     [funding.payments, contractNum, funding.paymentsSetupError]
   );
   const fundingBlockerList = funding.serverBlockers ?? localFundingBlockers;
-  /** ⚠️ Read from the RECORD: the server refuses bankDecline without a logged decline. */
   const declineHappened = useMemo(() => hasDecline(funding.record), [funding.record]);
   const attempts = useMemo(() => attemptLog(funding.record), [funding.record]);
-  /** The most recent status check across every row. */
   const lastSyncedAt = useMemo(() => {
     const stamps = funding.payments.map((p) => p.syncedAt).filter(Boolean) as string[];
     if (!stamps.length) return null;
@@ -1134,8 +719,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   }, [funding.payments]);
   const bankDeclined = resultChoice === 'bank_decline';
 
-  // A rep who reassigns a declined amount can end up with no live decline; the job
-  // must not stay resulted as a Bank Decline in that case.
   useEffect(() => {
     if (!declineHappened && resultChoice === 'bank_decline') setResultChoice('sale');
   }, [declineHappened, resultChoice]);
@@ -1145,10 +728,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [funding.payments, linkTarget]
   );
 
-  // Plan key → human label for the Review rows, e.g. `2511` → "2511 (6 Months 0%
-  // Interest No Payments…) (Bank Fee: 4%)". Web parity: `resolvePlanLabel`. Falls
-  // back to the raw key when the catalog has no entry (a plan retired since the
-  // deal was sold still has to render), and to an em dash when nothing is set.
   const resolvePlanLabel = useCallback(
     (stored: any, fallbackKey = '') => {
       const key = coerceToPlanKey(stored, fallbackKey);
@@ -1158,7 +737,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [coerceToPlanKey, paymentOptions]
   );
 
-  // ── tiers (web computeEditedTiers) ──────────────────────────────────────────
   const tierResult = useMemo(
     () =>
       computeEditedTiers({
@@ -1179,25 +757,15 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const customerName =
     `${lead?.customerDetails?.firstName || ''} ${lead?.customerDetails?.lastName || ''}`.trim() ||
     'Customer';
-  // The balance is what the BALANCE ROWS actually carry, not a bare
-  // `price − down`: those agree only while the auto row is absorbing the whole
-  // remainder, and in `upfront` mode there is no balance at all.
   const balance = balanceTotal;
   const newMarkup = getMarkupInfo(contractPrice, tierResult.next, undefined);
-  // Markup badge for the PREVIOUS build's contract price vs its tiers (web parity —
-  // the previous card shows a "RETAIL +X%" badge next to its contract price too).
   const previousMarkup = getMarkupInfo(parsePrice(lead?.originalContractPrice), tierResult.previous, undefined);
 
-  // Current install date parsed for the inline calendar highlight, and formatted
-  // for display (fixes the raw-ISO string that was shown, e.g. 2026-07-17T20:00:00
-  // -04:00 → 7/17/2026 · <window>). Mirrors AppointmentSchedulerModal's parsing.
   const parsedScheduleDate = useMemo(() => {
     if (!scheduleDate || scheduleDate === 'TBD') return null;
     const d = new Date(scheduleDate);
     return isNaN(d.getTime()) ? null : d;
   }, [scheduleDate]);
-  // The intro card stacks the date over its time window (web `formatScheduleDate`
-  // renders M/D/YY, with the window — or "TBD" — underneath).
   const currentInstallDateText = useMemo(() => {
     if (!scheduleDate) return 'Not Scheduled';
     if (scheduleDate === 'TBD') return 'TBD';
@@ -1205,16 +773,10 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   }, [scheduleDate, parsedScheduleDate]);
   const currentInstallTimeText = scheduleTimeWindow || 'TBD';
 
-  // ── change detection + diff ─────────────────────────────────────────────────
   const buildChangeGroups = useMemo(
     () => (editedJobState ? computeDynamicBuildChanges(initialState, editedJobState, jobBuilderConfig) : []),
     [editedJobState, initialState, jobBuilderConfig]
   );
-  // A build change is detected ONLY via the field-level diff (`computeDynamicBuildChanges`
-  // → `buildChangeGroups`). The previous raw `JSON.stringify(edited) !== initial` signal
-  // produced false positives — the builder mutates the hydrated state on mount
-  // (auto-fields, defaults, editable locked fields), so it differed even when the rep
-  // changed nothing, showing a phantom "Job Build: Previous → Updated build" row.
   const buildChanged = buildChangeGroups.some((g) => g.changes.length > 0);
 
   const scheduleChanged =
@@ -1222,88 +784,37 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     (scheduleDate !== (lead?.jobBuilder?.scheduleTime?.date || null) ||
       scheduleTimeWindow !== (lead?.jobBuilder?.scheduleTime?.timeWindow || ''));
   const priceChanged = parsePrice(lead?.originalContractPrice) !== Number(contractPrice);
-  // A note edit is itself an addendum change, so the rep can send a note-only
-  // addendum (baseline is the lead's existing note).
   const noteChanged = String(lead?.note ?? '') !== note;
-  // ⚠️ ROUNDED on BOTH sides. The rows hold whole dollars (they are seeded with
-  // `Math.round` and `toUpsertRows` sends `toWholeDollars`), so a stored `500.50`
-  // would otherwise never equal the `500` the field can express — and every deal with
-  // cents on its down payment would open already reading as an edit.
   const downPaymentChanged = Math.round(parsePrice(lead?.downPayment)) !== Math.round(downTotal);
 
-  // ── price validation (web parity: `contractPriceError` / `downPaymentError`) ──
-  // Selling under the rebuilt COST loses money on the addendum, and a down payment
-  // above the contract price yields a negative balance. Both block the wizard here
-  // rather than being caught downstream — mobile had NO validation at all, so a rep
-  // could advance and submit an addendum priced below cost.
   const costFloor = Number(tierResult?.next?.cost) || 0;
   const contractPriceError =
     costFloor > 0 && (Number(contractPrice) || 0) < costFloor
       ? `Cannot be below the cost of ${fmtMoney(costFloor)}.`
       : '';
-  // ⚠️ The old standalone `downPaymentError` ("cannot exceed the contract price") is
-  // GONE — not dropped, MOVED. With the contract split across N lines the honest
-  // question is whether every line together adds up, which is what `confirmBlockers`
-  // asks and `CoverageBar` shows live. A per-field ceiling could only ever check one
-  // of them, and it would have read as satisfied on a job over-allocated across two.
   const hasPriceError = Boolean(contractPriceError);
 
-  // ── refund detection ──────────────────────────────────────────────────────
-  /**
-   * How much has to go BACK at this price — measured against what has actually
-   * been collected, never against the old contract figure. A deal can be re-priced
-   * a long way down and owe nothing, so long as it still covers the money taken.
-   */
   const refundDue = useMemo(
     () => refundDueFor(contractNum, funding.payments),
     [contractNum, funding.payments]
   );
   const needsRefund = refundDue > 0;
 
-  /**
-   * ⚠️ Lance: *"Do not let them adjust the down payment (since that means funding
-   * has already been charged/received) as long as the new contract amount is greater
-   * than the down payment still."* So a COLLECTED down payment is untouchable while
-   * the price still covers it — the rep re-works the BALANCE instead. It only comes
-   * back into play below that line, because that is precisely the refund case.
-   */
   const downLocked = useMemo(
     () => isDownPaymentLocked(contractNum, funding.payments),
     [contractNum, funding.payments]
   );
 
-  // ⚠️ Scoped with the LEAD's company, exactly as `useFunding` above is. The
-  // picker and the refund request that follows it must agree about which company
-  // they belong to, or the approver chosen here is refused at `decide` time.
   const approverFeed = useRefundApprovers(needsRefund, lead?.companyId || user?.companyId);
   const approverOptions = useMemo(
     () => pickableApprovers(approverFeed.feed, user?._id || user?.id),
     [approverFeed.feed, user?._id, user?.id]
   );
 
-  /**
-   * The warning, in Lance's own words, the first time the price crosses below what
-   * has been collected.
-   *
-   * ⚠️ **Only on YES does the refund appear** on the funding screen and the addendum.
-   * That is the specified behaviour, not a nicety: a rep mid-keystroke on their way
-   * from 10000 to 12000 passes through 1, and pinning an approval flow to every
-   * intermediate value would make the field unusable.
-   *
-   * ⚠️ Fired from an effect on the DERIVED flag rather than from `onChangeText`, so
-   * it cannot fire twice for one crossing and cannot be skipped by the auto-adjust
-   * buttons, which set the price without touching the input.
-   *
-   * ⚠️ Raised as the app’s own `ConfirmDialog`, not a native `Alert`: an OS dialog
-   * renders in system chrome and reads as coming from the phone rather than from the
-   * deal — and this is the question that decides whether the company gives money back.
-   */
   const refundPromptRef = useRef(false);
   const [showRefundPrompt, setShowRefundPrompt] = useState(false);
   useEffect(() => {
     if (!needsRefund) {
-      // Back above the line: forget the prompt and the answer, so a second crossing
-      // asks again rather than silently inheriting the first YES.
       refundPromptRef.current = false;
       setShowRefundPrompt(false);
       if (refundAcknowledged) setRefundAcknowledged(false);
@@ -1314,17 +825,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setShowRefundPrompt(true);
   }, [needsRefund, refundAcknowledged]);
 
-  /** The refund actually in play — acknowledged, and still owed. */
   const activeRefund = needsRefund && refundAcknowledged;
 
-  /**
-   * Which collected row the money comes back from.
-   *
-   * ⚠️ The largest collected row, deliberately: a refund is capped at what ONE row
-   * holds, so choosing the biggest is the only pick that can cover the most refunds
-   * without the rep having to reason about it. Splitting one refund across rows is a
-   * separate feature and the API has no shape for it.
-   */
   const refundSourceRow = useMemo(() => {
     const withMoney = (funding.payments || [])
       .map((row) => ({ row, left: refundableAmount(row) }))
@@ -1333,57 +835,22 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     return withMoney[0]?.row || null;
   }, [funding.payments]);
 
-  /**
-   * The refund the SERVER knows about — newest first, and TERMINAL ones included.
-   *
-   * ⚠️ This is what the approval rail draws, and it is deliberately not derived from
-   * `refundDue`. Once the request is out, how far it has got is a fact only the server
-   * holds; the rep can carry on re-pricing and the arithmetic on this screen would
-   * happily report a refund that has already been declined as though it were fresh.
-   * Before a request exists this is `null`, which the rail renders as a preview of
-   * what Submit will start.
-   */
   const jobRefund = useMemo(() => refundsOnJob(funding.payments)[0]?.refund || null, [funding.payments]);
 
-  /**
-   * The approval request behind that refund, and whether the rep may chase it yet
-   * (REVDSM-1160).
-   *
-   * ⚠️ **Read from `GET /lead/v1/:leadId/approvals`, not from the funding record.**
-   * The refund row carries its `state` and `approvalId`; the reminder WINDOW lives on
-   * the approval row, and it is server-computed on purpose — the 48 h / 24 h pair is
-   * two backend constants, still pending Lance's confirmation, so serving it is what
-   * lets it change without an app release.
-   */
   const refundApproval = useRefundApproval(leadId, jobRefund, lead?.companyId || user?.companyId);
 
-  /**
-   * ⚠️ The request is out and nobody has answered — the approver is FIXED.
-   *
-   * Re-picking would change a local field and nothing else: the request the approver
-   * is looking at is already filed against them server-side, and moving it needs
-   * `POST /approvals/:id/reassign`, which is `pending`-only and is not wired here. A
-   * picker that silently changed nothing is worse than one that says why it is shut.
-   *
-   * It re-opens the moment a verdict lands, because a DECLINED request is terminal —
-   * the rep raises a new refund, and that one may well go to somebody else.
-   */
   const approverLocked = jobRefund?.state === 'pendingApproval';
 
-  /** The chosen approver, resolved for display in both places the picker is offered. */
   const approverName = useMemo(
     () => approverOptions.find((a) => String(a.id) === String(approverId))?.name || '',
     [approverOptions, approverId]
   );
 
-  // Seed the method from what the row can actually do — a card row can go back to
-  // the card, anything else has to be a cheque.
   useEffect(() => {
     if (!activeRefund || refundMethod) return;
     setRefundMethod(refundSourceRow?.type === 'cc' ? 'card' : 'check');
   }, [activeRefund, refundMethod, refundSourceRow]);
 
-  /** Why the refund cannot be requested yet — rendered above Submit, like every other gate. */
   const refundGate = useMemo(() => {
     if (!activeRefund) return [];
     return refundBlockers({
@@ -1397,22 +864,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   }, [activeRefund, refundSourceRow, refundDue, refundMethod, refundReason, approverId, approverFeed.isConfigured]);
 
 
-  /**
-   * Everything standing between the rep and **Confirm**, in one list rendered above
-   * the button — the price floor first, then the allocation rules.
-   *
-   * Same control as the Deal Center's Confirm footer, and for the same reason: the
-   * reasons are visible BEFORE the tap, not discovered by it.
-   */
   const confirmGate = useMemo(
     () => [
       ...(contractPriceError ? [contractPriceError] : []),
-      // ⚠️ The acknowledged refund is passed in, and without it this screen DEAD-ENDS:
-      // collected money above the new price reads as an over-allocation the rep cannot
-      // clear (the row is settled, so it is read-only and un-removable), so Confirm
-      // stays disabled and the step where the refund is actually raised is unreachable.
-      // Only an ACKNOWLEDGED refund counts — answering "No" leaves the blocker, which
-      // is correct: the rep must either put the price back up or accept the refund.
       ...confirmBlockers(activeRows, contractNum, payMode, {
         refundDue: activeRefund ? refundDue : 0,
       }),
@@ -1420,12 +874,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [contractPriceError, activeRows, contractNum, payMode, activeRefund, refundDue]
   );
 
-  // ── "Send Addendum To" phone ────────────────────────────────────────────────
-  // The addendum is TEXTED to this number, so an incomplete one means the customer
-  // is never asked to sign and the draft sits pending forever. Same rule as Add New
-  // Lead / Edit Customer, with one difference that matters: this field renders a
-  // STATIC "+1" beside it and holds the local part only (`formatLocalUSPhone`), so a
-  // complete number is TEN digits here, not the eleven those two screens count.
   const customerPhoneDigits = customerPhone.replace(/\D/g, '');
   const customerPhoneError =
     customerPhoneDigits.length === 0
@@ -1434,39 +882,16 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         ? 'Enter a complete 10-digit phone number.'
         : '';
 
-  // ── "Send Addendum To" email ────────────────────────────────────────────────
-  // Format-checked with the app's shared `validateEmail` (the same rule login and
-  // forgot-password use), so "email" cannot come to mean two different things.
-  //
-  // ⚠️ OPTIONAL, unlike the phone — and that asymmetry is deliberate. SMS is the
-  // channel that gets the customer to the signature page, so an unreachable phone
-  // leaves the draft pending forever; email is a copy. The submit already tolerated a
-  // blank address (it sent `lead.customerDetails.email || ''`), so requiring one here
-  // would make every email-less lead UNSUBMITTABLE — a regression on a flow that
-  // works today. A blank field therefore means "SMS only", exactly as before; only a
-  // value that is present and malformed blocks Submit.
   const customerEmailTrimmed = customerEmail.trim();
   const customerEmailError =
     customerEmailTrimmed && !validateEmail(customerEmailTrimmed)
       ? 'Enter a valid email address (e.g. name@example.com).'
       : '';
-  // Compare each picker against the SAME baseline it was seeded from, so opening the
-  // wizard and touching nothing reads as no change. Both sides go through
-  // `coerceToPlanKey` with the matching fallback ('check' for the balance, blank for
-  // the down payment) — web parity. The old `!!key &&` guard existed only because the
-  // pickers opened blank; seeding them made it obsolete, and keeping it would have
-  // masked a real edit back to the deal's original method.
-  // Same filter as the seed (`toDownPaymentKey`): a deal storing a financing plan in
-  // `paymentMethod` blanks BOTH sides, so opening the wizard and touching nothing is
-  // not a change. Once the rep picks a real method it compares blank → that method.
   const downPaymentMethodChanged =
     toDownPaymentKey(lead?.paymentMethod) !== downPaymentMethodKey;
   const balanceMethodChanged =
     coerceToPlanKey(lead?.balancePaymentMethod, 'check') !== balanceMethodKey;
 
-  // These were previously inlined here, so the Submit button enabled on a payment
-  // change but the Review list had no row for it — the rep saw "no changes" for an
-  // edit that was really being submitted. Named so the review step can render them.
   const hasAnyChange =
     buildChanged ||
     scheduleChanged ||
@@ -1476,13 +901,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     downPaymentMethodChanged ||
     balanceMethodChanged;
 
-  /**
-   * One expression for the Submit button, so the disabled state and the greying can
-   * never disagree — before this they were two hand-kept copies of the same list.
-   *
-   * ⚠️ `refundGate` is EMPTY unless a refund is actually in play, so an ordinary
-   * addendum is completely unaffected by it.
-   */
   const submitBlocked =
     isSubmitting ||
     !hasAnyChange ||
@@ -1492,27 +910,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     !!customerEmailError ||
     refundGate.length > 0;
 
-  // ── Job Price ⇄ Funding ────────────────────────────────────────────────────
-
-  /**
-   * **Confirm** — save the pricing rows, then move to the Funding screen.
-   *
-   * The PUT is the save for the whole screen: `payments` is the COMPLETE list, so a
-   * row the rep deleted is deleted server-side too. Only advance on success — the
-   * funding screen renders the server's record, so opening it after a failed save
-   * would show the rep the previous state under the new price.
-   */
   const goFunding = useCallback(async () => {
     if (confirmGate.length) {
       FlashMessage.error('Not ready to confirm', confirmGate[0]);
       return;
     }
-    // ⚠️ `activeRows`, not `rows`: the inactive structure's lines are still in
-    // state, and `payments` is the COMPLETE list — sending them would file the
-    // contract twice over.
     const upsert = toUpsertRows(activeRows, contractNum, pricing.plans);
-    // savePayments logs the save itself (with the full breakdown) — it is the only
-    // place the server's answer exists.
     const res = await funding.savePayments(Math.round(contractNum), upsert, payMode);
     if (!res.ok) return;
     logFundingOpened({
@@ -1524,32 +927,19 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setPriceScreen('funding');
   }, [confirmGate, activeRows, contractNum, pricing.plans, payMode, funding, fundingLog]);
 
-  /** Back / "Edit payments" — fold every lender decision onto the pricing rows. */
   const goPricing = useCallback(() => {
     const applied = applyDecisionsToRows(activeRows, funding.payments, contractNum, payMode);
-    // `reassigning` is the case worth telling apart: a lender decision opened a gap
-    // and the rep is going back to cover it, not just changing their mind.
     logFundingEditPayments({ ...fundingLog, reassigning: applied.banners.length > 0 });
-    // Decisions only ever touch the ACTIVE structure, so the other one's rows are
-    // carried through untouched rather than dropped.
     const inactive = rows.filter((r) => !activeRows.includes(r));
     setRows([...applied.rows, ...inactive]);
     setBanners(applied.banners);
     if (applied.banners.length) setPriceUnlocked(true);
     funding.clearServerBlockers();
-    // The "void it first" nudge answered a tap that is now a screen back.
     setStructureNudge(false);
     setPriceScreen('price');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, activeRows, funding, contractNum, payMode, fundingLog]);
 
-  /**
-   * Open the send sheet and fetch the hosted-page url.
-   *
-   * ⚠️ `POST …/link` marks NOTHING — merely opening the sheet must not tick Link
-   * Sent. It is idempotent, so backing out and reopening returns the same page rather
-   * than minting a second live link.
-   */
   const openSendSheet = useCallback(
     async (pid: string) => {
       setLinkTarget(pid);
@@ -1562,20 +952,10 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [funding]
   );
 
-  /** The rep confirmed a send happened. Resolves false if the server did not deliver. */
   const handleSendLink = useCallback(
     async (channel: FundingChannel, destination?: string): Promise<boolean> => {
       if (!linkTarget) return false;
       const res = await funding.markLinkSent(linkTarget, channel, destination);
-      /**
-       * ⚠️ A corrected destination RE-ISSUES the link: the server expires the open
-       * Checkout session and mints a new page, so the url this screen is still holding
-       * — the one behind the QR code and the Copy button — is dead. Re-fetch instead of
-       * trusting what we cached (REVDSM-1155).
-       *
-       * `reissued` comes back from the hook because it cannot be re-derived here: the
-       * row now carries the NEW destination, so comparing it would answer false.
-       */
       if (res.ok && res.data?.reissued) {
         const fresh = await funding.fetchLink(linkTarget);
         setLinkUrl(fresh.ok ? fresh.data?.url || '' : '');
@@ -1585,17 +965,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [funding, linkTarget]
   );
 
-  /**
-   * Bank Decline / back to Sale.
-   *
-   * ⚠️ Only mirrored locally once the SERVER accepts it — it refuses the switch
-   * without a logged lender decline, and refuses to undo one after submission.
-   *
-   * ⚠️ This sets the FUNDING record's result. It deliberately does not rewrite the
-   * addendum draft's own `result` field, which still carries the deal's
-   * (`lead.result`) — re-resulting a signed deal is a different decision from
-   * recording that a lender said no, and it is not what an addendum submits.
-   */
   const handleSetFundingResult = useCallback(
     async (next: 'sale' | 'bank_decline') => {
       const res = await funding.setResult(next === 'bank_decline' ? 'bankDecline' : 'sale');
@@ -1604,31 +973,19 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [funding]
   );
 
-  // ── activity log ────────────────────────────────────────────────────────────
-  // Every Install Date event names the same deal. Built once here for the reason
-  // `dealEditMeta` exists: the portal scopes `my_deal` by leadId + calculatorId, so
-  // a row that spells either differently never shows up on the deal. `null` when
-  // there is no user to attribute it to - the helpers no-op on that, matching the
-  // submit log's own `if (logUserId)` guard.
   const dealLogTarget = useMemo(() => {
     const userId = user?._id || user?.id;
     if (!userId || !leadId) return null;
     return {
       userId,
       leadId,
-      // The HUMAN lead id, matching the portal capture (which reads "N/A" on a
-      // self-gen lead) - NOT the mongo id, which `leadId` above already carries.
       jobBuilderId: lead?.leadId || leadId,
       ...(editCalculatorId ? { calculatorId: editCalculatorId } : {}),
-      // On every row in the capture: which job-builder config the edit was made
-      // against, so a row can still be read after the config is edited.
       configId: savedOutcome?.jobBuilder?.configId || (jobBuilderConfig as any)?.id || null,
       result: lead?.result || 'Sale',
     };
   }, [user, leadId, editCalculatorId, lead?.result, lead?.leadId, savedOutcome, jobBuilderConfig]);
 
-  // The schedule as it stands, echoed on every decision row so the timeline reads
-  // without having to join back to the deal.
   const loggedSchedule = useCallback(
     () => ({
       currentDate: scheduleDate || 'TBD',
@@ -1637,15 +994,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [scheduleDate, scheduleTimeWindow]
   );
 
-  // The four wizard steps, by the names the portal shows them under.
-  // One view row per screen the rep lands on.
-  //
-  // WARNING Job Build is skipped: the embedded builder logs a `step_viewed` per TAB
-  // it opens, so a wizard-level row there would only add a duplicate parent entry
-  // above them (web skips it for the same reason).
-  //
-  // Ref-guarded rather than fired from a handler, so the screen the wizard OPENS on
-  // is reported too — that is the row that was missing, and no handler runs for it.
   const lastLoggedStepRef = useRef(-1);
   useEffect(() => {
     if (!dealLogTarget || step === 1) return;
@@ -1654,22 +1002,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     logDealStepViewed({ ...dealLogTarget, step });
   }, [step, dealLogTarget]);
 
-  // The builder is mounted from the start so a job build survives stepping away,
-  // which also meant it logged its first tab view before the rep had seen it. Latched
-  // ON when they first reach Job Build and left on for the session, so bouncing
-  // between steps does not re-open it (web `buildStepVisited`).
   const [buildStepVisited, setBuildStepVisited] = useState(false);
   useEffect(() => {
     if (step === 1) setBuildStepVisited(true);
   }, [step]);
 
 
-  // ── Job Price change tracking ───────────────────────────────────────────────
-  // The five values a rep can move on step 2, in the shape the diff reads. The
-  // money fields carry the markup each side of the change sat at, resolved from the
-  // pair the log actually reports (web `markupFor`) - a burst of keystrokes
-  // coalesces to one row, and stamping the markup at render time would stamp an
-  // intermediate one.
   const markupText = useCallback(
     (value: any) => {
       const info = getMarkupInfo(parsePrice(value), tierResult.next, undefined);
@@ -1691,9 +1029,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       },
       downPayment: {
         label: 'Down Payment',
-        // ⚠️ `downTotal`, not a `downPayment` field: the multi-method rows replaced
-        // that single input, and this is the derived scalar the payload and the
-        // Review row both use — so the log reports the figure the rep sees.
         value: fmtMoney(downTotal),
       },
       balance: {
@@ -1728,15 +1063,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       : null
   );
 
-  // ── Review & Submit change tracking ────────────────────────────────────────
-  // The three things the rep can still edit on the last step. Web tracks only the
-  // phone here; the note and the email are mobile's own - the note is shown to the
-  // customer ON the addendum, and the email decides where a copy is sent, so both
-  // are worth a row.
-  //
-  // WARNING The phone and email are the CUSTOMER'S contact details, and this puts
-  // them on the activity timeline. Web already logs the phone; the email was asked
-  // for so a rep can be shown where an addendum actually went.
   const reviewScreenValues = useMemo(
     () => ({
       note: { label: 'Additional Notes', value: note },
@@ -1762,14 +1088,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       : null
   );
 
-  // ── handlers ────────────────────────────────────────────────────────────────
-  // Tapping a calendar day only SELECTS it (web `handleDatePick`) — the rep then
-  // confirms with "Use <date>", which opens the confirm-time card.
   const handleInlineDateSelect = useCallback(
     (day: Date) => {
       const nextDate = format(day, 'M/d/yyyy');
-      // Only when the selection actually MOVES. The calendar re-selects on every
-      // tap, and tapping the same day twice is one decision, not two.
       const already = proposedDate ? format(proposedDate, 'M/d/yyyy') === nextDate : false;
       if (dealLogTarget && !already) {
         logDealInstallDateSelected({
@@ -1784,34 +1105,26 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [dealLogTarget, loggedSchedule, proposedDate]
   );
 
-  // "Next · Review" from Job Price. Flushed first, so a price typed and immediately
-  // confirmed is reported BEFORE the step it was entered on is left behind.
   const handleNextToReview = useCallback(() => {
     flushPriceChanges();
     setStep(3);
   }, [flushPriceChanges]);
 
-  // "Modify Install Date" → the calendar. Logged so the timeline can tell a rep who
-  // looked at the date from one who never opened the step.
   const handleOpenInstallCalendar = useCallback(() => {
     if (dealLogTarget) logDealInstallDateModifyOpened({ ...dealLogTarget, ...loggedSchedule() });
     setDateStep('calendar');
   }, [dealLogTarget, loggedSchedule]);
 
-  // "No Change — Skip" → straight to Job Build, with the date left as it was.
   const handleSkipInstallDate = useCallback(() => {
     if (dealLogTarget) logDealInstallDateUnchanged({ ...dealLogTarget, ...loggedSchedule() });
     setStep(1);
   }, [dealLogTarget, loggedSchedule]);
 
-  // "Use <date>" → offer the first time window for the selected day.
   const handleUseSelectedDate = useCallback(() => {
     if (!proposedDate) return;
     setDateStep('time');
   }, [proposedDate]);
 
-  // "TBD" → clear the scheduled date/window, then show the confirmation card
-  // (web `handleSelectTbd` → `showSuccess`). "Done — Next →" moves on to Job Build.
   const handleSelectTbd = useCallback(() => {
     if (dealLogTarget) {
       logDealInstallDateChanged({
@@ -1829,18 +1142,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setDateStep('success');
   }, [dealLogTarget, scheduleDate, scheduleTimeWindow]);
 
-  // "Doesn't Work" → offer the next window for the SAME day; once both windows have
-  // been declined, send the rep back to the calendar to pick another date (web
-  // `handleProposalNo`). It used to roll forward to the next non-Sunday day instead,
-  // which silently moved the date the rep had chosen.
   const handleProposeNextSlot = useCallback(() => {
     if (proposedSlotIdx < INSTALL_WINDOWS.length - 1) {
       setProposedSlotIdx(proposedSlotIdx + 1);
       return;
     }
-    // Logged only on the SECOND decline - the one that sends the rep back to the
-    // calendar. Logging the first would say the window was refused when the rep is
-    // simply being offered the other one.
     if (dealLogTarget) {
       logDealInstallWindowsDeclined({
         ...dealLogTarget,
@@ -1852,9 +1158,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setDateStep('calendar');
   }, [proposedSlotIdx, proposedDate, dealLogTarget]);
 
-  // "Confirm" → commit the proposed schedule, then show the confirmation card (web
-  // `handleProposalYes` → `showSuccess`). `proposedDate` is intentionally kept so the
-  // card can echo the committed date; `handleFinishInstallDate` clears it.
   const handleAcceptProposedTime = useCallback(() => {
     if (!proposedDate) return;
     const nextDate = format(proposedDate, 'M/d/yyyy');
@@ -1873,8 +1176,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setDateStep('success');
   }, [proposedDate, proposedSlotIdx, dealLogTarget, scheduleDate, scheduleTimeWindow]);
 
-  // "Done — Next →" on the confirmation card → Job Build. Resets Step 0 back to its
-  // landing card so stepping back to Install Date shows the intro, not the success card.
   const handleFinishInstallDate = useCallback(() => {
     setDateStep('intro');
     setProposedDate(null);
@@ -1886,9 +1187,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     const { previous, next } = tierResult;
     const original = parsePrice(lead?.originalContractPrice) || contractPrice;
     const before = contractPrice;
-    // Logged as its own action: the debounced diff will ALSO report the resulting
-    // contract price, and the two rows say different things - this one records that
-    // the rep asked for the figure rather than typing it.
     const logAdjusted = (value: number) => {
       if (!dealLogTarget) return;
       logDealPriceAutoAdjusted({
@@ -1899,14 +1197,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         markup: markupText(value),
       });
     };
-    // Preserve the markup the PREVIOUS card shows (e.g. "COST +75%"), not the raw
-    // retail ratio. The badge measures the premium over the nearest LOWER tier, and
-    // the tiers do NOT scale uniformly when the build changes (cost/par/retail each
-    // move by a different factor), so scaling the price by the retail ratio left the
-    // New badge reading a different % (COST +169%). Scale by the SAME tier the badge
-    // is based on so the New card reproduces the previous markup: with pct = original
-    // premium over previous[baseKey], newContract = next[baseKey] × (original /
-    // previous[baseKey]) lands the New price at the identical premium over next[baseKey].
     const info = getMarkupInfo(original, previous);
     const baseKey = info.baseKey;
     const prevBase = baseKey ? previous[baseKey] : 0;
@@ -1919,29 +1209,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     } else if (next.par > 0) {
       adjusted = Math.round(next.par * 1.1);
     }
-    // With no tier to scale against, Auto Adjust changes nothing — and a log row
-    // saying it ran would claim a re-price that never happened.
     if (adjusted == null) return;
 
-    /**
-     * ⚠️ **CLAMPED TO THE COST FLOOR — the same `next.cost` this screen validates
-     * against.** Without this, Auto Adjust hands back a price the screen then REFUSES,
-     * and the rep is left in a dead end they did not create and cannot read: a red
-     * *"Cannot be below the cost of $6,632"* under a figure a button just produced,
-     * with **Confirm** greyed out and nothing saying why.
-     *
-     * It happens because the scaling above preserves the ORIGINAL markup, and that
-     * markup can itself be below cost — the reported case had the badge reading
-     * **COST −5%**, i.e. the deal was already sold under the build's cost, so
-     * reproducing −5% against the new cost was faithful and invalid at once. It is
-     * most visible on a REFUND, where the rep is deliberately pricing down and the
-     * floor is the only thing standing between them and Confirm.
-     *
-     * ⚠️ **Clamp, never relax the floor.** Letting a refund waive it would be selling
-     * the job below what it costs to do — the exact thing the rule exists to stop.
-     * The floor is a business rule; Auto Adjust is a convenience, so the convenience
-     * yields.
-     */
     const floor = Number(next?.cost) || 0;
     const { price: flooredPrice, clamped: wasClamped } = clampToCostFloor(adjusted, floor);
     adjusted = flooredPrice;
@@ -1950,29 +1219,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     logAdjusted(adjusted);
 
     if (wasClamped) {
-      /**
-       * ⚠️ Said out loud, because the rep asked for a markup and got a different one.
-       * Silently landing on a number that does not match the badge they were
-       * preserving reads as the button having miscalculated.
-       */
       FlashMessage.info(
         'Adjusted to the cost floor',
         `The job's markup would have priced it below the ${fmtMoney(floor)} it costs to build, so the price was set to the floor instead.`
       );
     }
 
-    /**
-     * ⚠️ Auto Adjust ASKS about the refund itself rather than leaving it to the
-     * effect on `needsRefund`, and the difference is a real one. That effect latches
-     * (`refundPromptRef`) so a rep typing their way down to a new figure is asked
-     * once and not once per keystroke — correct for typing, wrong for a BUTTON. A
-     * rep who answered "No", re-shaped the build and pressed Auto Adjust again is
-     * making a fresh decision on a fresh number, and the latch would swallow it: the
-     * price would land below what was collected with nothing on screen saying so.
-     *
-     * An already-acknowledged refund is left alone — the rep has answered, and
-     * re-asking on every adjustment would be the noise the latch exists to prevent.
-     */
     if (!refundAcknowledged && requiresRefundApproval(adjusted, funding.payments)) {
       refundPromptRef.current = true;
       setShowRefundPrompt(true);
@@ -1984,8 +1236,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setIsSubmitting(true);
     try {
       await LeadService.cancelLead(leadId, lead);
-      // After the server accepted it, never before: a failed cancel that logged
-      // anyway would leave the timeline claiming a job was cancelled when it was not.
       if (dealLogTarget) logDealJobCancelled({ ...dealLogTarget, ...loggedSchedule() });
       FlashMessage.success('Job Cancelled', 'This job was marked cancelled');
       setShowCancelConfirm(false);
@@ -1999,18 +1249,10 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   const handleSubmit = useCallback(async () => {
     if (!leadId) return;
-    // A note or a phone typed and submitted straight away is still an edit: the
-    // debounce has not fired yet, and the screen is about to go. Flushed BEFORE the
-    // submit row so the timeline reads in the order it happened.
     flushReviewChanges();
     setIsSubmitting(true);
     try {
-      // Persisted state is document-free — the draft endpoint reads docs from the
-      // TOP LEVEL. Serialize runtime ids → storage keys (web parity).
       const stateForSubmit = { ...(effectiveJobState || {}), agreements: [], orderSheets: [] };
-      // preserveExisting=true: this wizard renders the builder in editMode, so the
-      // rep may override locked (calculator-driven) fields. Persist their explicit
-      // entries instead of reverting them to the stale dealCenterData snapshot.
       const persisted = jobBuilderConfig
         ? serializeDynamicJobStateForStorage(stateForSubmit, jobBuilderConfig, dealCenterData, true)
         : stateForSubmit;
@@ -2036,14 +1278,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         scheduleTime,
       };
 
-      // LFCalculator is a backend subdoc with REQUIRED `createdBy`/`appointmentId`/
-      // `title`. Web always sends a COMPLETE one (it persists a real LFCalculator);
-      // mobile deliberately never persists LFCalculator (see repo guide §5), so
-      // `calculatorData` here is usually empty/partial. Sending that partial subdoc
-      // is exactly what tripped the 500 — "JobBuilderDraft validation failed:
-      // LFCalculator.createdBy/appointmentId/title required". Only attach it when it
-      // is a complete subdoc; otherwise omit it (the top-level `originalContractPrice`
-      // / `selectedCalculatorId` already carry what the addendum needs).
       const lfCalculatorComplete = Boolean(
         calculatorData &&
           typeof calculatorData === 'object' &&
@@ -2052,45 +1286,19 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           (calculatorData as any).title
       );
 
-      // The Deal Center job-submit builds `leadData` with a fixed key set
-      // (`buildSubmitLeadData`). This draft is a DIFFERENT endpoint with a flatter
-      // shape, but the OUTCOME fields it carries should be the same ones — three were
-      // missing here, so an addendum dropped them and the signed record disagreed with
-      // the original submit. Sale/Demo blanking follows the same rule as there.
       const isSaleResult = (lead?.result || 'Sale') === 'Sale';
 
       const payload: any = {
         result: lead?.result || 'Sale',
-        // ⚠️ Present on the draft record (it reads `oneLeg: null` today) and on the
-        // Deal Center payload, but never sent from here — so every addendum silently
-        // cleared it. Defaults to 'No', matching `buildSubmitLeadData`.
         oneLeg: toPayloadText(savedOutcome?.oneLeg ?? lead?.oneLeg ?? 'No'),
-        // Demo-only, blank on a Sale — exactly as the Deal Center does. Resolution
-        // chain matches `EditContractDetailsModal`, which reads the same two fields.
         reason: toPayloadText(isSaleResult ? '' : (savedOutcome?.reason ?? lead?.reason)),
         explain: toPayloadText(isSaleResult ? '' : (savedOutcome?.explain ?? lead?.explain)),
         lastPriceQuoted: lead?.lastPriceQuoted || '',
         originalContractPrice: String(contractPrice),
-        // Normalize to a number-string (web parity): an empty field still saves "0"
-        // so it doesn't read as a phantom down-payment change on the customer's addendum.
         downPayment: String(Math.round(downTotal)),
         paymentMethod: downPaymentMethodKey || lead?.paymentMethod || '',
         balancePaymentMethod: balanceMethodKey || lead?.balancePaymentMethod || '',
         balance: String(Math.round(balance)),
-        /**
-         * The multi-method breakdown, persisted BESIDE the four scalars above —
-         * which stay written as a DERIVED MIRROR (section totals plus the first
-         * funded row's plan key).
-         *
-         * ⚠️ Additive, never a replacement. ~20 consumers read the flat names, and
-         * the customer-facing agreement and amendment renderers would degrade
-         * *silently* rather than error if they were converted outright. An
-         * un-upgraded reader sees a LOSSY view — one method named for a job that
-         * used three — never a wrong one.
-         *
-         * ⚠️ `method` here is a plan KEY, matching the scalar it mirrors — NOT the
-         * catalogue LABEL the funding API's own `payments[].method` carries.
-         */
         downPayments: allocations.downPayments,
         balancePayments: allocations.balancePayments,
         selectedCalculatorId:
@@ -2104,28 +1312,13 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           lead?.jobBuilder?.appointmentId ||
           null,
         jobBuilder,
-        // Snapshot the build diff for the customer consent page (web parity).
         buildChangeSummary: buildChangeGroups,
-        // Free-text note ("" → null). Stored on the draft now, written to
-        // Lead.note / LeadOutcome.note when the customer signs.
         note,
-        // ── who this addendum goes to ──────────────────────────────────────────
-        // ROOT-LEVEL on the draft-create POST. Both fields are seeded from the
-        // customer record and shown on the Review step, so the rep can OVERRIDE them:
-        // typing a different number/address here sends the addendum there instead of
-        // to whatever the customer record holds.
-        //
-        // ⚠️ E.164 (`+12542343674`) for the phone, per the documented payload. The
-        // field itself renders a static "+1" and holds the LOCAL part, so the display
-        // value must go through `toE164USPhone` — sending it raw would hand the SMS
-        // provider "232-123-2112".
         customerPhone: toE164USPhone(customerPhone || readLeadPhone(lead)),
         customerEmail: customerEmailTrimmed,
       };
       if (lfCalculatorComplete) payload.LFCalculator = calculatorData;
 
-      // Attach any NEW captures the rep added while editing that already carry
-      // inline data (data:/base64). Existing S3 docs are skipped (not re-uploaded).
       const isDemo = (lead?.result || 'Sale') !== 'Sale';
       const collectInlineDocs = (group: any, type: string) =>
         (Array.isArray(group) ? group : [])
@@ -2143,37 +1336,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       const b = draftRes?.data;
       const draftId = b?.data?.draft?._id || b?.draft?._id || b?.data?._id || b?._id;
 
-      /**
-       * ── THE HOLD (REVDSM-1159, `TAYYAB-REFUND-HOLD-AND-REMINDERS.md` §1) ─────────
-       *
-       * ⚠️ **A refund addendum must NOT reach the customer before the refund is
-       * approved.** `sendDraftSubmitEmail` (`PATCH …/job-builder-draft/:id/submit`)
-       * is what flips the draft to `pending`, posts the chat card and texts/emails the
-       * review link — so calling it here would release the paperwork first.
-       *
-       * That is not cosmetic. The refund machine is
-       * `pendingApproval → pendingCustomer → customerSigned → …`, and
-       * `pendingApproval → customerSigned` is **not a legal move**: the server's
-       * `refundMovesForDecision` guard is a bare `return`, so a customer who signs
-       * while the refund is still awaiting approval has their signature **silently
-       * dropped for the refund**. The approver then approves, the refund advances to
-       * `pendingCustomer`, and it waits forever for a signature that already happened
-       * and cannot be asked for again. The addendum reads `accepted`, the money never
-       * moves, and nothing anywhere says why.
-       *
-       * So the order is inverted: raise the refund FIRST, and let **approval** release
-       * the addendum. The backend does that half — `ApprovalHandler.applyToRefund`
-       * calls `releaseAddendumForApprovedRefund(draftId)` the moment the refund reaches
-       * `pendingCustomer`, which refuses unless the draft is still `draft` (so it can
-       * never double-send) and then does exactly what `/submit` does.
-       *
-       * ⚠️ **Declining releases nothing, deliberately** — a dead refund must not put an
-       * addendum promising money in front of the customer. The rep files a fresh one.
-       *
-       * ⚠️ A held draft stays `status: 'draft'`, so it is correctly NOT counted as a
-       * pending addendum (`isPendingDraft` matches `'pending'` only) — the lead must
-       * not show as awaiting a signature nobody has been asked for.
-       */
       const release = addendumReleasePlan({
         refundAcknowledged: !!activeRefund,
         hasSourceRow: !!refundSourceRow,
@@ -2189,22 +1351,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           reason: (refundReason || 'priceDrop') as FundingRefundReason,
           ...(refundNote.trim() ? { note: refundNote.trim() } : {}),
           ...(approverId ? { assignedToUserId: approverId } : {}),
-          // ⚠️ The ONLY join between the refund and the paperwork the customer signs.
-          // It can only be set at creation — there is no endpoint to attach a draft
-          // afterwards — and the consent handler advances only refunds whose `draftId`
-          // matches the signed draft.
           draftId,
         });
         if (!res.ok) {
-          /**
-           * ⚠️ **ABORT.** Nothing has left the building yet, so stopping is free — and
-           * carrying on is the one outcome on this screen that must never be possible:
-           * it would put the price CUT in front of the customer to sign while the
-           * company quietly keeps the money that cut gives back.
-           *
-           * The rep stays on the wizard and can submit again. The draft already filed
-           * is inert (`draft`, uncounted, never sent).
-           */
           FlashMessage.error(
             'Refund not raised — nothing was sent',
             res.error?.message ||
@@ -2214,14 +1363,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         }
         refundRaised = true;
       } else if (release === 'abort') {
-        /**
-         * ⚠️ A refund is owed and the rep said YES, but it could not be raised — the
-         * draft id could not be read off the response, the source row is missing, or
-         * the gate is unsatisfied. Sending anyway is the failure above, so this aborts
-         * too. Silence here would be the worst outcome on the screen: the rep believes
-         * the money is on its way back, the approver never sees a request, and the
-         * customer signs an addendum with no refund attached to it.
-         */
         FlashMessage.error(
           'Refund not raised — nothing was sent',
           'The app could not link the refund to this addendum, so nothing was sent to the customer. Submit again to try once more.'
@@ -2229,22 +1370,10 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         return;
       }
 
-      // ⚠️ Only an addendum carrying NO refund goes straight to the customer. A held
-      // one is released by the APPROVER, server-side — see the block above.
       if (draftId && !refundRaised) {
-        // Always E.164 (+1XXXXXXXXXX) for the SMS provider. The old branch passed a
-        // value through untouched when it merely STARTED with '+', so a display
-        // string like "+1 443-878-4937" reached the API with spaces and dashes; and
-        // a stored "14438784937" became "+114438784937". `toE164USPhone` strips
-        // formatting and takes the last 10 digits, so every shape normalizes.
         const formattedPhone = toE164USPhone(customerPhone || readLeadPhone(lead));
         try {
           await LeadService.sendDraftSubmitEmail(draftId, {
-            // The address the rep typed, not the lead's stored one — that is the whole
-            // point of the field. Deliberately NOT falling back to the stored value when
-            // blank: the field is SEEDED from it, so an empty field means the rep cleared
-            // it on purpose, and a fallback would mail the addendum to an address they
-            // had just removed.
             customerEmail: customerEmailTrimmed,
             customerPhone: formattedPhone,
           });
@@ -2253,14 +1382,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         }
       }
 
-      // Log the addendum submission under `my_deal` (web `logAddendumSubmitted`). This
-      // is the deal-edit completion event — the embedded builder's job_builder_completed
-      // is suppressed in edit mode, so this is the single "addendum sent" marker.
       const logUserId = user?._id || user?.id;
       if (logUserId) {
         logDealAddendumSubmitted({
-          // The same target every other row on this wizard carries, so the submit
-          // lands in the Addendum Review group with them rather than on its own.
           ...(dealLogTarget || {}),
           userId: logUserId,
           leadId,
@@ -2278,8 +1402,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         });
       }
 
-      // ⚠️ "The customer has been notified to sign" is a LIE for a held addendum —
-      // nobody has been notified yet, and will not be until the refund is approved.
       FlashMessage.success(
         refundRaised ? 'Sent for approval' : 'Addendum Submitted',
         refundRaised
@@ -2323,7 +1445,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     scheduleChanged,
     priceChanged,
     noteChanged,
-    // The refund is raised from inside this callback, after the draft — see there.
     activeRefund,
     refundSourceRow,
     refundDue,
@@ -2336,25 +1457,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   ]);
 
   const goBack = useCallback(() => {
-    // Flushed before the step changes: an edit made and immediately walked back from
-    // is still an edit, and the tracker drops its baseline on leaving the step.
     flushPriceChanges();
     flushReviewChanges();
     setStep((s) => Math.max(0, s - 1));
   }, [flushPriceChanges, flushReviewChanges]);
 
-  // Wait on the calculator schemas too (web parity): the Step-2 tiers price the
-  // edited build THROUGH those schemas, so rendering before they load would show
-  // a zero-delta price. Mirrors web's `configLoading || schemasLoading || …` gate.
-  //
-  // ⚠️ `isCalculatorLoading` IS PART OF THIS GATE. Leaving it out produced a
-  // race that showed "This deal can't be edited here" on a perfectly editable
-  // deal: open the wizard quickly and `outcomeFetched` could flip true while the
-  // calculator request was still in flight, so `isLoading` went false, the
-  // fallback below ran against a not-yet-resolved `savedDynamicJobState` /
-  // `initialState`, and the rep got the dead end. Going back and reopening
-  // "fixed" it only because the query cache was warm the second time — which is
-  // why it looked intermittent and worse on a slow connection.
   const isLoading = isDealEditLoading({
     configLoading: isConfigLoading,
     schemasLoading: isSchemasLoading,
@@ -2367,7 +1474,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     lead?.jobBuilder?.isDynamic || lead?.jobBuilder?.dynamicJobState || lead?.isDynamic || savedDynamicJobState
   );
 
-  // ── render ───────────────────────────────────────────────────────────────
   const Header = (
     <View
       style={{
@@ -2382,9 +1488,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     >
       <TouchableOpacity
         onPress={() => {
-          // On the funding sub-screen "back" is Edit payments, not a step back: it is
-          // the ONE path that folds any lender decision onto the pricing rows, so
-          // stepping past it would drop a decline the rep has to price around.
           if (step === 2 && priceScreen === 'funding') {
             goPricing();
             return;
@@ -2419,9 +1522,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   if (isLoading) {
     return (
-      // edges={[]} — DynamicDealCenter is in the nav `showHeader` list, so the root
-      // SafeAreaView already applies the top inset + global header; adding it again
-      // here would double-pad the top.
       <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={[]}>
         {Header}
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -2469,8 +1569,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         {step === 0 && (
           <ScrollView contentContainerStyle={{ padding: 16 }}>
             {dateStep === 'intro' ? (
-              /* Landing card (web parity: `dynamic-deal-edit-modal.js` step 0) —
-                 the current install date, then Modify / Skip / Cancel. */
               <View style={styles.dateCard}>
                 <Text style={styles.dateCardTitle}>Edit Job Build</Text>
                 <Text style={styles.dateCardSubtitle}>Install Date</Text>
@@ -2494,8 +1592,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 </TouchableOpacity>
               </View>
             ) : dateStep === 'calendar' ? (
-              /* "Select Install Date": tapping a day selects it; the rep confirms
-                 with "Use <date>", or sets TBD. */
               <View style={styles.dateCard}>
                 <View style={styles.calendarHeader}>
                   <TouchableOpacity onPress={() => setDateStep('intro')} hitSlop={8} style={styles.calendarBackBtn}>
@@ -2530,8 +1626,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 </View>
               </View>
             ) : dateStep === 'time' ? (
-              /* Confirm-time card, reached from "Use <date>". Declining both windows
-                 walks the rep back to the calendar (see `handleProposeNextSlot`). */
               <ProposedTimeCard
                 date={proposedDate}
                 slot={INSTALL_WINDOWS[proposedSlotIdx]}
@@ -2539,8 +1633,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 onYes={handleAcceptProposedTime}
               />
             ) : (
-              /* Confirmation card (web `showSuccess`) — TBD gets a blue "?" badge,
-                 a committed date gets a green check plus the date + window it saved. */
               <View style={styles.dateCard}>
                 <View
                   style={[
@@ -2582,13 +1674,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             mode="edit"
             activityLoggingEnabled={buildStepVisited}
             initialConfig={jobBuilderConfig ?? undefined}
-            // System A calculator schemas — the Job Builder Summary resolves each
-            // card's header colour from the matching schema CATEGORY's colour (web
-            // parity: `resolveTabAccentColor` → `findTabCategoryColorFromSchemas`).
-            // They are NOT on `initialConfig` (that is the System B job-builder
-            // config), so without this every tab fell through to the single
-            // `vertical.color` and every card rendered the same purple. The new-deal
-            // path (`DynamicDealCenterScreen`) passes this same array as `verticals`.
             calculatorSchemas={configuredSchemas}
             initialJobState={builderInitialState}
             dealCenterData={dealCenterData}
@@ -2602,16 +1687,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             scheduleTimeOverride={
               scheduleDate ? { date: scheduleDate, timeWindow: scheduleTimeWindow } : null
             }
-            // Web parity: the amendment view must show the agreements/order sheets
-            // saved on the original deal. The builder's own outcome GET is skipped in
-            // edit mode, so hand it the raw docs from the deal we already fetched.
-            // A RESULTED deal carries its docs under `lead.jobBuilderDocuments`
-            // (the same source DealDetail renders, and what web's `dealEditMode`
-            // prefers in `refreshDocumentsFromServer` — `jobBuilderDocuments` over
-            // `leadOutcomeDocuments`). The calculator-scoped outcome often echoes NO
-            // `leadOutcomeDocuments`, so reading only that showed "No documents" on
-            // the summary even when agreements existed. Prefer jobBuilderDocuments,
-            // falling back to either outcome-echoed shape.
             rawDocsOverride={
               lead?.jobBuilderDocuments ||
               savedOutcome?.jobBuilderDocuments ||
@@ -2632,8 +1707,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             CoverageBar, FundingView, SendLinkModal, BlockerList) — there is no second
             implementation of any of it. */}
         {step === 2 && priceScreen === 'price' && (
-          // Same keyboard treatment as step 3 — the contract price and the payment
-          // amounts sit low on the page once the method pickers are expanded.
           <KeyboardAwareScrollView
             contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
             keyboardShouldPersistTaps="handled"
@@ -2758,8 +1831,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                       allRows={activeRows}
                       price={contractNum}
                       plans={pricing.plans}
-                      // Paid in full now, so there is no balance to carry — lender
-                      // plans are not offered here, same as a deposit.
                       options={pricing.outcomeDownPaymentMethods}
                       needsRowId={needsRowId}
                       canAdd={MULTI_METHOD_ENABLED}
@@ -2868,8 +1939,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                       allRows={activeRows}
                       price={contractNum}
                       plans={pricing.plans}
-                      // Financing carries a balance, never a deposit — the Down
-                      // Payment picker is cash/card only (see useDealPricing).
                       options={pricing.outcomeDownPaymentMethods}
                       needsRowId={needsRowId}
                       canAdd={MULTI_METHOD_ENABLED}
@@ -2977,12 +2046,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
               onActivate={funding.activateLoan}
               onReactivate={funding.reactivateLoan}
               refunds={refundsOnJob(funding.payments)}
-              /**
-               * ⚠️ Scoped to the ONE refund whose approval was actually read. A job can
-               * carry more than one (raised, declined, raised again), and putting the
-               * first one's window on every card would offer a reminder for a request
-               * that is not the one the rep is looking at.
-               */
               reminderFor={(r) =>
                 r?.rid && jobRefund?.rid && String(r.rid) === String(jobRefund.rid)
                   ? {
@@ -3002,14 +2065,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
         {/* STEP 3 — Review & Submit */}
         {step === 3 && (
-          // Additional Notes and Phone Number sit at the very bottom, so the keyboard
-          // covered them. `KeyboardAwareScrollView` scrolls the FOCUSED input above the
-          // keyboard on both platforms, which plain `automaticallyAdjustKeyboardInsets`
-          // could not do on Android. `bottomOffset` keeps a gap between the caret and
-          // the keypad; the extra bottom padding lets the last field clear the sticky
-          // Back / Submit footer. Deliberately NOT a padding `KeyboardAvoidingView` —
-          // that only shrinks the ScrollView and leaves a low field below the fold,
-          // which is the bug it was meant to fix (see DynamicJobBuilderScreen).
           <KeyboardAwareScrollView
             contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
             keyboardShouldPersistTaps="handled"
@@ -3119,11 +2174,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 <Text style={{ color: '#94A3B8', marginRight: 4, fontSize: 14 }}>+1</Text>
                 <TextInput
                   value={customerPhone}
-                  // Dash-formatted as typed (443-878-4937). The country code is the
-                  // static "+1" to the left, so the value holds the local part only.
                   onChangeText={(t) => setCustomerPhone(formatLocalUSPhone(t))}
                   keyboardType="phone-pad"
-                  // 10 digits + 2 dashes — stops extra digits being appended silently.
                   maxLength={12}
                   placeholder="443-878-4937"
                   placeholderTextColor="#94A3B8"
@@ -3145,8 +2197,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   value={customerEmail}
                   onChangeText={setCustomerEmail}
                   keyboardType="email-address"
-                  // An address is case-insensitive and never a proper noun, so the OS
-                  // shift-on-first-letter and autocorrect only ever corrupt it.
                   autoCapitalize="none"
                   autoCorrect={false}
                   autoComplete="email"
@@ -3197,8 +2247,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   amount={refundDue}
                   refund={jobRefund}
                   reminder={refundApproval.reminder}
-                  // The SERVER's assignee wins — that is who actually holds the request;
-                  // the local pick is only a fallback before it lands.
                   approverName={refundApproval.approverName || approverName}
                   onRemind={refundApproval.remind}
                   reminding={refundApproval.sending}
@@ -3210,8 +2258,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                     { v: 'card' as const, label: 'Back to the card' },
                     { v: 'check' as const, label: 'Cheque in the post' },
                   ])
-                    // ⚠️ A cheque can refund a card payment; a card can only refund a
-                    //    payment that was TAKEN by card. Filtering here beats a 422.
                     .filter((o) => o.v !== 'card' || refundSourceRow?.type === 'cc')
                     .map((o) => (
                       <TouchableOpacity
@@ -3332,8 +2378,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 </TouchableOpacity>
                 <View style={{ flex: 1 }} />
                 {step === 2 ? (
-                  // Confirm SAVES the split (the PUT is the save for the whole screen)
-                  // and only then opens Funding — see goFunding.
                   <TouchableOpacity
                     onPress={goFunding}
                     disabled={confirmGate.length > 0 || funding.isSaving}
@@ -3346,14 +2390,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 ) : (
                   <TouchableOpacity
                     onPress={handleSubmit}
-                    // ⚠️ The phone, email and refund gates block SUBMIT only, never the
-                    // Job Price step — those fields all live on THIS step, so blocking
-                    // the way in would strand the rep with a disabled button and nothing
-                    // on screen explaining it.
-                    //
-                    // ⚠️ `refundGate` is EMPTY unless a refund is actually in play, so an
-                    // ordinary addendum — install date, scope, materials, a price that
-                    // went up — is completely unaffected by it.
                     disabled={submitBlocked}
                     style={{ backgroundColor: submitBlocked ? '#CBD5E1' : '#22C55E', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isSubmitting ? 0.7 : 1 }}
                   >
@@ -3436,8 +2472,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           setShowRefundPrompt(false);
         }}
         onCancel={() => {
-          // Left un-acknowledged: the price stays as typed (the rep may be mid-edit),
-          // but no refund is raised and nothing reaches the addendum.
           setRefundAcknowledged(false);
           setShowRefundPrompt(false);
         }}
@@ -3446,14 +2480,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   );
 }
 
-// ── subcomponents ────────────────────────────────────────────────────────────
-
-/**
- * Inline install-date calendar for edit Step 0 (web parity). Same date-fns logic
- * as AppointmentSchedulerModal's `renderCalendar`: Sundays and past dates are
- * disabled, the current install date is highlighted, today gets a dot. Tapping a
- * selectable date calls `onSelect`, which opens the scheduler on its time step.
- */
 function InstallDateCalendar({
   selectedDate,
   onSelect,
@@ -3532,13 +2558,6 @@ function InstallDateCalendar({
   );
 }
 
-/**
- * "Confirm Time Window" card, shown after the rep confirms a date with "Use <date>"
- * (web parity: the `showProposal` card). It offers ONE window at a time — the long
- * date, a green-outlined block naming the window (Morning / Afternoon), then
- * "Doesn't Work" / "Confirm". "Doesn't Work" walks to the other window and, once both
- * are declined, returns to the calendar (handled by the caller).
- */
 function ProposedTimeCard({
   date,
   slot,
@@ -3638,24 +2657,12 @@ function TierRow({ tiers, highlight }: { tiers: Tiers; highlight?: boolean }) {
   );
 }
 
-/**
- * One section's combinations, laid out as the portal's build card lays them out: a
- * bordered panel headed by the section, holding `Combination #1`, `Combination #2`, …
- * each as a tinted table of its measurements.
- *
- * Every combination of a section sits in ONE panel — two panels for one section read as
- * two products, which is the thing this replaced.
- */
 function ComboSectionCard({ label, blocks }: { label: string; blocks: ComboBlock[] }) {
   return (
     <View style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
       {!!label && <Text style={styles.comboSectionTitle}>{label}</Text>}
       <View style={styles.comboOuter}>
         {blocks.map((block, bi) => {
-          // A combination dropped from (or added to) the build is not an edit of a
-          // value, so it must not read as one — the eyebrow names the operation, and a
-          // removal's values stay neutral rather than showing a green "new value" the
-          // rep never entered.
           const eyebrow =
             block.kind === 'removed' ? 'REMOVED' : block.kind === 'added' ? 'ADDED' : 'UPDATED';
           const valueColor = block.kind === 'removed' ? '#94A3B8' : '#15803D';
@@ -3717,8 +2724,6 @@ function ReviewRow({
   to: string;
   kind?: BuildChangeKind;
 }) {
-  // A combination the diff could not break out (no resolvable values) still lands here,
-  // so the operation eyebrows are kept.
   const eyebrow = kind === 'removed' ? 'REMOVED' : kind === 'added' ? 'ADDED' : 'NEW';
   const eyebrowColor = kind === 'removed' ? '#DC2626' : '#94A3B8';
   const valueColor = kind === 'removed' ? '#94A3B8' : '#15803D';
@@ -3733,11 +2738,6 @@ function ReviewRow({
         {/* An ADDED combination has no previous value — striking through an em
             dash would read as "something was there before". */}
         {kind !== 'added' && (
-          // ⚠️ `from` is NOT free text — for a locationGrid it is `displayValue()` →
-          // the grid's TOTAL. So a wrong value here ("48" reading as "4") is a wrong
-          // SUM, never a clipped glyph, and no amount of width or font styling can
-          // affect it. That was mis-diagnosed once; the cause was the diff's original
-          // side still hydrating — see the note on the Review step's loading hold.
           <Text style={{ fontSize: 11, color: '#DC2626', textDecorationLine: 'line-through' }}>{from}</Text>
         )}
       </View>
@@ -3753,11 +2753,7 @@ function ReviewRow({
   );
 }
 
-// ── Step 0 (Install Date) card styling — mirrors the web edit modal's centred
-// card: a white rounded panel with a hairline border, a soft shadow, and
-// full-width stacked actions.
 const styles = StyleSheet.create({
-  // The portal's build card: a soft tinted panel holding one row per measurement.
   comboCard: {
     backgroundColor: '#E6F4F7',
     borderWidth: 1,
@@ -3849,7 +2845,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 16,
   },
-  // Current install date block (grey, bordered, centred).
   currentInstallBox: {
     backgroundColor: '#F8FAFC',
     borderRadius: 12,
@@ -3901,8 +2896,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   dangerBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
-  // "‹ Back  Select Install Date" header — the spacer view opposite Back keeps
-  // the title optically centred.
   calendarHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3924,8 +2917,6 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 14,
   },
-  // ── Confirmation ("success") card ──
-  // Circular badge: blue + "?" for TBD, green + check for a committed date.
   successIcon: {
     width: 72,
     height: 72,
@@ -3950,14 +2941,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 24,
   },
-  // ── Confirm Time Window card ──
   confirmDate: {
     fontSize: 13,
     color: '#64748B',
     textAlign: 'center',
     marginBottom: 20,
   },
-  // Green-outlined block naming the offered window.
   windowBox: {
     borderWidth: 2,
     borderColor: '#22C55E',

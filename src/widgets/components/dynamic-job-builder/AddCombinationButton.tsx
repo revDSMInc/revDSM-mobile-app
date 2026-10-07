@@ -7,8 +7,6 @@ interface AddCombinationButtonProps {
   label?: string;
 }
 
-// Matches the normal Job Builder "Add Combination" button (LeafFilter variant):
-// h-14 rounded-2xl slate border, plus icon, slate font-black.
 export function AddCombinationButton({ onClick, label = 'Add Combination' }: AddCombinationButtonProps) {
   return (
     <TouchableOpacity

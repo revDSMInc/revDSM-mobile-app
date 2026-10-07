@@ -70,8 +70,6 @@ import Reanimated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 
-// Web's outcome dropdown stores 'Sale' / 'Demo'; mobile stores them lower-cased.
-// Only the LOG is normalised — the stored result is untouched.
 const capitalizeResult = (v: any) => {
   const s = String(v ?? '').trim();
   return s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s;
@@ -80,13 +78,6 @@ const capitalizeResult = (v: any) => {
 interface DynamicJobBuilderScreenProps {
   navigation?: NativeStackNavigationProp<any>;
   initialConfig?: any;
-  /**
-   * System A calculator form schemas (`CalculatorSchema[]`, from
-   * `/calculator-form-schemas/deal-center`). Web threads the same array through as
-   * `schemas`; the summary tab uses each schema CATEGORY's colour for that tab's
-   * card header. Distinct from `initialConfig`, which is the System B
-   * job-builder config (verticals/products) and carries no schemas.
-   */
   calculatorSchemas?: any[];
   dealCenterData?: any;
   calculatorResultData?: {
@@ -100,106 +91,26 @@ interface DynamicJobBuilderScreenProps {
     pineapple?: boolean;
   };
   leadId?: string;
-  /**
-   * The lead record. Read ONLY for the job-tracker auto-add on Sale: the rep
-   * initials that build the job number, and the Lowe's admin-fee waiver.
-   */
   lead?: any;
   onJobComplete?: (config: any, state: any) => void;
   onGoBack?: () => void;
-  // --- Deal-edit flow (web PortalDynamicJobBuilderModal) ----------------------
-  // 'edit' rewires this screen to the PortalJobBuilder: it skips the calculator
-  // outcome GET (parent supplies `initialJobState`), saves via
-  // upsertPortalJobBuilder instead of the outcome PUT, and does NOT re-run the
-  // /job-builder POST on complete (editing doesn't re-create the job).
   mode?: 'new' | 'edit';
-  /**
-   * Web `skipDraftState` (JobBuilderContext) / `jobBuilderData.startFresh`.
-   *
-   * REHASH only: the rep was offered the calculator's existing build and chose to
-   * rebuild from scratch, so the saved outcome is still fetched (documents, and the
-   * record the save writes back to) but its `dynamicJobState` is NOT applied.
-   * Meaningless outside a rehash, where there is no prompt and reuse is the behaviour.
-   */
   startFresh?: boolean;
-  // Pre-deserialized job state for edit mode (parent loaded + deserialized it).
   initialJobState?: any;
-  // Web `portalUnrestrictedEdit`: unlock every tab, show all fields/sections
-  // (applyConditions off). Defaults to true in edit mode.
   portalUnrestrictedEdit?: boolean;
-  // Web `hideAllocationTrackers`: hide the pinned footage/allocation trackers.
-  // Defaults to true in edit mode.
   hideAllocationTrackers?: boolean;
-  /**
-   * Open on the SUMMARY step instead of step 1. Set by the `agreement-signed`
-   * notification deep link, where the rep's next action is Complete Job.
-   */
   openOnSummary?: boolean;
   appointmentId?: string;
-  // --- Embedded (4-step deal-edit wizard, step "Job Build") -------------------
-  // When true this renders as the wizard's inner build step (web `<DynamicJobBuilder
-  // embedded editMode>`): its own header + close are hidden (the wizard supplies
-  // them), its auto-save/submit are suppressed (the wizard owns the single addendum
-  // submit at the end), edited state streams out via `onStateChange`, the finalize
-  // button becomes "Next · Price" (`onEditComplete`), and Back from the first tab
-  // calls `onEditBack` (→ the wizard's Install Date step).
   embedded?: boolean;
-  /**
-   * Whether this screen may write activity logs. Default true.
-   *
-   * WARNING The deal-edit wizard keeps this screen MOUNTED across all four of its
-   * steps so a job build survives navigating away, which means its first
-   * `step_viewed` would otherwise fire the moment the wizard opens — the rep is on
-   * Install Date and the timeline says "Gutter". The wizard passes false until the
-   * rep first reaches the Job Build step, then leaves it true for the session (web
-   * `buildStepVisited`).
-   */
   activityLoggingEnabled?: boolean;
-  // The wizard's Install Date step owns the reschedule. This screen stays MOUNTED
-  // across steps (it is only hidden), so `initialJobState` is read once and a date
-  // picked afterwards would never reach the Summary tab's Scheduled Appointment
-  // card. The wizard passes the live value here and it is synced into root state.
   scheduleTimeOverride?: { date?: string | null; timeWindow?: string } | null;
-  /**
-   * Edit mode only: the parent (DynamicDealEditScreen) already fetched the saved
-   * outcome, so it hands the raw `leadOutcomeDocuments` here. The builder's own
-   * outcome GET is skipped in edit mode, so without this the agreement/order-sheet
-   * docs never resolve and the Contract Amendment summary shows no existing docs.
-   */
   rawDocsOverride?: { agreements?: any[]; orderSheets?: any[] } | null;
-  /**
-   * EVERY calculator on the lead's appointment, backend-shaped (`_id` / `price` /
-   * `dropPrice` / `totals`).
-   *
-   * Only the `rollout_and_drop_summary` activity log reads this — web passes its whole
-   * `appointmentsCalculator` list there (`logRolloutDropSummaryOnSubmit`), because the
-   * event reports on the WHOLE negotiation: how many rollouts were priced, how many
-   * drops were taken across all of them, and the aggregate retail/cost. Mobile used to
-   * pass `[selectedCalculator]`, so a lead worked across four calculators was logged as
-   * one rollout with only its own drops — the portal board then under-reported every
-   * multi-calculator lead.
-   *
-   * Optional: an embedder that doesn't have the list falls back to the resulted
-   * calculator alone, i.e. the previous behaviour.
-   */
   allCalculators?: any[];
   onStateChange?: (jobState: any) => void;
   onEditComplete?: (jobState: any) => void;
   onEditBack?: () => void;
 }
 
-/**
- * Normalize `scheduleTime` for the SUBMIT payload — web parity with
- * `appointment-scheduler.js`, which emits the raw calendar `Date` (→ ISO on the wire)
- * and never attaches a `reason` to a dated slot:
- *   - a dated appointment's `date` is kept in the display form (`M/d/yyyy`) on the
- *     in-memory state for the summary UI, but the payload sends it as an ISO datetime;
- *   - its `reason` (always null for a dated slot — that field is TBD-only) is dropped;
- *   - a `TBD` appointment is passed through unchanged (it legitimately carries a reason).
- * The calendar day is preserved: a bare `M/d/yyyy` is rebuilt at LOCAL noon (like web's
- * local `Date`), so `toISOString()` round-trips to the same day in the rep's timezone
- * instead of rolling back a day the way UTC-midnight would in negative-offset (US) zones.
- */
 function normalizeScheduleTimeForSubmit(scheduleTime: any): any {
   if (!scheduleTime || typeof scheduleTime !== 'object') return scheduleTime;
   const { date } = scheduleTime;
@@ -210,14 +121,12 @@ function normalizeScheduleTimeForSubmit(scheduleTime: any): any {
   const mdy = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (mdy) {
     const [, mm, dd, yyyy] = mdy;
-    // Local noon → a ±12h margin so the UTC date-part stays on the picked day.
     iso = new Date(Number(yyyy), Number(mm) - 1, Number(dd), 12, 0, 0, 0).toISOString();
   } else {
     const parsed = new Date(str);
     if (!isNaN(parsed.getTime())) iso = parsed.toISOString();
   }
 
-  // Drop the (null) `reason` on a dated slot; keep customerName/timeWindow/etc.
   const { reason: _reason, ...rest } = scheduleTime;
   return { ...rest, date: iso };
 }
@@ -242,16 +151,12 @@ function DynamicJobBuilderInner({
   embedded = false,
   activityLoggingEnabled = true,
   scheduleTimeOverride,
-  // `rawDocsOverride` (savedOutcome.jobBuilderDocuments) is intentionally NOT consumed:
-  // it is not pruned when a rep deletes a document, so it would resurrect removed
-  // agreements. Edit-mode docs come from `downloadOutcomeDocuments` (web parity).
   allCalculators,
   onStateChange,
   onEditComplete,
   onEditBack,
 }: DynamicJobBuilderScreenProps) {
   const isEdit = mode === 'edit';
-  // In edit mode both flags default ON (web parity); callers can still override.
   const portalUnrestrictedEdit = portalUnrestrictedEditProp ?? isEdit;
   const hideAllocationTrackers = hideAllocationTrackersProp ?? isEdit;
   const insets = useSafeAreaInsets();
@@ -262,127 +167,41 @@ function DynamicJobBuilderInner({
   const { colors, isDark } = useTheme();
   const { user: authUser } = useAuth();
 
-  // Fetch saved job state on mount via the calculator-scoped outcome endpoint
-  // (web parity: GET /lead/v1/{leadId}/outcome/{calculatorId}). Web stores the
-  // SERIALIZED job state at outcome.jobBuilder.dynamicJobState (storage keys);
-  // we unwrap + deserialize it back to runtime ids below so already-set data
-  // displays. Documents live under `leadOutcomeDocuments`. 404 = fresh start.
   const calcId = (calculatorResultData as any)?.calculatorId;
   const { data: outcomeData, isFetched: isOutcomeFetched } = useQuery({
     queryKey: ['leadOutcome', leadId, calcId, startFresh],
     queryFn: async () => {
-      // Deserialize storage-keys → runtime ids with the SAME config web used to
-      // serialize (deserializeDynamicJobStateFromStorage). Idempotent for legacy
-      // raw saves — keys without the `__` storage marker pass through unchanged —
-      // so both web-written and old-mobile-written state rehydrate correctly.
-      //
-      // `startFresh` (web `skipDraftState`) drops it: on a rehash the rep answered
-      // "Start Fresh", so the outcome is still read — the documents query below and
-      // the record we save back to stay linked — but the prior build is NOT applied.
-      // ⚠️ It gates BOTH sources; a device draft is not a way around that answer.
       const applySaved = (saved: any) =>
         saved && typeof saved === 'object' && !startFresh
           ? deserializeDynamicJobStateFromStorage(saved, initialConfig)
           : undefined;
 
-      // ⚠️ THE DEVICE IS CONSULTED FIRST, and until this existed it was not consulted at all.
-      // The offline autosave writes the rep's build to the local record and this read went
-      // straight to the network, so leaving the Job Builder and coming back with no signal
-      // showed an EMPTY builder over work that was on the device the whole time — it only
-      // reappeared once the queue had drained. `resolveJobBuildSource` carries the rule.
       const work = findOfflineWorkForLead(lead || { _id: leadId });
       const stored = offlineSavedJobBuildState(work);
       const offline = !isOnline() || isClientId(leadId) || isClientId(calcId);
       if (resolveJobBuildSource({ work, offline }) === 'device') {
-        // ⚠️ `outcomeExists: false` SUPPRESSES the documents query below, deliberately.
-        // This branch is the offline/device-owned path: its signed-URL round-trip cannot
-        // succeed without a connection, and `calcId` may be a client id the server has
-        // never seen. Leaving the flag undefined reads as "unknown" and lets that read
-        // fire anyway. Documents re-resolve on the next online open, when this branch is
-        // no longer taken.
         return { initialJobState: applySaved(stored), outcomeExists: false };
       }
 
       try {
         const res = await LeadService.getLeadOutcomeByCalculator(leadId!, calcId);
-        // Unwrap + locate the saved state through the shared helper, so the rehash
-        // "Use Existing / Start Fresh" pre-check keys off exactly the same rule.
         const outcome = extractCalculatorOutcome(res.data);
         const savedState = extractSavedJobBuildState(outcome);
 
-        // ⚠️ A read that SUCCEEDS and reports no build is an ANSWER, not an absence, so the
-        // device copy is deliberately not substituted here — a job reset on the portal would
-        // otherwise be resurrected from a record this device has already uploaded.
-        //
-        // Return the draft state IMMEDIATELY. Documents are resolved by a SEPARATE
-        // query (below) which re-reads this same endpoint — this one must not await
-        // the signed-URL round-trip, or `initialJobState` (the draft) can't reach the
-        // session until the whole doc chain settles. That is the "reopen shows empty,
-        // then fills in a moment later" the rep sees.
-        // `outcomeExists` gates the DOCUMENTS query below, which re-reads this very
-        // endpoint. Without it that read fires on every first open and 404s a second
-        // time — see the note on it.
         return { initialJobState: applySaved(savedState), outcomeExists: true };
       } catch (e) {
-        /**
-         * ⚠️ A **404 means no outcome has been saved for this calculator yet**, which is
-         * the normal state on a first open — the record is created by the first save.
-         * Anything else is a real failure, and there `outcomeExists` stays TRUE so the
-         * documents read still gets its own chance rather than being suppressed by an
-         * unrelated error.
-         *
-         * A read that FAILED knows nothing. Answering `undefined` here is what blanked the
-         * builder on a flaky connection, so the device copy stands in when there is one.
-         */
         return { initialJobState: applySaved(stored), outcomeExists: !isMissingOutcome(e) };
       }
     },
-    // Edit mode supplies the (already-deserialized) state from the PortalJobBuilder
-    // via `initialJobStateProp`, so the calculator-outcome GET is skipped entirely.
     enabled: Boolean(leadId && calcId) && !isEdit,
-    // Web parity (JobBuilderContext.loadCalculatorDraft): the saved outcome is
-    // fetched FRESH on every job-builder open — web calls the endpoint imperatively
-    // each session, never from a cache. Here it MUST NOT be cached: after the rep
-    // types a value the debounced PUT updates the server, but the React Query cache
-    // for this (leadId, calcId) is not invalidated. A quick reopen within the old
-    // 30s staleTime would then serve the STALE pre-edit result (often empty on the
-    // first-ever open) → the reopened job builder showed nothing. `staleTime: 0` +
-    // `refetchOnMount: 'always'` force a refetch on reopen, and `gcTime: 0` drops
-    // the cache on close so the remount starts from a clean loading state (undefined
-    // initialJobState) — the one-time apply guard in the session then waits for the
-    // fresh value instead of latching onto a stale one.
     staleTime: 0,
     gcTime: 0,
     refetchOnMount: 'always',
   });
 
-  // Documents resolve in a SEPARATE, non-blocking query — resolving S3 refs to signed
-  // URLs is the slow work that used to gate draft hydration, so it never delays the
-  // draft and a doc failure leaves the previously-set documents untouched.
-  //
-  // Non-edit (create/reopen) path only: reads `leadOutcomeDocuments` from the
-  // CALCULATOR-scoped outcome. Edit mode does NOT use this — it reads documents
-  // lead-scoped via `downloadOutcomeDocuments` below (web parity, see that query).
-  // Feeding the parent's `rawDocsOverride` (savedOutcome.jobBuilderDocuments) here
-  // showed agreements the rep had already DELETED: that field is not pruned on delete,
-  // whereas the outcome read reflects deletions.
   const { data: resolvedDocumentsData } = useQuery({
     queryKey: ['leadOutcomeDocs', leadId, calcId],
     queryFn: () => loadResolvedOutcomeDocuments(leadId, calcId),
-    /**
-     * Runs once the draft's outcome GET has landed, and NEVER in edit mode — edit
-     * fetches docs lead-scoped via `editDocsData` below (web parity).
-     *
-     * ⚠️ **And only when an outcome actually EXISTS.** This re-reads the SAME endpoint
-     * the query above just called, so on a first open — where there is no outcome yet —
-     * it fired a second `GET …/outcome/{calcId}` that 404'd and logged an error, for a
-     * record the app had already been told does not exist. Documents live ON the
-     * outcome, so no outcome means no documents and nothing to ask for.
-     *
-     * ⚠️ It re-enables on its own: filing the first document creates the outcome, and
-     * `commitUploaded` invalidates `['leadOutcome', leadId]` — a PREFIX of this query's
-     * key — so the read above refetches, `outcomeExists` flips true, and this runs.
-     */
     enabled:
       Boolean(leadId && calcId) && !isEdit && isOutcomeFetched && outcomeData?.outcomeExists !== false,
     staleTime: 0,
@@ -390,16 +209,6 @@ function DynamicJobBuilderInner({
     refetchOnMount: 'always',
   });
 
-  // EDIT-mode documents — the previously-submitted agreement / order-sheet PDFs.
-  //
-  // Web parity (`dynamic-deal-edit-modal.js` lines 415, 483-524): the edit modal reads
-  // documents with `downloadOutcomeDocuments(leadId)` — the LEAD-scoped endpoint that
-  // returns each doc with its base64 body — and builds `{ agreements, orderSheets }`
-  // display rows from it. This is the source of truth that REFLECTS DELETIONS: when a
-  // rep removes an agreement, it disappears here (and on web), unlike the outcome's
-  // `jobBuilderDocuments` mirror which is not pruned. Reading that mirror is what made
-  // the mobile summary keep showing a deleted agreement. `leadId` is always present,
-  // so this does not depend on a (possibly null) `calcId`.
   const { data: editDocsData } = useQuery({
     queryKey: ['editOutcomeDocs', leadId],
     queryFn: async () => {
@@ -408,7 +217,6 @@ function DynamicJobBuilderInner({
         const res = await LeadService.downloadOutcomeDocuments(leadId!);
         const body: any = res?.data;
         const docs = body?.data ?? body ?? {};
-        // Mirror web `toFile`: prefer the base64 body as a data-URI, else any URL.
         const toDisplay = (arr: any, group: 'agreement' | 'orderSheet') =>
           (Array.isArray(arr) ? arr : [])
             .map((d: any) => {
@@ -432,10 +240,6 @@ function DynamicJobBuilderInner({
             })
             .filter(Boolean);
         return {
-          // Filtered on the RAW rows — `toDisplay` defaults the name below
-          // (`d?.name || 'Agreement'`), which erases the only thing that marks the
-          // backend's duplicate submit row. Order sheets are legitimately unnamed
-          // here, so they are NOT filtered.
           agreements: toDisplay(dropUnnamedAgreements(docs.agreements), 'agreement'),
           orderSheets: toDisplay(docs.orderSheets, 'orderSheet'),
         };
@@ -450,12 +254,6 @@ function DynamicJobBuilderInner({
     refetchOnMount: 'always',
   });
 
-  // Web parity (JobBuilderContext.applyDraftState): the outcome GET returns the
-  // DESERIALIZED saved state; before feeding it to the session we RE-HYDRATE it
-  // against dealCenterData. LOCKED, dcField-driven fields (e.g. gutter Extras:
-  // Wedges / Straps) are NOT stored meaningfully — they resolve from the calculator
-  // — so deserialize alone leaves them blank on reopen. Re-hydrating re-resolves
-  // them to their current calculator values while preserving every non-locked entry.
   const hydratedInitialJobState = useMemo(() => {
     if (isEdit) return initialJobStateProp;
     const ds = outcomeData?.initialJobState;
@@ -468,31 +266,12 @@ function DynamicJobBuilderInner({
     initialConfig,
     dealCenterData,
     initialJobState: hydratedInitialJobState,
-    // Web parity (`stateResetKey`): restore the saved draft ONCE per calculator
-    // session, exactly like web's `beginSession` → `loadCalculatorDraft` → one
-    // `setStateRestoreKey` bump. Keyed by (leadId, calcId) rather than the fetched
-    // object so that:
-    //   • the draft ALWAYS applies on first load, even if something wrote to job state
-    //     while the outcome GET was still in flight (the blank-tab bug), and
-    //   • later refetches of this same outcome (e.g. the invalidation after a document
-    //     upload) do NOT restore over the rep's in-progress edits.
-    // Edit mode keeps its existing behaviour — its state arrives as a prop.
     draftToken: isEdit ? undefined : `${leadId || ''}:${calcId || ''}`,
-    // Lets the restore latch even when this lead has NO saved draft yet — without it
-    // a brand-new lead stayed permanently open to a late draft, and the refetch that
-    // `commitUploaded` triggers after signing restored a doc-less draft OVER the
-    // agreement the rep had just signed. See the effect in useDynamicJobBuilderSession.
     draftSettled: isEdit ? undefined : isOutcomeFetched,
   });
 
   const { jobState, updateTabState, updateRootState, clearRootState, lockedTabIdsByVertical } = session;
 
-  // Web parity (dynamic-job-builder.js `verticalHasUnlockedSteps`): a vertical is
-  // "configured" for this deal when it has at least one non-summary tab that isn't
-  // locked (its dealCenter-driven visibility passes). A vertical whose every step is
-  // locked — only the auto Summary remains — is treated as locked so, in a
-  // multi-product deal, only the configured Job Builder(s) can be opened. Edit mode
-  // (`portalUnrestrictedEdit`) unlocks everything, matching web's `unlockAll`.
   const verticalHasUnlockedSteps = useMemo(() => {
     const map: Record<string, boolean> = {};
     verticalList.forEach((v: any) => {
@@ -511,10 +290,6 @@ function DynamicJobBuilderInner({
     [verticalList, verticalHasUnlockedSteps]
   );
 
-  // Embedded (wizard step 1): stream the edited job state up so the wizard can
-  // price the delta (Job Price step), diff it (Review step), and submit it. The
-  // callback is held in a ref so an inline parent handler doesn't re-fire the
-  // effect every render — it fires only when jobState actually changes.
   const onStateChangeRef = useRef(onStateChange);
   onStateChangeRef.current = onStateChange;
   useEffect(() => {
@@ -527,177 +302,83 @@ function DynamicJobBuilderInner({
   const [selectedTabId, setSelectedTabId] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  // Server-hydrated agreement / order-sheet docs (secure URLs), mirrored from the
-  // lead outcome. Local drafts live on jobState.agreements / .orderSheets.
   const [resolvedDocuments, setResolvedDocuments] = useState<{ agreements: any[]; orderSheets: any[] }>({
     agreements: [],
     orderSheets: [],
   });
-  // Blocks the debounced auto-save while a document upload is mid-flight so we
-  // don't race the outcome PUT (mirrors normal JB's isDocUploadingRef).
   const isDocUploadingRef = useRef(false);
 
-  // The LIVE job state, for `performAutoSave` to serialize from.
-  //
-  // ⚠️ `performAutoSave` is a `useCallback` that closes over `jobState`, and its
-  // in-flight guard re-invokes THE SAME CLOSURE as a follow-up. So a save that was
-  // coalesced while another was in flight re-sent the state as it stood when the
-  // FIRST save started — silently dropping anything written in between. That is how a
-  // draft could persist `scheduleTime` and not the `agreements` written moments later
-  // (the reported "agreement is not in the payload"): both writes landed on the same
-  // object, but the payload was serialized from a snapshot taken before the second.
-  //
-  // Same fix the calculator save engine already carries (`useDynamicCalculators`
-  // reads the current tab from `tabsRef`, "like web's `entriesRef.current`").
   const jobStateRef = useRef(jobState);
   jobStateRef.current = jobState;
 
-  // ── Working the job with no signal ──────────────────────────────────────────
-  //
-  // Every write this screen makes is one of three requests, and all three are addressed by ids the
-  // server issues. So "offline" here is not a flag on each call — it is a decision about WHERE the
-  // rep's work is written, and the local record (`services/offlineLeadStore`) is the same one the
-  // Deal Center already filled in for this lead. The uploader replays it in dependency order.
-  //
-  // ⚠️ A CLIENT ID is as disqualifying as no connection. A lead created at a door has an id this
-  // device minted, so `PUT lead/v1/lead-1773…/outcome/calc-1773…` is a request that 404s — it must
-  // never be attempted, however good the signal is.
   const worksOffline = useCallback(
     () => !isOnline() || isClientId(leadId) || isClientId(calcId),
     [leadId, calcId]
   );
 
-  /** The local record for this lead, created on demand. `null` only when there is no lead at all. */
   const offlineWorkId = useCallback((): string | null => {
     const work = ensureOfflineWorkForLead(lead || { _id: leadId });
     return work?.clientId || null;
   }, [lead, leadId]);
 
-  // Make the lead record READABLE with no signal.
-  //
-  // The agreement is built from the customer's name, address and phone, and the only place the
-  // dialog reads them is `useLeadQuery` — a GET. Offline that answers nothing, so the agreement
-  // would be rendered for "Valued Customer" at a blank address: a wrong document rather than a
-  // missing one, and the customer signs it.
-  //
-  // ⚠️ Seeded only when the cache is EMPTY, so a fetched record is never overwritten by the
-  // (sparser) navigation snapshot. For a lead created at a door there is no server record to
-  // fetch at all, and this is the only copy that will ever exist.
   useEffect(() => {
     if (!leadId || !lead) return;
     if (queryClient.getQueryData(['lead', leadId]) !== undefined) return;
     queryClient.setQueryData(['lead', leadId], lead);
   }, [leadId, lead]);
 
-  // Hydrate previously-saved (server) documents into the display state once the
-  // outcome + secure URLs resolve — so a reopened job shows its agreement/order
-  // sheet. commitUploaded appends freshly-uploaded ones on top of these.
   useEffect(() => {
     if (resolvedDocumentsData) {
       setResolvedDocuments(resolvedDocumentsData);
     }
   }, [resolvedDocumentsData]);
 
-  // Edit mode: mirror the lead-scoped `downloadOutcomeDocuments` result into the
-  // display state (web parity). Keyed separately from the non-edit path so exactly
-  // one populates per mode, and this one reflects deletions.
   useEffect(() => {
     if (editDocsData) {
       setResolvedDocuments(editDocsData);
     }
   }, [editDocsData]);
 
-  // Sale vs demo drives which cards render and the completion gate (web parity:
-  // isSale = result.toLowerCase() === 'sale'; demo = any non-sale).
   const resultType = (calculatorResultData?.resultType || '').toString().toLowerCase();
   const isSale = resultType === 'sale';
   const isDemo = Boolean(resultType) && !isSale;
 
-  // --- Activity logging (web parity: use-dynamic-job-builder-activity-log) -----
-  // Web (`dynamic-job-builder-modal.js`): `configId: config?.id || null`.
-  // ⚠️ `configId`/`_id` NEVER resolve here — `normalizeLightweight`
-  // (useDynamicCalculatorSchemas) moves the id onto `id` and DELETES `_id`, so
-  // the old pair sent `null` on every log. The sibling call site at the submit
-  // payload already read `.id`; only the logging one had drifted.
   const configId = (initialConfig as any)?.id || null;
   const loggedAutoFieldTabsRef = useRef<Set<string>>(new Set());
   const activityLog = useDynamicJobBuilderActivityLog({
-    // WARNING In the deal-edit wizard this screen is MOUNTED from the start (so a
-    // rep's edits survive stepping away), which made it log a tab view the moment
-    // the wizard opened — the first row of an edit read "Gutter" while the rep was
-    // looking at Install Date. The wrapper holds it off until the rep actually
-    // reaches the Job Build step (web `buildStepVisited`).
     enabled: Boolean(leadId) && activityLoggingEnabled,
     leadId,
-    // Web passes the HUMAN lead/job number here (`currentLead?.leadId ||
-    // currentLead?.jobNumber || …`), which is what lands in `meta.jobBuilderId`.
-    // Mobile passed the MONGO id, so every log carried `jobBuilderId === leadId`
-    // — the same value twice and no job number at all. A lead with no job number
-    // stores the literal 'N/A', which is what web's own logs show.
     jobId: (lead as any)?.leadId || (lead as any)?.jobNumber || leadId,
     calculatorId: (calculatorResultData as any)?.calculatorId,
     calculatorType: 'dynamic',
-    // Web's `formData.result` is the outcome dropdown's own value — 'Sale' /
-    // 'Demo'. Mobile stores `resultType` lower-cased, so the portal saw two
-    // spellings of one outcome across the platforms.
     result: capitalizeResult(
       (calculatorResultData as any)?.resultType || (calculatorResultData as any)?.result
     ),
     dealCenterData,
     configId,
     verticals: verticalList,
-    // Edit mode is reached only from My Deals (Deal Detail → Edit), so its wizard
-    // events log under `MY_DEAL_MODULE` (web deal-edit parity), not job_builder.
     isDealEdit: isEdit,
     markAutoFieldsLoggedTab: (tabKey: string) => {
       loggedAutoFieldTabsRef.current.add(tabKey);
     },
   });
 
-  // job_builder_opened — fires once when user + leadId are ready (idempotent).
   useEffect(() => {
     activityLog.logOpened();
   }, [activityLog]);
 
-  // Defer auto-save until the initial outcome fetch completes (web parity).
-  // Without this guard, the auto-save fires with empty/default state before the
-  // GET populates the session, overwriting saved server data.
   const initialFetchDoneRef = useRef(false);
   useEffect(() => {
-    // Edit mode skips the outcome fetch, so release the auto-save gate immediately
-    // (the initial state is already present via initialJobStateProp).
     if ((isOutcomeFetched || isEdit) && !initialFetchDoneRef.current) {
       initialFetchDoneRef.current = true;
     }
   }, [isOutcomeFetched, isEdit]);
 
-  // Web parity (JobBuilderContext.flushSave, ported from System A's save engine):
-  // a per-save in-flight guard + follow-up so two outcome PUTs never overlap and
-  // the latest state is re-saved after an in-flight save resolves; a dirty ref
-  // drives an unmount flush so an edit made in the 2s debounce window right before
-  // navigating away is not dropped.
   const saveInFlightRef = useRef(false);
   const needsFollowUpRef = useRef(false);
   const autoSaveDirtyRef = useRef(false);
-  // Set for the duration of handleComplete. Completing must NOT write the
-  // calculator-scoped outcome (`PUT /outcome/{calcId}`) — that endpoint belongs to
-  // the agreement/doc-save path only. Without this flag the debounced autosave (and
-  // the unmount flush that fires when onJobComplete resets navigation) would issue a
-  // second PUT to it moments after Complete Job, duplicating the outcome row.
   const isCompletingRef = useRef(false);
 
-  // ── the calculator document every outcome PUT must carry ───────────────────
-  //
-  // ⚠️ `calculatorResultData.LFCalculator` is the IN-MEMORY `CalcTab`, which has no
-  // `createdBy`, no `appointmentId` and no backend `title`. `buildCalculatorOutcomePayload`
-  // requires all three before it will attach the subdoc (a partial one 500s the PUT
-  // with "LFCalculator.createdBy is required"), so the tab ALWAYS failed that gate and
-  // every auto-save PUT went out with NO LFCalculator at all — while web sends the full
-  // document. `handleComplete` already resolved the real one; this shares it so the
-  // auto-save path does too.
-  //
-  // ⚠️ CACHED per calculator id. The auto-save is debounced and fires on every build
-  // edit, so re-reading the calculator each time would be a GET per keystroke-batch.
   const lfCalcDocRef = useRef<{ id: string; doc: any; fromServer: boolean } | null>(null);
   const resolveLfCalculatorDoc = useCallback(
     async (targetCalcId: string | null, rd: any, opts: { force?: boolean } = {}) => {
@@ -711,9 +392,6 @@ function DynamicJobBuilderInner({
       } catch (e: any) {
         console.warn('[DynamicJobBuilder] could not read the calculator:', e?.message || e);
       }
-      // A failed read is NON-FATAL: the in-memory tab is the documented fallback and
-      // `buildCalculatorDocument` fills the required ids from the context passed here,
-      // so the shape is still complete enough to pass the subdoc validators.
       const doc = buildCalculatorDocument(serverDoc, rd?.LFCalculator, {
         calculatorId: targetCalcId,
         appointmentId: rd?.selectedAppointmentId || rd?.appointmentId || null,
@@ -729,13 +407,8 @@ function DynamicJobBuilderInner({
   const performAutoSave = useCallback(async () => {
     if (!leadId || !initialFetchDoneRef.current || embedded) return;
     if (isCompletingRef.current) return;
-    // Skip while a document upload is in flight — that upload PUTs the outcome
-    // itself; auto-saving here would race it and can clobber the new files.
     if (isDocUploadingRef.current) return;
-    // New flow requires a calculator id (outcome is calculator-scoped). Edit mode
-    // saves to the lead-scoped PortalJobBuilder and does not need one.
     if (!calcId && !isEdit) return;
-    // In-flight guard: coalesce a concurrent request into a single follow-up.
     if (saveInFlightRef.current) {
       needsFollowUpRef.current = true;
       return;
@@ -743,29 +416,12 @@ function DynamicJobBuilderInner({
     saveInFlightRef.current = true;
     autoSaveDirtyRef.current = false;
     try {
-      // Documents ride ALONG WITH the draft — do NOT strip them.
-      //
-      // Web keeps its agreements / order sheets at `jobState.agreements` /
-      // `.orderSheets` (`dynamic-job-builder.js#handleAgreementDocumentsChange` →
-      // `makeJobBuilderDocsDurableForDraft`), and the storage serializer passes both
-      // keys through verbatim (`ROOT_PASSTHROUGH_KEYS`). That draft copy is what the
-      // summary renders (`existingAgreements={jobState?.agreements}`) — on web AND on
-      // mobile. Stripping them here meant every 2s autosave OVERWROTE the saved draft
-      // with a doc-less copy, so a web-attached agreement disappeared from the deal on
-      // the next open, and a mobile-attached one was never visible to web at all.
-      // From the REF, never the closure — see `jobStateRef`. `jobState` stays in this
-      // callback's dependency list so the 2 s debounce still re-arms on every edit;
-      // the ref only guarantees that whichever closure ends up running sends what the
-      // rep actually has now.
       const dynamicJobState = serializeDynamicJobStateForStorage(
         jobStateRef.current || {},
         initialConfig,
         dealCenterData
       );
       const configId = (initialConfig as any)?.id || null;
-      // Web parity (JobBuilderContext.buildSavePayload): persist which sections
-      // already had their auto-populated fields logged, so a reopen dedups them
-      // instead of re-firing the activity events.
       const autoFieldsLogged = Array.from(loggedAutoFieldTabsRef.current);
 
       if (isEdit) {
@@ -782,9 +438,6 @@ function DynamicJobBuilderInner({
       } else {
         const rd = (calculatorResultData || {}) as any;
         const offline = worksOffline();
-        // ⚠️ NOT read while offline. This resolver GETs the calculator, and offline it would fail
-        // on every one of these 2 s ticks. The result-modal copy is the fallback it already
-        // documents, and the uploader re-resolves the real document at send.
         const { doc: autoSaveLfDoc } = offline
           ? { doc: null as any }
           : await resolveLfCalculatorDoc(calcId, rd);
@@ -803,9 +456,6 @@ function DynamicJobBuilderInner({
         });
 
         if (offline) {
-          // The whole draft, stored rather than sent. A full-state write, so successive ticks
-          // simply overwrite — the rep's edits coalesce and one PUT goes when the signal returns,
-          // instead of a queue holding one request per keystroke.
           const workId = offlineWorkId();
           if (workId) {
             saveOfflineJobBuilderDraft(workId, outcomePayload, calcId || undefined);
@@ -818,10 +468,6 @@ function DynamicJobBuilderInner({
       console.warn('[DynamicJobBuilder] Auto-save failed:', error);
     } finally {
       saveInFlightRef.current = false;
-      // A save requested while this one was in flight → run one follow-up now.
-      // ⚠️ Through the REF, not `performAutoSave` — calling the identifier here recurses
-      // into THIS closure, i.e. the one captured when this save started, so the
-      // follow-up re-sent stale `initialConfig` / `dealCenterData` too.
       if (needsFollowUpRef.current) {
         needsFollowUpRef.current = false;
         void performAutoSaveRef.current();
@@ -829,17 +475,9 @@ function DynamicJobBuilderInner({
     }
   }, [leadId, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded, resolveLfCalculatorDoc, worksOffline, offlineWorkId]);
 
-  // Keep the latest saver in a ref so the unmount flush calls the current closure.
   const performAutoSaveRef = useRef(performAutoSave);
   performAutoSaveRef.current = performAutoSave;
 
-  // Debounce. `jobState` is the real trigger and is now named here directly — it used
-  // to reach this effect only as part of `performAutoSave`'s identity, which is what
-  // tied the re-arm to a closure that also carried a SNAPSHOT of the state. The rest of
-  // the list is everything `performAutoSave` reads, so a save is still re-armed when any
-  // of them settles (e.g. `dealCenterData`), exactly as before.
-  //
-  // ⚠️ Fires through the REF so the timer always runs the CURRENT closure.
   useEffect(() => {
     if (!leadId || !initialFetchDoneRef.current || embedded) return;
     autoSaveDirtyRef.current = true;
@@ -847,8 +485,6 @@ function DynamicJobBuilderInner({
     return () => clearTimeout(timer);
   }, [jobState, leadId, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded]);
 
-  // Unmount flush: if a debounced edit is still pending, persist it immediately so
-  // a value changed then quickly navigated away from is not lost (web parity).
   useEffect(
     () => () => {
       if (autoSaveDirtyRef.current) void performAutoSaveRef.current();
@@ -856,18 +492,12 @@ function DynamicJobBuilderInner({
     [],
   );
 
-  // Web parity (dynamic-job-builder.js:111-121): once a non-sale result exists,
-  // any lingering install appointment is cleared from root state.
   useEffect(() => {
     if (isDemo && jobState?.scheduleTime) {
       clearRootState('scheduleTime');
     }
   }, [isDemo, jobState?.scheduleTime, clearRootState]);
 
-  // Reschedules made in the wizard's Install Date step (this screen is mounted the
-  // whole time) must reach root state so the Summary tab's Scheduled Appointment
-  // card shows the newly picked date instead of the one saved on the deal. Demo
-  // deals carry no install appointment, so leave the clear-effect above alone.
   const overrideDate = scheduleTimeOverride?.date;
   const overrideWindow = scheduleTimeOverride?.timeWindow;
   useEffect(() => {
@@ -888,9 +518,6 @@ function DynamicJobBuilderInner({
     [verticalList, selectedVerticalId]
   );
 
-  // Web parity (dynamic-job-builder.js:225-245): if the initially-selected vertical
-  // is fully locked (not configured for this deal), hand off to the first vertical
-  // that HAS unlocked steps so the rep doesn't land on an un-openable product.
   useEffect(() => {
     if (verticalList.length <= 1) return;
     if (verticalHasUnlockedSteps[selectedVerticalId]) return;
@@ -901,8 +528,6 @@ function DynamicJobBuilderInner({
   }, [verticalList, selectedVerticalId, verticalHasUnlockedSteps]);
 
   const currentVerticalLockedTabIds = useMemo(() => {
-    // Web `portalUnrestrictedEdit`: every tab is unlocked so the user can freely
-    // revise any product in the deal (dynamic-job-builder.js lockedTabIds = []).
     if (portalUnrestrictedEdit) return [];
     return selectedVertical ? lockedTabIdsByVertical[selectedVertical.id] || [] : [];
   }, [selectedVertical, lockedTabIdsByVertical, portalUnrestrictedEdit]);
@@ -915,15 +540,6 @@ function DynamicJobBuilderInner({
     return res;
   }, [tabs, currentVerticalLockedTabIds, selectedVerticalId]);
 
-  // The step number the ACTIVITY LOG reports, in web's index space.
-  //
-  // ⚠️ Web indexes into `tabs = activeVertical?.tabs` — the vertical's FULL tab
-  // list — while mobile's `currentTabIndex` indexes `nonSummaryTabs`, which is
-  // filtered to the UNLOCKED tabs. So on a build whose earlier tabs were locked,
-  // mobile reported Soffit as step 1 where web reported step 3, and a step number
-  // that moves as tabs unlock is not a stable identifier for the portal. The
-  // comment on `currentStepIndex` below already records these two index spaces as
-  // a trap; the logging calls were reading the wrong one.
   const logStepNumberOf = useCallback(
     (tab: any) => {
       const all = selectedVertical?.tabs || [];
@@ -948,29 +564,7 @@ function DynamicJobBuilderInner({
     [availableTabs]
   );
 
-  /**
-   * Deep link from the `agreement-signed` notification: land on SUMMARY, not on
-   * step 1. The customer has signed, so the rep's next action is Complete Job —
-   * dropping them on Gutters means scrolling through every step to reach it.
-   *
-   * ⚠️ Waits for `availableTabs` to resolve. The tabs come from the config fetch,
-   * so on the first renders `summaryTab` is undefined and setting the id then
-   * would be overwritten by the default-tab effect.
-   *
-   * ⚠️ Deliberately bypasses `handleGoToTab`'s forward gate. That gate stops a rep
-   * SKIPPING incomplete work; here they are being sent to review a build that is
-   * already complete enough to have produced a signed agreement, and "Complete
-   * Job" runs its own validation regardless (the order-sheet requirement).
-   *
-   * Fires once — re-running would fight the rep the moment they pressed Back.
-   */
   const openedOnSummaryRef = useRef(false);
-  /**
-   * ⚠️ Held across ONE commit so the fallback effect below cannot undo this.
-   * Both effects run in the same mount commit and both read the SAME pre-commit
-   * `selectedTabId` (still `''`), so the one defined later wins — which dropped
-   * the rep on step 1 with the deep link silently discarded.
-   */
   const summaryPinnedRef = useRef(false);
   useEffect(() => {
     if (!openOnSummary || openedOnSummaryRef.current) return;
@@ -995,40 +589,23 @@ function DynamicJobBuilderInner({
     return null;
   }, [availableTabs, selectedTabId]);
 
-  // True only while the Summary tab is selected as a FALLBACK (no product tab was
-  // available yet). Cleared the moment a product tab exists so we can correct back
-  // to step 1 — the job builder must open on the first tab, not the summary.
   const autoSummaryRef = useRef(false);
   useEffect(() => {
-    // Yield to the `openOnSummary` deep link for exactly as long as it takes to
-    // land. Cleared the moment the selection is observed to BE the summary, so a
-    // later vertical switch (which resets `selectedTabId` to '') still gets its
-    // fallback and the screen can never be left blank.
     if (summaryPinnedRef.current) {
       if (summaryTab && selectedTabId === summaryTab.id) summaryPinnedRef.current = false;
       return;
     }
     if (nonSummaryTabs.length > 0) {
-      // Product tabs are available: open on the first one. Also correct a Summary
-      // selection that was only a fallback picked before the tabs resolved (the
-      // locks/dealCenterData settle a tick after mount) — otherwise the screen
-      // stays stuck on the Summary even though step 1 is now navigable.
       if (!selectedTabId || (autoSummaryRef.current && summaryTab && selectedTabId === summaryTab.id)) {
         autoSummaryRef.current = false;
         setSelectedTabId(nonSummaryTabs[0].id);
       }
     } else if (!selectedTabId && summaryTab) {
-      // Every product tab is locked — fall back to the summary tab so the screen
-      // isn't blank (e.g. dealCenterData has no calculator entries yet). Flag it so
-      // the branch above can promote to step 1 once a product tab appears.
       autoSummaryRef.current = true;
       setSelectedTabId(summaryTab.id);
     }
   }, [nonSummaryTabs, summaryTab, selectedTabId]);
 
-  // step_viewed + auto-populated + baseline seed on each tab activation. Must be
-  // defined BEFORE the field-change effect so the baseline is seeded first on a
-  // tab switch (then the change effect diffs against it → no spurious log).
   const firstTabActivatedRef = useRef(false);
   useEffect(() => {
     if (!currentTab || currentTab.isSummary || !selectedVerticalId) return;
@@ -1045,7 +622,6 @@ function DynamicJobBuilderInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTab?.id, selectedVerticalId]);
 
-  // Field-change tracking — debounced 'change' logs for the active tab.
   const activeTabState = jobState?.[selectedVerticalId]?.[currentTab?.id || ''];
   useEffect(() => {
     if (!currentTab || currentTab.isSummary || !selectedVerticalId) return;
@@ -1057,17 +633,12 @@ function DynamicJobBuilderInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabState]);
 
-  // In unrestricted edit, conditions are off (web effectiveApplyConditions=false):
-  // all fields/sections show and tab-completion isn't gated by dealCenter rules.
   const applyConditions = !portalUnrestrictedEdit;
   const validationCtx = useMemo(() => ({
     dealCenterData: dealCenterData || {},
     applyConditions,
     products: initialConfig?.products || [],
-    // Which surface the builder is on, for `flow` rules.
     editMode: isEdit,
-    // ⚠️ `isEdit` belongs in the dep array too, or the memo keeps a stale flag when
-    // the screen is reused.
   }), [dealCenterData, initialConfig, applyConditions, isEdit]);
 
   const tabCompletionById = useMemo(() => {
@@ -1110,10 +681,6 @@ function DynamicJobBuilderInner({
 
   const isAppointmentSet = Boolean(jobState?.scheduleTime?.date);
 
-  // Web parity (dynamic-job-builder.js:325-335 `isRequiredDocumentationComplete`):
-  // a Sale requires a signed AGREEMENT, a Demo requires an ORDER SHEET. Web reads
-  // `jobState.agreements[].files`; mobile also has server-hydrated `resolvedDocuments`,
-  // so accept either a local draft doc OR a persisted one.
   const hasAgreementDoc = useMemo(() => {
     const local = ((jobState?.agreements || []) as any[]).some((d) => d?.files && d.files.length > 0);
     return local || (resolvedDocuments.agreements?.length || 0) > 0;
@@ -1126,9 +693,6 @@ function DynamicJobBuilderInner({
     () => ({ portalUnrestrictedEdit, areAllTabsComplete, isSale, isDemo, isAppointmentSet, hasAgreementDoc, hasOrderSheetDoc }),
     [portalUnrestrictedEdit, areAllTabsComplete, isSale, isDemo, isAppointmentSet, hasAgreementDoc, hasOrderSheetDoc],
   );
-  // Web parity (dynamic-job-builder.js:500-504): a sale requires the install
-  // appointment AND a signed agreement; a demo requires an order sheet. Logic lives
-  // in the unit-tested `finalize-gate` module.
   const canComplete = useMemo(() => canCompleteJobBuilder(gateInput), [gateInput]);
   const finalizeBlockedReason = useMemo(() => computeFinalizeBlockedReason(gateInput), [gateInput]);
 
@@ -1140,13 +704,7 @@ function DynamicJobBuilderInner({
     return isCurrentTabComplete;
   }, [portalUnrestrictedEdit, currentTabIndex, nonSummaryTabs.length, canComplete, isCurrentTabComplete]);
 
-  // ─── Empty-step gate (My Deals / deal-edit only) — web dynamic-job-builder.js ──
-  // In deal-edit, a step with no REP-entered data is surfaced with a soft
-  // "Add details / Skip" prompt rather than dropping straight into a blank form.
-  // Calculator-seeded (locked) values don't count as content — see `stateHasContent`.
   const lockedFieldIds = useMemo(() => collectLockedFieldIds(initialConfig), [initialConfig]);
-  // Steps the rep chose to fill ("Add details") — so the gate doesn't reappear on
-  // the same step after they open it. Per-session, cleared on unmount (web parity).
   const [gateDismissed, setGateDismissed] = useState<Set<string>>(() => new Set());
   const showEmptyGate = useMemo(() => {
     if (!isEdit || !currentTab || currentTab.isSummary) return false;
@@ -1164,10 +722,6 @@ function DynamicJobBuilderInner({
     });
   }, [currentTab]);
 
-  // ─── Clear-step (reset current tab) — web `dynamic-job-builder.js` handleClearTab ──
-  // A red reset button in the footer wipes every selection/measurement on the ACTIVE
-  // tab back to its fresh initial state (deal-center-seeded locked fields kept, so
-  // combinations/sections re-hydrate as blank editable rows), behind a confirm dialog.
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const showClearButton =
     isEdit &&
@@ -1184,8 +738,6 @@ function DynamicJobBuilderInner({
     const freshTabState =
       fresh?.[selectedVertical.id]?.[currentTab.id] || { colorValues: {}, sectionFields: {} };
     updateTabState(selectedVertical.id, currentTab.id, freshTabState);
-    // Keep the empty-step gate suppressed so the rep lands on the blank editable form
-    // right after clearing (not the "No details yet" prompt).
     setGateDismissed((prev) => {
       const next = new Set(prev);
       next.add(currentTab.id);
@@ -1194,12 +746,6 @@ function DynamicJobBuilderInner({
     setClearConfirmOpen(false);
   }, [selectedVertical, currentTab, initialConfig, dealCenterData, updateTabState]);
 
-  // ─── Skip-all (jump straight to the Summary step) ─────────────────────────────
-  // A footer icon that jumps from any build step directly to the final Summary tab,
-  // bypassing the intermediate steps. Only in deal-edit (movement is unrestricted
-  // there — `portalUnrestrictedEdit`), and only when a Summary tab exists and isn't
-  // already the active step. Jumps by setting the tab directly (not `handleGoToTab`)
-  // so no completion gate blocks it.
   const showSkipAll =
     isEdit && !!summaryTab && !!currentTab && currentTab.id !== summaryTab.id;
   const handleSkipAll = useCallback(() => {
@@ -1214,18 +760,11 @@ function DynamicJobBuilderInner({
   const handleTabStateChange = useCallback(
     (tabStateOrUpdater: any) => {
       if (!selectedVertical?.id || !currentTab?.id) return;
-      // Pass the updater straight through — updateTabState resolves it inside the
-      // setter against React's latest state, so batched edits chain instead of
-      // clobbering (web parity). No `jobState` in deps → no stale snapshot.
       updateTabState(selectedVertical.id, currentTab.id, tabStateOrUpdater);
     },
     [selectedVertical, currentTab, updateTabState]
   );
 
-  // The current step's index in the STEPPER's own list (allNonSummaryTabs + summary).
-  // NOTE: this is a different index space from `currentTabIndex`, which is relative
-  // to `nonSummaryTabs` (available/unlocked only) — mixing them misaligns whenever a
-  // vertical has locked tabs. `tabProgress` and `handleGoToTab` both use this space.
   const currentStepIndex = useMemo(() => {
     if (!currentTab) return -1;
     if (summaryTab && currentTab.id === summaryTab.id) return allNonSummaryTabs.length;
@@ -1234,15 +773,6 @@ function DynamicJobBuilderInner({
 
   const handleGoToTab = useCallback(
     (index: number) => {
-      // Web parity (dynamic-job-builder.js): the rep can't skip ahead past a step
-      // with incomplete required fields. Web's ProgressTracker takes no click
-      // handler at all — its stepper is display-only and Next (gated on
-      // `canProceed`) is the only way forward. Mobile keeps the stepper tappable,
-      // so it's gated by the SAME rule instead: backward is always allowed;
-      // forward requires the current step to be complete AND every step jumped
-      // over to be complete (locked steps aren't applicable, so they don't block).
-      // Deal-edit mode moves freely — web parity ("the rep may move through every
-      // step freely" in edit mode), which `canProceed` already reflects.
       if (!portalUnrestrictedEdit && currentStepIndex >= 0 && index > currentStepIndex) {
         if (!canProceed) return;
         for (let i = currentStepIndex + 1; i < index; i += 1) {
@@ -1283,7 +813,6 @@ function DynamicJobBuilderInner({
         toTab,
         fromStep: logStepNumberOf(currentTab),
         toStep: logStepNumberOf(toTab),
-        // Web's own values (`dynamic-job-builder.js`): 'next' / 'back'.
         direction: 'next',
         verticalId: selectedVerticalId,
       });
@@ -1313,25 +842,13 @@ function DynamicJobBuilderInner({
       isCompletingRef.current = true;
       setIsSaving(true);
 
-      // In edit mode both of these are job_builder-module events that would land in the
-      // middle of a `my_deal` addendum edit. `logSubmit` is already suppressed in the
-      // hook when editing, and the rollout/drop summary is skipped here — web's deal-edit
-      // flow fires neither; the wrapper fires `addendum_submitted` instead.
       activityLog.logSubmit(jobState);
 
-      // Web parity (TabbedCalculator.js:923 logRolloutDropSummaryOnSubmit): emit the
-      // aggregate rollout/drop summary on the dynamic submit too — previously only the
-      // regular JobBuilder fired it, so the dynamic flow logged job_builder_completed
-      // without its companion rollout_and_drop_summary event.
       if (!isEdit) try {
         const rdForSummary = (calculatorResultData || {}) as any;
         const rawCalc = rdForSummary.LFCalculator && Object.keys(rdForSummary.LFCalculator).length
           ? rdForSummary.LFCalculator
           : null;
-        // The summary reads `selectedCalculator._id` / `.appointmentId`, but the
-        // in-memory CalcTab carries `id` (no `_id`). Without this map the summary log
-        // ships `calculatorId: undefined`, so the portal can't group it under the
-        // right calculator. Normalize to the backend shape.
         const selectedCalc = rawCalc
           ? {
               ...rawCalc,
@@ -1340,10 +857,6 @@ function DynamicJobBuilderInner({
             }
           : null;
         const uid = authUser?._id || authUser?.id;
-        // Web passes its full `appointmentsCalculator` list; the resulted calculator alone
-        // is the fallback for an embedder that has no list. The resulted one is force-
-        // merged in by id so its LIVE drops/price are what the summary reports even if the
-        // list handed down is a render behind.
         const summaryCalcs = Array.isArray(allCalculators) && allCalculators.length
           ? allCalculators.map((c: any) =>
               selectedCalc && String(c?._id || c?.id) === String(selectedCalc._id)
@@ -1354,28 +867,11 @@ function DynamicJobBuilderInner({
             ? [selectedCalc]
             : [];
         if (uid && leadId && selectedCalc) {
-          // ⚠️ NOT awaited — exact web parity. Web fires this without `await`
-          // (TabbedCalculator.js:1103) and mobile used to block the ENTIRE submit on
-          // it, as the very first step: a full activity-log round trip before the job
-          // was even sent. Nothing reads the summary synchronously, so awaiting it
-          // only added latency to "Complete Job".
           logRolloutAndDropSummary({
             userId: uid,
             leadId,
             allCalculators: summaryCalcs,
             selectedCalculator: selectedCalc,
-            // ⚠️ NORMALIZED to web's `cleanLeadData` keys — NOT `rd` verbatim.
-            //
-            // The result modal produces `resultType` / `contractPrice` /
-            // `downPaymentMethod`, while this log reads `result` /
-            // `originalContractPrice` / `paymentMethod`. So every dynamic submit logged
-            // `resultStatus: "Unknown"` and a resulted price of 0 (hence
-            // `deltaFromRolloutToResult: "0%"`), where web logs the real Sale/Demo and
-            // price — the portal board could not tell what this calculator sold for.
-            //
-            // Built by the SAME `buildSubmitLeadData` that assembles the submit payload,
-            // so the log and the job can never disagree about the result or about which
-            // of `lastPriceQuoted` / `originalContractPrice` a Demo vs a Sale carries.
             leadData: {
               ...rdForSummary,
               ...buildSubmitLeadData({
@@ -1385,8 +881,6 @@ function DynamicJobBuilderInner({
                 selectedCalculatorId: selectedCalc._id,
               }),
             },
-            // Dynamic calculators carry no legacy priced columns — take the tiers from
-            // the `totals` the deal center persisted (web passes `schemas` instead).
             preferStoredTotals: true,
             isLowesLead: Boolean((initialConfig as any)?.lowesLead) || Boolean(rdForSummary?.isLowesLead),
           }).catch((e) => console.warn('[DynamicJobBuilder] rollout summary log failed:', e));
@@ -1395,23 +889,11 @@ function DynamicJobBuilderInner({
         console.warn('[DynamicJobBuilder] rollout summary log failed:', e);
       }
 
-      // scheduleTime rides inside jobBuilder (web parity); installDate/timeWindow
-      // are also surfaced flat. The agreement / order-sheet entries stay ON the
-      // state: they are durable server REFERENCES (serverId + filePath, resolved by
-      // handleUploadDocs), not base64 bodies, so nothing is re-uploaded and nothing
-      // trips the backend's "file required" validation — they simply keep the
-      // submitted record pointing at the documents, exactly like web's serialized
-      // `jobState` does (`ROOT_PASSTHROUGH_KEYS`).
-      // Serialize once (runtime ids → storage keys) — reused by both the outcome
-      // finalize PUT and the /job-builder POST so both persist the identical state.
       const dynamicJobState = serializeDynamicJobStateForStorage(
         jobState || {},
         initialConfig,
         dealCenterData
       );
-      // Send the appointment as an ISO datetime and without the dated-slot `reason:null`
-      // (web parity). Reassigns a NEW object on the serialized copy only — the in-memory
-      // `jobState.scheduleTime` keeps its display form for the summary UI.
       if (dynamicJobState?.scheduleTime) {
         dynamicJobState.scheduleTime = normalizeScheduleTimeForSubmit(dynamicJobState.scheduleTime);
       }
@@ -1424,10 +906,6 @@ function DynamicJobBuilderInner({
         status: 'submitted',
       };
 
-      // EDIT FLOW (web PortalDynamicJobBuilderModal.handleComplete): editing a saved
-      // deal only upserts the PortalJobBuilder (status:'submitted'). It does NOT
-      // finalize the calculator outcome and does NOT re-run the /job-builder POST —
-      // the job already exists; we're only updating its products. Then bounce back.
       if (isEdit) {
         const rd = (calculatorResultData || {}) as any;
         if (leadId) {
@@ -1448,26 +926,6 @@ function DynamicJobBuilderInner({
         return;
       }
 
-      // NOTE: the calculator-scoped outcome (`PUT /outcome/{calcId}`) is deliberately
-      // NOT written here. That endpoint is owned by the agreement/doc-save path; the
-      // debounced autosave has already persisted the identical `dynamicJobState` to
-      // it, and finalizing through it again produced a duplicate outcome row per
-      // completed job. The submitted state is persisted below by the /job-builder
-      // POST and the lead-scoped outcome mirror, which a reopen also reads.
-
-      // Documents for the /job-builder POST — web parity (TabbedCalculator finalize).
-      // Web converts every file on `jobState.agreements` / `.orderSheets` to a base64
-      // PDF and submits them at the top level alongside the serialized jobState; mobile
-      // now does the same (`buildDocumentPayloads`). Note this is the JobBuilderDocument
-      // collection — the LeadOutcomeDocument rows were already created eagerly by
-      // handleUploadDocs / the sign endpoint, which is why the outcome mirror below
-      // still sends FIELDS ONLY.
-      //
-      // ⚠️ Offline this is SKIPPED, and the documents are re-attached by the uploader instead.
-      // Building them here would read every signed agreement off disk and hold megabytes of base64
-      // in a payload that is about to be written to MMKV — where it would then be re-serialized on
-      // every subsequent write to this record. The queued documents already name their files; the
-      // submit step reads them at the moment it sends, which is the only moment they are needed.
       const submitOffline = worksOffline();
       const documentPayloads = submitOffline
         ? { agreements: [], orderSheets: [] }
@@ -1476,29 +934,13 @@ function DynamicJobBuilderInner({
             orderSheets: jobState?.orderSheets,
             leadId,
             isSale,
-            // Web parity: submit the signed agreement too (read from its local file://
-            // copy) so the lead-scoped outcome write below populates jobBuilderDocuments.
             includeSystemGenerated: true,
           });
 
-      // POST /lead/v1/{leadId}/job-builder REQUIRES top-level `leadData` AND
-      // `jobState` (web TabbedCalculator payload). The previous
-      // `{ jobBuilder, ...resultData }` shape 400'd with
-      // "Both leadData and jobState are required in the request body".
       const rd = (calculatorResultData || {}) as any;
       const result = isSale ? 'Sale' : 'Demo';
       const submitCalculatorId = calcId || rd.calculatorId || null;
 
-      // The calculator document the payload must carry (`leadData.LFCalculator`).
-      // Read the SERVER copy: it is the only source with `_id` / `createdBy` /
-      // `appointmentId` / `createdAt` and the full entries ARRAY the backend's
-      // reference payload shows. The in-memory tab (`rd.LFCalculator`) is only the
-      // fallback — see `buildCalculatorDocument`. A failed read is non-fatal: the
-      // fallback still produces the complete shape.
-      // Same resolver the auto-save uses, FORCED — the submit must read the calculator
-      // fresh rather than trust a doc cached earlier in the session.
-      // Offline this cannot be read; the in-memory tab is the documented fallback and the uploader
-      // resolves the server copy when the submit actually goes.
       const { doc: lfCalculatorDoc, fromServer: lfFromServer } = submitOffline
         ? {
             doc: buildCalculatorDocument(null, rd?.LFCalculator, {
@@ -1511,11 +953,6 @@ function DynamicJobBuilderInner({
           }
         : await resolveLfCalculatorDoc(submitCalculatorId, rd, { force: true });
 
-      // `leadData` is assembled to the backend's documented key set (see
-      // `utils/job-submit-payload.ts`) rather than spread from the result modal's
-      // state — the modal carries extra fields (versatile / pineapple / resultType)
-      // that are not part of this contract and reach the backend through the
-      // lead-scoped outcome mirror below.
       const leadDataPayload = buildSubmitLeadData({
         resultData: rd,
         result,
@@ -1529,20 +966,10 @@ function DynamicJobBuilderInner({
         leadData: leadDataPayload,
         jobState: dynamicJobState,
         configId,
-        // Web parity (TabbedCalculator `action === 'complete'`): the submit carries the
-        // documents at the TOP LEVEL as base64 PDFs — `{ name: '', file, type }` — next
-        // to the serialized jobState. Built from jobState.agreements / .orderSheets, and
-        // on a non-Sale result the agreements are filed as order sheets (web's
-        // `data.leadData?.result === 'Sale'` branch). `paperWork` and
-        // `downPaymentReceipt` are the backend's other two document groups; the job
-        // builder produces neither, so they go out EMPTY rather than absent.
         agreements: documentPayloads.agreements,
         orderSheets: documentPayloads.orderSheets,
       });
 
-      // One line naming the calculator that went into `leadData`, so "LFCalculator is
-      // not appended" is answerable from a device trace without reading the whole
-      // (elided) payload below.
       console.log(
         '[COMPLETE JOB] leadData calculator:',
         lfCalculatorDoc?._id
@@ -1552,9 +979,6 @@ function DynamicJobBuilderInner({
           : 'NONE — no calculator id resolved and no local tab'
       );
 
-      // Full Complete-Job payload (POST /lead/v1/{leadId}/job-builder). The document
-      // bodies are elided — stringifying multi-MB base64 for a log line is exactly the
-      // kind of heap spike that used to crash Submit.
       console.log(
         `[COMPLETE JOB PAYLOAD] POST /lead/v1/${leadId}/job-builder\n` +
           JSON.stringify(
@@ -1572,25 +996,9 @@ function DynamicJobBuilderInner({
         await LeadService.submitJobBuilder(leadId, payload);
       }
 
-      // Web parity (TabbedCalculator.js ~L872-917): mirror the outcome fields +
-      // agreements/order-sheets to PUT /lead/v1/{leadId}/outcome so the
-      // LeadOutcome collection is populated (the source read by
-      // downloadOutcomeDocuments and rendered in ContractDetails). Without this,
-      // the outcome fields (oneLeg, result, reason, explain, contract price, etc.)
-      // and uploaded documents are only in the JobBuilderDocument collection and
-      // invisible to the LeadOutcome-based views.
-      // The outcome endpoint is calculator-scoped, so without an id there is nothing
-      // to write to — skip rather than falling back to the removed lead-scoped route.
       const outcomeCalcId = calcId || rd.calculatorId || null;
       if (leadId && outcomeCalcId) {
         try {
-          // The outcome mirror keeps the modal's FULL field set (versatile /
-          // pineapple / resultType and the rest): unlike the /job-builder POST it has
-          // no fixed contract, and it is what persists those fields.
-          // `downPaymentMethod` is renamed to `paymentMethod` below, and the
-          // in-memory calculator TAB must never be spread in — it lacks the
-          // subdocument's required `createdBy`/`appointmentId` and 500s the backend.
-          // The resolved `lfCalculatorDoc` is attached instead.
           const rdWithoutDpm = Object.fromEntries(
             Object.entries(rd).filter(([k]) => k !== 'downPaymentMethod' && k !== 'LFCalculator')
           );
@@ -1603,56 +1011,17 @@ function DynamicJobBuilderInner({
             selectedAppointmentId: rd.selectedAppointmentId || leadId,
             jobBuilder: jobBuilderWrapper,
             ...(lfCalculatorDoc && { LFCalculator: lfCalculatorDoc }),
-            // ⚠️ The base64 agreements / order sheets are DELIBERATELY NOT ATTACHED here.
-            // This is a considered divergence from web (TabbedCalculator.js L1073-1074),
-            // because MOBILE FILES ITS DOCUMENTS EAGERLY and web does not:
-            //
-            //   • a scanned doc is filed the moment it is added, by `handleUploadDocs`
-            //     (PUT /lead/v1/{id}/outcome/{calcId}) — "that is what creates the
-            //     LeadOutcomeDocument rows";
-            //   • a generated agreement is filed by the /sign endpoint, which writes its
-            //     OWN LeadOutcomeDocument.
-            //
-            // So by submit time every document is ALREADY a LeadOutcomeDocument row, and
-            // re-sending the bytes here did not "upsert by file" as the old comment
-            // claimed — it filed a SECOND row. That is the duplicate agreement reported
-            // earlier: same `fileData.size` and same `base64Data`, distinct `_id` and
-            // `filePath`, and an EMPTY `name` — because `buildDocumentPayloads` sends
-            // `name: ''`. The two rows in that trace are 35 s apart
-            // (…851569 at sign time, …886943 at submit), which is this write.
-            //
-            // Dropping them fixes the duplicate at its source and removes a multi-MB
-            // upload from "Complete Job" (the reporter's trace: 27 requests, 308 MB).
-            //
-            // ⚠️ Do NOT remove the CALL itself. It is the only write that persists the
-            // outcome FIELDS — contract price, down payment, oneLeg, reason, explain,
-            // payment methods, LFCalculator — to LeadOutcome; the eager calculator-scoped
-            // PUT sends only { result, status, selectedCalculatorId, jobBuilder, docs }.
-            // Those fields are what Contract Details renders.
           };
-          // Fields only now — no document bodies to elide (see above).
           console.log(
             `[COMPLETE JOB — OUTCOME MIRROR PAYLOAD] PUT /lead/v1/${leadId}/outcome\n` +
               JSON.stringify(outcomePayload, null, 2)
           );
           if (submitOffline) {
-            // ── Completed with no signal ──────────────────────────────────────
-            //
-            // Both writes are stored TOGETHER, in one record, because they are two halves of one
-            // act: the outcome carries the fields Contract Details renders, the submit is what
-            // marks the job built. Storing only one would upload a job whose result is missing, or
-            // a result for a job that never submitted.
-            //
-            // ⚠️ Storing the submit is also what ARMS the submit step. Until this line runs, an
-            // upload of this lead files the draft and stops — which is exactly right for a rep who
-            // built the job and walked away without completing it.
             const workId = offlineWorkId();
             if (workId) {
               completeOfflineJobBuilder(workId, payload as any, outcomePayload);
             }
           } else {
-            // Calculator-scoped PUT /lead/v1/{leadId}/outcome/{calcId}. The bare
-            // lead-scoped variant this used to call is DEPRECATED and 404s on device.
             await LeadService.updateLeadOutcomeByCalculator(leadId, outcomeCalcId, outcomePayload);
           }
         } catch (e) {
@@ -1660,21 +1029,6 @@ function DynamicJobBuilderInner({
         }
       }
 
-      // ── Auto-add to Job Tracker on SALE ───────────────────────────────────
-      // Web parity (TabbedCalculator.js ~L1351). Two conditions, both required:
-      // the /job-builder POST above must have RESOLVED, and the outcome must be a
-      // SALE. A Demo never files a job-tracker row.
-      //
-      // ⚠️ Non-fatal by design. The job is already submitted at this point, so a
-      // job-tracker failure must never surface as a failed build or block
-      // navigation - it is caught and logged, exactly as the legacy JobBuilder
-      // screen does.
-      //
-      // ⚠️ Skipped offline, and deliberately NOT queued. The Job Tracker row is derived entirely
-      // from the submitted job, so the honest place to create it is after the job lands — queueing
-      // a second write of the same facts only invents a way for the two to disagree. It is worth
-      // knowing that this means an offline sale reaches the Job Tracker when it uploads, not at
-      // the door.
       if (isSale && leadId && !submitOffline) {
         try {
           const scheduleTime: any = (jobState as any)?.scheduleTime || {};
@@ -1685,29 +1039,20 @@ function DynamicJobBuilderInner({
             0;
           const pmMethod = rd.balancePaymentMethod || rd.downPaymentMethod || rd.paymentMethod || '';
 
-          // RETAIL is the calculator line-item sum (totals.retail = the same
-          // Sum(qty x price.retail) web reads via getSchemaRetailPrice). It is NOT a
-          // markup figure: those already bake in the $500 admin fee, which the tier
-          // thresholds add again.
           const retailPrice = Number((lfCalculatorDoc as any)?.totals?.retail) || 0;
 
-          // Split jobs blend the bank fee dollar-weighted: the down payment rides on
-          // the down-payment method, the balance on the balance method.
           const downPaymentAmt = parseFloat(String(rd.downPayment ?? 0).replace(/,/g, '')) || 0;
           const payments = [
             { amount: downPaymentAmt, method: rd.downPaymentMethod || rd.paymentMethod || pmMethod },
             { amount: Math.max(0, rawPrice - downPaymentAmt), method: pmMethod },
           ];
 
-          // Cached after the first read; null on any failure, which falls back to the
-          // legacy ladder rather than blocking the submit.
           const commissionConfig = await fetchCommissionConfig(queryClient);
 
           const commissionResult = calculateCommission(rawPrice, pmMethod, {
             config: commissionConfig,
             retailPrice,
             payments,
-            // Lowe's leads carry no admin fee.
             adminFeeOverride: lead?.lowesLead === true ? 0 : null,
           });
 
@@ -1735,23 +1080,6 @@ function DynamicJobBuilderInner({
         }
       }
 
-      // Web parity: mark the lead's timeline milestones complete now that the job is
-      // built. The web static flow does this in two steps — result-lead-modal.js:3189
-      // sets `leadResulted: "completed"` and job-builder-modal.js:2980 sets
-      // `jobBuild: "complete"`. The dynamic deal-center flow only ever set
-      // `leadResulted: "active"` on the Sale/Demo pick and never flipped it to
-      // completed, so the PORTAL timeline kept showing the lead result "in progress".
-      // Flip both (plus salesProcess) here so the portal renders the milestone as
-      // Complete — the same statuses the mobile regular flow writes (useDealOutcome.ts).
-      //
-      // ⚠️ NOT awaited. These are PORTAL milestone flags — nothing the rep is about to
-      // see reads them, and this was the last blocking round trip before navigation,
-      // so awaiting it delayed "Complete Job" for no user-visible benefit. Web makes
-      // no equivalent call here at all. The request is not cancelled by navigating:
-      // nothing aborts it and the JS context outlives this screen.
-      // Offline these would fail immediately and there is nothing to retry them with — they are
-      // portal display flags, not the rep's work, and the submit that follows re-establishes the
-      // same facts.
       if (leadId && !submitOffline) {
         LeadService.updateLeadTimelineProgress(leadId, {
           salesProcess: 'completed',
@@ -1772,9 +1100,6 @@ function DynamicJobBuilderInner({
       }
     } catch (error) {
       console.error('[DynamicJobBuilder] Completion failed:', error);
-      // Completion aborted — re-enable autosave so further edits are still persisted
-      // and a retry behaves normally. On success the flag stays set: the screen is
-      // navigating away and must not fire a trailing calculator-scoped PUT.
       isCompletingRef.current = false;
       Alert.alert('Error', 'Failed to complete the job. Please check your connection.');
     } finally {
@@ -1782,25 +1107,10 @@ function DynamicJobBuilderInner({
     }
   }, [jobState, initialConfig, calculatorResultData, leadId, calcId, dealCenterData, isSale, onJobComplete, canComplete, activityLog, isEdit, appointmentId, authUser, resolveLfCalculatorDoc, allCalculators, lead, worksOffline, offlineWorkId]);
 
-  // Persist a generated/scanned agreement or order-sheet. Web parity
-  // (TabbedCalculator outcomePayload): the base64 PDFs go at the TOP LEVEL of the
-  // outcome PUT — that is what upserts the LeadOutcomeDocument S3 rows (the display
-  // source, read back via downloadOutcomeDocuments / leadOutcomeDocuments). We also
-  // send the SERIALIZED jobBuilder.dynamicJobState + Sale context so the field state
-  // and result aren't clobbered. Docs are sale-only, so result/status are 'Sale'
-  // (matches the working normal JB SummarySection payload). Resolves to the
-  // category's documents as the server now holds them, or null if the save failed.
   const handleUploadDocs = useCallback(
     async (cat: 'agreement' | 'orderSheet', payloads: any[]) => {
       if (!leadId || !payloads?.length) return null;
 
-      // ── No signal: queue the document, keep the rep's copy ────────────────────
-      //
-      // ⚠️ The return value is what the summary card renders, so it must NEVER be `null` here.
-      // Null is this function's "the upload failed" answer and the caller falls back to the draft
-      // copy; offline nothing failed, and a card that greyed out would tell the rep to scan the
-      // order sheet again. The rows handed back are the local files, which is genuinely what the
-      // device holds until the uploader files them.
       if (worksOffline()) {
         const workId = offlineWorkId();
         if (!workId) return null;
@@ -1812,18 +1122,11 @@ function DynamicJobBuilderInner({
             extension: cat === 'agreement' ? 'pdf' : 'pdf',
           });
           if (doc) {
-            // ⚠️ Built key by key, NOT spread from `p`. The payload `p` carries the document's
-            // whole base64 body, and this row is written into `jobState` — which the draft save
-            // then serializes into MMKV, on every 2 s tick, for the rest of the job. Spreading it
-            // would put megabytes of the signed contract into a record we rewrite constantly.
-            // The file is on disk; the row only needs to point at it.
             queued.push({
               name: doc.name,
               uri: doc.uri,
               contentType: doc.contentType,
               documentType: cat,
-              // ⚠️ No `serverId`/`filePath` — there is none yet, and inventing one would let a
-              // later delete address a row the server has never heard of.
               isNew: false,
               pendingUpload: true,
             });
@@ -1834,11 +1137,6 @@ function DynamicJobBuilderInner({
 
       try {
         const rootKey = cat === 'agreement' ? 'agreements' : 'orderSheets';
-        // The NEW base64 payloads go at the TOP LEVEL of this PUT — that is what
-        // creates the LeadOutcomeDocument rows. The draft copy under
-        // `jobBuilder.dynamicJobState` is serialized from the state as-is, documents
-        // included, so this write never blanks the documents already recorded there
-        // (see performAutoSave for why that matters).
         const dynamicJobState = serializeDynamicJobStateForStorage(
           jobState || {},
           initialConfig,
@@ -1858,14 +1156,6 @@ function DynamicJobBuilderInner({
           },
           [rootKey]: payloads,
         };
-        // Document-submit payload (PUT /lead/v1/{leadId}/outcome/{calcId}).
-        //
-        // ⚠️ The base64 PDF bodies are ELIDED, exactly as the Complete-Job and
-        // outcome-mirror logs below already do. This one was missed, and it was the
-        // single largest cost in an order-sheet upload: pretty-printing a multi-MB
-        // base64 string and pushing it to the console took SECONDS on the JS thread
-        // (far worse with DevTools attached, where the whole string crosses the CDP
-        // bridge). Never stringify a document payload in full.
         console.log(
           `[DOC SUBMIT PAYLOAD] ${cat} → PUT /lead/v1/${leadId}/outcome/${calcId}\n` +
             JSON.stringify(
@@ -1882,12 +1172,6 @@ function DynamicJobBuilderInner({
         );
         await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, docSubmitPayload);
 
-        // Re-sync from the server (web `DocumentUploadDialog.syncFromServer`): read
-        // the lead's document rows back and resolve them to signed URLs. The caller
-        // stores THESE in `jobState.<rootKey>` so the draft carries durable,
-        // cross-platform references (serverId + filePath) instead of a device-local
-        // `file://` path — which is what lets web render a mobile-attached agreement
-        // and lets a later delete actually reach the server (it needs the serverId).
         const rows = await fetchOutcomeDocumentRows(leadId, calcId);
         const resolved = await resolveOutcomeDocRows(rows);
         return resolved[rootKey] || [];
@@ -1899,17 +1183,9 @@ function DynamicJobBuilderInner({
     [leadId, calcId, jobState, initialConfig, dealCenterData, calculatorResultData, worksOffline, offlineWorkId]
   );
 
-  // Re-read the lead's stored documents WITHOUT uploading anything. Used after the
-  // server-side agreement sign, which files its own LeadOutcomeDocument — adopting
-  // that row is what keeps a generated agreement from being stored twice.
-  // Re-read the lead's stored documents WITHOUT uploading anything. Used after the
-  // server-side agreement sign, which files its own LeadOutcomeDocument — adopting
-  // that row is what keeps a generated agreement from being stored twice.
   const handleRefreshDocs = useCallback(
     async (cat: 'agreement' | 'orderSheet') => {
       if (!leadId || !calcId) return null;
-      // Nothing to re-read with no signal, and `null` is this function's own "keep what you have" —
-      // the caller falls back to the draft copy, which offline is the only true account anyway.
       if (worksOffline()) return null;
       const rows = await fetchOutcomeDocumentRows(leadId, calcId);
       const resolved = await resolveOutcomeDocRows(rows);
@@ -1918,21 +1194,10 @@ function DynamicJobBuilderInner({
     [leadId, calcId, worksOffline]
   );
 
-  /**
-   * Instagram-style collapsing step header (ticket: "have the header of steps timeline
-   * glide away when scrolling down but re-appear when scrolling up").
-   *
-   * ⚠️ Only THIS header collapses. The pinned footage/allocation tracker lives inside
-   * `DynamicTabRenderer`, ABOVE its ScrollView, and the ticket is explicit that it must
-   * stay put ("Keep allocation tracker always there") — so the handler is threaded down
-   * to that ScrollView and nothing else moves.
-   */
   const collapsingHeader = useCollapsingHeader(true, currentTab?.id);
 
   const isLastStep = currentTabIndex === nonSummaryTabs.length;
   const isFirstStep = currentTabIndex <= 0;
-  // Embedded (wizard) finalize point: the summary tab when present, else the last
-  // product tab. Reaching it turns the primary button into "Next · Price".
   const isFinalBuildStep = summaryTab
     ? isLastStep
     : nonSummaryTabs.length > 0 && currentTabIndex >= nonSummaryTabs.length - 1;
@@ -1954,8 +1219,6 @@ function DynamicJobBuilderInner({
             the keyboard, leaving a low field below the fold and hidden (this ticket). */}
         <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
           {currentTab && showEmptyGate ? (
-            // Deal-edit: this step has no rep-entered data. Prompt to add or skip
-            // instead of showing a blank form (web dynamic-job-builder.js:749).
             <View style={{ flex: 1, paddingTop: collapsingHeader.topInset }}>
             <EmptyStepGate
               stepLabel={currentTab.label || 'this step'}
@@ -1984,8 +1247,6 @@ function DynamicJobBuilderInner({
               verticalColor={selectedVertical?.color || '#22c55e'}
               products={initialConfig?.products || []}
               schemas={calculatorSchemas || initialConfig?.schemas || []}
-              // Web `useDealEditMode()`: drops the Required gates when editing an
-              // already-resulted deal.
               editMode={isEdit}
               repDetails={authUser}
               leadId={leadId}
@@ -2015,7 +1276,6 @@ function DynamicJobBuilderInner({
         <Reanimated.View
           onLayout={collapsingHeader.onHeaderLayout}
           style={[{
-            // OVERLAY: floats over the top of the list and slides up (see `useCollapsingHeader`).
             position: 'absolute',
             top: 0,
             left: 0,
@@ -2023,9 +1283,6 @@ function DynamicJobBuilderInner({
             zIndex: 60,
             paddingHorizontal: 24,
             paddingTop: 8,
-            // Trimmed from 24 → 8: the stepper carried a tall empty white band below
-            // the Gutters/LeafFilter/… pills before the content card. 8 keeps the
-            // pills clear of the divider without the extra padding.
             paddingBottom: 8,
             borderBottomWidth: 1,
             borderBottomColor: '#E2E8F0',
@@ -2087,8 +1344,6 @@ function DynamicJobBuilderInner({
             ]}
             activeStepId={currentTab?.id || ''}
             onStepPress={handleGoToTab}
-            // Deal-edit: the stepper is display-only (web parity) — the rep advances
-            // only via the bottom Next button, not by tapping Gutters/LeafFilter/etc.
             disableNavigation={isEdit}
           />
         </Reanimated.View>
@@ -2098,9 +1353,6 @@ function DynamicJobBuilderInner({
           style={{
             paddingHorizontal: 24,
             paddingTop: 12,
-            // ⚠️ inset + a gap, NOT just the inset: with edge-to-edge the footer ends exactly where the
-            // system nav bar starts, so `max(inset, 16)` left the button flush against it. insets can
-            // read 0 (gesture nav), hence the gap is always added on top.
             paddingBottom: insets.bottom + 16,
             borderTopWidth: 1,
             borderTopColor: '#E2E8F0',
@@ -2140,7 +1392,6 @@ function DynamicJobBuilderInner({
                 </Text>
               </TouchableOpacity>
             ) : embedded ? (
-              // First build tab: Back returns to the wizard's Install Date step.
               <TouchableOpacity
                 onPress={() => onEditBack?.()}
                 style={{
@@ -2201,8 +1452,6 @@ function DynamicJobBuilderInner({
               </TouchableOpacity>
             )}
             {embedded ? (
-              // Wizard: advance to the Job Price step once the build is finalized,
-              // otherwise page through the build tabs. No submit happens here.
               isFinalBuildStep ? (
                 <TouchableOpacity
                   onPress={() => onEditComplete?.(jobState)}

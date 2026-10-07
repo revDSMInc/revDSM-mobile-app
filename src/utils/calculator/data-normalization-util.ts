@@ -2,10 +2,6 @@ import { extrasList } from './pricing-data';
 import { getVerticalItemIds } from './verticals-data';
 import { toWebFlatCalculator } from './calculator-field-map';
 
-/**
- * Normalizes raw calculator details into standard inputs and extras objects.
- * Matches web lf-calculator data-normalization-util.js.
- */
 export const normalizeCalculatorData = (details: any) => {
   if (!details) return { inputs: {}, extras: {}, flat: {} };
 
@@ -46,5 +42,4 @@ export const normalizeCalculatorData = (details: any) => {
   return { inputs, extras, verticals, flat };
 };
 
-// Backward-compatible alias
 export const flattenCalculatorDetails = toWebFlatCalculator;

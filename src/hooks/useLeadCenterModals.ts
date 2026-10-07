@@ -10,17 +10,6 @@ import { isOnline } from '../services/connectivity';
 import { offlineBlockFor } from '../utils/offline-capability';
 import { useQueuedConsentForms } from './useQueuedConsentForms';
 
-/**
- * ⚠️ The list of what cannot work offline MOVED to `utils/offline-capability.ts`, and it moved
- * because this hook stopped being the only place that needed it. Chat, the Job Tracker, Referral
- * and the addendum wizard all ask the same question now; two copies of the answer would let one
- * surface promise what another refuses, on the same phone, in front of the same customer.
- *
- * The tool ids and the wording are unchanged — see that file for why each entry is there, and for
- * the rule that anything with a device-side path (the consent and waiver FORMS above all) must
- * never be listed.
- */
-
 interface ModalState {
   showJobBuilder: boolean;
   showInspectionGrid: boolean;
@@ -32,10 +21,6 @@ interface ModalState {
   showPdfModal: boolean;
 }
 
-/**
- * What to say when a signed form is still on the device. ⚠️ Never "submitted": the PDF is rendered
- * by the server, so until the upload lands there is no document to open.
- */
 const queuedFormMessage = (): string =>
   isOnline()
     ? 'Saved on your device and uploading now. The PDF will be viewable once it is filed.'
@@ -52,8 +37,6 @@ export const useLeadCenterModals = (
 ) => {
   const navigation = useNavigation<any>();
   const { user } = useAuth();
-  // A consent or waiver signed at a door counts as filed — see the note in `ToolsSection`, which
-  // reads the same hook so the card and this guard can never disagree about it.
   const queuedForms = useQueuedConsentForms(lead);
 
   const [modals, setModals] = useState<ModalState>({
@@ -87,7 +70,6 @@ export const useLeadCenterModals = (
 
   const onToolAction = useCallback(
     (toolId: string, extra?: any) => {
-      // One guard at the top, so no branch below can forget it.
       const blocked = offlineBlockFor(toolId, isOnline());
       if (blocked) {
         FlashMessage.info(blocked.title, blocked.message);
@@ -112,9 +94,6 @@ export const useLeadCenterModals = (
         );
       };
 
-      // Title/filename for the risk report. When the url comes from a just-finished job there
-      // is no record for it yet in `existing` (it is the FIRST match, possibly an older
-      // report), so use the newest non-reset one; otherwise the record the url came from.
       const riskTitle = (existing: any, fromJob: boolean) => {
         if (!fromJob) return reportDisplayName(existing, 'Risk Report');
         const risk = [
@@ -127,23 +106,16 @@ export const useLeadCenterModals = (
       };
 
       if (toolId === 'consent') {
-        // ⚠️ The QUEUED form is checked first and short-circuits, because there is no document to
-        // open at all yet — the server renders the PDF from the submitted form, so until the queue
-        // drains there is nothing to view. Falling through would re-open a blank form for a
-        // customer who has already signed one.
         if (queuedForms.consentPending) {
           FlashMessage.info('Consent is signed', queuedFormMessage());
           return;
         }
         const existing = findReport('consent_form');
         if (!existing && queuedForms.consent) {
-          // Uploaded from this device, but the lead in hand predates the refetch.
           FlashMessage.info('Consent is on file', FILED_NOT_LOADED);
           return;
         }
         if (existing && !isOnline()) {
-          // The consent IS on file — which is what gates presenting a quote — so say so rather
-          // than opening a viewer onto an expired link and letting it read as "not signed".
           FlashMessage.info(
             'Consent is on file',
             'Signed and filed. Viewing the PDF needs a connection.'
@@ -224,7 +196,6 @@ export const useLeadCenterModals = (
       } else if (toolId === 'risk-reset') {
         handlers.handleResetRiskReport?.(extra);
       } else if (toolId === 'revrender') {
-        // Handled in screen directly via navigation for better stability
       } else if (toolId === 'pitchbook') {
         navigation.navigate('Pitchbook', { lead });
       }

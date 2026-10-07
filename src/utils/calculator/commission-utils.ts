@@ -1,33 +1,6 @@
 import { paymentPlans } from './payment-plans';
 import type { CommissionConfig, CommissionTier } from './commission-config';
 
-/**
- * Rep commission.
- *
- * Two paths:
- *
- *  - DYNAMIC — the company ladder from GET /company/v1/sales/commission-config,
- *    passed in as `options.config`. Needs a retail basis. Tiers are resolved by
- *    DOLLAR THRESHOLD, not by the end-price-to-retail ratio:
- *
- *      bankPct   = Sum(amount x plan fee) / Sum(amount)   dollar-weighted
- *      raw_i     = retail x startPct_i                    endPct is never used
- *      thresh_i  = (raw_i + adminFee_i) / (1 - bankPct)   0 when adminFeeApplies false
- *      tier      = the HIGHEST tier whose thresh_i the end price clears
- *
- *      overagePct > 0 -> raw x rate + max(0, end - threshold) x overagePct
- *      overagePct = 0 -> max(0, end x (1 - bankPct) - adminFee) x rate
- *
- *  - LEGACY — the original hardcoded ladder below, used whenever no ladder is
- *    configured (or the config request failed). This keeps every existing
- *    two-argument caller working unchanged.
- *
- * `options` is optional with a default, so `calculateCommission(price, method)`
- * behaves exactly as it always has.
- */
-
-/* ---------------------------------------------------------------- legacy - */
-
 const LEGACY_ADMIN_FEE = 500;
 
 interface LegacyTier {
@@ -47,21 +20,15 @@ const LEGACY_TIERS: LegacyTier[] = [
   { name: 'below 40% retail', min: 0, rate: 0.01, overageRate: 0, overageFrom: 0 },
 ];
 
-/* ----------------------------------------------------------------- types - */
-
 export interface PaymentSplit {
   amount: number;
   method: string;
 }
 
 export interface CommissionOptions {
-  /** Normalized config; null / unconfigured falls back to the legacy ladder. */
   config?: CommissionConfig | null;
-  /** Sum(qty x field.price.retail) — the calculator's `totals.retail`. */
   retailPrice?: number;
-  /** Split-payment rows, so the bank fee can be blended dollar-weighted. */
   payments?: PaymentSplit[] | null;
-  /** Lead-level admin-fee waiver: 0 for Lowe's leads, which carry no fee. */
   adminFeeOverride?: number | null;
 }
 
@@ -77,9 +44,7 @@ export interface CommissionDetails {
     afterBankFee: number;
     afterDeduction: number;
     retail: number;
-    /** Dollar threshold of the tier that paid (legacy: the tier's `min`). */
     threshold: number | null;
-    /** Lowest configured threshold — renders "Below $X" when nothing clears. */
     lowestThreshold: number | null;
     commissionRate: number;
     baseCommission: number;
@@ -99,8 +64,6 @@ interface TierWithThreshold extends CommissionTier {
   adminFeeAmount: number;
   threshold: number;
 }
-
-/* --------------------------------------------------------------- helpers - */
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
@@ -129,10 +92,6 @@ const baseDetails = (
   source,
 });
 
-/**
- * Dollar-weighted blend of the bank fee across the methods actually used on the
- * job. A single method blends to that method's own rate.
- */
 export function resolveBankPct(
   payments: PaymentSplit[] | null | undefined,
   plans: Record<string, any> = paymentPlans
@@ -147,7 +106,6 @@ export function resolveBankPct(
   return weighted / total;
 }
 
-/** One dollar threshold per tier: the end price the job must clear to reach it. */
 export function buildTierThresholds(
   tiers: CommissionTier[],
   retail: number,
@@ -167,13 +125,6 @@ export function buildTierThresholds(
   });
 }
 
-/**
- * The highest tier whose threshold the end price clears.
- *
- * Rows arrive sorted by startPct ascending, so the last cleared row is the
- * highest BAND. If a MIDDLE tier were admin-fee exempt its threshold could dip
- * below the rung beneath it; "highest" is resolved as highest band.
- */
 export function resolveTier(
   rows: TierWithThreshold[],
   endPrice: number
@@ -184,8 +135,6 @@ export function resolveTier(
   });
   return match;
 }
-
-/* ------------------------------------------------------------------ main - */
 
 export function calculateCommission(
   endPrice: number,
@@ -206,7 +155,6 @@ export function calculateCommission(
   const planLabel = plan?.label || paymentMethod;
   const afterBankFee = endPrice * (1 - bankPct);
 
-  /* -- no ladder configured: the original behaviour, exactly --------------- */
   if (!config?.isConfigured) {
     const adminFeeAmount = adminFeeOverride ?? LEGACY_ADMIN_FEE;
     const afterDeduction = Math.max(0, afterBankFee - adminFeeAmount);
@@ -239,14 +187,8 @@ export function calculateCommission(
     };
   }
 
-  /* -- configured ladder --------------------------------------------------- */
-
-  // With no retail on the record the end price stands in for it. The ladder
-  // still applies; its top rungs simply become unreachable.
   const retail = retailPrice > 0 ? retailPrice : endPrice;
 
-  // A lead-level waiver (Lowe's) outranks the configured fee. `??` not `||`, so
-  // an explicit override of 0 is honoured.
   const adminFee = adminFeeOverride ?? config.adminFee;
 
   const withThresholds = buildTierThresholds(config.tiers, retail, adminFee, bankPct);

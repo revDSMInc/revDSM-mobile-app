@@ -11,11 +11,6 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
-/**
- * Screen-space box of a tapped ⓘ. Declared locally, not imported from the Dynamic
- * Deal Center's `FullPackageBadge`: this is a shared `widgets/` component and must
- * not depend on a screen. Structurally identical, so it satisfies that consumer.
- */
 export interface PackageAnchorRect {
   x: number;
   y: number;
@@ -32,25 +27,7 @@ interface HorizontalDraggableTabsProps {
   onDragStateChange?: (isDragging: boolean) => void;
   tabsScrollViewRef?: React.RefObject<ScrollView | null>;
   scrollXRef?: React.MutableRefObject<number>;
-  /**
-   * Optional override for the "identical calculator" warning. The default
-   * detection compares gutter/leaf-filter input keys, which don't exist on the
-   * schema-driven Dynamic Deal Center tabs (so every tab would falsely read as a
-   * duplicate). Dynamic callers pass `() => false` to opt out.
-   */
   getIsDuplicate?: (calc: any, idx: number) => boolean;
-  /**
-   * Tapping a full-package tab's ⓘ. A calculator flagged `isFullPackage` shows a
-   * package icon + this button INSTEAD of its derived `G+VMax+S+FWrap` name, and the
-   * caller owns the popover that lists what the package contains.
-   *
-   * `rect` is the ⓘ's box in WINDOW space so the caller can open its card directly
-   * beneath the icon — this row scrolls horizontally, so the icon's position is only
-   * knowable at tap time. `null` when the view could not be measured.
-   *
-   * Omitted by the classic deal center, which never sets `isFullPackage`, so its tabs
-   * are untouched.
-   */
   onShowPackageInfo?: (calc: any, idx: number, rect: PackageAnchorRect | null) => void;
 }
 
@@ -99,13 +76,10 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
   const panX = useRef(new Animated.Value(0)).current;
   const panY = useRef(new Animated.Value(0)).current;
 
-  // Track layouts of all tabs
   const layouts = useRef<{ x: number; width: number }[]>([]);
 
-  // Array of Animated.Values to shift other tabs smoothly
   const shiftAnims = useRef<Animated.Value[]>([]);
 
-  // Initialize or update shift animations when calculators length changes
   if (shiftAnims.current.length !== calculators.length) {
     shiftAnims.current = calculators.map(() => new Animated.Value(0));
   }
@@ -141,8 +115,6 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
 
   const hasPanResponderCapturedRef = useRef<boolean>(false);
 
-  // Per-tab ⓘ nodes. This row scrolls horizontally and reorders, so an icon's screen
-  // position is only knowable at tap time — measured then, never cached.
   const infoRefs = useRef<Record<number, any>>({});
   const reportPackageInfo = (calc: any, idx: number) => {
     const node = infoRefs.current[idx];
@@ -155,10 +127,6 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
     });
   };
 
-  // A horizontal ScrollView must measure its child by its intrinsic content
-  // width. Keep the selected tab in view after a programmatic tab change (for
-  // example, selecting it from the grid), rather than relying on a guessed
-  // fixed tab width in each screen.
   useEffect(() => {
     const layout = layouts.current[activeIdx];
     if (!layout || !tabsScrollViewRef?.current) return;
@@ -192,7 +160,6 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
         panX.setValue(gestureState.dx);
         panY.setValue(gestureState.dy);
 
-        // Auto-scroll logic near horizontal edges
         const screenWidth = Dimensions.get('window').width;
         const leftThreshold = 60;
         const rightThreshold = screenWidth - 100;
@@ -210,7 +177,6 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
           const scrollDelta = scrollXRef ? (scrollXRef.current - initialScrollX.current) : 0;
           const currentCenterX = draggedLayout.x + draggedLayout.width / 2 + gestureState.dx + scrollDelta;
 
-          // Find closest target index
           let targetIdx = index;
           let minDistance = Infinity;
           for (let i = 0; i < calculators.length; i++) {
@@ -225,20 +191,17 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
             }
           }
 
-          // Shifting tabs:
           for (let i = 0; i < calculators.length; i++) {
             if (i === index) continue;
             const layout = layouts.current[i];
             if (layout) {
               if (index < targetIdx) {
-                // Dragging right
                 if (i > index && i <= targetIdx) {
                   shiftAnims.current[i].setValue(-(draggedLayout.width + 8));
                 } else {
                   shiftAnims.current[i].setValue(0);
                 }
               } else if (index > targetIdx) {
-                // Dragging left
                 if (i >= targetIdx && i < index) {
                   shiftAnims.current[i].setValue(draggedLayout.width + 8);
                 } else {
@@ -422,15 +385,6 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
                 />
               )}
               {calc.isFullPackage ? (
-                /* A full package replaces the derived name outright: the four-part
-                   `G+VMax+S+FWrap` string is what the package icon stands for, so
-                   rendering both would just be the same fact twice. The ⓘ carries the
-                   breakdown the letters used to spell out.
-
-                   ⓘ sits INSIDE the pill rather than floating above it as in the mock:
-                   this row is a horizontal ScrollView with drag-reorder, and Android
-                   clips children drawn outside their parent's bounds, so an overhanging
-                   badge is a coin-flip on whether it renders at all. */
                 <View style={styles.packageRow}>
                   <Ionicons
                     name="cube"

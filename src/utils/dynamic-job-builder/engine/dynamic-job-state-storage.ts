@@ -105,26 +105,7 @@ function hydrateFieldValue(
   const existingValue = resolveExistingFieldValue(field, existing);
 
   if (isFieldLocked(field)) {
-    // In edit mode the rep can override a locked (calculator-driven) field. Keep
-    // their explicit entry instead of re-resolving it from the (often stale)
-    // dealCenterData snapshot, which would silently revert the change on save.
     if (preserveExisting && existingValue !== undefined) return existingValue;
-    // Pass the conditional default so a NOT-included product (a locked field whose
-    // `dependencies.defaultWhen` inclusion condition is not met) resolves to '' — and
-    // RETURN that '' so the field is emptied. Emptying is what makes an unbuilt
-    // product's combo match the prune's default (`buildComboGroupDefaultItem` seeds a
-    // locked optionList/toggle empty too), so the combo is dropped from storage.
-    // Treating '' as "blank" and falling through to the existing value instead kept the
-    // phantom value (e.g. LeafFilter Profile "Versa") and made the portal render an
-    // un-built product (LeafFilter Combination #1-4 though never built).
-    // Only a genuinely-unresolvable ref ('—') or undefined falls through — and that is
-    // handled below by `if (existingValue !== undefined) return existingValue`, so a
-    // real saved value is still never destroyed. Web parity: dynamic-job-state-
-    // storage.js hydrateFieldValue (`if (locked !== undefined && locked !== '—')`).
-    // A locked COLOUR whose paired quantity is empty resolves to '' for the same
-    // reason a not-included product does: seeding the portal's default colour onto
-    // an extra the rep never quoted writes a phantom colour into the saved build
-    // (and paints it back on reopen). See `locked-color-defaults.ts`.
     const colorSuppressed = isPairedQuantityEmpty(field, {
       fields: siblingFields,
       state: existing,
@@ -138,26 +119,6 @@ function hydrateFieldValue(
     if (locked !== undefined && locked !== '—') return locked;
   }
 
-  // Ticket 1063 — a `disabled` dropdown is answered by the CONFIG, exactly like a
-  // locked field, so it is resolved here for the same reason locked fields are:
-  // the value has to be in STATE from the moment the state is built, for EVERY
-  // combination, before anything renders.
-  //
-  // ⚠️ Doing this in the renderer is not equivalent, and that is the trap. A field
-  // whose value another field's rules depend on may never reach `DropdownField`
-  // at all — if it is also `locked` the renderer returns a `LockedField` before the
-  // type switch, so the seeding effect never runs — and even when it does run, it
-  // runs a render LATE. Meanwhile the dependent field's `optionVisibility` /
-  // `optionShowFields` rules have already read an empty state, ruled every option
-  // out, and removed themselves from the screen. That is the reported
-  // "Combination #2 shows LeafFilter Profile but no Gutter Opening Width": the
-  // profile DISPLAYED a value that state did not hold.
-  //
-  // Resolving at hydrate time fixes the cascade at its source and is independent of
-  // which branch ends up drawing the field.
-  //
-  // `preserveExisting` (deal-edit) still defers to the rep: there the field is
-  // unlocked and their entry wins.
   if (!isFieldLocked(field) && field?.disabled) {
     if (preserveExisting && existingValue !== undefined) return existingValue;
     const configAnswer = resolveLockedValue(field, dealCenterData, {
@@ -170,15 +131,6 @@ function hydrateFieldValue(
 
   if (existingValue !== undefined) return existingValue;
 
-  // Ticket 1063: the conditional gate must run on the NON-locked branch too.
-  // `buildDefaultItemFromFields` is condition-blind by design (it cannot import the
-  // dependency engine), so without this a dropdown carrying `defaultValue` +
-  // `dependencies.defaultWhen` gets its RAW default persisted even when the
-  // condition is not met — the same phantom-value class already fixed for locked
-  // LeafFilter colours, just reached through the other branch.
-  // `resolveConditionalDefault` returns `undefined` when the field has no
-  // `defaultWhen` at all, so an unconditioned default still falls through to the
-  // normal seeding path untouched.
   const conditionalDefault = resolveConditionalDefault(field, existing, { dealCenterData });
   if (conditionalDefault !== undefined) return conditionalDefault;
 
@@ -359,13 +311,7 @@ export function buildConfigStorageIndex(config: any) {
   const verticalFromStorage = new Map<string, string>();
   const tabToStorage = new Map<string, string>();
   const tabFromStorage = new Map<string, string>();
-  // Canonical ids + per-vertical tab slugs, used ONLY to recover a saved key whose
-  // exact form is no longer in the config (see `resolveVerticalIdFromStorage` /
-  // `resolveTabIdFromStorage`). Never used when the exact key still matches.
   const verticalIds = new Set<string>();
-  // Label slug -> the vertical ids using it. A LIST, not a single id: two products
-  // can carry the same name, and the recovery must be able to see that it is
-  // ambiguous rather than silently pick the first.
   const verticalIdsBySlug = new Map<string, string[]>();
   const tabIds = new Set<string>();
   const tabsByVertical = new Map<string, Array<{ id: string; slug: string }>>();
@@ -462,35 +408,17 @@ export function buildConfigStorageIndex(config: any) {
   };
 }
 
-/** The part of a storage key after the `__` marker (`vertical_1__gutters` → `gutters`). */
 function storageKeySlug(storageKey: string) {
   const marker = storageKey.indexOf('__');
   return marker === -1 ? '' : storageKey.slice(marker + 2);
 }
 
-/**
- * Recover a canonical id from a saved storage key whose exact form is no longer in
- * the config, by taking the part BEFORE the `__` marker and accepting it only if it
- * is a real id in the current config.
- *
- * Membership is checked against the config rather than a string prefix (`field_`,
- * `section_`, …) because vertical and tab ids carry no common prefix, and inventing
- * an id that isn't in the config would file the state under a key nothing reads —
- * the exact failure this recovery exists to prevent.
- */
 function recoverCanonicalId(storageKey: string, knownIds: Set<string>): string | undefined {
   if (knownIds.has(storageKey)) return storageKey; // legacy raw (pre-storage-key) save
   const canonical = storageKeySlug(storageKey) ? storageKey.slice(0, storageKey.indexOf('__')) : '';
   return canonical && knownIds.has(canonical) ? canonical : undefined;
 }
 
-/**
- * The saved vertical's own tab keys, reduced to the slug half of each key.
- *
- * A tab key is `buildTabKey(productId, productCategory)`, so its slug is the
- * CATEGORY - which survives a product being recreated, while the id half does not.
- * That is what makes it usable as a fingerprint for the product a build belongs to.
- */
 function savedTabSlugs(savedVerticalState: any): Set<string> {
   if (!savedVerticalState || typeof savedVerticalState !== 'object' || Array.isArray(savedVerticalState)) {
     return new Set();
@@ -503,7 +431,6 @@ function savedTabSlugs(savedVerticalState: any): Set<string> {
   return slugs;
 }
 
-/** How many of the saved tabs a config vertical actually has. */
 function tabOverlap(verticalId: string, saved: Set<string>, index: any): number {
   const tabs = index.tabsByVertical.get(verticalId) || [];
   const configSlugs = new Set(tabs.map((t: any) => t.slug).filter(Boolean));
@@ -514,37 +441,6 @@ function tabOverlap(verticalId: string, saved: Set<string>, index: any): number 
   return hits;
 }
 
-/**
- * Saved vertical key -> runtime vertical id.
- *
- * WARNING The stored key is `${vertical.id}__${slug(vertical.label)}`, so it embeds
- * the LABEL. Rename a product in the job-builder config and every previously-saved
- * build stops matching: the old key isn't in `verticalFromStorage`, and the
- * pre-existing `.get(key) || key` fallback then filed the whole vertical under the
- * raw storage key - which no renderer reads, so the restored build came up
- * completely blank while the data sat in memory under an unreadable id. Sections
- * and fields already recovered this way (`resolveCanonicalKeyFromStorage`);
- * verticals and tabs did not.
- *
- * WARNING The id recovery below is not enough on its own. A product REPLACED in the
- * portal comes back with a NEW id, and the saved build then references an id that is
- * no longer in the config at all - proven against two real leads on one company
- * whose Gutters/Roofline product was rebuilt: the newer lead restored, the older one
- * came up blank with its data intact under `6a45f1df...__gutters-roofline`. Hence
- * the two content-based recoveries after it.
- *
- * The order is cheapest-and-most-certain first:
- *   1. exact key            - the normal path, and the ONLY one a healthy lead takes
- *   2. the id before `__`   - covers a renamed product (id unchanged)
- *   3. the label slug       - covers a replaced product that kept its name
- *   4. the tab fingerprint  - covers a replaced product that was ALSO renamed
- *
- * WARNING Steps 3 and 4 accept a candidate only when it is UNAMBIGUOUS, and give up
- * otherwise. Restoring a build onto the wrong product is worse than restoring
- * nothing: the state is what the addendum diff calls the ORIGINAL, so a wrong match
- * would describe someone else's job on a document the customer signs. Leaving it
- * unresolved keeps today's behaviour - blank, data intact, recoverable later.
- */
 function resolveVerticalIdFromStorage(
   storageKey: string,
   index: any,
@@ -558,21 +454,12 @@ function resolveVerticalIdFromStorage(
 
   const saved = savedTabSlugs(savedVerticalState);
 
-  // 3. Same name, new id. Accepted only when exactly one product carries the name,
-  //    and - when the build has tabs to check against - only when that product
-  //    actually holds some of them. Two unrelated products can share a name; they
-  //    cannot also share their tabs.
   const slug = storageKeySlug(storageKey);
   const bySlug = slug ? index.verticalIdsBySlug.get(slug) || [] : [];
   if (bySlug.length === 1 && (!saved.size || tabOverlap(bySlug[0], saved, index) > 0)) {
     return bySlug[0];
   }
 
-  // 4. Renamed AND replaced: the tabs are the only handle left. The winner must beat
-  //    every other product outright and account for at least half of the saved tabs,
-  //    so a stray shared category can never carry a match on its own. Half rather
-  //    than all, because a tab deleted from the config since the sale should not
-  //    strand the remaining ones - they are still renderable.
   let winner: string | undefined;
   let best = 0;
   let tied = false;
@@ -594,17 +481,6 @@ function resolveVerticalIdFromStorage(
   return storageKey;
 }
 
-/**
- * Saved tab key → runtime tab id, resolved WITHIN its vertical.
- *
- * Two recoveries, because a tab key takes one of two shapes (see the index build):
- *  - `buildStorageKey(tabId, label)` — id-prefixed, so the id recovery finds it;
- *  - `buildTabKey(productId, productCategory)` — carries the PRODUCT id and the
- *    category slug, and **no tab id at all**. A changed `productId` is unrecoverable
- *    by prefix, so we match the category slug against the vertical's own tabs. Scoped
- *    to the resolved vertical so two products sharing a category name (both having a
- *    "Gutters" tab) can never cross-restore.
- */
 function resolveTabIdFromStorage(storageKey: string, verticalId: string, index: any): string {
   const exact = index.tabFromStorage.get(storageKey);
   if (exact) return exact;
@@ -744,12 +620,6 @@ function remapTabStateFromStorage(tabState: any, index: any) {
   return next;
 }
 
-// ─── Pruning: drop fabricated default/empty combinations before persistence ───
-// Faithful port of web `pruneHydratedStateForStorage` & helpers. Structure is
-// preserved (verticals/tabs/sectionState/simple sections) so the builder
-// re-hydrates editable empty rows on reload; only untouched combinations are
-// removed so they are never stored as phantom products.
-
 function gridObjectHasValue(grid: any): boolean {
   if (!grid || typeof grid !== 'object') return false;
   return Object.values(grid).some(
@@ -767,12 +637,6 @@ function normalizeComparableValue(value: any): any {
   return value;
 }
 
-/**
- * A field value counts as "entered" only when it is non-empty AND differs from
- * the field's default. Text descriptors left at their configured defaultValue are
- * treated as not-entered; grids count only when they hold a real measurement;
- * arrays count when non-empty.
- */
 function isEnteredFieldValue(value: any, defaultValue: any): boolean {
   if (Array.isArray(value)) return value.length > 0;
   if (value && typeof value === 'object') return gridObjectHasValue(value);
@@ -781,18 +645,6 @@ function isEnteredFieldValue(value: any, defaultValue: any): boolean {
   return normalized !== normalizeComparableValue(defaultValue);
 }
 
-/**
- * A combination is meaningful (the rep actually BUILT it) only when a NON-LOCKED field
- * holds a value that differs from BOTH the group default AND the field's own configured
- * default. Rationale (fixes an un-built product persisting/showing, e.g. LeafFilter):
- *  - LOCKED fields are auto-resolved from the calculator (dcField-driven), so they are
- *    never rep input and never mark a combo as built — a product the rep didn't build
- *    carries only these auto values (profile "Versa", gutter width 6"/7").
- *  - A value equal to the field's `defaultValue` is a config-seeded default (an
- *    optionList/toggle whose default the state carries), not user input.
- * (Stronger than web's `comboHasEnteredData`, which compares only against the group
- * default and so lets a locked/seeded-default combo survive — a bug on web too.)
- */
 function comboHasEnteredData(
   combo: any,
   defaults: any = {},
@@ -809,7 +661,6 @@ function comboHasEnteredData(
     if (field && isFieldLocked(field)) return false; // auto-resolved, not rep-built
     const value = combo[key] !== undefined ? combo[key] : colorValues[key];
     if (!isEnteredFieldValue(value, defaults[key])) return false;
-    // Equal to the field's own configured default → a seeded default, not user input.
     if (
       field &&
       field.defaultValue !== undefined &&

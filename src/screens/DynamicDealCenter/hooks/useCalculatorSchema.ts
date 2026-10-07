@@ -17,29 +17,9 @@ import {
   type PricingConfig,
 } from '../utils/pricing-config-util';
 
-/**
- * Loads the category-shaped calculator schema that drives the Dynamic Deal
- * Center calculator + rollout forms.
- *
- * Mirrors the web implementation (`src/api/calculator-form-schemas.js`):
- *   GET /calculator-form-schemas/deal-center  ->  { data: [entity, ...] }
- * Each entity carries `calculatorFormSchema.categories[]`, and every field has a
- * `price: { retail, cost, par }`. We normalize the payload exactly like the web
- * does and keep only "configured" schemas (those that actually contain fields).
- *
- * There is NO mock fallback: when the backend returns nothing configured, `schema`
- * is null and `isConfigured` is false — callers must surface a not-configured
- * state (or fall back to the normal builder) rather than render demo data.
- */
-
 const DEAL_CENTER_SCHEMAS_URL = '/calculator-form-schemas/deal-center';
 const PRICING_CONFIG_URL = '/company/v1/pricing-config/sales';
 
-// Web parity (`calculator-form-schemas.js` normalizePrice): resolve every tier to a
-// concrete number ONCE, at load — an explicit per-field value wins, otherwise it's
-// derived as `percentOf% of` another tier via the company pricing config. Without
-// this, a field priced only at retail returns cost/par = 0 and the rollout PAR/COST
-// tiles floor to $200.
 function normalizeField(field: any, pricingConfig: PricingConfig | null): CalculatorField {
   return { ...field, price: bakeFieldPrice(field?.price, pricingConfig) };
 }
@@ -70,7 +50,6 @@ function normalizeSchema(entity: any, pricingConfig: PricingConfig | null): Calc
   };
 }
 
-/** A schema is "configured" only if some category actually has fields. */
 export function isConfiguredDealCenterSchema(schema: CalculatorSchema): boolean {
   return (schema.categories || []).some((category) => {
     const directFields = category.directFields || category.fields || [];
@@ -84,17 +63,11 @@ interface UseCalculatorSchemaOptions {
 }
 
 interface UseCalculatorSchemaResult {
-  /** primary schema (first configured); null when nothing is configured */
   schema: CalculatorSchema | null;
-  /** all normalized schemas returned by the backend */
   schemas: CalculatorSchema[];
-  /** normalized schemas that actually have fields configured */
   configuredSchemas: CalculatorSchema[];
-  /** true when the schema came from the backend rather than the bundled template */
   isRemote: boolean;
-  /** true when the backend has at least one configured deal-center schema */
   isConfigured: boolean;
-  /** company pricing config (dynamic tiers / fees / derivation); null pre-config */
   pricingConfig: PricingConfig | null;
   isLoading: boolean;
 }
@@ -103,14 +76,9 @@ export function useCalculatorSchema(
   options: UseCalculatorSchemaOptions = {}
 ): UseCalculatorSchemaResult {
   const { enabled = true } = options;
-  // Company setup, not the rep's data — cached so the Deal Center still has products, fields and
-  // prices with no signal. Scoped by rep, so a second login on the same device cannot read the
-  // first company's schema.
   const { user } = useAuth();
   const userId = user?._id || user?.id;
 
-  // Company pricing config drives per-field tier derivation (par/cost from retail)
-  // and static fees. Fetched alongside the schemas and baked into the field prices.
   const { data: pricingConfig, isLoading: pricingLoading } = useQuery<PricingConfig | null>({
     queryKey: ['dealCenterPricingConfig'],
     queryFn: () =>
@@ -127,8 +95,6 @@ export function useCalculatorSchema(
     retry: 1,
   });
 
-  // Fetch the RAW schema entities; normalization (with derivation) happens in the
-  // memo below once the pricing config resolves, so blank tiers derive correctly.
   const { data: rawEntities, isLoading } = useQuery<any[]>({
     queryKey: ['dealCenterCalculatorSchemas'],
     queryFn: () =>

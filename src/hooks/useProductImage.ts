@@ -28,7 +28,6 @@ export const useProductImage = (defaultProductName = 'gutter') => {
           return;
         }
 
-        // Get secure link
         const secureResponse = await LeadService.getSecureUrls([
           {
             bucketName: product.bucketName,

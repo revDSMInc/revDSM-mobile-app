@@ -29,26 +29,9 @@ interface UseDynamicJobBuilderActivityLogArgs {
   flushSave?: () => void | Promise<void>;
   configId?: any;
   verticals?: any[];
-  /**
-   * Deal-EDIT (My Deals addendum) mode. When true the wizard's events log under
-   * `MY_DEAL_MODULE` (web `use-deal-edit-activity-log.js`) with an
-   * `isDealEdit`/`editSource` stamp, and the events web's deal-edit hook deliberately
-   * omits — `job_builder_opened`, `auto-populated`, `job_builder_completed` — are
-   * suppressed (the wrapper `DynamicDealEditScreen` fires `addendum_submitted` instead).
-   */
   isDealEdit?: boolean;
 }
 
-/**
- * RN port of web `use-dynamic-job-builder-activity-log.js`. Fires the full set of
- * dynamic job-builder analytics events with web-parity payloads:
- *   job_builder_opened (view) · step_viewed (view) · step_navigation (navigate) ·
- *   auto-populated (auto-populated) · field change (change, debounced 1s) ·
- *   job_builder_completed (submit).
- *
- * All payloads carry user_id/created_by (from useAuth), jobBuilderId, calculatorId,
- * calculatorType, result, configId, isDynamic — matching the web hook exactly.
- */
 export function useDynamicJobBuilderActivityLog({
   enabled = false,
   leadId,
@@ -65,14 +48,6 @@ export function useDynamicJobBuilderActivityLog({
 }: UseDynamicJobBuilderActivityLogArgs) {
   const { user } = useAuth();
 
-  // Deal-edit (My Deals) events log under `MY_DEAL_MODULE` with the DEAL_EDIT_META
-  // stamp; the regular build logs under `job_builder`. Memoized so the derived values
-  // stay stable across renders (they feed the callbacks' dependency arrays below).
-  //
-  // WARNING Both are IMPORTED, never re-typed here. This hook and the wizard wrapper
-  // (`utils/activity-log/my-deal-log.ts`) log the two halves of one edit, so a literal
-  // in either place would let them drift apart and split that edit across two
-  // timelines — which is exactly what a second spelling of the module name would do.
   const { moduleType, dealEditStamp } = useMemo(
     () => ({
       moduleType: isDealEdit ? MY_DEAL_MODULE : 'job_builder',
@@ -83,12 +58,6 @@ export function useDynamicJobBuilderActivityLog({
 
   const openedRef = useRef(false);
   const initDoneRef = useRef(false);
-  // One debounce timer PER field state-key (web parity). A single SHARED timer let a
-  // later field change clear an earlier one still pending, so only the LAST key of a
-  // multi-field diff survived — e.g. adding a combination and filling several fields
-  // (or editing two fields within 1 s) logged only the last one and silently DROPPED
-  // the rest, so previous-combination values were "cut" from the logs. Per-key timers
-  // debounce each field independently so no change clobbers another.
   const fieldLogTimersRef = useRef<Map<string, any>>(new Map());
   const prevTabValuesRef = useRef<Record<string, any>>({});
   const prevTabKeyRef = useRef('');
@@ -98,7 +67,6 @@ export function useDynamicJobBuilderActivityLog({
     dealCenterDataRef.current = dealCenterData;
   }, [dealCenterData]);
 
-  // Clear every pending per-field debounce timer (web parity `clearPendingFieldLogs`).
   const clearPendingFieldLogs = useCallback(() => {
     fieldLogTimersRef.current.forEach((timerId) => clearTimeout(timerId));
     fieldLogTimersRef.current.clear();
@@ -114,13 +82,9 @@ export function useDynamicJobBuilderActivityLog({
     }
   }, [enabled, clearPendingFieldLogs]);
 
-  // Drop any still-pending field-log timers on unmount so they don't fire after the
-  // screen is gone (and so nothing leaks across a remount).
   useEffect(() => () => clearPendingFieldLogs(), [clearPendingFieldLogs]);
 
   const logOpened = useCallback(() => {
-    // Web's deal-edit hook deliberately emits NO "opened" event (the first
-    // `step_viewed` marks the session start), so skip it in edit mode.
     if (!enabled || !user?._id || !leadId || openedRef.current || isDealEdit) return;
     openedRef.current = true;
 
@@ -175,10 +139,6 @@ export function useDynamicJobBuilderActivityLog({
   const logNavigate = useCallback(
     ({ fromTab, toTab, fromStep, toStep, direction, verticalId }: any) => {
       if (!enabled || !user?._id || !leadId || !toTab) return;
-      // WARNING Suppressed in the deal-edit wizard, and ONLY there. A row per tab
-      // move was reported as noise on the My Deals timeline, and the portal capture
-      // holds no `navigate` rows for that module at all - `step_viewed` already
-      // marks each tab the rep opens. The regular job_builder build still logs it.
       if (isDealEdit) return;
 
       const vertical = resolveVerticalFromConfig(verticals, verticalId);
@@ -210,9 +170,6 @@ export function useDynamicJobBuilderActivityLog({
   const logAutoPopulatedForTab = useCallback(
     async ({ verticalId, tab, isTabLogged }: any) => {
       if (!enabled || !user?._id || !leadId || !tab || !verticalId) return false;
-      // Web's deal-edit hook has no auto-populate pass — nothing is auto-populated when
-      // editing an already-built job, so it would only re-log the original build's
-      // locked fields. Skip it in edit mode.
       if (isDealEdit) return false;
       if (!initDoneRef.current) return false;
 
@@ -269,11 +226,6 @@ export function useDynamicJobBuilderActivityLog({
       if (!enabled || !user?._id || !leadId || !stateKey || !context || context.skip) return;
       if (serializeValue(oldValue) === serializeValue(newValue)) return;
 
-      // Debounce ONLY the same stateKey — a later change to THIS field re-arms this
-      // field's own timer; changes to OTHER fields keep their independent timers, so a
-      // multi-field diff (adding a combination, or editing several fields within 1 s)
-      // logs EVERY field instead of only the last (web parity — the single-timer version
-      // dropped the rest).
       const timers = fieldLogTimersRef.current;
       const pending = timers.get(stateKey);
       if (pending) clearTimeout(pending);
@@ -360,10 +312,6 @@ export function useDynamicJobBuilderActivityLog({
 
   const logSubmit = useCallback(
     (jobState: any) => {
-      // In edit mode the embedded builder's "complete" is only the Job-Build step
-      // saving its products — NOT the addendum submission. Web's deal-edit hook emits
-      // no `job_builder_completed`; the wrapper fires `addendum_submitted` when the
-      // draft is actually sent. Suppress it here.
       if (!enabled || !user?._id || !leadId || isDealEdit) return;
 
       const verticalSummaries: Record<string, any> = {};

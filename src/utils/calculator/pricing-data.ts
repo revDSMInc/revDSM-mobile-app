@@ -1,4 +1,3 @@
-// Pricing data constants
 export const pricing = {
   gutters: {
     '5_inch_all_stories': 23.0,
@@ -43,7 +42,6 @@ export const pricing = {
     groundSpout: 50.0,
     extraLabor: 80.0,
     replaceCorner: 100.0,
-    // Lighting
     lighting1stStory: 38.0,
     lighting2ndStory: 40.0,
     lighting3rdStory: 42.0,
@@ -196,7 +194,6 @@ export const extrasList = [
     icon: 'solar:settings-bold-duotone',
     category: 'Additional Services',
   },
-  // Lighting (retail prices — used for PAR/RETAIL tier calculations)
   {
     id: 'lighting1stStory',
     label: 'Lighting 1st Story',
@@ -386,7 +383,6 @@ export const extrasList50 = [
     icon: 'solar:settings-bold-duotone',
     category: 'Gutters',
   },
-  // Lighting (cost prices — used for COST tier calculation)
   {
     id: 'lighting1stStory',
     label: 'Lighting 1st Story',

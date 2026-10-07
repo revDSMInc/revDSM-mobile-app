@@ -856,7 +856,6 @@ export const verticals: Record<string, VerticalCategory> = {
   },
 };
 
-// Derive a flat list of all vertical item definitions with their cost and retail prices
 export const getAllVerticalItems = (): VerticalItem[] => {
   const items: VerticalItem[] = [];
   Object.entries(verticals).forEach(([verticalName, vertical]) => {
@@ -875,24 +874,20 @@ export const getAllVerticalItems = (): VerticalItem[] => {
   return items;
 };
 
-// Get all unique item IDs from the verticals data
 export const getVerticalItemIds = (): string[] => getAllVerticalItems().map((i) => i.id);
 
-// Get the cost price for a given item ID
 export const getVerticalItemCost = (id: string): number => {
   const items = getAllVerticalItems();
   const found = items.find((i) => i.id === id);
   return found ? found.cost : 0;
 };
 
-// Get the retail price for a given item ID
 export const getVerticalItemRetail = (id: string): number => {
   const items = getAllVerticalItems();
   const found = items.find((i) => i.id === id);
   return found ? found.retail : 0;
 };
 
-// Get item definition by ID
 export const getVerticalItemDef = (id: string): VerticalItem | null => {
   const items = getAllVerticalItems();
   return items.find((i) => i.id === id) || null;

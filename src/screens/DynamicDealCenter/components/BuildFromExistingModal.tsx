@@ -4,19 +4,6 @@ import { BlurView } from '@react-native-community/blur';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
 
-/**
- * Port of web `deal-center/components/build-from-existing-dialog.js`.
- *
- * Shown on a REHASH when the rep opens the job builder for a calculator that already
- * has a saved build. Reusing the prior scope/measurements/specs is the helpful default,
- * but it must be the rep's explicit choice — never automatic: a rehash is a second
- * attempt at the house, and silently re-applying the original build would hide from the
- * rep that they are quoting last visit's scope.
- *
- * Deliberately NOT dismissible by tapping outside (web renders the Dialog with no
- * `onClose`) — both answers open the builder, so there is no third outcome to fall
- * back to, and a stray tap that closed it would strand the rep on the result step.
- */
 export function BuildFromExistingModal({
   visible,
   onReuse,
@@ -79,12 +66,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 32,
     paddingBottom: 20,
-    // The card must read as a raised surface, not as a lighter patch of the
-    // background. Border AND shadow, because neither carries both platforms: the
-    // hairline is what defines the edge on Android where elevation renders as a soft
-    // ambient wash, and the shadow is what lifts it on iOS. No `overflow: 'hidden'`
-    // here — iOS drops a shadow on any view that clips (see the inspection-card note
-    // in CLAUDE.md), and nothing inside needs clipping.
     borderWidth: 1,
     borderColor: '#DFE3E8',
     shadowColor: '#000000',

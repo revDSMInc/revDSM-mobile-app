@@ -2,22 +2,12 @@ import React from 'react';
 import { View, Text, Image, TouchableOpacity } from 'react-native';
 import { AgreementBlockProps } from './types';
 
-// Web uses a cursive font for the typed (non-canvas) signature. RN has no bundled
-// cursive font here, so we approximate with italic styling.
 const SIGNATURE_TEXT_STYLE = {
   fontSize: 20,
   fontStyle: 'italic' as const,
   color: '#2c3e50',
 };
 
-// Web renders each signature column as a table cell with `verticalAlign: 'bottom'`,
-// so the Print Name / Signature / Date underlines and their captions line up along a
-// common baseline even though the cells hold different-height content (the Print Name
-// cell also carries a top label, the Signature cell a taller sign box). RN flex cells
-// default to top-alignment, which dropped the labelled Print Name column below the
-// others. `justifyContent: 'flex-end'` bottom-anchors each cell to match web — every
-// cell ends in its caption (same font) with the underline a fixed 5px above it, so the
-// lines align regardless of the box heights.
 const signatureCell = {
   padding: 8,
   alignItems: 'center' as const,
@@ -33,8 +23,6 @@ interface SignatureRowProps {
   onRequestSignature?: () => void;
 }
 
-// Faithful port of the web `SignatureRow` sub-component.
-// Three cells: Print Name (40%), Signature (40%), Date (20%).
 function SignatureRow({
   label,
   printedName,
@@ -144,9 +132,6 @@ function SignatureRow({
   );
 }
 
-// Faithful port of web `blocks/signature-section-block.js`.
-// Contractor / Buyer / Co-Buyer signature rows + optional initials label.
-// Both contractor and buyer rows share the same captured buyer signature (as in web).
 export default function SignatureSectionBlock({
   block,
   customerDetails,

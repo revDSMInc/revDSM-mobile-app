@@ -1,16 +1,3 @@
-/**
- * Zone Canvasser — pure zone rules, ported from web.
- *
- * Web refs (mhalt-revDSM-sales-frontend):
- *  - src/utils/zone-helpers.js                              → payload build + validation
- *  - src/sections/map/zone-canvasser/zone-stats-popup.js    → getZoneStats / canDelete / canArchive
- *  - src/sections/map/zone-canvasser/archived-zones-panel.js → zoneLabel / knockedCount
- *  - src/sections/map/zone-canvasser/zone-canvasser-map.js  → create/delete/archive/unarchive handling
- *
- * Kept free of React Native so it is testable under jest — the hook and the widgets
- * that consume it all pull in RN / Mapbox and cannot be loaded there.
- */
-
 export type LatLngTuple = [number, number];
 
 export type ZoneBuilding = {
@@ -39,28 +26,23 @@ export type ZonePayload = {
 
 export const DEFAULT_ZONE_COLOR = '#99FFB1';
 
-/** Web `createZone` error the backend returns when a zone holds no buildings. */
 export const NO_BUILDING_API_MESSAGE = 'Cannot create revzone without a building';
 
-/** Timestamp + 3-digit random suffix (web `generateZoneId`). */
 export function generateZoneId(now: number = Date.now(), random: number = Math.random()): string {
   const suffix = Math.floor(random * 1000);
   return `${now}${suffix.toString().padStart(3, '0')}`;
 }
 
-/** Web `generateZoneName`. */
 export function generateZoneName(zoneId: string): string {
   return `REV-${zoneId}`;
 }
 
-/** Web `generateBuildingId` — only used for a building the Overpass read gave no id. */
 export function generateBuildingId(zoneId: string, index: number): number {
   const baseId = 800400000;
   const zoneHash = parseInt(zoneId.slice(-3), 10) || 0;
   return baseId + zoneHash * 100 + index + 1;
 }
 
-/** Web `processBuildingsWithIds`. */
 export function processBuildingsWithIds(buildings: ZoneBuilding[], zoneId: string) {
   return buildings.map((building, index) => ({
     ...building,
@@ -68,11 +50,6 @@ export function processBuildingsWithIds(buildings: ZoneBuilding[], zoneId: strin
   }));
 }
 
-/**
- * The drawn ring as web's `handleZoneCreated` hands it on: `[lat, lng]` pairs with the
- * duplicate CLOSING vertex dropped. The rectangle tool closes its own loop, so without
- * this a rectangle would reach the API as five corners where web sends four.
- */
 export function toZoneCoordinates(
   points: { latitude: number; longitude: number }[]
 ): LatLngTuple[] {
@@ -85,7 +62,6 @@ export function toZoneCoordinates(
   return coordinates;
 }
 
-/** Web `createZonePayload`. `coordinates` are `[lat, lng]`; geoJSON is `[lng, lat]` and closed. */
 export function createZonePayload({
   coordinates,
   buildingDetails = [],
@@ -135,7 +111,6 @@ export function createZonePayload({
   };
 }
 
-/** Web `validateZonePayload`. */
 export function validateZonePayload(payload: Partial<ZonePayload> | null | undefined) {
   const errors: string[] = [];
   if (!payload?.zoneId) errors.push('Zone ID is required');
@@ -149,7 +124,6 @@ export function validateZonePayload(payload: Partial<ZonePayload> | null | undef
   return { isValid: errors.length === 0, errors };
 }
 
-/** Web `fetchBuildingsInPolygon`'s Overpass element → building mapping + residential filter. */
 export function overpassElementsToHouses(elements: any[], idSeed: string | number = Date.now()) {
   return (Array.isArray(elements) ? elements : [])
     .filter((el) => el?.center)
@@ -162,7 +136,6 @@ export function overpassElementsToHouses(elements: any[], idSeed: string | numbe
     .filter((b) => ['house', 'yes', 'detached', 'residential'].includes(b.type));
 }
 
-/** Web `handleZoneCreated`'s catch block, message for message. */
 export function resolveZoneCreateError(apiMessage?: string | null): string {
   if (apiMessage === NO_BUILDING_API_MESSAGE) {
     return 'No building data available for this area. Failed to create zone.';
@@ -171,16 +144,11 @@ export function resolveZoneCreateError(apiMessage?: string | null): string {
   return 'Failed to create zone - unknown error';
 }
 
-/** The id the sales-rep zone routes take. Web sends `zone.zoneId` (unarchive falls back to `_id`). */
 export function zoneApiId(zone: any): string | undefined {
   const id = zone?.zoneId || zone?._id;
   return id != null ? String(id) : undefined;
 }
 
-/**
- * Delete / archive answer `code: 200`; the archive route documents `success: true`.
- * Web's unarchive handler accepts either, so a shape difference can't swallow a result.
- */
 export function isZoneActionSuccess(response: any): boolean {
   return response?.success === true || response?.code === 200;
 }
@@ -191,18 +159,15 @@ function zoneLeads(zone: any): any[] {
   return [];
 }
 
-/** Web archived-zones-panel `knockedCount`. */
 export function zoneKnockedCount(zone: any): number {
   return zoneLeads(zone).length;
 }
 
-/** Web archived-zones-panel `zoneLabel` — long REV ids are elided to their last 4 digits. */
 export function zoneLabel(zone: any): string {
   const name = zone?.zoneName || zone?.zoneId || zone?._id || 'Zone';
   return String(name).replace(/^(REV-)(\d+)(\d{4})$/, '$1...$3');
 }
 
-/** Web zone-stats-popup `getZoneStats`, plus the two action gates derived from it. */
 export function getZoneStats(zone: any) {
   const totalHomes = zone?.buildingDetails?.length || 0;
   const allLeads = zoneLeads(zone);
@@ -222,8 +187,6 @@ export function getZoneStats(zone: any) {
     notInterested: count('not_interested'),
     noSoliciting: count('no_soliciting'),
     percentage: totalHomes > 0 ? Math.round((homesKnocked / totalHomes) * 100) : 0,
-    // A zone nobody has knocked can be deleted outright; one with knock history is
-    // archived instead, so that history is preserved. Never both, never neither.
     canDelete: homesKnocked === 0,
     canArchive: homesKnocked > 0,
   };

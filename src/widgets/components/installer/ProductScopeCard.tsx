@@ -6,32 +6,16 @@ import { productIcon } from '../../../constants/installer';
 import { rowText } from '../../../utils/installer-product-scope';
 import type { ScopeFieldRow, ScopeSection, SoldProduct } from '../../../config/types/installer';
 
-/**
- * Line height of a spec line — also the height of a bullet's centring box.
- *
- * 20 on the 14 px spec line. The dot centres itself in a box exactly this tall, so it
- * sits on the middle of the first line however the text wraps; a bare margin guess
- * drifts as soon as the font size does.
- */
 const LINE_HEIGHT = 20;
 
-/**
- * Width of the label column in a spec row.
- *
- * The rows are read as a table — every label on one edge, every value on another — so
- * the column is a share of the card rather than the widest label: a percentage keeps
- * the values aligned across combinations that carry different fields.
- */
 const LABEL_WIDTH = '46%';
 
-/** Alpha suffixes on the product accent. One place, so the tints stay a family. */
 const CARD_TINT = '10'; // ~6%  — the card itself
 const CARD_BORDER = '59'; // ~35% — soft edge, as on the sales card
 const BLOCK_TINT = '1F'; // ~12% — a combination block, one step deeper than the card
 const RULE = '33'; // ~20% — the rule under the product name
 
 function SpecRow({ row, color, muted }: { row: ScopeFieldRow; color: string; muted: string }) {
-  // No label — the value is the whole of what the field says, so it spans the row.
   if (!row.label) {
     return (
       <Text className="text-sm font-bold py-0.5" style={{ color, lineHeight: LINE_HEIGHT }}>
@@ -58,7 +42,6 @@ function SpecRow({ row, color, muted }: { row: ScopeFieldRow; color: string; mut
   );
 }
 
-/** A tinted block — one combination, or a titled group of loose fields ("Extras"). */
 function ScopeBlock({
   title,
   headline,
@@ -99,7 +82,6 @@ function ScopeBlock({
   );
 }
 
-/** Loose fields with nothing to title them — the flat list, as bullets. */
 function BulletList({
   rows,
   accent,
@@ -147,14 +129,6 @@ function SectionBody({
 }) {
   const hasCombos = section.combinations.length > 0;
 
-  /*
-   * Where the section's own name goes.
-   *
-   * A section that holds COMBINATIONS is a product within the product ("Vinyl Soffit",
-   * "Porch Ceiling SqFT"), so its name is a heading over the blocks. A section that
-   * holds only loose fields IS one block ("Extras"), so its name titles that block —
-   * printing it in both places would say it twice.
-   */
   const heading = hasCombos ? section.label : '';
   const looseTitle = hasCombos ? '' : section.label;
 
@@ -188,8 +162,6 @@ function SectionBody({
             muted={muted}
           />
         ) : (
-          // Nothing names them and nothing else is in the section — the flat list is
-          // the honest rendering, and it is what a "Additional Services" card is.
           <BulletList rows={section.rows} accent={accent} color={color} />
         ))}
     </View>
@@ -198,27 +170,13 @@ function SectionBody({
 
 interface Props {
   product: SoldProduct;
-  /** Resolved accent — callers pass `productColor(idx, product.color, product.name)`. */
   accent: string;
-  /** Verification controls, rendered under the spec. Read-only surfaces pass none. */
   children?: React.ReactNode;
 }
 
-/**
- * One sold product, as the installer reads it: name, then the rep's build laid out the
- * way the sales summary lays it out — a heading per section, a tinted block per
- * combination, and every measurement beside the label it was entered under.
- *
- * Shared by the Job Reference list and Verify Job Scope deliberately. The two drew
- * byte-identical spec lists before this and had already started to drift (two copies of
- * the same bullet geometry, two different title weights); one component is what stops
- * the same product looking like two different jobs on two screens.
- */
 export function ProductScopeCard({ product, accent, children }: Props) {
   const { colors } = useTheme();
   const sections = product.sections ?? [];
-  // The flat form is the fallback for a payload whose structure came out empty — a
-  // shape we have not seen still shows what was sold rather than an empty card.
   const fallback = sections.length === 0 ? product.lines : [];
 
   return (

@@ -12,14 +12,6 @@ import type { ContractRefundSummary } from '../../../utils/contract-refund-summa
 
 interface ContractDetailsCardProps {
   lead: any;
-  /**
-   * The refund figures, or `null` when this lead has nothing to say — see
-   * `buildContractRefundSummary`.
-   *
-   * ⚠️ Passed in rather than read here: `JobDocsSection` chains the approvals and
-   * funding reads so this card and the approvals card above it share ONE request and
-   * cannot disagree about a lead.
-   */
   refundSummary?: ContractRefundSummary | null;
   outcomeData: any;
   leadDraft: any;
@@ -64,26 +56,8 @@ export const ContractDetailsCard = ({
 }: ContractDetailsCardProps) => {
   const navigation = useNavigation<any>();
 
-  /**
-   * Does the refund block have the WHOLE story — the price before, what went back, and
-   * the price now?
-   *
-   * ⚠️ It needs `before`, and only then does it replace the stock Original Contract
-   * Price row. Without it the block could print only "Contract After Refund", which on
-   * this card equals the row above it — the same number twice under two labels, which is
-   * the shape of the duplicate that was reported in the first place. So when the
-   * original cannot be recovered (`resolveBeforePrice` trusted no candidate) the stock
-   * row stays and the refund rows are not drawn at all.
-   */
   const showRefundBlock = !!refundSummary?.accepted && refundSummary.before !== null;
 
-  // Web `sections/job/components/contract-details.js` splits these two cases, and mobile
-  // used to collapse both into `return null`:
-  //   !isResulted  → nothing at all (a scheduled / self-gen lead has no outcome yet)
-  //   !hasContract → the EMPTY CARD below. The lead WAS resulted, just not as a
-  //                  sale/demo — Reset, No Demo, Not Hit, Cancelled — so there are
-  //                  genuinely no contract details, and saying so beats a silent gap
-  //                  where the card was. This is what the rep sees after a Reset.
   if (!isResulted) return null;
 
   if (!hasContract) {
@@ -103,17 +77,6 @@ export const ContractDetailsCard = ({
   const statusStr = (lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '');
   const isDemo = statusStr === 'demo' || statusStr === 'demonosale';
 
-  // This header now reports ONE thing: a pending `leadDraft` — the draft an
-  // EditContractDetails save writes (`upsertLeadDraft` has exactly one caller). It
-  // keeps its `showStatus` gate, which is that flow's own opt-in.
-  //
-  // ⚠️ A pending ADDENDUM deliberately no longer paints this header amber. It has its
-  // own section now — `AddendumRecipientCard`, rendered as a SEPARATE card above this
-  // one by `JobDocsSection`, carrying web `deal-banners.js`'s
-  // "PENDING ADDENDUM - AWAITING CUSTOMER SIGNATURE" bar plus the recipient and its
-  // Resend / Edit Phone / Edit Email controls. So while an addendum is out this card
-  // reads GREEN `✓ … - LEAD RESULTED` and the amber status sits above it, which is the
-  // requested design (and web's own — see the note in `DealBanners`).
   const draftStatus = String(leadDraft?.status || '').toLowerCase();
   const showLeadDraftPending =
     draftStatus === 'pending' && (leadDraft?.showStatus === true || leadDraft?.showStatus === 'true');

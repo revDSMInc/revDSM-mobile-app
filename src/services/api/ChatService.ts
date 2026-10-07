@@ -1,21 +1,10 @@
-/**
- * ChatService — REST + socket operations for the chat module.
- *
- * The socket lifecycle is now managed by SocketManager (singleton).
- * ChatService only handles REST calls and wraps SocketManager.emit()
- * for chat-specific events.
- */
-
 import api from './index';
 import SocketManager from '../SocketManager';
 import RNFS from 'react-native-fs';
 import { Platform } from 'react-native';
 import { readChatId } from '../../utils/chat-response';
+import { isHttpStatus } from '../../utils/network-error';
 
-// Bucket to sign against when a chat file carries no bucketName of its own.
-// Mirrors the web ChatModule, which falls back to 'np-revdsm-staging'. The env
-// bucket (mhalt-revdsm) is the WRONG bucket for chat uploads on this backend,
-// which is why signed URLs came back empty and images reloaded blank.
 const CHAT_FALLBACK_BUCKET = 'np-revdsm-staging';
 
 type FileRef = { filePath: string; bucketName?: string };
@@ -26,42 +15,44 @@ class ChatService {
 
   // ─── REST ───────────────────────────────────────────────────────────────────
 
+  /**
+   * The lead's thread id, creating the thread if the server says there isn't one.
+   *
+   * ⚠️ **404 is a normal answer here, not an error** — it is what the web app keys off too
+   * (`GET /chat/v1/lead/{id}` → 404 → `POST /chat/v1/create`). A thread is opened by the
+   * start-appointment flow; any lead where that never ran — created offline, imported, or
+   * started before chat existed — has no thread until someone asks for one.
+   *
+   * ⚠️ The status MUST come from `httpStatusOf`. This used to read `err.response?.status`, but
+   * `normalizeApiError` rejects with a PLAIN OBJECT that has no `.response`, so the comparison was
+   * `undefined === 404` and the fallback below never ran once. The visible symptom was a chat
+   * screen that opened empty and could not be used, on exactly those leads.
+   */
   async getChatByLeadId(leadId: string): Promise<string | null> {
     try {
       const res = await api.get<any>(`/chat/v1/lead/${leadId}`);
-      return readChatId(res.data);
+      const existing = readChatId(res.data);
+      // A 200 with no id in it means the same thing as a 404: there is no thread yet.
+      return existing || (await this.createChatForLead(leadId).catch(() => null));
     } catch (err: any) {
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-      console.log('[ChatDiag] GET lead/%s failed status=%s', leadId, err?.response?.status);
-      // ⚠️ 404 is the EXPECTED answer for a lead created offline: the thread is opened by the
-      // start-appointment flow, which never ran at the door. Creating here is the backstop.
-      if (err.response?.status === 404) {
-        const id = await this.createChatForLead(leadId);
-        // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-        console.log('[ChatDiag] after create -> id=%s', id);
-        return id;
+      if (isHttpStatus(err, 404)) {
+        // ⚠️ Never let a failed create throw out of here. Every caller treats this as "open the
+        // chat", and a rejection would take down the screen rather than degrade it.
+        return await this.createChatForLead(leadId).catch(() => null);
       }
       return null;
     }
   }
 
-  /** Returns the new thread's id, or null if the server answered without one. */
+  /**
+   * Opens the lead's thread. Returns its id, or null if the server answered without one.
+   *
+   * Safe to call more than once: the backend answers an existing thread rather than duplicating
+   * it, which is what lets `getChatByLeadId` fall back to this unconditionally.
+   */
   async createChatForLead(leadId: string): Promise<string | null> {
-    try {
-      const res = await api.post<any>('/chat/v1/create', { leadId });
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. The POST appears to run and the
-      // thread still does not exist afterwards, so we need its actual answer.
-      console.log('[ChatDiag] POST create leadId=%s status=%s body=%s',
-        leadId, res?.status, JSON.stringify(res?.data));
-      return readChatId(res.data);
-    } catch (e: any) {
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. This path was SILENT: the only
-      // caller `.catch`es it to a console.warn, so a REFUSED create looked identical to
-      // one that never ran.
-      console.log('[ChatDiag] POST create leadId=%s FAILED status=%s body=%s',
-        leadId, e?.response?.status, JSON.stringify(e?.response?.data));
-      throw e;
-    }
+    const res = await api.post<any>('/chat/v1/create', { leadId });
+    return readChatId(res.data);
   }
 
   async getMessages(chatId: string, limit = 20): Promise<any[]> {
@@ -84,7 +75,6 @@ class ChatService {
     const links: Record<string, string> = {};
     const toFetch: FileRef[] = [];
 
-    // 1. Check Memory Cache First (dedupe by filePath)
     const seen = new Set<string>();
     refs.forEach((r) => {
       const ref: FileRef = typeof r === 'string' ? { filePath: r } : r;
@@ -100,8 +90,6 @@ class ChatService {
 
     if (toFetch.length === 0) return links;
 
-    // 2. Fetch from backend for remaining paths. Sign against each file's OWN
-    // bucket (falling back to the chat bucket) — the env bucket is wrong here.
     const payload = {
       filePaths: toFetch.map((r) => ({
         bucketName: r.bucketName || CHAT_FALLBACK_BUCKET,
@@ -117,8 +105,6 @@ class ChatService {
         rawData.forEach((item: any, idx: number) => {
           const val = item?.secureUrl || item?.url;
           if (!val) return;
-          // Prefer the echoed path; fall back to positional alignment with the
-          // request (web parity — the endpoint may not echo filePath back).
           const key = item?.filePath || item?.path || toFetch[idx]?.filePath;
           if (key) {
             links[key] = val;
@@ -139,13 +125,6 @@ class ChatService {
     return links;
   }
 
-  /**
-   * Web parity: `getSecureLinks({ filePaths })` — POST the file paths and return the
-   * raw response array in REQUEST ORDER. The caller aligns each entry positionally to
-   * its source file and keys the signed URL by the file's stable id. This avoids the
-   * S3-key round-trip problem (appointment-photo keys have spaces/em-dashes and often
-   * an empty bucket, so object-key lookups miss and the tile shows a placeholder).
-   */
   async getSecureLinks(
     refs: FileRef[]
   ): Promise<Array<{ secureUrl?: string; url?: string } | null>> {
@@ -203,10 +182,6 @@ class ChatService {
       .filter(Boolean);
   }
 
-  // Like extractFilePaths, but carries each file's own bucketName so signed URLs
-  // are requested against the correct S3 bucket (web parity). Top-level media
-  // fields (voice/image on the message itself) have no per-file bucket and fall
-  // back to the chat bucket in getSecureFileUrls.
   extractFileRefs(messages: any[]): FileRef[] {
     const refs: FileRef[] = [];
     const push = (p: any, bucketName?: string) => {
@@ -252,7 +227,6 @@ class ChatService {
   }
 
   normalizeMessage(raw: any): any {
-    // 1. Robust extraction: handle nested payloads ONLY if they are actual objects
     let m = raw || {};
     if (raw?.data && typeof raw.data === 'object') {
       m = raw.data.message || raw.data;
@@ -283,7 +257,6 @@ class ChatService {
         if (m.messageType === 'voice' || m.contentType === 'audio') {
           console.log('[ChatService] Normalizing Voice Note Raw Payload:', JSON.stringify(m, null, 2));
         }
-        // Server uses `message` field; GiftedChat uses `text`
         const raw = m.text || m.message || m.content || m.body || '';
         if (typeof raw === 'string') return raw;
         if (raw && typeof raw === 'object') return raw.body || raw.message || raw.text || '';
@@ -296,11 +269,9 @@ class ChatService {
         avatar: (() => {
           const pic = sender.profilePicture || sender.image;
           if (!pic || typeof pic !== 'object') return pic || undefined;
-          // profilePicture is an object { bucketName, filePath } - return undefined for now; URL fetched separately
           return undefined;
         })(),
       },
-      // Normalize files — server uses fileName/fileType/filePath/mimeType
       files: (m.files || m.messageFiles || []).map((f: any) => ({
         ...f,
         id: f._id || f.id,
@@ -308,7 +279,6 @@ class ChatService {
         type: f.fileType || f.mimeType || f.type || f.contentType || 'application/octet-stream',
         mimeType: f.mimeType || f.fileType || f.type || 'application/octet-stream',
         size: this.normalizeFileSize(f),
-        // filePath is the S3 key; url will be fetched securely separately
         url: f.url || f.path || f.s3url || f.preview || undefined,
         filePath: f.filePath || f.path || undefined,
         bucketName: f.bucketName || undefined,
@@ -319,7 +289,6 @@ class ChatService {
       editHistory: m.editHistory || [],
       received: !!m.seenBy?.length,
       sent: true,
-      // Preserve reply linkage from server
       replyTo: m.replyTo || null,
       replyToDetails: (() => {
         const rd = m.replyToDetails;
@@ -381,7 +350,6 @@ class ChatService {
         !!m.voiceUrl || !!m.audioUrl || !!m.audio || !!m.voice || false,
     };
 
-    // Verbose logging for debug
     const type = result.image
       ? 'IMAGE'
       : result.video
@@ -403,8 +371,6 @@ class ChatService {
   async sendFileMessage(chatId: string, file: any, message = '', replyTo?: string): Promise<any> {
     let resolvedUri = file?.uri ?? '';
 
-    // Android: copy content:// URIs to a local cache file so FormData can read them.
-    // content:// URIs are not supported by the native networking stack directly.
     if (Platform.OS === 'android' && resolvedUri.startsWith('content://')) {
       try {
         const ext = file.name?.split('.').pop() || 'file';
@@ -416,8 +382,6 @@ class ChatService {
       }
     }
 
-    // Normalize local file paths with the file:// prefix on both Android and iOS so that
-    // React Native's FormData engine can correctly read the file data.
     if (resolvedUri && !resolvedUri.startsWith('file://') && !resolvedUri.startsWith('content://') && !resolvedUri.startsWith('http')) {
       resolvedUri = `file://${resolvedUri}`;
     }
@@ -431,23 +395,10 @@ class ChatService {
       type: file.type || 'application/octet-stream',
     } as any);
 
-    // Do NOT set Content-Type — let React Native's networking layer append the
-    // multipart boundary. Setting `multipart/form-data` here (as a merge did) sends it
-    // WITHOUT the boundary, so the backend can't parse the body and the image never
-    // uploads. This is the `main`-branch behavior that works; the boundary-less header
-    // was the regression. (The web sets the header, but browsers rewrite it with the
-    // boundary for FormData — React Native does not.)
-    // Returned, not discarded: the response carries the STORED file rows (`filePath`,
-    // `bucketName`), which is the only place the S3 path exists for an upload — the caller
-    // needs it for the activity log. See `buildLogFiles` in `useChatLogic`.
     const res = await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
     return res?.data?.data?.message || res?.data?.message || res?.data || null;
   }
 
-  // Send MULTIPLE local files in ONE message (multipart) — so a batch of gallery
-  // photos sent together lands as a single message and renders as a grid, just
-  // like appointment photos. The backend accepts multiple `files` parts (same
-  // multer-array pattern the offline image upload uses).
   async sendFilesMessage(
     chatId: string,
     files: Array<{ uri?: string; name?: string; fileName?: string; type?: string }>,
@@ -491,24 +442,11 @@ class ChatService {
       } as any);
     }
 
-    // Do NOT set Content-Type — let React Native's networking layer append the
-    // multipart boundary (same as sendFileMessage / the working `main` branch). A
-    // boundary-less `multipart/form-data` header makes the backend fail to parse the
-    // upload, so the image never sends.
-    // Returned, not discarded: the response carries the STORED file rows (`filePath`,
-    // `bucketName`), which is the only place the S3 path exists for an upload — the caller
-    // needs it for the activity log. See `buildLogFiles` in `useChatLogic`.
     const res = await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
     return res?.data?.data?.message || res?.data?.message || res?.data || null;
   }
 
 
-  // Send already-in-S3 photos (the lead's appointment/sales photos) as ONE
-  // message carrying an array of file REFERENCES — not a binary upload. Mirrors
-  // the web MessageInput.handleSend appointment-photo branch: a single JSON POST
-  // with `type: 'appointment_photo'` and `files: [{ filePath, bucketName, ... }]`.
-  // The backend echoes these files back (with bucketName), so on reload the chat
-  // signs each filePath against its own bucket and the grid renders correctly.
   async sendAppointmentPhotos(
     chatId: string,
     files: Array<{
@@ -530,9 +468,6 @@ class ChatService {
       files,
     };
     if (replyTo) payload.replyTo = replyTo;
-    // Plain JSON body (default Content-Type) — NOT multipart.
-    // Returned so the caller's activity log can read the STORED rows: these photos are S3
-    // references the device never downloaded, so their byte size is only known server-side.
     const res = await api.post<any>(`/chat/v1/${chatId}/messages`, payload);
     return res?.data?.data?.message || res?.data?.message || res?.data || null;
   }
@@ -549,21 +484,13 @@ class ChatService {
     return (res as any).data?.data?.message || (res as any).data;
   }
 
-  // ─── Socket wrappers (delegate to SocketManager) ─────────────────────────
-
-  /** @deprecated — socket lifecycle is now managed by SocketManager */
   connect(token: string, chatId: string, isChannel = false, userId?: string): any {
-    // SocketManager.connect() is called at app level (in AppContent).
-    // This method now just joins the room for backward compat.
     const event = isChannel ? 'join-team-channel' : 'join-chat';
     SocketManager.joinRoom(chatId, event, userId);
     return SocketManager.getSocket();
   }
 
-  /** @deprecated — socket lifecycle is now managed by SocketManager */
   disconnect(): void {
-    // Room cleanup only — SocketManager owns the socket
-    // (actual disconnect on logout is handled by useSocketManager)
   }
 
   sendMessage(payload: { chatId: string; message: string; replyTo?: string }): void {
@@ -579,9 +506,6 @@ class ChatService {
   }
 
   markSeen(chatId: string, messageIds: string[]): void {
-    // `mark-messageS-seen` (PLURAL) is the object-taking event. The singular
-    // `mark-message-seen` takes a bare messageId STRING and silently ignores an object,
-    // which is why unread counts never cleared — CHAT-MOBILE-API.md §3.1.
     SocketManager.emit('mark-messages-seen', { chatId, messageIds });
   }
 
@@ -637,8 +561,6 @@ class ChatService {
     SocketManager.emit('typing', { chatId, isTyping });
   }
 
-  // ─── Team Channels ──────────────────────────────────────────────────────────
-
   async getChannelParticipants(channelId: string): Promise<any[]> {
     try {
       const res = await api.get<any>(`/chat/v1/channels/${channelId}/members`);
@@ -656,13 +578,6 @@ class ChatService {
     });
   }
 
-  /**
-   * Create a new team channel.
-   * Web parity: `use-team-channels.js` `createChannel` emits the `create-team-channel`
-   * socket event with the channel payload built in the create-channel dialog. The
-   * backend responds by broadcasting `team-channel-created`, which the threads screen
-   * listens for to refresh the channel list.
-   */
   createChannel(channelData: any): void {
     console.log('[ChatService] create-team-channel:', channelData);
     SocketManager.emit('create-team-channel', channelData);
@@ -678,29 +593,12 @@ class ChatService {
     SocketManager.emit('channel-typing', { channelId, isTyping });
   }
 
-  /**
-   * Resolves a lead's chat and makes sure `userId` is on its participant list.
-   *
-   * The backend seeds participants when the chat is first CREATED — rep, installer,
-   * crew, managers. Anyone added to the crew after that is missing, which is the normal
-   * case for an installer: the thread usually exists from the sales conversation long
-   * before a crew is assigned. A non-participant can still read and post, but gets
-   * **no unread badge, no chat-list refresh and no push notifications**
-   * (CHAT-MOBILE-API.md §2.1) — most of the value of the thread.
-   *
-   * Safe to call repeatedly: `getChatByLeadId` falls back to create (itself idempotent),
-   * and the POST only fires when the id is genuinely absent.
-   *
-   * Never throws. This runs behind a screen that has already opened, so a failure costs
-   * notifications, not the chat.
-   */
   async ensureParticipant(leadId: string, userId: string): Promise<string | null> {
     try {
       const chatId = await this.getChatByLeadId(leadId);
       if (!chatId || !userId) return chatId;
 
       const participants = await this.getLeadParticipants(chatId, leadId);
-      // Participants come back as objects on some routes and bare ids on others.
       const alreadyIn = participants.some((p: any) => {
         const id = typeof p === 'string' ? p : p?._id || p?.id || p?.userId;
         return String(id) === String(userId);

@@ -28,15 +28,8 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-// Drawing-pad height. Single source of truth: the pad view, the on-screen preview
-// viewBoxes, and the SVG written for upload must all share one coordinate space.
 const PAD_HEIGHT = 300;
 
-// The sign request uses `responseType: 'blob'`, so when the server rejects it the
-// error body arrives as a Blob (application/json) — the axios interceptor rejects
-// with `error.response.data` (that Blob). Logging it prints an opaque
-// `{_data:{…,name:'sign.json'}}` with no message. These helpers READ the Blob so the
-// real server reason is surfaced to the rep (and the console) instead.
 const readBlobAsText = (blob: any): Promise<string> =>
   new Promise((resolve) => {
     try {
@@ -50,8 +43,6 @@ const readBlobAsText = (blob: any): Promise<string> =>
     }
   });
 
-// Pull the most useful human message out of a signing error, which may be a Blob
-// (application/json body), the parsed `error.response.data`, or a plain Error.
 const extractServerMessage = async (err: any): Promise<string> => {
   const isBlobLike = (v: any) => v && (v._data || typeof v.size === 'number');
   const candidate = isBlobLike(err)
@@ -88,39 +79,12 @@ interface AgreementSignatureModalProps {
     width: number;
     height: number;
   };
-  /** Lead customer details (primary buyer + `coBuyers[]`) — enables "Send
-   *  Remotely" so the homeowner (and each co-buyer) can e-sign on their own
-   *  phone. When omitted, the remote button is hidden and only in-person
-   *  signing is available. */
   customerDetails?: any;
-  /** Fired when a remote session finishes (all signers signed) so the parent can
-   *  refresh the outcome and close, same as an in-person `onSuccess`. */
   onRemoteComplete?: () => void;
-  /** Fired when the rep SENDS the agreement for remote signature (now pending). The
-   *  parent closes the whole stack and marks the summary "Pending Customer Signature". */
   onRemoteSent?: (agreementId?: string) => void;
-  /**
-   * How this modal presents itself. Defaults to `slide`, which is right when it is
-   * opened straight from a screen (the legacy Job Builder summary).
-   *
-   * WARNING Pass `fade` when this is rendered INSIDE an already-open full-screen
-   * modal, as `DynamicAgreementDialog` does. Two nested modals both sliding up reads
-   * to the rep as the app opening two separate screens for one 'Generate' tap - they
-   * watch a page slide up to show a spinner, then a second page slide up over it. A
-   * cross-fade makes the document replace the spinner in place, so the whole thing
-   * looks like the one screen it logically is.
-   */
   animationType?: 'none' | 'slide' | 'fade';
 }
 
-/**
- * The footer row (Cancel / Submit), padded by the MODAL WINDOW's own bottom inset.
- *
- * ⚠️ Must be a child of the modal's inner `SafeAreaProvider`: the component that renders the
- * Modal reads the app ROOT's insets, where the bottom inset is 0 - but this window extends under
- * the Android nav bar, which then painted over the buttons ("still not centred"). The inner
- * provider measures the actual modal window. Same helper as the installer sub-flows.
- */
 const ModalFooterBar: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const inner = useSafeAreaInsets();
   return (
@@ -128,8 +92,6 @@ const ModalFooterBar: React.FC<{ children: React.ReactNode }> = ({ children }) =
       style={{
         paddingHorizontal: 24,
         paddingTop: 16,
-        // Android floor (32): if the window still reports no inset, a 3-button nav bar (~48dp) must
-        // not be able to sit over the buttons. A correct inset (48 / gesture ~24) wins when larger.
         paddingBottom: footerBottomPadding(Math.max(inner.bottom, Platform.OS === 'android' ? 32 : 0)),
         borderTopWidth: 1,
         borderTopColor: '#f1f5f9',
@@ -162,25 +124,19 @@ export const AgreementSignatureModal = ({
   const insets = useSafeAreaInsets();
   const statusBarBg = isDark ? colors.background : '#0E2A1C';
   const [loading, setLoading] = useState(false);
-  // Remote-signing (homeowner e-signs on their own phone). Only offered when the
-  // caller supplies customer details to address the link(s) to.
   const [remoteOpen, setRemoteOpen] = useState(false);
 
-  // Initials state
   const [initialsPaths, setInitialsPaths] = useState<string[]>([]);
   const [liveInitials, setLiveInitials] = useState<string[]>([]);
   const [currentInitialsPath, setCurrentInitialsPath] = useState('');
   const currentInitialsRef = useRef('');
 
-  // Signature state
   const [signaturePaths, setSignaturePaths] = useState<string[]>([]);
   const [liveSignature, setLiveSignature] = useState<string[]>([]);
   const [currentSignaturePath, setCurrentSignaturePath] = useState('');
   const currentSignatureRef = useRef('');
 
   const [activePad, setActivePad] = useState<'initials' | 'signature' | null>(null);
-  // The e-signature consent box on the capture pad. Reset every time a pad opens, so each
-  // mark is an explicit agreement rather than one tick carried over from the last.
   const [agreedToESign, setAgreedToESign] = useState(false);
   useEffect(() => {
     setAgreedToESign(false);
@@ -189,11 +145,6 @@ export const AgreementSignatureModal = ({
   const [containerLayout, setContainerLayout] = useState({ width: 0, height: 0 });
   const [padWidth, setPadWidth] = useState(0);
 
-  // ---- Shared zoom/pan transform values ----
-  // Both the Pdf view and the box overlays live inside the same Animated.View
-  // below, driven by these values. Because they share one transform, zoom
-  // and pan can never desync the boxes from the page — there's no position
-  // recalculation happening on zoom at all.
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -223,8 +174,6 @@ export const AgreementSignatureModal = ({
 
   const panGesture = Gesture.Pan()
     .onUpdate((e) => {
-      // Only allow panning once zoomed in — mirrors typical PDF viewer feel
-      // and avoids fighting the page-swipe-to-change-page gesture at scale 1.
       if (savedScale.value > MIN_SCALE) {
         translateX.value = savedTranslateX.value + e.translationX;
         translateY.value = savedTranslateY.value + e.translationY;
@@ -252,8 +201,6 @@ export const AgreementSignatureModal = ({
     setCurrent: (p: string) => void,
     setLive: React.Dispatch<React.SetStateAction<string[]>>
   ) => {
-    // Last raw point of the in-progress stroke. Held in the responder's closure
-    // (not state) so it is always current inside the move handler.
     let last: { x: number; y: number } | null = null;
 
     return PanResponder.create({
@@ -276,15 +223,8 @@ export const AgreementSignatureModal = ({
         }
         const dx = locationX - last.x;
         const dy = locationY - last.y;
-        // Drop sub-pixel jitter — without this the finger's micro-tremor emits a
-        // curve per event and the stroke reads as fuzzy rather than clean.
         if (dx * dx + dy * dy < 1) return;
 
-        // Smooth with the midpoint technique: the PREVIOUS raw point becomes the
-        // quadratic control point and the midpoint between it and the current
-        // point becomes the endpoint. Consecutive segments then share a tangent,
-        // so the stroke curves continuously instead of showing a corner at every
-        // sampled touch (the old `L` line-to produced a visible polyline).
         const mx = (last.x + locationX) / 2;
         const my = (last.y + locationY) / 2;
         const next = `${currentRef.current} Q${fmt(last.x)},${fmt(last.y)} ${fmt(mx)},${fmt(my)}`;
@@ -293,10 +233,6 @@ export const AgreementSignatureModal = ({
         setCurrent(next);
       },
       onPanResponderRelease: () => {
-        // Close on the final raw point: the loop above always ends at a midpoint,
-        // so the last half-segment would otherwise be clipped. For a tap with no
-        // movement this is a zero-length line, which strokeLinecap="round" renders
-        // as a dot (previously a bare `M` drew nothing at all).
         if (last && currentRef.current) {
           currentRef.current = `${currentRef.current} L${fmt(last.x)},${fmt(last.y)}`;
         }
@@ -332,13 +268,10 @@ export const AgreementSignatureModal = ({
     }
   };
 
-  // Save Mark needs BOTH: the consent ticked AND something actually drawn on the open pad.
   const padHasInk = activePad === 'initials' ? liveInitials.length > 0 : liveSignature.length > 0;
   const canSavePad = agreedToESign && padHasInk;
 
   const savePad = () => {
-    // Belt and braces: the button is disabled until both are true, but the guard lives here so
-    // no other caller can save an empty mark or one without the consent.
     if (!canSavePad) return;
     if (activePad === 'initials') {
       setInitialsPaths([...liveInitials]);
@@ -349,12 +282,6 @@ export const AgreementSignatureModal = ({
   };
 
   const convertToSvgFile = async (paths: string[], fileName: string) => {
-    // The viewBox MUST match the pad's own coordinate space (padWidth × PAD_HEIGHT),
-    // because the path data is in raw pad pixels. It was hardcoded to 500×200 while
-    // the pad is 300 tall, so everything the customer drew below y=200 — typically
-    // the lower third of a signature — was cropped out of the file sent to
-    // `/agreement/{leadId}/sign`, even though the on-screen preview (which uses the
-    // correct viewBox) looked complete.
     const w = padWidth || 500;
     const svgContent = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
       <svg width="${w}" height="${PAD_HEIGHT}" viewBox="0 0 ${w} ${PAD_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
@@ -400,9 +327,6 @@ export const AgreementSignatureModal = ({
         throw new Error('Received empty blob from server');
       }
 
-      // The real success returns a PDF. A JSON body here means the server reported an
-      // error with a 2xx status — read it and surface the message instead of writing
-      // the JSON out as a bogus ".pdf".
       if (typeof blob.type === 'string' && blob.type.includes('json')) {
         const msg = await extractServerMessage(blob);
         throw new Error(msg || 'The server could not sign this agreement.');
@@ -437,8 +361,6 @@ export const AgreementSignatureModal = ({
         setLoading(false);
       };
     } catch (error) {
-      // Surface the ACTUAL server reason (read out of the error Blob) so a signing
-      // failure is diagnosable instead of a blanket "Failed to sign agreement".
       const serverMsg = await extractServerMessage(error);
       console.error('Signing failed:', serverMsg || error);
       FlashMessage.error('Error', serverMsg || 'Failed to sign agreement');
@@ -853,10 +775,6 @@ export const AgreementSignatureModal = ({
                 pdfDimensions={pdfDimensions}
                 customerDetails={customerDetails}
                 onComplete={() => {
-                  // Close the nested remote sheet FIRST, then tear down the agreement
-                  // modal/dialog on a later frame. Collapsing the stacked modals
-                  // (dialog → sign modal → remote sheet) in a single frame orphans a
-                  // modal backdrop and leaves a blank black screen — so sequence them.
                   setRemoteOpen(false);
                   setTimeout(() => {
                     onRemoteComplete?.();
@@ -864,9 +782,6 @@ export const AgreementSignatureModal = ({
                   }, 450);
                 }}
                 onSent={(id) => {
-                  // Agreement SENT for remote signature. Same staged teardown as
-                  // onComplete, but the summary marks "Pending Customer Signature"
-                  // (onRemoteSent) instead of reading a signed PDF that doesn't exist yet.
                   setRemoteOpen(false);
                   setTimeout(() => {
                     onRemoteSent?.(id);

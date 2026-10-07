@@ -19,17 +19,6 @@ const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
   Questions: { icon: '❓', color: '#9775FA' },
 };
 
-/**
- * Lead preview thumbnail shown before the title in a lead chat header — the same
- * street-view image as the Recent-Leads row, resolved via the shared hook. Falls
- * back to a home-outline glyph, matching web's `quick-chat-dialog.js` header.
- *
- * The thumbnail is previewable: HOLD peeks it enlarged (instant, because
- * `PhotoPeekPressable` warms a local `file://` copy — see the "Hold-to-peek
- * previews" note in CLAUDE.md), and a TAP opens the same full-screen
- * `ImageGalleryModal` the chat's image messages use. It was previously an inert
- * `<Image>` with no press handling at all, so the rep could not open it.
- */
 function LeadHeaderThumbnail({ leadPreview, title }: { leadPreview: any; title?: string }) {
   const thumbnailUrl = useLeadPreviewUrl(leadPreview);
   const [preview, setPreview] = useState<string | null>(null);
@@ -40,8 +29,6 @@ function LeadHeaderThumbnail({ leadPreview, title }: { leadPreview: any; title?:
         <PhotoPeekPressable
           uri={thumbnailUrl}
           label={title}
-          // `onPress` hands back the WARMED uri, so the gallery opens on the local
-          // file rather than re-fetching the pre-signed S3 object.
           onPress={(peekUri) => setPreview(peekUri || thumbnailUrl)}
           className="w-10 h-10 rounded-xl mr-3 overflow-hidden"
           style={{ backgroundColor: '#F1F5F9' }}
@@ -93,8 +80,6 @@ export const ChatHeader = ({
   onNext,
 }: any) => {
   const navigation = useNavigation<any>();
-  // An installer's chat list is titled 'My Installs', so the way back out of a
-  // conversation has to name the same place (channels are shared by both roles).
   const { isInstaller } = useUserRole();
 
   const handleBack = () => {

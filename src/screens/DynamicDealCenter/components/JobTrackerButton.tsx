@@ -8,15 +8,6 @@ import { FlashMessage } from '../../../config/message';
 import { logEvent } from '../../../services/api/LoggerService';
 import { useAuth } from '../../../hooks/useAuth';
 
-/**
- * "Add This Job to Job Tracker" button for the dynamic deal center — a port of the
- * web `JobTrackerButton` (`src/sections/job-tracker/components/job-tracker-button.js`),
- * rendered under the Job Summary in the editable calculator view. It looks up whether
- * a job already exists for the appointment (`GET /job-tracker/{appointmentId}`) and
- * shows either the green **Add** button (opens the shared `AddEditJobModal` seeded
- * with the calculator's appointment/calculator/title/price/payment method) or, when
- * one already exists, a red **remove** button plus **Go to Job Tracker**.
- */
 export function JobTrackerButton({
   appointmentId,
   calculatorId,
@@ -46,7 +37,6 @@ export function JobTrackerButton({
       const job = await JobService.getJobByAppointment(appointmentId);
       setExistingJob(job);
     } catch {
-      // A missing/empty job tracker entry is a normal 404 — treat as "none".
       setExistingJob(null);
     } finally {
       setChecking(false);
@@ -96,7 +86,6 @@ export function JobTrackerButton({
     );
   }, [existingJob, refreshExisting]);
 
-  // The seed passed to the shared modal — a calculator-originated (non-manual) job.
   const seedJob: Partial<JobEntry> = {
     appointmentId,
     calculatorId,

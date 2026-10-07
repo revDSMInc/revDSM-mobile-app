@@ -57,9 +57,6 @@ export const RoofWaiverModal = ({
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
-  // Web parity (REVDSM-1053): the agreement names the signed-in company and the
-  // products it publishes, not LeafFilter. Both have safe fallbacks, so the
-  // paragraph is still complete while the products request is in flight.
   const { user } = useAuth();
   const { products: repProducts } = useRepProducts();
   const companyName = user?.companyName;
@@ -632,7 +629,6 @@ const styles = StyleSheet.create({
   },
   submitBtnText: { fontWeight: '600', fontSize: 13 },
 
-  // ── Inline Signature Overlay (no second Modal) ──────────────────
   sigOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.55)',

@@ -14,10 +14,6 @@ import { NUMERIC_KEYBOARD } from '../../utils/keyboard-type';
 import { PIN_STATUS_FILTER_LABELS, PinStatusFilter } from '../../utils/sales-pins';
 import { useIsOnline } from '../../hooks/useIsOnline';
 
-// Dedicated, interceptor-free client for the Google Places/Geocode web-service calls,
-// with a finite timeout so a hung request fails fast instead of surfacing a bare
-// "Network Error". It's fully isolated from the app's authed API instance
-// (`services/api/index.ts`, which is its own `axios.create`) and from the global axios.
 const googleHttp = axios.create({ timeout: 15000 });
 
 export interface FilterState {
@@ -34,42 +30,14 @@ export interface FilterState {
   isHeatMap: boolean;
   showRoute: boolean;
   showProduct: boolean;
-  // Sold-job pin status (REVUIUX-439), applied on the device like web: pending =
-  // `pinCategory === 'pendingInstall'`, installed = everything else. Drives ONLY this
-  // modal's dropdown — web parity, do not repoint the on-map toggles at this field.
   statusFilter: PinStatusFilter;
-  /**
-   * The Sales Map's on-map "INS" / "PI" quick toggles (`LeadMap.tsx`'s right-side
-   * stack) — NOT the same thing as `statusFilter` above, on purpose.
-   *
-   * Ticket: "in the installed toggle only installed pins [should] display, uploaded
-   * pins should not display in this toggle." `statusFilter === 'installed'` means
-   * "not pending" (uploaded counts as a historical install — web parity, see above),
-   * which is right for the dropdown but was also what the on-map toggle used at
-   * first, and that's the "uploaded is displayed" the ticket is against.
-   *
-   * ⚠️ **Deliberate divergence from web / from `statusFilter`'s own rule — do NOT
-   * "fix" this to reuse `statusFilter`.** These two are a STRICT `pinCategory` match
-   * (`getPinCategory(item) === 'installed'` / `'pendingInstall'`), independent of the
-   * modal's dropdown. A rep can therefore have the dropdown on "All Jobs" while the
-   * on-map toggle narrows further to a stricter set — that is correct, not a bug.
-   * Mutually exclusive with each other (enforced in `MapDetail`'s `onToggleFilter`
-   * handler, not by type), unrelated to `statusFilter`'s own value.
-   *
-   * Not counted in `countAppliedMapFilters` / not persisted via
-   * `savedFiltersToFilterState`, matching the other on-map-only toggles
-   * (`isHeatMap` / `myJobsOnly` / `isReferralOnly`) rather than `statusFilter`.
-   */
   isMapInstalledOnly: boolean;
   isMapPendingInstallOnly: boolean;
   centerCoords?: { latitude: number; longitude: number };
-  // Persisted so a re-hydrated (saved) filter set restores the search mode and the
-  // date-range label (web `savedFilters.searchType` / `savedFilters.rangeType`).
   searchType?: 'location' | 'job';
   rangeType?: string;
 }
 
-// Date-range option ↔ web `rangeType` value (web parity: header-filter.js menu items).
 export const RANGE_TYPE_TO_LABEL: Record<string, string> = {
   last30days: 'Past 30 Days',
   lastYear: 'Past Year',
@@ -83,12 +51,6 @@ export const LABEL_TO_RANGE_TYPE: Record<string, string> = {
   Custom: 'custom',
 };
 
-/**
- * Map a lead's persisted `savedFilters` (web shape) back onto the mobile
- * `FilterState`, so re-opening the map screen restores what the rep last applied
- * (web parity: header-filter.js "Populate filters from savedFilters"). Returns a
- * partial to spread over the default filter state.
- */
 export const savedFiltersToFilterState = (sf: any): Partial<FilterState> => {
   if (!sf || typeof sf !== 'object') return {};
   const out: Partial<FilterState> = {};
@@ -109,16 +71,6 @@ export const savedFiltersToFilterState = (sf: any): Partial<FilterState> => {
   return out;
 };
 
-/**
- * How many filters are actually applied — drives the badge on the header's
- * filter icon. Port of web `header-filter.js`'s `filteredItemsCount`, which
- * counts: address, job number, distance, min, max, date range, favourites.
- *
- * Mobile keeps the location text in the same `jobNumber` field as a job-number
- * search, so a geocoded location (which also sets `centerCoords`) counts once
- * rather than twice. The product/route switches are display toggles and are not
- * counted, matching web. A pin status other than "all" counts as one.
- */
 export const countAppliedMapFilters = (filters: FilterState | null | undefined): number => {
   if (!filters) return 0;
 
@@ -140,11 +92,7 @@ interface MapFiltersModalProps {
   filters: FilterState;
   onApply: (newFilters: FilterState) => void;
   onReset: () => void;
-  /** The lead the map is scoped to — filters are saved/cleared against it. */
   lead?: any;
-  /** Called with the persisted `savedFilters` after a save/reset, so the parent can
-   *  keep the (shared) lead object fresh — mobile has no global lead store, so this is
-   *  how a reset/apply survives a back-and-return without an app reload. */
   onFiltersPersisted?: (savedFilters: any) => void;
 }
 
@@ -171,19 +119,11 @@ export const MapFiltersModal = ({
 }: MapFiltersModalProps) => {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
-  // Price / date / status / job-number / radius filters are all pure client-side re-filters of
-  // leads already in memory (`MapDetail`'s `baseFilteredLeads`) — they work offline with nothing
-  // to "sync". The ONE filter that genuinely needs the network is location text search, which
-  // resolves an address to coordinates via Google Places Autocomplete + Geocoding (`fetchPlaces`
-  // below, and the geocode call in `handleApply`'s location branch) — there is no offline
-  // fallback for that lookup. `isOnline` gates it so the rep sees an explicit hint instead of a
-  // silently empty results list that looks broken.
   const isOnline = useIsOnline();
   const [localFilters, setLocalFilters] = useState(filters);
   const [showStartDate, setShowStartDate] = useState(false);
   const [showEndDate, setShowEndDate] = useState(false);
 
-  // Search State
   const [searchType, setSearchType] = useState<'location' | 'job'>('location');
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
   const [searchText, setSearchText] = useState(filters.jobNumber || '');
@@ -198,8 +138,6 @@ export const MapFiltersModal = ({
   useEffect(() => {
     setLocalFilters(filters);
     setSearchText(filters.jobNumber || '');
-    // Restore the search mode + date-range label from the (possibly saved) filters
-    // so a re-hydrated set shows the way the rep left it (web parity).
     setSearchType(filters.searchType || 'location');
     setDateRangeLabel(
       filters.rangeType && RANGE_TYPE_TO_LABEL[filters.rangeType]
@@ -208,7 +146,6 @@ export const MapFiltersModal = ({
     );
   }, [filters, visible]);
 
-  // Keyboard listener to hide results
   useEffect(() => {
     const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
       setSearchResults([]);
@@ -216,10 +153,6 @@ export const MapFiltersModal = ({
     return () => hideSubscription.remove();
   }, []);
 
-  // Debounced search for Places (Only for 'location' type). Skipped entirely offline — Google
-  // Places Autocomplete has no offline path, and firing it anyway would just burn the 15s
-  // `googleHttp` timeout for a request that cannot succeed. The hint shown next to the input
-  // (below) tells the rep why, instead of a results list that looks empty/broken.
   useEffect(() => {
     if (searchType !== 'location' || !searchText || searchText.length < 3 || skipSearch.current || !isOnline) {
       setSearchResults([]);
@@ -241,8 +174,6 @@ export const MapFiltersModal = ({
       )}&key=${ENV.GOOGLE_MAPS_API_KEY}&components=country:us`;
 
       const res = await googleHttp.get(url);
-      // Google always answers 200 — a bad key / quota shows up as a `status` field
-      // (REQUEST_DENIED / OVER_QUERY_LIMIT), which is the actionable case to flag.
       if (res.data?.status && res.data.status !== 'OK' && res.data.status !== 'ZERO_RESULTS') {
         console.error('[MapFilters] Places API rejected:', res.data.status, res.data.error_message || '');
         setSearchResults([]);
@@ -250,10 +181,6 @@ export const MapFiltersModal = ({
         setSearchResults(res.data?.predictions || []);
       }
     } catch (error: any) {
-      // A transient "Network Error" (the Google request never reached a response —
-      // connectivity blip) is expected mid-typing and must NOT throw a red LogBox
-      // overlay; autocomplete just yields no suggestions for this keystroke. Only a
-      // real HTTP failure with a response is worth an error.
       if (error?.response) {
         console.error('[MapFilters] Places API error:', error.response.status, error.response.data);
       } else {
@@ -271,9 +198,6 @@ export const MapFiltersModal = ({
     setSearchResults([]);
     onClose();
 
-    // Persist the applied filters against the lead (web parity: `saveLeadFilters`) so
-    // they re-hydrate on the next visit. Only set fields go in the payload, exactly
-    // like web's `payload` build; wrapped in `{ savedFilters }` to match the endpoint.
     const leadId = lead?._id || lead?.id;
     if (leadId) {
       const text = searchText?.trim();
@@ -295,9 +219,6 @@ export const MapFiltersModal = ({
       if (localFilters.endDate) payload.endDate = localFilters.endDate;
       if (localFilters.isFavoriteOnly) payload.favoriteJobs = true;
       if (Object.keys(payload).length > 0) {
-        // ⚠️ Offline this PATCH cannot leave the device, and the `.catch` used to swallow
-        // that — the device showed the new filters while the server kept the old set, which
-        // came back on the next read. Queued instead, and replayed on reconnect.
         if (isOnline) {
           LeadService.saveLeadFilters(leadId, { savedFilters: payload }).catch((error) =>
             console.error('[MapFilters] Error saving filters:', error),
@@ -305,8 +226,6 @@ export const MapFiltersModal = ({
         } else {
           queueMapFilters(leadId, payload);
         }
-        // Sync the (shared) lead object so re-opening the map re-hydrates these filters
-        // rather than a stale set — mobile has no global lead store (web: setCurrentLead).
         onFiltersPersisted?.(payload);
       }
     }
@@ -417,20 +336,14 @@ export const MapFiltersModal = ({
     setSearchType('location');
     setDateRangeLabel('Select Date Range');
     onReset();
-    // Clear the persisted filters too (web parity: `saveLeadFilters(leadId, { savedFilters: {} })`).
     const leadId = lead?._id || lead?.id;
     if (leadId) {
-      // ⚠️ `{}` IS the write — a reset is not "nothing to send". Queueing it is what makes the
-      // reported case work: filter online, go offline, Reset, come back — the badge stayed at
-      // "1" because this request died in the `.catch` and the server never heard about it.
       if (isOnline) {
         LeadService.saveLeadFilters(leadId, { savedFilters: {} }).catch(() => {});
       } else {
         queueMapFilters(leadId, {});
       }
     }
-    // Clear the shared lead object's saved filters so a back-and-return shows the reset
-    // state (not a stale filter set) without an app reload.
     onFiltersPersisted?.({});
     const uid = user?._id || user?.id;
     if (uid) {
@@ -466,7 +379,6 @@ export const MapFiltersModal = ({
       endDate: end ? end.toISOString() : null,
     });
     setDateRangeLabel(label);
-    // Always close dropdown after selection (including Custom) for iOS parity.
     setShowDateRangeDropdown(false);
   };
 
@@ -521,7 +433,6 @@ export const MapFiltersModal = ({
                         onChangeText={(text) => {
                           skipSearch.current = false;
                           setSearchText(text);
-                          // Clear centerCoords if they modify the text so we don't use a stale geocoded location
                           setLocalFilters((prev) => ({ ...prev, centerCoords: undefined }));
                         }}
                       />
@@ -581,7 +492,6 @@ export const MapFiltersModal = ({
                         setSearchText('');
                         setShowTypeDropdown(false);
                         setSearchResults([]);
-                        // Clear location coordinates and radius when switching search modes
                         setLocalFilters((prev) => ({ ...prev, centerCoords: undefined, radius: 0 }));
                       }}
                     >
@@ -611,7 +521,6 @@ export const MapFiltersModal = ({
                             setSearchResults([]);
                             Keyboard.dismiss();
 
-                            // Geocode to get coordinates for map navigation
                             try {
                               const url = `https://maps.googleapis.com/maps/api/geocode/json?place_id=${item.place_id}&key=${ENV.GOOGLE_MAPS_API_KEY}`;
                               const res = await googleHttp.get(url);

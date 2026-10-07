@@ -15,22 +15,14 @@ import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 import { useAuth } from '../../../hooks/useAuth';
 import { useIsOnline } from '../../../hooks/useIsOnline';
-// ⚠️ The imperative read is for CALLBACKS (`goFunding`), where a render-time
-// value could be a tick stale; `useIsOnline` is for render. See `LeadCenter`.
 import { isOnline } from '../../../services/connectivity';
 import { ensureOfflineWorkForLead, saveOfflineFunding } from '../../../services/offlineLeadStore';
-// Past Confirm only. Everything BEFORE it is the Result Lead module below.
 import {
   logFundingEditPayments,
   logFundingLinkCopied,
   logFundingOpened,
   type FundingSource,
 } from '../../../utils/activity-log/funding-log';
-// This screen, up to and including Confirm.
-// ⚠️ The four pricing emitters here have twins in `funding-log` that are STILL
-// LIVE: `DynamicDealEditScreen`s Job Price step renders the same pricing
-// components inside the My Deals wizard, which is not a Result Lead sheet and
-// deliberately keeps logging to `funding`.
 import {
   logResultLeadBuildJob,
   logResultLeadConfirmed,
@@ -89,37 +81,9 @@ import {
   type PayStructure,
 } from '../utils/funding';
 
-/**
- * The full **Result Lead** sheet.
- *
- * It is now TWO screens behind one header (mockup `screenResult` / `screenFunding`):
- *
- *  1. **Result Lead** — One Leg, Result, and a *Pricing* panel where the contract
- *     price is split across as many payment methods as the deal needs (see
- *     `funding/PaymentRowsGroup`). Job Summary and the Versatile/Pineapple toggles
- *     are unchanged.
- *  2. **Funding** — one card per payment, each driven to the end of its own life
- *     cycle before the job can be submitted (see `funding/FundingView`).
- *
- * The two talk to each other in both directions: **Confirm** projects the pricing
- * rows into funding payments, and coming back (Back / *Edit payments*) folds any
- * lender decision onto the rows it came from — a declined row locks at $0 and the
- * contract price unlocks, because a decision the lender made is a fact the rep now
- * has to price around.
- *
- * The **Demo** branch is untouched: a demo has nothing to fund, so it keeps the
- * original single-screen form and the Build Job button.
- */
-
 const ONE_LEG_OPTIONS = ['No', 'MR', 'MRS'];
 
-// Same 19 reasons the regular outcome flow uses (ResultViews.tsx demoReasons).
-// These stay STATIC intentionally: demo/result reasons have NO backend endpoint
-// on either platform — the web hardcodes them everywhere too. Payment plans and
-// discount tiers are the only dynamic (backend-driven) data (see useDealPricing).
 const DEMO_REASONS = [
-  // Straight apostrophe in "Didn't Like" to match the web reason string byte-for-byte
-  // (web uses U+0027); a curly apostrophe would fork the persisted/reported reason.
   "Can't Afford", "Didn't Like", 'DIY', 'Lowes Demo', 'Lowes Pending Sale',
   'Lowes Rehash', 'Moving', 'No Job', 'No Need / Want', 'No Snap Decision',
   'Other Projects', 'Rental Property', 'Rushed - No Time', 'Shop Around',
@@ -127,7 +91,6 @@ const DEMO_REASONS = [
   'Other (Explain)',
 ];
 
-/** Amounts are money; compare with a cent of slack rather than exactly. */
 const EPS = 0.01;
 
 const PRICE_UNLOCK_HINT =
@@ -135,89 +98,42 @@ const PRICE_UNLOCK_HINT =
 
 interface ResultJobModalProps {
   visible?: boolean;
-  /** The lead — needed to fire the `lead_result_field_entry` outcome logs (web parity). */
   lead?: any;
   calculatorTitle?: string;
-  /**
-   * The calculator this sale is being resulted from. Display never uses it — it is
-   * carried so every funding log row links the money back to the quote it came
-   * from, which is otherwise unrecoverable once the sheet closes.
-   */
   calculatorId?: string;
-  /** Open straight on the Funding screen once the saved record loads (a resumed, already-submitted funding). */
   startOnFunding?: boolean;
-  /**
-   * WHICH FLOW this sheet was opened through — `rehash` | `sale` | `my_deals`.
-   *
-   * Composed onto every funding `meta.action` so the backend can display the money
-   * trail under the right heading; `module_type` stays `funding` regardless.
-   * Resolve it with `resolveFundingSource`, never by hand.
-   *
-   * ⚠️ Left undefined the actions ship UN-prefixed, which reads as "origin unknown"
-   * in the data. That is deliberate — better than silently filing a rehash under
-   * `sale` because a mount site forgot to pass it.
-   */
   fundingSource?: FundingSource;
   resultType?: 'sale' | 'demo' | null;
-  /** prefill for the contract price (the rollout end / latest drop price) */
   initialPrice?: number;
-  /** prefill for the payment method from the calculator's selected plan (web parity) */
   initialPaymentMethod?: string;
-  /** prefill for the down payment carried from a secured/viewed drop price */
   initialDownPayment?: number;
-  /** entered line items → the Job Summary card */
   entries?: Record<string, CalculatorEntry>;
-  /** all configured verticals — used to resolve Job Summary category pills + icons */
   verticals?: CalculatorSchema[];
-  /** sectionId → label, so Job Summary rows read "5' 5" Gutter/DS/E (All Stories)". */
   sectionLabelMap?: Record<string, string>;
   isLowesLead?: boolean;
-  /** Backend-driven payment plans + discount config (static fallback). */
   pricing: DealPricing;
   onClose?: () => void;
   onConfirm?: (data: {
     resultType: 'sale' | 'demo';
     oneLeg?: string;
     contractPrice?: number;
-    /** Demo only: the last price quoted (web `lastPriceQuoted`), previously dropped on mobile. */
     lastPriceQuoted?: number;
     downPayment?: number;
     balance?: number;
     downPaymentMethod?: string;
     balancePaymentMethod?: string;
-    /**
-     * The multi-method breakdown, persisted BESIDE the four scalars above (which
-     * stay written as a derived mirror — summed totals plus the first funded row's
-     * plan key).
-     *
-     * ⚠️ Additive on purpose. ~20 consumers read the four flat names, and the
-     * customer-facing agreement and amendment renderers would degrade *silently*
-     * rather than error if they were converted outright. A reader that has not been
-     * upgraded therefore sees a LOSSY view — one method named for a job that used
-     * three — never a wrong one.
-     *
-     * ⚠️ `method` here is a plan KEY, matching `paymentMethod` — NOT the catalogue
-     * label the funding API's own `payments[].method` carries.
-     */
     downPayments?: PaymentAllocation[];
     balancePayments?: PaymentAllocation[];
     demoReason?: string;
     reasonExplanation?: string;
     versatile?: boolean;
     pineapple?: boolean;
-    /**
-     * Sale only — the funding record as the SERVER holds it once Submit landed.
-     * `payments` is the full multi-method breakdown; the four fields above stay
-     * populated (first/summed) so every existing consumer of the outcome payload
-     * keeps working unchanged.
-     */
     bankDecline?: boolean;
     payments?: FundingPaymentRow[];
     fundingAttempts?: FundingRecord['attemptHistory'];
   }) => void;
 }
 
-/** Floating-label helper shared by every field (notched-outline look, web parity). */
 function FloatingLabel({ text, error, bg = '#fff' }: { text: string; error?: boolean; bg?: string }) {
   return (
     <Text style={{ position: 'absolute', top: -8, left: 12, zIndex: 10, paddingHorizontal: 4, backgroundColor: bg, fontSize: FS.MICRO, fontFamily: PS.semibold, letterSpacing: 0.5, color: error ? '#EF4444' : '#000' }}>
@@ -226,7 +142,6 @@ function FloatingLabel({ text, error, bg = '#fff' }: { text: string; error?: boo
   );
 }
 
-/** Dropdown select — options render inline (in-flow) below the box, like the regular. */
 function SelectField({ label, value, placeholder, options, onSelect, disabled, capitalize, error, bg }: {
   label: string; value: string; placeholder: string;
   options: { value: string; label: string }[];
@@ -269,14 +184,8 @@ function SelectField({ label, value, placeholder, options, onSelect, disabled, c
   );
 }
 
-/* NOTE: the old single-select `BalancePaymentField` lived here. The balance is now
-   one line per method inside `funding/PaymentRowsGroup`, which renders the same
-   provider-grouped catalog (and the same `planBelowMin` gating) per row. */
-
-/** $-prefixed money input with the floating-label look. */
 function MoneyField({ label, value, onChange, editable = true, labelBg, trailing }: {
   label: string; value: string; onChange?: (v: string) => void; editable?: boolean;
-  /** Match the label's cut-out to whatever the field sits on (white, or the Pricing panel). */
   labelBg?: string;
   trailing?: React.ReactNode;
 }) {
@@ -321,23 +230,9 @@ export function ResultJobModal({
   onConfirm,
 }: ResultJobModalProps) {
   const { isDark } = useTheme();
-  // The funding endpoints are company-scoped by a header (spec §1). The lead's own
-  // company wins over the signed-in rep's — same resolution `JobDocsSection` uses.
   const { user } = useAuth();
-  /**
-   * ⚠️ The HOOK, not `isOnline()`. This is read during render (it feeds
-   * `resultBlockers`), and a one-shot read would not re-evaluate when the
-   * signal drops with the sheet already open.
-   */
   const online = useIsOnline();
-  /**
-   * `handleBuild` is declared AFTER `goFunding` but the offline arm of `goFunding`
-   * has to call it. A ref rather than a reorder: both are large callbacks with
-   * their own dependency lists, and moving either one past the state it closes
-   * over is how a stale-capture bug gets introduced quietly.
-   */
   const handleBuildRef = useRef<(() => void) | null>(null);
-  // Web `result-lead-modal.js:61`. See `Lead.isRehashed`.
   const isRehashed = lead?.isRehashed === true;
   const [oneLeg, setOneLeg] = useState('No');
   const [resultType, setResultType] = useState<'sale' | 'demo'>(initialResultType || 'sale');
@@ -347,35 +242,15 @@ export function ResultJobModal({
   const [versatile, setVersatile] = useState(false);
   const [pineapple, setPineapple] = useState(false);
 
-  // ── funding state ────────────────────────────────────────────────────────
-  /**
-   * The Funding API. It owns the record; everything the funding screen renders
-   * comes from there and ⚠️ **no step is ever advanced locally** (spec rule 3).
-   * Only the PRICING rows below are local, because they are an unsaved draft until
-   * the rep taps Confirm.
-   */
   const leadLogId = lead?._id || lead?.leadId || lead?.id;
   const funding = useFunding(leadLogId, lead?.companyId || user?.companyId, {
     userId: user?._id || user?.id,
     calculatorId,
     calculatorTitle,
     source: fundingSource,
-    // ⚠️ The CUSTOMER document, not the lead — it is what a corrected phone or
-    // email is written back to when a rep fixes a mistyped destination.
     customerId: lead?.customerDetails?._id || lead?.customerDetails?.id || undefined,
   });
 
-  /**
-   * Identity for every event this component fires directly — the ones that are pure
-   * UI and never reach an endpoint (structure, rows, method picks, moving between
-   * the two screens). Everything endpoint-driven is logged inside `useFunding`,
-   * which is the only place the OUTCOME exists.
-   *
-   * ⚠️ ONE object feeds BOTH modules — `result_lead` before Confirm and `funding`
-   * after it — which is why `ResultLeadLogBase` is an alias of `FundingLogBase`
-   * rather than a second shape. A row has to identify the same lead, calculator and
-   * flow whichever side of the boundary it lands on.
-   */
   const logCtx = useMemo(
     () => ({
       userId: user?._id || user?.id,
@@ -387,62 +262,29 @@ export function ResultJobModal({
     [user?._id, user?.id, leadLogId, calculatorId, calculatorTitle, fundingSource]
   );
 
-  /** Which half of the sheet is showing. A demo never leaves `result`. */
   const [screen, setScreen] = useState<'result' | 'funding'>('result');
-  /** Down Payment + Balance, or the whole contract collected now. */
   const [payMode, setPayMode] = useState<PayMode>('split');
-  /** "No Down Payment": split with the Down Payment group hidden and unfunded. */
   const [noDown, setNoDown] = useState(true);
-  /** The "you are financing the whole contract" confirmation, raised from Confirm. */
   const [noDownWarn, setNoDownWarn] = useState(false);
-  /** The rep tried to switch structure after money started moving. */
   const [structureNudge, setStructureNudge] = useState(false);
-  /** The editable pricing lines. One down row + one auto balance row to start. */
   const [rows, setRows] = useState<PaymentRow[]>([]);
-  /** Messages a lender decision left above the Balance group. */
   const [banners, setBanners] = useState<DecisionBanner[]>([]);
-  /** A decision changed what the job can fund, so the contract price opens up. */
   const [priceUnlocked, setPriceUnlocked] = useState(false);
-  /** `bank_decline` is only reachable once a lender has actually declined. */
   const [resultChoice, setResultChoice] = useState<'sale' | 'bank_decline'>('sale');
-  /** Payment pid whose share sheet is open, plus the url `POST …/link` returned. */
   const [linkTarget, setLinkTarget] = useState<string | null>(null);
   const [linkUrl, setLinkUrl] = useState('');
   const [isLoadingLink, setIsLoadingLink] = useState(false);
-  /**
-   * The server's reason for refusing the last Confirm, kept ON the sheet.
-   *
-   * ⚠️ The flash banner alone is not enough for this one. A `422` here is a RULE the
-   * rep has to act on ("Down payments total $600, above the 50% maximum ($550)") and
-   * the banner is gone in four seconds, so it is also written above the button that
-   * was refused — where the blockers for that same button already are. Cleared by
-   * the next edit, because any change to the rows or the price makes it a claim
-   * about a deal that no longer exists.
-   */
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const isSale = resultType === 'sale';
   const payments = funding.payments;
   const bankDeclined = isSale && resultChoice === 'bank_decline';
 
-  /**
-   * Down payments are cash/card only, so a plan carried in from the rollout is
-   * only a valid SEED if it is one of those — a financing key belongs to the
-   * balance. Same rule as the deal-edit wizard's `toDownPaymentKey`.
-   */
   const seedDownMethod = useCallback(
     (key?: string) => (key && pricing.outcomeDownPaymentMethods.some((o) => o.value === key) ? key : ''),
     [pricing.outcomeDownPaymentMethods]
   );
 
-  /**
-   * Open the sheet: reset the form, then load whatever funding this lead already
-   * has and seed the pricing rows from it.
-   *
-   * ⚠️ Hydrating rather than always re-seeding is what keeps `pid` STABLE across
-   * visits — it is the server's merge key, so inventing fresh ids on every open
-   * would create a second set of rows for the same deal on the next save.
-   */
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
@@ -452,7 +294,6 @@ export function ResultJobModal({
     setReasonExplanation('');
     setScreen('result');
     setPayMode('split');
-    // No down payment carried in from the rollout → open on "No Down Payment".
     setNoDown(!(initialDownPayment && initialDownPayment > 0));
     setNoDownWarn(false);
     setStructureNudge(false);
@@ -473,16 +314,10 @@ export function ResultJobModal({
         amount: initialDownPayment && initialDownPayment > 0 ? String(Math.round(initialDownPayment)) : '',
         method: seedDownMethod(initialPaymentMethod),
       },
-      // The auto row absorbs whatever the down payment leaves, so the two halves
-      // always add up to the contract without the rep doing the subtraction.
       { pid: newPaymentId(), kind: 'bal', amount: '', method: initialPaymentMethod || '', auto: true },
     ];
     setRows(freshRows);
-    // The Upfront group is seeded lazily, the first time the rep switches to it —
-    // see `switchPayMode`. Carrying an unused third row here would put it in
-    // `rows` where the split-mode totals would count it.
 
-    // A demo never funds anything, so don't fetch a record it will never use.
     if ((initialResultType || 'sale') !== 'sale') return;
 
     funding.load().then((record) => {
@@ -490,21 +325,15 @@ export function ResultJobModal({
       // ⚠️ The record is lead-wide; another calculator's unstarted rows are not ours.
       const owner = leadLogId ? Storage.getItem(fundingOwnerKey(leadLogId)) : null;
       if (!shouldAdoptSavedFunding(owner, calculatorId)) return;
-      // First sight of an un-owned record claims it, so a sibling calculator never inherits it.
       if (!owner && leadLogId && calculatorId && (record.payments || []).length) {
         Storage.setItem(fundingOwnerKey(leadLogId), String(calculatorId));
       }
       const saved = hydrateRowsFromRecord(record, pricing.plans);
-      // The structure is not a stored field — it is read back off the saved rows
-      // (see `inferPayMode`), and BOTH reads come from that one function so the
-      // mode and the rows it produced can never describe different structures.
       if (saved.length) {
         setRows(saved);
         setPayMode(inferPayMode(record));
         setNoDown(inferNoDownPayment(record));
       }
-      // The stored contract price wins over the rollout's: it is what the saved
-      // rows were priced against, and a mismatch would misreport the remainder.
       if (record.contractPrice > 0) setContractPrice(String(record.contractPrice));
       if (record.result === 'bankDecline') setResultChoice('bank_decline');
       if (startOnFunding && saved.length) {
@@ -521,12 +350,6 @@ export function ResultJobModal({
 
   const contractNum = parseFloat(contractPrice) || 0;
 
-  /**
-   * Both structures' rows live in one list, so switching back and forth keeps
-   * whatever the rep already typed on the other side. ⚠️ **Every calculation runs
-   * on `activeRows`**, never on `rows` — the inactive structure's lines are still
-   * in state, and counting them would double the contract.
-   */
   const activeRows = useMemo(
     () => rows.filter((r) => (payMode === 'upfront' ? r.kind === 'up' : r.kind !== 'up')),
     [rows, payMode]
@@ -535,7 +358,6 @@ export function ResultJobModal({
   const upRows = useMemo(() => activeRows.filter((r) => r.kind === 'up'), [activeRows]);
   const downRows = useMemo(() => activeRows.filter((r) => r.kind === 'down'), [activeRows]);
   const balRows = useMemo(() => activeRows.filter((r) => r.kind === 'bal'), [activeRows]);
-  /** Everything collected at the table: the down payment, or the whole upfront contract. */
   const collectNowRows = useMemo(() => activeRows.filter((r) => r.kind !== 'bal'), [activeRows]);
 
   const downTotal = useMemo(
@@ -547,24 +369,6 @@ export function ResultJobModal({
     [balRows, activeRows, contractNum]
   );
 
-  /**
-   * The single-method fields every existing consumer of the outcome payload still
-   * reads (`buildCalculatorOutcomePayload`, the outcome logs, the deal-edit
-   * baseline). With a split contract there is no one method, so the FIRST funded
-   * row of each half stands in — and the summed totals stay exact. The full
-   * breakdown rides alongside in `downPayments` / `balancePayments`.
-   *
-   * ⚠️ **These hold a plan KEY, and must NEVER become a joined display string.**
-   * `getPaymentMethodLabel`, `coerceToPlanKey` and the server's own
-   * `resolvePaymentMethodLabel` all look the value up against the company's
-   * payment-plan catalogue, so a `"Check + AMEX"` resolves to nothing in every
-   * consumer at once. Worse, `resolveTierPaymentMethod`
-   * (`utils/dynamic-deal-pricing.ts:51`) SUBSTRING-SNIFFS this value to pick the
-   * fee that grosses up the whole contract price — a joined string containing
-   * `amex` would silently reprice a signed deal at AMEX's rate. Per-row gross-up
-   * is a pricing decision RevDSM has not made yet; until it does, the one-key
-   * mirror is what keeps that path honest.
-   */
   const primaryDownMethod = useMemo(
     () => collectNowRows.find((r) => r.method && effectiveRowAmount(r, activeRows, contractNum) > 0)?.method || '',
     [collectNowRows, activeRows, contractNum]
@@ -574,36 +378,15 @@ export function ResultJobModal({
     [balRows, activeRows, contractNum]
   );
 
-  /**
-   * The full allocation, persisted alongside those scalars so a split contract
-   * survives a reload as three rows rather than as one row of the summed total.
-   *
-   * ⚠️ Built from `activeRows` for the same reason `goFunding` saves from them: the
-   * inactive structure's lines are still in `rows`, and including them would file
-   * the contract twice over.
-   */
   const allocations = useMemo(
     () => paymentAllocations(activeRows, contractNum, pricing.plans),
     [activeRows, contractNum, pricing.plans]
   );
 
-  // Web parity (result-lead-modal.js): fire the `lead_result_field_entry` outcome
-  // logs for this resulted lead.
-  //
-  // These are the rows a rep sees when they enter a down payment or switch a
-  // payment method, and they used to arrive with nothing saying WHICH flow they
-  // came from — indistinguishable between a rehash re-pitch, a fresh sale and a My
-  // Deals edit. `source` stamps them the same way every funding row is stamped.
-  // ⚠️ It is opt-in on the hook: the other two callers pass none and keep sending
-  // byte-identical payloads (web parity) — see `useOutcomeLogging`.
   useOutcomeLogging({
     visible,
     lead,
     source: fundingSource,
-    // ⚠️ The override that makes this screen ONE module: without it these rows stay
-    // on `lead_result_field_entry` and the sheet goes on emitting two module types
-    // for a single flow. Opt-in on the hook, so the classic Outcome modal and the
-    // Lead Center Result Lead modal keep their web parity untouched.
     moduleType: RESULT_LEAD_MODULE,
     outcomeStatus: resultType,
     outcomeForm: {
@@ -618,8 +401,6 @@ export function ResultJobModal({
     },
   });
 
-  // Entered line items, grouped by category (sorted) so the Job Summary reads the
-  // same as the rollout quote card — category pills + per-row schema icons.
   const items = useMemo(
     () =>
       (Object.values(entries).filter((e) => e && e.inputValue > 0) as CalculatorEntry[]).sort((a, b) =>
@@ -628,17 +409,12 @@ export function ResultJobModal({
     [entries]
   );
 
-  // categoryId → { label, style }; icon/color are schema-driven (Iconify → Ionicons).
   const categoryMeta = useMemo(() => buildCategoryMeta(verticals), [verticals]);
 
-  // Full package → the Calculator block shows the icon + ⓘ instead of the derived
-  // `G+VMax+Versa+S+FWrap` name. The contents card is an IN-SHEET overlay, never a
-  // nested <Modal>: stacking native modals is unreliable on both platforms.
   const packageInfo = useMemo(() => describeFullPackage(entries, verticals), [entries, verticals]);
   const [packageAnchor, setPackageAnchor] = useState<PackageAnchorRect | null>(null);
   const [showPackageInfo, setShowPackageInfo] = useState(false);
 
-  // Count of entered items per category → the "Gutters (3)" pills, in entry order.
   const categoryChips = useMemo(() => {
     const counts: Record<string, number> = {};
     const order: string[] = [];
@@ -651,29 +427,9 @@ export function ResultJobModal({
     return order.map((id) => ({ id, count: counts[id] }));
   }, [entries]);
 
-  // ── the Result Lead flow: start ──────────────────────────────────────────
-
-  /**
-   * Has the rep been through to the funding screen on this visit? Only used to
-   * mark the re-entry, so a ref rather than state — nothing renders from it.
-   */
   const wentToFundingRef = useRef(false);
-  /** Latches the `opened` row so re-renders do not repeat it. */
   const openLoggedRef = useRef(false);
 
-  /**
-   * `result_lead_opened` — the START of the flow.
-   *
-   * ⚠️ Fires on ENTERING the pricing panel, not merely on the sheet becoming
-   * visible, and the latch is released whenever the rep leaves it. That is what
-   * makes **Edit payments** log a second `opened` (carrying `reopened`) rather
-   * than filing the re-price silently under a flow that had already been
-   * confirmed — the module follows the SCREEN.
-   *
-   * ⚠️ `contractNum` / `payMode` are read at fire time but the latch means a later
-   * change to either cannot re-log; they are in the dep list because the rule
-   * demands it, not because a change should re-fire.
-   */
   useEffect(() => {
     const onPricing = visible && screen === 'result';
     if (!onPricing) {
@@ -692,18 +448,12 @@ export function ResultJobModal({
     });
   }, [visible, screen, resultType, payMode, contractNum, logCtx]);
 
-  // ── pricing-row editing ──────────────────────────────────────────────────
-
   const updateRow = useCallback((pid: string, patch: Partial<PaymentRow>) => {
     setRows((prev) => prev.map((r) => (r.pid === pid ? { ...r, ...patch } : r)));
   }, []);
 
   const removeRow = useCallback(
     (pid: string) => {
-      // ⚠️ Read and logged BEFORE the state update, not inside the updater — React
-      // may invoke an updater more than once, which would double-log. After this
-      // the row is gone, and the event is the only record that money was ever
-      // assigned to that method.
       const gone = rows.find((r) => r.pid === pid);
       if (gone) {
         logResultLeadRowRemoved({
@@ -721,9 +471,6 @@ export function ResultJobModal({
 
   const addRow = useCallback(
     (kind: PaymentKind) => {
-      // Same reason as `removeRow`: logged outside the updater, which React may run
-      // more than once. `rowCount` is the count AFTER this add, so the timeline
-      // reads "the contract is now split three ways".
       logResultLeadRowAdded({
         ...logCtx,
         kind,
@@ -731,8 +478,6 @@ export function ResultJobModal({
       });
       setRows((prev) => {
         const next = [...prev];
-        // A new line goes AFTER the last row of its own half so the two groups stay
-        // contiguous — `rows` is one flat list and the groups render from filters.
         let insertAt = next.length;
         for (let i = next.length - 1; i >= 0; i -= 1) {
           if (next[i].kind === kind) {
@@ -747,18 +492,9 @@ export function ResultJobModal({
     [activeRows, logCtx]
   );
 
-  /**
-   * A method was picked on one line.
-   *
-   * Amounts are deliberately NOT logged as they are typed — that would be a row per
-   * keystroke — so the method pick and the Confirm save (which carries every final
-   * amount) are the two events that describe the split.
-   */
   const selectRowMethod = useCallback(
     (pid: string, key: string) => {
       const row = rows.find((r) => r.pid === pid);
-      // Only when it actually changes, matching how the Investment Center logs its
-      // payment-method selection — re-picking the same plan is not an event.
       if (row && key && key !== row.method) {
         logResultLeadMethodSelected({
           ...logCtx,
@@ -768,38 +504,19 @@ export function ResultJobModal({
           amount: effectiveRowAmount(row, activeRows, contractNum),
         });
       }
-      // `swapRowMethod` also clears the lender state a decided financing row carried and
-      // shelves the plan it replaced — the same path the deal-edit wizard takes.
       setRows((prev) => swapRowMethod(prev, pid, key, pricing.plans));
     },
     [rows, activeRows, contractNum, pricing.plans, logCtx]
   );
 
-  /**
-   * Switch between Down Payment and Upfront.
-   *
-   * ⚠️ Refused once money has started moving (`structureLocked`): an upfront row
-   * the processor has already charged cannot be re-cast as a down payment against
-   * a balance that does not exist. The refusal is EXPLAINED rather than silent —
-   * a card that does nothing on tap reads as a bug.
-   *
-   * The other structure's rows are seeded on first use, not at mount, so they are
-   * never sitting in `rows` un-displayed while `activeRows` has to remember to
-   * exclude them.
-   */
   const switchPayMode = useCallback(
     (next: PayMode, allowed: boolean) => {
-      // Identity FIRST: when the structure is locked the selected card is disabled
-      // too, and tapping the option you are already on must not scold you for it.
       if (next === payMode) return;
       if (!allowed) {
         setStructureNudge(true);
         return;
       }
       setStructureNudge(false);
-      // Logged only once the switch is actually ALLOWED — a refused tap changed
-      // nothing about the deal, and recording it would put a structure change in the
-      // timeline that never happened.
       logResultLeadStructureChanged({ ...logCtx, from: payMode, to: next });
       setRows((prev) => {
         const wantUpfront = next === 'upfront';
@@ -819,7 +536,6 @@ export function ResultJobModal({
     [payMode, contractNum, logCtx]
   );
 
-  /** The dropdown's choice: `none` / `split` are both `payMode === 'split'`. */
   const selectStructure = useCallback(
     (next: PayStructure, allowed: boolean) => {
       if (next === payStructureOf(payMode, noDown)) return;
@@ -840,17 +556,6 @@ export function ResultJobModal({
     [payMode, noDown, switchPayMode]
   );
 
-  /**
-   * Re-open the auto (remainder) row when money comes unassigned again.
-   *
-   * The rep can dismiss the auto row once it is holding $0, but lowering a down
-   * payment afterwards would leave the gap invisible. Rather than restoring a
-   * deleted row, the LAST balance row without a lender decision takes the auto
-   * flag back — which is where the remainder belongs anyway.
-   *
-   * Upfront has no remainder row by design — every amount there is typed, and the
-   * `CoverageBar` is what surfaces a gap — so this only runs in split mode.
-   */
   useEffect(() => {
     if (!isSale || contractNum <= 0 || payMode === 'upfront') return;
     const hasAuto = activeRows.some((r) => r.auto);
@@ -859,24 +564,14 @@ export function ResultJobModal({
     const candidates = activeRows.filter((r) => r.kind === 'bal' && !r.decision);
     const target = candidates[candidates.length - 1];
     if (!target) return;
-    // Only reclaim a row the rep has not typed into — never overwrite an amount.
     if (parseFloat(target.amount || '0') > 0) return;
     updateRow(target.pid, { auto: true });
   }, [activeRows, contractNum, isSale, payMode, updateRow]);
 
   const needsRowId = useMemo(() => needsAttentionRowId(activeRows, banners, payMode), [activeRows, banners, payMode]);
 
-  /** Has money moved? Then the structure is settled — see `switchPayMode`. */
   const structureIsLocked = useMemo(() => structureLocked(payments), [payments]);
 
-  /**
-   * Lender decisions, explained immediately above the group that carries the
-   * remainder — the Balance in split mode, the Upfront group in upfront mode.
-   *
-   * That is where the rep has to act, and it is the row `needsRowId` highlights
-   * amber. Floating the prose above both groups would put "assign the remaining
-   * $X below" above a Down Payment group that has nothing to do with it.
-   */
   const decisionBanners = banners.map((b) => (
     <View key={b.id} style={{ backgroundColor: b.tone === 'bad' ? FUND.RED_BG : FUND.AMBER_BG, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 12 }}>
       <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, lineHeight: 17, color: b.tone === 'bad' ? FUND.RED_TEXT : FUND.AMBER_TEXT }}>
@@ -885,80 +580,28 @@ export function ResultJobModal({
     </View>
   ));
 
-  /**
-   * Any edit retires the server's last refusal — it was about rows that no longer
-   * exist. ⚠️ Keyed on the three pieces of state the whole pricing panel writes
-   * through, rather than cleared inside each setter: a per-setter list is one the
-   * next field added to this panel would quietly fall off.
-   */
   useEffect(() => {
     setSaveError(null);
   }, [rows, contractPrice, payMode]);
 
-  // ── gate into funding ────────────────────────────────────────────────────
-
   const totalAssigned = useMemo(() => assignedTotal(activeRows, contractNum), [activeRows, contractNum]);
-  /**
-   * Why Confirm is off, listed above it. Same shape as the funding footer's
-   * blockers — the rep works a list rather than tapping a grey button and being
-   * told no. `goFunding` re-checks the same rules as a backstop.
-   */
   const resultBlockers = useMemo(
-    // ⚠️ `plans` + `online` so a card or loan row that can no longer be
-    // collected is listed as a reason BEFORE the tap. Without them a rep who
-    // picked AMEX on signal and then lost it taps Confirm and gets the server's
-    // generic "payments could not be saved" — which names neither the cause nor
-    // the fix.
     () => confirmBlockers(activeRows, contractNum, payMode, { plans: pricing.plans, online }),
     [activeRows, contractNum, payMode, pricing.plans, online]
   );
   const saleReady = resultBlockers.length === 0;
 
-  /**
-   * Confirm — save the pricing rows, then move to Funding.
-   *
-   * The `PUT` is the save for the whole screen: `payments` is the COMPLETE list,
-   * so a row the rep deleted is deleted server-side too. Only advance on success —
-   * the funding screen renders the server's record, so opening it after a failed
-   * save would show the rep the previous state under the new price.
-   */
   const goFunding = useCallback(async (acknowledged = false) => {
     if (resultBlockers.length) {
       FlashMessage.error('Not ready to confirm', resultBlockers[0]);
       return;
     }
-    // No Down Payment: the rep must acknowledge that the WHOLE contract goes to financing.
-    // Down Payment / Upfront show nothing.
     if (payMode === 'split' && noDown && !acknowledged) {
       setNoDownWarn(true);
       return;
     }
-    // ⚠️ `activeRows`, not `rows`: the inactive structure's lines are still in
-    // state, and `payments` is the COMPLETE list — sending them would file the
-    // contract twice over.
     const upsert = toUpsertRows(activeRows, contractNum, pricing.plans);
 
-    /**
-     * ⚠️ OFFLINE: the split is QUEUED and the rep carries on. It is not refused.
-     *
-     * This used to block, on the reasoning that `savePayments` is a live PUT and
-     * the funding screen renders the SERVER's record. Both facts are still true —
-     * but they argue for skipping that screen, not for stopping the sale. A cheque
-     * taken at a door is a complete transaction: the rep has the cheque, and
-     * nothing about filing the paperwork later changes that. Refusing Confirm
-     * stranded them mid-sale with no way forward, which is worse than the
-     * anonymous failure it replaced.
-     *
-     * ⚠️ Safe to queue because the request is a FULL PUT of the whole list, so a
-     * replay lands the same record — and because a card or lender row never
-     * reaches here: `resultBlockers` refuses those offline (`planBlockedOffline`),
-     * since collecting one needs the server to mint a Stripe link. What is queued
-     * is always a split the device could honour by itself.
-     *
-     * ⚠️ Goes STRAIGHT to the job build, skipping the funding screen. That screen
-     * is a view onto the server's record; with no signal it has nothing to draw,
-     * and showing an empty one would read as the split having been lost.
-     */
     if (!isOnline()) {
       const work = ensureOfflineWorkForLead(lead || { _id: leadLogId });
       if (!work?.clientId) {
@@ -982,16 +625,9 @@ export function ResultJobModal({
         'Saved on this device',
         'The payment split uploads automatically when you have signal. Carry on and build the job.',
       );
-      // The funding MODULE is server-owned, so the rep goes to the build instead of
-      // a screen that cannot render. `handleBuild` has its own offline arm.
       handleBuildRef.current?.();
       return;
     }
-    // ⚠️ The BOUNDARY. `result_lead` ends on the press and `funding` begins with the
-    // save below, so this fires FIRST and unconditionally: gating it on the save
-    // succeeding would leave a failed confirm as a flow with no terminal row, which
-    // reads worse than an end marker followed by the save's own
-    // `funding_payments_save_failed`.
     logResultLeadConfirmed({
       ...logCtx,
       contractPrice: Math.round(contractNum),
@@ -999,13 +635,8 @@ export function ResultJobModal({
       paymentCount: upsert.length,
       payments: upsert.map((r) => ({ kind: r.kind, method: r.method, amount: r.amount })),
     });
-    // `savePayments` logs the save itself (with the full breakdown) — it is the only
-    // place the server's answer exists.
     const res = await funding.savePayments(Math.round(contractNum), upsert, payMode);
     if (!res.ok) {
-      // `useFunding` already flashed it — into THIS sheet, via `ModalFlashHost`.
-      // This keeps the same sentence above Confirm after the banner goes, because a
-      // refused rule is something the rep has to fix, not something to acknowledge.
       setSaveError(res.error?.message || 'The payments could not be saved.');
       return;
     }
@@ -1018,29 +649,6 @@ export function ResultJobModal({
       payMode,
     });
 
-    /**
-     * Confirm COMPLETES the portal's **Lead Resulted** milestone.
-     *
-     * The result itself is finished here — outcome, contract price and the whole
-     * payment split are saved — and everything past this point belongs to Funding,
-     * which the portal derives separately from the `JobFunding` document. The step
-     * was turned `'active'` when the sheet opened (`handleResultJob` → `openSheet`);
-     * this is its other end.
-     *
-     * ⚠️ `jobBuild` is deliberately NOT advanced. The rep has not started building,
-     * and Build Job sends `{ leadResulted: 'completed', jobBuild: 'active' }` of its
-     * own accord — repeating `leadResulted` there is a harmless no-op under the
-     * backend's forward-only `canAdvanceStatus` (`pending → active → completed`).
-     *
-     * ⚠️ Fired AFTER the save succeeds, unlike `result_lead_confirmed` above, and the
-     * difference is deliberate: that one is an EVENT (the rep pressed Confirm, which
-     * happened whatever the server said), this is a STATE CLAIM. A refused save leaves
-     * the rep on the pricing panel still able to change the result, so completing the
-     * milestone there would be a claim we cannot walk back — the guard is forward-only.
-     *
-     * ⚠️ Not awaited, matching every other timeline write: nothing on screen reads
-     * these flags, and a failed PATCH must never hold up the move to Funding.
-     */
     if (leadLogId) {
       LeadService.updateLeadTimelineProgress(leadLogId, {
         salesProcess: 'completed',
@@ -1049,71 +657,40 @@ export function ResultJobModal({
         console.warn('[ResultJobModal] timeline progress (confirm) failed:', e?.message || e)
       );
     }
-    // Set only once the rep has ACTUALLY left: a failed save keeps them on the
-    // pricing panel, and marking the trip there would make the next `opened` row
-    // claim a return that never happened.
     wentToFundingRef.current = true;
     setScreen('funding');
   }, [resultBlockers, contractNum, activeRows, pricing.plans, payMode, noDown, funding, logCtx, leadLogId, lead, calculatorId]);
 
-  /** Back / "Edit payments" — fold every lender decision onto the pricing rows. */
   const goResult = useCallback(() => {
     const applied = applyDecisionsToRows(activeRows, payments, contractNum, payMode);
-    // `reassigning` is the case worth telling apart: a lender decision opened a gap
-    // and the rep is going back to cover it, not just changing their mind.
     logFundingEditPayments({ ...logCtx, reassigning: applied.banners.length > 0 });
-    // Decisions only ever touch the ACTIVE structure, so the other one's rows are
-    // carried through untouched rather than dropped.
     const inactive = rows.filter((r) => !activeRows.includes(r));
     setRows([...applied.rows, ...inactive]);
     setBanners(applied.banners);
     if (applied.banners.length) setPriceUnlocked(true);
     funding.clearServerBlockers();
-    // The "void it first" nudge answered a tap that is now several screens back.
     setStructureNudge(false);
     setScreen('result');
   }, [rows, activeRows, payments, contractNum, payMode, funding, logCtx]);
 
-  // ── funding actions ──────────────────────────────────────────────────────
-
   const covered = useMemo(() => coverageOK(payments, contractNum), [payments, contractNum]);
-  /**
-   * The live checklist. The SERVER's list replaces it the moment a submit is
-   * refused (spec §5.12) — that one is authoritative and already ordered — but
-   * showing the local mirror beforehand means the rep works the list instead of
-   * discovering it by tapping a button that says no.
-   */
   const localBlockers = useMemo(
-    // The `charges_enabled` gate joins the checklist as ONE line — it is why the
-    // link steps below it cannot be finished, and repeating it per card would say
-    // the same company-wide thing three times on a three-card job.
     () => fundingBlockers(payments, contractNum, { setupBlocked: !!funding.paymentsSetupError }),
     [payments, contractNum, funding.paymentsSetupError]
   );
   const blockers = funding.serverBlockers ?? localBlockers;
-  /** ⚠️ Read from the record: the server refuses `bankDecline` without a logged decline. */
   const declineHappened = useMemo(() => hasDecline(funding.record), [funding.record]);
   const attempts = useMemo(() => attemptLog(funding.record), [funding.record]);
-  /** The most recent status check across every row. */
   const lastSyncedAt = useMemo(() => {
     const stamps = payments.map((p) => p.syncedAt).filter(Boolean) as string[];
     if (!stamps.length) return null;
     return formatStamp(stamps.sort().slice(-1)[0]);
   }, [payments]);
 
-  // A rep who reassigns a declined amount can end up with no live decline; the
-  // job must not stay resulted as a Bank Decline in that case.
   useEffect(() => {
     if (!declineHappened && resultChoice === 'bank_decline') setResultChoice('sale');
   }, [declineHappened, resultChoice]);
 
-  /**
-   * Open the send sheet and fetch the hosted-page url.
-   *
-   * ⚠️ `POST …/link` marks NOTHING — merely opening the sheet must not tick Link
-   * Sent (spec §5.4). It is idempotent, so backing out and reopening returns the
-   * same page rather than minting a second live link.
-   */
   const openSendSheet = useCallback(
     async (pid: string) => {
       setLinkTarget(pid);
@@ -1126,20 +703,10 @@ export function ResultJobModal({
     [funding]
   );
 
-  /** The rep confirmed a send happened. Resolves false if the server did not deliver. */
   const handleSendLink = useCallback(
     async (channel: FundingChannel, destination?: string): Promise<boolean> => {
       if (!linkTarget) return false;
       const res = await funding.markLinkSent(linkTarget, channel, destination);
-      /**
-       * ⚠️ A corrected destination RE-ISSUES the link: the server expires the open
-       * Checkout session and mints a new page, so the url this screen is still holding
-       * — the one behind the QR code and the Copy button — is dead. Re-fetch instead of
-       * trusting what we cached (REVDSM-1155).
-       *
-       * `reissued` comes back from the hook because it cannot be re-derived here: the
-       * row now carries the NEW destination, so comparing it would answer false.
-       */
       if (res.ok && res.data?.reissued) {
         const fresh = await funding.fetchLink(linkTarget);
         setLinkUrl(fresh.ok ? fresh.data?.url || '' : '');
@@ -1149,12 +716,6 @@ export function ResultJobModal({
     [funding, linkTarget]
   );
 
-  /**
-   * Bank Decline / back to Sale.
-   *
-   * ⚠️ Only mirrored locally once the SERVER accepts it — it refuses the switch
-   * without a logged lender decline, and refuses to undo one after submission.
-   */
   const handleSetResult = useCallback(
     async (next: 'sale' | 'bank_decline') => {
       const res = await funding.setResult(next === 'bank_decline' ? 'bankDecline' : 'sale');
@@ -1165,44 +726,14 @@ export function ResultJobModal({
 
   const linkPayment = useMemo(() => payments.find((p) => p.pid === linkTarget) || null, [payments, linkTarget]);
 
-  // ── submit ───────────────────────────────────────────────────────────────
-
-  // Web `isFormValid` (result-lead-modal.js): a Demo needs a reason AND a last
-  // price quoted > 0. The Sale gate now lives in `saleReady` — every funded line
-  // needs a method, which subsumes the old "balance method required" rule and also
-  // covers a paid-in-full deal that has no balance line at all.
   const demoDisabled =
     !demoReason || (demoReason === 'Other (Explain)' && !reasonExplanation.trim()) || !(contractNum > 0);
-  // The server is the real gate; this only keeps the rep from tapping into a
-  // rejection it can already see coming. A Bank Decline submits with no checks.
   const submitDisabled = funding.isSubmitting || (!bankDeclined && localBlockers.length > 0);
 
-  /**
-   * Finish.
-   *
-   * A **demo** has nothing to fund, so it hands off immediately. A **sale** must
-   * submit the funding first and only proceeds if the server accepts — a refusal
-   * comes back as the itemised `blockers` list, which is rendered in place of the
-   * local one rather than dropping the rep into the job builder on an unfunded job.
-   */
   const handleBuild = useCallback(async () => {
     const isDemo = resultType === 'demo';
 
     if (!isDemo) {
-      /**
-       * ⚠️ The funding SUBMIT is skipped offline, not failed.
-       *
-       * `submit` is the server marking the funding record complete, and it is
-       * validated against payments the server does not have yet — the split is
-       * still in the upload queue. So there is nothing for it to answer, and
-       * `useFunding.run()` refuses it offline anyway.
-       *
-       * The sale is NOT lost by skipping it: the queued `funding` step files the
-       * split when signal returns, and the job build the rep is about to do is
-       * queued by its own screen. What this costs is the funding record being
-       * marked submitted at the door, which is a server-side state nobody reads
-       * from the device.
-       */
       if (isOnline()) {
         const res = await funding.submit();
         if (!res.ok) return;
@@ -1214,11 +745,6 @@ export function ResultJobModal({
         });
       }
     } else {
-      // The demo arm never reaches Confirm and never enters the funding module, so
-      // without this it would be the one path through this screen that starts and
-      // simply stops. ⚠️ A SALE is NOT logged here — by then the rep is on the
-      // funding screen and `funding_submitted` already records it with the server's
-      // answer.
       logResultLeadBuildJob({
         ...logCtx,
         resultType,
@@ -1231,17 +757,11 @@ export function ResultJobModal({
       resultType,
       oneLeg,
       contractPrice: isDemo ? undefined : contractNum || undefined,
-      // Demo persists the last price quoted (web parity) — the read-only value shown
-      // in the demo branch; previously dropped so the demo outcome saved an empty price.
       lastPriceQuoted: isDemo ? contractNum || undefined : undefined,
       downPayment: isDemo ? undefined : downTotal || undefined,
       balance: isDemo ? undefined : balanceTotal,
       downPaymentMethod: primaryDownMethod || undefined,
       balancePaymentMethod: primaryBalanceMethod || undefined,
-      // A demo funds nothing, so it carries no allocation. Sent as `undefined`
-      // rather than `[]` — the backend's `default: undefined` is what distinguishes
-      // "predates multi-method" from "genuinely no rows", and an empty array on a
-      // demo would claim the latter about a record that never had payments.
       downPayments: isDemo ? undefined : allocations.downPayments,
       balancePayments: isDemo ? undefined : allocations.balancePayments,
       demoReason: isDemo ? demoReason : undefined,
@@ -1252,7 +772,6 @@ export function ResultJobModal({
         ? {}
         : {
             bankDecline: bankDeclined,
-            // The record as the server holds it after the submit landed.
             payments,
             fundingAttempts: funding.record?.attemptHistory || [],
           }),
@@ -1263,23 +782,16 @@ export function ResultJobModal({
     logCtx,
   ]);
 
-  // See `handleBuildRef` — `goFunding`'s offline arm hands off to this, and it is
-  // declared below `goFunding`, so the ref is what bridges them.
   useEffect(() => {
     handleBuildRef.current = handleBuild;
   }, [handleBuild]);
 
-  // ── price lock ───────────────────────────────────────────────────────────
-
   const priceEditable = isRehashed || priceUnlocked;
-  /** Money a lender has already committed to — the floor the price cannot go under. */
   const lockedTotal = useMemo(
     () => activeRows.filter((r) => r.decision).reduce((n, r) => n + effectiveRowAmount(r, activeRows, contractNum), 0),
     [activeRows, contractNum]
   );
   const priceBelowLocked = priceUnlocked && contractNum < lockedTotal;
-
-  // ── render ───────────────────────────────────────────────────────────────
 
   const onFunding = screen === 'funding';
 
@@ -1317,8 +829,6 @@ export function ResultJobModal({
 
             <ScrollView style={{ paddingHorizontal: 20, paddingTop: 24 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
               {onFunding ? (
-                /* Every callback is an ENDPOINT — nothing here ticks a step
-                   locally; the screen redraws from the record each one returns. */
                 <FundingView
                   payments={payments}
                   payMode={payMode}
@@ -1417,9 +927,6 @@ export function ResultJobModal({
                   )}
 
                   {isSale && (
-                    /* PRICING — the contract price and everything paying it, in one
-                       recessed panel so the split reads as a single figure broken up
-                       rather than three unrelated fields. */
                     <View style={{ backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 22, paddingHorizontal: 14, paddingTop: 16, paddingBottom: 6, marginBottom: 22 }}>
                       <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 1.2, textTransform: 'uppercase', color: FUND.PANEL_LABEL, paddingHorizontal: 4, paddingBottom: 14 }}>
                         Pricing
@@ -1476,8 +983,6 @@ export function ResultJobModal({
                             allRows={activeRows}
                             price={contractNum}
                             plans={pricing.plans}
-                            // Paid in full now, so there is no balance to carry —
-                            // lender plans are not offered here, same as a deposit.
                             options={pricing.outcomeDownPaymentMethods}
                             needsRowId={needsRowId}
                             canAdd={MULTI_METHOD_ENABLED}
@@ -1507,8 +1012,6 @@ export function ResultJobModal({
                             allRows={activeRows}
                             price={contractNum}
                             plans={pricing.plans}
-                            // Financing carries a balance, never a deposit — the Down
-                            // Payment picker is cash/card only (see `useDealPricing`).
                             options={pricing.outcomeDownPaymentMethods}
                             needsRowId={needsRowId}
                             canAdd={MULTI_METHOD_ENABLED}

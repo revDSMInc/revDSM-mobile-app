@@ -11,9 +11,7 @@ type Props = {
   visible: boolean;
   zone: any;
   onClose: () => void;
-  /** Web `onDelete` — offered only while nobody has knocked a door in the zone. */
   onDelete?: (zone: any) => void | Promise<void>;
-  /** Web `onArchive` — offered only once the zone has knock history. */
   onArchive?: (zone: any) => void | Promise<void>;
   isProcessing?: boolean;
 };
@@ -34,7 +32,6 @@ function StatItem({ label, value, textColor, mutedColor }: { label: string; valu
 const DELETE_COLOR = '#FF5630'; // theme error.main — web `color="error"`
 const ARCHIVE_COLOR = '#FFAB00'; // theme warning.main — web `color="warning"`
 
-// Web zone-stats-popup ConfirmDialog copy, verbatim.
 const CONFIRM = {
   delete: {
     title: 'Delete Zone?',
@@ -76,8 +73,6 @@ export function ZoneStatsPopup({
   const displayName = formatZoneDisplayName(zone);
   const surfaceBg = isDark ? colors.surface : '#FFFFFF';
 
-  // A native Alert rather than a second Modal: this sheet is already a Modal inside the
-  // map's Modal, and stacking native modals is unreliable on both platforms.
   const confirm = (kind: keyof typeof CONFIRM) => {
     const handler = kind === 'delete' ? onDelete : onArchive;
     if (!handler || isProcessing) return;

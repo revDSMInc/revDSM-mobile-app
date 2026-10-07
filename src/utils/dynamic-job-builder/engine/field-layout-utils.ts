@@ -180,12 +180,6 @@ export function getFieldGridColumns(layoutConfig: any = {}) {
   return Math.min(Math.round(columns), 3);
 }
 
-/**
- * Resolve the portal "Mobile Layout" setting to a column count for the `xs`
- * breakpoint. Returns null when unset or stacked (1) so callers keep their own
- * default — nothing changes for existing schemas.
- * Port of web `field-layout-utils.js` `resolveMobileGridColumns`.
- */
 export function resolveMobileGridColumns(mobileColumns: any): number | null {
   const normalized = Number(mobileColumns);
   if (!Number.isFinite(normalized) || normalized < 2) return null;

@@ -64,10 +64,8 @@ export function isLeadInGeofence(lead: any, userLocation: UserLocation): boolean
   );
 }
 
-/** Leads list / job card — mirrors web getJobStatus + useJobCard.handleImageButtonClick dispatch */
 export function planStartAppointment(lead: any, userLocation: UserLocation): AppointmentLogPlan {
   const rawInRange = isLeadInGeofence(lead, userLocation);
-  // GPS bypass replaces the physical geofence check (web parity)
   const isInRange = rawInRange || isGpsBypassActive(lead);
 
   const isSelfGen = isSelfGeneratedLead(lead);
@@ -75,25 +73,19 @@ export function planStartAppointment(lead: any, userLocation: UserLocation): App
 
   const scheduledTime = getScheduledDateTime(lead);
   const beforeWindow = isBeforeTimeWindow(scheduledTime);
-  // Early-start bypass replaces the time-window gate (only meaningful on-site)
   const earlyStartActive =
     (lead?.earlyStart === true || isEarlyStartBypassActive(lead)) && isInRange;
 
   let logModule: LeadLogModule = '';
   if (isResumeLead) {
-    // Checked in before → GPS alone decides Resume vs Review (time window ignored)
     logModule = isInRange ? 'lead_resume' : 'lead_review';
   } else if (isSelfGen) {
-    // Self-gen never checked in → on-site starts; off-site is Preview (no action)
     if (isInRange) logModule = 'lead_check_in';
   } else {
-    // Regular never checked in → on-site + not-too-early starts; else Preview (no action)
     if (isInRange && (!beforeWindow || earlyStartActive)) logModule = 'lead_check_in';
   }
 
   const isResulted = !['lfLead', 'selfGenerated', 'scheduled'].includes(lead?.status || '');
-  // Only the actionable states (check-in / resume / review) hit the work endpoint;
-  // a Preview button is disabled and never reaches here.
   const shouldCallWork = !isResulted && logModule !== '';
 
   return {
@@ -104,7 +96,6 @@ export function planStartAppointment(lead: any, userLocation: UserLocation): App
   };
 }
 
-/** Zone map submitted-lead popup — mirrors web submitted-lead-popup.js */
 export function planZoneCanvasserStartAppointment(
   lead: any,
   userLocation: UserLocation
@@ -145,10 +136,6 @@ export async function logLeadActionClick(
   const userId = user?._id || user?.id;
   if (!userId || !logModule) return;
 
-  // Web parity (useJobCard.handleImageButtonClick): attach the ACTIVE bypass +
-  // its reason to the check-in / resume log so the Forever Record shows which
-  // manager override was in effect when the rep arrived. Review carries no
-  // bypass meta (matching web — a review is off-site, no override was used).
   const bypassMeta: Record<string, unknown> = {};
   if (logModule === 'lead_check_in' || logModule === 'lead_resume') {
     if (isGpsBypassActive(lead)) {
@@ -168,18 +155,7 @@ export async function logLeadActionClick(
     created_by: userId,
     meta: {
       leadId: lead._id || lead.id,
-      // The HUMAN lead number, which web sends alongside the record id
-      // (`useJobCard.logActionEvent`: `jobLeadId: job?.leadId`). Mobile dropped it, so a
-      // portal row from the app could not be matched to the lead the rep sees on the card.
-      // A self-gen lead has none, and web sends its literal `'N/A'` rather than omitting
-      // the key — the captured payload shows `jobLeadId: "N/A"`.
       jobLeadId: lead.leadId || 'N/A',
-      // `hasSalesPhotos` FIRST — this runs on a lead straight off the list, and a slim
-      // (`view=summary`) row carries `salesPhotos: []` regardless of whether the lead
-      // actually has any. Counting the array alone would log `false` for every lead.
-      // The boolean is the server's answer to exactly that question; the array length
-      // stays as the fallback for a fully-hydrated lead and for older payloads.
-      // (Web makes the same change in its `hasImages()`.)
       hasExistingImages:
         typeof lead.hasSalesPhotos === 'boolean'
           ? lead.hasSalesPhotos
@@ -229,13 +205,6 @@ export async function executeStartAppointmentFlow(
       await logLeadActionClick(user, plan.logModule, lead);
     }
 
-    // Web parity (useJobCard / submitted-lead-popup): the ops side watches this room to
-    // see the rep is on site. `useLocationBroadcaster` then feeds it a position every
-    // minute; `logLeadSessionPause` leaves it when the rep backs out.
-    //
-    // Goes through the MANAGER's own method, not a bare `emit`, so the join is re-sent
-    // after a reconnect — a room only exists on the server's socket, and a dropped
-    // connection used to take the rep off the ops board's live list silently.
     SocketManager.joinLeadOnsiteWatch(leadId);
     const workData = res.data?.data || res.data;
     if (workData) {
@@ -254,20 +223,6 @@ export async function logLeadSessionEnter(user: any, lead: any) {
   await persistActiveLeadId(leadId);
 }
 
-/**
- * Backing out of the Lead Center PAUSES the on-site work session.
- *
- * Web fires this from both back paths of `job-capture-images-view.js` (the header arrow
- * and `useDetectBack`) as `logEvent('pause', { module_type: 'lead_session', ... })`, then
- * releases the session with `setLeadWork(leadId, null)` and leaves the ops watch room.
- *
- * Mobile used to send `unload` / `lead_check_out` / `check_out_unloaded` here instead —
- * an event web has never had, so the portal timeline read differently depending on which
- * client the rep used. That log is gone; this is its replacement.
- *
- * The work release itself stays where it already was, in `useLeadCenterData`'s unmount
- * cleanup (`LeadService.endWorkLead`) — that is mobile's `setLeadWork(leadId, null)`.
- */
 export async function logLeadSessionPause(user: any, lead: any) {
   const userId = user?._id || user?.id;
   const leadId = lead?._id || lead?.id;
@@ -284,8 +239,5 @@ export async function logLeadSessionPause(user: any, lead: any) {
     },
   });
 
-  // Web emits this beside the pause log so the ops side stops watching the rep on this
-  // lead. The paired join happens on check-in / resume in `executeStartAppointmentFlow`.
-  // Clearing it here is what stops the reconnect handler re-joining a lead the rep left.
   SocketManager.leaveLeadOnsiteWatch(leadId);
 }

@@ -1,14 +1,3 @@
-/**
- * offlineSettings.ts — storage and replay for a rep default set with no signal.
- *
- * The rules live in `utils/offline-settings.ts` (pure, tested). This is the device half: one MMKV
- * record, a listener set so the toggle re-renders the instant it is tapped, and a reconnect flush.
- *
- * ⚠️ Replay is unconditionally safe here, unlike the lead queue. This is a whole-value PUT of a
- * preference, so sending it twice lands the same state — there is no create to duplicate and no
- * ambiguous outcome to reason about.
- */
-
 import { storage } from '../utils/storage';
 import { SettingsService } from './api/SettingsService';
 import { isOnline, onReconnect } from './connectivity';
@@ -51,7 +40,6 @@ const persist = (): void => {
     try {
       l();
     } catch {
-      /* a bad listener must not stop the sync */
     }
   });
 };
@@ -66,7 +54,6 @@ export const subscribePendingCalculatorSettings = (listener: () => void): (() =>
   return () => listeners.delete(listener);
 };
 
-/** Record the rep's choice locally. Returns the merged record the UI should read. */
 export const queueCalculatorSetting = (patch: CalculatorSettingsPatch): PendingCalculatorSettings => {
   load();
   pending = mergePendingSettings(pending, patch);
@@ -74,13 +61,6 @@ export const queueCalculatorSetting = (patch: CalculatorSettingsPatch): PendingC
   return pending;
 };
 
-/**
- * Send whatever is waiting.
- *
- * Resolves with the payload that landed, so the caller can write those values onto the local user
- * BEFORE the pending record is cleared. ⚠️ That order matters: clearing first drops the override
- * while redux still holds the older server value, and the rep watches their toggle flip back.
- */
 export const flushCalculatorSettings = async (
   onApplied?: (applied: CalculatorSettingsPatch) => void
 ): Promise<CalculatorSettingsPatch | null> => {
@@ -96,7 +76,6 @@ export const flushCalculatorSettings = async (
     persist();
     return payload;
   } catch (e) {
-    // Kept for the next reconnect. A preference is not worth surfacing an error over.
     console.warn('[settings] could not sync pending defaults', e);
     return null;
   } finally {
@@ -104,14 +83,6 @@ export const flushCalculatorSettings = async (
   }
 };
 
-/**
- * A pending default is one rep's PREFERENCE, and it is applied to whoever is signed in
- * (`applyPendingSettingsToUser` overlays it onto the Redux user). So unlike the queued leads and
- * photos it cannot simply be owner-filtered and left — it ends with the session.
- *
- * ⚠️ The memo has to go with the MMKV key. Left holding the old value, the next write would
- * persist it straight back under the new rep.
- */
 registerSessionResetHook(() => {
   pending = null;
   loaded = false;
@@ -119,14 +90,12 @@ registerSessionResetHook(() => {
     try {
       l();
     } catch {
-      /* a bad listener must not stop the reset */
     }
   });
 });
 
 let syncStarted = false;
 
-/** Idempotent. Flushes on every reconnect, plus once on a cold start. */
 export const startCalculatorSettingsSync = (
   onApplied?: (applied: CalculatorSettingsPatch) => void
 ): void => {

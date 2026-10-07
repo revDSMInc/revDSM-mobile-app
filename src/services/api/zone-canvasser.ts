@@ -1,10 +1,6 @@
 import api from './index';
 import { normalizePropertyResponse } from '../../utils/property-util';
 
-/**
- * Web `endpoints.zoneCanvasser` (src/utils/axios.js), path for path. Keep these in step
- * with web — the mobile map is the same sales-rep feature against the same routes.
- */
 export const ZONE_ENDPOINTS = {
   list: '/revzones/v1/sales-rep/my-revzones',
   archivedList: '/revzones/v1/sales-rep/my-revzones?archived=true',
@@ -12,12 +8,9 @@ export const ZONE_ENDPOINTS = {
   update: (zoneId: string) => `/revzones/v1/${zoneId}`,
   salesRepDelete: (zoneId: string) => `/revzones/v1/sales-rep/${zoneId}`,
   salesRepArchive: (zoneId: string) => `/revzones/v1/sales-rep/${zoneId}/archive`,
-  // Same archive route with `?unarchive=true`, which flips `isArchive` back to false.
-  // Without the flag the API 400s ("already archived").
   salesRepUnarchive: (zoneId: string) => `/revzones/v1/sales-rep/${zoneId}/archive?unarchive=true`,
 } as const;
 
-/** The zones array out of whatever the list route wraps it in (web reads `data.data`). */
 function readZoneList(body: any): any[] {
   if (Array.isArray(body)) return body;
   if (Array.isArray(body?.data)) return body.data;
@@ -25,43 +18,36 @@ function readZoneList(body: any): any[] {
   return [];
 }
 
-/** Web `useGetCanvasserZones` — the rep's ACTIVE zones. */
 export async function fetchCanvasserZones(): Promise<any[]> {
   const res = await api.get<any>(ZONE_ENDPOINTS.list);
   return readZoneList(res.data);
 }
 
-/** Web `useGetArchivedZones` — same list route with `?archived=true`. */
 export async function fetchArchivedZones(): Promise<any[]> {
   const res = await api.get<any>(ZONE_ENDPOINTS.archivedList);
   return readZoneList(res.data);
 }
 
-/** Web `createZone`. */
 export async function createZone(payload: any) {
   const res = await api.post<any>(ZONE_ENDPOINTS.create, payload);
   return res.data;
 }
 
-/** Web `updateZone`. */
 export async function updateZone(zoneId: string, payload: any) {
   const res = await api.put<any>(ZONE_ENDPOINTS.update(zoneId), payload);
   return res.data;
 }
 
-/** Web `deleteZone` — sales rep, only zones with no knocked doors. */
 export async function deleteZone(zoneId: string) {
   const res = await api.delete<any>(ZONE_ENDPOINTS.salesRepDelete(zoneId));
   return res.data;
 }
 
-/** Web `archiveZone` — sales rep, only zones with knocked doors. No body. */
 export async function archiveZone(zoneId: string) {
   const res = await api.put<any>(ZONE_ENDPOINTS.salesRepArchive(zoneId));
   return res.data;
 }
 
-/** Web `unarchiveZone`. No body. */
 export async function unarchiveZone(zoneId: string) {
   const res = await api.put<any>(ZONE_ENDPOINTS.salesRepUnarchive(zoneId));
   return res.data;
@@ -98,7 +84,6 @@ export async function reverseGeocode(latitude: number, longitude: number) {
   return res.data;
 }
 
-/** Web parity: reverse geocode → US address check → property lookup */
 export async function fetchPropertyDetails(latitude: number, longitude: number) {
   const geocodeData = await reverseGeocode(latitude, longitude);
 
@@ -154,10 +139,6 @@ export async function fetchPropertyDetails(latitude: number, longitude: number) 
 }
 
 
-// Mongo indexes buildingDetails.position as 2dsphere, which needs GeoJSON order
-// [lng, lat]. The map works in [lat, lng], so swap at this boundary - sending
-// [lat, lng] makes Mongo read the longitude as a latitude and reject any point
-// past +/-90 lng (LA fails, Florida silently stores a bogus point).
 function withGeoPosition(payload: any) {
   const position = payload?.buildingDetails?.position;
   if (!Array.isArray(position) || position.length !== 2) return payload;

@@ -1,15 +1,3 @@
-/**
- * finalize-gate.ts — pure completion-gate logic for the Dynamic Job Builder.
- * Ports web `dynamic-job-builder.js` (`isRequiredDocumentationComplete`,
- * `canProceed`, `finalizeBlockedReason`). Previously mobile only gated a sale on
- * the appointment and (incorrectly) claimed web did not gate documentation — web
- * blocks a sale without a signed agreement and a demo without an order sheet.
- *
- * An ORDER SHEET is now required to finish ANY job (Sale or Demo) — a frontend
- * gate mirrored by a backend validation. A Sale additionally requires a signed
- * agreement and the scheduled install appointment.
- */
-
 export interface GateInput {
   portalUnrestrictedEdit?: boolean;
   areAllTabsComplete: boolean;
@@ -21,9 +9,7 @@ export interface GateInput {
 }
 
 export function isRequiredDocumentationComplete(i: Pick<GateInput, 'isSale' | 'isDemo' | 'hasAgreementDoc' | 'hasOrderSheetDoc'>): boolean {
-  // An order sheet is required to finish ANY job.
   if (!i.hasOrderSheetDoc) return false;
-  // A Sale additionally requires a signed agreement.
   if (i.isSale) return i.hasAgreementDoc;
   return true;
 }

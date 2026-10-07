@@ -30,34 +30,7 @@ export function useOutcomeLogging(opts: {
   setActiveIdx?: (idx: number) => void;
   lead?: any;
   disabled?: boolean;
-  /**
-   * WHICH FLOW this Result Lead sheet was opened through — `rehash` | `sale` |
-   * `my_deals`.
-   *
-   * ⚠️ **Opt-in, and it has to be.** These rows are `lead_result_field_entry`, a
-   * module THREE different screens emit into and one the WEB app sends the same
-   * strings for. Passing no source leaves every payload byte-identical to what it
-   * has always sent, so the classic Outcome modal and the Lead Center Result Lead
-   * modal are untouched and web parity is preserved.
-   *
-   * Passed, it stamps each row the way the funding module does — the flow composed
-   * onto `meta.action` plus `meta.fundingSource` — so a payment-method or
-   * down-payment change made while re-pitching a rehash is no longer
-   * indistinguishable from the same change on a fresh sale.
-   */
   source?: FundingSource;
-  /**
-   * The `module_type` these rows are filed under.
-   *
-   * ⚠️ **Opt-in, and it has to be.** Three screens call this hook and the WEB app
-   * emits the same strings into `lead_result_field_entry`, so the default keeps the
-   * classic Outcome modal and the Lead Center Result Lead modal byte-identical.
-   *
-   * Only the DYNAMIC Result Lead sheet overrides it, with `RESULT_LEAD_MODULE`, so
-   * ONE module covers everything on that screen — these field rows alongside the
-   * payment-split rows the sheet fires itself. Without the override it would go on
-   * emitting two module types for one flow, which is the thing being fixed.
-   */
   moduleType?: string;
 }) {
   const { user } = useAuth();
@@ -82,18 +55,6 @@ export function useOutcomeLogging(opts: {
   const loggedSectionsRef = useRef<Record<string, boolean>>({});
   const [sectionsReady, setSectionsReady] = useState(false);
 
-  /**
-   * Stamp one row with the flow it happened in.
-   *
-   * ⚠️ **Every `logEvent` in this hook goes through this**, for the reason
-   * `fire()` exists in `funding-log.ts`: with six emit sites a per-site edit is a
-   * per-site chance to forget, and a row that silently loses its origin is exactly
-   * the bug this is fixing.
-   *
-   * `baseAction` supplies a name for the sites that never carried one — added
-   * ONLY when a source is present, so a caller that passes none still sends the
-   * exact payload it always did.
-   */
   const stamp = useCallback(
     (meta: Record<string, any>, baseAction?: string) => {
       if (!source) return meta;
@@ -121,8 +82,6 @@ export function useOutcomeLogging(opts: {
     };
   }, [outcomeForm, outcomeStatus, calculators, activeIdx, lead]);
 
-  // Hoisted so the effect's dependency list can name it (the outcome endpoint is
-  // calculator-scoped, so the id is part of what the read depends on).
   const loggedSectionsCalcId = calculators[activeIdx]?._id || resolveLeadCalculatorId(lead);
 
   useEffect(() => {
@@ -210,7 +169,6 @@ export function useOutcomeLogging(opts: {
     prevActiveIdxRef.current = activeIdx;
   }, [visible, sectionsReady, user, leadId, buildResultData, outcomeForm, outcomeStatus, activeIdx, disabled, stamp, moduleType]);
 
-  // Calculator switch logging (web parity: selectedCalculatorId change)
   useEffect(() => {
     if (disabled) return;
     if (!visible) return;

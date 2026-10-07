@@ -31,16 +31,13 @@ export const FasciaSection = ({
   const getVal = (baseKey: string) => {
     if (!calculatorData) return 0;
     const lowerKey = baseKey.toLowerCase();
-    // Check root
     const topKey = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
     const topVal = topKey ? n(calculatorData[topKey]) : 0;
     if (topVal > 0) return topVal;
-    // Check extras (fascia/soffit keys live here)
     const extras = calculatorData.extras || {};
     const extrasKey = Object.keys(extras).find((k) => k.toLowerCase() === lowerKey);
     const extrasVal = extrasKey ? n(extras[extrasKey]) : 0;
     if (extrasVal > 0) return extrasVal;
-    // Check inputs
     const inputs = calculatorData.inputs || {};
     const inputKey = Object.keys(inputs).find((k) => k.toLowerCase() === lowerKey);
     return inputKey ? n(inputs[inputKey]) : 0;

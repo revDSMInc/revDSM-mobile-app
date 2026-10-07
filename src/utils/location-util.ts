@@ -1,13 +1,5 @@
-/**
- * Web Parity: 1 mile radius — matches job-checkin-range.js: rangeMiles = 1
- */
 export const GEOFENCE_RADIUS_MILES = 1;
 
-/**
- * Calculate distance between two coordinates using Haversine formula
- * Matches web app: job-checkin-range.js calculateDistance()
- * @returns Distance in miles
- */
 export const calculateDistance = (
   lat1: number,
   lon1: number,
@@ -29,11 +21,6 @@ export const calculateDistance = (
   return distanceKm * 0.621371; // Convert km to miles
 };
 
-/**
- * Check if lead is self-generated.
- * Web parity: job-card.js isSelfGeneratedLead()
- * Self-gen = no leadTime, or explicit flag, or leadType marker.
- */
 export const isSelfGeneratedLead = (lead: any): boolean => {
   return (
     !lead?.leadTime ||
@@ -49,12 +36,6 @@ export const isSelfGeneratedLead = (lead: any): boolean => {
   );
 };
 
-/**
- * Web parity: job-card.js canCheckIn()
- * Returns true if the rep has already initiated a check-in at least once.
- * workflowState "preview" means: checked in once, can still start.
- * workflowState "resume" means: was working, paused, now resuming.
- */
 export const canCheckIn = (lead: any): boolean => {
   return (
     lead?.workflowState === 'preview' ||
@@ -64,18 +45,10 @@ export const canCheckIn = (lead: any): boolean => {
   );
 };
 
-/**
- * Web parity: job-card.js isResumeAppointment()
- * Returns true ONLY if workflowState is explicitly "resume".
- */
 export const isResumeAppointment = (lead: any): boolean => {
   return lead?.workflowState === 'resume';
 };
 
-/**
- * Parse leadTime (e.g., "9am", "1pm") and lead date into a scheduled Date object.
- * Web parity: job-card.js getScheduledDateTime()
- */
 export const getScheduledDateTime = (lead: any): Date | null => {
   if (!lead?.leadTime || typeof lead.leadTime !== 'string') return null;
   const dateStr = lead.leadDate || lead.installationDate;
@@ -96,15 +69,6 @@ export const getScheduledDateTime = (lead: any): Date | null => {
   return new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), hours, 0, 0);
 };
 
-/**
- * Manager-applied overrides — re-exported so the sales callers keep importing them from
- * here, while the rule itself lives in ONE place.
- *
- * Web parity: job-card-utils.js `isGpsBypassActive()` / `isEarlyStartBypassActive()`.
- * `gpsBypass` REPLACES the physical geofence check; `earlyStart` REPLACES the time-window
- * gate. The shared reader also accepts the installer payload's `installerBypass` spelling
- * of the same object — see `utils/job-bypass.ts`.
- */
 export {
   isGpsBypassActive,
   isEarlyStartBypassActive,
@@ -112,10 +76,6 @@ export {
   earlyStartBypassReason,
 } from './job-bypass';
 
-/**
- * Web parity: job-card-utils.js isWithinTimeWindow()
- * True when now is within 15 min before → 1 hour after the scheduled time.
- */
 export const isWithinTimeWindow = (scheduledDateTime: Date | null): boolean => {
   if (!scheduledDateTime) return false;
   const now = Date.now();
@@ -123,10 +83,6 @@ export const isWithinTimeWindow = (scheduledDateTime: Date | null): boolean => {
   return now >= scheduled - 15 * 60 * 1000 && now <= scheduled + 60 * 60 * 1000;
 };
 
-/**
- * Web parity: job-card-utils.js isBeforeTimeWindow()
- * True when now is earlier than 15 min before the scheduled time.
- */
 export const isBeforeTimeWindow = (scheduledDateTime: Date | null): boolean => {
   if (!scheduledDateTime) return false;
   return Date.now() < scheduledDateTime.getTime() - 15 * 60 * 1000;

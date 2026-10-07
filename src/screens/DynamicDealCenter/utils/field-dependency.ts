@@ -1,19 +1,3 @@
-/**
- * Conditional-field dependency engine — a faithful TS port of the web deal
- * center's `field-dependency-utils.js`
- * (`src/sections/deal-center/components/utils/`).
- *
- * A schema field can carry a `conditional` that reacts to OTHER fields having a
- * value (`dependsOn`):
- *   - valueMode `highlight` → tint this field's background when the parent(s)
- *     are filled (e.g. enter "gutter DS/E = 5" → "wedges" background turns yellow).
- *   - valueMode `fixed`     → force this field to a fixed value and disable it
- *     while the parent(s) are filled.
- *
- * `formState` is a flat map keyed by BOTH field id and field name → the numeric
- * value entered (mirrors how web reads its form state).
- */
-
 import type { CalculatorField } from '../types/calculator';
 
 const VALUE_MODES = { userInput: 'userInput', fixed: 'fixed', highlight: 'highlight' } as const;

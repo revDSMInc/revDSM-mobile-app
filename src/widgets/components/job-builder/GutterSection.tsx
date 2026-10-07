@@ -116,7 +116,6 @@ export const GutterSection = ({
     [availableFootageRaw]
   );
 
-  // Auto-set size if only one available
   useEffect(() => {
     if (availableSizes.length === 1 && data.gutterColorsMulti?.length > 0) {
       const needsUpdate = data.gutterColorsMulti.some((c: any) => c.size !== availableSizes[0]);

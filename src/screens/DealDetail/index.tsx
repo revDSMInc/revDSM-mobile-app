@@ -18,18 +18,6 @@ import { LeadService } from '../../services/api/leads';
 import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
 import { FlashMessage } from '../../config/message';
 
-/**
- * Deal Detail — web parity with `DealDetailsView`
- * (`src/sections/deal/view/deal-details-view.js`) + `ContractDetails`. Reached
- * from the My Deals list. Shows the resulted-deal summary (contract price, down
- * payment, balance, install date), Agreement Documents, Order Sheets, and any
- * pending addendum drafts, with a "Msg Ops/IM" action and an **Edit** pencil that
- * launches the 4-step dynamic deal-edit wizard (`DynamicDealCenter` `mode:'edit'`).
- *
- * Self-contained (does NOT reuse the LeadCenter JobDocsSection / ContractDetailsCard,
- * per the requirement to leave the Lead Center tools untouched).
- */
-
 interface DealDetailProps {
   navigation?: NativeStackNavigationProp<any>;
   route?: { params?: { lead?: any; leadId?: string } };
@@ -68,11 +56,9 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
     uri: '',
     title: '',
   });
-  // Addendum drill-in (web `handleDraftClick` → getDraftSummary → DraftComparison).
   const [selectedDraft, setSelectedDraft] = useState<any>(null);
   const [draftSummary, setDraftSummary] = useState<any>(null);
   const [draftSummaryLoading, setDraftSummaryLoading] = useState(false);
-  // Which addendum row is resolving its signed PDF (shows a "Preparing PDF…" spinner).
   const [pdfLoadingDraftId, setPdfLoadingDraftId] = useState<string | null>(null);
 
   const loadDeal = useCallback(async () => {
@@ -103,11 +89,6 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
     }
   }, [leadId]);
 
-  // Reload whenever the screen (re)gains focus — e.g. returning from the addendum
-  // edit wizard after submitting — so the pending-addendum banner + fresh contract
-  // details appear WITHOUT a manual pull-to-refresh. Also covers the initial mount
-  // focus. `loadDeal` doesn't flip the full-screen `loading` flag, so a refocus
-  // refresh updates silently instead of flashing the spinner.
   useFocusEffect(
     useCallback(() => {
       loadDeal();
@@ -119,16 +100,12 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
     loadDeal();
   }, [loadDeal]);
 
-  // ── derived ──────────────────────────────────────────────────────────────
   const status = String(lead?.result || lead?.status || '');
   const isSale = status.toLowerCase() === 'sale';
   const isDemo = status.toLowerCase() === 'demo';
   const isCancelled = status.toLowerCase() === 'cancelled';
   const isResulted = !NON_RESULTED_STATUSES.includes(status || lead?.status);
   const hasDetails = isSale || isDemo || isCancelled;
-  // Web parity (`deal-details-view.js` isDynamicDeal): only dynamic deals open the
-  // dynamic edit wizard; web sends legacy deals to JobBuilderEditModal, which has
-  // no mobile equivalent (dynamic is the shipping path).
   const isDynamicDeal = Boolean(
     lead?.jobBuilder?.isDynamic || lead?.jobBuilder?.dynamicJobState || lead?.isDynamic
   );
@@ -189,10 +166,6 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
 
   const onEdit = useCallback(() => {
     if (!leadId) return;
-    // Web parity: ContractDetails pencil → isDynamicDeal ? DynamicDealEditModal :
-    // JobBuilderEditModal. Mobile ships only the dynamic editor, so a legacy deal
-    // can't be edited on device — tell the rep instead of dropping them on the
-    // dynamic wizard's not-configured fallback.
     if (!isDynamicDeal) {
       FlashMessage.show(
         'Edit on web',
@@ -202,16 +175,10 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
       );
       return;
     }
-    // Launches the 4-step dynamic edit wizard (Install Date → Job Build → Job
-    // Price → Review & Submit).
     navigation?.navigate('DynamicDealCenter', {
       lead,
       mode: 'edit',
       calculatorResultData: {
-        // The outcome doc exposes the calculator under several shapes depending on
-        // where the lead came from (list row vs. `GET .../outcome` body) — check
-        // them all so the edit screen can read the calculator-scoped outcome
-        // (`GET lead/v1/{leadId}/outcome/{calculatorId}`) rather than the lead-wide one.
         calculatorId:
           lead?.selectedCalculatorId ||
           lead?.calculatorId ||
@@ -236,10 +203,6 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
     const status = String(draft?.status || '').toLowerCase();
     const approved = status === 'accepted' || status === 'signed' || status === 'approved';
 
-    // Web parity (`deal-details-view.js` handleDraftClick): an APPROVED addendum
-    // opens straight to its SIGNED PDF — the document carrying the customer signature
-    // AND the updated contract details. The API builds it on demand at approval, so
-    // one open at a time (a second build = duplicate Puppeteer run / S3 upload).
     if (approved) {
       if (pdfLoadingDraftId) return;
       setPdfLoadingDraftId(id);
@@ -258,7 +221,6 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
       return;
     }
 
-    // Pending / declined: no signed PDF yet — show the proposed-change comparison.
     setSelectedDraft(draft);
     setDraftSummary(null);
     setDraftSummaryLoading(true);
@@ -292,7 +254,6 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
   const toggle = (key: 'agreements' | 'orderSheets') =>
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
 
-  // ── render ───────────────────────────────────────────────────────────────
   const Header = (
     <View
       style={{
@@ -516,7 +477,6 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
   );
 }
 
-// ── subcomponents ────────────────────────────────────────────────────────────
 function Row({
   label,
   value,
@@ -613,7 +573,6 @@ function DocSection({
   );
 }
 
-// ── Addendum diff (web `DraftComparison`) ────────────────────────────────────
 const PRICING_LABELS: Record<string, string> = {
   originalContractPrice: 'Contract Price',
   downPayment: 'Down Payment',

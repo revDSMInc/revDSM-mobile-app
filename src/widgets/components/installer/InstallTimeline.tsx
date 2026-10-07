@@ -8,26 +8,13 @@ import type { InstallStepKey, InstallStepStatus } from '../../../config/types/in
 
 interface Props {
   status: Record<InstallStepKey, InstallStepStatus>;
-  /** Per-step summary line replacing the default description once work exists. */
   notes?: Partial<Record<InstallStepKey, string | null>>;
-  /**
-   * Steps that hold work but are not finished.
-   *
-   * They read RESUME rather than START: an installer who has already put photos into
-   * a step and comes back to a "START" badge reads it as work that was lost.
-   */
   inProgress?: Partial<Record<InstallStepKey, boolean>>;
   completedCount: number;
   totalSteps: number;
   onOpen: (key: InstallStepKey) => void;
 }
 
-/**
- * Vertical step rail for the install flow.
- *
- * Locked steps are non-interactive — gating is computed in `useInstallProgress`
- * from each step's dependencies, so the rail only renders what it's told.
- */
 export function InstallTimeline({
   status,
   notes = {},

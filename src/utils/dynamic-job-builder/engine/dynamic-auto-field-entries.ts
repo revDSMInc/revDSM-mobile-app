@@ -26,13 +26,6 @@ export function resolveAutoFieldEntries(config: any, dealCenterData: any = {}) {
   return entries;
 }
 
-// ---------------------------------------------------------------------------
-// Activity-log auto-field entries (RN port of web dynamic-auto-field-entries.js).
-// Used by the dynamic activity-log hook to fire one `auto-populated` event per
-// locked/auto-filled field on a tab (mirrors the static getAutoFieldEntriesForSection).
-// ---------------------------------------------------------------------------
-
-/** Map dynamic tab ids to static auto-field section keys (gutter, leaffilter, …). */
 const TAB_ID_TO_AUTO_FIELD_SECTION: Record<string, string> = {
   gutter: 'gutter',
   gutters: 'gutter',
@@ -68,14 +61,6 @@ function formatDisplayValue(val: any) {
   return val;
 }
 
-/**
- * Collect locked leaf fields while tracking the group each belongs to, so fields
- * that share a label across gutter sizes (e.g. a "LeafFilter Profile" per 5"/6"/7"
- * size) can be logged distinctly. The group is the nearest enclosing stack/accordion
- * container label, or the nearest preceding `sectionLabel` header — whichever most
- * recently applies in render order. Returns [{ field, groupLabel }]. (Web parity —
- * `dynamic-auto-field-entries.js#collectLockedFieldsWithGroup`.)
- */
 function collectLockedFieldsWithGroup(fields: any[], inheritedGroup: string, out: any[]) {
   let currentGroup = inheritedGroup;
 
@@ -101,7 +86,6 @@ function collectLockedFieldsWithGroup(fields: any[], inheritedGroup: string, out
   });
 }
 
-/** Prefix a field label with its group when that adds distinguishing context. */
 function buildGroupedAutoFieldLabel(field: any, groupLabel: string): string {
   const rawLabel = String(field.label || field.id || '').trim();
   const group = String(groupLabel || '').trim();
@@ -124,10 +108,6 @@ export function extractLoggedSectionsFromCalculatorJobBuilder(jobBuilder: any) {
   return normalizeCalculatorAutoFieldsLogged(jobBuilder?.autoFieldsLogged);
 }
 
-/**
- * Schema-driven locked-field entries for activity logging (mirrors the static
- * getAutoFieldEntriesForSection). Returns [{ key, label, value, fieldType }].
- */
 export function getDynamicAutoFieldEntriesForTab(tab: any, dealCenterData: any = {}): any[] {
   if (!tab) return [];
 
@@ -136,15 +116,9 @@ export function getDynamicAutoFieldEntriesForTab(tab: any, dealCenterData: any =
 
   sections.forEach((section: any) => {
     const locked: any[] = [];
-    // Seed the group with the section label so multi-section tabs still get context
-    // even when a section has no inner headers/containers (web parity).
     collectLockedFieldsWithGroup(section.fields || [], String(section.label || '').trim(), locked);
 
     locked.forEach(({ field, groupLabel }: any) => {
-      // Web parity: resolve the locked value with the CONDITIONAL default as the
-      // fallback (not the static `field.defaultValue`), so a field that resolves blank
-      // via its dcField but has a conditional default still logs its real value instead
-      // of being dropped.
       const value = resolveLockedValue(field, dealCenterData, {
         fallbackDefault: resolveConditionalDefault(field, {}, { dealCenterData }),
       });

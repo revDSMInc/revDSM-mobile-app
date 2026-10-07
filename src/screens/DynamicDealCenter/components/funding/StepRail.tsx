@@ -4,34 +4,15 @@ import Svg, { Circle, Line } from 'react-native-svg';
 import { FS, FUND, PS } from './funding-theme';
 import { connectorTones, type ConnectorTone, type StepState } from '../../utils/funding';
 
-/**
- * StepRail — the horizontal progress bar this module draws everywhere: one dot per
- * milestone, connected by a rule that fills in green behind the rep.
- *
- * ⚠️ **Extracted so there is exactly ONE of these.** It was the body of
- * `FundingStepper`, which drew a payment's life cycle; the refund's approval flow
- * needs the same bar over a different set of milestones. Two copies would be two
- * answers to "what does a finished step look like" on one screen — and the two rails
- * genuinely do appear together, a payment card above and its refund below it.
- *
- * The state that matters most here is **locked**: a step somebody else posts (the
- * bank, the processor, the install crew — or, on the refund rail, a milestone a dead
- * request will never reach). It draws as a dashed, empty dot so it reads as "not
- * yours", never as an unfinished task.
- */
-
 export interface RailStep {
   label: string;
   state: StepState;
-  /** A second line under the label — e.g. the figure a lender actually approved. */
   sub?: string;
-  /** Small uppercase caption naming whoever owns this step. */
   caption?: string;
 }
 
 const DOT = 26;
 const RING = 34;
-/** Vertical centre of the dot, so the connectors meet it. */
 const LINE_TOP = RING / 2 - 1;
 
 function dotColors(state: StepState): { bg: string; border: string; fg: string } {
@@ -67,14 +48,6 @@ function markFor(state: StepState, index: number): string {
   return String(index + 1);
 }
 
-/**
- * A connector half.
- *
- * ⚠️ The dashed variant is drawn with `react-native-svg`, NOT `borderStyle:
- * 'dashed'` — Android silently renders a dashed border as SOLID on a view that has
- * a border radius or a single-sided width, which would erase the one cue that says
- * "nobody here has to do this".
- */
 function Connector({ side, tone }: { side: 'left' | 'right'; tone: ConnectorTone }) {
   const base = {
     position: 'absolute' as const,
@@ -95,8 +68,6 @@ function Connector({ side, tone }: { side: 'left' | 'right'; tone: ConnectorTone
   return <View style={{ ...base, backgroundColor: tone === 'green' ? FUND.GREEN : FUND.BORDER }} />;
 }
 
-/** The empty dashed ring of a step nobody on this screen performs. Same Android
- *  caveat as `Connector` — a `borderStyle: 'dashed'` circle draws solid there. */
 function DashedDot() {
   const r = (DOT - 2.5) / 2;
   return (
@@ -127,7 +98,6 @@ export function StepRail({ steps }: { steps: RailStep[] }) {
                 alignItems: 'center',
                 justifyContent: 'center',
                 marginBottom: 5,
-                // The "you are here" halo. Only the active step gets it.
                 backgroundColor: state === 'now' ? 'rgba(76,187,23,0.18)' : 'transparent',
               }}
             >

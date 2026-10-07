@@ -22,8 +22,6 @@ import { MODAL_BLUR_AMOUNT } from '../DynamicDealCenter/components/modal-chrome'
 const { width: SW, height: SH } = Dimensions.get('window');
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
-// How far above dead-center the enlarged card settles, so it clears the bottom
-// step-controls pill.
 const SETTLE_DY = -SH * 0.04;
 const OPEN_MS = 300;
 const CLOSE_MS = 240;
@@ -37,50 +35,27 @@ export interface SpotlightRect {
 }
 
 export interface SpotlightState {
-  /** Stable id of the section currently enlarged. */
   id: string;
-  /** The section's in-place footprint in window coordinates (from measureInWindow). */
   rect: SpotlightRect;
-  /** Settled zoom factor (already clamped to fit the screen). */
   finalScale: number;
 }
 
 interface Props {
-  /** The active section, or null when nothing is enlarged (overlay unmounts). */
   spotlight: SpotlightState | null;
-  /** Title shown in the bottom step-controls pill. */
   title: string;
-  /** Fired once the collapse animation finishes — the parent clears `spotlight`. */
   onClosed: () => void;
-  /** Rendered above everything inside the spotlight Modal (e.g. an in-modal picker). */
   overlay?: React.ReactNode;
   onPrev: () => void;
   onNext: () => void;
-  /** The enlarged card, laid out at width = spotlight.rect.w (scale does the zoom). */
   children: React.ReactNode;
 }
 
-/**
- * iOS-style "spotlight" zoom for the Investment Center cards. Tapping a card
- * (Total Investment / 1-Year Program / In-Home Pre Order) lifts it off the page:
- * it flies from its in-place footprint to screen-center while scaling up, and the
- * rest of the screen dims. The card stays fully interactive while enlarged; the
- * bottom pill steps forward/back through the three sections without collapsing, and
- * tapping the dimmed area collapses the card back into its place.
- *
- * The transition is a FLIP: the enlarged content is laid out at the section's real
- * in-place width, so at scale 1 it exactly overlays the original card; it then
- * animates translate→center + scale→finalScale (and reverses on close).
- */
 export function SpotlightOverlay({ spotlight, title, onClosed, onPrev, onNext, overlay, children }: Props) {
   const tx = useSharedValue(0);
   const ty = useSharedValue(0);
   const scale = useSharedValue(1);
   const backdrop = useSharedValue(0);
-  // Card opacity — starts hidden so the very first paint (before the open effect
-  // positions the card at its origin) never flashes it at center.
   const reveal = useSharedValue(0);
-  // Inner-content opacity — cross-fades the card body on a forward/back switch.
   const contentOpacity = useSharedValue(1);
 
   const prevIdRef = useRef<string | null>(null);
@@ -94,14 +69,10 @@ export function SpotlightOverlay({ spotlight, title, onClosed, onPrev, onNext, o
     prevIdRef.current = id;
     if (!id || !rect) return;
 
-    // Origin transform: the card is laid out centered (its layout center = screen
-    // center) at width rect.w, so translating its center to the section's real
-    // center + scale 1 makes it overlay the in-place card exactly.
     const originTx = rect.x + rect.w / 2 - SW / 2;
     const originTy = rect.y + rect.h / 2 - SH / 2;
 
     if (!prev) {
-      // OPEN — snap to the origin, reveal, then fly to center while zooming up.
       tx.value = originTx;
       ty.value = originTy;
       scale.value = 1;
@@ -112,7 +83,6 @@ export function SpotlightOverlay({ spotlight, title, onClosed, onPrev, onNext, o
       ty.value = withTiming(SETTLE_DY, { duration: OPEN_MS, easing: EASE });
       scale.value = withTiming(finalScale, { duration: OPEN_MS, easing: EASE });
     } else if (prev !== id) {
-      // SWITCH — new section grows from its own in-place slot; body cross-fades.
       tx.value = originTx;
       ty.value = originTy;
       scale.value = 1;
@@ -133,7 +103,6 @@ export function SpotlightOverlay({ spotlight, title, onClosed, onPrev, onNext, o
     }
     const originTx = r.x + r.w / 2 - SW / 2;
     const originTy = r.y + r.h / 2 - SH / 2;
-    // Collapse back into the section's place, then let the parent unmount us.
     backdrop.value = withTiming(0, { duration: CLOSE_MS, easing: EASE });
     tx.value = withTiming(originTx, { duration: CLOSE_MS, easing: EASE });
     ty.value = withTiming(originTy, { duration: CLOSE_MS, easing: EASE });
