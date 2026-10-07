@@ -24,7 +24,11 @@ import { buildInspectionSections } from '../../utils/inspection-photos';
 import { ZoomableImage } from '../../widgets/common/ZoomableImage';
 import { getWarmedLocalUri } from '../../utils/imageFileCache';
 import { PresentationGesturesTutorial } from '../../widgets/components/pitchbook/PresentationGesturesTutorial';
-import { PresentationDock, type DockMode } from '../../widgets/components/pitchbook/PresentationDock';
+import {
+  PresentationDock,
+  GREEN as DOCK_TAB_GREEN,
+  type DockMode,
+} from '../../widgets/components/pitchbook/PresentationDock';
 import { PresentationTopBar } from '../../widgets/components/pitchbook/PresentationTopBar';
 import { SlideArrows } from '../../widgets/components/pitchbook/SlideArrows';
 import {
@@ -1983,12 +1987,14 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
               style={{ backgroundColor: t.track }}
             >
               <View
-                className={`h-full ${riskJob.waiting ? '' : 'bg-emerald-500'}`}
+                className="h-full"
                 style={{
                   width: `${riskJob.progress}%`,
-                  // ⚠️ Set as an explicit colour, not a Tailwind class: this sheet renders over the
-                  // dark presentation theme as well, where a slate/amber utility pair reads wrong.
-                  ...(riskJob.waiting ? { backgroundColor: WAITING_AMBER } : {}),
+                  // ⚠️ Both colours are explicit values, not Tailwind classes: this sheet also
+                  // renders over the dark presentation theme, where a utility colour pair reads
+                  // wrong. DOCK_TAB_GREEN is the brand green shared with the presentation dock;
+                  // WAITING_AMBER marks a job paused because the device lost signal.
+                  backgroundColor: riskJob.waiting ? WAITING_AMBER : DOCK_TAB_GREEN,
                 }}
               />
             </View>

@@ -22,7 +22,7 @@ import { useTabStripAutoScroll } from '../../../hooks/useTabStripAutoScroll';
  * exactly what the old right-edge "Interactive Tools" tab did once it was replaced.
  */
 
-const GREEN = '#72BD00';
+export const GREEN = '#72BD00';
 
 export type DockMode = 'slides' | 'tools';
 
