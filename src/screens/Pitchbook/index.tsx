@@ -23,7 +23,11 @@ import { InspectionPhotosPanel } from '../../widgets/components/InspectionPhotos
 import { buildInspectionSections } from '../../utils/inspection-photos';
 import { ZoomableImage } from '../../widgets/common/ZoomableImage';
 import { PresentationGesturesTutorial } from '../../widgets/components/pitchbook/PresentationGesturesTutorial';
-import { PresentationDock, type DockMode } from '../../widgets/components/pitchbook/PresentationDock';
+import {
+  PresentationDock,
+  GREEN as DOCK_TAB_GREEN,
+  type DockMode,
+} from '../../widgets/components/pitchbook/PresentationDock';
 import { PresentationTopBar } from '../../widgets/components/pitchbook/PresentationTopBar';
 import { SlideArrows } from '../../widgets/components/pitchbook/SlideArrows';
 import {
@@ -1924,7 +1928,10 @@ const RiskContent = ({ lead, refetch, reports, onDownload, onAction, dark = fals
               className="mt-3 h-1.5 w-full rounded-full overflow-hidden"
               style={{ backgroundColor: t.track }}
             >
-              <View className="h-full bg-emerald-500" style={{ width: `${riskJob.progress}%` }} />
+              <View
+                className="h-full"
+                style={{ width: `${riskJob.progress}%`, backgroundColor: DOCK_TAB_GREEN }}
+              />
             </View>
           )}
           {riskJob && riskJob.status !== 'completed' && (

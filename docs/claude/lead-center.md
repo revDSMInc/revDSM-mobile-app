@@ -1134,5 +1134,5 @@ Ticket: a Roofline Lighting render must say what was rendered ("Christmas" + col
 ### Follow-up — gallery shows the look's month and the render date
 - The chip reads `Name · Dec` for seasonal looks: the server does not echo `month`, so it is looked up with
   `findLook(selections.lookId)` from the catalogue. Everyday / team / theme looks have no month and show the name only.
-- The "Rendered" line gains ` · Oct 6, 2026` from `run.createdAt`, parsed as TEXT (YYYY-MM-DD) — ⚠️ never
+- The "Rendered" line gains ` · 10/6/2026` (M/D/YYYY, no zero padding — was `Oct 6, 2026`) from `run.createdAt`, parsed as TEXT (YYYY-MM-DD) — ⚠️ never
   `new Date()`, which shifts the day across timezones. Hidden when `createdAt` is absent.
