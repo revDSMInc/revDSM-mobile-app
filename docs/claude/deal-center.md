@@ -2844,3 +2844,15 @@ gap) and 12pt top padding - the same helper the installer sub-flows use.
 - ⚠️ Follow-up: the buttons still sat under the nav bar because `insets` there is the APP ROOT's (bottom 0), while this Modal's window extends beneath the Android nav bar. The footer is now `ModalFooterBar`, a child of the modal's INNER `SafeAreaProvider`, so `useSafeAreaInsets()` reports the modal window's real bottom inset (padding = `footerBottomPadding(inner.bottom)`, top 16 so the row reads centred). Do not read the footer inset from the component that renders `<Modal>`. Not verified on device.
 - The footer also floors the inset at 32 on Android, so a window that reports 0 still clears a 3-button nav bar.
 - Header: the title block ran UNDER the Send Remotely button (it kept its one-line width). It is now `flex: 1, minWidth: 0` with a 12pt right margin and wraps (`numberOfLines={2}`); the button group is `flexShrink: 0`, 36pt tall, with a one-line 10.5pt label. ⚠️ A `flex: 1` sibling needs `minWidth: 0` to be allowed to shrink below its text width.
+
+## Lowe's leads see ALL payment plans; other leads never see Lowe's
+
+Ticket: *"a Lowe's lead only shows the Lowe's payment plans — we need Lowe's plan, GreenSky and all other plans inside it; other leads must not show the Lowe's plan."*
+
+- `buildPricing` (`DynamicDealCenter/hooks/useDealPricing.ts`): `relevant` is now every plan for a Lowe's lead and the non-Lowe's plans for everyone else (was Lowe's-only vs non-Lowe's-only). The empty-picker static fallback now triggers when the response has NO Lowe's plan (`!relevant.some(isLowesPlan)`), not when it is empty.
+- ⚠️ The DOWN-PAYMENT methods (`outcomeDownPaymentMethods`) and the default (`lowes_ach`) stay Lowe's ACH / CC only for a Lowe's lead; only the financing picker widened. Do not widen those too.
+- Static fallback (`utils/calculator/lowes-payment-util.ts`): `getRolloutPaymentCategories(true)` = Lowe's basics + "Lowe's Plan" + the standard GreenSky / Wells Fargo / Concora groups (standard "Basic Options" check/cards omitted); `getDropAddPlanCategories(true)` likewise. Non-Lowe's output is unchanged.
+
+### Follow-up: last plan in the Payment Plan sheet sat under Android's nav bar
+
+Ticket: *"the last plan name is merged with the bottom bar."* `PaymentPlanModal` (`DynamicDealCenter/components/RolloutView.tsx`) is a bottom sheet inside a native `Modal`, whose safe-area inset reads 0, so the scroll content ran under the three-button bar. Its `ScrollView` now pads `14 + useBottomInset()` at the bottom. ⚠️ Padding goes in `contentContainerStyle`, not `style`. `DropAddPlanModal` and the `CalculatorSummary` picker are centred cards and need no inset.

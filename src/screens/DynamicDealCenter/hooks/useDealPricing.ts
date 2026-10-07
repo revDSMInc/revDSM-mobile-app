@@ -324,12 +324,12 @@ export function useDealPricing(lead: any): DealPricing {
     if (isDynamic) {
       // Full lookup map keeps every key resolvable (labels for already-saved
       // methods), but the picker/categories only surface plans relevant to the
-      // lead: Lowe's leads see Lowe's plans only, others see non-Lowe's only.
+      // lead: Lowe's leads see EVERY plan (Lowe's + GreenSky + Wells Fargo + …), others see non-Lowe's only.
       const plans: Record<string, DealPlan> = {};
       dyn.forEach((p) => {
         plans[p.key] = p;
       });
-      const relevant = dyn.filter((p) => (isLowesLead ? isLowesPlan(p) : !isLowesPlan(p)));
+      const relevant = isLowesLead ? dyn : dyn.filter((p) => !isLowesPlan(p));
 
       // A Lowe's lead whose dynamic provider-plans response carried NO Lowe's plans
       // (the company hasn't published Lowe's provider plans, or they arrived without
@@ -337,7 +337,7 @@ export function useDealPricing(lead: any): DealPricing {
       // Fall back to the shared static Lowe's plans (lowes_ach / lowes_cc / financing)
       // so the dropdown is always populated with Lowe's-ONLY methods — the whole flow
       // is keyed on those canonical keys anyway. Non-Lowe's leads keep the dynamic set.
-      if (isLowesLead && relevant.length === 0) {
+      if (isLowesLead && !relevant.some(isLowesPlan)) {
         const lowesCategories = staticCategories(true);
         const mergedPlans: Record<string, DealPlan> = { ...plans };
         lowesCategories.forEach((c) =>
@@ -362,7 +362,9 @@ export function useDealPricing(lead: any): DealPricing {
       }
 
       const categories = buildCategories(relevant);
-      const basics = relevant.filter((p) => p.type === 'cash' || p.type === 'card');
+      const allBasics = relevant.filter((p) => p.type === 'cash' || p.type === 'card');
+      // A Lowe's lead takes its down payment through Lowe's ACH / CC only.
+      const basics = isLowesLead ? allBasics.filter(isLowesPlan) : allBasics;
       const preferred = isLowesLead
         ? basics.find((p) => /ach/i.test(p.key)) || basics[0]
         : basics.find((p) => p.key === 'check') || basics[0];
