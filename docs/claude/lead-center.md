@@ -1187,3 +1187,16 @@ Ticket: *"the UI is hidden under the keyboard inside the waiver form."* `RoofWai
 ### Follow-up: waiver phone field (number pad) also scrolls into view
 
 The waiver's Phone Number field uses the in-app number pad, which `KeyboardAwareScrollView` cannot scroll for. `RoofWaiverModal` now also calls `useNumPadScrollIntoView` (scroll ref + a `collapsable={false}` wrapper around the scroll content), same as `DynamicTabRenderer` (see `app-wide.md`). The pad is mounted by the patched `Modal` in `index.js`, so no extra provider is needed.
+
+## Inspection report: end on a dialog, not a toast
+
+Ticket: *after the inspection report is generated a toast says "saved to Downloads", but the rep has no way to see the file and no navigation afterwards.* `LeadCenter/index.tsx` (inspection submit) now finishes with the app's own `ConfirmDialog` (`DynamicDealCenter/components/ConfirmDialog`, `tone="neutral"`, same look as Result Lead / Deal Center; state `inspectionDone`) - NOT a system `Alert` (follow-up: *"use the same dialog format already used in the app"*) - offering **View Report** (`FileViewer.open(pdfPath, { showOpenWithDialog: true })` on the local generated file) and **Done**. The text says what really happened: uploaded to the lead's Job docs, saved to Downloads as `Inspection Report.pdf` (Android) - or, if `downloadPdfToDevice` threw, that it is uploaded but NOT saved to the device (the old catch branch showed a green "success" for that). ⚠️ The local file is deleted only when it is not a valid PDF, so `pdfPath` is still there to open. ⚠️ `downloadPdfToDevice(..., false)` stays silent: don't re-enable its toast or the rep gets two messages. Not verified on device.
+
+### Follow-up: the report dialog says WHERE the file is
+
+Ticket: *tell the user the report is generated and saved on the phone — that navigation isn't described.* The `inspectionDone` dialog now carries a `note` (the `ConfirmDialog` tinted box) with the locations: Android `Files / My Files app > Downloads > Inspection Report.pdf`, iOS `Files app, in the location you chose in the share sheet`, plus `this lead > Job docs` in both; when the device save failed it only points to Job docs and View Report. ⚠️ Keep the path text in step with `downloadPdfToDevice` (`utils/download-utils.ts`: Android writes to the `Download` media collection as `<title>.pdf`; iOS goes through the share sheet, so the real location is the user's choice).
+
+### Follow-up: no "View Report" button, no Job-docs pointer
+
+*"Remove the view report button — we do not show the report inside the app."* The `inspectionDone` `ConfirmDialog` is now a single-button notice (`hideCancel`, confirm `OK`) that only says the report was saved and where (Android `Files / My Files > Downloads > Inspection Report.pdf`; iOS the share-sheet location). The `FileViewer.open` path, the `path` field and every "this lead > Job docs" pointer are gone, because the report is not viewable in-app. If the device save fails the message says to generate it again. ⚠️ Do not add a viewer button back unless the report becomes viewable in the app.
+- `LeadCenter/index.tsx` no longer imports `react-native-file-viewer` (its only use was the removed View Report button); other screens that still open PDFs keep their own import.
