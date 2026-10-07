@@ -37,6 +37,7 @@ import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
 import { LeadService } from '../../services/api/leads';
 import { FlashMessage } from '../../config/message';
 import { JobChangeMeta, getJobChangeMeta } from '../../utils/job-change-summary';
+import { isHttpStatus } from '../../utils/network-error';
 import { RootStackParamList } from '../../navigation';
 import { useChatSession } from '../../hooks/useChatSession';
 import { useVoiceNote, formatTime, formatMs } from '../../hooks/useVoiceNote';
@@ -739,7 +740,7 @@ export default function ChatDetailScreen() {
       } catch (err: any) {
         // 409 = the draft is not accepted. It shouldn't reach here from an
         // ACCEPTED card, but fall back to the changes view rather than dead-end.
-        if (err?.response?.status === 409) {
+        if (isHttpStatus(err, 409)) {
           setJobChangeDraftId(draftId);
         } else {
           console.warn('[ChatDetail] addendum PDF failed:', err);

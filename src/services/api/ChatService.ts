@@ -11,6 +11,7 @@ import SocketManager from '../SocketManager';
 import RNFS from 'react-native-fs';
 import { Platform } from 'react-native';
 import { readChatId } from '../../utils/chat-response';
+import { isHttpStatus } from '../../utils/network-error';
 
 // Bucket to sign against when a chat file carries no bucketName of its own.
 // Mirrors the web ChatModule, which falls back to 'np-revdsm-staging'. The env
@@ -26,42 +27,44 @@ class ChatService {
 
   // ─── REST ───────────────────────────────────────────────────────────────────
 
+  /**
+   * The lead's thread id, creating the thread if the server says there isn't one.
+   *
+   * ⚠️ **404 is a normal answer here, not an error** — it is what the web app keys off too
+   * (`GET /chat/v1/lead/{id}` → 404 → `POST /chat/v1/create`). A thread is opened by the
+   * start-appointment flow; any lead where that never ran — created offline, imported, or
+   * started before chat existed — has no thread until someone asks for one.
+   *
+   * ⚠️ The status MUST come from `httpStatusOf`. This used to read `err.response?.status`, but
+   * `normalizeApiError` rejects with a PLAIN OBJECT that has no `.response`, so the comparison was
+   * `undefined === 404` and the fallback below never ran once. The visible symptom was a chat
+   * screen that opened empty and could not be used, on exactly those leads.
+   */
   async getChatByLeadId(leadId: string): Promise<string | null> {
     try {
       const res = await api.get<any>(`/chat/v1/lead/${leadId}`);
-      return readChatId(res.data);
+      const existing = readChatId(res.data);
+      // A 200 with no id in it means the same thing as a 404: there is no thread yet.
+      return existing || (await this.createChatForLead(leadId).catch(() => null));
     } catch (err: any) {
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-      console.log('[ChatDiag] GET lead/%s failed status=%s', leadId, err?.response?.status);
-      // ⚠️ 404 is the EXPECTED answer for a lead created offline: the thread is opened by the
-      // start-appointment flow, which never ran at the door. Creating here is the backstop.
-      if (err.response?.status === 404) {
-        const id = await this.createChatForLead(leadId);
-        // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-        console.log('[ChatDiag] after create -> id=%s', id);
-        return id;
+      if (isHttpStatus(err, 404)) {
+        // ⚠️ Never let a failed create throw out of here. Every caller treats this as "open the
+        // chat", and a rejection would take down the screen rather than degrade it.
+        return await this.createChatForLead(leadId).catch(() => null);
       }
       return null;
     }
   }
 
-  /** Returns the new thread's id, or null if the server answered without one. */
+  /**
+   * Opens the lead's thread. Returns its id, or null if the server answered without one.
+   *
+   * Safe to call more than once: the backend answers an existing thread rather than duplicating
+   * it, which is what lets `getChatByLeadId` fall back to this unconditionally.
+   */
   async createChatForLead(leadId: string): Promise<string | null> {
-    try {
-      const res = await api.post<any>('/chat/v1/create', { leadId });
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. The POST appears to run and the
-      // thread still does not exist afterwards, so we need its actual answer.
-      console.log('[ChatDiag] POST create leadId=%s status=%s body=%s',
-        leadId, res?.status, JSON.stringify(res?.data));
-      return readChatId(res.data);
-    } catch (e: any) {
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release. This path was SILENT: the only
-      // caller `.catch`es it to a console.warn, so a REFUSED create looked identical to
-      // one that never ran.
-      console.log('[ChatDiag] POST create leadId=%s FAILED status=%s body=%s',
-        leadId, e?.response?.status, JSON.stringify(e?.response?.data));
-      throw e;
-    }
+    const res = await api.post<any>('/chat/v1/create', { leadId });
+    return readChatId(res.data);
   }
 
   async getMessages(chatId: string, limit = 20): Promise<any[]> {
