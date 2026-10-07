@@ -2856,3 +2856,17 @@ Ticket: *"a Lowe's lead only shows the Lowe's payment plans — we need Lowe's p
 ### Follow-up: last plan in the Payment Plan sheet sat under Android's nav bar
 
 Ticket: *"the last plan name is merged with the bottom bar."* `PaymentPlanModal` (`DynamicDealCenter/components/RolloutView.tsx`) is a bottom sheet inside a native `Modal`, whose safe-area inset reads 0, so the scroll content ran under the three-button bar. Its `ScrollView` now pads `14 + useBottomInset()` at the bottom. ⚠️ Padding goes in `contentContainerStyle`, not `style`. `DropAddPlanModal` and the `CalculatorSummary` picker are centred cards and need no inset.
+
+### Follow-up: focused job-builder field half hidden by the number pad
+
+Ticket: *"the selected field is slightly hidden by the keyboard — it should go up a bit more."* The tab's `KeyboardAwareScrollView` (`widgets/components/dynamic-job-builder/DynamicTabRenderer.tsx`) used `bottomOffset={24}`, too little for a field's floating label + rounded border above the in-app number pad. Now `72`. ⚠️ Raise this number, don't add a second scroll mechanism; `DynamicDealEditScreen` keeps 24 (not reported). Not verified on device.
+
+### Follow-up: raising `bottomOffset` did nothing — the number pad needs its own scroll-into-view
+
+*"still same, the field is hidden."* Root cause: `KeyboardAwareScrollView` scrolls from KEYBOARD frame events, and the in-app number pad (`NumPadProvider`, in-flow) emits none — it only shrinks the scroll frame, so a field near the bottom stayed half under the pad whatever `bottomOffset` was (the 24 → 72 change above is cosmetic for the system keyboard only).
+- New `hooks/useNumPadScrollIntoView.ts`: when a field takes the pad (`useNumPadTarget`, new context exported from `widgets/common/keyboard/NumPad`, identity changes per field), after 260 ms it measures the focused input (`TextInput.State.currentlyFocusedInput`) against the scroll view's window bottom and `scrollTo`s the shortfall + 24pt. The current offset comes from a `collapsable={false}` wrapper View around the scroll content (`contentRef`) vs the scroll view's window y — NOT `onScroll`, because `collapsingScrollProps` is spread last and may own `onScroll`.
+- Wired into `DynamicTabRenderer` (job-builder tabs). ⚠️ Any other `KeyboardAwareScrollView` form with numeric fields has the same gap; reuse the hook (pass the content top padding) rather than tuning `bottomOffset`. Not verified on device.
+
+### Follow-up: focused field still touching the pad's top edge
+
+After the scroll-into-view hook the field scrolled up but its bordered box still touched the pad. The hook measures the TextInput, not the box around it (the box reaches ~40pt lower), so the default margin in `useNumPadScrollIntoView` went 24 → 64.

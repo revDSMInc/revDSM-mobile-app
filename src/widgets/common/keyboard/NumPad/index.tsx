@@ -73,6 +73,13 @@ const NumPadActiveContext = createContext(false);
 /** Null outside a provider - callers fall back to the system keyboard. */
 export const useNumPad = () => useContext(NumPadContext);
 export const useNumPadActive = () => useContext(NumPadActiveContext);
+/**
+ * The field that currently owns the pad (null when it is down). The identity changes every time
+ * focus moves to another numeric field, so an effect keyed on it re-runs per field - used to scroll
+ * the focused field clear of the pad (`hooks/useNumPadScrollIntoView`).
+ */
+const NumPadTargetContext = createContext<NumPadTarget | null>(null);
+export const useNumPadTarget = () => useContext(NumPadTargetContext);
 
 const SLIDE_MS = 220;
 // Focus often jumps A -> B as "blur A" then "focus B"; clearing straight away would slide the
@@ -175,6 +182,7 @@ const AndroidNumPadProvider: React.FC<{
     return (
       <NumPadContext.Provider value={ctx}>
         <NumPadActiveContext.Provider value={padUp}>
+         <NumPadTargetContext.Provider value={target}>
           {fill ? (
             <View style={styles.host}>
               {children}
@@ -186,6 +194,7 @@ const AndroidNumPadProvider: React.FC<{
               {panel}
             </>
           )}
+         </NumPadTargetContext.Provider>
         </NumPadActiveContext.Provider>
       </NumPadContext.Provider>
     );
@@ -194,9 +203,11 @@ const AndroidNumPadProvider: React.FC<{
   return (
     <NumPadContext.Provider value={ctx}>
       <NumPadActiveContext.Provider value={padUp}>
-        <PanHost target={target} padPanel={panel}>
-          {children}
-        </PanHost>
+        <NumPadTargetContext.Provider value={target}>
+          <PanHost target={target} padPanel={panel}>
+            {children}
+          </PanHost>
+        </NumPadTargetContext.Provider>
       </NumPadActiveContext.Provider>
     </NumPadContext.Provider>
   );

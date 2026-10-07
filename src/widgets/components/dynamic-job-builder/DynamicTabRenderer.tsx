@@ -1,7 +1,8 @@
-import React, { useMemo, useState, Fragment } from 'react';
+import React, { useMemo, useRef, useState, Fragment } from 'react';
 import Reanimated from 'react-native-reanimated';
 import { View, Text, TouchableOpacity, Animated } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+import { useNumPadScrollIntoView } from '../../../hooks/useNumPadScrollIntoView';
 import {
   getTabSections,
   getCombinationSectionRowFields,
@@ -2085,6 +2086,10 @@ export function DynamicTabRenderer({
   // down by padding instead (`collapsingTopInset` + the measured tracker height).
   const collapsingOverlay = collapsingTrackerStyle !== undefined;
 
+  const numPadScrollRef = useRef<any>(null);
+  const numPadContentRef = useRef<View>(null);
+  useNumPadScrollIntoView(numPadScrollRef, numPadContentRef, 12 + (collapsingOverlay ? collapsingTopInset + trackerHeight : 0));
+
   return (
     <View style={{ flex: 1 }}>
       {collapsingOverlay ? (
@@ -2102,6 +2107,7 @@ export function DynamicTabRenderer({
       )}
 
       <KeyboardAwareScrollView
+        ref={numPadScrollRef}
         className="flex-1"
         // `KeyboardAwareScrollView` (not a plain `ScrollView` + `adjustResize`) so the
         // FOCUSED field stays scrolled into view both while typing AND after the keyboard
@@ -2109,8 +2115,8 @@ export function DynamicTabRenderer({
         // scroll offset stayed put, so a field entered near the bottom (e.g. "# of End
         // Caps (Lefts)") scrolled out from under the fold the instant the window resized
         // back to full height — the rep had no way to see what they'd just typed.
-        // `bottomOffset` matches the pattern already used for this in
-        // `DynamicDealEditScreen`'s Job Price / Addendum steps.
+        // `bottomOffset` is 72 (not the 24 used in `DynamicDealEditScreen`): a field's
+        // floating label + border sat half under the numeric pad / keyboard at 24.
         contentContainerStyle={{
           padding: 12,
           paddingBottom: 160,
@@ -2120,9 +2126,10 @@ export function DynamicTabRenderer({
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
-        bottomOffset={24}
+        bottomOffset={72}
         {...collapsingScrollProps}
       >
+      <View ref={numPadContentRef} collapsable={false}>
       {!hasAllocationOnly && hasTabFields && (() => {
         const nonAllocFields = filterFields(
           tabFields.filter((f: any) => !isAllocationField(f) && f.type !== 'accordion'),
@@ -2208,6 +2215,7 @@ export function DynamicTabRenderer({
           </Fragment>
         );
       })}
+      </View>
       </KeyboardAwareScrollView>
     </View>
   );
