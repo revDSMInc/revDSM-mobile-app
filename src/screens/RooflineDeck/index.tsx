@@ -26,6 +26,7 @@ import {
 } from '../../widgets/common/PhotoPeekScrollLock';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { jobWaitState } from '../../utils/report-job-connectivity';
 import IonIcon from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../widgets/common/MainHeader';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -39,6 +40,7 @@ import { ENV } from '../../config/env';
 import { storage } from '../../utils/storage';
 import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
+import { useLeadPhotosWithPending } from '../../hooks/useLeadPhotosWithPending';
 import Feather from 'react-native-vector-icons/Feather';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
@@ -112,11 +114,23 @@ export default function RooflineDeckScreen() {
   }, []);
 
 
-  const activePhotos = useMemo(() => {
+  const serverPhotos = useMemo(() => {
     return fullLeadData?.outcome?.salesPhotos || fullLeadData?.salesPhotos || lead?.salesPhotos || [];
   }, [fullLeadData, lead]);
 
-  const { data: secureImages = {} } = useSecureUrls(activePhotos);
+  /**
+   * ⚠️ Plus the shots still in the UPLOAD QUEUE. `salesPhotos` is the server's list, so a photo
+   * captured at a door with no signal is not in it — the rep saw three photos in Manage Photos
+   * marked "Saved on device" and this screen said "No inspection photos available".
+   */
+  const activePhotos = useLeadPhotosWithPending(
+    serverPhotos,
+    (lead as any)?._id || (lead as any)?.id
+  );
+
+  // ⚠️ The SERVER photos only. A queued shot has no `s3url` to sign, and passing it would
+  // change the set key on every capture, re-fetching every url for nothing.
+  const { data: secureImages = {} } = useSecureUrls(serverPhotos);
 
   const toolsAnim = useRef(new Animated.Value(0)).current;
 
@@ -1343,7 +1357,11 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
               )}
               {riskJob && riskJob.status !== 'completed' && (
                 <View className="flex-row items-center gap-2">
-                  <ActivityIndicator size="small" color={colors.primary.main} />
+                  {riskJob.waiting ? (
+                    <Icon name="cloud-off-outline" size={14} color="#B45309" />
+                  ) : (
+                    <ActivityIndicator size="small" color={colors.primary.main} />
+                  )}
                   <Text className="text-[10px] font-bold text-slate-500 ">{riskJob.progress}%</Text>
                 </View>
               )}
@@ -1353,12 +1371,19 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
           {/* Progress Bar for Risk Job */}
           {riskJob && riskJob.status !== 'completed' && (
             <View className="mt-3 h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-              <View className="h-full bg-emerald-500" style={{ width: `${riskJob.progress}%` }} />
+              <View
+                className={`h-full ${riskJob.waiting ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                style={{ width: `${riskJob.progress}%` }}
+              />
             </View>
           )}
           {riskJob && riskJob.status !== 'completed' && (
-            <Text className="text-[10px] text-slate-400 mt-1 italic">
-              {riskJob.step || 'Processing...'}
+            <Text
+              className={`text-[10px] mt-1 ${
+                riskJob.waiting ? 'text-amber-700 font-semibold' : 'text-slate-400 italic'
+              }`}
+            >
+              {jobWaitState(riskJob.step, !!riskJob.waiting).label}
             </Text>
           )}
         </View>

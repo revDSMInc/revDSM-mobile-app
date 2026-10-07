@@ -187,3 +187,72 @@ export const mergePendingIntoSections = <T,>(
 
   return out;
 };
+
+// ─── Folding pending photos into a lead's `salesPhotos` ──────────────────────
+
+/**
+ * Project the queue into the PHOTO-RECORD shape, so a screen that reads `lead.salesPhotos` sees
+ * the door shots too.
+ *
+ * ⚠️ `buildInspectionSections` resolves a photo with `uriByS3[p.s3url] || p.secureUrl || p.uri`
+ * and groups by `category` / `subcategory` — so those four fields are the whole contract. A
+ * queued upload has no `s3url` and no `secureUrl`; `uri` is the local `file://` copy, which is
+ * exactly what the third fallback exists for.
+ */
+export const pendingAsSalesPhotos = (
+  pending: PendingUpload[] | null | undefined,
+  leadId: string | null | undefined
+): Array<Record<string, unknown>> => {
+  if (!leadId) return [];
+  return (pending || [])
+    .filter((it) => it && it.leadId === leadId && it.uri && !isAnnotated(it.subcategory))
+    .map((it) => ({
+      uri: it.uri,
+      category: it.categoryName,
+      subcategory: it.subcategory,
+      timestampTaken: it.timestamp,
+      isPending: true,
+      pendingId: it.id,
+    }));
+};
+
+/**
+ * A lead's server photos plus any queued shot the server does not yet account for.
+ *
+ * ⚠️ The SAME surplus rule as `mergePendingForSlot`, applied per SLOT rather than to the whole
+ * list: a queue item survives until its upload succeeds and the lead refetch can land first, so
+ * for a moment the photo is in both. Comparing whole-list counts would be wrong the instant one
+ * slot uploads ahead of another — the surplus has to be worked out where the photos actually
+ * correspond, which is the slot.
+ *
+ * Returns the SAME array when nothing is pending, so callers keep their memo identity.
+ */
+export const salesPhotosWithPending = <T extends Record<string, any>>(
+  serverPhotos: T[] | null | undefined,
+  pending: PendingUpload[] | null | undefined,
+  leadId: string | null | undefined
+): Array<T | Record<string, unknown>> => {
+  const server = Array.isArray(serverPhotos) ? serverPhotos : [];
+  const queued = pendingAsSalesPhotos(pending, leadId);
+  if (queued.length === 0) return server;
+
+  const slotOf = (cat: unknown, sub: unknown) => slotKeyOf(String(cat ?? ''), String(sub ?? ''));
+
+  const serverBySlot = new Map<string, number>();
+  server.forEach((p) => {
+    const k = slotOf(p.category, p.subcategory);
+    serverBySlot.set(k, (serverBySlot.get(k) || 0) + 1);
+  });
+
+  const add: Array<Record<string, unknown>> = [];
+  const seen = new Map<string, number>();
+  queued.forEach((q) => {
+    const k = slotOf(q.category, q.subcategory);
+    const n = (seen.get(k) || 0) + 1;
+    seen.set(k, n);
+    // Only the items BEYOND what the server already shows for this slot.
+    if (n > (serverBySlot.get(k) || 0)) add.push(q);
+  });
+
+  return add.length === 0 ? server : [...server, ...add];
+};
