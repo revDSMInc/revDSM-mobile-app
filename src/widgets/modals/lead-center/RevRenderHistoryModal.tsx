@@ -214,8 +214,8 @@ export const RevRenderHistoryModal = ({
   const renderedOn = useMemo(() => {
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(currentRun?.createdAt || ''));
     if (!m) return '';
-    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return `${MONTHS[Number(m[2]) - 1] ?? ''} ${Number(m[3])}, ${m[1]}`;
+    // M/D/YYYY (no zero padding), the app's date format — was "Oct 6, 2026".
+    return `${Number(m[2])}/${Number(m[3])}/${m[1]}`;
   }, [currentRun]);
 
   // Track if current slide is fully loaded (prioritizing persistent cache)
