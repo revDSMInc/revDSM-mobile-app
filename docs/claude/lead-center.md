@@ -1180,6 +1180,14 @@ Separate JSX, not a shared component; the rule is shared, the markup is not.
 
 Why waiting rather than failed, and the trap about keying off the error: [`offline.md`](offline.md).
 
+## Roof Waiver form: fields hidden under the keyboard
+
+Ticket: *"the UI is hidden under the keyboard inside the waiver form."* `RoofWaiverModal.tsx` is a centred card (`maxHeight: 88%`) in a native `Modal` with a plain `ScrollView`, so the keyboard covered its lower half and nothing scrolled. Same fix as `CoCFormModal`: the backdrop is now `react-native-keyboard-controller`'s `KeyboardAvoidingView behavior="padding"` (shrinks the card to the space above the keyboard) and the body is a `KeyboardAwareScrollView` (`bottomOffset={24}`) that brings the focused field into it; `body` gained `flexShrink: 1` so the scroll area can shrink inside the card. ⚠️ Use the keyboard-controller versions, not React Native's: `KeyboardProvider` makes the app edge-to-edge, so Android no longer resizes the window. ⚠️ File is CRLF. Not verified on device.
+
+### Follow-up: waiver phone field (number pad) also scrolls into view
+
+The waiver's Phone Number field uses the in-app number pad, which `KeyboardAwareScrollView` cannot scroll for. `RoofWaiverModal` now also calls `useNumPadScrollIntoView` (scroll ref + a `collapsable={false}` wrapper around the scroll content), same as `DynamicTabRenderer` (see `app-wide.md`). The pad is mounted by the patched `Modal` in `index.js`, so no extra provider is needed.
+
 ## Reports tab: Inspection and Roof Waiver no longer filed twice (REVDSM-1293)
 
 Every inspection and roof waiver showed up as TWO generated reports (e.g. `inspection_report` +
