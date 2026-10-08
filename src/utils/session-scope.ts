@@ -8,6 +8,17 @@ export const SESSION_KEEP_KEYS: ReadonlySet<string> = new Set([
 
   'offline_lead_work',
   'upload_photo_queue',
+
+  // Every OWNER-SCOPED queue belongs here. Each already filters by `ownerId` on replay, so
+  // keeping it is safe for the next login, and clearing it DESTROYS work the rep did at a door.
+  // This is how a held `lead_check_in` was lost: the rep started an appointment offline, came
+  // back online, logged out before the drain ran, and the log was wiped, while the `work` PUT
+  // survived (its queue WAS listed), so the lead read "Resume" with no check-in behind it.
+  'offline_activity_logs',
+  'offline_lead_workflow',
+  'offline-photo-deletes',
+  'offline-map-filters',
+  'offline-agreement-delivery',
 ]);
 
 export const SESSION_KEEP_PREFIXES: readonly string[] = [

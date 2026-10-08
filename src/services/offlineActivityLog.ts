@@ -1,3 +1,4 @@
+import { AppState } from 'react-native';
 import { Storage } from '../utils/storage';
 import { isOnline, onReconnect } from './connectivity';
 import { getSessionOwner, registerSessionResetHook } from './sessionScope';
@@ -59,6 +60,9 @@ export const queueActivityLog = (
   if (!ownerId) return;
   store = appendQueuedLog(store, { ...entry, id: nextId(), ownerId, attempts: 0 });
   persist();
+  // Drain on enqueue, as the other queues do: a log held during a brief dropout would otherwise
+  // wait for the next `onReconnect`, which may never come in that session.
+  if (isOnline()) runActivityLogDrain();
 };
 
 export const rekeyActivityLogs = (fromId: string, toId: string): void => {
@@ -83,7 +87,12 @@ export const queuedActivityLogCount = (): number => {
 
 export const drainActivityLogs = async (): Promise<void> => {
   load();
-  if (draining || !isOnline() || !sender) return;
+  // No session yet means the app is still starting, NOT that the log is bad. Returning here
+  // rather than letting the sender throw is what stops a few launches burning all 5 attempts
+  // and discarding a check-in the rep really did make.
+  if (draining || !isOnline() || !sender || !getSessionOwner() || !Storage.getItem('accessToken')) {
+    return;
+  }
   draining = true;
   try {
     for (;;) {
@@ -121,9 +130,27 @@ export const runActivityLogDrain = (): void => {
 
 let syncStarted = false;
 
+const RETRY_SWEEP_MS = 60_000;
+
 export const startActivityLogSync = (): void => {
   if (syncStarted) return;
   syncStarted = true;
   onReconnect(() => runActivityLogDrain());
+
+  // The same three triggers `offlineLeadStore` uses, and for the same reason. `onReconnect` alone
+  // is not enough: a rep who reconnects, kills the app, then reopens it ALREADY ONLINE never gets
+  // a reconnect event, and the startup drain below races `initialize()` setting the session owner
+  // and token - so the queue sat full while the app looked perfectly healthy.
+  AppState.addEventListener('change', (next) => {
+    if (next === 'active') runActivityLogDrain();
+  });
+
+  setInterval(() => {
+    if (!isOnline()) return;
+    load();
+    if (!replayableLogs(store, getSessionOwner()).length) return;
+    runActivityLogDrain();
+  }, RETRY_SWEEP_MS);
+
   runActivityLogDrain();
 };

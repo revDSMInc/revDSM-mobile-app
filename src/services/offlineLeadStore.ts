@@ -13,6 +13,7 @@ import { isOwnedBy } from '../utils/session-scope';
 import { uploadQueueManager } from '../utils/uploadQueue';
 import { rekeyActivityLogs } from './offlineActivityLog';
 import { describeQueuedLead, isSuccessfulCreate, messageOfError } from '../utils/offline-lead-queue';
+import { setWorkReleaseQueue } from '../utils/lead-work-session';
 import {
   applyResolvedAddress,
   coordsFromLeadPayload,
@@ -410,6 +411,34 @@ export const queueLeadWorkStart = (lead: any, userId: string): boolean => {
   runUpload();
   return true;
 };
+
+/**
+ * The rep left the lead with no signal. Queues the `workStartedBy: null` release.
+ *
+ * Takes a bare leadId (not a lead object) because the caller only has the stored session.
+ * Returns false when there is nothing to attach it to - a lead with no offline record was
+ * started online, and `endWorkLead` has already been tried directly.
+ */
+export const queueLeadWorkEnd = (leadId: string): boolean => {
+  load();
+  const id = String(leadId || '').trim();
+  if (!id || isClientId(id)) return false;
+  const base = beginOfflineWorkOnLead(id, '');
+  if (!base) return false;
+  putOfflineWork({
+    ...base,
+    workEnded: { at: new Date().toISOString() },
+    status: base.status === 'uploaded' ? 'draft' : base.status,
+  });
+  runUpload();
+  return true;
+};
+
+// `utils/lead-work-session` is pure (jest-loadable) and cannot import this module, so it takes
+// the queue as a hook. Registered here, at the module that owns the queue.
+setWorkReleaseQueue((leadId) => {
+  queueLeadWorkEnd(leadId);
+});
 
 export const queueCustomerUpdate = (lead: any, payload: Record<string, unknown>): boolean => {
   const { id, work } = workForLead(lead);
@@ -958,6 +987,17 @@ const runStep = async (
     case 'work': {
       if (!leadId) throw new Error('cannot record work on a lead with no server id');
       await LeadService.workLead(leadId, String(work.workStarted?.userId || ''));
+      await refreshLeadLists();
+      return {};
+    }
+
+    case 'workEnd': {
+      // Releasing the rep from the lead. Queued because `endWorkLead` is a bare PUT: offline it
+      // threw, the caller caught it, and the rep stayed live on the ops board for good. Runs
+      // after 'work' (UPLOAD_STEPS order), so a start and an end queued in one offline stint
+      // replay in the order they happened.
+      if (!leadId) throw new Error('cannot release work on a lead with no server id');
+      await LeadService.endWorkLead(leadId);
       await refreshLeadLists();
       return {};
     }

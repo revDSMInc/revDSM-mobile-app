@@ -240,7 +240,10 @@ export default function LeadCenterPage() {
     useCallback(() => {
       setHeaderActions({
         onNavigate: (target: any) => {
-          pauseLeadSessionRef.current();
+          // Only going back to the lead LIST ends the session. Account Settings, Job Tracker,
+          // My Learning, notifications and chat are side trips the rep returns from, and are
+          // part of working the lead.
+          if (target === 'Leads') pauseLeadSessionRef.current();
           navigation.navigate(target);
         },
       });

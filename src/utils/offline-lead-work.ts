@@ -20,6 +20,7 @@ export type UploadStep =
   | 'submit'
   | 'consent'
   | 'work'
+  | 'workEnd'
   | 'chat'
   | 'customer'
   | 'archive'
@@ -38,6 +39,7 @@ export const UPLOAD_STEPS: readonly UploadStep[] = [
   'consent',
   'work',
   'chat',
+  'workEnd',
   'customer',
   'archive',
   'delete',
@@ -58,6 +60,7 @@ export const stepReplaySafety = (step: UploadStep): ReplaySafety => {
     case 'chat':
       return 'idempotent';
     case 'work':
+    case 'workEnd':
     case 'customer':
     case 'archive':
     case 'delete':
@@ -150,6 +153,8 @@ export interface OfflineLeadWork {
   archive?: { isArchive: boolean; lead?: Record<string, unknown> };
   deleteLead?: boolean;
   workStarted?: { userId: string; at: string };
+  /** The rep left the lead. Releases `workStartedBy` once there is signal. */
+  workEnded?: { at: string };
   customer?: { customerId: string; payload: Record<string, unknown> };
   funding?: Record<string, unknown>;
   submit?: Record<string, unknown>;
@@ -231,6 +236,8 @@ export const isStepApplicable = (work: OfflineLeadWork, step: UploadStep): boole
       return !!work.consents?.some((c) => !c.uploadedAt);
     case 'work':
       return !!work.workStarted && !work.submit;
+    case 'workEnd':
+      return !!work.workEnded && !work.submit;
     case 'chat':
       return !!work.workStarted && !work.chatCreated;
     case 'customer':
