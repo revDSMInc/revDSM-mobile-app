@@ -12,6 +12,11 @@ export interface Look {
   name: string;
   colors: string[];
   pattern: LookPattern;
+  /** Team rows only (REVUIUX-483 §10) — absent, not null, elsewhere. */
+  lat?: number;
+  lng?: number;
+  state?: string;
+  tier?: 'pro' | 'college';
 }
 
 export interface CustomLook extends Look {

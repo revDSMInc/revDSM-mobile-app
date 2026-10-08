@@ -26,6 +26,12 @@ import {
   applyServerPreferences, emptyState, guidanceDismissedFrom, LightingState, toggleFavourite,
 } from '../../utils/revrender-lighting/selection';
 import { hydrateFromCache, refreshCatalogue } from '../../utils/revrender-lighting/catalog';
+import {
+  leadCoords, NearYouOrigin, resolveOrigin, stateFromAddress,
+} from '../../utils/revrender-lighting/near-you';
+import { lastKnownCoords } from '../../utils/capture-location';
+import { getOfficeCoords } from '../../utils/office-location';
+import { geocodeAddress } from '../../utils/places';
 import { LeadService } from '../../services/api/leads';
 import { toLookPayload } from '../../utils/revrender-lighting/payload';
 import { Look } from '../../utils/revrender-lighting/types';
@@ -321,6 +327,25 @@ export default function RevRenderScreen() {
     });
     return () => { cancelled = true; };
   }, []);
+
+  // REVUIUX-483 §10 "Near you" origin: job → device (cached fix, never prompts) → office → none.
+  // The lead normally carries coordinates; only an address-only lead is geocoded, once per address.
+  const leadAddress: string | undefined = lead?.fullAddress;
+  const leadHasCoords = !!leadCoords(lead);
+  const [geocodedOrigin, setGeocodedOrigin] = useState<NearYouOrigin | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setGeocodedOrigin(null);
+    if (leadHasCoords || !leadAddress?.trim()) return undefined;
+    geocodeAddress(leadAddress).then((c) => {
+      if (!cancelled && c) setGeocodedOrigin({ ...c, state: stateFromAddress(leadAddress) });
+    });
+    return () => { cancelled = true; };
+  }, [leadAddress, leadHasCoords]);
+  const nearYouOrigin = useMemo<NearYouOrigin | null>(
+    () => geocodedOrigin ?? resolveOrigin({ lead, device: lastKnownCoords(), office: getOfficeCoords(user) }),
+    [geocodedOrigin, lead, user],
+  );
 
   const handleSaveCustomLook = useCallback(async (look: Look) => {
     try {
@@ -1286,6 +1311,7 @@ export default function RevRenderScreen() {
               onToggleFavourite={handleToggleFavourite}
               onSaveCustomLook={handleSaveCustomLook}
               onSelectLook={handleSelectLook}
+              nearYouOrigin={nearYouOrigin}
             />
             </View>
           )}

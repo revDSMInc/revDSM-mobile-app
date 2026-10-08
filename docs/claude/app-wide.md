@@ -650,3 +650,36 @@ Ticket: *"when I press a digit it shows BOLD, then turns normal a moment later."
 Ticket: *"input digits show bold in the calculator (even after reset-cache); only titles should be bold."* Not a JS style problem - the field styles were already Regular. Samsung **Bold font** / Android 12+ **Bold text** sets `Configuration.fontWeightAdjustment`, which the framework adds to an `EditText`'s typeface (`ReactEditText` is one) but NOT to React's `Text` (drawn through a `Layout`), so only typed values looked heavy, and only on devices with that setting on (one tester's screenshot of the same screen was regular).
 - `android/app/src/main/java/com/revdsm/MainActivity.kt` overrides `attachBaseContext` (API 31+) to hand the activity a configuration context with `fontWeightAdjustment = 0`. ⚠️ **Native change: needs `yarn android` (rebuild), a JS reload does nothing.** It also makes the whole app ignore the system Bold-text switch, consistent with the Public Sans ticket above.
 - ⚠️ The file is CRLF. Not verified on device from this session. The `REGULAR_INPUT_FONT` style in `dealcenter/SharedElements.tsx` stays (harmless, explicit).
+
+## RevRender lighting — "Near you" row (REVUIUX-483 §10)
+
+Backend handoff: `docs/revuiux-483-near-you-backend-handoff.md`. The Teams tab shows up to 6 nearby teams above
+the league selector (hidden while searching). Everything is computed **on device**; no new endpoint, and the
+address/coordinates go nowhere new.
+
+- **Files:** `utils/revrender-lighting/near-you.ts` (pure: `nearYou`, `resolveOrigin`, `leadCoords`,
+  `stateFromAddress`, `haversineMiles`, `NEAR_YOU_CONFIG`), origin wiring in `screens/RevRender/index.tsx`
+  (`nearYouOrigin`), row in `lighting/LightingPanel.tsx`. Test: `__tests__/utils/near-you.test.ts`.
+- **Data:** catalogue team rows now carry `lat`, `lng`, `state`, `tier` (`Look` widened). ⚠️ Test for
+  presence with `isLocatable` (has a `lat`), never `group === 'team'`; branch pro/college on `tier`, **never**
+  hard-code a league list (the backend carries it as data so a new league needs no release).
+- **Origin order:** lead coordinates (`location.coordinates` is GeoJSON `[lng, lat]`) → address geocode only
+  when the lead has none (`geocodeAddress`, once per address) → `lastKnownCoords()` (cached fix; ⚠️ never
+  call `getCaptureCoords` / request permission for this) → `getOfficeCoords(user)` → none = row hidden.
+- **State** comes from the address text (`stateFromAddress`); with none, the college rule uses its 150 mi
+  radius only. Device/office origins borrow the lead's address state when it has one.
+- **Interpretations of §10 (not spelled out there):** a 2nd team in a league counts as a "multi-team market"
+  only within `metroRadiusMi` (30) of the 1st; favourites are **not** deduped (the spec's wording is
+  ambiguous and the row must never be empty); the row is relabelled "Nearest to you" when nothing met a radius.
+- ⚠️ **Open product decisions, not coded:** Canadian teams (12) carry a province in `state` and never match a
+  US job's state — they only appear via radius/backfill. Tunables are code defaults in `NEAR_YOU_CONFIG`
+  (the backend does not serve them yet). The bundled seed `constants/revrender-looks.json` has no locations,
+  so the row appears only after the first catalogue refresh from an environment that has been re-seeded.
+- **Teams tab default (follow-up):** with a Near you result the tab shows ONLY those tiles plus a "Browse all
+  teams (268)" button; the league grid appears after picking a league (with a "Show only teams near you" link)
+  and search always searches all teams. With no result (no location, or a backend not yet re-seeded) it falls
+  back to the league grid. ⚠️ A dev-only `[NearYou]` log prints origin, located-team count and the result —
+  `locatedTeams: 0` means the API is not serving `lat` yet, not an app bug.
+- **Browse-teams sheet / nav bar (follow-up):** `CategorySheet` is a `Modal`, so its safe-area insets read 0/stale and
+  the Android 3-button bar sat over the pinned **Close** button. Bottom padding is now
+  `max(useBottomInset(), 48 on Android) + 16`. ⚠️ Don't swap it back to a fixed `pb-8`.

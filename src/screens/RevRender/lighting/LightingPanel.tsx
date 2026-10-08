@@ -2,8 +2,9 @@ import React, { useMemo, useState } from 'react';
 import { Text, TextInput, TouchableOpacity, useWindowDimensions, Vibration, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {
-  categoriesForTab, findLook, looksForTab, looksInCategory, seasonsSections, tagForLook,
+  allLooks, catalogueVersion, categoriesForTab, findLook, looksForTab, looksInCategory, seasonsSections, tagForLook,
 } from '../../../utils/revrender-lighting/catalog';
+import { nearYou, NearYouOrigin } from '../../../utils/revrender-lighting/near-you';
 import { searchLooks } from '../../../utils/revrender-lighting/search';
 import {
   addButtonLabel, canAdd, isFavourite, isSelected, LightingState, recentsToShow,
@@ -32,6 +33,7 @@ export function LightingPanel({
   onToggleFavourite,
   onSaveCustomLook,
   onSelectLook,
+  nearYouOrigin,
 }: {
   state: LightingState;
   setState: (s: LightingState) => void;
@@ -40,11 +42,15 @@ export function LightingPanel({
   onToggleFavourite?: (lookId: string) => void;
   onSaveCustomLook?: (look: Look) => void;
   onSelectLook?: (look: Look, nowSelected: boolean) => void;
+  /** Job → device → office, resolved by the screen. Null hides the Near you row (§10). */
+  nearYouOrigin?: NearYouOrigin | null;
 }) {
   const [tab, setTab] = useState<LookTab>('seasons');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Record<string, string>>({ teams: 'NFL', themes: 'Marvel' });
   const [sheetOpen, setSheetOpen] = useState(false);
+  // Teams opens on the nearby teams only; the league grid appears once the rep chooses to browse.
+  const [browsingTeams, setBrowsingTeams] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
   const [popover, setPopover] = useState<PopoverAnchor | null>(null);
   const { width: screenWidth } = useWindowDimensions();
@@ -93,6 +99,24 @@ export function LightingPanel({
   };
 
   const { everyday, holidays } = useMemo(() => seasonsSections(), []);
+
+  // Keyed on the catalogue version so a refresh that brings the team locations in recomputes it.
+  const near = useMemo(
+    () => nearYou(nearYouOrigin, allLooks()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [nearYouOrigin, catalogueVersion(), allLooks().length],
+  );
+  const showNearOnly = tab === 'teams' && !query && !!near && near.looks.length > 0 && !browsingTeams;
+
+  if (__DEV__ && tab === 'teams') {
+    const located = allLooks().filter((l) => Number.isFinite(l.lat)).length;
+    console.log('[NearYou]', {
+      origin: nearYouOrigin,
+      locatedTeams: located,
+      result: near?.looks.map((l) => l.id),
+      label: near?.label,
+    });
+  }
 
   const quickFavourites = state.fav.map((id) => findLook(id, state.customs)).filter((l): l is Look => Boolean(l));
   const quickRecents = recentsToShow(state).map((id) => findLook(id, state.customs)).filter((l): l is Look => Boolean(l));
@@ -205,6 +229,15 @@ export function LightingPanel({
             </View>
           )}
 
+          {/* Near you (483 §10) — computed on device. Hidden with no location or no team
+              locations in the catalogue; never a fake default. */}
+          {tab === 'teams' && !query && near && near.looks.length > 0 && (
+            <View className="mb-4">
+              <SectionLabel>{near.label}</SectionLabel>
+              {grid(near.looks, (l) => tile(l))}
+            </View>
+          )}
+
           {/* Category selector — the sheet replaced a horizontal rail that
               overflowed on small phones (483 §5). */}
           {!query && (
@@ -214,9 +247,11 @@ export function LightingPanel({
               style={{ minHeight: 48, backgroundColor: cardBg, borderWidth: 1, borderColor: isDark ? '#2A2F36' : '#DFE3E8' }}
             >
               <Text className="text-[14px] font-black" style={{ color: label }}>
-                {category[tab]}{' '}
+                {showNearOnly ? 'Browse all teams' : category[tab]}{' '}
                 <Text className="font-normal" style={{ color: sub }}>
-                  ({categoriesForTab(tab, state.customs).find((c) => c.name === category[tab])?.count ?? 0})
+                  ({showNearOnly
+                    ? looksForTab(tab, state.customs).length
+                    : categoriesForTab(tab, state.customs).find((c) => c.name === category[tab])?.count ?? 0})
                 </Text>
               </Text>
               <View className="flex-row items-center">
@@ -226,7 +261,18 @@ export function LightingPanel({
             </TouchableOpacity>
           )}
 
-          {grid(
+          {!query && tab === 'teams' && browsingTeams && near && near.looks.length > 0 && (
+            <TouchableOpacity
+              onPress={() => setBrowsingTeams(false)}
+              className="mb-3 self-start"
+              style={{ minHeight: 44, justifyContent: 'center' }}
+              accessibilityLabel="Show only teams near you"
+            >
+              <Text className="text-[12px] font-bold" style={{ color: GREEN }}>Show only teams near you</Text>
+            </TouchableOpacity>
+          )}
+
+          {!showNearOnly && grid(
             query
               ? searchLooks(looksForTab(tab, state.customs), query)
               : looksInCategory(tab, category[tab], state.customs),
@@ -324,7 +370,10 @@ export function LightingPanel({
         state={state}
         customs={state.customs}
         isDark={isDark}
-        onPick={(name) => setCategory({ ...category, [tab]: name })}
+        onPick={(name) => {
+          setCategory({ ...category, [tab]: name });
+          if (tab === 'teams') setBrowsingTeams(true);
+        }}
         onClose={() => setSheetOpen(false)}
       />
 
