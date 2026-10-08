@@ -1188,6 +1188,33 @@ Ticket: *"the UI is hidden under the keyboard inside the waiver form."* `RoofWai
 
 The waiver's Phone Number field uses the in-app number pad, which `KeyboardAwareScrollView` cannot scroll for. `RoofWaiverModal` now also calls `useNumPadScrollIntoView` (scroll ref + a `collapsable={false}` wrapper around the scroll content), same as `DynamicTabRenderer` (see `app-wide.md`). The pad is mounted by the patched `Modal` in `index.js`, so no extra provider is needed.
 
+## Reports tab: Inspection and Roof Waiver no longer filed twice (REVDSM-1293)
+
+Every inspection and roof waiver showed up as TWO generated reports (e.g. `inspection_report` +
+`Inspection_N/A.pdf`, `Roof Waiver - <name>` + `waiver_form`). Both server endpoints already file their own
+`generatedReport`, and the app then uploaded the same PDF again through `uploadGeneratedReport`.
+- Inspection (`handleInspectionSubmit`, `LeadCenter/index.tsx`): the re-upload is gone. `/pdf-reports/v1/inspection/:leadId/generate`
+  files `inspection_report` itself. The handler now invalidates `['leads']` and ends on the `inspectionDone` dialog (see the next section).
+- Roof Waiver (`finalizeConsentUpload`, `services/api/consent-forms.ts`): returns early for `kind === 'waiver'`, which covers both
+  the online flow and the offline drain (`offlineLeadStore.ts`). `/lead/v1/:leadId/mobile/waiver-form` files `Roof Waiver - {name}`,
+  and `hasFiledConsentReport` still matches it on the `waiver` keyword.
+- ⚠️ Do NOT remove the CONSENT upload: `user/consent/v1/mobile/create` files no report, so this upload is the only one.
+- Only new submissions are affected. Duplicates already stored were deliberately left alone.
+
+Where the backend (`mhalt-revDSM-backend/src`) creates each `generatedReport` row:
+
+| Form | Mobile calls | Route | Handler, where the row is created | `reportName` stored |
+|---|---|---|---|---|
+| Inspection | `handleInspectionSubmit` → `POST /pdf-reports/v1/inspection/:leadId/generate` | `api/controllers/v1/reports/PdfReportController.ts` (`generateInspectionReport`) | `core/handlers/reports/PdfReportHandler.ts` → `generateInspectionReport`, `generatedReportDBService.create(...)` (~L535): renders the PDF, uploads it to S3 (`inspection_report/<leadCode>/...`), saves the row, emits `emitGeneratedReportsUpdate`, streams the PDF back | `inspection_report` |
+| Roof Waiver | `handleWaiverSubmit` / offline drain → `POST /lead/v1/:leadId/mobile/waiver-form` | `api/controllers/v1/lead/LeadController.ts` (`submitWaiverFormMobile`) | `core/handlers/lead/LeadHandler.ts` → `submitWaiverFormMobile`, `generatedReportDBService.create(...)` (~L7589): renders the PDF, uploads it to S3, saves a `WaiverForm` and the report row together (one `Promise.all`, so a failed save fails the request), then a `JobBuilderDocument` (Docs tab), emits sockets, streams the PDF back | `Roof Waiver - {fullName}` |
+| Consent Form | `submitConsentForm` → `POST /user/consent/v1/mobile/create` | `api/controllers/v1/consents/UserConsentController.ts` (`createConsentFormMobile`) | `core/handlers/consent/UserConsentHandler.ts` → `createUserConsentMobile`: renders the PDF but creates **no** report row | none (the mobile `finalizeConsentUpload` creates it) |
+
+The duplicates came from the generic upload endpoint `POST /generated-reports/v1` (`LeadService.uploadGeneratedReport`):
+`api/controllers/v1/reports/GeneratedReportController.ts` → `core/handlers/reports/GeneratedReportHandler.ts` → `createGeneratedReport`.
+It stores the client's `reportName`, or falls back to the uploaded file's name (~L101): `Inspection_<jobNumber|leadId>.pdf`
+for the inspection re-upload and `waiver_form` (from `waiver_form.pdf`) for the waiver one. Consent is now the only
+mobile flow that still uses it.
+
 ## Inspection report: end on a dialog, not a toast
 
 Ticket: *after the inspection report is generated a toast says "saved to Downloads", but the rep has no way to see the file and no navigation afterwards.* `LeadCenter/index.tsx` (inspection submit) now finishes with the app's own `ConfirmDialog` (`DynamicDealCenter/components/ConfirmDialog`, `tone="neutral"`, same look as Result Lead / Deal Center; state `inspectionDone`) - NOT a system `Alert` (follow-up: *"use the same dialog format already used in the app"*) - offering **View Report** (`FileViewer.open(pdfPath, { showOpenWithDialog: true })` on the local generated file) and **Done**. The text says what really happened: uploaded to the lead's Job docs, saved to Downloads as `Inspection Report.pdf` (Android) - or, if `downloadPdfToDevice` threw, that it is uploaded but NOT saved to the device (the old catch branch showed a green "success" for that). ⚠️ The local file is deleted only when it is not a valid PDF, so `pdfPath` is still there to open. ⚠️ `downloadPdfToDevice(..., false)` stays silent: don't re-enable its toast or the rep gets two messages. Not verified on device.

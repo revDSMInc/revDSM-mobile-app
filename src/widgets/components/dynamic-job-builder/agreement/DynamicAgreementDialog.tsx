@@ -96,6 +96,9 @@ export function DynamicAgreementDialog({
   const insets = useSafeAreaInsets();
 
   const renderLocally = !isOnline() || isClientId(leadId);
+  // REVUIUX-391 applies offline too: ask BEFORE generating, so the signed copy always has a
+  // destination. Skipped only for a client-id lead - the server has no record to save against.
+  const needsDelivery = !!leadId && !isClientId(leadId);
   const { agreementConfig, agreementConfigLoading } = useGetAgreementConfig(visible);
   const [remoteOpen, setRemoteOpen] = useState(false);
   const [deliveryReady, setDeliveryReady] = useState(false);
@@ -360,7 +363,7 @@ export function DynamicAgreementDialog({
             screen — there is no second modal, which also means no stacked-modal teardown to
             stage. `onSave` fires only once both marks are drawn (the generator's own gate). */}
         {renderLocally ? (
-          agreementConfig ? (
+          agreementConfig && (deliveryReady || !needsDelivery) ? (
             <DynamicAgreementGenerator
               agreementConfig={agreementConfig}
               customerDetails={resolvedCustomerDetails}
@@ -462,7 +465,7 @@ export function DynamicAgreementDialog({
         {/* In-card overlay, NOT a second native Modal — this dialog is already one. */}
         <AgreementDeliveryPrompt
           inline
-          visible={visible && !renderLocally && !deliveryReady && !!leadId}
+          visible={visible && needsDelivery && !deliveryReady}
           leadId={leadId || ''}
           customerDetails={leadData?.customerDetails || customerDetails}
           onCancel={onClose}

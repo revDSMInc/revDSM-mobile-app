@@ -15,6 +15,7 @@ import PushNotificationService from '../services/PushNotificationService';
 import { startOfflineSyncTimer, stopOfflineSyncTimer } from '../services/api/offlineUploadManager';
 import { startOfflineWorkSync } from '../services/offlineLeadStore';
 import { startMapFilterSync } from '../services/offlineMapFilters';
+import { startDeliveryPreferenceSync } from '../services/offlineAgreementDelivery';
 import { adoptSessionOwner } from '../services/sessionScope';
 import { startPhotoQueueSync } from '../utils/uploadQueue';
 import { startActivityLogSync } from '../services/offlineActivityLog';
@@ -179,6 +180,7 @@ export function useAppInitialization() {
     startActivityLogSync();
 
     startMapFilterSync();
+    startDeliveryPreferenceSync();
 
     startBackgroundUploadService();
     startCalculatorSettingsSync((applied) => {

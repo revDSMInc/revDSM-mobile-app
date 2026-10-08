@@ -12,6 +12,12 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LeadService } from '../../../services/api/leads';
+import { isNetworkError } from '../../../utils/network-error';
+import { isOnline } from '../../../services/connectivity';
+import {
+  queueDeliveryPreference,
+  queuedDeliveryPreference,
+} from '../../../services/offlineAgreementDelivery';
 import {
   DeliveryChannel,
   DeliveryPreferenceForm,
@@ -77,6 +83,10 @@ export function AgreementDeliveryPrompt({
     setForm(initialDeliveryForm(null, fallback));
     setName(deliveryRecipientName(customerDetails?.firstName));
     if (!leadId) return;
+    const queued = queuedDeliveryPreference(leadId);
+    if (queued) setForm(initialDeliveryForm({ preference: queued }, fallback));
+    // Offline: no GET to make. The form already holds the queued choice or the lead's own details.
+    if (!isOnline()) return;
     setLoading(true);
     LeadService.getAgreementDeliveryPreference(leadId)
       .then((res) => {
@@ -109,14 +119,26 @@ export function AgreementDeliveryPrompt({
       setTouched(true);
       return;
     }
+    const payload = buildDeliveryPayload(form);
+    // This prompt gates Generate Agreement, so it must never hold the sale for a network call.
+    if (!isOnline()) {
+      queueDeliveryPreference(leadId, payload);
+      onConfirmed();
+      return;
+    }
     setSaving(true);
     setServerError('');
     try {
-      await LeadService.saveAgreementDeliveryPreference(leadId, buildDeliveryPayload(form));
+      await LeadService.saveAgreementDeliveryPreference(leadId, payload);
       onConfirmed();
     } catch (e: any) {
+      if (isNetworkError(e)) {
+        queueDeliveryPreference(leadId, payload);
+        onConfirmed();
+        return;
+      }
       setServerError(
-        e?.response?.data?.message || "Couldn't save how to send the copy. Please try again."
+        e?.message || "Couldn't save how to send the copy. Please try again."
       );
     } finally {
       setSaving(false);

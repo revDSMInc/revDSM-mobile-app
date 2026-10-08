@@ -23,7 +23,6 @@ import { AgreementSignatureModal } from '../../modals/job-builder/AgreementSigna
 import { PdfPreviewModal } from '../../modals/PdfPreviewModal';
 import { LeadService } from '../../../services/api/leads';
 import { AgreementDeliveryPrompt } from '../../modals/job-builder/AgreementDeliveryPrompt';
-import { isOnline } from '../../../services/connectivity';
 import { isClientId } from '../../../utils/offline-lead-work';
 import { useAuth } from '../../../hooks/useAuth';
 import { useLeadQuery } from '../../../hooks/useLeadQuery';
@@ -635,7 +634,7 @@ export const SummarySection = ({
     if (!installDate) {
       return runGenerateAgreement(override);
     }
-    if (!isOnline() || isClientId(leadId)) return runGenerateAgreement(override);
+    if (isClientId(leadId) || !leadId) return runGenerateAgreement(override);
     pendingGenerateOverride.current = override;
     if (agreementDialogOpen) {
       setAgreementDialogOpen(false);
