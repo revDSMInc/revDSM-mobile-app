@@ -81,9 +81,11 @@ interface Props {
   onOptIn: (calculatorId: string, opts: { price: number; paymentMethod?: string; downPayment?: number }) => void;
   onSetInHome?: (calculatorId: string, inHome: { planKey?: string; addedPlans?: string[]; apr?: number; monthlyPayment?: number; grandTotal?: number; optInProgram?: 'inhome' | 'oneyear' | null }) => void;
   onRefresh?: () => void;
+  /** Plan key the rep set as the lead-wide default on ANY of this lead's calculators. */
+  leadOneYearDefaultKey?: string | null;
 }
 
-export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig, jobBuilderConfig, descriptionSchemas, lead, onOptIn, onSetInHome, onRefresh }: Props) {
+export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig, jobBuilderConfig, descriptionSchemas, lead, onOptIn, onSetInHome, onRefresh, leadOneYearDefaultKey = null }: Props) {
   const isLeadSold = lead?.status === 'sale';
   const [selectedProgram, setSelectedProgram] = useState<'inhome' | 'oneyear' | null>(
     calculator.inHome?.optInProgram ?? null,
@@ -304,13 +306,16 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     return fin.find((k) => Math.round((plans[k]?.apr || 0) * 100) / 100 === 9.99) || fin.find((k) => (plans[k]?.apr || 0) > 0) || fin[0] || method;
   }, [plans, method]);
   const oneYear = calculator.oneYearMonthlyPlan;
-  const oneYearMode = oneYear?.mode || 'match';
+  // Same inheritance rule as the rollout's OneYearMonthlyPlan: nothing stored, or a bare `Default`,
+  // follows the lead-wide default; a calculator's own default pick / Match / custom is kept.
+  const oneYearInherits = !!leadOneYearDefaultKey && (!oneYear || (oneYear.mode === 'default' && !oneYear.isDefault));
+  const oneYearMode = oneYear?.mode || (leadOneYearDefaultKey ? 'default' : 'match');
   const oneYearKey =
     oneYearMode === 'match'
       ? selectedPlanKey || seedFinancingKey || defaultOneYearKey
       : oneYearMode === 'custom'
         ? oneYear?.planKey || defaultOneYearKey
-        : defaultOneYearKey;
+        : (oneYearInherits ? leadOneYearDefaultKey : oneYear?.planKey) || defaultOneYearKey;
   const oneYearMonthly = useMemo(() => calcMonthly(plans, oneYearGrandTotal, oneYearKey), [plans, oneYearGrandTotal, oneYearKey]);
   const oneYearMonthlyShown = oneYearMonthly;
 

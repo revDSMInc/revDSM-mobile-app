@@ -98,3 +98,8 @@ __tests__/
 yarn.lock
 branch_structure.json
 config.bat
+# Generated at build time by the RN Gradle bundling task; never commit it —
+
+# it bakes in .env values (API URL + keys) and goes stale.
+
+android/app/src/main/assets/index.android.bundle

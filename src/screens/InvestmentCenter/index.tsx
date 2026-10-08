@@ -221,6 +221,10 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
     [tabs],
   );
   const active = visible.find((t) => t.id === activeTabId) || visible[0];
+  const leadOneYearDefaultKey = useMemo(
+    () => tabs.find((t) => t.oneYearMonthlyPlan?.isDefault && t.oneYearMonthlyPlan?.planKey)?.oneYearMonthlyPlan?.planKey ?? null,
+    [tabs],
+  );
 
   const packageByCalcId = useMemo(() => {
     const map: Record<string, { isFullPackage: boolean; extras: string }> = {};
@@ -395,6 +399,7 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
               jobBuilderConfig={jobBuilderConfig}
               descriptionSchemas={descriptionSchemas}
               lead={lead}
+              leadOneYearDefaultKey={leadOneYearDefaultKey}
               onOptIn={handleOptIn}
               onSetInHome={handleSetInHome}
               onRefresh={() => {
