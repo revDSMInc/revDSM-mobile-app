@@ -381,3 +381,6 @@ Now a single `OVERVIEW_COLUMNS` list (`key`, `label`, `width`, `format`) drives 
 
 - ⚠️ Never stack native Modals: from the spotlight the picker MUST be the `inline` overlay. The ordinary `AddPlanModal` (Modal) is gated `showAddPlan && !spotlight` so only one of the two ever renders. An earlier version closed the spotlight and re-opened it after the picker; reps rejected the flicker. Do not restore it.
 - The enlarged card reads live panel state, so an added plan appears in its Monthly list as the overlay closes.
+
+### 1-Year default plan reaches the Investment Center
+`InvestmentPanel.tsx` resolved a `Default`-mode 1-Year monthly from the hard-coded `defaultOneYearKey` (first 9.99% APR plan) and ignored the stored `oneYearMonthlyPlan.planKey`, so the rep's picked default never showed. Now `default` mode uses the stored `planKey`; and a calculator with nothing stored (or a bare `Default`) inherits the lead-wide default (`leadOneYearDefaultKey`, computed in `InvestmentCenter/index.tsx` from the first tab with `oneYearMonthlyPlan.isDefault`) - the same inheritance rule as `OneYearMonthlyPlan.tsx`. `defaultOneYearKey` is only the last fallback. Not verified on device.
