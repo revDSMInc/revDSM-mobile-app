@@ -165,6 +165,9 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         case 'noProvider':
           FlashMessage.error('No payment provider', error.message);
           break;
+        case 'settledOnOtherCalculator':
+          FlashMessage.warning('Funding is on another job scope', error.message);
+          break;
         case 'notFound':
           await refetch();
           FlashMessage.error(context, error.message);
@@ -256,7 +259,13 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         const res = await run('Save payments', () =>
           FundingService.savePayments(
             leadId!,
-            { contractPrice, payments, payMode: payMode === 'upfront' ? 'upfront' : 'split' },
+            {
+              contractPrice,
+              payments,
+              payMode: payMode === 'upfront' ? 'upfront' : 'split',
+              // Lets the server claim (or move) ownership; omitted = leave it untouched.
+              ...(logCtx?.calculatorId ? { calculatorId: String(logCtx.calculatorId) } : {}),
+            },
             companyId,
             actorId
           )
@@ -274,7 +283,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         setIsSaving(false);
       }
     },
-    [run, leadId, companyId, actorId, logBase]
+    [run, leadId, companyId, actorId, logBase, logCtx?.calculatorId]
   );
 
   const fetchLink = useCallback(

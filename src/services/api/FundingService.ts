@@ -198,6 +198,8 @@ export interface FundingRecord {
   contractPrice: number;
   contractPriceUnlocked?: boolean;
   payMode?: 'split' | 'upfront';
+  /** Calculator this lead's funding is attached to; null = unclaimed. Server-owned. */
+  calculatorId?: string | null;
   status: FundingRecordStatus;
   submittedAt?: string | null;
   submittedBy?: string | null;
@@ -255,6 +257,7 @@ export type FundingErrorKind =
   | 'notFound'
   | 'delivery'
   | 'noProvider'
+  | 'settledOnOtherCalculator'
   | 'offline'
   | 'unknown';
 
@@ -262,6 +265,8 @@ export interface FundingError {
   kind: FundingErrorKind;
   message: string;
   httpStatus?: number;
+  /** Machine code from `data.code` (e.g. FUNDING_SETTLED_ON_OTHER_CALCULATOR). */
+  code?: string;
   blockers?: string[];
   reminder?: FundingApprovalReminder;
 }
@@ -275,6 +280,8 @@ const KIND_BY_STATUS: Record<number, FundingErrorKind> = {
   502: 'delivery',
   503: 'noProvider',
 };
+
+export const FUNDING_SETTLED_ON_OTHER_CALCULATOR = 'FUNDING_SETTLED_ON_OTHER_CALCULATOR';
 
 export function isLinkEndpointUrl(url?: string | null): boolean {
   if (!url) return false;
@@ -312,11 +319,15 @@ export function classifyFundingError(
   else if (kind === 'stale' && onRemind) kind = 'remindTooSoon';
 
   const reminder = body?.reminder ?? body?.data?.reminder;
+  const code: string | undefined = typeof body?.data?.code === 'string' ? body.data.code : undefined;
+  // Match on `data.code`, never the message. A refused re-scope is not a stale record: no refetch/retry.
+  if (code === FUNDING_SETTLED_ON_OTHER_CALCULATOR) kind = 'settledOnOtherCalculator';
 
   return {
     kind,
     message: body?.message || err?.message || 'Something went wrong',
     httpStatus,
+    ...(code ? { code } : {}),
     ...(Array.isArray(blockers) ? { blockers } : {}),
     ...(reminder && typeof reminder === 'object' ? { reminder: reminder as FundingApprovalReminder } : {}),
   };
@@ -374,7 +385,12 @@ export const FundingService = {
 
   savePayments: (
     leadId: string,
-    payload: { contractPrice: number; payments: FundingUpsertRow[]; payMode?: 'split' | 'upfront' },
+    payload: {
+      contractPrice: number;
+      payments: FundingUpsertRow[];
+      payMode?: 'split' | 'upfront';
+      calculatorId?: string;
+    },
     companyId?: string,
     userId?: string
   ): Promise<FundingResponse> => api.put(FundingEndpoints.record(leadId), payload, cfg(companyId, userId)),

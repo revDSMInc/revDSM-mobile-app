@@ -871,6 +871,7 @@ const runStep = async (
         contractPrice: Number(body?.contractPrice) || 0,
         payments: Array.isArray(body?.payments) ? body.payments : [],
         payMode: body?.payMode === 'upfront' ? 'upfront' : 'split',
+        ...(body?.calculatorId ? { calculatorId: String(body.calculatorId) } : {}),
       });
       return {};
     }

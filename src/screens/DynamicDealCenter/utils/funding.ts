@@ -199,6 +199,38 @@ export function lockedMethodNote(row: PaymentRow): string {
   return 'This payment has already started, so its method is locked.';
 }
 
+/**
+ * Does the saved funding record belong to this calculator? Ownership is the server's
+ * `record.calculatorId` (null = unclaimed). A different owner means the rep is re-scoping,
+ * so the sheet must not hydrate from those rows; the server moves it or answers 409.
+ */
+export function fundingBelongsToCalculator(
+  recordCalculatorId: string | null | undefined,
+  calculatorId: string | null | undefined
+): boolean {
+  if (!recordCalculatorId || !calculatorId) return true;
+  return String(recordCalculatorId) === String(calculatorId);
+}
+
+/** Real money has moved (charged card / collected cheque) — mirrors the server's `isSettled`. A lender decision alone is not money. */
+export function hasCollectedMoney(
+  record: { payments?: Array<{ charged?: boolean; collected?: boolean }> } | null | undefined
+): boolean {
+  return (record?.payments || []).some((p) => Boolean(p.charged || p.collected));
+}
+
+/**
+ * Collected money pins the lead's funding to the calculator that took it: any OTHER calculator
+ * may not result a Sale until that is refunded. Fully-financed funding pins nothing.
+ */
+export function fundingPinnedToOtherCalculator(
+  record: { calculatorId?: string | null; payments?: Array<{ charged?: boolean; collected?: boolean }> } | null | undefined,
+  calculatorId: string | null | undefined
+): boolean {
+  if (!record?.calculatorId || !calculatorId) return false;
+  return !fundingBelongsToCalculator(record.calculatorId, calculatorId) && hasCollectedMoney(record);
+}
+
 export function isMethodLockedRow(row: PaymentRow): boolean {
   return Boolean(row.charged || row.collected || row.activated);
 }

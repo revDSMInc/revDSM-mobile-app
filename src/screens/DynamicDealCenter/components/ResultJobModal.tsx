@@ -39,8 +39,6 @@ import { FS, FUND, PS } from './funding/funding-theme';
 import { ModalFlashHost } from '../../../widgets/common/ModalFlashHost';
 import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
 import { FundingView } from './funding/FundingView';
-import { Storage } from '../../../utils/storage';
-import { fundingOwnerKey, shouldAdoptSavedFunding } from '../../../utils/funding-owner';
 import { SendLinkModal } from './funding/SendLinkModal';
 import { DropdownChoice } from './funding/DropdownChoice';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -81,6 +79,7 @@ import {
   type PaymentRow,
   type PayMode,
   type PayStructure,
+  fundingBelongsToCalculator,
 } from '../utils/funding';
 
 const ONE_LEG_OPTIONS = ['No', 'MR', 'MRS'];
@@ -340,12 +339,9 @@ export function ResultJobModal({
 
     funding.load().then((record) => {
       if (cancelled || !record) return;
-      // ⚠️ The record is lead-wide; another calculator's unstarted rows are not ours.
-      const owner = leadLogId ? Storage.getItem(fundingOwnerKey(leadLogId)) : null;
-      if (!shouldAdoptSavedFunding(owner, calculatorId)) return;
-      if (!owner && leadLogId && calculatorId && (record.payments || []).length) {
-        Storage.setItem(fundingOwnerKey(leadLogId), String(calculatorId));
-      }
+      // ⚠️ The record is lead-wide; ownership is the SERVER's `record.calculatorId`. Another
+      // calculator's rows are not ours — we are re-scoping, and the next save moves (or 409s).
+      if (!fundingBelongsToCalculator(record.calculatorId, calculatorId)) return;
       const saved = hydrateRowsFromRecord(record, pricing.plans);
       if (saved.length) {
         setRows(saved);
@@ -630,6 +626,7 @@ export function ResultJobModal({
         contractPrice: Math.round(contractNum),
         payments: upsert,
         payMode,
+        ...(calculatorId ? { calculatorId: String(calculatorId) } : {}),
       });
       logResultLeadConfirmed({
         ...logCtx,
@@ -659,7 +656,6 @@ export function ResultJobModal({
       return;
     }
     setSaveError(null);
-    if (leadLogId && calculatorId) Storage.setItem(fundingOwnerKey(leadLogId), String(calculatorId));
     logFundingOpened({
       ...logCtx,
       contractPrice: Math.round(contractNum),

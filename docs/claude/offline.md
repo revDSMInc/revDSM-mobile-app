@@ -154,3 +154,12 @@ Different moment from the entry-point guard: `offline-capability.ts` already blo
 risk report or render with no signal, but it only speaks at the tap and cannot help a bar already
 on screen. A render whose *initial* POST never reached the server **is** a genuine failure and
 stays `failed` — reported as "No connection — this render was not started", never axios' wording.
+
+
+### REVUIUX-519: queued funding carries `calculatorId`
+
+The offline `'funding'` step (`offlineLeadStore.ts`, replaying `PUT /lead/v1/:leadId/funding`) now forwards `calculatorId`
+from the queued body (`ResultJobModal` stores it via `saveOfflineFunding`), so the server claims funding ownership when the
+queue drains, exactly as an online save does. Omitted when absent (older queued work) = ownership untouched, which the backend
+treats as a no-op. ⚠️ A replay can now 409 `FUNDING_SETTLED_ON_OTHER_CALCULATOR`; the `'funding'` step has no 409 handling (unlike the lead/outcome steps), so it throws like any other error and follows the queue's normal retry path — unverified whether that loops; check before relying on it.
+Details: `deal-center.md` → "REVUIUX-519".

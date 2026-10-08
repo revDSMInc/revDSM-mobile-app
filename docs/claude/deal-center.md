@@ -2639,6 +2639,36 @@ The native `Alert.alert` read as OS chrome. It is now `ConfirmDialog` (`tone="wa
 information-only card with one OK button) rendered beside both `ResultJobModal`s in `DynamicDealCenterScreen`, driven by
 `fundingBlock` state. ⚠️ Both render branches (edit-mode early return and the main flow) carry the dialog — keep them in step.
 
+### REVUIUX-519: funding ownership is now the server's `calculatorId` (supersedes the device pin above)
+
+Source: backend guide `FUNDING-CALCULATOR-OWNERSHIP-MOBILE.md`. `JobFunding` carries a nullable `calculatorId`; the server
+claims it on `PUT /lead/v1/:leadId/funding`, moves it if no row is *settled* (charged card / collected cheque — an approved or
+activated loan is NOT settled), and answers `409 data.code = FUNDING_SETTLED_ON_OTHER_CALCULATOR` otherwise.
+- **Deleted `utils/funding-owner.ts` and every `Storage` `funding-owner:<leadId>` read/write.** Replaced by the pure
+  `fundingBelongsToCalculator(record.calculatorId, calculatorId)` in `DynamicDealCenter/utils/funding.ts` (null = unclaimed = ours).
+- **Send `calculatorId` on every write**: `useFunding.savePayments` adds `logCtx.calculatorId` (Result Lead sheet and My Deals edit);
+  the offline queue (`saveOfflineFunding` body → `offlineLeadStore` `'funding'` step) carries it too.
+- `FundingRecord.calculatorId` is typed; `FundingError.code` is read from `data.code`; the 409 is its own kind
+  `settledOnOtherCalculator` (warning flash, **no refetch / no retry**). ⚠️ Match on the code, never the message; a bare 409 is still `stale`.
+- ⚠️ **The hard block is gone.** `handleResultJob` no longer refuses a Sale when another calculator's funding is submitted (and the
+  `fundingBlock` `ConfirmDialog`s were removed from both render branches). A same-owner / unclaimed submitted record opens on the
+  Funding screen (collected money locked, financing swappable); a different owner opens the normal sheet unhydrated — the save then
+  re-scopes, or the server's 409 text is shown in the sheet's save error.
+- ⚠️ A re-scoping sheet starts from fresh rows (per the backend guide); it does not copy the other calculator's financing rows across.
+- ⚠️ **Do NOT build the "money already collected" carry-over/refund flow** — product decision still open; the 409 is the placeholder.
+Tests: `__tests__/utils/funding-owner.test.ts` (gitignored dir).
+
+### Follow-up: collected money pins the lead to its calculator (fully-financed funding pins nothing)
+
+Ticket: *all calculators fully financed → each may be resulted; once a down payment is received, only the calculator that took it may be resulted.*
+`handleResultJob` (CRLF) now checks `fundingPinnedToOtherCalculator(record, calculatorId)` (`utils/funding.ts`: `record.calculatorId` is a
+different calculator AND `hasCollectedMoney` = any row `charged || collected`, mirroring the server's `isSettled`) and shows the
+`fundingBlock` `ConfirmDialog` ("Down payment already collected") instead of opening the sheet. Sale only; a lookup failure falls through.
+⚠️ A lender decision / approved loan is NOT money, so financing never pins. ⚠️ The server still enforces it (409
+`FUNDING_SETTLED_ON_OTHER_CALCULATOR`); this is the early, friendly gate. ⚠️ Funding is ONE record per lead (`JobFunding` unique on `leadId`):
+financing resulted on calculator B *moves* the record from A rather than keeping two — true parallel funding per calculator needs a backend change.
+Both render branches carry the dialog — keep them in step.
+
 ## Result Lead payment rows: one card per payment, amount and method in separate boxes
 
 Ticket: *two separate boxes — one for the amount, one for the payment method; several payments must not share a line; Down Payment,
