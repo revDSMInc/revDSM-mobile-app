@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Modal, Pressable, ScrollView } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import {
@@ -31,6 +31,9 @@ interface Props {
   leadDefault?: { planKey: string; apr?: number } | null;
 }
 
+// "2521 (12 Months 0% ...)" -> "2521"; falls back to the whole label when there is no code.
+const planCodeOf = (label: string) => (label.split('(')[0] || label).trim();
+
 const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
 const aprPercent = (apr: any): number => {
@@ -41,6 +44,7 @@ const aprPercent = (apr: any): number => {
 
 export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey, base, value, onChange, locked = false, leadDefault = null }: Props) {
   const [showPicker, setShowPicker] = useState(false);
+  const pickerScrollRef = useRef<ScrollView>(null);
   // A calculator INHERITS the lead's default plan until the rep changes it there: nothing stored yet,
   // or `Default` clicked without a pick of its own. An explicit Match / custom pick (or its own
   // default pick, `isDefault`) is the rep's decision for this calculator and is never overwritten.
@@ -173,7 +177,7 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
               <View style={{ width: 44, height: 5, borderRadius: 3, backgroundColor: '#CBD5E1' }} />
             </View>
             <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', flexDirection: 'row', alignItems: 'flex-start' }}>
-              <View style={{ flex: 1 }}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
                 <Text style={{ fontSize: 16, fontWeight: '900', color: '#1C252E' }}>Pick 1 Year Monthly Plan</Text>
                 <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 3 }}>This monthly flows through to the Investment Center.</Text>
               </View>
@@ -184,7 +188,34 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
             {/* Full plan sheet — grouped by provider (GreenSky / Wells Fargo / …),
                 each row the plan's FULL label + APR, with the monthly on the right,
                 matching the rollout's payment picker. */}
-            <ScrollView contentContainerStyle={{ padding: 16 }}>
+            <ScrollView ref={pickerScrollRef} contentContainerStyle={{ padding: 16 }}>
+              {/* The lead-wide default plan - only while the rep is on Default. Picking a plan
+                  below while on Default replaces it; `Change` just points the rep at the list. */}
+              {mode === 'default' && !!plans[effectiveDefaultKey] && (
+                <View style={{ marginBottom: 14 }}>
+                  <Text style={{ fontSize: 9, fontWeight: '900', color: '#4CBB17', letterSpacing: 0.5, marginBottom: 6 }}>MY DEFAULT PLAN</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: '#4CBB17', borderRadius: 12, backgroundColor: '#4CBB170D', paddingHorizontal: 14, paddingVertical: 12 }}>
+                    <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: '#4CBB1726', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                      <Ionicons name="star" size={17} color="#4CBB17" />
+                    </View>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <Text style={{ fontSize: 11.5, fontWeight: '900', color: '#1C252E', lineHeight: 15 }}>
+                        {`${plans[effectiveDefaultKey]?.provider ? plans[effectiveDefaultKey].provider + ' ' : ''}${planCodeOf(planLabelOf(plans, effectiveDefaultKey))}${calcMonthly(plans, base, effectiveDefaultKey) > 0 ? ` \u00B7 ${fmt(calcMonthly(plans, base, effectiveDefaultKey))}/mo` : ''}`}
+                      </Text>
+                      {!!(plans[effectiveDefaultKey]?.shortlabel || plans[effectiveDefaultKey]?.displayMonths) && (
+                        <Text style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>{plans[effectiveDefaultKey]?.shortlabel || plans[effectiveDefaultKey]?.displayMonths}</Text>
+                      )}
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => pickerScrollRef.current?.scrollTo({ y: 150, animated: true })}
+                      style={{ backgroundColor: '#4CBB1726', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '900', color: '#4CBB17' }}>Change</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={{ fontSize: 9, color: '#94A3B8', marginTop: 6 }}>Pre-selected on every new deal.</Text>
+                </View>
+              )}
               {financingCategories.length === 0 ? (
                 <Text style={{ fontSize: 11, color: '#94A3B8', textAlign: 'center', paddingVertical: 24 }}>No financing plans available.</Text>
               ) : (
@@ -198,6 +229,7 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                     {cat.plans.map((key) => {
                       const m = calcMonthly(plans, base, key);
                       const isSel = resolvedKey === key;
+                      const isMyDefault = mode === 'default' && key === effectiveDefaultKey;
                       return (
                         <TouchableOpacity
                           key={key}
@@ -206,6 +238,11 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                           style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: isSel ? 2 : 1, borderColor: isSel ? '#4CBB17' : '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 9, backgroundColor: isSel ? '#4CBB170D' : '#fff' }}
                         >
                           <View style={{ flex: 1, paddingRight: 12 }}>
+                            {isMyDefault && (
+                              <View style={{ alignSelf: 'flex-start', backgroundColor: '#4CBB17', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginBottom: 6 }}>
+                                <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5 }}>MY DEFAULT</Text>
+                              </View>
+                            )}
                             {/* The plan label already spells out the real APR (e.g.
                                 "Reduced rate 6.9% APR…"), so no separate APR line —
                                 the old one also printed the raw fraction (0.069%). */}

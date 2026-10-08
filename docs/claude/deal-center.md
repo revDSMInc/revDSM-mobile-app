@@ -2926,3 +2926,8 @@ Ticket: the quantity box (`InputField` in `dealcenter/SharedElements.tsx`, e.g. 
 
 ### Follow-up: quantity / price inputs pinned to Public Sans Regular
 `font-normal` alone did not stop the typed digits showing bold on Android, so `InputField` and `PricingInputField` (`dealcenter/SharedElements.tsx`) now pass `REGULAR_INPUT_FONT` (`fontFamily: 'PublicSans-Regular'` + `fontWeight: 'normal'` - the pair `docs/claude/app-wide.md` requires) as an explicit style, and `font-black` is gone from `PricingInputField`. ⚠️ Keep the weight in `style`, not only a className: it is what the native text view reads when the digit is written. Labels stay bold. Not verified on device - if digits are STILL heavy, the cause is outside these two components (check the field is not another input).
+
+### 1-Year monthly plan picker - "My default plan" UI
+`OneYearMonthlyPlan.tsx` picker sheet extended using only the existing sheet tokens (green #4CBB17 + its tint, original 9-16px font sizes, 12px-radius cards, no new palette). While `mode === 'default'` it shows a **MY DEFAULT PLAN** card at the top (star, `provider + plan code · $X/mo`, `shortlabel`/`displayMonths`, **Change**, "Pre-selected on every new deal.") and a **MY DEFAULT** badge on the matching row (`effectiveDefaultKey`). `Change` only scrolls to the plan list - picking a row while on Default still calls `commit('default', key, true)`, so the lead-wide default behaviour is unchanged. The card is hidden in Match/custom mode (no default is being edited). Plan code = label text before `(`. Not verified on device.
+
+Picker rows: ALL plan labels are bold (900) - the selected-only-bold variant was tried and reverted at the user's request. Selection is shown by border/tint only.
