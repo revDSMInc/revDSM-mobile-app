@@ -3,6 +3,8 @@ import { View, Text, TouchableOpacity, TextInput } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 
+const REGULAR_INPUT_FONT = { fontFamily: 'PublicSans-Regular', fontWeight: 'normal' as const };
+
 export const PricingInputField = React.memo(({
   label,
   value,
@@ -26,7 +28,8 @@ export const PricingInputField = React.memo(({
         {!noLabel && <Text className="text-xl font-black text-slate-400 mr-2">$</Text>}
         {noLabel && <Text className="text-lg font-black text-slate-400 mr-1">$</Text>}
         <TextInput
-          className={`flex-1 font-black text-[#101828] ${noLabel ? 'text-lg' : 'text-xl'}`}
+          className={`flex-1 text-[#101828] ${noLabel ? 'text-lg' : 'text-xl'}`}
+          style={REGULAR_INPUT_FONT}
           value={local}
           placeholder=""
           keyboardType={NUMERIC_KEYBOARD}
@@ -145,7 +148,8 @@ export const InputField = React.memo(({
         }}
       >
         <TextInput
-          className="flex-1 h-11 text-sm font-black text-[#1C252E]"
+          className="flex-1 h-11 text-sm text-[#1C252E]"
+          style={REGULAR_INPUT_FONT}
           value={localValue}
           editable={editable}
           onChangeText={setLocalValue}

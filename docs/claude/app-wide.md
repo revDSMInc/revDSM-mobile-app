@@ -621,3 +621,32 @@ In the 4-column decimal pad the tall Done key rendered as a near-circle (the `Ke
 `widgets/common/NumPadScrollView.tsx` is a `ScrollView` + `collapsable={false}` content wrapper + `useNumPadScrollIntoView`, for forms whose numeric fields would otherwise sit under the in-app pad. First user: `ResultJobModal` (Down Payment amount box was half cut off); the same hook is also used directly in `DynamicTabRenderer` and `RoofWaiverModal` (see above).
 - ⚠️ **A component, not a hook call in the screen**: `useNumPadTarget` reads the NEAREST `NumPadProvider`, and every `Modal` mounts its own (`index.js`). A hook called in the modal's parent component reads the app-root provider and never fires; the component below `<Modal>` reads the right one. The same applies to `useNumPadActive` (see `PadAwareCenter` in `ResultJobModal`).
 - `contentTop` = the content container's top padding, so the offset maths stays right. Not verified on device.
+
+### Number pad: ~1 s lag between a key tap and the digit appearing
+
+Ticket: *"the custom num pad lags while pressing a key - the digit takes almost 1 second to show in the field."*
+
+Two causes, both in the tap-to-pixel path:
+- **Digits fired on `onPress` (finger UP)**, while backspace already fired on `onPressIn`. Digit and `.` keys now use `onPressIn` (`NumPadPanel`). Done stays `onPress` on purpose (it submits + blurs).
+- **Controlled fields waited for the full JS round trip** (`onChangeText` -> parent `setState` -> screen re-render -> `value` prop -> native). On a heavy screen (calculator, job builder) that is the lag. `useNumPadField.setValue` now ALWAYS writes `setNativeProps({ text })` first, so the digit shows at once, then calls `onChangeText`.
+- ⚠️ **Reconcile guard**: if a parent filters/rejects the value and does not re-render, the native text would stay ahead of state. A 300 ms settle timer compares the last RENDERED `value` (`rendered` ref, set in render, never mutated by us) with what was typed and snaps the native text back. Do not replace `rendered` with `latest.current` - that one is mutated by `setValue`, so the check could never fire.
+- Not verified on device from this session (no jest for RN components): check a controlled money field and a phone field (reformats as you type) on Android.
+
+### `widgets/common/BufferedTextInput.tsx`: debounced parent writes for heavy screens
+
+Follow-up to the number-pad lag ticket (calculator write-up in `deal-center.md` › "Calculator Summary: number-pad typing lag"). A drop-in `TextInput` that keeps the typed text in LOCAL state and tells the parent `debounceMs` (180) after the last key; it flushes immediately on blur / submit / end-editing and on unmount.
+- ⚠️ `onBlur`, `onSubmitEditing` and `onEndEditing` receive the flushed text as a **second argument**. The parent's state is still stale in that same tick, so those handlers must use it, not their own state.
+- ⚠️ Parent `value` changes are adopted only while no edit is pending (`dirty`), otherwise the parent's old value would overwrite what the rep is typing. A parent that normalises the value (e.g. `0` -> `''`) does not re-sync a locally typed `0` until the value actually changes.
+- Use it only where the parent re-render is expensive; small memoised fields should stay plain. It works with the number pad because the pad reads the `value` / `onChangeText` of this inner `TextInput`. Not verified on device.
+
+### Follow-up: controlled fields no longer get `setNativeProps({ text })` (digits flashed bold)
+
+Ticket: *"when I press a digit it shows BOLD, then turns normal a moment later."* The `setNativeProps({ text })` write added for the lag fix (above) paints the digit on Android WITHOUT the field's font style - it rendered heavy until React's own re-render applied the real style. Removing `font-black` from the field did not stop it, which proves the cause is that write, not the class.
+- `useNumPadField.setValue` is back to: **uncontrolled fields** (no `value`) use `setNativeProps` (they have no re-render to wait for); **controlled fields** only call `onChangeText` and let the re-render paint. The 300 ms settle timer and `rendered` ref were removed with it.
+- ⚠️ **Do not re-add a native text write for controlled fields.** The lag on heavy screens is handled by making the parent re-render cheap instead: `BufferedTextInput` (local state, debounced parent write) - use it on any numeric field whose screen is expensive to re-render. The first fix in this section (digits on `onPressIn`) stays.
+
+### Typed digits bold on Samsung: `fontWeightAdjustment` zeroed in `MainActivity`
+
+Ticket: *"input digits show bold in the calculator (even after reset-cache); only titles should be bold."* Not a JS style problem - the field styles were already Regular. Samsung **Bold font** / Android 12+ **Bold text** sets `Configuration.fontWeightAdjustment`, which the framework adds to an `EditText`'s typeface (`ReactEditText` is one) but NOT to React's `Text` (drawn through a `Layout`), so only typed values looked heavy, and only on devices with that setting on (one tester's screenshot of the same screen was regular).
+- `android/app/src/main/java/com/revdsm/MainActivity.kt` overrides `attachBaseContext` (API 31+) to hand the activity a configuration context with `fontWeightAdjustment = 0`. ⚠️ **Native change: needs `yarn android` (rebuild), a JS reload does nothing.** It also makes the whole app ignore the system Bold-text switch, consistent with the Public Sans ticket above.
+- ⚠️ The file is CRLF. Not verified on device from this session. The `REGULAR_INPUT_FONT` style in `dealcenter/SharedElements.tsx` stays (harmless, explicit).
