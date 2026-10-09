@@ -12,19 +12,7 @@ import {
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/Ionicons';
 import ChatService from '../../../services/api/ChatService';
-
-const stringToColor = (str: string) => {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  let color = '#';
-  for (let i = 0; i < 3; i++) {
-    const value = (hash >> (i * 8)) & 0xff;
-    color += ('00' + value.toString(16)).substr(-2);
-  }
-  return color;
-};
+import { getAvatarProps } from './chat-utils';
 
 export const PinnedMessagesArea = ({
   pinnedMessages,
@@ -160,22 +148,22 @@ export const ParticipantsModal = ({ visible, onClose, chatId, leadId, isChannel 
               <View className="w-12 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" />
             </View>
 
-            <View className="flex-row items-center justify-between mb-8">
+            <View className="flex-row items-center justify-between mb-4">
               <View className="flex-row items-center">
-                <Text className="text-2xl font-black mr-3" style={{ color: colors.text }}>
+                <Text className="text-xl font-bold mr-2" style={{ color: colors.text }}>
                   Members
                 </Text>
-                <View className="bg-blue-100 dark:bg-blue-900/30 rounded-full px-3 py-1">
-                  <Text className="text-blue-600 dark:text-blue-400 font-black text-sm">
+                <View className="bg-blue-100 dark:bg-blue-900/30 rounded-full px-2 py-0.5">
+                  <Text className="text-blue-600 dark:text-blue-400 font-bold text-xs">
                     {participants?.length || 0}
                   </Text>
                 </View>
               </View>
               <TouchableOpacity
                 onPress={onClose}
-                className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 items-center justify-center"
+                className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-zinc-800 items-center justify-center"
               >
-                <Icon name="close" size={20} color={colors.text} />
+                <Icon name="close" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
@@ -183,8 +171,8 @@ export const ParticipantsModal = ({ visible, onClose, chatId, leadId, isChannel 
               <View className="py-20 items-center">
                 <ActivityIndicator size="large" color={colors.primary.main} />
                 <Text
-                  className="mt-4 font-bold opacity-40 tracking-widest text-[10px]"
-                  style={{ color: colors.text }}
+                  className="mt-4 text-xs font-bold"
+                  style={{ color: colors.textSecondary }}
                 >
                   Loading Roster...
                 </Text>
@@ -193,26 +181,25 @@ export const ParticipantsModal = ({ visible, onClose, chatId, leadId, isChannel 
               <ScrollView showsVerticalScrollIndicator={false}>
                 {participants?.length > 0 ? (
                   participants.map((u: any) => {
-                    const name = `${u.firstName || u.name || 'User'} ${u.lastName || ''}`;
-                    const avatarColor = stringToColor(name);
+                    const name = `${u.firstName || u.name || 'User'} ${u.lastName || ''}`.trim();
+                    const avatar = getAvatarProps({ ...u, name }, false);
                     return (
-                      <View key={u._id || u.id} className="flex-row items-center mb-6">
+                      <View key={u._id || u.id} className="flex-row items-center py-3">
                         <View
-                          className="w-14 h-14 rounded-[22px] items-center justify-center mr-4 shadow-sm"
-                          style={{
-                            backgroundColor: avatarColor,
-                          }}
+                          className="w-11 h-11 rounded-full items-center justify-center mr-4"
+                          style={{ backgroundColor: avatar.color }}
                         >
-                          <Text className="text-lg font-black text-white">{getInitials(u)}</Text>
+                          <Text className="text-sm font-bold text-white">{getInitials(u)}</Text>
                         </View>
                         <View className="flex-1">
-                          <Text className="font-black text-[17px]" style={{ color: colors.text }}>
+                          <Text className="font-bold text-[15px]" style={{ color: colors.text }} numberOfLines={1}>
                             {name}
                           </Text>
-                          <View className="flex-row items-center mt-1">
+                          <View className="flex-row items-center mt-0.5">
                             <Text
-                              className="text-[10px] font-black opacity-40 tracking-widest"
-                              style={{ color: colors.text }}
+                              className="text-[12px]"
+                              style={{ color: colors.textSecondary }}
+                              numberOfLines={1}
                             >
                               {u.email || u.role || (u.isAdmin ? 'Admin' : 'Member')}
                             </Text>
