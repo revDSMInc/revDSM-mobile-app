@@ -68,3 +68,8 @@ export function settleDuration(collapsed: number, target: number, headerHeight: 
   const fraction = Math.abs(target - collapsed) / headerHeight;
   return Math.round(SETTLE_MIN_MS + (SETTLE_MAX_MS - SETTLE_MIN_MS) * fraction);
 }
+
+export function fitsWithoutScrolling(contentHeight: number, layoutHeight: number): boolean {
+  'worklet';
+  return layoutHeight > 0 && contentHeight - layoutHeight <= TOP_ZONE_PX;
+}

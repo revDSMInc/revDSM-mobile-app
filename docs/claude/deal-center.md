@@ -2931,3 +2931,38 @@ Ticket: the quantity box (`InputField` in `dealcenter/SharedElements.tsx`, e.g. 
 `OneYearMonthlyPlan.tsx` picker sheet extended using only the existing sheet tokens (green #4CBB17 + its tint, original 9-16px font sizes, 12px-radius cards, no new palette). While `mode === 'default'` it shows a **MY DEFAULT PLAN** card at the top (star, `provider + plan code · $X/mo`, `shortlabel`/`displayMonths`, **Change**, "Pre-selected on every new deal.") and a **MY DEFAULT** badge on the matching row (`effectiveDefaultKey`). `Change` only scrolls to the plan list - picking a row while on Default still calls `commit('default', key, true)`, so the lead-wide default behaviour is unchanged. The card is hidden in Match/custom mode (no default is being edited). Plan code = label text before `(`. Not verified on device.
 
 Picker rows: ALL plan labels are bold (900) - the selected-only-bold variant was tried and reverted at the user's request. Selection is shown by border/tint only.
+
+## Job Builder summary — header faded / half-collapsed on iPhone after an agreement or order sheet is submitted
+
+Symptom (iOS only): after submitting an agreement or order sheet on the summary tab, the "Job Builder" title + step
+tracker looked blurred (opacity ~0.35) and/or slid partly up, though the list was back at the top.
+
+⚠️ **Cause (diagnosed from the symptom, not reproduced on device):** `useCollapsingHeader` only updates its `collapsed`
+value from ScrollView scroll events. The summary re-render lands the list at y=0 on iOS **without emitting a scroll
+event**, so `collapsed` kept the value from the earlier scroll-down (opacity interpolates 1 → 0.35 → 0 with it).
+- **`hooks/useCollapsingHeader.ts`** now returns `reset()` (snap open) and adds `onContentSizeChange` to `scrollProps`
+  (re-opens when content stops being scrollable — `fitsWithoutScrolling` in `utils/collapsing-header.ts`).
+- **`DynamicJobBuilderScreen.tsx`**: an effect re-opens the header on any `jobState` change while on the summary tab.
+- If it still reproduces, log `collapsed.value` at the moment it is stuck and find which re-render skips the scroll event.
+
+## Duplicated calculator tab read `FWrap (LG)` / `FWrap (SM)` instead of `⚠️ FWrap ⚠️`
+
+Tab titles disambiguate by `totals.retail` (`computeDerivedTitles`): equal price → `⚠️ base ⚠️` on both; different price →
+`(SM)`/`(LG)`. A duplicate has the same entries, so it must price the same — but `handleDuplicateTab` gave the copy
+`computeTotals(entries)` (and `createRemoteTab` preferred the server's `c.totals`), while the source tab carried the totals
+it was actually shown/saved with. Any difference made the pair read `(LG)`/`(SM)`.
+- **Fix (`hooks/useDynamicCalculators.ts`):** the duplicate takes a deep copy of **`source.totals`** — sent in the create
+  payload, kept over the server's echo (`extra.totals ?? c.totals ?? totals`) and used on the local fallback.
+- ⚠️ Diagnosed from the symptom (the two tabs' totals were not compared on device). If a pair still shows `(SM)/(LG)`
+  after duplicating, log `source.totals.retail` vs the copy's. The first edit of either tab recomputes totals from entries,
+  so a genuine difference then (e.g. a changed value) correctly produces `(SM)/(LG)` again.
+
+### Follow-up — a duplicate keeps the source's size suffix: `⚠️ FWrap (LG) ⚠️`
+
+The totals fix above made the pair tie, but a tie rendered `⚠️ FWrap ⚠️`, dropping the `(LG)` the source was showing.
+`computeDerivedTitles` (`utils/tab-naming.ts`): a tied-price tab now takes its suffix from the price rank when the group
+has more than one price level, otherwise **inherits the suffix already in a group member's stored title**
+(`⚠️`/`📦` stripped, must match `${base} (…)`). So duplicating `FWrap (LG)` gives both tabs `⚠️ FWrap (LG) ⚠️`.
+- ⚠️ This supersedes the earlier "same price reads plain `⚠️ … ⚠️`" rule when a suffix exists. A tie with no suffix
+  history (two fresh identical tabs) still reads `⚠️ FWrap ⚠️`.
+- Test: `__tests__/tab-naming-duplicate.test.ts` (gitignored dir, local only).
