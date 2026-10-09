@@ -46,6 +46,8 @@ export function comboHasSelectedColor(combo: any, fields: any[] = []): boolean {
 
 export const ADDED_IN_EDIT_KEY = '_addedInEdit';
 
-export function isComboHiddenInDealEdit(_combo: any, _fields: any[] = [], _editMode?: boolean): boolean {
-  return false;
+export function isComboHiddenInDealEdit(combo: any, fields: any[] = [], editMode?: boolean): boolean {
+  if (!editMode) return false;
+  if (combo?.[ADDED_IN_EDIT_KEY]) return false;
+  return !comboHasSelectedColor(combo, fields);
 }
