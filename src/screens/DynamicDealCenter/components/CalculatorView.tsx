@@ -22,6 +22,7 @@ import { FullPackageTitle, FullPackageInfoModal, type PackageAnchorRect } from '
 import { useAuth } from '../../../hooks/useAuth';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 import { useNumPadActive } from '../../../widgets/common/keyboard/NumPad';
+import { useNumPadScrollIntoView } from '../../../hooks/useNumPadScrollIntoView';
 import { FlashMessage } from '../../../config/message';
 import {
   changeKind,
@@ -519,6 +520,9 @@ export function CalculatorView({
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   const { user } = useAuth();
   const numPadActive = useNumPadActive();
+  const bodyScrollRef = useRef<ScrollView>(null);
+  const bodyContentRef = useRef<View>(null);
+  useNumPadScrollIntoView(bodyScrollRef, bodyContentRef, 16);
   const lockedMethod = activeTab?.paymentMethod || user?.defaultPaymentMethod || defaultMethod || 'check';
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
   const [menuIdx, setMenuIdx] = useState<number | null>(null);
@@ -709,7 +713,8 @@ export function CalculatorView({
         </View>
       )}
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 140 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView ref={bodyScrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 140 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <View ref={bodyContentRef} collapsable={false}>
         {readOnly ? (
           <LockedCalculatorView
             name={tabs.find((t) => t.id === activeTabId)?.title || 'Calculator'}
@@ -763,6 +768,7 @@ export function CalculatorView({
             )}
           </>
         )}
+        </View>
       </ScrollView>
 
       {/* Calculator tabs footer — draggable tabs + add + view-all (rollout), matching the deal center */}

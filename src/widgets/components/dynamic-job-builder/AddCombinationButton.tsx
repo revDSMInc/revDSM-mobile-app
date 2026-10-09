@@ -5,13 +5,15 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 interface AddCombinationButtonProps {
   onClick?: () => void;
   label?: string;
+  /** Tighter bottom margin (12 instead of 24) for a button that sits directly above another card. */
+  compact?: boolean;
 }
 
-export function AddCombinationButton({ onClick, label = 'Add Combination' }: AddCombinationButtonProps) {
+export function AddCombinationButton({ onClick, label = 'Add Combination', compact }: AddCombinationButtonProps) {
   return (
     <TouchableOpacity
       onPress={onClick}
-      className="mx-3 mb-6 h-14 rounded-2xl border border-slate-200 items-center justify-center flex-row bg-white"
+      className={`mx-3 ${compact ? 'mb-3' : 'mb-6'} h-14 rounded-2xl border border-slate-200 items-center justify-center flex-row bg-white`}
     >
       <Icon name="plus" size={16} color="#94A3B8" />
       <Text className="text-slate-400 font-black text-[11px] ml-2">{label}</Text>

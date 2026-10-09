@@ -2931,3 +2931,125 @@ Ticket: the quantity box (`InputField` in `dealcenter/SharedElements.tsx`, e.g. 
 `OneYearMonthlyPlan.tsx` picker sheet extended using only the existing sheet tokens (green #4CBB17 + its tint, original 9-16px font sizes, 12px-radius cards, no new palette). While `mode === 'default'` it shows a **MY DEFAULT PLAN** card at the top (star, `provider + plan code · $X/mo`, `shortlabel`/`displayMonths`, **Change**, "Pre-selected on every new deal.") and a **MY DEFAULT** badge on the matching row (`effectiveDefaultKey`). `Change` only scrolls to the plan list - picking a row while on Default still calls `commit('default', key, true)`, so the lead-wide default behaviour is unchanged. The card is hidden in Match/custom mode (no default is being edited). Plan code = label text before `(`. Not verified on device.
 
 Picker rows: ALL plan labels are bold (900) - the selected-only-bold variant was tried and reverted at the user's request. Selection is shown by border/tint only.
+
+## Job Builder summary — header faded / half-collapsed on iPhone after an agreement or order sheet is submitted
+
+Symptom (iOS only): after submitting an agreement or order sheet on the summary tab, the "Job Builder" title + step
+tracker looked blurred (opacity ~0.35) and/or slid partly up, though the list was back at the top.
+
+⚠️ **Cause (diagnosed from the symptom, not reproduced on device):** `useCollapsingHeader` only updates its `collapsed`
+value from ScrollView scroll events. The summary re-render lands the list at y=0 on iOS **without emitting a scroll
+event**, so `collapsed` kept the value from the earlier scroll-down (opacity interpolates 1 → 0.35 → 0 with it).
+- **`hooks/useCollapsingHeader.ts`** now returns `reset()` (snap open) and adds `onContentSizeChange` to `scrollProps`
+  (re-opens when content stops being scrollable — `fitsWithoutScrolling` in `utils/collapsing-header.ts`).
+- **`DynamicJobBuilderScreen.tsx`**: an effect re-opens the header on any `jobState` change while on the summary tab.
+- If it still reproduces, log `collapsed.value` at the moment it is stuck and find which re-render skips the scroll event.
+
+## Duplicated calculator tab read `FWrap (LG)` / `FWrap (SM)` instead of `⚠️ FWrap ⚠️`
+
+Tab titles disambiguate by `totals.retail` (`computeDerivedTitles`): equal price → `⚠️ base ⚠️` on both; different price →
+`(SM)`/`(LG)`. A duplicate has the same entries, so it must price the same — but `handleDuplicateTab` gave the copy
+`computeTotals(entries)` (and `createRemoteTab` preferred the server's `c.totals`), while the source tab carried the totals
+it was actually shown/saved with. Any difference made the pair read `(LG)`/`(SM)`.
+- **Fix (`hooks/useDynamicCalculators.ts`):** the duplicate takes a deep copy of **`source.totals`** — sent in the create
+  payload, kept over the server's echo (`extra.totals ?? c.totals ?? totals`) and used on the local fallback.
+- ⚠️ Diagnosed from the symptom (the two tabs' totals were not compared on device). If a pair still shows `(SM)/(LG)`
+  after duplicating, log `source.totals.retail` vs the copy's. The first edit of either tab recomputes totals from entries,
+  so a genuine difference then (e.g. a changed value) correctly produces `(SM)/(LG)` again.
+
+### Follow-up — a duplicate keeps the source's size suffix: `⚠️ FWrap (LG) ⚠️`
+
+The totals fix above made the pair tie, but a tie rendered `⚠️ FWrap ⚠️`, dropping the `(LG)` the source was showing.
+`computeDerivedTitles` (`utils/tab-naming.ts`): a tied-price tab now takes its suffix from the price rank when the group
+has more than one price level, otherwise **inherits the suffix already in a group member's stored title**
+(`⚠️`/`📦` stripped, must match `${base} (…)`). So duplicating `FWrap (LG)` gives both tabs `⚠️ FWrap (LG) ⚠️`.
+- ⚠️ This supersedes the earlier "same price reads plain `⚠️ … ⚠️`" rule when a suffix exists. A tie with no suffix
+  history (two fresh identical tabs) still reads `⚠️ FWrap ⚠️`.
+- Test: `__tests__/tab-naming-duplicate.test.ts` (gitignored dir, local only).
+
+## Calculator (Deal Center) — focused numeric field cut off at the bottom by the number pad
+
+`CalculatorView.tsx`'s body was a plain `ScrollView`, so a field near the bottom (e.g. `7" Versa`) stayed half under the
+tab footer / in-app pad — the pad emits no keyboard events, so nothing scrolled for it. The body now runs
+`useNumPadScrollIntoView(bodyScrollRef, bodyContentRef, 16)` with a `collapsable={false}` wrapper around the content
+(same wiring as `RolloutView`; see `app-wide.md`). ⚠️ Not inside a `Modal`, so the hook in the screen reads the right
+provider. Not verified on device.
+
+### Follow-up — My Deals colour filter is back on (`combination-color-filter.ts`)
+
+Continues "My Deals hides a combination whose colour was never picked" (above). Ticket: *My Deals LeafFilter tab should
+show only combinations that received values from the Deal Center; a valueless one must not display.* An empty
+`Combination #3` (seeded `Versa` only) was showing in the edit wizard.
+
+`isComboHiddenInDealEdit` had been stubbed to `return false` (`c4896aa`, "free hand") and the comment cleanup dropped the
+note on how to restore it. It is restored to `editMode && !combo[ADDED_IN_EDIT_KEY] && !comboHasSelectedColor(combo, fields)`.
+- Full write-up and traps: **`deal-edit-addendums.md`** § "the My Deals hide rule is back ON".
+- ⚠️ Display only and edit-mode only; the Deal Center CREATE flow is untouched. A combination added this edit session
+  (`_addedInEdit`) still shows, so Add Combination works. This deliberately reverses `c4896aa`.
+
+### Follow-up — one universal Add Combination in My Deals
+
+`DynamicTabRenderer.tsx`: in edit mode a single `UniversalAddCombination` (with a picker of every combination section)
+replaces the per-section buttons, so a deal with no finished combination from the Deal Center can still add one
+(tagged `_addedInEdit`). Details and traps: `deal-edit-addendums.md`, "ONE universal Add Combination in My Deals".
+
+⚠️ **Placement:** the universal button renders ABOVE the first simple section (the "Extras" card, i.e. after the Grand Total
+card), or at the end of the tab when there is none. `universalAddPlaced` is a render-time flag flipped inside the
+`sections.map` in `DynamicTabRenderer.tsx` — keep the end-of-list fallback or a tab without a simple section loses the button.
+
+⚠️ **No picker (later update):** clicking the universal button adds the combination straight away (first addable section with
+nothing showing, else first with room) instead of listing sections; see `deal-edit-addendums.md`.
+
+⚠️ **Placement (corrected):** the universal button goes after the last combination section, not above the first simple
+section — see `deal-edit-addendums.md`, "Placement update".
+
+⚠️ **Final placement:** directly under the last combination section and ABOVE the Grand Total card (not below it).
+
+⚠️ **Spacing:** the universal button is `compact` (12 below, not 24) with `marginTop: -12` to cancel the section block's `mb-3`, so the card above and the Grand Total below sit 16 / 12 away. `AddCombinationButton` gained the `compact` prop; the create-flow buttons keep `mb-6`.
+
+⚠️ **Blank, not seeded:** the universal Add Combination uses `createBlankCombinationItem` (`combination-utils.ts`) — `createNextCombinationItem` with every non-`_` key emptied — so nothing is pre-selected (LeafFilter Profile no longer opens on `Versa`). Create-flow "Add Combination" still seeds `defaultValue`s. ⚠️ A required field the rep skips is now caught by normal validation rather than defaulted.
+
+⚠️ **The blank item alone was not enough — `DropdownField` re-seeds.** Its layout effect (`resolveDropdownSync`) writes `defaultValue`/`fallbackValue` into an EMPTY dropdown, so the profile snapped back to `Versa`. The `renderField` dropdown case now passes `defaultValue`/`fallbackValue` as `undefined` when the combination carries `_addedInEdit` (`noSeed`), so a combination added in My Deals shows "Select an option" on every dropdown until the rep picks. Saved combinations keep seeding as before.
+
+### Follow-up — Gutter Opening Width "Important Notice" did not pop up (My Deals)
+
+The notice wiring in `DropdownField` is intact (`useFieldNotice` → `handleValueChange` on the rep's pick), so the likely miss was the
+**exact-string** trigger: `resolveFieldNotice` compared the picked option to `notice.triggerValue` with `===`, and a differently
+spaced / cased / quoted authoring (`<2.5"` vs `< 2.5″`) never fired. `valueMatchesTrigger` (`notice-utils.ts`) now compares
+case-, whitespace- and quote/`&lt;`-insensitively. ⚠️ **Not reproduced on device.** A dev-only log `[FieldNotice] enabled but not fired`
+(`FieldNoticeModal.tsx`) prints the picked value and `triggerValue` when a field has a notice that did not match — if the popup is still
+missing, read that line (config text mismatch vs. a remount of the field).
+
+### Follow-up — field notice host
+
+`FieldNoticeModal.tsx` › `FieldNoticeHost` (mounted at the root of `DynamicTabRenderer`) now presents the "Important Notice"; fields publish to it instead of owning a Modal. See `deal-edit-addendums.md`, "the notice is now presented by ONE host".
+
+⚠️ **Field notice, second pass:** `FieldNoticeModal.tsx` also keeps the OPEN notice at module level (`activeNotice`) until the rep dismisses it, and a freshly
+mounted `FieldNoticeHost` starts open when one is pending — so a tab re-mount right after the pick cannot swallow the popup. Dev log
+`[FieldNotice] pick { field, picked, fires, hasHost }` fires on every pick of a notice-enabled field (no line = the pick never reached the
+notice code; `fires:false` = trigger-text mismatch; `hasHost:false` = no host mounted). Not verified on device; details in `deal-edit-addendums.md`.
+
+### Follow-up — the notice no longer depends on the tap reaching the widget (`useFieldNoticeWatcher`)
+
+Ticket: *the information popup must display at any cost when `<2.5` is picked.* Two earlier passes hardened the PRESENTATION; this one removes the
+dependency on the TRIGGER path. `hooks/useFieldNoticeWatcher.ts` (called at the top of `DynamicTabRenderer`, above the summary early-return) snapshots
+every notice-enabled field's value in job state — combination rows, simple sections and tab fields — and when a value **changes** to one
+`resolveFieldNotice` matches, it publishes through `publishFieldNotice` (`FieldNoticeModal.tsx`). The widget's own `onChange` path stays and both land in the
+same host; `publishFieldNotice` **de-duplicates identical text for 1.5 s**, so a pick shows ONE popup.
+- ⚠️ The **first snapshot never fires** (opening a saved deal on `<2.5` stays silent), and a section whose combination count changed between snapshots only
+  refreshes the baseline (add / remove shifts indexes) — otherwise deleting a combination could pop a notice for the one that slid into its slot.
+- ⚠️ It still needs `field.notice.enabled` + text + a matching `triggerValue` (case / space / quote-insensitive). If the popup is STILL missing, the config
+  has no notice on that field (check the portal) — the code paths no longer are the limit. Not verified on device; no jest test (the hook imports RN).
+
+### Follow-up — the `< 2.5` notice is now a BUILT-IN rule (root cause: the schema field carried no notice)
+
+Three passes on triggering/presenting did nothing because the likely cause was never the code path: web's static LeafFilter section **hard-codes** this popup
+(`leaffilter-section.js`: `gutterOpeningWidth === '< 2.5'` → "Important Notice / Ensure Agreement has Special Can't Guarantee Cleaning or Sealing
+Clause", originally only for Versa Max + Sale), while the dynamic builder shows a notice ONLY when the portal-authored `field.notice` is enabled with text.
+A field without it shows nothing — however the pick is wired.
+- **`utils/dynamic-job-builder/engine/notice-utils.ts`**: `resolveBuiltinFieldNotice` / `resolveAnyFieldNotice` — a field whose label matches
+  `gutter opening width` set to `< 2.5` (case/space/quote-insensitive) yields the notice; the field's own `notice` still wins.
+  `useFieldNotice` and `useFieldNoticeWatcher` both call `resolveAnyFieldNotice`, and the watcher now also watches Gutter-Opening-Width fields that have no notice.
+- ⚠️ **Deliberately looser than web**: no Versa Max / Sale gate (the ticket: show it whenever `< 2.5` is picked). Re-add the profile / demo checks in
+  `resolveBuiltinFieldNotice` if reps complain of it on Versa. A label other than "Gutter Opening Width" needs `field.notice` authored in the portal.
+- Test: `__tests__/field-notice.test.ts` (gitignored dir). Not verified on device.
