@@ -18,7 +18,12 @@ import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 import { useAuth } from '../../../hooks/useAuth';
 import { useIsOnline } from '../../../hooks/useIsOnline';
 import { isOnline } from '../../../services/connectivity';
-import { ensureOfflineWorkForLead, saveOfflineFunding } from '../../../services/offlineLeadStore';
+import {
+  ensureOfflineWorkForLead,
+  saveOfflineFunding,
+  saveOfflineFundingCollected,
+  saveOfflineFundingSubmit,
+} from '../../../services/offlineLeadStore';
 import {
   logFundingEditPayments,
   logFundingLinkCopied,
@@ -71,6 +76,7 @@ import {
   MULTI_METHOD_ENABLED,
   needsAttentionRowId,
   newPaymentId,
+  offlineFundingRecord,
   paymentAllocations,
   structureHint,
   structureLocked,
@@ -250,7 +256,6 @@ export function ResultJobModal({
   const { isDark } = useTheme();
   const { user } = useAuth();
   const online = useIsOnline();
-  const handleBuildRef = useRef<(() => void) | null>(null);
   const isRehashed = lead?.isRehashed === true;
   const [oneLeg, setOneLeg] = useState('No');
   const [resultType, setResultType] = useState<'sale' | 'demo'>(initialResultType || 'sale');
@@ -293,9 +298,13 @@ export function ResultJobModal({
   const [linkUrl, setLinkUrl] = useState('');
   const [isLoadingLink, setIsLoadingLink] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Offline there is no server record, so the Funding screen is fed from the rows the rep
+  // just entered. Cleared whenever the modal reopens, with the rest of the state.
+  const [offlineRecord, setOfflineRecord] = useState<FundingRecord | null>(null);
+  const [offlineWorkId, setOfflineWorkId] = useState<string | null>(null);
 
   const isSale = resultType === 'sale';
-  const payments = funding.payments;
+  const payments = offlineRecord?.payments ?? funding.payments;
   const bankDeclined = isSale && resultChoice === 'bank_decline';
 
   const seedDownMethod = useCallback(
@@ -321,6 +330,8 @@ export function ResultJobModal({
     setLinkTarget(null);
     setLinkUrl('');
     setSaveError(null);
+    setOfflineRecord(null);
+    setOfflineWorkId(null);
     funding.clearServerBlockers();
 
     const seededPrice = initialPrice && initialPrice > 0 ? String(Math.round(initialPrice)) : '';
@@ -639,11 +650,21 @@ export function ResultJobModal({
         payments: upsert.map((r) => ({ kind: r.kind, method: r.method, amount: r.amount })),
       });
       setSaveError(null);
-      FlashMessage.info(
-        'Saved on this device',
-        'The payment split uploads automatically when you have signal. Carry on and build the job.',
+      // The rep gets the SAME Funding step as online. It used to jump straight to Build Job,
+      // so the split they had just entered was never shown back and Submit Funding never ran.
+      // Every row here is a check - `confirmBlockers` refuses a card or loan with no signal.
+      setOfflineWorkId(work.clientId);
+      setOfflineRecord(
+        offlineFundingRecord(String(leadLogId || work.clientId), contractNum, upsert, payMode)
       );
-      handleBuildRef.current?.();
+      logFundingOpened({
+        ...logCtx,
+        contractPrice: Math.round(contractNum),
+        paymentCount: upsert.length,
+        payMode,
+      });
+      wentToFundingRef.current = true;
+      setScreen('funding');
       return;
     }
     logResultLeadConfirmed({
@@ -687,6 +708,7 @@ export function ResultJobModal({
     setBanners(applied.banners);
     if (applied.banners.length) setPriceUnlocked(true);
     funding.clearServerBlockers();
+    setOfflineRecord(null);
     setStructureNudge(false);
     setScreen('result');
   }, [rows, activeRows, payments, contractNum, payMode, funding, logCtx]);
@@ -734,6 +756,23 @@ export function ResultJobModal({
     [funding, linkTarget]
   );
 
+  // Taking a check in hand is a real-world act, not a server one - it has to work at a door
+  // with no signal. The row is ticked on the device record and the POST is queued against the
+  // same pid the save carries.
+  const handleMarkCollected = useCallback(
+    (pid: string) => {
+      if (isOnline()) return funding.markCheckCollected(pid);
+      if (offlineWorkId) saveOfflineFundingCollected(offlineWorkId, pid);
+      setOfflineRecord((prev) =>
+        prev
+          ? { ...prev, payments: prev.payments.map((p) => (p.pid === pid ? { ...p, collected: true } : p)) }
+          : prev
+      );
+      return undefined;
+    },
+    [funding, offlineWorkId]
+  );
+
   const handleSetResult = useCallback(
     async (next: 'sale' | 'bank_decline') => {
       const res = await funding.setResult(next === 'bank_decline' ? 'bankDecline' : 'sale');
@@ -756,11 +795,18 @@ export function ResultJobModal({
         const res = await funding.submit();
         if (!res.ok) return;
       } else {
+        // Queued, not dropped: the save already sits behind the `funding` step, and this
+        // submits it once that lands. Without it the deal reached the office unsubmitted.
+        if (offlineWorkId) saveOfflineFundingSubmit(offlineWorkId);
         logResultLeadBuildJob({
           ...logCtx,
           resultType,
           contractPrice: Math.round(contractNum) || undefined,
         });
+        FlashMessage.info(
+          'Saved on this device',
+          'The funding uploads automatically when you have signal.'
+        );
       }
     } else {
       logResultLeadBuildJob({
@@ -797,12 +843,8 @@ export function ResultJobModal({
   }, [
     resultType, oneLeg, contractNum, downTotal, balanceTotal, primaryDownMethod, primaryBalanceMethod,
     allocations, demoReason, reasonExplanation, versatile, pineapple, bankDeclined, payments, funding, onConfirm,
-    logCtx,
+    logCtx, offlineWorkId,
   ]);
-
-  useEffect(() => {
-    handleBuildRef.current = handleBuild;
-  }, [handleBuild]);
 
   const priceEditable = isRehashed || priceUnlocked;
   const lockedTotal = useMemo(
@@ -861,7 +903,7 @@ export function ResultJobModal({
                   onSyncAll={funding.syncAll}
                   onSyncOne={funding.syncPayment}
                   onSendLink={openSendSheet}
-                  onMarkCollected={funding.markCheckCollected}
+                  onMarkCollected={handleMarkCollected}
                   onChargeCard={funding.chargeCard}
                   onActivate={funding.activateLoan}
                   onReactivate={funding.reactivateLoan}

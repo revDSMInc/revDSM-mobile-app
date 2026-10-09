@@ -17,6 +17,8 @@ export type UploadStep =
   | 'documents'
   | 'remoteSignature'
   | 'funding'
+  | 'fundingCollect'
+  | 'fundingSubmit'
   | 'submit'
   | 'consent'
   | 'work'
@@ -35,6 +37,8 @@ export const UPLOAD_STEPS: readonly UploadStep[] = [
   'documents',
   'remoteSignature',
   'funding',
+  'fundingCollect',
+  'fundingSubmit',
   'submit',
   'consent',
   'work',
@@ -157,6 +161,15 @@ export interface OfflineLeadWork {
   workEnded?: { at: string };
   customer?: { customerId: string; payload: Record<string, unknown> };
   funding?: Record<string, unknown>;
+  /** The rep pressed Submit Funding offline; the save above has to land first. */
+  fundingSubmitted?: { at: string };
+  /**
+   * Check payments the rep took in hand offline, by `pid`.
+   *
+   * Safe to address by pid because the pid is minted on the DEVICE and sent in the save
+   * above - the server keeps it, so no re-keying is needed here.
+   */
+  fundingCollected?: string[];
   submit?: Record<string, unknown>;
   chatCreated?: boolean;
   done: UploadStep[];
@@ -230,6 +243,10 @@ export const isStepApplicable = (work: OfflineLeadWork, step: UploadStep): boole
       return !!work.remoteSignature;
     case 'funding':
       return !!work.funding;
+    case 'fundingCollect':
+      return !!work.fundingCollected?.length && !!work.funding;
+    case 'fundingSubmit':
+      return !!work.fundingSubmitted && !!work.funding;
     case 'submit':
       return !!work.submit;
     case 'consent':

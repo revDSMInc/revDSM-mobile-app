@@ -58,6 +58,28 @@ export const queuedDeliveryPreference = (leadId: string | null | undefined) => {
   return pendingDeliveryFor(queue, leadId);
 };
 
+/**
+ * Re-point a queued preference at the real lead id once the lead itself syncs.
+ *
+ * A lead created at a door is queued under a CLIENT id. Replaying the preference against that id
+ * would file it on a lead the server has never heard of, so the row has to follow the lead.
+ */
+export const rekeyDeliveryPreference = (fromId: string, toId: string): void => {
+  load();
+  const from = String(fromId || '').trim();
+  const to = String(toId || '').trim();
+  if (!from || !to || from === to) return;
+  let changed = false;
+  queue = queue.map((row) => {
+    if (row.leadId !== from) return row;
+    changed = true;
+    return { ...row, leadId: to };
+  });
+  if (!changed) return;
+  persist();
+  void drainDeliveryPreferences();
+};
+
 export const pendingDeliveryCount = (): number => {
   load();
   return replayableDeliveryWrites(queue, getSessionOwner()).length;

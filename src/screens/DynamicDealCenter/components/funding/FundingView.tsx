@@ -4,7 +4,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FS, FUND, PS } from './funding-theme';
 import { PaymentFundingCard } from './PaymentFundingCard';
 import { RefundApprovalCard } from './RefundApprovalStatus';
-import { describePayment, groupTotal, type AttemptLogEntry, type FundingPayment, type PayMode } from '../../utils/funding';
+import { canSync, describePayment, groupTotal, type AttemptLogEntry, type FundingPayment, type PayMode } from '../../utils/funding';
 import type { FundingApprovalReminder, FundingRefund } from '../../../../services/api/FundingService';
 
 interface Props {
@@ -96,6 +96,9 @@ export function FundingView({
   onUndoBankDecline,
 }: Props) {
   const upfront = payMode === 'upfront';
+  // Nothing to poll when every row is a check - that is the whole board offline, where
+  // the button would also have no server to ask.
+  const anySyncable = payments.some((p) => canSync(p));
   const down = payments.filter((p) => p.kind === 'down');
   const balance = payments.filter((p) => p.kind === 'bal');
 
@@ -124,17 +127,19 @@ export function FundingView({
       {/* status-check header */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED }}>
-          {lastSyncedAt ? `All synced ${lastSyncedAt}` : 'Not synced yet'}
+          {!anySyncable ? 'Nothing to check on' : lastSyncedAt ? `All synced ${lastSyncedAt}` : 'Not synced yet'}
         </Text>
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={onSyncAll}
-          disabled={syncingAll}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 7, opacity: syncingAll ? 0.6 : 1, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 }}
-        >
-          {syncingAll ? <ActivityIndicator size="small" color="#5B6B60" /> : <Ionicons name="refresh" size={14} color="#5B6B60" />}
-          <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: '#5B6B60' }}>Sync all</Text>
-        </TouchableOpacity>
+        {anySyncable && (
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={onSyncAll}
+            disabled={syncingAll}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 7, opacity: syncingAll ? 0.6 : 1, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 }}
+          >
+            {syncingAll ? <ActivityIndicator size="small" color="#5B6B60" /> : <Ionicons name="refresh" size={14} color="#5B6B60" />}
+            <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: '#5B6B60' }}>Sync all</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 18, padding: 16, marginBottom: 20 }}>

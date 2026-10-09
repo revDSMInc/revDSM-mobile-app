@@ -12,6 +12,7 @@ import { getSessionOwner, registerSessionResetHook } from './sessionScope';
 import { isOwnedBy } from '../utils/session-scope';
 import { uploadQueueManager } from '../utils/uploadQueue';
 import { rekeyActivityLogs } from './offlineActivityLog';
+import { rekeyDeliveryPreference } from './offlineAgreementDelivery';
 import { describeQueuedLead, isSuccessfulCreate, messageOfError } from '../utils/offline-lead-queue';
 import { setWorkReleaseQueue } from '../utils/lead-work-session';
 import {
@@ -250,6 +251,24 @@ export const saveOfflineFunding = (
   funding: Record<string, unknown>
 ): OfflineLeadWork | null =>
   patchOfflineWork(workClientId, (w) => rearmStep({ ...w, funding }, 'funding'));
+
+/** A check taken in hand offline. The pid is the one the save above carries, so it addresses. */
+export const saveOfflineFundingCollected = (
+  workClientId: string,
+  pid: string
+): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) =>
+    rearmStep(
+      { ...w, fundingCollected: Array.from(new Set([...(w.fundingCollected || []), pid])) },
+      'fundingCollect'
+    )
+  );
+
+/** Submit Funding pressed offline. Ordered after `funding`, so the rows land before the submit. */
+export const saveOfflineFundingSubmit = (workClientId: string): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) =>
+    rearmStep({ ...w, fundingSubmitted: { at: new Date().toISOString() } }, 'fundingSubmit')
+  );
 
 export const addOfflineJobDocument = async (
   workClientId: string,
@@ -698,6 +717,11 @@ const isAlreadySubmitted = async (work: OfflineLeadWork): Promise<boolean> => {
   return String(lead?.jobBuilder?.status || '').toLowerCase() === 'submitted';
 };
 
+const isFundingAlreadySubmitted = async (leadId: string): Promise<boolean> => {
+  const res = await FundingService.getFunding(leadId);
+  return res?.data?.data?.funding?.status === 'submitted';
+};
+
 const isConsentAlreadyFiled = async (leadId: string, kind: ConsentFormKind): Promise<boolean> => {
   const res = await LeadService.getSalesDealById(leadId);
   const lead = res?.data?.data || res?.data?.lead || res?.data || {};
@@ -784,6 +808,7 @@ const runStep = async (
       offlinePhotoDeleteQueue.rekeyLead(work.clientId, id);
       rekeyLeadWorkflow(work.clientId, id);
       rekeyActivityLogs(work.clientId, id);
+      rekeyDeliveryPreference(work.clientId, id);
       if (resolvedAddress) {
         patchOfflineWork(work.clientId, (w) => ({
           ...w,
@@ -901,6 +926,34 @@ const runStep = async (
         payments: Array.isArray(body?.payments) ? body.payments : [],
         payMode: body?.payMode === 'upfront' ? 'upfront' : 'split',
       });
+      return {};
+    }
+
+    case 'fundingCollect': {
+      if (!leadId) throw new Error('no lead id for the collected checks');
+      // Only on a RETRY whose first attempt was ambiguous: a second POST on a row already
+      // collected is refused, and that refusal would park a sold deal. The happy path costs
+      // no extra read.
+      const already = guarded
+        ? new Set(
+            ((await FundingService.getFunding(leadId))?.data?.data?.funding?.payments || [])
+              .filter((p) => p.collected)
+              .map((p) => p.pid)
+          )
+        : new Set<string>();
+      for (const pid of work.fundingCollected || []) {
+        if (already.has(pid)) continue;
+        await FundingService.markCheckCollected(leadId, pid);
+      }
+      return {};
+    }
+
+    case 'fundingSubmit': {
+      if (!leadId) throw new Error('no lead id for the funding submit');
+      // A repeat submit is rejected, and the rejection reads like a real failure. Read the
+      // record instead: already-submitted is the state this step wanted anyway.
+      if (guarded && (await isFundingAlreadySubmitted(leadId))) return {};
+      await FundingService.submitFunding(leadId);
       return {};
     }
 
