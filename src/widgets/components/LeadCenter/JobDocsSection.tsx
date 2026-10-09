@@ -84,6 +84,7 @@ import { uploadQueueManager, UploadQueueItem } from '../../../utils/uploadQueue'
 import { offlinePhotoDeleteQueue } from '../../../services/offlinePhotoDeleteQueue';
 import { getCaptureCoords } from '../../../utils/capture-location';
 import { resolveS3Url } from '../../../utils/s3-utils';
+import { countLeadPhotos, PHOTO_COUNT_HINT } from '../../../utils/lead-photo-counts';
 
 interface SectionImage {
   uri: string;
@@ -1338,77 +1339,63 @@ export const JobDocsSection = ({
     return { captured: totalCaptured, total: totalSlots };
   }, [getTabCounts]);
 
+  const [photoCountHintOpen, setPhotoCountHintOpen] = useState(false);
+
   const dynamicCounts = useMemo(() => {
     if (!isDynamicInspection) return null;
     const photos = (Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [])
       .filter(Boolean)
       .filter((p: any) => !deletedUrls.has(p?.s3url));
 
-    const seen = new Set<string>();
-    const countBySub = new Map<string, number>();
-    let totalPhotos = 0;
-    photos.forEach((p: any) => {
-      const sub = String(p.subcategory || '');
-      if (sub.toLowerCase().includes('(annotated)')) return; // annotated aren't slot photos
-      const id = p.s3url || p._id;
-      if (id) {
-        if (seen.has(id)) return;
-        seen.add(id);
-      }
-      const k = `${norm(p.category)}||${norm(sub)}`;
-      countBySub.set(k, (countBySub.get(k) || 0) + 1);
-      totalPhotos += 1;
-    });
-
-    const pendingBySub = new Map<string, number>();
-    (queueItems || []).forEach((it: any) => {
-      if (it.leadId !== lead?._id) return;
-      const sub = String(it.subcategory || '');
-      if (sub.toLowerCase().includes('(annotated)')) return;
-      const k = `${norm(it.categoryName)}||${norm(sub)}`;
-      pendingBySub.set(k, (pendingBySub.get(k) || 0) + 1);
-    });
-    pendingBySub.forEach((pd, k) => {
-      const extra = Math.max(0, pd - (countBySub.get(k) || 0));
-      if (extra > 0) {
-        countBySub.set(k, (countBySub.get(k) || 0) + extra);
-        totalPhotos += extra;
-      }
-    });
+    const pending = (queueItems || [])
+      .filter((it: any) => it.leadId === lead?._id)
+      .map((it: any) => ({
+        uri: it.uri,
+        s3url: it.s3url,
+        category: it.categoryName,
+        subcategory: it.subcategory,
+      }));
 
     let totalSlots = 0;
-    let filledSlots = 0;
+    const configuredKeys = new Set<string>();
     configuredProducts.forEach((prod: any) => {
       const pfx = prod?.name || prod?.id ? `${prod.name || prod.id} — ` : '';
       indexSchema(prod?.categories || []).leafCategories.forEach((cat: any) => {
         getCapturableSlots(cat).forEach((slot: any) => {
           totalSlots += 1;
-          const k = `${norm(`${pfx}${cat.label}`)}||${norm(slot.storageName)}`;
-          if ((countBySub.get(k) || 0) > 0) filledSlots += 1;
+          configuredKeys.add(`${norm(`${pfx}${cat.label}`)}||${norm(slot.storageName)}`);
         });
       });
     });
 
-    return { totalPhotos, totalSlots, filledSlots };
+    // One rule for every surface - see `utils/lead-photo-counts`. Extras and annotated photos
+    // count, and each brings its own slot, so the denominator grows as the rep adds them.
+    return countLeadPhotos([...photos, ...pending], configuredKeys, totalSlots);
   }, [isDynamicInspection, configuredProducts, lead?.salesPhotos, queueItems, lead?._id, deletedUrls]);
 
   const displayTotal = useMemo(() => {
-    if (dynamicCounts) return dynamicCounts.totalSlots;
+    if (dynamicCounts) return dynamicCounts.slots;
     return globalCounts.total;
   }, [dynamicCounts, globalCounts]);
 
   const totalUploaded = useMemo(() => {
-    if (dynamicCounts) return dynamicCounts.filledSlots;
+    if (dynamicCounts) return dynamicCounts.photos;
     return globalCounts.captured;
   }, [dynamicCounts, globalCounts]);
 
   const totalPhotosCount = useMemo(() => {
-    if (dynamicCounts) return dynamicCounts.totalPhotos;
+    if (dynamicCounts) return dynamicCounts.photos;
+    const seen = new Set<string>();
     let count = 0;
     IMAGE_CATEGORIES.forEach((cat) => {
-      const imgs = getImagesForSection(cat);
-      const nonAnnotated = imgs.filter(img => !img.subcategory?.toLowerCase().includes('(annotated)'));
-      count += nonAnnotated.length;
+      getImagesForSection(cat).forEach((img: any) => {
+        const id = img?.s3url || img?.uri || img?._id;
+        if (id) {
+          if (seen.has(id)) return;
+          seen.add(id);
+        }
+        count += 1;
+      });
     });
     return count;
   }, [dynamicCounts, getImagesForSection]);
@@ -1490,9 +1477,34 @@ export const JobDocsSection = ({
 
       {/* Progress Bar */}
       <View className="mb-3 mt-2 px-1">
-        <Text className="text-[14px] font-semibold mb-2.5" style={{ color: '#454F5B' }}>
-          {totalUploaded}/{displayTotal} slots • {totalPhotosCount} {totalPhotosCount === 1 ? 'photo' : 'photos'}
-        </Text>
+        <View className="flex-row items-center mb-2.5">
+          {/* Why the total moves as extras and annotations are added. An in-card popover rather
+              than a Modal - this screen already stacks several, and iOS drops a presentation
+              requested while another is dismissing. */}
+          <View>
+            {photoCountHintOpen && (
+              <View
+                className="absolute bottom-full left-0 mb-1.5 rounded-lg px-3 py-2"
+                style={{ width: 230, backgroundColor: '#1C252E', zIndex: 10, elevation: 6 }}
+              >
+                <Text className="text-[11px] leading-[15px]" style={{ color: '#FFFFFF' }}>
+                  {PHOTO_COUNT_HINT}
+                </Text>
+              </View>
+            )}
+            <TouchableOpacity
+              onPress={() => setPhotoCountHintOpen((v) => !v)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityRole="button"
+              accessibilityLabel="How photos are counted"
+            >
+              <Icon name="information-outline" size={16} color="#919EAB" />
+            </TouchableOpacity>
+          </View>
+          <Text className="text-[14px] font-semibold ml-1.5" style={{ color: '#454F5B' }}>
+            {totalUploaded}/{displayTotal} slots • {totalPhotosCount} {totalPhotosCount === 1 ? 'photo' : 'photos'}
+          </Text>
+        </View>
         <View
           className="w-full h-1.5 rounded-full overflow-hidden"
           style={{ backgroundColor: '#919EAB1F' }}
