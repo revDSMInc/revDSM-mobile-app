@@ -151,6 +151,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const secureLogo = useSecureLogo();
   const { user } = useAuth();
   const companyName = user?.companyName;
+  const hasLogoSource = !!(user?.companyLogo || user?.profilePicture);
 
   const logUserId = user?._id || user?.id;
   const visitIdRef = useRef(
@@ -696,7 +697,9 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         )}
         {/* The logo stands alone; the company name is only the fallback when there is no logo
             (the heading below already says "Your Investment With {company}"). */}
-        {secureLogo ? null : companyName ? (
+        {/* While a logo is configured but still resolving, show nothing — the name text flashed
+            before the logo on every calculator-tab switch. */}
+        {secureLogo || hasLogoSource ? null : companyName ? (
           <Text style={{ fontSize: 15, fontWeight: '800', fontStyle: 'italic', color: '#15803D', textTransform: 'capitalize' }}>{companyName}</Text>
         ) : !secureLogo ? (
           <Text style={{ fontSize: 15, fontWeight: '800', fontStyle: 'italic', color: '#15803D' }}>

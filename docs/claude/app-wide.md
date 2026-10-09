@@ -683,3 +683,31 @@ address/coordinates go nowhere new.
 - **Browse-teams sheet / nav bar (follow-up):** `CategorySheet` is a `Modal`, so its safe-area insets read 0/stale and
   the Android 3-button bar sat over the pinned **Close** button. Bottom padding is now
   `max(useBottomInset(), 48 on Android) + 16`. ⚠️ Don't swap it back to a fixed `pb-8`.
+
+## RevRender lighting — activity logs (Roofline Lighting mode)
+
+Ticket: *"Roofline Lighting section logs are not added"* — only `select look` was logged; everything else in the
+mode was silent. Now every interaction logs through the **same envelope as the core logs**
+(`user_id`, `module_type: 'rev_render'`, `created_by`, `meta.{leadId, jobId, screen, viewId}`).
+
+- **One screen helper, `logLighting(action, meta)`** in `screens/RevRender/index.tsx`, passed to `LightingPanel` /
+  `LightingFooter` as `onLog` (type `LightingLog`). The panel stays free of user/lead context; add new lighting
+  logs through `onLog`, don't import `logEvent` into the panel. Lighting logs carry `renderMode: 'lighting'`.
+- **Events:** `change` `render_mode` (Core ⇄ Lighting, old/new) · `change` `browse_looks_tab` (Seasons / Teams /
+  Themes / Custom, logged on every tap incl. the active one) · `change` `look_category` (category sheet pick) ·
+  `change` `team_search` (**debounced 800 ms**, never per keystroke) · `click` Browse all / Show only teams near you /
+  New custom look · `add` `custom_look` (saved) · `select` look (existing, `selected` true/false; the selected-list ✕
+  logs `selected:false`, `source:'selected_list_remove'`) · `change` `look_favourite` (hold-popover and star) ·
+  `add` "Add to renders" (lookIds/Names, `coreIncluded`) · `start` Generate (now also `coreRenders`,
+  `lightingRenders`, `lookNames`) · `delete` queue item (now `renderMode` + look id/name) · photo-guidance buttons.
+- Core "+ Add Render Combo" `add` gained `renderMode: 'core'`.
+- ⚠️ `index.tsx` is CRLF — edit with `newline=''`.
+
+## RevRender custom look sheet — footer under the system bar, Save with a pending colour
+
+- **Footer:** the pinned Cancel / Save row used a fixed `pb-8`, so Android's 3-button bar was drawn over it. It now
+  uses `Math.max(insets.bottom, android ? 48 : 20) + 12` (the Modal-insets floor rule, CLAUDE.md §6).
+- **Save enabled by a pending colour:** a colour still open in the picker (not too dark; not an "add" at the 6-colour
+  limit) counts as chosen — `withPending` in `CustomLookSheet.tsx`. Save enables and saves it without pressing
+  "Add color" first, and the dusk preview shows it live. ⚠️ Save must keep reading `usable` (derived from
+  `withPending`), not `colors`, or the pending colour is dropped on save.

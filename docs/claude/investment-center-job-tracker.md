@@ -384,3 +384,15 @@ Now a single `OVERVIEW_COLUMNS` list (`key`, `label`, `width`, `format`) drives 
 
 ### 1-Year default plan reaches the Investment Center
 `InvestmentPanel.tsx` resolved a `Default`-mode 1-Year monthly from the hard-coded `defaultOneYearKey` (first 9.99% APR plan) and ignored the stored `oneYearMonthlyPlan.planKey`, so the rep's picked default never showed. Now `default` mode uses the stored `planKey`; and a calculator with nothing stored (or a bare `Default`) inherits the lead-wide default (`leadOneYearDefaultKey`, computed in `InvestmentCenter/index.tsx` from the first tab with `oneYearMonthlyPlan.isDefault`) - the same inheritance rule as `OneYearMonthlyPlan.tsx`. `defaultOneYearKey` is only the last fallback. Not verified on device.
+
+## Investment Center — company-name text flashed before the logo on a calculator-tab switch
+
+`InvestmentPanel` is `key={active.id}`, so each tab switch REMOUNTS it and `useSecureLogo` restarted from `null`; the
+branding row showed the company-name fallback until the secure URL resolved, then swapped to the logo.
+
+- **`hooks/useSecureLogo.ts`** keeps a module-level `resolvedLogos` map (filePath → resolved URI) and seeds its state from
+  it (and from a plain `http` source), so a remount already has the logo on the first render.
+- **`InvestmentPanel.tsx`** shows the name fallback only when there is NO logo source at all (`hasLogoSource`); while a
+  configured logo is still resolving (first ever open) the row stays empty at its `minHeight: 32`.
+- ⚠️ Do not drop the cache by "simplifying" the hook, and do not un-key the panel to fix this — the key is what resets
+  per-calculator state.

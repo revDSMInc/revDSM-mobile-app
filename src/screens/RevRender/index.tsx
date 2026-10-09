@@ -378,7 +378,45 @@ export default function RevRenderScreen() {
   const [guidanceFor, setGuidanceFor] = useState<RenderMode | null>(null);
   const guidanceShown = useRef<Record<RenderMode, boolean>>({ core: false, lighting: false });
 
+  // Lighting-mode activity logs share the core logs' envelope; callers add only what is specific.
+  const logLighting = (action: string, meta: Record<string, any>) => {
+    const userId = user?._id || user?.id;
+    if (!userId) return;
+    logEvent(action, {
+      user_id: userId,
+      module_type: 'rev_render',
+      created_by: userId,
+      meta: {
+        leadId: lead?._id || lead?.id || lead?.leadId || null,
+        jobId: lead?._id || lead?.id || lead?.leadId || null,
+        screen: 'before_configure',
+        viewId: selectedPhoto?.viewId,
+        viewLabel: selectedPhoto?.viewLabel,
+        renderMode: 'lighting',
+        ...meta,
+      },
+    });
+  };
+
   const handleModeChange = (next: RenderMode) => {
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('change', {
+        user_id: userId,
+        module_type: 'rev_render',
+        created_by: userId,
+        meta: {
+          leadId: lead?._id || lead?.id || lead?.leadId || null,
+          jobId: lead?._id || lead?.id || lead?.leadId || null,
+          screen: 'before_configure',
+          viewId: selectedPhoto?.viewId,
+          fieldName: 'render_mode',
+          componentLabel: next === 'lighting' ? 'Roofline Lighting' : 'Core Products',
+          oldValue: mode,
+          newValue: next,
+        },
+      });
+    }
     setMode(next);
   };
 
@@ -457,6 +495,17 @@ export default function RevRenderScreen() {
   }, [config, selectedPhoto]);
 
   const handleAddLighting = (looks: Look[]) => {
+    const coreIncluded = coreIsConfigured();
+    logLighting('add', {
+      componentLabel: 'Add to renders',
+      lookIds: looks.map(l => l.id),
+      lookNames: looks.map(l => l.name),
+      lookGroups: looks.map(l => l.group),
+      lookCount: looks.length,
+      coreIncluded,
+      enabledComponentIds: coreIncluded ? Object.keys(buildCoreRender().selections) : [],
+      remainingRenders: renderQueue.length + looks.length + (coreIncluded ? 1 : 0),
+    });
     const items: any[] = looks.map((look) => ({
       id: `${Date.now()}-${look.id}`,
       mode: 'lighting' as const,
@@ -608,6 +657,7 @@ export default function RevRenderScreen() {
           screen: 'before_configure',
           viewId: selectedPhoto?.viewId,
           viewLabel: selectedPhoto?.viewLabel,
+          renderMode: 'core',
           enabledComponentIds: Object.keys(selections),
           sameColorEnabled: config.sameColor,
         },
@@ -635,6 +685,9 @@ export default function RevRenderScreen() {
           meta: {
             screen: 'Generating renders from queue',
             totalRenders: renderQueue.length,
+            coreRenders: renderQueue.filter(item => item.mode !== 'lighting').length,
+            lightingRenders: renderQueue.filter(item => item.mode === 'lighting').length,
+            lookNames: renderQueue.filter(item => item.mode === 'lighting').map(item => item.look?.name),
           },
         });
       }
@@ -693,6 +746,11 @@ export default function RevRenderScreen() {
           viewId: deletedItem?.viewId || null,
           viewLabel: deletedItem?.viewLabel || deletedItem?.photo?.label || null,
           componentsCount: deletedItem?.summary?.length ?? 0,
+          renderMode: deletedItem?.mode === 'lighting' ? 'lighting' : 'core',
+          ...(deletedItem?.mode === 'lighting' && {
+            lookId: deletedItem.look?.id,
+            lookName: deletedItem.look?.name,
+          }),
           remainingRenders: renderQueue.length - 1,
         },
       });
@@ -1311,6 +1369,7 @@ export default function RevRenderScreen() {
               onToggleFavourite={handleToggleFavourite}
               onSaveCustomLook={handleSaveCustomLook}
               onSelectLook={handleSelectLook}
+              onLog={logLighting}
               nearYouOrigin={nearYouOrigin}
             />
             </View>
@@ -1327,6 +1386,7 @@ export default function RevRenderScreen() {
               corePending={coreIsConfigured()}
               onAdd={handleAddLighting}
               onToggleFavourite={handleToggleFavourite}
+              onLog={logLighting}
             />
           )}
 
@@ -1565,9 +1625,13 @@ export default function RevRenderScreen() {
             mode={guidanceFor ?? 'core'}
             visible={guidanceFor !== null}
             isDark={isDark}
-            onGotIt={() => setGuidanceFor(null)}
+            onGotIt={() => {
+              logLighting('click', { componentLabel: 'Photo guidance: Got it', guidanceMode: guidanceFor, renderMode: guidanceFor });
+              setGuidanceFor(null);
+            }}
             onNeverShowAgain={() => {
               if (guidanceFor) {
+                logLighting('click', { componentLabel: 'Photo guidance: Never show again', guidanceMode: guidanceFor, renderMode: guidanceFor });
                 setGuidanceSeen({ ...guidanceSeen, [guidanceFor]: true });
                 LeadService.dismissRevRenderGuidance(guidanceFor).catch((e) =>
                   logEvent('revrender_guidance_dismiss_failed', {

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Text, TextInput, TouchableOpacity, useWindowDimensions, Vibration, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {
@@ -18,6 +18,12 @@ import { LightStrip } from './LightStrip';
 import { LookTile, TILE_COLUMNS, TILE_WIDTH } from './LookTile';
 
 const GREEN = '#2EDE56';
+
+/** Activity-log hook supplied by the screen, which adds user / lead / photo context. */
+export type LightingLog = (action: string, meta: Record<string, any>) => void;
+
+const lookMeta = (look?: Look | null) =>
+  look ? { lookId: look.id, lookName: look.name, lookGroup: look.group, lookCategory: look.category } : {};
 const TABS: { key: LookTab; label: string }[] = [
   { key: 'seasons', label: 'Seasons' },
   { key: 'teams', label: 'Teams' },
@@ -33,6 +39,7 @@ export function LightingPanel({
   onToggleFavourite,
   onSaveCustomLook,
   onSelectLook,
+  onLog,
   nearYouOrigin,
 }: {
   state: LightingState;
@@ -42,6 +49,7 @@ export function LightingPanel({
   onToggleFavourite?: (lookId: string) => void;
   onSaveCustomLook?: (look: Look) => void;
   onSelectLook?: (look: Look, nowSelected: boolean) => void;
+  onLog?: LightingLog;
   /** Job → device → office, resolved by the screen. Null hides the Near you row (§10). */
   nearYouOrigin?: NearYouOrigin | null;
 }) {
@@ -66,8 +74,15 @@ export function LightingPanel({
   };
 
   const favourite = (id: string) => {
-    setState(toggleFavourite(state, id));
+    const nextState = toggleFavourite(state, id);
+    setState(nextState);
     onToggleFavourite?.(id);
+    onLog?.('change', {
+      fieldName: 'look_favourite',
+      ...lookMeta(findLook(id, state.customs)),
+      oldValue: isFavourite(state, id),
+      newValue: isFavourite(nextState, id),
+    });
   };
 
   const tile = (look: Look, showTag = false) => (
@@ -106,6 +121,21 @@ export function LightingPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [nearYouOrigin, catalogueVersion(), allLooks().length],
   );
+  // Typing is logged once the rep pauses, not per keystroke.
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) return undefined;
+    const t = setTimeout(() => {
+      onLog?.('change', {
+        fieldName: 'team_search',
+        newValue: q,
+        resultCount: searchLooks(looksForTab('teams', state.customs), q).length,
+      });
+    }, 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
+
   const showNearOnly = tab === 'teams' && !query && !!near && near.looks.length > 0 && !browsingTeams;
 
   if (__DEV__ && tab === 'teams') {
@@ -172,7 +202,16 @@ export function LightingPanel({
           return (
             <TouchableOpacity
               key={key}
-              onPress={() => setTab(key)}
+              onPress={() => {
+                onLog?.('change', {
+                  fieldName: 'browse_looks_tab',
+                  componentLabel: text,
+                  oldValue: tab,
+                  newValue: key,
+                  selectedCount: count,
+                });
+                setTab(key);
+              }}
               accessibilityRole="tab"
               accessibilityState={{ selected: active }}
               className="flex-1 flex-row items-center justify-center rounded-full"
@@ -242,7 +281,14 @@ export function LightingPanel({
               overflowed on small phones (483 §5). */}
           {!query && (
             <TouchableOpacity
-              onPress={() => setSheetOpen(true)}
+              onPress={() => {
+                onLog?.('click', {
+                  componentLabel: showNearOnly ? 'Browse all teams' : 'Browse all',
+                  tab,
+                  currentCategory: category[tab],
+                });
+                setSheetOpen(true);
+              }}
               className="flex-row items-center justify-between rounded-[14px] px-4 mb-4"
               style={{ minHeight: 48, backgroundColor: cardBg, borderWidth: 1, borderColor: isDark ? '#2A2F36' : '#DFE3E8' }}
             >
@@ -263,7 +309,10 @@ export function LightingPanel({
 
           {!query && tab === 'teams' && browsingTeams && near && near.looks.length > 0 && (
             <TouchableOpacity
-              onPress={() => setBrowsingTeams(false)}
+              onPress={() => {
+                onLog?.('click', { componentLabel: 'Show only teams near you', tab });
+                setBrowsingTeams(false);
+              }}
               className="mb-3 self-start"
               style={{ minHeight: 44, justifyContent: 'center' }}
               accessibilityLabel="Show only teams near you"
@@ -305,7 +354,11 @@ export function LightingPanel({
           */}
           <View className="flex-row flex-wrap justify-between">
             <TouchableOpacity
-              onPress={() => { setBuilderOpen(true); onOpenCustomBuilder?.(); }}
+              onPress={() => {
+                onLog?.('click', { componentLabel: 'New custom look', tab, savedCustomLooks: state.customs.length });
+                setBuilderOpen(true);
+                onOpenCustomBuilder?.();
+              }}
               accessibilityRole="button"
               accessibilityLabel="New custom look"
               style={{ width: TILE_WIDTH, minHeight: 44, marginBottom: 14 }}
@@ -349,6 +402,12 @@ export function LightingPanel({
         onSave={(look) => {
           setState({ ...state, customs: [...state.customs, look] });
           onSaveCustomLook?.(look);
+          onLog?.('add', {
+            fieldName: 'custom_look',
+            ...lookMeta(look),
+            colorsCount: look.colors.length,
+            pattern: look.pattern,
+          });
         }}
       />
 
@@ -371,6 +430,12 @@ export function LightingPanel({
         customs={state.customs}
         isDark={isDark}
         onPick={(name) => {
+          onLog?.('change', {
+            fieldName: 'look_category',
+            tab,
+            oldValue: category[tab],
+            newValue: name,
+          });
           setCategory({ ...category, [tab]: name });
           if (tab === 'teams') setBrowsingTeams(true);
         }}
@@ -388,6 +453,7 @@ export function LightingFooter({
   corePending = false,
   onAdd,
   onToggleFavourite,
+  onLog,
 }: {
   state: LightingState;
   setState: (s: LightingState) => void;
@@ -395,14 +461,30 @@ export function LightingFooter({
   corePending?: boolean;
   onAdd: (looks: Look[]) => void;
   onToggleFavourite?: (lookId: string) => void;
+  onLog?: LightingLog;
 }) {
   const sub = isDark ? '#919EAB' : '#637381';
   const label = isDark ? '#fff' : '#212B36';
   const favourite = (id: string) => {
-    setState(toggleFavourite(state, id));
+    const nextState = toggleFavourite(state, id);
+    setState(nextState);
     onToggleFavourite?.(id);
+    onLog?.('change', {
+      fieldName: 'look_favourite',
+      ...lookMeta(findLook(id, state.customs)),
+      oldValue: isFavourite(state, id),
+      newValue: isFavourite(nextState, id),
+      source: 'selected_list',
+    });
   };
-  const select = (id: string) => setState(toggleSelected(state, id));
+  const select = (id: string) => {
+    setState(toggleSelected(state, id));
+    onLog?.('select', {
+      ...lookMeta(findLook(id, state.customs)),
+      selected: false,
+      source: 'selected_list_remove',
+    });
+  };
 
   const selectedLooks = state.sel
     .map((id) => findLook(id, state.customs))
