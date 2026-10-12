@@ -296,6 +296,14 @@ export function useDynamicCalculators(
   const [appointmentId, setAppointmentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [offlineUnavailable, setOfflineUnavailable] = useState(false);
+  /**
+   * The rep pressed "Work offline" on a load that would not finish.
+   *
+   * ⚠️ Forces the device-authoritative path even though `isOnline()` says true - which on one
+   * bar it does, right up to the timeout. Without this escape the cached quote already on the
+   * device is unreachable precisely when it is most needed.
+   */
+  const [preferDevice, setPreferDevice] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastUpdated, setLastUpdated] = useState('');
 
@@ -672,7 +680,7 @@ export function useDynamicCalculators(
   );
 
   useEffect(() => {
-    const key = String(leadId || 'none');
+    const key = `${leadId || 'none'}:${preferDevice ? 'device' : 'net'}`;
     if (bootstrapLeadRef.current === key) return; // already bootstrapped this lead
     bootstrapLeadRef.current = key;
     let cancelled = false;
@@ -683,7 +691,7 @@ export function useDynamicCalculators(
       if (work) offlineWorkIdRef.current = work.clientId;
 
       const deviceIsAuthoritative =
-        !isOnline() || isClientId(String(leadId || '')) || hasUnsyncedDealCenter(work);
+        preferDevice || !isOnline() || isClientId(String(leadId || '')) || hasUnsyncedDealCenter(work);
 
       if (deviceIsAuthoritative) {
         offlineModeRef.current = true;
@@ -813,7 +821,7 @@ export function useDynamicCalculators(
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leadId]);
+  }, [leadId, preferDevice]);
 
   useEffect(() => {
     setTabs((prev) => {
@@ -1239,6 +1247,7 @@ export function useDynamicCalculators(
     appointmentId,
     loading,
     offlineUnavailable,
+    workFromDevice: () => setPreferDevice(true),
     isSaving,
     lastUpdated,
     handleEntryChange,

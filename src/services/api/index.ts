@@ -9,15 +9,24 @@ import { logout } from '../../redux/reducer/auth.reducer';
 import { queryClient } from './queryClient';
 import SocketManager from '../SocketManager';
 import {
+  beginRequest,
   classifyRequestError,
+  endRequest,
   isConnectionStable,
   reportRequestSignal,
 } from '../connectivity';
 
 
+/**
+ * ⚠️ Was 120 s, which is what the rep in the one-bar video actually waited on - twice, because
+ * TanStack retries once. A request that has not answered in this long on a field device is not
+ * going to; the cached copy is the better answer. See `utils/slow-request.ts`.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+
 const axiosInstance: AxiosInstance = axios.create({
   baseURL: ENV.API_URL,
-  timeout: 120000,
+  timeout: REQUEST_TIMEOUT_MS,
   headers: {
     Accept: 'application/json, text/plain, */*',
     'Accept-Language': 'en-US,en;q=0.9',
@@ -45,6 +54,7 @@ axiosInstance.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
     logTraffic(`→ ${config.method?.toUpperCase()}`, config.url, config.data);
+    (config as any).__inFlightId = beginRequest(config.url);
     return config;
   },
   (error) => Promise.reject(error)
@@ -55,11 +65,13 @@ const PARKED_NOTICE_COOLDOWN_MS = 60_000;
 
 axiosInstance.interceptors.response.use(
   (res) => {
+    endRequest((res.config as any)?.__inFlightId ?? null);
     reportRequestSignal('success');
     logTraffic(`← ${res.status} ${res.config.method?.toUpperCase()}`, res.config.url, res.data);
     return res;
   },
   async (error) => {
+    endRequest((error.config as any)?.__inFlightId ?? null);
     reportRequestSignal(classifyRequestError(error));
     logTraffic(
       `✗ ${error.response?.status ?? 'ERR'} ${error.config?.method?.toUpperCase()}`,
