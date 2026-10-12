@@ -15,6 +15,7 @@ import {
   subscribeOfflineWork,
 } from '../../services/offlineLeadStore';
 import { useIsOnline } from '../../hooks/useIsOnline';
+import { useNavigation } from '@react-navigation/native';
 
 interface Props {
   colors: any;
@@ -43,6 +44,7 @@ export const PendingLeadsBanner: React.FC<Props> = ({ colors, isDark }) => {
   const [items, setItems] = useState<OfflineLeadWork[]>(() => activeWork(getOfflineWork()));
   const [expanded, setExpanded] = useState(false);
   const online = useIsOnline();
+  const navigation = useNavigation<any>();
 
   useEffect(
     () => subscribeOfflineWork(() => setItems(activeWork(getOfflineWork()))),
@@ -196,6 +198,23 @@ export const PendingLeadsBanner: React.FC<Props> = ({ colors, isDark }) => {
             </View>
           );
         })}
+
+      {expanded && (
+        <TouchableOpacity
+          onPress={() => navigation.navigate('PendingUploads')}
+          style={{
+            paddingVertical: 10,
+            alignItems: 'center',
+            borderTopWidth: 1,
+            borderTopColor: isDark ? colors.border : '#E2E8F0',
+          }}
+          accessibilityRole="button"
+        >
+          <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textSecondary }}>
+            See all pending uploads
+          </Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 };

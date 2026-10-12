@@ -35,6 +35,7 @@ import { ENV } from '../../config/env';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 
 import { useTheme } from '../../theme/ThemeProvider';
+import { PendingUploadsCard } from '../../widgets/components/PendingUploadsCard';
 import { Header } from '../../widgets/common/MainHeader';
 import { CustomInput } from '../../widgets/common/CustomInput';
 import { CustomButton } from '../../widgets/common/CustomButton';
@@ -988,6 +989,8 @@ export default function ProfilePage() {
                   )}
                 </TouchableOpacity>
               </View>
+
+              <PendingUploadsCard />
 
               {/* Offline map packs */}
               <View

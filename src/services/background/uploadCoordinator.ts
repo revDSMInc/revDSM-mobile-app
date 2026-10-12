@@ -7,8 +7,8 @@ import {
   pendingOfflineWorkCount,
 } from '../offlineLeadStore';
 import {
-  getUploadQueue,
   isUploadQueueSyncing,
+  pendingInstallerUploadCount,
   processUploadQueue,
 } from '../api/offlineUploadManager';
 import { uploadQueueManager } from '../../utils/uploadQueue';
@@ -25,7 +25,7 @@ export const pendingUploadCount = (): number => {
   return (
     pendingOfflineWorkCount() +
     uploadQueueManager.heldCount() +
-    getUploadQueue().length +
+    pendingInstallerUploadCount() +
     queuedActivityLogCount()
   );
 };

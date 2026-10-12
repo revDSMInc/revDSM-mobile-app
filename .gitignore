@@ -103,3 +103,32 @@ config.bat
 # it bakes in .env values (API URL + keys) and goes stale.
 
 android/app/src/main/assets/index.android.bundle
+# Offline-module suites are tracked on purpose: the queues hold a rep's unsent work, so their
+# rules must run in CI and on every machine. Everything else above stays local.
+!tests/
+!tests/**/*.test.ts
+
+# MCP / Maestro tooling output - never commit (logs, debug dumps, UI-test artifacts, screenshots)
+*mcp*.log
+*mcp*.log.*
+mcp-logs/
+.mcp-logs/
+.maestro/
+maestro-*/
+*.maestro-*
+/*.png
+!/app.png
+# MCP / Maestro captured images (screenshots, recordings) anywhere in the repo
+/*.jpg
+/*.jpeg
+/*.webp
+/*.gif
+/*.mp4
+/*.mov
+screenshots/
+.screenshots/
+*-screenshot*.png
+*-screenshot*.jpg
+screenshot-*.png
+screenshot-*.jpg
+Screenshot*.png

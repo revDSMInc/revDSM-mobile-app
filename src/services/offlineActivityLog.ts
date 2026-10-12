@@ -1,6 +1,7 @@
 import { AppState } from 'react-native';
 import { Storage } from '../utils/storage';
 import { isOnline, onReconnect } from './connectivity';
+import { isUnauthorizedError } from '../utils/upload-retry-policy';
 import { getSessionOwner, registerSessionResetHook } from './sessionScope';
 import {
   appendQueuedLog,
@@ -68,13 +69,6 @@ export const queueActivityLog = (
 export const rekeyActivityLogs = (fromId: string, toId: string): void => {
   load();
   const next = rekeyQueuedLogs(store, fromId, toId);
-  console.log(
-    '[CheckInTrace] rekey logs %s -> %s held=%s matched=%s',
-    fromId,
-    toId,
-    store.length,
-    next === store ? 0 : 'some'
-  );
   if (next === store) return;
   store = next;
   persist();
@@ -100,16 +94,10 @@ export const drainActivityLogs = async (): Promise<void> => {
       if (!next || !isOnline()) return;
       let outcome: 'sent' | 'failed' = 'sent';
       try {
-        console.log(
-          '[CheckInTrace] replay %s leadId=%s attempts=%s',
-          next.payload?.module_type || next.eventType,
-          next.payload?.meta?.leadId,
-          next.attempts
-        );
         await sender(next);
       } catch (e: any) {
-        // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-        console.log('[CheckInTrace] replay FAILED status=%s', e?.response?.status);
+        // A 401 is the session, not the log: keep it, spend no attempt, and stop.
+        if (isUnauthorizedError(e)) return;
         outcome = 'failed';
       }
       const before = store.length;

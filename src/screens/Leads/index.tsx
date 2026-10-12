@@ -450,33 +450,16 @@ export default function LeadsPage() {
     setSelectedLead(item);
     setNavigatingLeadId(item._id!);
 
-    console.log(
-      '[CheckInTrace] tap id=%s offlineLead=%s online=%s workflowState=%s status=%s',
-      item._id,
-      isOfflineLead(item),
-      isOnline(),
-      (item as any)?.workflowState,
-      (item as any)?.status
-    );
     if (isOfflineLead(item) || !isOnline()) {
       try {
         await persistActiveLeadId(item._id);
         const plan = planStartAppointment(item, userLocation);
         const atTheDoor = createdAtTheDoor(findOfflineWorkForLead(item));
-        console.log(
-          '[CheckInTrace] plan shouldCallWork=%s logModule=%s inRange=%s atTheDoor=%s hasRecord=%s',
-          plan.shouldCallWork,
-          plan.logModule || 'NONE',
-          plan.isInRange,
-          atTheDoor,
-          !!findOfflineWorkForLead(item)
-        );
         if (plan.shouldCallWork || atTheDoor) {
           const logModule = plan.logModule || (atTheDoor ? 'lead_check_in' : '');
           if (logModule) {
             void logLeadActionClick(user, logModule, item);
           }
-          console.log('[CheckInTrace] resolved logModule=%s', logModule || 'NONE');
           if (logModule !== 'lead_review') {
             markLeadCheckedInOffline(item._id || (item as any).id);
             queueLeadWorkStart(item, String(user?._id || (user as any)?.id || ''));

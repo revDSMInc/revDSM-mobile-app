@@ -19,10 +19,17 @@ export const SESSION_KEEP_KEYS: ReadonlySet<string> = new Set([
   'offline-photo-deletes',
   'offline-map-filters',
   'offline-agreement-delivery',
+
+  // Installer before/after images. Each item carries an `ownerId` (legacy items without one belong
+  // to whoever is signed in), and the files live in DocumentDir - clearing this key orphaned them.
+  'offline_image_uploads',
 ]);
 
 export const SESSION_KEEP_PREFIXES: readonly string[] = [
   'persist:',
+  // Pending calculator defaults, stored PER OWNER (`offline_calculator_settings:<ownerId>`) so a
+  // second rep on the handset can neither see nor flush the first rep's toggle.
+  'offline_calculator_settings:',
 ];
 
 export const isSessionScopedKey = (key: string): boolean => {
