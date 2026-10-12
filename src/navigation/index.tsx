@@ -13,6 +13,7 @@ import LearningPage from '../screens/Learning/index';
 import ChatThreadsScreen from '../screens/ChatThreads/index';
 import ChatDetailScreen from '../screens/ChatDetail/index';
 import NotificationsScreen from '../screens/Notifications';
+import PendingUploadsScreen from '../screens/PendingUploads';
 import MapDetailPage from '../screens/MapDetail';
 import LeadCenterPage from '../screens/LeadCenter';
 import PitchbookScreen from '../screens/Pitchbook';
@@ -48,6 +49,7 @@ export type RootStackParamList = {
   MyLearning: undefined;
   ChatThreads: undefined;
   Notifications: undefined;
+  PendingUploads: undefined;
   ChatDetail: {
     leadId?: string;
     chatId: string;
@@ -208,6 +210,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                   options={{ gestureEnabled: true }}
                 />
                 <Stack.Screen name="Profile" component={ProfilePage} />
+                <Stack.Screen name="PendingUploads" component={PendingUploadsScreen} />
                 <Stack.Screen name="MyLearning" component={LearningPage} />
                 <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
                 <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
@@ -220,6 +223,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
               <>
                 <Stack.Screen name="Leads" component={LeadsPage} />
                 <Stack.Screen name="Profile" component={ProfilePage} />
+                <Stack.Screen name="PendingUploads" component={PendingUploadsScreen} />
                 <Stack.Screen name="JobTracker" component={JobTrackerPage} />
                 <Stack.Screen name="MyDeals" component={MyDealsPage} />
                 <Stack.Screen name="DealDetail" component={DealDetailPage} />

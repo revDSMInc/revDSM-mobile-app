@@ -9,6 +9,7 @@ import {
   withTiming,
 } from 'react-native-reanimated';
 import {
+  fitsWithoutScrolling,
   nextCollapseState,
   settleDuration,
   settleTarget,
@@ -21,11 +22,16 @@ export interface CollapsingHeader {
   onHeaderLayout: (e: { nativeEvent: { layout: { height: number } } }) => void;
   scrollProps: {
     onScroll: any;
+    onContentSizeChange: (w: number, h: number) => void;
     scrollEventThrottle: number;
   };
   underHeaderStyle: { paddingTop: number };
   hidden: boolean;
+  /** Snap the header open (no animation). */
+  reset: () => void;
 }
+
+const SETTLE_REOPEN_MS = 160;
 
 export const UNDER_HEADER_PAD_OPEN = 8;
 export const UNDER_HEADER_PAD_COLLAPSED = 2;
@@ -39,6 +45,7 @@ export function useCollapsingHeader(
   const headerH = useSharedValue(0);
   const userDriven = useSharedValue(false);
   const settling = useSharedValue(false);
+  const layoutH = useSharedValue(0);
 
   const [headerHeight, setHeaderHeight] = useState(0);
   const headerHeightRef = useRef(0);
@@ -85,6 +92,7 @@ export function useCollapsingHeader(
         userDriven.value = true;
       },
       onScroll: (e) => {
+        layoutH.value = e.layoutMeasurement.height;
         if (!enabled) return;
         const prev = { collapsed: collapsed.value, lastY: lastY.value };
         const next = nextCollapseState(prev, {
@@ -113,6 +121,27 @@ export function useCollapsingHeader(
     [enabled]
   );
 
+  // ⚠️ iOS emits NO scroll event when the content shrinks until it fits (a submitted agreement /
+  // order sheet re-renders the summary), so a header collapsed by an earlier scroll stayed
+  // half-faded and half-slid-up. Re-open it whenever the content stops being scrollable.
+  const onContentSizeChange = useCallback(
+    (_w: number, h: number) => {
+      if (fitsWithoutScrolling(h, layoutH.value) && collapsed.value !== 0) {
+        settling.value = false;
+        collapsed.value = withTiming(0, { duration: SETTLE_REOPEN_MS, easing: Easing.out(Easing.cubic) });
+        lastY.value = 0;
+      }
+    },
+    [collapsed, lastY, layoutH, settling]
+  );
+
+  const reset = useCallback(() => {
+    settling.value = false;
+    userDriven.value = false;
+    lastY.value = 0;
+    collapsed.value = 0;
+  }, [collapsed, lastY, settling, userDriven]);
+
   const headerAnimatedStyle = useAnimatedStyle(() => ({
     opacity:
       headerH.value > 0
@@ -135,8 +164,9 @@ export function useCollapsingHeader(
     topInset: headerHeight,
     underHeaderStyle: { paddingTop: UNDER_HEADER_PAD_OPEN },
     onHeaderLayout,
-    scrollProps: { onScroll, scrollEventThrottle: 16 },
+    scrollProps: { onScroll, onContentSizeChange, scrollEventThrottle: 16 },
     hidden: false,
+    reset,
   };
 }
 

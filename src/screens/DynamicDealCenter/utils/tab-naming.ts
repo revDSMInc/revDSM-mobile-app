@@ -209,7 +209,7 @@ export function computeDerivedTitles(
   schemas: CalculatorSchema[],
 ): Record<string, string> {
   const result: Record<string, string> = {};
-  const withBase: Array<{ id: string; base: string; price: number }> = [];
+  const withBase: Array<{ id: string; base: string; price: number; stored?: string }> = [];
 
   tabs.forEach((t, i) => {
     if (t.manualTitle) {
@@ -221,10 +221,10 @@ export function computeDerivedTitles(
       result[t.id] = (t.originalTitle || '').trim() || String(i + 1);
       return;
     }
-    withBase.push({ id: t.id, base, price: t.price || 0 });
+    withBase.push({ id: t.id, base, price: t.price || 0, stored: t.storedTitle });
   });
 
-  const groups: Record<string, Array<{ id: string; base: string; price: number }>> = {};
+  const groups: Record<string, Array<{ id: string; base: string; price: number; stored?: string }>> = {};
   withBase.forEach((item) => {
     (groups[item.base] = groups[item.base] || []).push(item);
   });
@@ -237,9 +237,21 @@ export function computeDerivedTitles(
     });
     const levels = [...new Set(group.map((it) => it.price))].sort((a, b) => a - b);
 
+    // A duplicate of `FWrap (LG)` ties with it on price, which leaves no price rank to derive
+    // `(LG)` from — so a tie keeps the size suffix a member of the group already carried.
+    const inheritedSuffix = (): string => {
+      for (const it of group) {
+        const bare = (it.stored || '').replace(/⚠️/g, '').replace(FULL_PACKAGE_TITLE_PREFIX, '').trim();
+        if (bare.startsWith(`${base} (`) && bare.endsWith(')')) return bare.slice(base.length);
+      }
+      return '';
+    };
+
     group.forEach((it) => {
       if (priceCounts[it.price] > 1) {
-        result[it.id] = `⚠️ ${it.base} ⚠️`;
+        const rank = levels.indexOf(it.price);
+        const ranked = levels.length > 1 ? (levels.length === 2 ? ` (${rank === 0 ? 'SM' : 'LG'})` : ` (${SIZING_LABELS[rank] || `XXL-${rank - 4}`})`) : '';
+        result[it.id] = `⚠️ ${it.base}${ranked || inheritedSuffix()} ⚠️`;
       } else if (levels.length > 1) {
         const idx = levels.indexOf(it.price);
         const label = SIZING_LABELS[idx] || `XXL-${idx - 4}`;

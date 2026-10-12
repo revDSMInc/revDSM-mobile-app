@@ -352,7 +352,9 @@ export type StepDecision =
   | 'retry-guarded'
   | 'done'
   | 'failed'
-  | 'needs-review';
+  | 'needs-review'
+  // Session expired: leave the work as it is (draft, no attempt spent) for the next sign-in.
+  | 'pause';
 
 export const resolveStepDecision = (
   outcome: CreateOutcome,
@@ -362,6 +364,8 @@ export const resolveStepDecision = (
   const safety = stepReplaySafety(step);
 
   switch (outcome) {
+    case 'unauthorized':
+      return 'pause';
     case 'never-sent':
       return 'retry';
     case 'rejected':
@@ -411,6 +415,9 @@ export const applyStepDecision = (
   error?: string,
   now: number = Date.now()
 ): OfflineLeadWork => {
+  if (decision === 'pause') {
+    return { ...work, status: 'draft', lastError: error, updatedAt: new Date(now).toISOString() };
+  }
   const attempts = work.attempts + 1;
   const base = { ...work, attempts, lastError: error, updatedAt: new Date(now).toISOString() };
 

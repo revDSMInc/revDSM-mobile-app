@@ -1321,3 +1321,105 @@ combination".)
 - ⚠️ The guard is in `savePad`, not only on the button, so no other caller can save a mark without the consent.
 - The consent is not sent to the backend (no field for it); it only gates the capture. If compliance needs it recorded, it has to be added to `/agreement/{leadId}/sign` and the activity log.
 - ⚠️ Save Mark needs the tick AND drawn ink (`canSavePad`); ticking alone used to enable it on a blank pad.
+
+### Follow-up — the My Deals hide rule is back ON (it had been stubbed to `return false`)
+
+Ticket: *"inside My Deals the LeafFilter tab should show only the combinations that received values from the Deal
+Center; a combination with no value must not display."* An empty `Combination #3` (only the seeded `Versa` profile, no
+width, no colour) was showing in the edit wizard.
+
+`isComboHiddenInDealEdit` (`combination-color-filter.ts`) had been neutralised to `return false` in `c4896aa` ("free hand":
+leave unfinished combinations visible so the rep can fill them in) and the comment-cleanup commit then dropped the note
+saying how to restore it. **Restored:** `editMode && !combo[ADDED_IN_EDIT_KEY] && !comboHasSelectedColor(combo, fields)`.
+All three surfaces already call the helper, so cards, Grand Total card, Summary step and chip numbering follow, and the
+"Add Combination" button still hides when a section has no visible combination.
+- ⚠️ **This deliberately reverses `c4896aa`.** A combination added IN this edit session still shows (`_addedInEdit`), so
+  Add Combination works; a SAVED combination with no colour is hidden (display only — it stays in job state). If reps
+  need to fill an unfinished saved combination again, this is the one switch to flip back.
+- ⚠️ The rule keys on **colour**, as the original ticket did, not on "any value": a saved combination with a width but no
+  colour is also hidden. Say so if "no value at all" is wanted instead (it would need a defaults-aware emptiness check).
+
+### Follow-up — ONE universal "Add Combination" in My Deals, with a picker of every combination
+
+Ticket: *when no combination is received from the Deal Center there must be an Add Combination button, and only ONE
+universal one, whose dropdown shows all the combination options.* With the colour filter back on (above), a LeafFilter tab
+whose combinations were all unfinished showed only the Extras card; a per-section button would have repeated per section.
+
+`DynamicTabRenderer.tsx`: **edit mode** renders a single `UniversalAddCombination` ABOVE the first simple section (the
+"Extras" card, after the Grand Total card), or at the end of the tab when it has no simple section (`universalAddPlaced`). One addable section → it adds directly; several → an inline list (not a Modal) of every combination section,
+labelled `section.label`, else `<first defaulted row field label>: <default>` (e.g. the 6" / 7" parent), else `Section N`.
+The pick adds a blank combination tagged `_addedInEdit` (the filter never hides it) with every dropdown option available.
+- ⚠️ **Per-section buttons are gone in edit mode** (`CombinationSectionBlock` now shows its own only when `!editMode`);
+  the CREATE flow keeps them. This supersedes the "button goes with them" rule above. Shown whether or not any combination
+  is visible, so it is also the way to add to a tab that still has finished ones.
+- ⚠️ Option labels are derived, not authored — a config with unlabelled sections and no `defaultValue` falls back to
+  `Section N`. Author `section.label` if that reads badly. `visibleComboCount` was removed (unused).
+
+⚠️ **Update — no picker.** The inline section list was removed (ticket: *"on click do not show these options; show the
+combination box directly above the button"*). `UniversalAddCombination` is now a plain button: it adds a blank, `_addedInEdit`
+combination to the first addable section that has nothing showing, else the first section with room, and the new card renders
+in that section's slot above the button. Its own width / profile dropdowns then carry the choices. ⚠️ Which section gets it is
+by config order, so on a LeafFilter deal the new card lands in the first empty section (e.g. the 6" parent), not a chosen one.
+
+⚠️ **Placement update — BELOW the combinations.** Ticket: the button showed above a newly created combination. It was placed
+above the first *simple* section, which on that config comes BEFORE the combination sections. It now renders right after the
+**last combination section** (and its Grand Total card) in `DynamicTabRenderer.tsx` (`lastCombinationSectionId`), so a new
+combination appears above the button regardless of where Extras sits; the end-of-tab fallback stays for a tab with none.
+
+⚠️ **Final placement:** directly under the last combination section and ABOVE the Grand Total card (not below it).
+
+⚠️ **Spacing:** the universal button is `compact` (12 below, not 24) with `marginTop: -12` to cancel the section block's `mb-3`, so the card above and the Grand Total below sit 16 / 12 away. `AddCombinationButton` gained the `compact` prop; the create-flow buttons keep `mb-6`.
+
+⚠️ **Blank, not seeded:** the universal Add Combination uses `createBlankCombinationItem` (`combination-utils.ts`) — `createNextCombinationItem` with every non-`_` key emptied — so nothing is pre-selected (LeafFilter Profile no longer opens on `Versa`). Create-flow "Add Combination" still seeds `defaultValue`s. ⚠️ A required field the rep skips is now caught by normal validation rather than defaulted.
+
+⚠️ **The blank item alone was not enough — `DropdownField` re-seeds.** Its layout effect (`resolveDropdownSync`) writes `defaultValue`/`fallbackValue` into an EMPTY dropdown, so the profile snapped back to `Versa`. The `renderField` dropdown case now passes `defaultValue`/`fallbackValue` as `undefined` when the combination carries `_addedInEdit` (`noSeed`), so a combination added in My Deals shows "Select an option" on every dropdown until the rep picks. Saved combinations keep seeding as before.
+
+### Follow-up — Gutter Opening Width "Important Notice" did not pop up (My Deals)
+
+The notice wiring in `DropdownField` is intact (`useFieldNotice` → `handleValueChange` on the rep's pick), so the likely miss was the
+**exact-string** trigger: `resolveFieldNotice` compared the picked option to `notice.triggerValue` with `===`, and a differently
+spaced / cased / quoted authoring (`<2.5"` vs `< 2.5″`) never fired. `valueMatchesTrigger` (`notice-utils.ts`) now compares
+case-, whitespace- and quote/`&lt;`-insensitively. ⚠️ **Not reproduced on device.** A dev-only log `[FieldNotice] enabled but not fired`
+(`FieldNoticeModal.tsx`) prints the picked value and `triggerValue` when a field has a notice that did not match — if the popup is still
+missing, read that line (config text mismatch vs. a remount of the field).
+
+### Follow-up — the notice is now presented by ONE host, not a Modal inside each field
+
+Still reported (iPhone) after the trigger-text fix: the `<2.5` "Important Notice" never appeared in My Deals. Cause not proven on device;
+the remaining suspects were the field's own card re-mounting (a combination added / renumbered) which destroys a Modal owned by the field, and
+iOS failing to present a Modal nested in a scrolling card. `FieldNoticeModal.tsx` now has **`FieldNoticeHost`**, mounted once at the top of
+`DynamicTabRenderer`; `useFieldNotice().handleValueChange` publishes to it (module-level listener; the last mounted host wins) and falls back
+to the old local modal only when no host is mounted. ⚠️ Keep `<FieldNoticeHost />` at the renderer root — a fixed position outside any
+scroll content is the point. If the popup STILL does not show, the dev log `[FieldNotice] enabled but not fired` separates a config
+mismatch from a presentation problem.
+
+⚠️ **Second pass (still no popup on a freshly added combination):** the open notice is now ALSO held at module level (`activeNotice`
+in `FieldNoticeModal.tsx`) until the rep dismisses it, and a newly mounted `FieldNoticeHost` starts open if one is pending — so a tab
+re-mount right after the pick can no longer swallow it. Dev log `[FieldNotice] pick { field, picked, fires, hasHost }` prints on EVERY
+pick of a notice-enabled field: no line = the pick never reached the notice code; `fires:false` = trigger text mismatch; `hasHost:false`
+= host not mounted. Web's `notice-utils.js` is identical to mobile's (exact `===` there), so the config is the shared contract.
+
+### Follow-up — the notice no longer depends on the tap reaching the widget (`useFieldNoticeWatcher`)
+
+Ticket: *the information popup must display at any cost when `<2.5` is picked.* Two earlier passes hardened the PRESENTATION; this one removes the
+dependency on the TRIGGER path. `hooks/useFieldNoticeWatcher.ts` (called at the top of `DynamicTabRenderer`, above the summary early-return) snapshots
+every notice-enabled field's value in job state — combination rows, simple sections and tab fields — and when a value **changes** to one
+`resolveFieldNotice` matches, it publishes through `publishFieldNotice` (`FieldNoticeModal.tsx`). The widget's own `onChange` path stays and both land in the
+same host; `publishFieldNotice` **de-duplicates identical text for 1.5 s**, so a pick shows ONE popup.
+- ⚠️ The **first snapshot never fires** (opening a saved deal on `<2.5` stays silent), and a section whose combination count changed between snapshots only
+  refreshes the baseline (add / remove shifts indexes) — otherwise deleting a combination could pop a notice for the one that slid into its slot.
+- ⚠️ It still needs `field.notice.enabled` + text + a matching `triggerValue` (case / space / quote-insensitive). If the popup is STILL missing, the config
+  has no notice on that field (check the portal) — the code paths no longer are the limit. Not verified on device; no jest test (the hook imports RN).
+
+### Follow-up — the `< 2.5` notice is now a BUILT-IN rule (root cause: the schema field carried no notice)
+
+Three passes on triggering/presenting did nothing because the likely cause was never the code path: web's static LeafFilter section **hard-codes** this popup
+(`leaffilter-section.js`: `gutterOpeningWidth === '< 2.5'` → "Important Notice / Ensure Agreement has Special Can't Guarantee Cleaning or Sealing
+Clause", originally only for Versa Max + Sale), while the dynamic builder shows a notice ONLY when the portal-authored `field.notice` is enabled with text.
+A field without it shows nothing — however the pick is wired.
+- **`utils/dynamic-job-builder/engine/notice-utils.ts`**: `resolveBuiltinFieldNotice` / `resolveAnyFieldNotice` — a field whose label matches
+  `gutter opening width` set to `< 2.5` (case/space/quote-insensitive) yields the notice; the field's own `notice` still wins.
+  `useFieldNotice` and `useFieldNoticeWatcher` both call `resolveAnyFieldNotice`, and the watcher now also watches Gutter-Opening-Width fields that have no notice.
+- ⚠️ **Deliberately looser than web**: no Versa Max / Sale gate (the ticket: show it whenever `< 2.5` is picked). Re-add the profile / demo checks in
+  `resolveBuiltinFieldNotice` if reps complain of it on Versa. A label other than "Gutter Opening Width" needs `field.notice` authored in the portal.
+- Test: `__tests__/field-notice.test.ts` (gitignored dir). Not verified on device.

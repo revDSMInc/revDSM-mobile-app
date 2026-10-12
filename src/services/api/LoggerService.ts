@@ -182,15 +182,6 @@ export const logEvent = async (eventType: string, details: any = {}) => {
     return;
   }
 
-  if (details.module_type === 'lead_check_in' || details.module_type === 'lead_resume') {
-    console.log(
-      '[CheckInTrace] logEvent %s online=%s queueable=%s leadId=%s',
-      details.module_type,
-      isOnline(),
-      isQueueableLog(details.module_type),
-      meta.leadId
-    );
-  }
   if (!isOnline() && isQueueableLog(details.module_type)) {
     const occurredAt = new Date().toISOString();
     if (attachLocation && cachedLocation && Date.now() - cachedLocation.at < LOCATION_TTL_MS) {

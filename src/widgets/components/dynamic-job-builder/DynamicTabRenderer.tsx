@@ -7,6 +7,7 @@ import {
   getTabSections,
   getCombinationSectionRowFields,
   canAddMoreCombinations,
+  createBlankCombinationItem,
   createNextCombinationItem,
   isParentCombination,
   getRenderedSectionCombos,
@@ -81,6 +82,8 @@ import { AllocatorBar } from './AllocatorBar';
 import { LocationGrid } from './LocationGrid';
 import { RoomPicker } from './RoomPicker';
 import { AddCombinationButton } from './AddCombinationButton';
+import { FieldNoticeHost } from './FieldNoticeModal';
+import { useFieldNoticeWatcher } from '../../../hooks/useFieldNoticeWatcher';
 import { AccordionSection } from './AccordionSection';
 import { GrandTotalCard } from './GrandTotalCard';
 import { VerticalSummaryTab } from './VerticalSummaryTab';
@@ -576,6 +579,8 @@ function renderField(
         );
       }
       const dropdownDisabled = Boolean(field.disabled) && !editMode;
+      // A combination added in My Deals opens with nothing selected: the dropdown must not seed its default.
+      const noSeed = !!state?.[ADDED_IN_EDIT_KEY];
       return (
         <DropdownField
           key={field.id}
@@ -589,8 +594,8 @@ function renderField(
           isMulti={!!field.multiSelect}
           disabled={dropdownDisabled || readOnly}
           boxLabel={boxTitleFor(field, ctx)}
-          defaultValue={resolveEffectiveDefaultValue(field, state, depCtx)}
-          fallbackValue={(() => {
+          defaultValue={noSeed ? undefined : resolveEffectiveDefaultValue(field, state, depCtx)}
+          fallbackValue={noSeed ? undefined : (() => {
             const dc = resolveLockedValue(field, dealCenterData, {
               fallbackDefault: resolveConditionalDefault(field, state, depCtx),
             });
@@ -1001,7 +1006,6 @@ function CombinationSectionBlock({
 
   const isComboHidden = (combo: any) =>
     isComboHiddenInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), editMode);
-  const visibleComboCount = combos.filter((combo: any) => !isComboHidden(combo)).length;
   const firstShownIndex = Math.max(0, combos.findIndex((combo: any) => !isComboHidden(combo)));
   let shownCount = 0;
   const chipNumbers = combos.map((combo: any) =>
@@ -1130,19 +1134,24 @@ function CombinationSectionBlock({
       })}
 
       {/*
-        ⚠️ Hidden when the colour filter has emptied the section. Once every
-        combination is filtered out, the bare "Add Combination" button was the only
-        thing left of the section — the reported row of orphaned buttons under an
-        otherwise empty LeafFilter tab. Adding one there would also create a
-        combination with no colour, which the same filter hides the instant it is
-        made, so the button could not do anything useful either.
-
-        The CREATE flow is untouched: `isComboHidden` is false outside `editMode`,
-        so `visibleComboCount` is simply `combos.length` there.
+        ⚠️ Edit mode (My Deals) has ONE universal Add Combination button for the whole tab
+        (`UniversalAddCombination`), so a section never shows its own there — a tab with
+        several combination sections, or one the colour filter emptied, would otherwise
+        show a row of identical buttons.
       */}
-      {!readOnly && canAddCombo && visibleComboCount > 0 && (
+      {!readOnly && canAddCombo && !editMode && (
         <AddCombinationButton onClick={handleAddCombo} />
       )}
+    </View>
+  );
+}
+
+function UniversalAddCombination({ onAdd, disabled }: { onAdd: () => void; disabled?: boolean }) {
+  if (disabled) return null;
+  // marginTop cancels the section block's own mb-3, so the gap above matches the gap between cards.
+  return (
+    <View style={{ marginTop: -12 }}>
+      <AddCombinationButton onClick={onAdd} compact />
     </View>
   );
 }
@@ -1293,6 +1302,7 @@ export function DynamicTabRenderer({
   onRefreshDocs,
 }: DynamicTabRendererProps) {
   const [trackerHeight, setTrackerHeight] = useState(0);
+  useFieldNoticeWatcher(tab, tabState);
 
   if (tab.isSummary) {
     return (
@@ -1665,12 +1675,36 @@ export function DynamicTabRenderer({
 
   const collapsingOverlay = collapsingTrackerStyle !== undefined;
 
+  // My Deals: ONE Add Combination for the tab, placed directly BELOW the last combination section (above its Grand
+  // Total card), so a new combination appears above it. `universalAddPlaced` is flipped while the sections render.
+  const universalAdd =
+    editMode && !readOnly ? (
+      <UniversalAddCombination
+        disabled={!getRenderedCombinationSections(tabState).some((section: any) => canAddMoreCombinations(section))}
+        onAdd={() => {
+          const addable = getRenderedCombinationSections(tabState).filter((section: any) => canAddMoreCombinations(section));
+          // A section with nothing showing is filled first; otherwise the first section with room.
+          const target =
+            addable.find((section: any) => !getSectionCombos(section).some((combo: any) => isComboShown(combo, section))) ||
+            addable[0];
+          if (!target) return;
+          const combos = getSectionCombos(target);
+          const added = createBlankCombinationItem(target, combos, comboIndexOffsets[target.id] ?? 0);
+          updateSectionCombos(target.id, [...combos, { ...added, [ADDED_IN_EDIT_KEY]: true }]);
+        }}
+      />
+    ) : null;
+  const renderedCombinationSections = getRenderedCombinationSections(tabState);
+  const lastCombinationSectionId = renderedCombinationSections[renderedCombinationSections.length - 1]?.id;
+  let universalAddPlaced = false;
+
   const numPadScrollRef = useRef<any>(null);
   const numPadContentRef = useRef<View>(null);
   useNumPadScrollIntoView(numPadScrollRef, numPadContentRef, 12 + (collapsingOverlay ? collapsingTopInset + trackerHeight : 0));
 
   return (
     <View style={{ flex: 1 }}>
+      <FieldNoticeHost />
       {collapsingOverlay ? (
         <Reanimated.View
           onLayout={(e) => {
@@ -1736,8 +1770,8 @@ export function DynamicTabRenderer({
 
         if (section.sectionType === 'simple') {
           return (
+            <Fragment key={section.id}>
             <SimpleSectionBlock
-              key={section.id}
               section={section}
               sectionState={getSimpleSectionState(section)}
               onSectionStateChange={(state) => updateSimpleSection(section.id, state)}
@@ -1750,6 +1784,7 @@ export function DynamicTabRenderer({
               hideAllocations
               editMode={editMode}
             />
+            </Fragment>
           );
         }
 
@@ -1775,6 +1810,7 @@ export function DynamicTabRenderer({
               hideAllocations
               editMode={editMode}
             />
+            {section.id === lastCombinationSectionId ? (universalAddPlaced = true, universalAdd) : null}
             {isLastCombinationSection && showTabGrandTotal && (
               <GrandTotalCard
                 entries={visibleSummaryEntries}
@@ -1785,6 +1821,7 @@ export function DynamicTabRenderer({
           </Fragment>
         );
       })}
+      {universalAddPlaced ? null : universalAdd}
       </View>
       </KeyboardAwareScrollView>
     </View>

@@ -1,7 +1,8 @@
 import { storage } from '../utils/storage';
 import { SettingsService } from './api/SettingsService';
 import { isOnline, onReconnect } from './connectivity';
-import { registerSessionResetHook } from './sessionScope';
+import { getSessionOwner, registerSessionResetHook } from './sessionScope';
+import { hasSession } from './api';
 import {
   hasPendingSettings,
   mergePendingSettings,
@@ -10,7 +11,10 @@ import {
   type PendingCalculatorSettings,
 } from '../utils/offline-settings';
 
-const KEY = 'offline_calculator_settings';
+const LEGACY_KEY = 'offline_calculator_settings';
+
+/** Per owner, so one rep's pending defaults can never be flushed onto another rep's account. */
+const keyFor = (owner: string): string => `${LEGACY_KEY}:${owner}`;
 
 let pending: PendingCalculatorSettings | null = null;
 let loaded = false;
@@ -19,9 +23,16 @@ const listeners = new Set<() => void>();
 
 const load = (): void => {
   if (loaded) return;
+  // No signed-in owner yet (app still starting): nothing to read, and NOT loaded, so the next call retries.
+  const owner = getSessionOwner();
+  if (!owner) return;
   loaded = true;
   try {
-    const saved = storage.getString(KEY);
+    // A record written before settings were per-owner belongs to whoever is signed in now.
+    const legacy = storage.getString(LEGACY_KEY);
+    if (legacy && !storage.getString(keyFor(owner))) storage.set(keyFor(owner), legacy);
+    if (legacy) storage.remove(LEGACY_KEY);
+    const saved = storage.getString(keyFor(owner));
     pending = saved ? JSON.parse(saved) : null;
   } catch (e) {
     console.warn('[settings] could not read pending defaults', e);
@@ -31,8 +42,11 @@ const load = (): void => {
 
 const persist = (): void => {
   try {
-    if (pending) storage.set(KEY, JSON.stringify(pending));
-    else storage.remove(KEY);
+    const owner = getSessionOwner();
+    if (owner) {
+      if (pending) storage.set(keyFor(owner), JSON.stringify(pending));
+      else storage.remove(keyFor(owner));
+    }
   } catch (e) {
     console.warn('[settings] could not write pending defaults', e);
   }
@@ -65,7 +79,7 @@ export const flushCalculatorSettings = async (
   onApplied?: (applied: CalculatorSettingsPatch) => void
 ): Promise<CalculatorSettingsPatch | null> => {
   load();
-  if (flushing || !isOnline() || !hasPendingSettings(pending)) return null;
+  if (flushing || !isOnline() || !hasSession() || !hasPendingSettings(pending)) return null;
 
   const payload = pendingSettingsPayload(pending);
   flushing = true;

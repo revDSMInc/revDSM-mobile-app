@@ -137,15 +137,6 @@ export const putOfflineWork = (work: OfflineLeadWork): OfflineLeadWork => {
   const i = store.findIndex((w) => w.clientId === work.clientId);
   store = i === -1 ? [...store, next] : store.map((w, n) => (n === i ? next : w));
   persist();
-  console.log(
-    '[LeadSync] store %s %s origin=%s status=%s workStarted=%s rows=%s',
-    i === -1 ? 'ADD' : 'UPDATE',
-    next.clientId,
-    next.origin,
-    next.status,
-    next.workStarted ? 'YES' : 'no',
-    store.length
-  );
   return next;
 };
 
@@ -386,13 +377,6 @@ const workForLead = (lead: any): { id: string; work?: OfflineLeadWork } => {
   const id = String(lead?._id || lead?.id || '');
   if (!id) return { id: '' };
   const hit = mine().find((w) => w.clientId === id || w.serverIds.leadId === id);
-  console.log(
-    '[LeadSync] lookup id=%s found=%s mine=%s ids=%s',
-    id,
-    hit ? hit.clientId : 'NONE',
-    mine().length,
-    JSON.stringify(mine().map((w) => w.serverIds.leadId || w.clientId))
-  );
   return { id, work: hit };
 };
 
@@ -414,10 +398,8 @@ const adoptForLead = (lead: any, id: string): OfflineLeadWork | null => {
 export const queueLeadWorkStart = (lead: any, userId: string): boolean => {
   const { id, work } = workForLead(lead);
   if (!id || !userId) {
-    console.log('[LeadSync] check-in NOT queued: id=%s userId=%s', id || 'NONE', userId || 'NONE');
     return false;
   }
-  console.log('[LeadSync] check-in queued for %s (record %s)', id, work ? work.clientId : 'new');
   const base = work || adoptForLead(lead, id);
   if (!base) return false;
   if (base.workStarted) return true;
@@ -967,12 +949,8 @@ const runStep = async (
     }
 
     case 'chat': {
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-      console.log('[CheckInTrace] chat step running for leadId=%s', leadId);
       if (!leadId) throw new Error('no lead id for the chat');
       const chatId = await ChatService.getChatByLeadId(leadId);
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-      console.log('[CheckInTrace] chat step resolved id=%s', chatId);
       patchOfflineWork(work.clientId, (w) => ({ ...w, chatCreated: true }));
       return {};
     }
@@ -1122,25 +1100,10 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
   let work = putOfflineWork({ ...start, status: 'uploading' });
   let guarded = false;
 
-  console.log(
-    '[LeadSync] start %s origin=%s workStarted=%s chatCreated=%s done=%s',
-    work.clientId,
-    work.origin,
-    work.workStarted ? work.workStarted.userId : 'NONE',
-    work.chatCreated === true,
-    JSON.stringify(work.done)
-  );
 
   for (;;) {
     const step = nextUploadStep(work);
     if (!step) {
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-      console.log(
-        '[LeadSync] done %s leadId=%s steps=%s',
-        work.clientId,
-        work.serverIds.leadId || 'NONE',
-        JSON.stringify(work.done)
-      );
       const finished = putOfflineWork({ ...work, status: 'uploaded' });
       if (finished.deleteLead) removeOfflineWork(finished.clientId);
       return;
@@ -1152,8 +1115,6 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
 
     try {
       const sent = work;
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-      console.log('[LeadSync] step %s -> %s', work.clientId, step);
       const ids = await runStep(sent, step, guarded);
       const now = latest(work);
       let landed = markStepDone(now, step, ids);
@@ -1188,13 +1149,6 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
 
 export const drainOfflineWork = async (): Promise<void> => {
   load();
-  console.log(
-    '[LeadSync] drain called online=%s alreadyDraining=%s rows=%s drainable=%s',
-    isOnline(),
-    draining,
-    mine().length,
-    uploadableWork(mine()).length
-  );
   if (draining || !isOnline()) return;
   draining = true;
   try {

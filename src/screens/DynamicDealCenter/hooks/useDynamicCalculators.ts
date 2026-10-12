@@ -222,6 +222,8 @@ interface CreateExtra {
   paymentMethodLabel?: string;
   originalCalculatorId?: string;
   duplicateLog?: any;
+  /** A duplicate carries the SOURCE's totals so both tabs price (and therefore title) identically. */
+  totals?: CalcTab['totals'];
 }
 
 async function createRemoteTab(
@@ -236,7 +238,7 @@ async function createRemoteTab(
 ): Promise<CalcTab | null> {
   try {
     const seeded = mergeFullEntries(entries, schemas);
-    const totals = computeTotals(seeded);
+    const totals = extra.totals ?? computeTotals(seeded);
     const res = await LeadService.createCalculator(appointmentId, {
       title,
       position,
@@ -258,7 +260,7 @@ async function createRemoteTab(
       id: String(id),
       title: c.title || title,
       entries: c.entries ? mergeFullEntries(parseEntries(c.entries), schemas) : seeded,
-      totals: c.totals || totals,
+      totals: extra.totals ?? c.totals ?? totals,
       persisted: true,
       paymentMethod: extra.paymentMethod || c.paymentMethod,
       discountPercentage: extra.discountPercentage ?? c.discountPercentage,
@@ -961,6 +963,7 @@ export function useDynamicCalculators(
       if (appointmentId) {
         const created = await createRemoteTab(appointmentId, placeholder, entries, leadId, enteredBy, schemasRef.current, position, {
           ...inheritedDefaults(),
+          ...(source.totals ? { totals: JSON.parse(JSON.stringify(source.totals)) } : {}),
           ...(sourceBackendId ? { originalCalculatorId: sourceBackendId } : {}),
           ...(duplicateLog ? { duplicateLog } : {}),
         });
@@ -987,7 +990,7 @@ export function useDynamicCalculators(
           return;
         }
       }
-      const local: CalcTab = { id: `local-${Date.now()}`, title: placeholder, entries, totals: computeTotals(entries) };
+      const local: CalcTab = { id: `local-${Date.now()}`, title: placeholder, entries, totals: source.totals ? JSON.parse(JSON.stringify(source.totals)) : computeTotals(entries) };
       setTabs((p) => retitle([...p, local]));
       setActiveTabId(local.id);
     },
