@@ -14,6 +14,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { format, isValid } from 'date-fns';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LeadService } from '../../services/api/leads';
+import { isOnline } from '../../services/connectivity';
+import { OFFLINE_CACHE, cachedFetch } from '../../utils/offline-query-cache';
+import { useAuth } from '../../hooks/useAuth';
+import { toDealsPage, type DealsPage } from '../../utils/my-deals-page';
 
 interface MyDealsProps {
   navigation?: NativeStackNavigationProp<any>;
@@ -22,6 +26,17 @@ interface MyDealsProps {
 const PAGE_LIMIT = 12;
 
 const SCHEDULE_FILTERS: (string | null)[] = [null, 'scheduled', 'TBD'];
+
+/**
+ * Page 1 of each tab, kept so the list is not empty at a door.
+ *
+ * ⚠️ PAGE 1 ONLY, deliberately. Later pages are an endless-scroll convenience; caching
+ * every page would grow without bound in MMKV, which rewrites its whole store per write.
+ */
+const dealsCacheName = (tab: number): string =>
+  `${OFFLINE_CACHE.LEADS_LIST}:my-deals:${SCHEDULE_FILTERS[tab] || 'all'}`;
+
+const readPage = (res: any): DealsPage => toDealsPage(res, PAGE_LIMIT);
 const TAB_LABELS = ['All', 'Scheduled', 'TBD'];
 
 function shortenOfficeName(name?: string): string {
@@ -141,6 +156,10 @@ function DealCard({ lead, onPress }: { lead: any; onPress: () => void }) {
 }
 
 export default function MyDeals({ navigation }: MyDealsProps) {
+  // ⚠️ Owner-scopes the cache: a shared handset must never show one rep's deals to the
+  // next person who signs in.
+  const { user } = useAuth();
+  const ownerId = user?._id || user?.id;
   const [activeTab, setActiveTab] = useState(0); // 0 All, 1 Scheduled, 2 TBD
   const [leads, setLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -162,19 +181,35 @@ export default function MyDeals({ navigation }: MyDealsProps) {
       setLoading(true);
       try {
         const scheduleFilter = SCHEDULE_FILTERS[activeTab];
-        const res = await LeadService.getSalesDeals({ page: pageNum, limit: PAGE_LIMIT, scheduleFilter });
-        if (requestId !== requestIdRef.current) return;
-        const body = res?.data || {};
-        const newLeads = body?.data?.leads || body?.leads || [];
-        const pagination = body?.pagination || body?.data?.pagination || {};
-        const total = pagination.total || 0;
-        const totalPages =
-          pagination.totalPages ||
-          pagination.total_pages ||
-          (total > 0 ? Math.ceil(total / PAGE_LIMIT) : 0);
+        const firstPage = pageNum === 1;
 
-        setLeads((prev) => (isNewFilter ? newLeads : [...prev, ...newLeads]));
-        hasMoreRef.current = pageNum < totalPages;
+        // ⚠️ Page 1 goes through the cache; later pages do not. Endless scroll is a
+        // convenience that needs a connection, but the FIRST screenful is what decides
+        // whether the rep sees their deals or "No leads found" at a door.
+        const result = firstPage
+          ? await cachedFetch<DealsPage>(
+              dealsCacheName(activeTab),
+              async () => readPage(
+                await LeadService.getSalesDeals({ page: pageNum, limit: PAGE_LIMIT, scheduleFilter })
+              ),
+              {
+                online: isOnline(),
+                userId: ownerId,
+                // Never cache an empty result over a good one - a transient empty response
+                // would wipe the rep's offline copy.
+                isEmpty: (p) => !p.leads.length,
+              }
+            )
+          : readPage(
+              await LeadService.getSalesDeals({ page: pageNum, limit: PAGE_LIMIT, scheduleFilter })
+            );
+
+        if (requestId !== requestIdRef.current) return;
+
+        setLeads((prev) => (isNewFilter ? result.leads : [...prev, ...result.leads]));
+        // ⚠️ Served from the cache means there is nothing more to fetch - claiming otherwise
+        // makes the list try to page forever against a network that is not there.
+        hasMoreRef.current = isOnline() && pageNum < result.totalPages;
         setHasMore(hasMoreRef.current);
       } catch (err) {
         if (requestId !== requestIdRef.current) return;
@@ -190,7 +225,7 @@ export default function MyDeals({ navigation }: MyDealsProps) {
         }
       }
     },
-    [activeTab]
+    [activeTab, ownerId]
   );
 
   useEffect(() => {

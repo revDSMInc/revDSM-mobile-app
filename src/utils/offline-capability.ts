@@ -63,6 +63,15 @@ export const OFFLINE_FEATURES: Record<string, OfflineNotice> = {
     title: 'Needs a connection',
     message: 'Job Tracker changes are saved on the server, so they need a connection.',
   },
+  /**
+   * ⚠️ NO LONGER a blanket block on editing a deal.
+   *
+   * Opening the edit wizard and changing the build offline is supported (the addendum queues
+   * and is sent on reconnect). What still needs a connection is narrower and lives in
+   * `utils/offline-addendum.ts`: a REFUND (an approver has to see it) and a NEW ATTACHMENT.
+   * This entry is kept for callers that genuinely cannot queue; use `addendumOfflineBlock`
+   * for the edit flow.
+   */
   addendum: {
     reason: 'server-record',
     title: 'Needs a connection',

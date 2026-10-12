@@ -243,6 +243,49 @@ export const saveOfflineFunding = (
 ): OfflineLeadWork | null =>
   patchOfflineWork(workClientId, (w) => rearmStep({ ...w, funding }, 'funding'));
 
+/**
+ * A My Deals addendum raised with no signal.
+ *
+ * ⚠️ Two steps, never one. `addendumDraft` creates it; `addendumRelease` sends it to the
+ * homeowner and is skipped entirely when a refund is attached - the approver releases those.
+ */
+export const saveOfflineAddendum = (
+  workClientId: string,
+  addendum: {
+    payload: Record<string, unknown>;
+    contact: { customerEmail?: string; customerPhone?: string };
+    hasRefund: boolean;
+  }
+): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) =>
+    rearmStep(
+      {
+        ...w,
+        addendum: { ...addendum, at: new Date().toISOString() },
+        addendumDraftId: undefined,
+      },
+      'addendumDraft'
+    )
+  );
+
+/**
+ * The cheque refund that rides with a queued addendum.
+ *
+ * ⚠️ Ordered AFTER `addendumDraft`, because the server needs the draft's real id to link them.
+ * Saved alongside the addendum, not instead of it.
+ */
+export const saveOfflineAddendumRefund = (
+  workClientId: string,
+  refund: {
+    pid: string;
+    amount: number;
+    reason: string;
+    note?: string;
+    assignedToUserId?: string;
+  }
+): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) => rearmStep({ ...w, addendumRefund: refund }, 'addendumRefund'));
+
 /** A check taken in hand offline. The pid is the one the save above carries, so it addresses. */
 export const saveOfflineFundingCollected = (
   workClientId: string,
@@ -699,6 +742,16 @@ const isAlreadySubmitted = async (work: OfflineLeadWork): Promise<boolean> => {
   return String(lead?.jobBuilder?.status || '').toLowerCase() === 'submitted';
 };
 
+const isRefundAlreadyRaised = async (
+  leadId: string,
+  pid: string,
+  draftId: string
+): Promise<boolean> => {
+  const res = await FundingService.getFunding(leadId);
+  const row = (res?.data?.data?.funding?.payments || []).find((p) => p.pid === pid);
+  return (row?.refunds || []).some((r: any) => String(r?.draftId || '') === draftId);
+};
+
 const isFundingAlreadySubmitted = async (leadId: string): Promise<boolean> => {
   const res = await FundingService.getFunding(leadId);
   return res?.data?.data?.funding?.status === 'submitted';
@@ -908,6 +961,63 @@ const runStep = async (
         payments: Array.isArray(body?.payments) ? body.payments : [],
         payMode: body?.payMode === 'upfront' ? 'upfront' : 'split',
       });
+      return {};
+    }
+
+    case 'addendumDraft': {
+      if (!leadId) throw new Error('no lead id for the addendum');
+      const add = work.addendum!;
+      // ⚠️ The payload carries NO documents. Agreements/order sheets are inlined as base64
+      // `data:` URIs by the online path, and base64 must never sit in MMKV - it rewrites its
+      // whole store per write. Attaching a document to an offline addendum is Phase 4 of
+      // `docs/MY-DEALS-OFFLINE-PLAN.md`; until then the gate refuses to queue one.
+      const res = await LeadService.submitJobBuilderDraft(leadId, send(add.payload));
+      const body = res?.data;
+      const draftId =
+        body?.data?.draft?._id || body?.draft?._id || body?.data?._id || body?._id || null;
+      if (!draftId) throw new Error('the addendum draft came back with no id');
+      patchOfflineWork(work.clientId, (w) => ({ ...w, addendumDraftId: String(draftId) }));
+      return {};
+    }
+
+    case 'addendumRefund': {
+      if (!leadId) throw new Error('no lead id for the addendum refund');
+      const r = work.addendumRefund!;
+      const draftId = work.addendumDraftId;
+      if (!draftId) throw new Error('no draft id to link the refund to');
+      // Already raised on a previous drain: the row carries it, and a second POST would
+      // raise a duplicate refund against the same payment.
+      if (guarded && (await isRefundAlreadyRaised(leadId, r.pid, draftId))) return {};
+      await FundingService.requestRefund(leadId, r.pid, {
+        amount: r.amount,
+        // ⚠️ CHEQUE ONLY - a card refund reverses through the processor and is refused offline.
+        method: 'check',
+        reason: r.reason as any,
+        ...(r.note ? { note: r.note } : {}),
+        ...(r.assignedToUserId ? { assignedToUserId: r.assignedToUserId } : {}),
+        draftId,
+      });
+      return {};
+    }
+
+    /**
+     * Release the addendum to the homeowner.
+     *
+     * ⚠️ Reached ONLY for an addendum with no refund - `isStepApplicable` enforces that. A
+     * refund addendum is released by the approver server-side; releasing it here would put the
+     * paperwork in front of the homeowner first, and a signature taken before the approval is
+     * silently dropped for the refund.
+     */
+    case 'addendumRelease': {
+      const draftId = work.addendumDraftId;
+      if (!draftId) throw new Error('no draft id to release the addendum with');
+      try {
+        await LeadService.sendDraftSubmitEmail(draftId, { ...(work.addendum?.contact || {}) });
+      } catch (err) {
+        // The only gate on submit is `status !== 'draft'` -> 409 naming the current status, so
+        // a 409 means somebody else already moved it. That is the state this step wanted.
+        if (!readIs409(err)) throw err;
+      }
       return {};
     }
 

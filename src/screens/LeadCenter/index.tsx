@@ -171,11 +171,10 @@ export default function LeadCenterPage() {
   const handleEditDeal = useCallback(() => {
     const leadId = lead?._id || lead?.id || lead?.leadId;
     if (!leadId) return;
-    const blockedEdit = offlineBlockFor('addendum', isOnline());
-    if (blockedEdit) {
-      FlashMessage.info(blockedEdit.title, blockedEdit.message);
-      return;
-    }
+    // ⚠️ The addendum gate used to refuse the EDIT SCREEN outright offline, so a rep at a door
+    // could not even open a sold deal. The refusal now lives where it belongs - on Submit, in
+    // `DynamicDealEditScreen`, which can tell a plain build change (queueable) from a refund or
+    // an attachment (not). Opening and editing is local work and always allowed.
     navigation.navigate('DynamicDealCenter', {
       lead,
       mode: 'edit',

@@ -32,6 +32,7 @@ import ZoneCanvasserMap from '../../widgets/modals/ZoneCanvasserMap';
 import { LeadCard } from '../../widgets/components/LeadCard';
 import { PendingLeadsBanner } from '../../widgets/components/PendingLeadsBanner';
 import {
+  applyOfflineResult,
   offlineArchivedLeads,
   offlineLeadsForTab,
   isOfflineLead,
@@ -197,8 +198,15 @@ export default function LeadsPage() {
         if (archived === undefined) return true;
         return archived === isArchivedTab;
       });
+    // ⚠️ BOTH overlays, and `applyOfflineResult` is the one that was missing. A lead
+    // resulted at a door keeps `status: 'selfGenerated'` on the device until the submit
+    // uploads, so the card went on offering "Resume Appointment" for work the rep had
+    // already finished - while Lead Center, which DOES apply it, showed "Resulted - Sale".
+    // Two screens disagreeing about the same lead is worse than either being wrong.
     const withWorkflow = (list: any[] | null | undefined) =>
-      applyOfflineActions(list).map((l) => applyOfflineWorkflow(l, offlineWorkflow));
+      applyOfflineActions(list)
+        .map((l) => applyOfflineResult(l, offlineWork))
+        .map((l) => applyOfflineWorkflow(l, offlineWorkflow));
     if (isRehash) return withWorkflow(serverLeads);
     if (isArchivedTab) {
       const archivedHere = offlineArchivedLeads(offlineWork, { serverLeadIds });
