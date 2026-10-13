@@ -137,7 +137,7 @@ export function swapRowMethod(
 ): PaymentRow[] {
   return rows.map((r) => {
     if (r.pid !== pid) return r;
-    if (!nextKey || nextKey === r.method || !r.method || !showsChip(r)) {
+    if (!nextKey || nextKey === r.method || !r.method || !hasLenderState(r)) {
       return nextKey && nextKey !== r.method && r.decision
         ? { ...r, method: nextKey, linkSent: false, activated: false, decision: null }
         : { ...r, method: nextKey };
@@ -174,7 +174,7 @@ export function restoreRowPlan(
       activated: false,
       decision: null,
       archived: [
-        ...(r.method || r.methodLabel ? [snapshotPlan(r, plans)] : []),
+        ...((r.method || r.methodLabel) && hasLenderState(r) ? [snapshotPlan(r, plans)] : []),
         ...shelf.filter((a) => a.archivedId !== archivedId),
       ],
     };

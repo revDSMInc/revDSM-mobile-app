@@ -2735,7 +2735,7 @@ Ticket: the two radio cards truncated "Down Pay…". Now a `DropdownChoice` (`co
 - Once money has moved (`structureLocked`) the other options are disabled and explain why, same as before.
 - `structureHint` takes a 4th `noDown` arg.
 
-### Result Lead opens on "No Down Payment" and warns on Confirm
+### Result Lead opens on "No Down Payment" (the Confirm warning was REMOVED)
 
 `ResultJobModal` defaults the dropdown to **No Down Payment** unless the rollout carried a down payment (`initialDownPayment > 0`); a saved deal still restores through `inferNoDownPayment`. Tapping **Confirm** on No Down Payment raises the app's own `ConfirmDialog` (tone `warn`) — "you are going with financing for the whole payment" — and only **Continue** runs `goFunding(true)`. Down Payment and Upfront show nothing.
 
@@ -3053,3 +3053,36 @@ A field without it shows nothing — however the pick is wired.
 - ⚠️ **Deliberately looser than web**: no Versa Max / Sale gate (the ticket: show it whenever `< 2.5` is picked). Re-add the profile / demo checks in
   `resolveBuiltinFieldNotice` if reps complain of it on Versa. A label other than "Gutter Opening Width" needs `field.notice` authored in the portal.
 - Test: `__tests__/field-notice.test.ts` (gitignored dir). Not verified on device.
+
+### Rollout — COST / PAR / RETAIL tiles wrapped large values
+
+- Symptom: a 6-digit retail (`$152,583`) wrapped onto two lines and the three tiles looked uneven.
+- Fix (`RolloutView.tsx`, tiles block): tiles are `flexBasis: 0, minWidth: 0` with 6px side padding; the value is `numberOfLines={1}` + `adjustsFontSizeToFit` (`minimumFontScale 0.6`), so it shrinks instead of wrapping. Not verified on device.
+- Drop / Result Lead buttons: fixed `height: 56` clipped the stacked icon + label + price (price spilled past the border). Now `minHeight: 64` with padding, and the icon sits in a row beside the "Result Lead" label with the price below. Not verified on device.
+- **Removed**: the "No Down Payment" `ConfirmDialog` (and `noDownWarn`, the `acknowledged` flag on `goFunding`) is gone by request — no warning on Confirm; it goes straight to funding. The `inline` ConfirmDialog notes above are historical. Do not re-add.
+
+### Result Lead: archive only plans that have actually started (`swapRowMethod` / `restoreRowPlan`)
+
+- Ticket: switching Check/AMEX on a fresh row filled "ARCHIVED METHODS" with plans nothing was ever sent for. Archive = a safety shelf for financing / cards that are LIVE (link sent, decision, activated, charged, collected) so they can be reused on any job scope later.
+- Root cause: `swapRowMethod` archived on `showsChip(r)`, which is `r.auto || hasLenderState(r)` — the auto-balance row counted. Now gated on `hasLenderState(r)` only; `restoreRowPlan` likewise only shelves the outgoing plan when it has lender state.
+- ⚠️ Do NOT widen the gate back to `showsChip` / `auto`. Rows archived before this fix are not cleaned up. Not verified on device.
+
+### Result Lead payment rows: back to ONE line per payment, short labels, no bank fee (supersedes the "one card per payment" ticket above)
+
+- Ticket: the stacked Amount / Payment-method cards ate the screen. `PaymentRowsGroup` panel layout is again `[amount box][method box][✕]` on one line. The amount box is sized to its digits (`flexShrink: 0`, `minWidth: 84`; the input width grows with the typed length) so a balance like `$2,863` is never truncated; the method box takes the remaining width.
+- Labels use the Investment Center shorthand via `shortMethodLabel`: Check -> `CK`, MC/VISA -> `CC`, `AMEX`, financing -> `compactPlanLabel` (`GS2511, 0% APR, 6M`). `stripBankFee` removes "(Bank Fee: x%)" from the dropdown options and archived entries too. Display only — the plan key / label sent to the server is unchanged.
+- ⚠️ Plain layout (My Deals mockup) untouched. Not verified on device.
+
+- Result Lead: choosing **Down Payment** in the structure dropdown now seeds its first (empty) down row in `selectStructure` (inserted before the balance row), so the method box shows without tapping "Add payment method". Only when no down row exists; removing it with ✕ still leaves the group empty. Not verified on device.
+
+### Follow-up — Result Lead: picking "Down Payment" seeds its first row (`selectStructure`, `ResultJobModal.tsx`)
+
+- Ticket: after choosing Down Payment the group showed only "Add payment method"; the rep had to tap it to get the first amount + method line.
+- Fix: `selectStructure` inserts one empty `kind: 'down'` row (before the first `bal` row, so order stays down -> bal) when no down row exists.
+- ⚠️ The `PayStructure` value for Down Payment is `'split'` (not `'down'`) — see `payStructureOf` in `utils/funding.ts`. ⚠️ Only seeds when none exists: removing the row with ✕ deliberately leaves the group empty. Not verified on device.
+- Follow-up: the green PANEL box holding the Pricing / payment groups had tight padding (`14 / 16 / 6`); now `paddingHorizontal: 18, paddingTop: 20, paddingBottom: 16` (`ResultJobModal.tsx`, the `isSale` panel). Not verified on device.
+- Follow-up: the white Down Payment / Balance cards sat too far in from the green panel. Panel `paddingHorizontal` is now **8** (top 20 / bottom 16 kept for breathing room) and the white card (`PaymentRowsGroup` panel layout) side padding is 10 (was 12), so the amount + method line gets the width back. ⚠️ Do not raise the panel side padding again without checking the balance amount still shows every digit. Not verified on device.
+- Follow-up: a huge amount (`31223321`) squeezed the method box to "…". The amount box is now `flexShrink: 1, maxWidth: 55%` (input width estimated at 9px/digit, `maxWidth: 100%`; read-only amount uses `adjustsFontSizeToFit`), and the method box keeps `minWidth: 96`, so the method name always stays readable. ⚠️ A very long typed amount scrolls inside its box rather than widening it. Not verified on device.
+- Follow-up: the CLOSED method box (after selecting) shows only the financing plan CODE (`GS2511`) via `shortMethodLabel(..., codeOnly)`; the option list still shows `GS2511, 0% APR, 6M`. CK / CC / AMEX unchanged. The Balance and Down Payment groups share this code, so both read the same. Not verified on device.
+- Follow-up (REVERTED by request): shortening the Down Payment option list (`options` -> `o.label`) through `shortMethodLabel` was undone; that list shows the raw labels again, e.g. "Check (Bank Fee: 0%)". Balance's category list is still shortened. Do not re-apply unasked.
+- Follow-up: the Balance (category) option list now shows the FULL plan label (`plan.label`, e.g. "Check (Bank Fee: 0%)") exactly like the Down Payment list, by request. Only the dropdown lists; the closed method box still shows the short form. Not verified on device.
