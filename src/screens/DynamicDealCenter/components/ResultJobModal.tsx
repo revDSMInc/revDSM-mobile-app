@@ -48,7 +48,6 @@ import { Storage } from '../../../utils/storage';
 import { fundingOwnerKey, shouldAdoptSavedFunding } from '../../../utils/funding-owner';
 import { SendLinkModal } from './funding/SendLinkModal';
 import { DropdownChoice } from './funding/DropdownChoice';
-import { ConfirmDialog } from './ConfirmDialog';
 import { CoverageBar } from './funding/CoverageBar';
 import { BlockerList } from './funding/BlockerList';
 import { useFunding } from '../hooks/useFunding';
@@ -288,7 +287,6 @@ export function ResultJobModal({
   const [screen, setScreen] = useState<'result' | 'funding'>('result');
   const [payMode, setPayMode] = useState<PayMode>('split');
   const [noDown, setNoDown] = useState(true);
-  const [noDownWarn, setNoDownWarn] = useState(false);
   const [structureNudge, setStructureNudge] = useState(false);
   const [rows, setRows] = useState<PaymentRow[]>([]);
   const [banners, setBanners] = useState<DecisionBanner[]>([]);
@@ -322,7 +320,6 @@ export function ResultJobModal({
     setScreen('result');
     setPayMode('split');
     setNoDown(!(initialDownPayment && initialDownPayment > 0));
-    setNoDownWarn(false);
     setStructureNudge(false);
     setBanners([]);
     setPriceUnlocked(false);
@@ -580,6 +577,16 @@ export function ResultJobModal({
       if (payMode === 'upfront') switchPayMode('split', true);
       setStructureNudge(false);
       if (next === 'none') setRows((prev) => prev.map((r) => (r.kind === 'down' ? { ...r, amount: '' } : r)));
+      // Picking "Down Payment" opens its first line straight away — no extra tap on
+      // "Add payment method". Inserted before the balance row so the order stays down -> bal.
+      if (next === 'split') {
+        setRows((prev) => {
+          if (prev.some((r) => r.kind === 'down')) return prev;
+          const at = prev.findIndex((r) => r.kind === 'bal');
+          const row = { pid: newPaymentId(), kind: 'down' as const, amount: '', method: '' };
+          return at < 0 ? [...prev, row] : [...prev.slice(0, at), row, ...prev.slice(at)];
+        });
+      }
       setNoDown(next === 'none');
     },
     [payMode, noDown, switchPayMode]
@@ -620,13 +627,9 @@ export function ResultJobModal({
   );
   const saleReady = resultBlockers.length === 0;
 
-  const goFunding = useCallback(async (acknowledged = false) => {
+  const goFunding = useCallback(async () => {
     if (resultBlockers.length) {
       FlashMessage.error('Not ready to confirm', resultBlockers[0]);
-      return;
-    }
-    if (payMode === 'split' && noDown && !acknowledged) {
-      setNoDownWarn(true);
       return;
     }
     const upsert = toUpsertRows(activeRows, contractNum, pricing.plans);
@@ -987,7 +990,7 @@ export function ResultJobModal({
                   )}
 
                   {isSale && (
-                    <View style={{ backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 22, paddingHorizontal: 14, paddingTop: 16, paddingBottom: 6, marginBottom: 22 }}>
+                    <View style={{ backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 22, paddingHorizontal: 8, paddingTop: 20, paddingBottom: 16, marginBottom: 22 }}>
                       <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 1.2, textTransform: 'uppercase', color: FUND.PANEL_LABEL, paddingHorizontal: 4, paddingBottom: 14 }}>
                         Pricing
                       </Text>
@@ -1291,23 +1294,6 @@ export function ResultJobModal({
             from inside an endpoint call — lands here rather than on the app-root
             instance, which is OUTSIDE this Modal's view tree and therefore behind it.
             Last child, so it draws over the card. */}
-        {/* The app's own ConfirmDialog, drawn inline: this sheet is already a native
-            Modal and a second one must never stack on it. */}
-        <ConfirmDialog
-          inline
-          visible={noDownWarn}
-          tone="warn"
-          title="No Down Payment"
-          message="You are going with financing for the whole payment. The full contract price will be the balance, with no money collected now."
-          confirmLabel="Continue"
-          cancelLabel="Go Back"
-          onCancel={() => setNoDownWarn(false)}
-          onConfirm={() => {
-            setNoDownWarn(false);
-            goFunding(true);
-          }}
-        />
-
         <ModalFlashHost active={visible} />
       </KeyboardAvoidingView>
     </Modal>

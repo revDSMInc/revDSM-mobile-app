@@ -79,6 +79,7 @@ import { DynamicManagePhotosView } from '../lead-center/DynamicManagePhotosView'
 import { DynamicInspectionView } from '../lead-center/DynamicInspectionView';
 import { useInspectionSchema } from '../../../hooks/useInspectionSchema';
 import { useIsOnline } from '../../../hooks/useIsOnline';
+import { FlashMessage } from '../../../config/message';
 import {
   indexSchema,
   getCapturableSlots,
@@ -912,12 +913,24 @@ export const JobDocsSection = ({
     setIsDownloading(false);
     setShowDownloadModal(false);
 
+    // Counts come from `downloadResultMessage` (it knows about `skippedOffline`, which the
+    // offline filter above produces); delivery is the app's own banner, not a native Alert.
+    // ⚠️ Raised after a beat: the download modal was only just dismissed and a banner shown
+    // under a dismissing modal is never seen.
     const { title, message } = downloadResultMessage(
       successCount,
       attempts.length,
       skippedOffline
     );
-    Alert.alert(title, message);
+    setTimeout(() => {
+      if (successCount === 0) {
+        FlashMessage.error(title, message);
+      } else if (successCount === attempts.length && skippedOffline === 0) {
+        FlashMessage.success(title, message);
+      } else {
+        FlashMessage.warning(title, message);
+      }
+    }, 450);
   };
 
   const onResultPress = (result: string) => {
