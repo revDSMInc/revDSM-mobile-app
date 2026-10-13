@@ -45,31 +45,59 @@ export const isClockSkewed = (): boolean =>
 /** `true` reachable and quick, `'slow'` reachable but crawling, `false` unreachable. */
 export type ProbeResult = boolean | 'slow';
 
+/**
+ * How many probes in a row must come back empty before we believe the network is GONE.
+ *
+ * ⚠️ One lost probe is not evidence of an offline phone. On a weak radio a single GET is
+ * dropped routinely while the link still works - that is exactly how a rep on LTE with two
+ * bars was shown "Offline - showing saved data". `false` force-settles past the dwell, so it
+ * must mean "we looked more than once and found nothing", never "one packet went missing".
+ */
+export const PROBE_FAILURES_BEFORE_OFFLINE = 2;
+
+/** Gap between the attempts inside one probe. Short: the caller is waiting on this. */
+export const PROBE_RETRY_GAP_MS = 400;
+
+const attemptProbe = async (): Promise<ProbeResult> => {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const res = await fetch(HEALTH_URL, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: { Accept: 'application/json', 'Cache-Control': 'no-store' },
+    });
+    if (res.status !== 200) return false;
+
+    const body = await res.json().catch(() => null);
+    if (body?.ok !== true) return false; // captive portal, or something else answering
+
+    if (typeof body.ts === 'number') clockSkewMs = body.ts - Date.now();
+    // Reachable - but say HOW reachable, so a crawling line is not called offline.
+    return Date.now() - startedAt >= PROBE_SLOW_MS ? 'slow' : true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 export const probeHealth = async (): Promise<ProbeResult> => {
   if (inFlight) return inFlight;
 
   const run = (async (): Promise<ProbeResult> => {
-    const startedAt = Date.now();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
     try {
-      const res = await fetch(HEALTH_URL, {
-        method: 'GET',
-        signal: controller.signal,
-        headers: { Accept: 'application/json', 'Cache-Control': 'no-store' },
-      });
-      if (res.status !== 200) return false;
-
-      const body = await res.json().catch(() => null);
-      if (body?.ok !== true) return false; // captive portal, or something else answering
-
-      if (typeof body.ts === 'number') clockSkewMs = body.ts - Date.now();
-      // Reachable - but say HOW reachable, so a crawling line is not called offline.
-      return Date.now() - startedAt >= PROBE_SLOW_MS ? 'slow' : true;
-    } catch {
+      for (let attempt = 1; attempt <= PROBE_FAILURES_BEFORE_OFFLINE; attempt += 1) {
+        const result = await attemptProbe();
+        // Any answer at all settles it immediately - only emptiness needs a second opinion.
+        if (result !== false) return result;
+        if (attempt < PROBE_FAILURES_BEFORE_OFFLINE) {
+          await new Promise<void>((r) => setTimeout(() => r(), PROBE_RETRY_GAP_MS));
+        }
+      }
       return false;
     } finally {
-      clearTimeout(timer);
       inFlight = null;
     }
   })();

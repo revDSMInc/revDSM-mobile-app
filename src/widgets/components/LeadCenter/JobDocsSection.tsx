@@ -33,6 +33,11 @@ import { convertJpegToPdf as sharedConvertJpegToPdf } from '../../../utils/jpeg-
 import { useAuth } from '../../../hooks/useAuth';
 import SocketManager from '../../../services/SocketManager';
 import { logEvent } from '../../../services/api/LoggerService';
+import { getLocalCachePath, getWarmedLocalUri } from '../../../utils/imageFileCache';
+import {
+  downloadResultMessage,
+  offlineDownloadNotice,
+} from '../../../utils/photo-download-plan';
 
 const getNativeModules = () => {
   try {
@@ -810,6 +815,56 @@ export const JobDocsSection = ({
       return;
     }
 
+    /**
+     * Resolve a photo to a file already on this device.
+     *
+     * ⚠️ Two lookups, not one. `getWarmedLocalUri` is the in-memory map and only knows what
+     * THIS app session warmed; after a relaunch it is empty while the files are still there.
+     * `getLocalCachePath` + `fs.exists` is the authoritative check, and it is what makes the
+     * feature survive the rep closing the app. The path deliberately ignores the S3 query
+     * string, so a re-signed URL still finds yesterday's file.
+     */
+    const resolveOnDevice = async (uri: string): Promise<string | null> => {
+      if (uri.startsWith('file://') || uri.startsWith('/')) return uri;
+      const warmed = getWarmedLocalUri(uri);
+      if (warmed) return warmed;
+      const path = getLocalCachePath(uri);
+      if (!path) return null;
+      try {
+        return (await ReactNativeBlobUtil.fs.exists(path)) ? `file://${path}` : null;
+      } catch {
+        return null;
+      }
+    };
+
+    // The component's own reactive flag (line ~227); no second source of truth here.
+    const online = isOnline;
+
+    // Resolve every photo against the device cache BEFORE deciding anything. Offline, this is
+    // the whole feature: the bytes are already here and only needed looking up.
+    const resolved = await Promise.all(
+      imagesToDownload.map(async (img) => ({ img, local: await resolveOnDevice(img.uri) }))
+    );
+
+    const onDevice = resolved.filter((r) => r.local);
+    const needsNetwork = resolved.filter((r) => !r.local);
+
+    // Offline, anything not on the device is simply not happening - say so up front rather
+    // than letting it fail one by one into a misleading "Failed to download photos".
+    if (!online) {
+      const notice = offlineDownloadNotice(onDevice.length, needsNetwork.length);
+      if (notice.kind === 'blocked') {
+        Alert.alert(notice.title, notice.message);
+        setIsDownloading(false);
+        setShowDownloadModal(false);
+        return;
+      }
+      if (notice.kind === 'partial') Alert.alert(notice.title, notice.message);
+    }
+
+    const attempts = online ? resolved : resolved.filter((r) => r.local);
+    const skippedOffline = resolved.length - attempts.length;
+
     const saveToCameraRollWithRetry = async (tag: string, type: 'photo' | 'video', retries = 2, delayMs = 1000) => {
       for (let i = 0; i <= retries; i++) {
         try {
@@ -827,17 +882,15 @@ export const JobDocsSection = ({
     let completedCount = 0;
     let successCount = 0;
 
-    const downloadAndSavePromises = imagesToDownload.map(async (img, idx) => {
+    const downloadAndSavePromises = attempts.map(async ({ img, local }, idx) => {
       try {
-        const mediaUri = img.uri;
-        let localPath = '';
+        // Already on the device - straight to the camera roll, no network at all.
+        let localPath = local || '';
 
-        if (mediaUri.startsWith('file://') || mediaUri.startsWith('/')) {
-          localPath = mediaUri;
-        } else {
+        if (!localPath) {
           const ext = 'jpg';
           const path = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/download_${Date.now()}_${idx}.${ext}`;
-          const res = await ReactNativeBlobUtil.config({ path }).fetch('GET', mediaUri);
+          const res = await ReactNativeBlobUtil.config({ path }).fetch('GET', img.uri);
           localPath = res.path();
         }
 
@@ -859,16 +912,12 @@ export const JobDocsSection = ({
     setIsDownloading(false);
     setShowDownloadModal(false);
 
-    if (successCount === imagesToDownload.length) {
-      Alert.alert('Success', `Successfully downloaded all ${successCount} photos to your gallery!`);
-    } else if (successCount > 0) {
-      Alert.alert(
-        'Partial Download',
-        `Downloaded ${successCount} of ${imagesToDownload.length} photos. Some failed.`
-      );
-    } else {
-      Alert.alert('Error', 'Failed to download photos. Please try again.');
-    }
+    const { title, message } = downloadResultMessage(
+      successCount,
+      attempts.length,
+      skippedOffline
+    );
+    Alert.alert(title, message);
   };
 
   const onResultPress = (result: string) => {

@@ -63,6 +63,12 @@ export type ProbeOutcome = boolean | 'slow';
  * ⚠️ `false` means UNREACHABLE, not "slow". It force-settles to offline, skipping the dwell,
  * so anything that cannot tell the two apart must not report `false` - that is how a rep on a
  * working-but-weak line gets told they are offline. `'slow'` is the honest answer there.
+ * `probeHealth` therefore retries before it ever returns `false`.
+ *
+ * ⚠️ A probe NEVER promotes to online, however healthy it looks. /health is cheap and
+ * unauthenticated, so it answers happily while the real API is failing - only a 2xx on a real
+ * request proves we are being SERVED. What a healthy probe does do is clear the failure run,
+ * so the next transport error starts counting from scratch instead of re-settling instantly.
  */
 export const applyProbeResult = (
   state: NetworkState,
@@ -71,7 +77,7 @@ export const applyProbeResult = (
 ): NetworkState => {
   if (reachable === false) return settle(state, 'offline', now, { force: true });
   // Reachable at all means the rep can still work; the line is just not healthy.
-  return settle(state, 'degraded', now);
+  return settle(reachable === true ? { ...state, failures: 0 } : state, 'degraded', now);
 };
 
 export const applyOsDisconnected = (

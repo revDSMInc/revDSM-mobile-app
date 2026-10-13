@@ -165,6 +165,7 @@ const setNetState = (next: NetworkState) => {
       console.warn('[connectivity] status listener threw:', e);
     }
   });
+  syncRecoveryPoll();
   if (next.status === 'online' && previous !== 'online') {
     reconnectListeners.forEach((l) => {
       try {
@@ -210,6 +211,48 @@ const probeAndApply = async (stalled = false): Promise<void> => {
   );
   if (reachable === null) return; // throttled; keep the current state
   setNetState(applyProbeResult(netState, reachable, Date.now()));
+};
+
+/**
+ * While the strip is showing, keep checking whether it still should be.
+ *
+ * ⚠️ Nothing else can clear it, and this is the bug the client hit from the other side:
+ * `applyOsConnected` only ever reaches `degraded`, and ONLY a 2xx on a real request promotes
+ * to `online`. An idle app makes no requests - so a rep who walked back into signal kept
+ * "Weak connection" (or worse, "Offline") until they happened to tap something.
+ *
+ * ⚠️ It must be a REAL authenticated call, not `/health`. A probe cannot promote to online
+ * by design: /health is cheap and unauthenticated, so it answers while the API is failing.
+ * `getMe` goes through axios, so its 2xx arrives as a normal `success` signal and recovery
+ * happens through the one sanctioned path rather than a second rule that could disagree.
+ *
+ * The poll exists ONLY while a warning is up; a healthy app pays nothing for it.
+ */
+export const RECOVERY_POLL_MS = 8_000;
+
+let recoveryTimer: ReturnType<typeof setInterval> | null = null;
+
+const recoveryCheck = async (): Promise<void> => {
+  try {
+    const { AuthService } = await import('./api/auth');
+    await AuthService.getMe();
+    // A 2xx already reported `success` through the interceptor - nothing to do here.
+  } catch {
+    // The interceptor reported the failure too. Swallow: this is a background check and an
+    // unhandled rejection here would surface as a crash on a bad line.
+  }
+};
+
+const syncRecoveryPoll = (): void => {
+  const warning = netState.status === 'offline' || netState.status === 'degraded';
+  if (warning && !recoveryTimer) {
+    recoveryTimer = setInterval(() => {
+      void recoveryCheck();
+    }, RECOVERY_POLL_MS);
+  } else if (!warning && recoveryTimer) {
+    clearInterval(recoveryTimer);
+    recoveryTimer = null;
+  }
 };
 
 const clearSlowTimer = (): void => {
@@ -288,6 +331,10 @@ export const recheckNetworkNow = async (): Promise<NetworkStatus> => {
 
 export const __resetNetworkStatus = (): void => {
   netState = initialNetworkState();
+  if (recoveryTimer) {
+    clearInterval(recoveryTimer);
+    recoveryTimer = null;
+  }
 };
 
 export const subscribeConnectivity = (listener: ConnectivityListener): (() => void) => {
