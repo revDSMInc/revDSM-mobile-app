@@ -1227,3 +1227,10 @@ Ticket: *tell the user the report is generated and saved on the phone — that n
 
 *"Remove the view report button — we do not show the report inside the app."* The `inspectionDone` `ConfirmDialog` is now a single-button notice (`hideCancel`, confirm `OK`) that only says the report was saved and where (Android `Files / My Files > Downloads > Inspection Report.pdf`; iOS the share-sheet location). The `FileViewer.open` path, the `path` field and every "this lead > Job docs" pointer are gone, because the report is not viewable in-app. If the device save fails the message says to generate it again. ⚠️ Do not add a viewer button back unless the report becomes viewable in the app.
 - `LeadCenter/index.tsx` no longer imports `react-native-file-viewer` (its only use was the removed View Report button); other screens that still open PDFs keep their own import.
+
+## Lead Center "Download Images" result uses the app banner, not a native Alert
+
+Ticket: after downloading photos the result was a stock Android `Alert.alert("Success", ...)` that ignored the app theme. `JobDocsSection.handleDownloadAllImages` now raises `FlashMessage.success` / `.warning` (partial) / `.error` instead (`config/message.ts`).
+
+- ⚠️ Raised inside a `setTimeout(..., 450)`: the download progress `Modal` has only just been dismissed, and a banner shown under a dismissing modal is never seen (root CLAUDE.md §6). Do not move it back inline.
+- Other `Alert.alert` calls in the file (permission, delete, reset confirms) are untouched. Not verified on device.

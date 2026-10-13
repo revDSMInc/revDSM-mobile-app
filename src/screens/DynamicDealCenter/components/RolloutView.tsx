@@ -1272,9 +1272,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         {/* 4. COST / PAR / RETAIL tiles */}
         <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginBottom: 14 }}>
           {tiers.map((tier) => (
-            <View key={tier.label} style={{ flex: 1, alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#fff', borderWidth: tier.isRetail ? 1.5 : 1, borderColor: tier.isRetail ? '#16A34A' : '#DFE3E8', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+            <View key={tier.label} style={{ flex: 1, flexBasis: 0, minWidth: 0, alignItems: 'center', paddingVertical: 10, paddingHorizontal: 6, borderRadius: 12, backgroundColor: '#fff', borderWidth: tier.isRetail ? 1.5 : 1, borderColor: tier.isRetail ? '#16A34A' : '#DFE3E8', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
               <Text style={{ fontSize: 9, fontWeight: '900', letterSpacing: 1.5, marginBottom: 4, color: '#94A3B8', textTransform: 'uppercase' }}>{tier.label}</Text>
-              <Text style={{ fontSize: 14, fontWeight: '900', color: tier.isRetail ? '#16A34A' : '#212B36' }}>{fmt(tier.value)}</Text>
+              <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ alignSelf: 'stretch', textAlign: 'center', fontSize: 14, fontWeight: '900', color: tier.isRetail ? '#16A34A' : '#212B36' }}>{fmt(tier.value)}</Text>
             </View>
           ))}
         </View>
@@ -1605,7 +1605,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   setShowDropInput(true);
                 }
               }}
-              style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: jobLock.isAnySubmitted ? '#CBD5E1' : '#1976D2', backgroundColor: jobLock.isAnySubmitted ? '#F1F5F9' : '#fff', opacity: jobLock.isAnySubmitted ? 0.5 : 1 }}
+              style={{ flex: 1, minHeight: 64, paddingVertical: 8, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: jobLock.isAnySubmitted ? '#CBD5E1' : '#1976D2', backgroundColor: jobLock.isAnySubmitted ? '#F1F5F9' : '#fff', opacity: jobLock.isAnySubmitted ? 0.5 : 1 }}
             >
               <Text style={{ fontSize: 12, fontWeight: '900', color: jobLock.isAnySubmitted ? '#94A3B8' : '#1976D2' }}>
                 {`+ ${['1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][drops.length] || `${drops.length + 1}th`} Drop`}
@@ -1615,7 +1615,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             {jobLock.isSubmittedTab ? (
               <TouchableOpacity
                 onPress={() => onResetJobBuilder?.()}
-                style={{ flex: 1, height: 56, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EF4444' }}
+                style={{ flex: 1, minHeight: 64, paddingVertical: 8, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EF4444' }}
               >
                 <Ionicons name="refresh" size={16} color="#fff" />
                 <Text style={{ fontSize: 12, fontWeight: '900', color: '#fff', marginLeft: 8 }}>Reset Job Builder</Text>
@@ -1624,11 +1624,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
               <TouchableOpacity
                 disabled={jobLock.isAnySubmitted}
                 onPress={openResultChooser}
-                style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: jobLock.isAnySubmitted ? '#CBD5E1' : '#F97316', backgroundColor: jobLock.isAnySubmitted ? '#F1F5F9' : '#fff', opacity: jobLock.isAnySubmitted ? 0.5 : 1 }}
+                style={{ flex: 1, minHeight: 64, paddingVertical: 8, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: jobLock.isAnySubmitted ? '#CBD5E1' : '#F97316', backgroundColor: jobLock.isAnySubmitted ? '#F1F5F9' : '#fff', opacity: jobLock.isAnySubmitted ? 0.5 : 1 }}
               >
-                <Ionicons name="document-text-outline" size={16} color={jobLock.isAnySubmitted ? '#94A3B8' : '#EA580C'} style={{ marginBottom: 2 }} />
-                <Text style={{ fontSize: 12, fontWeight: '900', color: jobLock.isAnySubmitted ? '#94A3B8' : '#EA580C', marginBottom: 1 }}>Result Lead</Text>
-                {/* Web parity (QuoteResultCard.js:964 `{!isRehashed && …}`): on a rehash
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="document-text-outline" size={16} color={jobLock.isAnySubmitted ? '#94A3B8' : '#EA580C'} style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 12, fontWeight: '900', color: jobLock.isAnySubmitted ? '#94A3B8' : '#EA580C' }}>Result Lead</Text>
+                </View>
+                                {/* Web parity (QuoteResultCard.js:964 `{!isRehashed && …}`): on a rehash
                     the price isn't carried forward from the original appointment — the rep
                     enters it in the result modal — so the button shows no locked figure. */}
                 {!isRehashed && (

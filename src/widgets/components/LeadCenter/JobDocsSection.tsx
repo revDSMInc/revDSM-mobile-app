@@ -74,6 +74,7 @@ import { DynamicManagePhotosView } from '../lead-center/DynamicManagePhotosView'
 import { DynamicInspectionView } from '../lead-center/DynamicInspectionView';
 import { useInspectionSchema } from '../../../hooks/useInspectionSchema';
 import { useIsOnline } from '../../../hooks/useIsOnline';
+import { FlashMessage } from '../../../config/message';
 import {
   indexSchema,
   getCapturableSlots,
@@ -859,16 +860,17 @@ export const JobDocsSection = ({
     setIsDownloading(false);
     setShowDownloadModal(false);
 
-    if (successCount === imagesToDownload.length) {
-      Alert.alert('Success', `Successfully downloaded all ${successCount} photos to your gallery!`);
-    } else if (successCount > 0) {
-      Alert.alert(
-        'Partial Download',
-        `Downloaded ${successCount} of ${imagesToDownload.length} photos. Some failed.`
-      );
-    } else {
-      Alert.alert('Error', 'Failed to download photos. Please try again.');
-    }
+    // The app's own banner, not a native Alert. Raised after a beat: the download modal
+    // above was only just dismissed and a banner shown under a dismissing modal is never seen.
+    setTimeout(() => {
+      if (successCount === imagesToDownload.length) {
+        FlashMessage.success('Photos saved', `Downloaded all ${successCount} photos to your gallery.`);
+      } else if (successCount > 0) {
+        FlashMessage.warning('Partial download', `Downloaded ${successCount} of ${imagesToDownload.length} photos. Some failed.`);
+      } else {
+        FlashMessage.error('Download failed', 'Failed to download photos. Please try again.');
+      }
+    }, 450);
   };
 
   const onResultPress = (result: string) => {

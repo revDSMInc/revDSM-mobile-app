@@ -13,7 +13,6 @@ import {
 } from '../utils/field-dependency';
 import { directSectionId } from '../utils/build-all-entries';
 import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-util';
-import { JobTrackerButton } from './JobTrackerButton';
 import { computeCalculatorTiers } from '../utils/dynamic-rollout-pricing';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 import { withPlanFee, type DealPlan } from '../hooks/useDealPricing';
@@ -713,7 +712,7 @@ export function CalculatorView({
         </View>
       )}
 
-      <ScrollView ref={bodyScrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 140 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView ref={bodyScrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <View ref={bodyContentRef} collapsable={false}>
         {readOnly ? (
           <LockedCalculatorView
@@ -753,19 +752,6 @@ export function CalculatorView({
             )}
 
             <JobSummary entries={entries} catMeta={catMeta} sectionLabelMap={sectionLabelMap} />
-
-            {/* Add This Job to Job Tracker — web parity (rendered under the Job
-                Summary in the editable calculator view, hidden when locked). */}
-            {appointmentId && (
-              <JobTrackerButton
-                appointmentId={appointmentId}
-                calculatorId={activeTabId}
-                title={activeTab?.title}
-                endPrice={price}
-                paymentMethod={activeTab?.paymentMethod}
-                isLowesLead={isLowesLead}
-              />
-            )}
           </>
         )}
         </View>
