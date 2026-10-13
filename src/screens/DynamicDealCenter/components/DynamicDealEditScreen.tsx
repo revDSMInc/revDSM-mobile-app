@@ -54,6 +54,12 @@ import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
 import { useIsOnline } from '../../../hooks/useIsOnline';
+import {
+  useInstallAvailability,
+  useOfferedWindows,
+  windowInfo,
+  windowNotice,
+} from '../../../hooks/useInstallAvailability';
 import { readOfflineCache, writeOfflineCache } from '../../../utils/offline-query-cache';
 import { addendumOfflineBlock } from '../../../utils/offline-addendum';
 import {
@@ -266,6 +272,19 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const [dateStep, setDateStep] = useState<'intro' | 'calendar' | 'time' | 'success'>('intro');
   const [proposedDate, setProposedDate] = useState<Date | null>(null);
   const [proposedSlotIdx, setProposedSlotIdx] = useState(0);
+
+  // What the scheduler says about the chosen day. Until it answers — or if it never
+  // does — every window is offered exactly as before.
+  const { availability: installAvailability, loading: installAvailabilityLoading } =
+    useInstallAvailability(
+      proposedDate ? format(proposedDate, 'yyyy-MM-dd') : null,
+      lead?._id,
+      dateStep === 'time',
+    );
+  const offeredInstallWindows = useOfferedWindows(INSTALL_WINDOWS, installAvailability);
+  const currentInstallWindow =
+    offeredInstallWindows[proposedSlotIdx] ?? offeredInstallWindows[0] ?? INSTALL_WINDOWS[0];
+  const installWindowNotice = windowNotice(windowInfo(currentInstallWindow, installAvailability));
 
   const [contractPrice, setContractPrice] = useState(0);
 
@@ -1284,7 +1303,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   }, [dealLogTarget, scheduleDate, scheduleTimeWindow]);
 
   const handleProposeNextSlot = useCallback(() => {
-    if (proposedSlotIdx < INSTALL_WINDOWS.length - 1) {
+    if (proposedSlotIdx < offeredInstallWindows.length - 1) {
       setProposedSlotIdx(proposedSlotIdx + 1);
       return;
     }
@@ -1292,17 +1311,17 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       logDealInstallWindowsDeclined({
         ...dealLogTarget,
         proposedDate: proposedDate ? format(proposedDate, 'M/d/yyyy') : undefined,
-        declinedWindows: INSTALL_WINDOWS.map((w) => w.value),
+        declinedWindows: offeredInstallWindows.map((w) => w.value),
       });
     }
     setProposedSlotIdx(0);
     setDateStep('calendar');
-  }, [proposedSlotIdx, proposedDate, dealLogTarget]);
+  }, [proposedSlotIdx, proposedDate, dealLogTarget, offeredInstallWindows]);
 
   const handleAcceptProposedTime = useCallback(() => {
     if (!proposedDate) return;
     const nextDate = format(proposedDate, 'M/d/yyyy');
-    const nextWindow = INSTALL_WINDOWS[proposedSlotIdx].value;
+    const nextWindow = currentInstallWindow.value;
     if (dealLogTarget) {
       logDealInstallDateChanged({
         ...dealLogTarget,
@@ -1315,7 +1334,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setScheduleDate(nextDate);
     setScheduleTimeWindow(nextWindow);
     setDateStep('success');
-  }, [proposedDate, proposedSlotIdx, dealLogTarget, scheduleDate, scheduleTimeWindow]);
+  }, [proposedDate, currentInstallWindow, dealLogTarget, scheduleDate, scheduleTimeWindow]);
 
   const handleFinishInstallDate = useCallback(() => {
     setDateStep('intro');
@@ -1854,7 +1873,10 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             ) : dateStep === 'time' ? (
               <ProposedTimeCard
                 date={proposedDate}
-                slot={INSTALL_WINDOWS[proposedSlotIdx]}
+                slot={currentInstallWindow}
+                loading={installAvailabilityLoading}
+                noAvailability={!installAvailabilityLoading && offeredInstallWindows.length === 0}
+                notice={installWindowNotice}
                 onNo={handleProposeNextSlot}
                 onYes={handleAcceptProposedTime}
               />
@@ -2789,15 +2811,45 @@ function InstallDateCalendar({
 function ProposedTimeCard({
   date,
   slot,
+  loading,
+  noAvailability,
+  notice,
   onNo,
   onYes,
 }: {
   date: Date | null;
   slot: { period: string; value: string };
+  loading?: boolean;
+  noAvailability?: boolean;
+  notice?: { tone: 'ok' | 'warn'; text: string } | null;
   onNo: () => void;
   onYes: () => void;
 }) {
   if (!date) return null;
+
+  if (loading) {
+    return (
+      <View style={styles.dateCard}>
+        <Text style={styles.dateCardTitle}>Checking availability…</Text>
+        <ActivityIndicator size="small" color="#22C55E" />
+      </View>
+    );
+  }
+
+  // Nothing a crew can reach in time: say so instead of offering a window that cannot be booked.
+  if (noAvailability) {
+    return (
+      <View style={styles.dateCard}>
+        <Text style={styles.dateCardTitle}>No availability</Text>
+        <Text style={styles.confirmDate}>{format(date, 'EEEE, MMMM d, yyyy')}</Text>
+        <Text style={styles.confirmPrompt}>No crew can take this job on that day.</Text>
+        <TouchableOpacity onPress={onNo} style={styles.useDateBtn}>
+          <Text style={styles.useDateBtnText}>Pick Another Date</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.dateCard}>
       <Text style={styles.dateCardTitle}>Confirm Time Window</Text>
@@ -2809,6 +2861,25 @@ function ProposedTimeCard({
         <Text style={styles.windowCaption}>Arrival window</Text>
       </View>
 
+      {!!notice && (
+        <Text
+          style={{
+            marginBottom: 16,
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+            borderRadius: 10,
+            overflow: 'hidden',
+            textAlign: 'center',
+            fontWeight: '700',
+            fontSize: 12.5,
+            color: notice.tone === 'warn' ? '#8A5A00' : '#047857',
+            backgroundColor: notice.tone === 'warn' ? '#FFF7E6' : '#ECFDF5',
+          }}
+        >
+          {notice.text}
+        </Text>
+      )}
+
       <Text style={styles.confirmPrompt}>Work for the customer?</Text>
 
       <View style={styles.calendarActions}>
@@ -2816,7 +2887,9 @@ function ProposedTimeCard({
           <Text style={styles.tbdBtnText}>Doesn&apos;t Work</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onYes} style={styles.useDateBtn}>
-          <Text style={styles.useDateBtnText}>Confirm</Text>
+          <Text style={styles.useDateBtnText}>
+            {notice?.tone === 'warn' ? 'Confirm Anyway' : 'Confirm'}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>

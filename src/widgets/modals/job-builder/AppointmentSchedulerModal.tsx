@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, Platform, Pressable, Keyboard, InputAccessoryView } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, Platform, Pressable, Keyboard, InputAccessoryView, ActivityIndicator } from 'react-native';
 
 const TBD_REASON_ACCESSORY_ID = 'tbdReasonDoneBar';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -17,6 +17,12 @@ import {
   startOfToday,
 } from 'date-fns';
 import { LeadService } from '../../../services/api/leads';
+import {
+  useInstallAvailability,
+  useOfferedWindows,
+  windowInfo,
+  windowNotice,
+} from '../../../hooks/useInstallAvailability';
 import { FlashMessage } from '../../../config/message';
 import { ContractAmendmentModal, AmendmentChange } from '../lead-center/ContractAmendmentModal';
 
@@ -91,6 +97,17 @@ export const AppointmentSchedulerModal = ({
   const [tbdReason, setTbdReason] = useState('');
   const [isTBD, setIsTBD] = useState(false);
 
+  // What the scheduler says about the chosen day. Until it answers — or if it never
+  // does — every window is offered exactly as before.
+  const { availability, loading: availabilityLoading } = useInstallAvailability(
+    format(selectedDate, 'yyyy-MM-dd'),
+    leadId,
+    visible && view === 'time' && !isTBD,
+  );
+  const offered = useOfferedWindows(windows, availability);
+  const currentWindow = offered[timeSlotIdx] ?? offered[0] ?? windows[0];
+  const notice = windowNotice(windowInfo(currentWindow, availability));
+
   React.useEffect(() => {
     if (visible) {
       if (initialDate && initialDate !== 'TBD') {
@@ -125,7 +142,7 @@ export const AppointmentSchedulerModal = ({
   };
 
   const handleNoSlot = () => {
-    if (timeSlotIdx === windows.length - 1) {
+    if (timeSlotIdx >= offered.length - 1) {
       let nextDay = addDays(selectedDate, 1);
       while (getDay(nextDay) === 0) {
         nextDay = addDays(nextDay, 1);
@@ -142,7 +159,7 @@ export const AppointmentSchedulerModal = ({
       ? { date: 'TBD', reason: tbdReason, customerName }
       : {
           date: format(selectedDate, 'M/d/yyyy'),
-          timeWindow: windows[timeSlotIdx].value,
+          timeWindow: currentWindow.value,
           customerName,
         };
 
@@ -196,7 +213,7 @@ export const AppointmentSchedulerModal = ({
   const buildEditAppointmentData = () =>
     isTBD
       ? { date: 'TBD', reason: tbdReason, customerName }
-      : { date: format(selectedDate, 'M/d/yyyy'), timeWindow: windows[timeSlotIdx].value, customerName };
+      : { date: format(selectedDate, 'M/d/yyyy'), timeWindow: currentWindow.value, customerName };
 
   const openAmendmentFlow = async (appointmentData: any, changes: AmendmentChange[]) => {
     if (!leadId) return;
@@ -434,9 +451,47 @@ export const AppointmentSchedulerModal = ({
                 <Text style={{ fontSize: 24, fontWeight: '900', color: '#1e293b', textAlign: 'center', marginBottom: 8 }}>
                   {format(selectedDate, 'M/d/yyyy')}
                 </Text>
-                <Text style={{ fontSize: 20, fontWeight: '900', color: '#334155', marginBottom: 40 }}>
-                  {windows[timeSlotIdx].label}
+                {availabilityLoading ? (
+                  <View style={{ alignItems: 'center', marginBottom: 40 }}>
+                    <ActivityIndicator color="#22C55E" />
+                    <Text style={{ color: '#94a3b8', fontWeight: '700', marginTop: 12 }}>Checking availability…</Text>
+                  </View>
+                ) : offered.length === 0 ? (
+                  <View style={{ alignItems: 'center', width: '100%' }}>
+                    <Text style={{ fontSize: 18, fontWeight: '900', color: '#334155', marginBottom: 8 }}>No availability</Text>
+                    <Text style={{ color: '#94a3b8', fontWeight: '700', textAlign: 'center', marginBottom: 32 }}>
+                      No crew can take this job on that day.
+                    </Text>
+                    <TouchableOpacity onPress={handleNoSlot} style={{ width: '100%' }}>
+                      <View style={{ height: 56, backgroundColor: '#22C55E', borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>Try Next Day</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                <>
+                <Text style={{ fontSize: 20, fontWeight: '900', color: '#334155', marginBottom: notice ? 16 : 40 }}>
+                  {currentWindow.label}
                 </Text>
+
+                {notice && (
+                  <Text
+                    style={{
+                      marginBottom: 24,
+                      paddingHorizontal: 12,
+                      paddingVertical: 10,
+                      borderRadius: 10,
+                      overflow: 'hidden',
+                      textAlign: 'center',
+                      fontWeight: '700',
+                      fontSize: 12.5,
+                      color: notice.tone === 'warn' ? '#8A5A00' : '#047857',
+                      backgroundColor: notice.tone === 'warn' ? '#FFF7E6' : '#ECFDF5',
+                    }}
+                  >
+                    {notice.text}
+                  </Text>
+                )}
 
                 <Text style={{ color: '#94a3b8', fontWeight: '700', textAlign: 'center', marginBottom: 40 }}>
                   Does this time work for the customer?
@@ -474,10 +529,14 @@ export const AppointmentSchedulerModal = ({
                         elevation: 4,
                       }}
                     >
-                      <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>Yes</Text>
+                      <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>
+                        {notice?.tone === 'warn' ? 'Yes, Book Anyway' : 'Yes'}
+                      </Text>
                     </View>
                   </TouchableOpacity>
                 </View>
+                </>
+                )}
               </View>
             )}
 
@@ -590,7 +649,7 @@ export const AppointmentSchedulerModal = ({
                   ) : (
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                       <Text style={{ color: '#94a3b8', fontWeight: '900', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Time Window</Text>
-                      <Text style={{ color: '#334155', fontWeight: '700', fontSize: 14 }}>{windows[timeSlotIdx].label}</Text>
+                      <Text style={{ color: '#334155', fontWeight: '700', fontSize: 14 }}>{currentWindow.label}</Text>
                     </View>
                   )}
                 </View>
