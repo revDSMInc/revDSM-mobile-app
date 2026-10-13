@@ -3086,3 +3086,9 @@ A field without it shows nothing — however the pick is wired.
 - Follow-up: the CLOSED method box (after selecting) shows only the financing plan CODE (`GS2511`) via `shortMethodLabel(..., codeOnly)`; the option list still shows `GS2511, 0% APR, 6M`. CK / CC / AMEX unchanged. The Balance and Down Payment groups share this code, so both read the same. Not verified on device.
 - Follow-up (REVERTED by request): shortening the Down Payment option list (`options` -> `o.label`) through `shortMethodLabel` was undone; that list shows the raw labels again, e.g. "Check (Bank Fee: 0%)". Balance's category list is still shortened. Do not re-apply unasked.
 - Follow-up: the Balance (category) option list now shows the FULL plan label (`plan.label`, e.g. "Check (Bank Fee: 0%)") exactly like the Down Payment list, by request. Only the dropdown lists; the closed method box still shows the short form. Not verified on device.
+
+### Dynamic calculator: "Add This Job to Job Tracker" button removed
+
+A resulted sale is added to the Job Tracker automatically, so `CalculatorView` no longer renders `JobTrackerButton` under the Job Summary (the import is gone; `components/JobTrackerButton.tsx` is now unused). The body ScrollView `paddingBottom` dropped from 140 to 24 — the tabs footer is a sibling below the ScrollView, not an overlay, so the old 140 was only dead space under the button.
+
+- ⚠️ Legacy `widgets/components/dealcenter/CalculatorForm.tsx` still has its own add / go-to-tracker buttons (the non-dynamic Deal Center) — untouched. Not verified on device.
