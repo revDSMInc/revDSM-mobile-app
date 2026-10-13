@@ -7,6 +7,7 @@ import { LeadService } from '../services/api/leads';
 import { ENV } from '../config/env';
 import { Platform } from 'react-native';
 import { submitConsentForm, finalizeConsentUpload } from '../services/api/consent-forms';
+import { markConsentFiled, clearConsentFiled } from '../services/consentFiledStore';
 
 export const useCreateLeadMutation = () => {
   const queryClient = useQueryClient();
@@ -91,7 +92,15 @@ export const useDeleteLeadMutation = () => {
 export const useResetLeadMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (leadId: string) => LeadService.resetLead(leadId),
+    mutationFn: async (leadId: string) => {
+      const res = await LeadService.resetLead(leadId);
+      // ⚠️ A reset is the ONE thing allowed to clear the local "already filed" record. Without
+      // this the rep could never re-collect consent on a deliberately reset lead - the log would
+      // outlive the thing it describes. A failed read must still never clear it.
+      clearConsentFiled(leadId, 'consent');
+      clearConsentFiled(leadId, 'waiver');
+      return res;
+    },
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       FlashMessage.success('Success', res.data?.message || 'Lead data has been reset');
@@ -107,11 +116,14 @@ export const useSubmitDigitalConsentMutation = () => {
   return useMutation({
     mutationFn: async (data: any) => {
       const payload = data?.payload ? { ...data.payload } : { ...data };
-      return submitConsentForm({
-        kind: 'consent',
-        leadId: String(data?.leadId || payload?.leadId || ''),
-        payload,
-      });
+      const leadId = String(data?.leadId || payload?.leadId || '');
+      const pdfPath = await submitConsentForm({ kind: 'consent', leadId, payload });
+      // ⚠️ Record it HERE, on this device, the moment the server accepts it. "Already filed"
+      // used to be read only from `lead.generatedReports` - server data - so going offline with
+      // a cached lead taken before the submission offered the blank form again and let the rep
+      // take a SECOND signature for the same consent.
+      markConsentFiled(leadId, 'consent');
+      return pdfPath;
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
@@ -126,8 +138,11 @@ export const useSubmitDigitalConsentMutation = () => {
 export const useSubmitRoofWaiverMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ leadId, payload }: { leadId: string; payload: any }) =>
-      submitConsentForm({ kind: 'waiver', leadId, payload }),
+    mutationFn: async ({ leadId, payload }: { leadId: string; payload: any }) => {
+      const pdfPath = await submitConsentForm({ kind: 'waiver', leadId, payload });
+      markConsentFiled(leadId, 'waiver');
+      return pdfPath;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
     },

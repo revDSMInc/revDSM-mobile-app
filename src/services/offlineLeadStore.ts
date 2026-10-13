@@ -29,6 +29,7 @@ import { rekeyLeadWorkflow } from './offlineLeadStatus';
 import { offlinePhotoDeleteQueue } from './offlinePhotoDeleteQueue';
 import { leadDetailForCache } from '../utils/offline-lead-detail-cache';
 import { submitConsentForm, finalizeConsentUpload } from './api/consent-forms';
+import { markConsentFiled } from './consentFiledStore';
 import {
   consentSignatureName,
   hasFiledConsentReport,
@@ -1119,6 +1120,10 @@ const runStep = async (
         patchOfflineConsent(work.clientId, form.clientId, {
           uploadedAt: new Date().toISOString(),
         });
+        // ⚠️ Keep the local "already filed" record once the queue row is gone. The queue is the
+        // only offline proof while it exists, but it is removed after a successful drain - and
+        // without this the form becomes offerable again on the next cached read.
+        markConsentFiled(consentLeadId, form.kind);
         discardOfflineDocumentFile(form.signatureUri);
         discardOfflineDocumentFile(pdfPath);
       }
