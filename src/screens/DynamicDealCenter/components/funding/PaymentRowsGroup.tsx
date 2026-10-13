@@ -201,8 +201,8 @@ export function PaymentRowsGroup({
     const settled = isSettledRow(row);
     const needs = row.pid === needsRowId;
     const amount = effectiveRowAmount(row, allRows, price);
-    // The closed box only has room for the plan CODE ("GS2511"); APR / months live in the option list.
-    const label = shortMethodLabel(plans, row.method, row.methodLabel, true);
+    // Same string the Investment Center shows: "GS2511, 0% APR, 6M".
+    const label = shortMethodLabel(plans, row.method, row.methodLabel);
     const isOpen = openRowId === row.pid;
     const readOnlyAmount = settled || !!row.auto;
 
@@ -288,7 +288,7 @@ export function PaymentRowsGroup({
             : { flex: 1, minWidth: 96, minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, borderWidth: 1.6, borderColor: isOpen ? FUND.TEXT : fieldBorder, borderRadius: 12, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: fieldBg }
         }
       >
-        <Text style={{ flex: 1, fontSize: FS.BODY, fontFamily: label ? (plain ? PS.semibold : PS.bold) : PS.semibold, color: label ? '#374151' : FUND.MUTED }} numberOfLines={1}>
+        <Text style={{ flex: 1, fontSize: FS.BODY, fontFamily: label ? (plain ? PS.semibold : PS.bold) : PS.semibold, color: label ? '#374151' : FUND.MUTED }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
           {label || 'Select Payment Method'}
         </Text>
         {row.decision && !plain ? (

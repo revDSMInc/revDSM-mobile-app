@@ -3092,3 +3092,4 @@ A field without it shows nothing — however the pick is wired.
 A resulted sale is added to the Job Tracker automatically, so `CalculatorView` no longer renders `JobTrackerButton` under the Job Summary (the import is gone; `components/JobTrackerButton.tsx` is now unused). The body ScrollView `paddingBottom` dropped from 140 to 24 — the tabs footer is a sibling below the ScrollView, not an overlay, so the old 140 was only dead space under the button.
 
 - ⚠️ Legacy `widgets/components/dealcenter/CalculatorForm.tsx` still has its own add / go-to-tracker buttons (the non-dynamic Deal Center) — untouched. Not verified on device.
+- Follow-up (supersedes the code-only note): the closed method box shows the Investment Center string again — `GS2511, 0% APR, 6M` (`compactPlanLabel`), not just `GS2511`. One line with `adjustsFontSizeToFit` (min 0.8) so it is not cut. `codeOnly` on `shortMethodLabel` is now unused. Not verified on device.
