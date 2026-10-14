@@ -17,6 +17,12 @@ import {
   buildComboGroupSectionState,
 } from '../../../utils/dynamic-job-builder/engine/combination-utils';
 import {
+  getGutterPairSections,
+  usesPerSectionAdd,
+  nextPairAddTarget,
+  shouldShowDownspoutHeading,
+} from '../../../utils/dynamic-job-builder/engine/gutter-pairing';
+import {
   shouldShowTabGrandTotalSummary,
   resolveGrandTotalColumns,
   formatComboFieldSummaryValue,
@@ -45,7 +51,7 @@ import {
   filterVisibleToggleOptions,
   getVisibleFieldOptions,
 } from '../../../utils/dynamic-job-builder/engine/toggle-utils';
-import { ADDED_IN_EDIT_KEY, isComboHiddenInDealEdit } from '../../../utils/dynamic-job-builder/engine/combination-color-filter';
+import { ADDED_IN_EDIT_KEY, isComboHiddenInDealEdit, isSoffitComboEmptyInDealEdit } from '../../../utils/dynamic-job-builder/engine/combination-color-filter';
 import {
   getWarningConfig,
   getOptionGridSize,
@@ -980,6 +986,9 @@ function CombinationSectionBlock({
   applyConditions,
   hideAllocations,
   editMode,
+  hideLabel,
+  pairLabelPrefix,
+  ownAddInEdit,
 }: {
   section: any;
   combos: any[];
@@ -995,6 +1004,11 @@ function CombinationSectionBlock({
   applyConditions?: boolean;
   hideAllocations?: boolean;
   editMode?: boolean;
+  hideLabel?: boolean;
+  /** Gutters pair tab (My Deals): the chip is always shown, prefixed on the downspout section. */
+  pairLabelPrefix?: string;
+  /** My Deals Soffit: each section keeps its own Add Combination instead of the tab-wide one. */
+  ownAddInEdit?: boolean;
 }) {
   const applyDep = applyConditions !== false;
   const allFields = section.fields || [];
@@ -1005,13 +1019,14 @@ function CombinationSectionBlock({
   const canAddCombo = canAddMoreCombinations(section);
 
   const isComboHidden = (combo: any) =>
-    isComboHiddenInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), editMode);
+    isComboHiddenInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), editMode) ||
+    (!!ownAddInEdit && isSoffitComboEmptyInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), editMode));
   const firstShownIndex = Math.max(0, combos.findIndex((combo: any) => !isComboHidden(combo)));
   let shownCount = 0;
   const chipNumbers = combos.map((combo: any) =>
     isComboHidden(combo) ? -1 : comboIndexOffset + ++shownCount
   );
-  const showCombinationLabel = (section as any)?.showCombinationLabel !== false;
+  const showCombinationLabel = pairLabelPrefix !== undefined || (section as any)?.showCombinationLabel !== false;
   const gridField = getFlattenedCombinationSectionRowFields(section).find((f: any) => f.type === 'locationGrid');
   const gridKey = gridField?.id || gridField?.key || 'grid';
 
@@ -1029,7 +1044,9 @@ function CombinationSectionBlock({
 
   const handleAddCombo = () => {
     if (readOnly || !canAddCombo) return;
-    const added = createNextCombinationItem(section, combos, comboIndexOffset);
+    const added = editMode
+      ? createBlankCombinationItem(section, combos, comboIndexOffset)
+      : createNextCombinationItem(section, combos, comboIndexOffset);
     onUpdateCombos([...combos, editMode ? { ...added, [ADDED_IN_EDIT_KEY]: true } : added]);
   };
 
@@ -1043,7 +1060,7 @@ function CombinationSectionBlock({
 
   return (
     <View className="mb-3">
-      {section.label && <SectionLabel title={section.label} />}
+      {section.label && !hideLabel && <SectionLabel title={section.label} />}
 
       {!hideAllocations && filterFields(allFields.filter(isAllocationField), tabState, tab, section, sectionState, combos, dealCenterData, applyDep)
         .map((field: any) => renderAllocationCard(field, {
@@ -1090,7 +1107,7 @@ function CombinationSectionBlock({
               {showCombinationLabel ? (
                 <View className="px-3 py-1 rounded-lg" style={{ backgroundColor: `${borderThemeColor}1A` }}>
                   <Text className="text-[10px] font-black" style={{ color: borderThemeColor }}>
-                    Combination #{combinationNumber}
+                    {pairLabelPrefix}Combination #{combinationNumber}
                   </Text>
                 </View>
               ) : (
@@ -1139,7 +1156,7 @@ function CombinationSectionBlock({
         several combination sections, or one the colour filter emptied, would otherwise
         show a row of identical buttons.
       */}
-      {!readOnly && canAddCombo && !editMode && (
+      {!readOnly && canAddCombo && (!editMode || ownAddInEdit) && (
         <AddCombinationButton onClick={handleAddCombo} />
       )}
     </View>
@@ -1347,7 +1364,8 @@ export function DynamicTabRenderer({
   };
 
   const isComboShown = (combo: any, section: any) =>
-    !isComboHiddenInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), editMode);
+    !isComboHiddenInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), editMode) &&
+    !(usesPerSectionAdd(tab) && isSoffitComboEmptyInDealEdit(combo, getFlattenedCombinationSectionRowFields(section), editMode));
 
   const getRenderedCombinationSections = (state: any) =>
     sections.filter((section: any) =>
@@ -1355,6 +1373,10 @@ export function DynamicTabRenderer({
       (section.fields || []).length > 0 &&
       !(applyConditions && !isSummarySectionVisible(section, state, dealCenterData, tab))
     );
+
+  // My Deals Gutters tab only: a gutter and its downspout are one pair, numbered per section (see gutter-pairing.ts).
+  const perSectionAdd = !!editMode && usesPerSectionAdd(tab);
+  const gutterPair = editMode ? getGutterPairSections(tab, getRenderedCombinationSections(tabState)) : null;
 
   const updateSectionCombos = (sectionId: string, combos: any[]) => {
     if (readOnly || !onStateChange) return;
@@ -1369,7 +1391,7 @@ export function DynamicTabRenderer({
           },
         },
       };
-      return renumberTabCombinations(getRenderedCombinationSections(next), next, isComboShown);
+      return renumberTabCombinations(getRenderedCombinationSections(next), next, isComboShown, !!gutterPair);
     });
   };
 
@@ -1416,9 +1438,15 @@ export function DynamicTabRenderer({
 
   const comboIndexOffsets: Record<string, number> = {};
   getRenderedCombinationSections(tabState).reduce((count: number, section: any) => {
-    comboIndexOffsets[section.id] = count;
-    return count + getSectionCombos(section).filter((combo: any) => isComboShown(combo, section)).length;
+    const base = gutterPair ? 0 : count;
+    comboIndexOffsets[section.id] = base;
+    return base + getSectionCombos(section).filter((combo: any) => isComboShown(combo, section)).length;
   }, 0);
+
+  const shownIn = (list: any[]) =>
+    list.reduce((n: number, s: any) => n + getSectionCombos(s).filter((combo: any) => isComboShown(combo, s)).length, 0);
+  const gutterShown = gutterPair ? shownIn(gutterPair.primary) : 0;
+  const downspoutShown = gutterPair ? shownIn([gutterPair.downspout]) : 0;
 
   const getSimpleSectionState = (section: any) =>
     tabState?.sectionFields?.[section.id] || {};
@@ -1678,13 +1706,21 @@ export function DynamicTabRenderer({
   // My Deals: ONE Add Combination for the tab, placed directly BELOW the last combination section (above its Grand
   // Total card), so a new combination appears above it. `universalAddPlaced` is flipped while the sections render.
   const universalAdd =
-    editMode && !readOnly ? (
+    editMode && !readOnly && !perSectionAdd ? (
       <UniversalAddCombination
         disabled={!getRenderedCombinationSections(tabState).some((section: any) => canAddMoreCombinations(section))}
         onAdd={() => {
           const addable = getRenderedCombinationSections(tabState).filter((section: any) => canAddMoreCombinations(section));
           // A section with nothing showing is filled first; otherwise the first section with room.
+          const pairTarget = gutterPair
+            ? addable.find((section: any) =>
+                nextPairAddTarget(gutterShown, downspoutShown) === 'downspout'
+                  ? section.id === gutterPair.downspout.id
+                  : section.id !== gutterPair.downspout.id
+              )
+            : undefined;
           const target =
+            pairTarget ||
             addable.find((section: any) => !getSectionCombos(section).some((combo: any) => isComboShown(combo, section))) ||
             addable[0];
           if (!target) return;
@@ -1809,6 +1845,9 @@ export function DynamicTabRenderer({
               applyConditions={applyConditions}
               hideAllocations
               editMode={editMode}
+              hideLabel={!!gutterPair && section.id === gutterPair.downspout.id && !shouldShowDownspoutHeading(gutterShown, downspoutShown)}
+              ownAddInEdit={perSectionAdd}
+              pairLabelPrefix={gutterPair ? (section.id === gutterPair.downspout.id ? 'Downspout ' : '') : undefined}
             />
             {section.id === lastCombinationSectionId ? (universalAddPlaced = true, universalAdd) : null}
             {isLastCombinationSection && showTabGrandTotal && (
