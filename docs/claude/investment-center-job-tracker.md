@@ -396,3 +396,9 @@ branding row showed the company-name fallback until the secure URL resolved, the
   configured logo is still resolving (first ever open) the row stays empty at its `minHeight: 32`.
 - ⚠️ Do not drop the cache by "simplifying" the hook, and do not un-key the panel to fix this — the key is what resets
   per-calculator state.
+
+### REVUIUX-444 — Investment Center follows the REP's 1 Year default
+
+`InvestmentPanel.tsx` no longer takes `leadOneYearDefaultKey` (the lead-wide `isDefault` scan in `InvestmentCenter/index.tsx` is gone). `Default` mode uses
+`resolveOneYearDefaultKey(plans, user, method)` (`utils/one-year-default.ts`, rep 1 Year default first) and no stored 1-Year plan + a rep default => `Default`, else `Match`.
+Full write-up: `deal-center.md` § REVUIUX-444.
