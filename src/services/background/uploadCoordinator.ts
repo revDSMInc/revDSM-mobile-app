@@ -40,6 +40,9 @@ const runPass = async (): Promise<void> => {
   const steps: Array<[string, () => Promise<unknown>]> = [
     ['activity-logs', drainActivityLogs],
     ['lead-work', drainOfflineWork],
+    // Again once lead work has created its server ids: the first pass held every log still naming
+    // an offline-created lead, appointment or calculator.
+    ['activity-logs-after-lead-work', drainActivityLogs],
     ['photos', () => uploadQueueManager.processQueue()],
     ['installer-images', () => processUploadQueue()],
   ];

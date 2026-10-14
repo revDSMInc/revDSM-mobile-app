@@ -27,7 +27,10 @@ import {
 import {
   logFundingEditPayments,
   logFundingLinkCopied,
+  logFundingCheckCollected,
   logFundingOpened,
+  logFundingPaymentsSaved,
+  logFundingSubmitted,
   type FundingSource,
 } from '../../../utils/activity-log/funding-log';
 import {
@@ -652,6 +655,14 @@ export function ResultJobModal({
         paymentCount: upsert.length,
         payments: upsert.map((r) => ({ kind: r.kind, method: r.method, amount: r.amount })),
       });
+      // Online this is logged by `funding.savePayments`; the offline save skips that hook.
+      logFundingPaymentsSaved({
+        ...logCtx,
+        contractPrice: Math.round(contractNum),
+        payMode,
+        payments: upsert.map((r) => ({ kind: r.kind, method: r.method, amount: r.amount })),
+        ok: true,
+      });
       setSaveError(null);
       // The rep gets the SAME Funding step as online. It used to jump straight to Build Job,
       // so the split they had just entered was never shown back and Submit Funding never ran.
@@ -766,6 +777,15 @@ export function ResultJobModal({
     (pid: string) => {
       if (isOnline()) return funding.markCheckCollected(pid);
       if (offlineWorkId) saveOfflineFundingCollected(offlineWorkId, pid);
+      // Online this is logged by `funding.markCheckCollected`; the offline tick skips that hook.
+      const row = offlineRecord?.payments.find((p) => p.pid === pid);
+      logFundingCheckCollected({
+        ...logCtx,
+        payment: row
+          ? { pid: row.pid, method: row.method, type: row.type, kind: row.kind, amount: row.amount }
+          : { pid },
+        ok: true,
+      });
       setOfflineRecord((prev) =>
         prev
           ? { ...prev, payments: prev.payments.map((p) => (p.pid === pid ? { ...p, collected: true } : p)) }
@@ -773,7 +793,7 @@ export function ResultJobModal({
       );
       return undefined;
     },
-    [funding, offlineWorkId]
+    [funding, offlineWorkId, offlineRecord, logCtx]
   );
 
   const handleSetResult = useCallback(
@@ -801,6 +821,14 @@ export function ResultJobModal({
         // Queued, not dropped: the save already sits behind the `funding` step, and this
         // submits it once that lands. Without it the deal reached the office unsubmitted.
         if (offlineWorkId) saveOfflineFundingSubmit(offlineWorkId);
+        // Online this is logged by `funding.submit`; the queued submit skips that hook.
+        logFundingSubmitted({
+          ...logCtx,
+          contractPrice: Math.round(contractNum) || 0,
+          paymentCount: offlineRecord?.payments.length ?? 0,
+          bankDecline: offlineRecord?.result === 'bankDecline',
+          ok: true,
+        });
         logResultLeadBuildJob({
           ...logCtx,
           resultType,
@@ -846,7 +874,7 @@ export function ResultJobModal({
   }, [
     resultType, oneLeg, contractNum, downTotal, balanceTotal, primaryDownMethod, primaryBalanceMethod,
     allocations, demoReason, reasonExplanation, versatile, pineapple, bankDeclined, payments, funding, onConfirm,
-    logCtx, offlineWorkId,
+    logCtx, offlineWorkId, offlineRecord,
   ]);
 
   const priceEditable = isRehashed || priceUnlocked;

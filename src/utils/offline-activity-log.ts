@@ -9,35 +9,39 @@ export interface QueuedActivityLog {
   attempts: number;
 }
 
-export const QUEUEABLE_LOG_MODULES: readonly string[] = [
-  'lead_check_in',
-  'lead_resume',
-  'lead_review',
-  'lead_session',
-  'customer_details',
-  'self_gen_lead',
-  'calculator',
-  'rollout_and_drop',
-  'job_builder',
-  'funding',
-  'agreement',
-  'consent_form',
-  'roof_waiver',
-  'roof_waiver_form',
-];
+// Every module is held while offline: an unlisted module used to be dropped silently, which is how
+// the funding / result-lead / roofline-deck / investment-center logs went missing. Only a log that
+// can never be replayed under a rep's session belongs here.
+export const NON_QUEUEABLE_LOG_MODULES: readonly string[] = ['system'];
 
 export const isQueueableLog = (moduleType: unknown): boolean =>
-  typeof moduleType === 'string' && QUEUEABLE_LOG_MODULES.includes(moduleType);
+  typeof moduleType === 'string' &&
+  moduleType.length > 0 &&
+  !NON_QUEUEABLE_LOG_MODULES.includes(moduleType);
 
-export const MAX_QUEUED_LOGS = 200;
+// A cap that drops the oldest entry is a lost log, so it is sized for a full day in the field.
+export const MAX_QUEUED_LOGS = 2000;
 export const MAX_LOG_ATTEMPTS = 5;
+
+// THE one variable that carries when a rep did something: `meta.occurredAt` (ISO-8601). It is taken
+// when `logEvent` is called, never when the request is sent or the network returns. A caller that
+// already knows the true moment (a photo's capture time) passes it in and it is kept.
+export const ACTION_TIME_KEY = 'occurredAt';
+
+export const stampActionTime = <T extends Record<string, any>>(
+  meta: T,
+  at: string
+): T & { occurredAt: string } => {
+  const existing = meta?.[ACTION_TIME_KEY];
+  const keep = typeof existing === 'string' && !Number.isNaN(Date.parse(existing));
+  return { ...meta, [ACTION_TIME_KEY]: keep ? existing : at };
+};
 
 export const stampOfflineLog = <T extends Record<string, any>>(
   meta: T,
   occurredAt: string
 ): T & { occurredAt: string; queuedOffline: true } => ({
-  ...meta,
-  occurredAt,
+  ...stampActionTime(meta, occurredAt),
   queuedOffline: true,
 });
 
@@ -96,4 +100,29 @@ export const rekeyQueuedLogs = (
     };
   });
   return changed ? next : (logs as QueuedActivityLog[]);
+};
+
+const logLeadId = (l: QueuedActivityLog): string =>
+  String(l.payload?.meta?.leadId ?? l.meta?.leadId ?? '').trim();
+
+// The next log that may be sent. A log still naming an id that exists only on this device (a lead,
+// appointment or calculator not yet created on the server) is skipped, together with every later
+// log of the same lead, so a lead's logs always go out in the order they happened and never ahead of
+// the lead itself. Logs of other leads are not held up behind it.
+export const nextSendableLog = (
+  queue: QueuedActivityLog[] | null | undefined,
+  ownerId: string,
+  isUnresolved: (l: QueuedActivityLog) => boolean
+): QueuedActivityLog | undefined => {
+  const blockedLeads = new Set<string>();
+  for (const l of replayableLogs(queue, ownerId)) {
+    const lead = logLeadId(l);
+    if (lead && blockedLeads.has(lead)) continue;
+    if (isUnresolved(l)) {
+      if (lead) blockedLeads.add(lead);
+      continue;
+    }
+    return l;
+  }
+  return undefined;
 };
