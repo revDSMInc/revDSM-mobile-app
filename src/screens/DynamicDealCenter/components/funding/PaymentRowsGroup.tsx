@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FS, FUND, PS } from './funding-theme';
 import { FlashMessage } from '../../../../config/message';
-import { planBelowMin, belowMinMsg, type DealPlan, type PayCategory } from '../../hooks/useDealPricing';
+import { planBelowMin, belowMinMsg, compactPlanLabel, type DealPlan, type PayCategory } from '../../hooks/useDealPricing';
 import { useIsOnline } from '../../../../hooks/useIsOnline';
 import {
   blockedOfflineMsg,
@@ -57,6 +57,26 @@ const CHIP: Record<LenderTone, { border: string; bg: string; name: string; sub: 
   approved: { border: '#BBF0D4', bg: '#F1FDF7', name: '#0F5132', sub: '#4B9E78', dot: '#12A96B' },
   declined: { border: '#FECDD3', bg: '#FFF1F2', name: '#9F1239', sub: '#E11D48', dot: '#E11D48' },
 };
+
+/** "Check (Bank Fee: 0%)" -> "Check". Fee text is noise on a sale sheet. */
+function stripBankFee(label?: string): string {
+  return String(label || '').replace(/\s*\(\s*Bank Fee:[^)]*\)/gi, '').trim();
+}
+
+/** Investment-Center shorthand: CK / CC / AMEX for basic methods, "GS2511, 0% APR, 6M" for financing. */
+function shortMethodLabel(plans: Record<string, DealPlan>, key?: string, fallback?: string, codeOnly = false): string {
+  const plan = plans[key || ''];
+  if (plan?.type === 'financing') {
+    const c = compactPlanLabel(plans, key);
+    if (c) return codeOnly ? c.split(',')[0].trim() : c;
+  }
+  const base = stripBankFee(plan?.label || fallback);
+  const k = String(key || '').toLowerCase();
+  if (/^check\b/i.test(base) || k === 'check') return 'CK';
+  if (/^amex\b/i.test(base) || k === 'amex') return 'AMEX';
+  if (/^(mc|visa)/i.test(base)) return 'CC';
+  return base;
+}
 
 export function PaymentRowsGroup({
   title,
@@ -181,7 +201,8 @@ export function PaymentRowsGroup({
     const settled = isSettledRow(row);
     const needs = row.pid === needsRowId;
     const amount = effectiveRowAmount(row, allRows, price);
-    const label = plans[row.method]?.label || row.methodLabel;
+    // Same string the Investment Center shows: "GS2511, 0% APR, 6M".
+    const label = shortMethodLabel(plans, row.method, row.methodLabel);
     const isOpen = openRowId === row.pid;
     const readOnlyAmount = settled || !!row.auto;
 
@@ -201,12 +222,12 @@ export function PaymentRowsGroup({
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Text style={{ fontSize: FS.LEAD, fontFamily: PS.bold, color: readOnlyAmount ? FUND.MUTED : FUND.TEXT, marginRight: 3 }}>$</Text>
           {readOnlyAmount ? (
-            <Text style={{ flex: 1, fontSize: FS.LEAD, fontFamily: PS.bold, color: locked ? FUND.TEXT : plain ? '#6B7280' : FUND.MUTED }} numberOfLines={1}>
+            <Text style={{ ...(plain ? { flex: 1 } : { flexShrink: 1 }), fontSize: FS.LEAD, fontFamily: PS.bold, color: locked ? FUND.TEXT : plain ? '#6B7280' : FUND.MUTED }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
               {amount.toLocaleString()}
             </Text>
           ) : (
             <TextInput
-              style={{ flex: 1, fontSize: FS.LEAD, fontFamily: PS.bold, color: FUND.TEXT, padding: 0 }}
+              style={{ ...(plain ? { flex: 1 } : { minWidth: 56, width: Math.max(56, (row.amount.length || 1) * 9 + 6), maxWidth: '100%' }), fontSize: FS.LEAD, fontFamily: PS.bold, color: FUND.TEXT, padding: 0 }}
               value={row.amount}
               onChangeText={(t) => onChangeAmount(row.pid, t.replace(/[^0-9.]/g, ''))}
               placeholder="0"
@@ -264,10 +285,10 @@ export function PaymentRowsGroup({
         style={
           plain
             ? { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4, minWidth: 0 }
-            : { flex: 1, minWidth: 0, minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, borderWidth: 1.6, borderColor: isOpen ? FUND.TEXT : fieldBorder, borderRadius: 12, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: fieldBg }
+            : { flex: 1, minWidth: 96, minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, borderWidth: 1.6, borderColor: isOpen ? FUND.TEXT : fieldBorder, borderRadius: 12, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: fieldBg }
         }
       >
-        <Text style={{ flex: 1, fontSize: FS.BODY, fontFamily: label ? (plain ? PS.semibold : PS.bold) : PS.semibold, color: label ? '#374151' : FUND.MUTED }} numberOfLines={1}>
+        <Text style={{ flex: 1, fontSize: FS.BODY, fontFamily: label ? (plain ? PS.semibold : PS.bold) : PS.semibold, color: label ? '#374151' : FUND.MUTED }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
           {label || 'Select Payment Method'}
         </Text>
         {row.decision && !plain ? (
@@ -292,7 +313,7 @@ export function PaymentRowsGroup({
               <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#D1D5DB' }} />
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: '#6B7280', textDecorationLine: 'line-through' }} numberOfLines={1}>
-                  {a.method}
+                  {stripBankFee(a.method)}
                 </Text>
                 <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: '#B0B4BA', marginTop: 1 }} numberOfLines={1}>
                   Archived{a.decision ? ` · ${a.decision === 'declined' ? 'Declined' : 'Approved'}` : ''}
@@ -371,35 +392,22 @@ export function PaymentRowsGroup({
       );
     }
 
-    const fieldLabel = { fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.SUBTEXT, marginBottom: 5 } as const;
     return (
-      <View
-        key={row.pid}
-        style={{ marginBottom: 10, borderWidth: 1.4, borderColor: needs ? FUND.AMBER : FUND.BORDER, borderRadius: 13, padding: 10, backgroundColor: needs ? FUND.AMBER_BG : '#FCFCFD' }}
-      >
-        {/* The "PAYMENT n" title only appears once the group holds MORE THAN ONE line. */}
-        {(rows.length > 1 || removable) && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: rows.length > 1 ? 'space-between' : 'flex-end', marginBottom: 8 }}>
-          {rows.length > 1 && (
-            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 0.4, textTransform: 'uppercase', color: FUND.MUTED }}>
-              {`Payment ${rowIndex + 1}`}
-            </Text>
-          )}
+      <View key={row.pid}>
+        {/* One line per payment: amount box (sized to its digits, never truncated) ·
+            method box (takes the rest) · remove. Rows were stacked into labelled
+            cards for a while; reps asked for the compact line back. */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <View style={{ flexShrink: 1, minWidth: 84, maxWidth: '55%', minHeight: 46, justifyContent: 'center', borderWidth: 1.6, borderColor: fieldBorder, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, backgroundColor: fieldBg }}>
+            {amountCell}
+          </View>
+          {methodCell}
           {removable && (
-            <TouchableOpacity onPress={() => onRemove(row.pid)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity onPress={() => onRemove(row.pid)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
               <Ionicons name="close" size={18} color={FUND.MUTED} />
             </TouchableOpacity>
           )}
         </View>
-        )}
-
-        <Text style={fieldLabel}>Amount</Text>
-        <View style={{ minHeight: 46, flexDirection: 'row', alignItems: 'center', borderWidth: 1.6, borderColor: fieldBorder, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, backgroundColor: fieldBg, marginBottom: 10 }}>
-          <View style={{ flex: 1 }}>{amountCell}</View>
-        </View>
-
-        <Text style={fieldLabel}>Payment method</Text>
-        <View style={{ alignSelf: 'stretch' }}>{methodCell}</View>
 
         {/* Options render IN FLOW below the row, matching the sheet's other
             selects — an absolutely-positioned menu inside a ScrollView is
@@ -451,7 +459,7 @@ export function PaymentRowsGroup({
   }
 
   return (
-    <View style={{ position: 'relative', backgroundColor: '#fff', borderWidth: 1.6, borderColor: FUND.BORDER, borderRadius: 16, paddingHorizontal: 12, paddingTop: 16, paddingBottom: 11, marginBottom: 14 }}>
+    <View style={{ position: 'relative', backgroundColor: '#fff', borderWidth: 1.6, borderColor: FUND.BORDER, borderRadius: 16, paddingHorizontal: 10, paddingTop: 16, paddingBottom: 11, marginBottom: 14 }}>
       <Text style={{ position: 'absolute', top: -9, left: 16, paddingHorizontal: 6, backgroundColor: FUND.PANEL, fontSize: FS.BODY, fontFamily: PS.bold, color: FUND.TEXT, zIndex: 2 }}>
         {title}
         {/* Shown only once the group holds MORE THAN ONE line — with a single row

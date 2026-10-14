@@ -16,6 +16,7 @@ import { scopeSignature } from '../utils/scope-signature';
 import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logSectionCleared, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
 import { buildFieldLogLabel, findFieldStoryLabel } from '../utils/story-log-label';
 import { isOnline } from '../../../services/connectivity';
+import { logEvent } from '../../../services/api/LoggerService';
 import {
   ensureOfflineWorkForLead,
   runUpload,
@@ -222,6 +223,8 @@ interface CreateExtra {
   paymentMethodLabel?: string;
   originalCalculatorId?: string;
   duplicateLog?: any;
+  /** A duplicate carries the SOURCE's totals so both tabs price (and therefore title) identically. */
+  totals?: CalcTab['totals'];
 }
 
 async function createRemoteTab(
@@ -236,7 +239,7 @@ async function createRemoteTab(
 ): Promise<CalcTab | null> {
   try {
     const seeded = mergeFullEntries(entries, schemas);
-    const totals = computeTotals(seeded);
+    const totals = extra.totals ?? computeTotals(seeded);
     const res = await LeadService.createCalculator(appointmentId, {
       title,
       position,
@@ -258,7 +261,7 @@ async function createRemoteTab(
       id: String(id),
       title: c.title || title,
       entries: c.entries ? mergeFullEntries(parseEntries(c.entries), schemas) : seeded,
-      totals: c.totals || totals,
+      totals: extra.totals ?? c.totals ?? totals,
       persisted: true,
       paymentMethod: extra.paymentMethod || c.paymentMethod,
       discountPercentage: extra.discountPercentage ?? c.discountPercentage,
@@ -296,6 +299,14 @@ export function useDynamicCalculators(
   const [appointmentId, setAppointmentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [offlineUnavailable, setOfflineUnavailable] = useState(false);
+  /**
+   * The rep pressed "Work offline" on a load that would not finish.
+   *
+   * ⚠️ Forces the device-authoritative path even though `isOnline()` says true - which on one
+   * bar it does, right up to the timeout. Without this escape the cached quote already on the
+   * device is unreachable precisely when it is most needed.
+   */
+  const [preferDevice, setPreferDevice] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastUpdated, setLastUpdated] = useState('');
 
@@ -328,7 +339,9 @@ export function useDynamicCalculators(
     const active = tabs.find((t) => t.id === activeTabId);
     if (!active) return;
     const calcId = (active as any).calculatorId || active.id;
-    if (!isBackendId(active.id) || loggedViewIds.current.has(calcId)) return;
+    // A calculator minted on the device (`calc-...`) is viewed too: online logs this for every tab, and
+    // the queued log is resolved to the server id once the calculator uploads.
+    if ((!isBackendId(active.id) && !isClientId(active.id)) || loggedViewIds.current.has(calcId)) return;
     loggedViewIds.current.add(calcId);
     logCalculatorViewed({
       userId: enteredBy,
@@ -454,10 +467,35 @@ export function useDynamicCalculators(
   const cacheTabsSnapshotRef = useRef(cacheTabsSnapshot);
   cacheTabsSnapshotRef.current = cacheTabsSnapshot;
 
+  // `persistOffline` is created once, so what it logs with is read from here.
+  const offlineLogCtx = useRef({ enteredBy: '', leadId: '' as string | undefined, appointmentId: '' as string | undefined });
+  offlineLogCtx.current = { enteredBy, leadId: leadId || undefined, appointmentId: appointmentId || undefined };
+
   const persistOffline = useCallback((explicit?: CalcTab[]) => {
     const workId = offlineWorkIdRef.current;
     if (!workId) return;
     if (!offlineModeRef.current && isOnline()) return;
+    // Online logs `auto_rename` when a save changes a tab's title (flushSave); a device save never
+    // reaches flushSave, so the same comparison is made here.
+    (explicit || tabsRef.current).forEach((t) => {
+      const prevTitle = lastSavedTitle.current[t.id];
+      if (prevTitle === undefined) {
+        lastSavedTitle.current[t.id] = t.title;
+        return;
+      }
+      if (prevTitle === t.title || t.title.startsWith(TEMP_TITLE_PREFIX)) return;
+      const ctx = offlineLogCtx.current;
+      if (ctx.enteredBy) {
+        logCalculatorAutoRenamed({
+          userId: ctx.enteredBy,
+          calculatorId: (t as any).calculatorId || t.id,
+          appointmentId: (t as any).appointmentId || ctx.appointmentId,
+          calculatorTitle: t.title,
+          leadId: ctx.leadId,
+        }).catch(() => {});
+      }
+      lastSavedTitle.current[t.id] = t.title;
+    });
     const calculators: OfflineCalculatorWork[] = (explicit || tabsRef.current).map((t) => ({
       clientId: t.id,
       serverId: isBackendId(t.id) ? t.id : undefined,
@@ -672,7 +710,7 @@ export function useDynamicCalculators(
   );
 
   useEffect(() => {
-    const key = String(leadId || 'none');
+    const key = `${leadId || 'none'}:${preferDevice ? 'device' : 'net'}`;
     if (bootstrapLeadRef.current === key) return; // already bootstrapped this lead
     bootstrapLeadRef.current = key;
     let cancelled = false;
@@ -683,7 +721,7 @@ export function useDynamicCalculators(
       if (work) offlineWorkIdRef.current = work.clientId;
 
       const deviceIsAuthoritative =
-        !isOnline() || isClientId(String(leadId || '')) || hasUnsyncedDealCenter(work);
+        preferDevice || !isOnline() || isClientId(String(leadId || '')) || hasUnsyncedDealCenter(work);
 
       if (deviceIsAuthoritative) {
         offlineModeRef.current = true;
@@ -745,10 +783,22 @@ export function useDynamicCalculators(
                   ];
 
           if (cancelled) return;
+          hydrated.forEach((t) => { lastSavedTitle.current[t.id] = t.title; });
           setTabs(hydrated);
           setActiveTabId(hydrated[0].id);
           setLoading(false);
           if (source !== 'cache') persistOfflineRef.current?.(hydrated);
+          if (source === 'mint' && enteredBy) {
+            // The first calculator of an offline lead: online logs this when it creates the tab.
+            logCalculatorCreated({
+              userId: enteredBy,
+              calculatorId: hydrated[0].id,
+              appointmentId: apptServerIdRef.current || apptClientId,
+              calculatorTitle: hydrated[0].title,
+              isFirstCalculator: true,
+              leadId: leadId || undefined,
+            }).catch(() => {});
+          }
           return;
         }
         if (!isOnline()) {
@@ -813,7 +863,7 @@ export function useDynamicCalculators(
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leadId]);
+  }, [leadId, preferDevice]);
 
   useEffect(() => {
     setTabs((prev) => {
@@ -883,8 +933,68 @@ export function useDynamicCalculators(
     [activeTabId, retitle, markDirty, enteredBy, leadId, categoryNameOf]
   );
 
+  // A calculator added while the device is authoritative (offline, or a lead/appointment that exists only
+  // here). Nothing is sent: it takes a `calc-...` id, is saved to the device record, and uploads with
+  // the rest of the deal. The server is never asked, so its logs are written here instead.
+  const deviceTabFrom = useCallback(
+    (title: string, entries: Record<string, CalculatorEntry>, extra: CreateExtra): CalcTab => {
+      const seeded = mergeFullEntries(entries, schemasRef.current);
+      const tab: CalcTab = {
+        id: newWorkId('calc'),
+        title,
+        entries: seeded,
+        totals: extra.totals ?? computeTotals(seeded),
+        paymentMethod: extra.paymentMethod,
+        discountPercentage: extra.discountPercentage,
+        persisted: false,
+      };
+      lastSavedTitle.current[tab.id] = tab.title;
+      offlineModeRef.current = true;
+      const next = retitle([...tabsRef.current, tab]);
+      tabsRef.current = next;
+      setTabs(next);
+      setActiveTabId(tab.id);
+      markDirty(tab.id);
+      persistOfflineRef.current?.(next);
+      return tab;
+    },
+    [retitle, markDirty]
+  );
+  const onDevice = useCallback(
+    () => offlineModeRef.current || !isOnline() || isClientId(String(appointmentId || '')),
+    [appointmentId]
+  );
+
   const handleAddTab = useCallback(async () => {
     const placeholder = String(tabs.length + 1);
+    if (onDevice() && offlineWorkIdRef.current) {
+      const defaults = inheritedDefaults();
+      const created = deviceTabFrom(placeholder, {}, defaults);
+      if (enteredBy) {
+        logCalculatorCreated({
+          userId: enteredBy,
+          calculatorId: created.id,
+          appointmentId: appointmentId || '',
+          calculatorTitle: created.title,
+          calculatorPosition: tabs.length + 1,
+          leadId: leadId || undefined,
+        }).catch(() => {});
+        if (defaults.paymentMethod) {
+          logPaymentMethodInherited({
+            userId: enteredBy,
+            calculatorId: created.id,
+            appointmentId: appointmentId || '',
+            calculatorTitle: created.title,
+            fromCalculator: null,
+            toCalculator: created.id,
+            paymentMethod: defaults.paymentMethod,
+            inheritanceSource: 'default payment method',
+            ...(leadId ? { leadId } : {}),
+          }).catch(() => {});
+        }
+      }
+      return;
+    }
     if (appointmentId) {
       const defaults = inheritedDefaults();
       const created = await createRemoteTab(appointmentId, placeholder, {}, leadId, enteredBy, schemasRef.current, tabs.length + 1, defaults);
@@ -922,7 +1032,7 @@ export function useDynamicCalculators(
     const local: CalcTab = { id: `local-${Date.now()}`, title: placeholder, entries: buildAllEntriesMap(schemasRef.current), totals: { ...ZERO } };
     setTabs((p) => retitle([...p, local]));
     setActiveTabId(local.id);
-  }, [tabs.length, appointmentId, leadId, enteredBy, retitle, inheritedDefaults]);
+  }, [tabs.length, appointmentId, leadId, enteredBy, retitle, inheritedDefaults, onDevice, deviceTabFrom]);
 
   const handleDuplicateTab = useCallback(
     async (tabId: string) => {
@@ -932,6 +1042,47 @@ export function useDynamicCalculators(
       const entries = mergeFullEntries(JSON.parse(JSON.stringify(source.entries)), schemasRef.current);
       const position = tabs.length + 1;
       const sourceBackendId = isBackendId(source.id) ? source.id : undefined;
+      if (onDevice() && offlineWorkIdRef.current) {
+        const copy = deviceTabFrom(placeholder, entries, {
+          ...inheritedDefaults(),
+          ...(source.totals ? { totals: JSON.parse(JSON.stringify(source.totals)) } : {}),
+        });
+        if (enteredBy) {
+          // Online the server writes the `duplicate` log from `duplicateLog`; no request is made here.
+          logEvent('duplicate', {
+            user_id: enteredBy,
+            created_by: enteredBy,
+            module_type: 'calculator',
+            meta: {
+              ...(leadId ? { leadId } : {}),
+              sourceCalculatorId: source.id,
+              sourceCalculatorTitle: source.title,
+              newCalculatorTitle: placeholder,
+              calculatorId: copy.id,
+              appointmentId,
+              position,
+              action: 'calculator_duplicated',
+            },
+          }).catch(() => {});
+          const inherited = (source as any).paymentMethod || '';
+          if (inherited) {
+            logPaymentMethodInherited({
+              userId: enteredBy,
+              calculatorId: copy.id,
+              appointmentId: appointmentId || '',
+              calculatorTitle: placeholder,
+              fromCalculator: source.id,
+              toCalculator: copy.id,
+              paymentMethod: inherited,
+              inheritanceSource: 'calculator duplication',
+              sourceCalculatorTitle: source.title,
+              newCalculatorTitle: placeholder,
+              ...(leadId ? { leadId } : {}),
+            }).catch(() => {});
+          }
+        }
+        return;
+      }
       const duplicateLog =
         enteredBy && sourceBackendId
           ? {
@@ -953,6 +1104,7 @@ export function useDynamicCalculators(
       if (appointmentId) {
         const created = await createRemoteTab(appointmentId, placeholder, entries, leadId, enteredBy, schemasRef.current, position, {
           ...inheritedDefaults(),
+          ...(source.totals ? { totals: JSON.parse(JSON.stringify(source.totals)) } : {}),
           ...(sourceBackendId ? { originalCalculatorId: sourceBackendId } : {}),
           ...(duplicateLog ? { duplicateLog } : {}),
         });
@@ -979,11 +1131,11 @@ export function useDynamicCalculators(
           return;
         }
       }
-      const local: CalcTab = { id: `local-${Date.now()}`, title: placeholder, entries, totals: computeTotals(entries) };
+      const local: CalcTab = { id: `local-${Date.now()}`, title: placeholder, entries, totals: source.totals ? JSON.parse(JSON.stringify(source.totals)) : computeTotals(entries) };
       setTabs((p) => retitle([...p, local]));
       setActiveTabId(local.id);
     },
-    [tabs, appointmentId, leadId, enteredBy, retitle, inheritedDefaults]
+    [tabs, appointmentId, leadId, enteredBy, retitle, inheritedDefaults, onDevice, deviceTabFrom]
   );
 
   const handleDeleteTab = useCallback(
@@ -1239,6 +1391,7 @@ export function useDynamicCalculators(
     appointmentId,
     loading,
     offlineUnavailable,
+    workFromDevice: () => setPreferDevice(true),
     isSaving,
     lastUpdated,
     handleEntryChange,

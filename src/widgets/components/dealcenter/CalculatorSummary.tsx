@@ -49,6 +49,7 @@ import { logEvent } from '../../../services/api/LoggerService';
 import { sanitizeCalculatorLogTitle } from '../../../utils/activity-log/job-builder-auto-log';
 import { SettingsService } from '../../../services/api/SettingsService';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
+import { BufferedTextInput } from '../../common/BufferedTextInput';
 
 const getOrdinal = (n: number) => {
   const j = n % 10,
@@ -905,7 +906,7 @@ export const CalculatorSummary = ({
                     >
                       $
                     </Text>
-                    <TextInput
+                    <BufferedTextInput
                       className={`flex-1 font-black p-0 ${activeDrop || activeCalc.isRolloutConfirmed
                         ? 'text-green-600'
                         : 'text-text-primary'
@@ -924,7 +925,7 @@ export const CalculatorSummary = ({
                       returnKeyType="done"
                       editable={!activeCalc.isRolloutConfirmed && !activeDrop && !isJobBuilderSubmitted}
                       onChangeText={handlePriceChange}
-                      onEndEditing={handlePriceBlur}
+                      onEndEditing={(_e, t) => handlePriceBlur(t)}
                       onFocus={() => {
                         setTimeout(() => {
                           scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -1131,7 +1132,7 @@ export const CalculatorSummary = ({
                           >
                             <View collapsable={false} className="flex-row items-center flex-1">
                               <Text className="text-xs font-bold text-slate-500 mr-1">$</Text>
-                              <TextInput
+                              <BufferedTextInput
                                 ref={downPaymentInputRef}
                                 autoFocus={true}
                                 className="text-xs font-black text-slate-800 p-0 flex-1"
@@ -1159,14 +1160,15 @@ export const CalculatorSummary = ({
                                   }, 150);
                                 }}
 
-                                onBlur={async () => {
-                                  updateActive({ downPayment: preOrderDownPayment });
+                                onBlur={async (_e, text) => {
+                                  const dp = Number(text.replace(/[^0-9]/g, ''));
+                                  updateActive({ downPayment: dp });
                                   try {
-                                    await LeadService.updateCalculator(activeCalc._id, { downPayment: preOrderDownPayment });
+                                    await LeadService.updateCalculator(activeCalc._id, { downPayment: dp });
                                   } catch (err) {
                                     console.warn('Failed to save down payment', err);
                                   }
-                                  if (preOrderDownPayment === 0) {
+                                  if (dp === 0) {
                                     setShowPreOrderDownPaymentInput(false);
                                   }
                                 }}
@@ -1400,7 +1402,7 @@ export const CalculatorSummary = ({
                   <View className="mt-2 mb-6">
                     <View className="bg-[#F4F6F8] border border-border rounded-xl px-4 h-14 flex-row items-center">
                       <Text className="text-slate-400 font-bold mr-2">$</Text>
-                      <TextInput
+                      <BufferedTextInput
                         className="flex-1 text-slate-900 font-bold text-sm"
                         placeholder="Enter price..."
                         placeholderTextColor="#919EAB"
@@ -1412,8 +1414,8 @@ export const CalculatorSummary = ({
                           setDropValue(v);
                           if (error) setError(null);
                         }}
-                         onSubmitEditing={() => {
-                          const num = Number(dropValue.replace(/[^0-9.]/g, ''));
+                         onSubmitEditing={(_e, dropText) => {
+                          const num = Number(dropText.replace(/[^0-9.]/g, ''));
                           const costPrice = Math.round(results.costAtCheck ?? results.price50);
                           const endPrice = Number(activeCalc.price) || 0;
                           const dropPaymentMethod = selectedPlan || activeCalc.inputs.paymentPlan;
@@ -1453,8 +1455,8 @@ export const CalculatorSummary = ({
                             setShowDropInput(false);
                           }
                         }}
-                        onBlur={() => {
-                          const num = Number(dropValue.replace(/[^0-9.]/g, ''));
+                        onBlur={(_e, dropText) => {
+                          const num = Number(dropText.replace(/[^0-9.]/g, ''));
                           const costPrice = Math.round(results.costAtCheck ?? results.price50);
                           const endPrice = Number(activeCalc.price) || 0;
                           const dropPaymentMethod = selectedPlan || activeCalc.inputs.paymentPlan;
@@ -2044,7 +2046,7 @@ export const CalculatorSummary = ({
                             >
                               $
                             </Text>
-                            <TextInput
+                            <BufferedTextInput
                               ref={dpInputRef}
                               autoFocus={true}
                               className="flex-1 font-bold text-base text-slate-900 p-0"

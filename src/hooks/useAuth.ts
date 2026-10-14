@@ -11,6 +11,7 @@ import { logLogout } from '../utils/activity-log/auth-log';
 import { clearPendingLogs } from '../services/api/LoggerService';
 import { clearActiveInstallerJob } from '../utils/activity-log/installer-log';
 import { endInstallerWorkSession } from '../utils/installer-work-session';
+import { endActiveLeadWorkSession } from '../utils/lead-work-session';
 import PushNotificationService from '../services/PushNotificationService';
 import { applyPendingSettingsToUser } from '../utils/offline-settings';
 import {
@@ -43,6 +44,11 @@ export const useAuth = () => {
       logLogout(user);
 
       await endInstallerWorkSession('logout');
+
+      // A rep who logs out mid-appointment is no longer at that door. Without this the lead stays
+      // open on the server and the rep reads as live on the ops board until something else ends
+      // it. Ordered BEFORE `setSessionHeader(null)`: both calls need the token.
+      await endActiveLeadWorkSession();
 
       await PushNotificationService.unbind();
 

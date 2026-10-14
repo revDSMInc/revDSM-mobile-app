@@ -33,6 +33,11 @@ import { convertJpegToPdf as sharedConvertJpegToPdf } from '../../../utils/jpeg-
 import { useAuth } from '../../../hooks/useAuth';
 import SocketManager from '../../../services/SocketManager';
 import { logEvent } from '../../../services/api/LoggerService';
+import { getLocalCachePath, getWarmedLocalUri } from '../../../utils/imageFileCache';
+import {
+  downloadResultMessage,
+  offlineDownloadNotice,
+} from '../../../utils/photo-download-plan';
 
 const getNativeModules = () => {
   try {
@@ -74,6 +79,7 @@ import { DynamicManagePhotosView } from '../lead-center/DynamicManagePhotosView'
 import { DynamicInspectionView } from '../lead-center/DynamicInspectionView';
 import { useInspectionSchema } from '../../../hooks/useInspectionSchema';
 import { useIsOnline } from '../../../hooks/useIsOnline';
+import { FlashMessage } from '../../../config/message';
 import {
   indexSchema,
   getCapturableSlots,
@@ -84,6 +90,7 @@ import { uploadQueueManager, UploadQueueItem } from '../../../utils/uploadQueue'
 import { offlinePhotoDeleteQueue } from '../../../services/offlinePhotoDeleteQueue';
 import { getCaptureCoords } from '../../../utils/capture-location';
 import { resolveS3Url } from '../../../utils/s3-utils';
+import { countLeadPhotos, PHOTO_COUNT_HINT } from '../../../utils/lead-photo-counts';
 
 interface SectionImage {
   uri: string;
@@ -809,6 +816,56 @@ export const JobDocsSection = ({
       return;
     }
 
+    /**
+     * Resolve a photo to a file already on this device.
+     *
+     * ⚠️ Two lookups, not one. `getWarmedLocalUri` is the in-memory map and only knows what
+     * THIS app session warmed; after a relaunch it is empty while the files are still there.
+     * `getLocalCachePath` + `fs.exists` is the authoritative check, and it is what makes the
+     * feature survive the rep closing the app. The path deliberately ignores the S3 query
+     * string, so a re-signed URL still finds yesterday's file.
+     */
+    const resolveOnDevice = async (uri: string): Promise<string | null> => {
+      if (uri.startsWith('file://') || uri.startsWith('/')) return uri;
+      const warmed = getWarmedLocalUri(uri);
+      if (warmed) return warmed;
+      const path = getLocalCachePath(uri);
+      if (!path) return null;
+      try {
+        return (await ReactNativeBlobUtil.fs.exists(path)) ? `file://${path}` : null;
+      } catch {
+        return null;
+      }
+    };
+
+    // The component's own reactive flag (line ~227); no second source of truth here.
+    const online = isOnline;
+
+    // Resolve every photo against the device cache BEFORE deciding anything. Offline, this is
+    // the whole feature: the bytes are already here and only needed looking up.
+    const resolved = await Promise.all(
+      imagesToDownload.map(async (img) => ({ img, local: await resolveOnDevice(img.uri) }))
+    );
+
+    const onDevice = resolved.filter((r) => r.local);
+    const needsNetwork = resolved.filter((r) => !r.local);
+
+    // Offline, anything not on the device is simply not happening - say so up front rather
+    // than letting it fail one by one into a misleading "Failed to download photos".
+    if (!online) {
+      const notice = offlineDownloadNotice(onDevice.length, needsNetwork.length);
+      if (notice.kind === 'blocked') {
+        Alert.alert(notice.title, notice.message);
+        setIsDownloading(false);
+        setShowDownloadModal(false);
+        return;
+      }
+      if (notice.kind === 'partial') Alert.alert(notice.title, notice.message);
+    }
+
+    const attempts = online ? resolved : resolved.filter((r) => r.local);
+    const skippedOffline = resolved.length - attempts.length;
+
     const saveToCameraRollWithRetry = async (tag: string, type: 'photo' | 'video', retries = 2, delayMs = 1000) => {
       for (let i = 0; i <= retries; i++) {
         try {
@@ -826,17 +883,15 @@ export const JobDocsSection = ({
     let completedCount = 0;
     let successCount = 0;
 
-    const downloadAndSavePromises = imagesToDownload.map(async (img, idx) => {
+    const downloadAndSavePromises = attempts.map(async ({ img, local }, idx) => {
       try {
-        const mediaUri = img.uri;
-        let localPath = '';
+        // Already on the device - straight to the camera roll, no network at all.
+        let localPath = local || '';
 
-        if (mediaUri.startsWith('file://') || mediaUri.startsWith('/')) {
-          localPath = mediaUri;
-        } else {
+        if (!localPath) {
           const ext = 'jpg';
           const path = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/download_${Date.now()}_${idx}.${ext}`;
-          const res = await ReactNativeBlobUtil.config({ path }).fetch('GET', mediaUri);
+          const res = await ReactNativeBlobUtil.config({ path }).fetch('GET', img.uri);
           localPath = res.path();
         }
 
@@ -858,16 +913,24 @@ export const JobDocsSection = ({
     setIsDownloading(false);
     setShowDownloadModal(false);
 
-    if (successCount === imagesToDownload.length) {
-      Alert.alert('Success', `Successfully downloaded all ${successCount} photos to your gallery!`);
-    } else if (successCount > 0) {
-      Alert.alert(
-        'Partial Download',
-        `Downloaded ${successCount} of ${imagesToDownload.length} photos. Some failed.`
-      );
-    } else {
-      Alert.alert('Error', 'Failed to download photos. Please try again.');
-    }
+    // Counts come from `downloadResultMessage` (it knows about `skippedOffline`, which the
+    // offline filter above produces); delivery is the app's own banner, not a native Alert.
+    // ⚠️ Raised after a beat: the download modal was only just dismissed and a banner shown
+    // under a dismissing modal is never seen.
+    const { title, message } = downloadResultMessage(
+      successCount,
+      attempts.length,
+      skippedOffline
+    );
+    setTimeout(() => {
+      if (successCount === 0) {
+        FlashMessage.error(title, message);
+      } else if (successCount === attempts.length && skippedOffline === 0) {
+        FlashMessage.success(title, message);
+      } else {
+        FlashMessage.warning(title, message);
+      }
+    }, 450);
   };
 
   const onResultPress = (result: string) => {
@@ -1338,77 +1401,63 @@ export const JobDocsSection = ({
     return { captured: totalCaptured, total: totalSlots };
   }, [getTabCounts]);
 
+  const [photoCountHintOpen, setPhotoCountHintOpen] = useState(false);
+
   const dynamicCounts = useMemo(() => {
     if (!isDynamicInspection) return null;
     const photos = (Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [])
       .filter(Boolean)
       .filter((p: any) => !deletedUrls.has(p?.s3url));
 
-    const seen = new Set<string>();
-    const countBySub = new Map<string, number>();
-    let totalPhotos = 0;
-    photos.forEach((p: any) => {
-      const sub = String(p.subcategory || '');
-      if (sub.toLowerCase().includes('(annotated)')) return; // annotated aren't slot photos
-      const id = p.s3url || p._id;
-      if (id) {
-        if (seen.has(id)) return;
-        seen.add(id);
-      }
-      const k = `${norm(p.category)}||${norm(sub)}`;
-      countBySub.set(k, (countBySub.get(k) || 0) + 1);
-      totalPhotos += 1;
-    });
-
-    const pendingBySub = new Map<string, number>();
-    (queueItems || []).forEach((it: any) => {
-      if (it.leadId !== lead?._id) return;
-      const sub = String(it.subcategory || '');
-      if (sub.toLowerCase().includes('(annotated)')) return;
-      const k = `${norm(it.categoryName)}||${norm(sub)}`;
-      pendingBySub.set(k, (pendingBySub.get(k) || 0) + 1);
-    });
-    pendingBySub.forEach((pd, k) => {
-      const extra = Math.max(0, pd - (countBySub.get(k) || 0));
-      if (extra > 0) {
-        countBySub.set(k, (countBySub.get(k) || 0) + extra);
-        totalPhotos += extra;
-      }
-    });
+    const pending = (queueItems || [])
+      .filter((it: any) => it.leadId === lead?._id)
+      .map((it: any) => ({
+        uri: it.uri,
+        s3url: it.s3url,
+        category: it.categoryName,
+        subcategory: it.subcategory,
+      }));
 
     let totalSlots = 0;
-    let filledSlots = 0;
+    const configuredKeys = new Set<string>();
     configuredProducts.forEach((prod: any) => {
       const pfx = prod?.name || prod?.id ? `${prod.name || prod.id} — ` : '';
       indexSchema(prod?.categories || []).leafCategories.forEach((cat: any) => {
         getCapturableSlots(cat).forEach((slot: any) => {
           totalSlots += 1;
-          const k = `${norm(`${pfx}${cat.label}`)}||${norm(slot.storageName)}`;
-          if ((countBySub.get(k) || 0) > 0) filledSlots += 1;
+          configuredKeys.add(`${norm(`${pfx}${cat.label}`)}||${norm(slot.storageName)}`);
         });
       });
     });
 
-    return { totalPhotos, totalSlots, filledSlots };
+    // One rule for every surface - see `utils/lead-photo-counts`. Extras and annotated photos
+    // count, and each brings its own slot, so the denominator grows as the rep adds them.
+    return countLeadPhotos([...photos, ...pending], configuredKeys, totalSlots);
   }, [isDynamicInspection, configuredProducts, lead?.salesPhotos, queueItems, lead?._id, deletedUrls]);
 
   const displayTotal = useMemo(() => {
-    if (dynamicCounts) return dynamicCounts.totalSlots;
+    if (dynamicCounts) return dynamicCounts.slots;
     return globalCounts.total;
   }, [dynamicCounts, globalCounts]);
 
   const totalUploaded = useMemo(() => {
-    if (dynamicCounts) return dynamicCounts.filledSlots;
+    if (dynamicCounts) return dynamicCounts.photos;
     return globalCounts.captured;
   }, [dynamicCounts, globalCounts]);
 
   const totalPhotosCount = useMemo(() => {
-    if (dynamicCounts) return dynamicCounts.totalPhotos;
+    if (dynamicCounts) return dynamicCounts.photos;
+    const seen = new Set<string>();
     let count = 0;
     IMAGE_CATEGORIES.forEach((cat) => {
-      const imgs = getImagesForSection(cat);
-      const nonAnnotated = imgs.filter(img => !img.subcategory?.toLowerCase().includes('(annotated)'));
-      count += nonAnnotated.length;
+      getImagesForSection(cat).forEach((img: any) => {
+        const id = img?.s3url || img?.uri || img?._id;
+        if (id) {
+          if (seen.has(id)) return;
+          seen.add(id);
+        }
+        count += 1;
+      });
     });
     return count;
   }, [dynamicCounts, getImagesForSection]);
@@ -1490,9 +1539,34 @@ export const JobDocsSection = ({
 
       {/* Progress Bar */}
       <View className="mb-3 mt-2 px-1">
-        <Text className="text-[14px] font-semibold mb-2.5" style={{ color: '#454F5B' }}>
-          {totalUploaded}/{displayTotal} slots • {totalPhotosCount} {totalPhotosCount === 1 ? 'photo' : 'photos'}
-        </Text>
+        <View className="flex-row items-center mb-2.5">
+          {/* Why the total moves as extras and annotations are added. An in-card popover rather
+              than a Modal - this screen already stacks several, and iOS drops a presentation
+              requested while another is dismissing. */}
+          <View>
+            {photoCountHintOpen && (
+              <View
+                className="absolute bottom-full left-0 mb-1.5 rounded-lg px-3 py-2"
+                style={{ width: 230, backgroundColor: '#1C252E', zIndex: 10, elevation: 6 }}
+              >
+                <Text className="text-[11px] leading-[15px]" style={{ color: '#FFFFFF' }}>
+                  {PHOTO_COUNT_HINT}
+                </Text>
+              </View>
+            )}
+            <TouchableOpacity
+              onPress={() => setPhotoCountHintOpen((v) => !v)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityRole="button"
+              accessibilityLabel="How photos are counted"
+            >
+              <Icon name="information-outline" size={16} color="#919EAB" />
+            </TouchableOpacity>
+          </View>
+          <Text className="text-[14px] font-semibold ml-1.5" style={{ color: '#454F5B' }}>
+            {totalUploaded}/{displayTotal} slots • {totalPhotosCount} {totalPhotosCount === 1 ? 'photo' : 'photos'}
+          </Text>
+        </View>
         <View
           className="w-full h-1.5 rounded-full overflow-hidden"
           style={{ backgroundColor: '#919EAB1F' }}

@@ -15,7 +15,8 @@ import {
   Linking,
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
-import { GlobalKeyboardAvoidingView } from '../../common/keyboard/GlobalKeyboard';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardAvoidingView, KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { CustomInput } from '../../common/CustomInput';
 import { NumPadProvider } from '../../common/keyboard/NumPad';
 import { CustomButton } from '../../common/CustomButton';
@@ -80,6 +81,8 @@ export default function LeadCreateModal({
   prefilledOwnerName = '',
 }: Props) {
   const { colors, isDark } = useTheme();
+  // Inside a Modal the insets read 0 / stale, so floor them (Android 3-button nav bar is ~48dp).
+  const insets = useSafeAreaInsets();
   const createLeadMutation = useCreateLeadMutation();
   const online = useIsOnline();
   const initialFormState: {
@@ -116,7 +119,7 @@ export default function LeadCreateModal({
 
   const [form, setForm] = useState(initialFormState);
 
-  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollViewRef = useRef<any>(null);
   const [numPadActive, setNumPadActive] = useState(false);
   const flashRef = useRef<any>(null);
   const [addressFieldY, setAddressFieldY] = useState(0);
@@ -127,11 +130,21 @@ export default function LeadCreateModal({
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
 
+  // The keyboard (or the in-app pad) covers the nav bar, so the footer's nav-bar floor would only be dead space above it.
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const footerBottom = keyboardOpen || numPadActive ? 12 : Math.max(insets.bottom, Platform.OS === 'android' ? 48 : 20);
+
   useEffect(() => {
-    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+    const ios = Platform.OS === 'ios';
+    const showSubscription = Keyboard.addListener(ios ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardOpen(true));
+    const hideSubscription = Keyboard.addListener(ios ? 'keyboardWillHide' : 'keyboardDidHide', () => {
       setShowSuggestions(false);
+      setKeyboardOpen(false);
     });
-    return () => hideSubscription.remove();
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -539,12 +552,15 @@ export default function LeadCreateModal({
       transparent
       statusBarTranslucent={Platform.OS === 'android'}
     >
-      <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.4)' }]}>
-        <GlobalKeyboardAvoidingView
-          isModal
-          enabled={!numPadActive}
-          style={[styles.modalContainer, { backgroundColor: isDark ? colors.surface : '#fff' }]}
-        >
+      {/* keyboard-controller's KeyboardAvoidingView (not RN's): KeyboardProvider makes the app edge-to-edge, so Android no longer
+          resizes the window and RN's one (and a hand-measured lift) left the pinned button under the system keyboard. It shrinks the
+          sheet to the space above the keyboard; off while the in-app pad is up (the pad sizes the form itself). */}
+      <KeyboardAvoidingView
+        behavior="padding"
+        enabled={!numPadActive}
+        style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.4)' }]}
+      >
+        <View style={[styles.modalContainer, { backgroundColor: isDark ? colors.surface : '#fff' }]}>
           {/* Custom number pad: Lead ID + Phone use it; Email/Name/Code/Address keep the system keyboard. */}
           <NumPadProvider layoutAnimated onActiveChange={setNumPadActive}>
           {/* Header */}
@@ -570,10 +586,11 @@ export default function LeadCreateModal({
             </TouchableOpacity>
           </View>
 
-          <ScrollView
+          <KeyboardAwareScrollView
             ref={scrollViewRef}
+            bottomOffset={24}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 24, paddingBottom: 80 }}
+            contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 }}
             scrollEnabled={!showSuggestions}
             keyboardShouldPersistTaps="handled"
           >
@@ -1058,20 +1075,31 @@ export default function LeadCreateModal({
                 </View>
               )}
 
-              <CustomButton
-                title="Save & Submit Lead"
-                onPress={handleSubmit}
-                loading={createLeadMutation.isPending}
-              />
-
               {/* Spacer for Address Suggestions when Keyboard is open */}
               {showSuggestions && <View style={{ height: 350 }} />}
             </View>
-          </ScrollView>
+          </KeyboardAwareScrollView>
+          {/* Pinned footer: the submit button used to be the last item of the scroll and was clipped / pushed off. */}
+          <View
+            style={{
+              paddingHorizontal: 24,
+              paddingTop: 12,
+              paddingBottom: footerBottom,
+              borderTopWidth: 1,
+              borderTopColor: isDark ? colors.border : colors.grey[200],
+              backgroundColor: isDark ? colors.surface : '#fff',
+            }}
+          >
+            <CustomButton
+              title="Save & Submit Lead"
+              onPress={handleSubmit}
+              loading={createLeadMutation.isPending}
+            />
+          </View>
           <RNFlashMessage ref={flashRef} position="top" canRegisterAsDefault={false} />
           </NumPadProvider>
-        </GlobalKeyboardAvoidingView>
-      </View>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1084,6 +1112,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContainer: {
+    flex: 1,
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
     maxHeight: '90%',

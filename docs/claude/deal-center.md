@@ -2765,7 +2765,7 @@ Ticket: the two radio cards truncated "Down Pay…". Now a `DropdownChoice` (`co
 - Once money has moved (`structureLocked`) the other options are disabled and explain why, same as before.
 - `structureHint` takes a 4th `noDown` arg.
 
-### Result Lead opens on "No Down Payment" and warns on Confirm
+### Result Lead opens on "No Down Payment" (the Confirm warning was REMOVED)
 
 `ResultJobModal` defaults the dropdown to **No Down Payment** unless the rollout carried a down payment (`initialDownPayment > 0`); a saved deal still restores through `inferNoDownPayment`. Tapping **Confirm** on No Down Payment raises the app's own `ConfirmDialog` (tone `warn`) — "you are going with financing for the whole payment" — and only **Continue** runs `goFunding(true)`. Down Payment and Upfront show nothing.
 
@@ -2943,3 +2943,295 @@ Ticket: on the 1 Year Program card, with **Default** selected, the pencil pick s
 - `OneYearMonthlyPlan.tsx`: the pencil on Default now calls `commit('default', key, true)` => stored `{ mode: 'default', planKey, isDefault: true }` (pencil on Match/custom still stores `custom`). `RolloutView.leadOneYearDefault` = the plan of the first calculator with `oneYearMonthlyPlan.isDefault`; it is passed down as `leadDefault`.
 - A calculator INHERITS it while it has nothing stored, or a bare `Default` (`mode: 'default'`, no `isDefault`): display uses `leadDefault.planKey` and an effect persists it (`onChange`) so a calculator added LATER, or one the rep has not opened, still carries it. Explicit **Match**, a **custom** pick, or its own default pick are the rep's decision for that calculator and are never overwritten; that is how the default "stops reflecting" there (clicking Match clears `isDefault`).
 - ⚠️ The lead default is derived from the calculators themselves (no extra field, nothing on the user profile), so it lives and dies with the lead; if every `isDefault` calculator is changed, the default is gone. ⚠️ Only the CURRENTLY selected calculator renders, so other calculators' stored `monthlyPayment` is refreshed when each is opened (the effect only runs mounted); nothing else reads that field today. ⚠️ Unrelated to the profile-level "Set as Default" (payment method) toggle. Not verified on device.
+
+### Calculator Summary: number-pad typing lag (`BufferedTextInput`)
+
+Ticket: *"inside the calculator it still lags with the custom num pad."* The Summary's money inputs (End Price, pre-order Down Payment, Drop price, current Down Payment) wrote parent state on EVERY key (`priceText` / `dropValue` / `preOrderDownPayment` / `handleCurrentSetDownPayment`), re-rendering the 2.4k-line `CalculatorSummary` per digit and delaying the next tap. They now use `widgets/common/BufferedTextInput.tsx`: a local `value`, parent notified 180 ms after the last key and flushed on blur / submit / end-editing.
+- ⚠️ **Blur/submit/endEditing handlers receive the flushed text as a 2nd arg** and must use it - parent state is still stale in that same tick (`handlePriceBlur(text?)`, drop `onSubmitEditing`/`onBlur`, pre-order down-payment `onBlur`). Reading `dropValue`/`priceText` there reintroduces a lost last digit.
+- Parent value changes sync into the field only when no edit is pending. Live totals now trail typing by ~180 ms by design. The form fields (`InputField`, `PricingInputField`) already buffered locally. Not verified on device.
+
+### Calculator form inputs: typed value flipped bold -> regular
+Ticket: the quantity box (`InputField` in `dealcenter/SharedElements.tsx`, e.g. Gutter "5\" Gutter/DS/E") showed digits in Black weight while typing and in a regular weight once the number pad's `setNativeProps({ text })` / re-render landed, so the value visibly changed. The input is now `font-normal` (the value never needs bold); the label above it keeps `font-black`. ⚠️ Don't put a heavy `font-*` on a number-pad field: on Android the native-text write can resolve the face differently from the initial render. `PricingInputField` and the Summary price boxes were left as they were - change them the same way if they show the flip. Not verified on device.
+- Applied: `InputField`'s `TextInput` className is now `flex-1 h-11 text-sm font-normal text-[#1C252E]` (was `font-black`); the floating label keeps `font-black`.
+
+### Follow-up: quantity / price inputs pinned to Public Sans Regular
+`font-normal` alone did not stop the typed digits showing bold on Android, so `InputField` and `PricingInputField` (`dealcenter/SharedElements.tsx`) now pass `REGULAR_INPUT_FONT` (`fontFamily: 'PublicSans-Regular'` + `fontWeight: 'normal'` - the pair `docs/claude/app-wide.md` requires) as an explicit style, and `font-black` is gone from `PricingInputField`. ⚠️ Keep the weight in `style`, not only a className: it is what the native text view reads when the digit is written. Labels stay bold. Not verified on device - if digits are STILL heavy, the cause is outside these two components (check the field is not another input).
+
+### 1-Year monthly plan picker - "My default plan" UI
+`OneYearMonthlyPlan.tsx` picker sheet extended using only the existing sheet tokens (green #4CBB17 + its tint, original 9-16px font sizes, 12px-radius cards, no new palette). While `mode === 'default'` it shows a **MY DEFAULT PLAN** card at the top (star, `provider + plan code · $X/mo`, `shortlabel`/`displayMonths`, **Change**, "Pre-selected on every new deal.") and a **MY DEFAULT** badge on the matching row (`effectiveDefaultKey`). `Change` only scrolls to the plan list - picking a row while on Default still calls `commit('default', key, true)`, so the lead-wide default behaviour is unchanged. The card is hidden in Match/custom mode (no default is being edited). Plan code = label text before `(`. Not verified on device.
+
+Picker rows: ALL plan labels are bold (900) - the selected-only-bold variant was tried and reverted at the user's request. Selection is shown by border/tint only.
+
+## Job Builder summary — header faded / half-collapsed on iPhone after an agreement or order sheet is submitted
+
+Symptom (iOS only): after submitting an agreement or order sheet on the summary tab, the "Job Builder" title + step
+tracker looked blurred (opacity ~0.35) and/or slid partly up, though the list was back at the top.
+
+⚠️ **Cause (diagnosed from the symptom, not reproduced on device):** `useCollapsingHeader` only updates its `collapsed`
+value from ScrollView scroll events. The summary re-render lands the list at y=0 on iOS **without emitting a scroll
+event**, so `collapsed` kept the value from the earlier scroll-down (opacity interpolates 1 → 0.35 → 0 with it).
+- **`hooks/useCollapsingHeader.ts`** now returns `reset()` (snap open) and adds `onContentSizeChange` to `scrollProps`
+  (re-opens when content stops being scrollable — `fitsWithoutScrolling` in `utils/collapsing-header.ts`).
+- **`DynamicJobBuilderScreen.tsx`**: an effect re-opens the header on any `jobState` change while on the summary tab.
+- If it still reproduces, log `collapsed.value` at the moment it is stuck and find which re-render skips the scroll event.
+
+## Duplicated calculator tab read `FWrap (LG)` / `FWrap (SM)` instead of `⚠️ FWrap ⚠️`
+
+Tab titles disambiguate by `totals.retail` (`computeDerivedTitles`): equal price → `⚠️ base ⚠️` on both; different price →
+`(SM)`/`(LG)`. A duplicate has the same entries, so it must price the same — but `handleDuplicateTab` gave the copy
+`computeTotals(entries)` (and `createRemoteTab` preferred the server's `c.totals`), while the source tab carried the totals
+it was actually shown/saved with. Any difference made the pair read `(LG)`/`(SM)`.
+- **Fix (`hooks/useDynamicCalculators.ts`):** the duplicate takes a deep copy of **`source.totals`** — sent in the create
+  payload, kept over the server's echo (`extra.totals ?? c.totals ?? totals`) and used on the local fallback.
+- ⚠️ Diagnosed from the symptom (the two tabs' totals were not compared on device). If a pair still shows `(SM)/(LG)`
+  after duplicating, log `source.totals.retail` vs the copy's. The first edit of either tab recomputes totals from entries,
+  so a genuine difference then (e.g. a changed value) correctly produces `(SM)/(LG)` again.
+
+### Follow-up — a duplicate keeps the source's size suffix: `⚠️ FWrap (LG) ⚠️`
+
+The totals fix above made the pair tie, but a tie rendered `⚠️ FWrap ⚠️`, dropping the `(LG)` the source was showing.
+`computeDerivedTitles` (`utils/tab-naming.ts`): a tied-price tab now takes its suffix from the price rank when the group
+has more than one price level, otherwise **inherits the suffix already in a group member's stored title**
+(`⚠️`/`📦` stripped, must match `${base} (…)`). So duplicating `FWrap (LG)` gives both tabs `⚠️ FWrap (LG) ⚠️`.
+- ⚠️ This supersedes the earlier "same price reads plain `⚠️ … ⚠️`" rule when a suffix exists. A tie with no suffix
+  history (two fresh identical tabs) still reads `⚠️ FWrap ⚠️`.
+- Test: `__tests__/tab-naming-duplicate.test.ts` (gitignored dir, local only).
+
+## Calculator (Deal Center) — focused numeric field cut off at the bottom by the number pad
+
+`CalculatorView.tsx`'s body was a plain `ScrollView`, so a field near the bottom (e.g. `7" Versa`) stayed half under the
+tab footer / in-app pad — the pad emits no keyboard events, so nothing scrolled for it. The body now runs
+`useNumPadScrollIntoView(bodyScrollRef, bodyContentRef, 16)` with a `collapsable={false}` wrapper around the content
+(same wiring as `RolloutView`; see `app-wide.md`). ⚠️ Not inside a `Modal`, so the hook in the screen reads the right
+provider. Not verified on device.
+
+### Follow-up — My Deals colour filter is back on (`combination-color-filter.ts`)
+
+Continues "My Deals hides a combination whose colour was never picked" (above). Ticket: *My Deals LeafFilter tab should
+show only combinations that received values from the Deal Center; a valueless one must not display.* An empty
+`Combination #3` (seeded `Versa` only) was showing in the edit wizard.
+
+`isComboHiddenInDealEdit` had been stubbed to `return false` (`c4896aa`, "free hand") and the comment cleanup dropped the
+note on how to restore it. It is restored to `editMode && !combo[ADDED_IN_EDIT_KEY] && !comboHasSelectedColor(combo, fields)`.
+- Full write-up and traps: **`deal-edit-addendums.md`** § "the My Deals hide rule is back ON".
+- ⚠️ Display only and edit-mode only; the Deal Center CREATE flow is untouched. A combination added this edit session
+  (`_addedInEdit`) still shows, so Add Combination works. This deliberately reverses `c4896aa`.
+
+### Follow-up — one universal Add Combination in My Deals
+
+`DynamicTabRenderer.tsx`: in edit mode a single `UniversalAddCombination` (with a picker of every combination section)
+replaces the per-section buttons, so a deal with no finished combination from the Deal Center can still add one
+(tagged `_addedInEdit`). Details and traps: `deal-edit-addendums.md`, "ONE universal Add Combination in My Deals".
+
+⚠️ **Placement:** the universal button renders ABOVE the first simple section (the "Extras" card, i.e. after the Grand Total
+card), or at the end of the tab when there is none. `universalAddPlaced` is a render-time flag flipped inside the
+`sections.map` in `DynamicTabRenderer.tsx` — keep the end-of-list fallback or a tab without a simple section loses the button.
+
+⚠️ **No picker (later update):** clicking the universal button adds the combination straight away (first addable section with
+nothing showing, else first with room) instead of listing sections; see `deal-edit-addendums.md`.
+
+⚠️ **Placement (corrected):** the universal button goes after the last combination section, not above the first simple
+section — see `deal-edit-addendums.md`, "Placement update".
+
+⚠️ **Final placement:** directly under the last combination section and ABOVE the Grand Total card (not below it).
+
+⚠️ **Spacing:** the universal button is `compact` (12 below, not 24) with `marginTop: -12` to cancel the section block's `mb-3`, so the card above and the Grand Total below sit 16 / 12 away. `AddCombinationButton` gained the `compact` prop; the create-flow buttons keep `mb-6`.
+
+⚠️ **Blank, not seeded:** the universal Add Combination uses `createBlankCombinationItem` (`combination-utils.ts`) — `createNextCombinationItem` with every non-`_` key emptied — so nothing is pre-selected (LeafFilter Profile no longer opens on `Versa`). Create-flow "Add Combination" still seeds `defaultValue`s. ⚠️ A required field the rep skips is now caught by normal validation rather than defaulted.
+
+⚠️ **The blank item alone was not enough — `DropdownField` re-seeds.** Its layout effect (`resolveDropdownSync`) writes `defaultValue`/`fallbackValue` into an EMPTY dropdown, so the profile snapped back to `Versa`. The `renderField` dropdown case now passes `defaultValue`/`fallbackValue` as `undefined` when the combination carries `_addedInEdit` (`noSeed`), so a combination added in My Deals shows "Select an option" on every dropdown until the rep picks. Saved combinations keep seeding as before.
+
+### Follow-up — Gutter Opening Width "Important Notice" did not pop up (My Deals)
+
+The notice wiring in `DropdownField` is intact (`useFieldNotice` → `handleValueChange` on the rep's pick), so the likely miss was the
+**exact-string** trigger: `resolveFieldNotice` compared the picked option to `notice.triggerValue` with `===`, and a differently
+spaced / cased / quoted authoring (`<2.5"` vs `< 2.5″`) never fired. `valueMatchesTrigger` (`notice-utils.ts`) now compares
+case-, whitespace- and quote/`&lt;`-insensitively. ⚠️ **Not reproduced on device.** A dev-only log `[FieldNotice] enabled but not fired`
+(`FieldNoticeModal.tsx`) prints the picked value and `triggerValue` when a field has a notice that did not match — if the popup is still
+missing, read that line (config text mismatch vs. a remount of the field).
+
+### Follow-up — field notice host
+
+`FieldNoticeModal.tsx` › `FieldNoticeHost` (mounted at the root of `DynamicTabRenderer`) now presents the "Important Notice"; fields publish to it instead of owning a Modal. See `deal-edit-addendums.md`, "the notice is now presented by ONE host".
+
+⚠️ **Field notice, second pass:** `FieldNoticeModal.tsx` also keeps the OPEN notice at module level (`activeNotice`) until the rep dismisses it, and a freshly
+mounted `FieldNoticeHost` starts open when one is pending — so a tab re-mount right after the pick cannot swallow the popup. Dev log
+`[FieldNotice] pick { field, picked, fires, hasHost }` fires on every pick of a notice-enabled field (no line = the pick never reached the
+notice code; `fires:false` = trigger-text mismatch; `hasHost:false` = no host mounted). Not verified on device; details in `deal-edit-addendums.md`.
+
+### Follow-up — the notice no longer depends on the tap reaching the widget (`useFieldNoticeWatcher`)
+
+Ticket: *the information popup must display at any cost when `<2.5` is picked.* Two earlier passes hardened the PRESENTATION; this one removes the
+dependency on the TRIGGER path. `hooks/useFieldNoticeWatcher.ts` (called at the top of `DynamicTabRenderer`, above the summary early-return) snapshots
+every notice-enabled field's value in job state — combination rows, simple sections and tab fields — and when a value **changes** to one
+`resolveFieldNotice` matches, it publishes through `publishFieldNotice` (`FieldNoticeModal.tsx`). The widget's own `onChange` path stays and both land in the
+same host; `publishFieldNotice` **de-duplicates identical text for 1.5 s**, so a pick shows ONE popup.
+- ⚠️ The **first snapshot never fires** (opening a saved deal on `<2.5` stays silent), and a section whose combination count changed between snapshots only
+  refreshes the baseline (add / remove shifts indexes) — otherwise deleting a combination could pop a notice for the one that slid into its slot.
+- ⚠️ It still needs `field.notice.enabled` + text + a matching `triggerValue` (case / space / quote-insensitive). If the popup is STILL missing, the config
+  has no notice on that field (check the portal) — the code paths no longer are the limit. Not verified on device; no jest test (the hook imports RN).
+
+### Follow-up — the `< 2.5` notice is now a BUILT-IN rule (root cause: the schema field carried no notice)
+
+Three passes on triggering/presenting did nothing because the likely cause was never the code path: web's static LeafFilter section **hard-codes** this popup
+(`leaffilter-section.js`: `gutterOpeningWidth === '< 2.5'` → "Important Notice / Ensure Agreement has Special Can't Guarantee Cleaning or Sealing
+Clause", originally only for Versa Max + Sale), while the dynamic builder shows a notice ONLY when the portal-authored `field.notice` is enabled with text.
+A field without it shows nothing — however the pick is wired.
+- **`utils/dynamic-job-builder/engine/notice-utils.ts`**: `resolveBuiltinFieldNotice` / `resolveAnyFieldNotice` — a field whose label matches
+  `gutter opening width` set to `< 2.5` (case/space/quote-insensitive) yields the notice; the field's own `notice` still wins.
+  `useFieldNotice` and `useFieldNoticeWatcher` both call `resolveAnyFieldNotice`, and the watcher now also watches Gutter-Opening-Width fields that have no notice.
+- ⚠️ **Deliberately looser than web**: no Versa Max / Sale gate (the ticket: show it whenever `< 2.5` is picked). Re-add the profile / demo checks in
+  `resolveBuiltinFieldNotice` if reps complain of it on Versa. A label other than "Gutter Opening Width" needs `field.notice` authored in the portal.
+- Test: `__tests__/field-notice.test.ts` (gitignored dir). Not verified on device.
+
+### Rollout — COST / PAR / RETAIL tiles wrapped large values
+
+- Symptom: a 6-digit retail (`$152,583`) wrapped onto two lines and the three tiles looked uneven.
+- Fix (`RolloutView.tsx`, tiles block): tiles are `flexBasis: 0, minWidth: 0` with 6px side padding; the value is `numberOfLines={1}` + `adjustsFontSizeToFit` (`minimumFontScale 0.6`), so it shrinks instead of wrapping. Not verified on device.
+- Drop / Result Lead buttons: fixed `height: 56` clipped the stacked icon + label + price (price spilled past the border). Now `minHeight: 64` with padding, and the icon sits in a row beside the "Result Lead" label with the price below. Not verified on device.
+- **Removed**: the "No Down Payment" `ConfirmDialog` (and `noDownWarn`, the `acknowledged` flag on `goFunding`) is gone by request — no warning on Confirm; it goes straight to funding. The `inline` ConfirmDialog notes above are historical. Do not re-add.
+
+### Result Lead: archive only plans that have actually started (`swapRowMethod` / `restoreRowPlan`)
+
+- Ticket: switching Check/AMEX on a fresh row filled "ARCHIVED METHODS" with plans nothing was ever sent for. Archive = a safety shelf for financing / cards that are LIVE (link sent, decision, activated, charged, collected) so they can be reused on any job scope later.
+- Root cause: `swapRowMethod` archived on `showsChip(r)`, which is `r.auto || hasLenderState(r)` — the auto-balance row counted. Now gated on `hasLenderState(r)` only; `restoreRowPlan` likewise only shelves the outgoing plan when it has lender state.
+- ⚠️ Do NOT widen the gate back to `showsChip` / `auto`. Rows archived before this fix are not cleaned up. Not verified on device.
+
+### Result Lead payment rows: back to ONE line per payment, short labels, no bank fee (supersedes the "one card per payment" ticket above)
+
+- Ticket: the stacked Amount / Payment-method cards ate the screen. `PaymentRowsGroup` panel layout is again `[amount box][method box][✕]` on one line. The amount box is sized to its digits (`flexShrink: 0`, `minWidth: 84`; the input width grows with the typed length) so a balance like `$2,863` is never truncated; the method box takes the remaining width.
+- Labels use the Investment Center shorthand via `shortMethodLabel`: Check -> `CK`, MC/VISA -> `CC`, `AMEX`, financing -> `compactPlanLabel` (`GS2511, 0% APR, 6M`). `stripBankFee` removes "(Bank Fee: x%)" from the dropdown options and archived entries too. Display only — the plan key / label sent to the server is unchanged.
+- ⚠️ Plain layout (My Deals mockup) untouched. Not verified on device.
+
+- Result Lead: choosing **Down Payment** in the structure dropdown now seeds its first (empty) down row in `selectStructure` (inserted before the balance row), so the method box shows without tapping "Add payment method". Only when no down row exists; removing it with ✕ still leaves the group empty. Not verified on device.
+
+### Follow-up — Result Lead: picking "Down Payment" seeds its first row (`selectStructure`, `ResultJobModal.tsx`)
+
+- Ticket: after choosing Down Payment the group showed only "Add payment method"; the rep had to tap it to get the first amount + method line.
+- Fix: `selectStructure` inserts one empty `kind: 'down'` row (before the first `bal` row, so order stays down -> bal) when no down row exists.
+- ⚠️ The `PayStructure` value for Down Payment is `'split'` (not `'down'`) — see `payStructureOf` in `utils/funding.ts`. ⚠️ Only seeds when none exists: removing the row with ✕ deliberately leaves the group empty. Not verified on device.
+- Follow-up: the green PANEL box holding the Pricing / payment groups had tight padding (`14 / 16 / 6`); now `paddingHorizontal: 18, paddingTop: 20, paddingBottom: 16` (`ResultJobModal.tsx`, the `isSale` panel). Not verified on device.
+- Follow-up: the white Down Payment / Balance cards sat too far in from the green panel. Panel `paddingHorizontal` is now **8** (top 20 / bottom 16 kept for breathing room) and the white card (`PaymentRowsGroup` panel layout) side padding is 10 (was 12), so the amount + method line gets the width back. ⚠️ Do not raise the panel side padding again without checking the balance amount still shows every digit. Not verified on device.
+- Follow-up: a huge amount (`31223321`) squeezed the method box to "…". The amount box is now `flexShrink: 1, maxWidth: 55%` (input width estimated at 9px/digit, `maxWidth: 100%`; read-only amount uses `adjustsFontSizeToFit`), and the method box keeps `minWidth: 96`, so the method name always stays readable. ⚠️ A very long typed amount scrolls inside its box rather than widening it. Not verified on device.
+- Follow-up: the CLOSED method box (after selecting) shows only the financing plan CODE (`GS2511`) via `shortMethodLabel(..., codeOnly)`; the option list still shows `GS2511, 0% APR, 6M`. CK / CC / AMEX unchanged. The Balance and Down Payment groups share this code, so both read the same. Not verified on device.
+- Follow-up (REVERTED by request): shortening the Down Payment option list (`options` -> `o.label`) through `shortMethodLabel` was undone; that list shows the raw labels again, e.g. "Check (Bank Fee: 0%)". Balance's category list is still shortened. Do not re-apply unasked.
+- Follow-up: the Balance (category) option list now shows the FULL plan label (`plan.label`, e.g. "Check (Bank Fee: 0%)") exactly like the Down Payment list, by request. Only the dropdown lists; the closed method box still shows the short form. Not verified on device.
+
+### Dynamic calculator: "Add This Job to Job Tracker" button removed
+
+A resulted sale is added to the Job Tracker automatically, so `CalculatorView` no longer renders `JobTrackerButton` under the Job Summary (the import is gone; `components/JobTrackerButton.tsx` is now unused). The body ScrollView `paddingBottom` dropped from 140 to 24 — the tabs footer is a sibling below the ScrollView, not an overlay, so the old 140 was only dead space under the button.
+
+- ⚠️ Legacy `widgets/components/dealcenter/CalculatorForm.tsx` still has its own add / go-to-tracker buttons (the non-dynamic Deal Center) — untouched. Not verified on device.
+- Follow-up (supersedes the code-only note): the closed method box shows the Investment Center string again — `GS2511, 0% APR, 6M` (`compactPlanLabel`), not just `GS2511`. One line with `adjustsFontSizeToFit` (min 0.8) so it is not cut. `codeOnly` on `shortMethodLabel` is now unused. Not verified on device.
+
+### Follow-up — My Deals Gutters tab: a gutter and its downspout are one numbered pair
+
+Ticket: *with no data from the Deal Center the Add Details screen showed the "Downspout & Accessories" heading above the Add Combination
+button; it should only show once a gutter combination exists and awaits its downspout, and the gutter and its downspout must carry the
+same "Combination #N".* Gutters tab, **edit mode only**; create flow and every other tab are untouched.
+
+- `utils/dynamic-job-builder/engine/gutter-pairing.ts` (new, pure, tested in `__tests__/gutter-pairing.test.ts`): `getGutterPairSections`
+  matches only a tab whose id ends `__gutters` (or label "Gutters") that has a section labelled `/downspout/i` plus another combination
+  section — anything else returns null and renders exactly as before.
+- The universal Add Combination alternates: gutter shown-count > downspout shown-count → the next press adds the **downspout**, else a new
+  **gutter**. `DynamicTabRenderer.tsx` `UniversalAddCombination.onAdd` uses `nextPairAddTarget`.
+- The "Downspout & Accessories" heading (`CombinationSectionBlock` `hideLabel`) shows when the downspout section has a card OR is the next
+  target (`shouldShowDownspoutHeading`); it is hidden on an empty tab and right after a downspout is paired. ⚠️ Existing downspout cards keep
+  their heading — only the empty slot loses it. Flip that rule in `shouldShowDownspoutHeading` if the heading should vanish entirely.
+- Numbering restarts per section on a pair tab: `renumberTabCombinations(..., restartPerSection)` and `comboIndexOffsets` = 0, so gutter #1 and
+  downspout #1 both read "Combination #1". ⚠️ Other tabs still number continuously across sections.
+- Section detection is by id/label, not by the hardcoded `section_…` ids in `gutter-roofline-description-generator.ts`.
+- Two tests in `combination-numbering.test.ts` (colour-filter "nothing hidden" cases) were already failing before this change.
+
+⚠️ **Pair-tab cards always carry their chip.** The Gutters sections had `showCombinationLabel: false`, so the boxes showed no "Combination #N"
+(only the Grand Total's `#1`). On a pair tab `CombinationSectionBlock` now forces the chip (`pairLabelPrefix`): gutter boxes read
+"Combination #N", downspout boxes "Downspout Combination #N". Other tabs still honour `showCombinationLabel`.
+
+### Follow-up — My Deals Soffit: one Add Combination PER heading (supersedes the colour-less-combination hide)
+
+Ticket: *Soffit showed an empty "Combination #1" under Nailer Build Out with no value from the Deal Center — then, on review, "revert to this UI":
+keep Vinyl Soffit / Porch Ceiling SqFT / Nailer Build Out headings (and the Nailer placeholder card) as they were, but give each heading its own Add
+Combination button instead of the generic one.*
+- ⚠️ **The "hide a combination in a colour-less section" attempt was reverted** (`combination-color-filter.ts` is back to colour-only) along with the
+  edit-mode "hide an empty section's heading" rule. Do NOT re-add either; the placeholder under Nailer Build Out is intended.
+- `gutter-pairing.ts` `usesPerSectionAdd(tab)` (Soffit tab only). In `DynamicTabRenderer.tsx` that tab, in edit mode, renders no
+  `UniversalAddCombination`; each `CombinationSectionBlock` shows its own button (`ownAddInEdit`) under its heading and adds to THAT section.
+- In edit mode `handleAddCombo` now adds a **blank** `_addedInEdit` combination (`createBlankCombinationItem`), as the universal button did, so
+  nothing is pre-selected. Create flow unchanged.
+- Every other tab keeps the single universal button; the Gutters pair logic above is unaffected.
+
+### Follow-up — My Deals Soffit: one Add Combination PER heading (supersedes the colour-less-combination hide)
+
+Ticket: *Soffit showed an empty "Combination #1" under Nailer Build Out with no value from the Deal Center — then, on review, "revert to this UI":
+keep the Vinyl Soffit / Porch Ceiling SqFT / Nailer Build Out headings (and the Nailer placeholder card) as they were, but give each heading its own
+Add Combination button instead of the generic one.*
+- ⚠️ **The "hide a combination in a colour-less section" attempt was reverted** (`combination-color-filter.ts` is back to colour-only) along with the
+  edit-mode "hide an empty section's heading" rule. Do NOT re-add either; the placeholder under Nailer Build Out is intended.
+- `gutter-pairing.ts` `usesPerSectionAdd(tab)` (Soffit tab only). In `DynamicTabRenderer.tsx` that tab, in edit mode, renders no
+  `UniversalAddCombination`; each `CombinationSectionBlock` shows its own button (`ownAddInEdit`) under its heading and adds to THAT section.
+- In edit mode `handleAddCombo` now adds a **blank** `_addedInEdit` combination (`createBlankCombinationItem`), as the universal button did, so
+  nothing is pre-selected. Create flow unchanged.
+- Every other tab keeps the single universal button; the Gutters pair logic above is unaffected.
+
+### Follow-up — My Deals Soffit: a combination shows only if the Deal Center sent values (refines the per-heading Add Combination)
+
+Ticket: *show a combination only when it received values from the Deal Center; otherwise just the heading with its Add Combination below.*
+- `combination-color-filter.ts` `isSoffitComboEmptyInDealEdit` (+ `comboHasNoEnteredValue`; `''`, `0`, `'0'`, empty arrays/objects = empty). Layered
+  ON TOP of `isComboHiddenInDealEdit`, which stays colour-only. Used only when `usesPerSectionAdd(tab)` (Soffit): `isComboShown` in
+  `DynamicTabRenderer` (numbering, Grand Total) and `isComboHidden` in `CombinationSectionBlock` (via `ownAddInEdit`). `_addedInEdit` always shows.
+- ⚠️ This is the generic "hide empty in a colour-less section" idea that was reverted for ALL tabs — it is deliberately Soffit-only now. Do not
+  widen it without a ticket.
+- ⚠️ A seeded `defaultValue` in a section's `defaultItem` counts as a value, so such a placeholder would show. Nailer/Vinyl/Porch have none today.
+
+### Follow-up — the Soffit rules now also apply to the Fascia tab
+
+Ticket: *same logic in the Fascia tab.* `usesPerSectionAdd` (`gutter-pairing.ts`) matches `__soffit` and `__fascia` (or those labels), so Fascia gets
+a per-section Add Combination and shows a combination only when the Deal Center sent values (or it was added in edit). Nothing else changed; the
+other tabs (Gutters pair, LeafFilter, Lighting, Gutter Guards…) are not matched.
+
+### Offline parity — every Deal Center log the online flow writes is now written offline (2026-10-14)
+
+Ticket: *logs generated online are missing when the same screen is used offline* (e.g. calculator `create` / `view`).
+Cause: the offline path is a different code path (device record, no request), and several logs were written by a
+**server hook or a success branch the offline path never reaches**. Queue mechanics: `docs/claude/offline.md` (activity logs section).
+
+| Log | Online source | Offline (was → now) |
+|---|---|---|
+| `calculator` view | effect, gated `isBackendId(tab.id)` | never logged for a `calc-…` tab → gate also accepts `isClientId` |
+| `calculator` create, first tab | bootstrap after `createRemoteTab` | the offline `'mint'` seed logged nothing → logs `isFirstCalculator` |
+| `calculator` create (+ payment-method inherited) | `handleAddTab` after `createRemoteTab` | offline fell to a `local-…` tab with no log (and a doomed request) → `deviceTabFrom` mints a `calc-…` tab, saves it to the device record, logs both |
+| `calculator` duplicate | the SERVER writes it from `duplicateLog` | no request offline, so no log → `logEvent('duplicate', …)` + payment-method inherited |
+| `auto_rename` | `flushSave` / `saveDisplacedSiblings` | `flushSave` skips non-server ids → same title comparison in `persistOffline` (baseline set at hydrate / create) |
+| `funding` payments saved | `useFunding.savePayments` | `goFunding` offline path skipped the hook → `logFundingPaymentsSaved` |
+| `funding` check collected | `useFunding.markCheckCollected` | `handleMarkCollected` offline → `logFundingCheckCollected` |
+| `funding` submitted | `useFunding.submit` | queued submit in `handleBuild` → `logFundingSubmitted` |
+
+Already fine offline (no connectivity gate): field entry, rename, clear section, rollout/drop (`RolloutView`), job-builder logs,
+rollout summary, result-lead logs. The ids in these logs may be device ids; the activity-log queue holds each log until its
+lead / appointment / calculator has a server id and swaps them (`setActivityLogIdResolver`).
+
+- ⚠️ **Any new Deal Center log must be written by the UI handler, not by a service/server hook** — the offline branch of that
+  handler is where it silently goes missing. When you add an online log, look at the offline branch of the same handler.
+- ⚠️ Online funding link / card / loan / sync actions are not logged offline because the actions themselves are blocked offline (`useFunding.run`).
+
+## REVUIUX-444 — the 1 Year Program default plan is REP-scoped (`defaultOneYearPaymentMethod`)
+
+Contract: `REVUIUX-444-MOBILE-HANDOFF.md`. Backend adds `user.defaultOneYearPaymentMethod` (a plan key, sibling of `defaultPaymentMethod`), written via the
+SAME `PUT /company/user/update-default-lf-calculator-settings` (`null` clears, omitted keys untouched, key NOT validated server-side), and stamps new
+calculators with `oneYearMonthlyPlan = { mode: 'default', planKey: <rep key>, apr/monthlyPayment/grandTotal: 0, isDefault: false }`. The handoff's open
+question (rep- vs lead-scoped) was settled by the ticket text: *"the plan a rep selects as default must reflect in ALL leads"* => **rep-scoped**.
+- ⚠️ **Supersedes the lead-wide `isDefault` scan** (`RolloutView.leadOneYearDefault`, `InvestmentCenter` `leadOneYearDefaultKey`, `OneYearMonthlyPlan`
+  `leadDefault`/`inherits`): all removed. The app never writes `isDefault: true` any more (always `false`); the user record is the source of truth.
+  A legacy calculator saved with `isDefault: true` is re-stamped to `false` and follows the rep default; with no rep default it falls to the 9.99% chain.
+- `utils/one-year-default.ts` (pure, `__tests__/utils/one-year-default.test.ts`): `resolveRepOneYearKey` (published FINANCING key or null — an unknown,
+  unpublished or cash key is treated as no default), `resolveOneYearDefaultKey` (rep 1 Year default > In-Home default > 9.99% > any APR > first
+  financing > method), `oneYearNeedsResync`. Used by `RolloutView` AND `InvestmentPanel` so the two screens cannot drift.
+- Write path: `SettingsService.updateCalculatorsSetting` type + `offline-settings.ts` `FIELDS`/`PendingCalculatorSettings` gained the key, so the offline queue,
+  optimistic merge (`useAuth` -> `applyPendingSettingsToUser`) and replay-on-reconnect work with no other change. `RolloutView.setOneYearDefault` goes through
+  the existing `saveDefault` (queue -> flush -> `refreshUser`), exactly like the In-Home star.
+- `OneYearMonthlyPlan.tsx`: `Default` mode is LIVE (`resolvedKey = defaultKey`), so changing the rep default moves every deal still on Default; Match / custom picks
+  stay. A sync effect re-stamps a Default calculator whose `planKey`/monthly/total is stale (the backend stamp has monthly 0 — "the app recomputes on first render").
+- ⚠️ **Fixes the two QA bugs.** Bug 1 (Match then Default lost the pick): `commit` no longer writes `isDefault` from the calculator. Bug 2 (could not set a default
+  from Match): the **MY DEFAULT PLAN** card now shows in EVERY mode (or a dashed "No default set" hint) and each plan row has a **star** that sets / clears the rep default
+  independent of mode. Picking a row is always a one-off `custom` pick; the star never switches the calculator's mode.
+- ⚠️ Not done: the web Deal Center (own ticket per the handoff). The endpoint was not exercised over HTTP by the backend dev — check once on staging. Not verified on device.

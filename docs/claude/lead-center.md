@@ -1227,3 +1227,28 @@ Ticket: *tell the user the report is generated and saved on the phone — that n
 
 *"Remove the view report button — we do not show the report inside the app."* The `inspectionDone` `ConfirmDialog` is now a single-button notice (`hideCancel`, confirm `OK`) that only says the report was saved and where (Android `Files / My Files > Downloads > Inspection Report.pdf`; iOS the share-sheet location). The `FileViewer.open` path, the `path` field and every "this lead > Job docs" pointer are gone, because the report is not viewable in-app. If the device save fails the message says to generate it again. ⚠️ Do not add a viewer button back unless the report becomes viewable in the app.
 - `LeadCenter/index.tsx` no longer imports `react-native-file-viewer` (its only use was the removed View Report button); other screens that still open PDFs keep their own import.
+
+## Lead Center "Download Images" result uses the app banner, not a native Alert
+
+Ticket: after downloading photos the result was a stock Android `Alert.alert("Success", ...)` that ignored the app theme. `JobDocsSection.handleDownloadAllImages` now raises `FlashMessage.success` / `.warning` (partial) / `.error` instead (`config/message.ts`).
+
+- ⚠️ Raised inside a `setTimeout(..., 450)`: the download progress `Modal` has only just been dismissed, and a banner shown under a dismissing modal is never seen (root CLAUDE.md §6). Do not move it back inline.
+- Other `Alert.alert` calls in the file (permission, delete, reset confirms) are untouched. Not verified on device.
+
+### Follow-up — the banner keeps the OFFLINE counts (merge `dev-v1-multi-tenat` → `dev-qs-offline-v2`)
+
+Both branches had rewritten the same block in `JobDocsSection.handleDownloadAllImages` and the merge
+conflicted: `dev-v1-multi-tenat` had the banner (above), `dev-qs-offline-v2` had the offline-aware
+counts. The resolution keeps **both** — `downloadResultMessage` (`utils/photo-download-plan.ts`)
+produces the title/message, `FlashMessage` delivers it, still inside the `setTimeout(..., 450)`.
+
+- The counts must come from `downloadResultMessage(successCount, attempts.length, skippedOffline)`.
+  Offline, `attempts` is `resolved.filter(r => r.local)` — only photos already on the device are tried
+  — and `skippedOffline` is the remainder, which the message reports as "N need a connection."
+- ⚠️ **Do not compare against `imagesToDownload.length`** (the pre-filter total), which is what the
+  incoming version did. Offline that is always larger than `attempts.length`, so a run where every
+  downloadable photo succeeded reported "Download failed" and never mentioned the skipped ones.
+- Severity is derived from the same three cases the helper branches on: `successCount === 0` → `.error`,
+  `successCount === attempts.length && skippedOffline === 0` → `.success`, otherwise `.warning`.
+- ⚠️ The file is CRLF. Not verified on device: the case to check is airplane mode with a mix of
+  on-device and remote photos — expect an amber "Partial Download … N need a connection."

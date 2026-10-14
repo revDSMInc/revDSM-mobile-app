@@ -17,9 +17,15 @@ export type UploadStep =
   | 'documents'
   | 'remoteSignature'
   | 'funding'
+  | 'addendumDraft'
+  | 'addendumRefund'
+  | 'addendumRelease'
+  | 'fundingCollect'
+  | 'fundingSubmit'
   | 'submit'
   | 'consent'
   | 'work'
+  | 'workEnd'
   | 'chat'
   | 'customer'
   | 'archive'
@@ -34,10 +40,16 @@ export const UPLOAD_STEPS: readonly UploadStep[] = [
   'documents',
   'remoteSignature',
   'funding',
+  'addendumDraft',
+  'addendumRefund',
+  'addendumRelease',
+  'fundingCollect',
+  'fundingSubmit',
   'submit',
   'consent',
   'work',
   'chat',
+  'workEnd',
   'customer',
   'archive',
   'delete',
@@ -58,6 +70,7 @@ export const stepReplaySafety = (step: UploadStep): ReplaySafety => {
     case 'chat':
       return 'idempotent';
     case 'work':
+    case 'workEnd':
     case 'customer':
     case 'archive':
     case 'delete':
@@ -150,8 +163,47 @@ export interface OfflineLeadWork {
   archive?: { isArchive: boolean; lead?: Record<string, unknown> };
   deleteLead?: boolean;
   workStarted?: { userId: string; at: string };
+  /** The rep left the lead. Releases `workStartedBy` once there is signal. */
+  workEnded?: { at: string };
   customer?: { customerId: string; payload: Record<string, unknown> };
   funding?: Record<string, unknown>;
+  /** The rep pressed Submit Funding offline; the save above has to land first. */
+  fundingSubmitted?: { at: string };
+  /**
+   * A My Deals addendum raised offline: the full `submitJobBuilderDraft` payload.
+   *
+   * ⚠️ `hasRefund` decides whether the addendum may be RELEASED to the homeowner by this
+   * device. A refund addendum is released server-side by the approver instead - see
+   * `addendumRelease`.
+   */
+  addendum?: {
+    payload: Record<string, unknown>;
+    contact: { customerEmail?: string; customerPhone?: string };
+    hasRefund: boolean;
+    at: string;
+  };
+  /** Set by the `addendumDraft` step once the server has minted the draft. */
+  addendumDraftId?: string;
+  /**
+   * The cheque refund that rides with this addendum.
+   *
+   * ⚠️ CHEQUE ONLY. A card refund reverses the charge through the processor and cannot be
+   * queued; `addendumOfflineBlock` refuses to save one.
+   */
+  addendumRefund?: {
+    pid: string;
+    amount: number;
+    reason: string;
+    note?: string;
+    assignedToUserId?: string;
+  };
+  /**
+   * Check payments the rep took in hand offline, by `pid`.
+   *
+   * Safe to address by pid because the pid is minted on the DEVICE and sent in the save
+   * above - the server keeps it, so no re-keying is needed here.
+   */
+  fundingCollected?: string[];
   submit?: Record<string, unknown>;
   chatCreated?: boolean;
   done: UploadStep[];
@@ -225,12 +277,31 @@ export const isStepApplicable = (work: OfflineLeadWork, step: UploadStep): boole
       return !!work.remoteSignature;
     case 'funding':
       return !!work.funding;
+    case 'addendumDraft':
+      return !!work.addendum && !work.addendumDraftId;
+    /**
+     * ⚠️ NEVER applicable when the addendum carries a refund. The approver releases those
+     * server-side; releasing here puts the paperwork in front of the homeowner before the
+     * approval, and `refundMovesForDecision` then silently drops the signature - the money
+     * never moves, with no error anywhere.
+     */
+    /** Needs the draft's real id, so it can only run once `addendumDraft` has landed. */
+    case 'addendumRefund':
+      return !!work.addendumRefund && !!work.addendumDraftId;
+    case 'addendumRelease':
+      return !!work.addendum && !work.addendum.hasRefund && !!work.addendumDraftId;
+    case 'fundingCollect':
+      return !!work.fundingCollected?.length && !!work.funding;
+    case 'fundingSubmit':
+      return !!work.fundingSubmitted && !!work.funding;
     case 'submit':
       return !!work.submit;
     case 'consent':
       return !!work.consents?.some((c) => !c.uploadedAt);
     case 'work':
       return !!work.workStarted && !work.submit;
+    case 'workEnd':
+      return !!work.workEnded && !work.submit;
     case 'chat':
       return !!work.workStarted && !work.chatCreated;
     case 'customer':
@@ -328,7 +399,9 @@ export type StepDecision =
   | 'retry-guarded'
   | 'done'
   | 'failed'
-  | 'needs-review';
+  | 'needs-review'
+  // Session expired: leave the work as it is (draft, no attempt spent) for the next sign-in.
+  | 'pause';
 
 export const resolveStepDecision = (
   outcome: CreateOutcome,
@@ -338,6 +411,8 @@ export const resolveStepDecision = (
   const safety = stepReplaySafety(step);
 
   switch (outcome) {
+    case 'unauthorized':
+      return 'pause';
     case 'never-sent':
       return 'retry';
     case 'rejected':
@@ -387,6 +462,9 @@ export const applyStepDecision = (
   error?: string,
   now: number = Date.now()
 ): OfflineLeadWork => {
+  if (decision === 'pause') {
+    return { ...work, status: 'draft', lastError: error, updatedAt: new Date(now).toISOString() };
+  }
   const attempts = work.attempts + 1;
   const base = { ...work, attempts, lastError: error, updatedAt: new Date(now).toISOString() };
 

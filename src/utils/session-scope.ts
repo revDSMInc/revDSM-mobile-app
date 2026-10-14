@@ -8,10 +8,34 @@ export const SESSION_KEEP_KEYS: ReadonlySet<string> = new Set([
 
   'offline_lead_work',
   'upload_photo_queue',
+
+  // Every OWNER-SCOPED queue belongs here. Each already filters by `ownerId` on replay, so
+  // keeping it is safe for the next login, and clearing it DESTROYS work the rep did at a door.
+  // This is how a held `lead_check_in` was lost: the rep started an appointment offline, came
+  // back online, logged out before the drain ran, and the log was wiped, while the `work` PUT
+  // survived (its queue WAS listed), so the lead read "Resume" with no check-in behind it.
+  'offline_activity_logs',
+  'offline_lead_workflow',
+  'offline-photo-deletes',
+  'offline-map-filters',
+  'offline-agreement-delivery',
+
+  // Installer before/after images. Each item carries an `ownerId` (legacy items without one belong
+  // to whoever is signed in), and the files live in DocumentDir - clearing this key orphaned them.
+  'offline_image_uploads',
 ]);
 
 export const SESSION_KEEP_PREFIXES: readonly string[] = [
   'persist:',
+  // Pending calculator defaults, stored PER OWNER (`offline_calculator_settings:<ownerId>`) so a
+  // second rep on the handset can neither see nor flush the first rep's toggle.
+  'offline_calculator_settings:',
+
+  // ⚠️ The "this consent is already filed" log. The envelope is owner-stamped, so another rep
+  // cannot read it, and clearing it would let the DUPLICATE-SIGNATURE bug back in after any
+  // sign-out: the rep would be offered a blank consent form for a lead they had already signed.
+  // Unlike the calculator status this is NOT re-derivable offline - keeping it is the fix.
+  'offline-cache:consent-filed',
 ];
 
 export const isSessionScopedKey = (key: string): boolean => {

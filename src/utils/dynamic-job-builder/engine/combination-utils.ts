@@ -178,6 +178,24 @@ export function createNextCombinationItem(section: any, combos: any[] = [], inde
   };
 }
 
+/**
+ * `createNextCombinationItem` with every field emptied — only the `_`-prefixed bookkeeping keys
+ * (`_combinationNumber`, …) survive. The My Deals "Add Combination" uses it so nothing is pre-selected
+ * (the normal item seeds `defaultValue`s such as the LeafFilter profile).
+ */
+export function createBlankCombinationItem(section: any, combos: any[] = [], indexOffset = 0) {
+  const next = createNextCombinationItem(section, combos, indexOffset);
+  const blank: Record<string, any> = {};
+  Object.keys(next).forEach((key) => {
+    const value = (next as any)[key];
+    if (key.startsWith('_')) blank[key] = value;
+    else if (Array.isArray(value)) blank[key] = [];
+    else if (value !== null && typeof value === 'object') blank[key] = null;
+    else blank[key] = value === null ? null : '';
+  });
+  return blank;
+}
+
 export function isParentCombination(index: number, firstShownIndex = 0) {
   return index === firstShownIndex;
 }
@@ -192,11 +210,13 @@ export function getRenderedSectionCombos(section: any, tabState: any = {}) {
 export function renumberTabCombinations(
   sections: any[] = [],
   tabState: any = {},
-  isShown: (combo: any, section: any) => boolean = () => true
+  isShown: (combo: any, section: any) => boolean = () => true,
+  restartPerSection = false
 ) {
   let next = tabState;
   let number = 0;
   sections.forEach((section: any) => {
+    if (restartPerSection) number = 0;
     const saved = tabState?.comboGroups?.[section.id]?.combinations;
     const legacy = !saved?.length && section.id === 'default' && tabState?.combinations?.length;
     const combos = getRenderedSectionCombos(section, tabState);

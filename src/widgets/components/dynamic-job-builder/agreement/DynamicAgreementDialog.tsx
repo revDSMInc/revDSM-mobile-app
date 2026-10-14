@@ -97,8 +97,9 @@ export function DynamicAgreementDialog({
 
   const renderLocally = !isOnline() || isClientId(leadId);
   // REVUIUX-391 applies offline too: ask BEFORE generating, so the signed copy always has a
-  // destination. Skipped only for a client-id lead - the server has no record to save against.
-  const needsDelivery = !!leadId && !isClientId(leadId);
+  // destination. A lead created at a door asks as well - its queued preference is re-pointed at
+  // the real id by `rekeyDeliveryPreference` when the lead itself syncs.
+  const needsDelivery = !!leadId;
   const { agreementConfig, agreementConfigLoading } = useGetAgreementConfig(visible);
   const [remoteOpen, setRemoteOpen] = useState(false);
   const [deliveryReady, setDeliveryReady] = useState(false);

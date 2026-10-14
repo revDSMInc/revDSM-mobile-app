@@ -137,7 +137,7 @@ export function swapRowMethod(
 ): PaymentRow[] {
   return rows.map((r) => {
     if (r.pid !== pid) return r;
-    if (!nextKey || nextKey === r.method || !r.method || !showsChip(r)) {
+    if (!nextKey || nextKey === r.method || !r.method || !hasLenderState(r)) {
       return nextKey && nextKey !== r.method && r.decision
         ? { ...r, method: nextKey, linkSent: false, activated: false, decision: null }
         : { ...r, method: nextKey };
@@ -174,7 +174,7 @@ export function restoreRowPlan(
       activated: false,
       decision: null,
       archived: [
-        ...(r.method || r.methodLabel ? [snapshotPlan(r, plans)] : []),
+        ...((r.method || r.methodLabel) && hasLenderState(r) ? [snapshotPlan(r, plans)] : []),
         ...shelf.filter((a) => a.archivedId !== archivedId),
       ],
     };
@@ -810,6 +810,52 @@ export function resumeOutcomeFromRecord(
 
 export function groupTotal(payments: FundingPayment[]): number {
   return payments.reduce((n, p) => n + fundedAmount(p), 0);
+}
+
+/**
+ * Build the funding record the Funding screen renders, from rows held on the device.
+ *
+ * Online the screen reads `funding.record`, which the server returns from `savePayments`.
+ * Offline there is no server, so Confirm used to skip the screen entirely and jump to Build
+ * Job - the rep never saw the Funding step, and the split they had just entered was never
+ * shown back to them.
+ *
+ * Only CHECK rows can exist here: `confirmBlockers` already refuses to confirm offline while
+ * any row needs a card or loan link, because those are minted server-side. So every row is
+ * one the install crew collects, and the fields a card/loan row would carry stay at rest.
+ */
+export function offlineFundingRecord(
+  leadId: string,
+  contractPrice: number,
+  rows: FundingUpsertRow[],
+  payMode: PayMode
+): FundingRecord {
+  return {
+    leadId,
+    contractPrice: toWholeDollars(contractPrice),
+    payMode,
+    result: 'sale',
+    status: 'pending',
+    payments: rows.map((r, i) => ({
+      pid: r.pid || newPaymentId(),
+      kind: r.kind,
+      method: r.method,
+      type: r.type || 'check',
+      amount: toWholeDollars(r.amount),
+      step: i,
+      linkSent: false,
+      sentChannel: null,
+      sentTo: null,
+      decision: null,
+      requested: null,
+      approvedAmt: null,
+      activated: false,
+      charged: false,
+      collected: false,
+      syncedAt: null,
+    })),
+    attemptHistory: [],
+  } as FundingRecord;
 }
 
 export function hasDecline(record: FundingRecord | null | undefined): boolean {

@@ -53,6 +53,23 @@ import {
 import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
+import { useIsOnline } from '../../../hooks/useIsOnline';
+import { readOfflineCache, writeOfflineCache } from '../../../utils/offline-query-cache';
+import { addendumOfflineBlock } from '../../../utils/offline-addendum';
+import {
+  ensureOfflineWorkForLead,
+  saveOfflineAddendum,
+  saveOfflineAddendumRefund,
+  saveOfflineFunding,
+} from '../../../services/offlineLeadStore';
+import { isOnline } from '../../../services/connectivity';
+import {
+  buildDealEditCache,
+  dealEditCacheChanged,
+  dealEditCacheName,
+  dealEditOfflineState,
+  type CachedDealEdit,
+} from '../../../utils/offline-deal-edit';
 import {
   logDealAddendumSubmitted,
   logDealInstallDateChanged,
@@ -92,6 +109,7 @@ import { RefundApproverRow, RefundStatusRail } from './funding/RefundApprovalSta
 import { useFunding } from '../hooks/useFunding';
 import type {
   FundingChannel,
+  FundingRecord,
   FundingRefundReason,
 } from '../../../services/api/FundingService';
 import {
@@ -104,6 +122,7 @@ import {
   refundBlockers,
   refundableAmount,
   addendumReleasePlan,
+  offlineFundingRecord,
   refundsOnJob,
   requiresRefundApproval,
   collectedTotal,
@@ -275,6 +294,25 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   const seededRef = useRef(false);
 
+  /**
+   * The snapshot of this deal saved the last time it opened with a connection.
+   *
+   * ⚠️ Read ONCE, not per render. MMKV reads are synchronous and fast, but this screen
+   * re-renders constantly and the payload is a whole job build.
+   */
+  const online = useIsOnline();
+  const ownerId = user?._id || user?.id;
+  const cacheName = dealEditCacheName(leadId);
+  const cachedRef = useRef<CachedDealEdit | null | undefined>(undefined);
+  if (cachedRef.current === undefined) {
+    cachedRef.current = cacheName
+      ? readOfflineCache<CachedDealEdit>(cacheName, { userId: ownerId || undefined })?.data ?? null
+      : null;
+  }
+  const cachedEdit = cachedRef.current;
+  const offlineState = dealEditOfflineState(online, false, cachedEdit);
+  const usingCache = offlineState === 'ready';
+
   const editCalculatorId =
     calculatorResultData?.calculatorId ||
     lead?.selectedCalculatorId ||
@@ -287,6 +325,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const { data: savedOutcome, isFetched: outcomeFetched } = useQuery({
     queryKey: ['dealEditOutcome', leadId, editCalculatorId],
     queryFn: async () => {
+      // ⚠️ Served from the snapshot INSIDE the queryFn, never via `enabled: false` - a disabled
+      // query keeps `isLoading` true forever in v5, which would hang the screen on a spinner.
+      if (usingCache) return cachedEdit?.outcome ?? null;
       try {
         const res = editCalculatorId
           ? await LeadService.getLeadOutcomeByCalculator(leadId!, editCalculatorId)
@@ -304,6 +345,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const { data: fetchedCalculator, isLoading: isCalculatorLoading } = useQuery({
     queryKey: ['dealEditCalculator', editCalculatorId],
     queryFn: async () => {
+      if (usingCache) return cachedEdit?.calculator ?? null;
       try {
         const res = await LeadService.getCalculator(editCalculatorId!);
         const body = res.data;
@@ -318,7 +360,14 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   const { data: portalRecord, isLoading: isPortalLoading } = useQuery({
     queryKey: ['dealEditPortalJobBuilder', leadId],
-    queryFn: async () => (leadId ? LeadService.getPortalJobBuilder(leadId) : null),
+    // ⚠️ Caches the RAW response, because line ~380 reads `portalRecord?.portalJobBuilder` off
+    // it. Unwrapping here would silently change the shape the screen seeds from.
+    queryFn: async (): Promise<any> =>
+      usingCache
+        ? (cachedEdit?.portalJobBuilder as any) ?? null
+        : leadId
+          ? LeadService.getPortalJobBuilder(leadId)
+          : null,
     enabled: Boolean(leadId),
     staleTime: 30_000,
   });
@@ -439,13 +488,30 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   );
 
   const fundingSource = resolveFundingSource({ lead, mode: 'edit' });
-  const funding = useFunding(leadId, lead?.companyId || user?.companyId, {
+  const serverFunding = useFunding(leadId, lead?.companyId || user?.companyId, {
     userId: user?._id || user?.id,
     calculatorId: editCalculatorId || undefined,
     calculatorTitle: (calculatorData as any)?.title || undefined,
     source: fundingSource,
     customerId: lead?.customerDetails?._id || lead?.customerDetails?.id || undefined,
   });
+
+  /**
+   * The payment split held on the device while there is no signal.
+   *
+   * ⚠️ Offline `funding.record` is null and every `funding.payments` read (24 of them) returns
+   * an empty list - so the Funding sub-screen renders blank and Confirm cannot advance. This
+   * overlays the rows the rep just entered, the same way `ResultJobModal` does in the create
+   * flow, so one shadow fixes every reader instead of 24 call sites.
+   */
+  const [offlineFunding, setOfflineFunding] = useState<FundingRecord | null>(null);
+  const funding = useMemo(
+    () =>
+      offlineFunding
+        ? { ...serverFunding, record: offlineFunding, payments: offlineFunding.payments }
+        : serverFunding,
+    [serverFunding, offlineFunding]
+  );
 
   const fundingLog = useMemo(
     () => ({
@@ -805,11 +871,52 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [contractNum, funding.payments]
   );
 
-  const approverFeed = useRefundApprovers(needsRefund, lead?.companyId || user?.companyId);
+  /**
+   * ⚠️ WARMED on every online open, not only when a refund is due.
+   *
+   * `needsRefund` is `refundDue > 0`, which only becomes true AFTER the rep lowers the price -
+   * so this used to fetch mid-session, on demand. Offline that is too late: there is no network
+   * at the moment it is needed, and `refundBlockers` fails on `!approverId`, blocking every
+   * refund. Fetching it at open (online) is one small, rarely-changing request that puts the
+   * list in the snapshot before the rep needs it.
+   */
+  const approverFeed = useRefundApprovers(
+    needsRefund || online,
+    lead?.companyId || user?.companyId,
+    usingCache ? ((cachedEdit?.approvers as any) ?? null) : null,
+  );
   const approverOptions = useMemo(
     () => pickableApprovers(approverFeed.feed, user?._id || user?.id),
     [approverFeed.feed, user?._id, user?.id]
   );
+
+  /**
+   * Save the snapshot this screen will seed from when the rep reopens it with no signal.
+   *
+   * ⚠️ ONE write per open, never per render. MMKV rewrites its WHOLE store on every write, so a
+   * per-render write here would tax every unrelated write in the app - including the Job
+   * Builder's autosave. `dealEditCacheChanged` settles on object identity first, so reopening an
+   * unchanged deal costs nothing at all.
+   *
+   * ⚠️ Skipped entirely while serving FROM the cache, or the screen would rewrite its own
+   * snapshot with a copy of itself.
+   */
+  useEffect(() => {
+    if (!online || usingCache || !cacheName) return;
+    const next = buildDealEditCache({
+      outcome: savedOutcome ?? null,
+      calculator: fetchedCalculator ?? null,
+      portalJobBuilder: portalRecord ?? null,
+      approvers: approverFeed.feed ?? null,
+      funding: funding.record ?? null,
+    });
+    if (!next || !dealEditCacheChanged(next, cachedRef.current)) return;
+    cachedRef.current = next;
+    writeOfflineCache<CachedDealEdit>(cacheName, next, ownerId || undefined);
+  }, [
+    online, usingCache, cacheName, ownerId,
+    savedOutcome, fetchedCalculator, portalRecord, approverFeed.feed, funding.record,
+  ]);
 
   const refundPromptRef = useRef(false);
   const [showRefundPrompt, setShowRefundPrompt] = useState(false);
@@ -848,8 +955,10 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   useEffect(() => {
     if (!activeRefund || refundMethod) return;
-    setRefundMethod(refundSourceRow?.type === 'cc' ? 'card' : 'check');
-  }, [activeRefund, refundMethod, refundSourceRow]);
+    // ⚠️ Never seed `card` with no signal — the picker hides that option offline, so the rep
+    // would be left with a pre-selected method they cannot see or change.
+    setRefundMethod(refundSourceRow?.type === 'cc' && online ? 'card' : 'check');
+  }, [activeRefund, refundMethod, refundSourceRow, online]);
 
   const refundGate = useMemo(() => {
     if (!activeRefund) return [];
@@ -916,6 +1025,38 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       return;
     }
     const upsert = toUpsertRows(activeRows, contractNum, pricing.plans);
+
+    // ⚠️ Offline this used to dead-end: `savePayments` refuses, `if (!res.ok) return` stops,
+    // and the rep could never reach Review — which made the queued addendum unreachable by
+    // the price-change route. The split is held on the device instead and uploads with the
+    // addendum. Every row here is a cheque; `confirmGate` refuses a card or loan with no signal.
+    if (!isOnline()) {
+      const work = ensureOfflineWorkForLead(lead || { _id: leadId });
+      if (!work?.clientId) {
+        FlashMessage.error(
+          'Not saved',
+          'This payment split could not be saved on the device. Try again once you have signal.'
+        );
+        return;
+      }
+      saveOfflineFunding(work.clientId, {
+        contractPrice: Math.round(contractNum),
+        payments: upsert,
+        payMode,
+      });
+      setOfflineFunding(
+        offlineFundingRecord(String(leadId), contractNum, upsert, payMode)
+      );
+      logFundingOpened({
+        ...fundingLog,
+        contractPrice: Math.round(contractNum),
+        paymentCount: upsert.length,
+        payMode,
+      });
+      setPriceScreen('funding');
+      return;
+    }
+
     const res = await funding.savePayments(Math.round(contractNum), upsert, payMode);
     if (!res.ok) return;
     logFundingOpened({
@@ -925,7 +1066,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       payMode,
     });
     setPriceScreen('funding');
-  }, [confirmGate, activeRows, contractNum, pricing.plans, payMode, funding, fundingLog]);
+  }, [confirmGate, activeRows, contractNum, pricing.plans, payMode, funding, fundingLog, lead, leadId]);
 
   const goPricing = useCallback(() => {
     const applied = applyDecisionsToRows(activeRows, funding.payments, contractNum, payMode);
@@ -1332,6 +1473,60 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       if (agreementsPayload.length) payload.agreements = agreementsPayload;
       if (orderSheetsPayload.length) payload.orderSheets = orderSheetsPayload;
 
+      // ── offline ────────────────────────────────────────────────────────────────────────
+      // Queue the addendum instead of sending it. The release to the homeowner is a SEPARATE
+      // queue step, so a refund addendum can never reach them ahead of its approval.
+      if (!isOnline()) {
+        const blocked = addendumOfflineBlock({
+          online: false,
+          hasRefund: !!activeRefund,
+          refundMethod,
+          newDocumentCount: agreementsPayload.length + orderSheetsPayload.length,
+        });
+        if (blocked) {
+          FlashMessage.info(blocked.title, blocked.message);
+          return;
+        }
+        const work = ensureOfflineWorkForLead(lead || { _id: leadId });
+        if (!work?.clientId) {
+          FlashMessage.error(
+            'Not saved',
+            'This addendum could not be saved on the device. Try again once you have signal.'
+          );
+          return;
+        }
+        // ⚠️ Documents are deliberately NOT carried — the gate above refuses an addendum that
+        // has any, so `payload` here never holds base64.
+        saveOfflineAddendum(work.clientId, {
+          payload,
+          contact: {
+            customerEmail: customerEmailTrimmed,
+            customerPhone: toE164USPhone(customerPhone || readLeadPhone(lead)),
+          },
+          hasRefund: !!activeRefund,
+        });
+        // ⚠️ A separate step, ordered AFTER the draft so it gets the real `draftId`. Cheque
+        // only — the gate above refuses a card refund offline. The addendum is NOT released
+        // by the device when this exists; the approver releases it server-side.
+        if (activeRefund && refundSourceRow) {
+          saveOfflineAddendumRefund(work.clientId, {
+            pid: refundSourceRow.pid,
+            amount: refundDue,
+            reason: refundReason || 'priceDrop',
+            ...(refundNote.trim() ? { note: refundNote.trim() } : {}),
+            ...(approverId ? { assignedToUserId: approverId } : {}),
+          });
+        }
+        FlashMessage.info(
+          'Saved on this device',
+          activeRefund
+            ? 'The addendum and its refund upload when you have signal. The customer is sent it once the refund is approved.'
+            : 'The addendum is sent to the customer automatically when you have signal.'
+        );
+        navigation?.goBack();
+        return;
+      }
+
       const draftRes = await LeadService.submitJobBuilderDraft(leadId, payload);
       const b = draftRes?.data;
       const draftId = b?.data?.draft?._id || b?.draft?._id || b?.data?._id || b?._id;
@@ -1519,6 +1714,37 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       </TouchableOpacity>
     </View>
   );
+
+  /**
+   * No connection and no snapshot: the deal was never opened on this device.
+   *
+   * ⚠️ A REFUSAL, placed ABOVE the loading gate on purpose. Every query here resolves to `null`
+   * offline rather than throwing, so without this the rep gets a half-seeded wizard with blank
+   * prices and no way to tell a genuinely empty field from one that failed to load - on a screen
+   * that prices a contract amendment.
+   */
+  if (offlineState === 'unavailable') {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={[]}>
+        {Header}
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+          <Icon name="cloud-off-outline" size={40} color="#CBD5E1" />
+          <Text style={{ marginTop: 12, fontSize: 15, fontWeight: '800', color: '#475569', textAlign: 'center' }}>
+            This deal isn’t saved on your device
+          </Text>
+          <Text style={{ marginTop: 6, fontSize: 12, color: '#94A3B8', textAlign: 'center', lineHeight: 18 }}>
+            Open it once with a connection and you’ll be able to edit it offline after that.
+          </Text>
+          <TouchableOpacity
+            onPress={() => navigation?.goBack()}
+            style={{ marginTop: 20, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#22C55E' }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -2258,7 +2484,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                     { v: 'card' as const, label: 'Back to the card' },
                     { v: 'check' as const, label: 'Cheque in the post' },
                   ])
-                    .filter((o) => o.v !== 'card' || refundSourceRow?.type === 'cc')
+                    // ⚠️ Card is hidden with no signal: it reverses through the processor,
+                    // which the device cannot do. Cheque stays, and queues.
+                    .filter((o) => o.v !== 'card' || (refundSourceRow?.type === 'cc' && online))
                     .map((o) => (
                       <TouchableOpacity
                         key={o.v}

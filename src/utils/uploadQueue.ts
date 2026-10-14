@@ -11,6 +11,10 @@ import { isOwnedBy } from './session-scope';
 import { adoptLocalFileAsCached } from './imageFileCache';
 import { resolveS3Url } from './s3-utils';
 import { isCacheFile } from './image-cache-policy';
+import {
+  MAX_PHOTO_ATTEMPTS,
+  isUnauthorizedError,
+} from './upload-retry-policy';
 
 export interface UploadQueueItem {
   id: string;
@@ -24,6 +28,13 @@ export interface UploadQueueItem {
   coordinates?: { latitude: number; longitude: number };
   retryCount?: number;
   userId?: string;
+  /**
+   * Set once the item has failed MAX_PHOTO_ATTEMPTS times. A parked photo is KEPT (file and
+   * all) and skipped by the drain until the rep retries or discards it - it used to be dropped,
+   * which silently destroyed a photo taken at a door.
+   */
+  parkedAt?: string;
+  lastError?: string;
 }
 
 class UploadQueueManager {
@@ -69,16 +80,44 @@ class UploadQueueManager {
     return this.activeUploadId;
   }
 
+  private canDrain(i: UploadQueueItem): boolean {
+    return !isClientId(i.leadId) && !i.parkedAt && this.ownedByCurrentSession(i);
+  }
+
   public hasUploadableWork(): boolean {
-    return this.queue.some((i) => !isClientId(i.leadId) && this.ownedByCurrentSession(i));
+    return this.queue.some((i) => this.canDrain(i));
   }
 
   public uploadableCount(): number {
-    return this.queue.filter((i) => !isClientId(i.leadId) && this.ownedByCurrentSession(i)).length;
+    return this.queue.filter((i) => this.canDrain(i)).length;
   }
 
+  /** Everything the background drain is still responsible for (parked items are NOT: they wait for the rep). */
   public heldCount(): number {
-    return this.queue.filter((i) => this.ownedByCurrentSession(i)).length;
+    return this.queue.filter((i) => !i.parkedAt && this.ownedByCurrentSession(i)).length;
+  }
+
+  public getParked(): UploadQueueItem[] {
+    return this.queue.filter((i) => !!i.parkedAt && this.ownedByCurrentSession(i));
+  }
+
+  public parkedCount(): number {
+    return this.getParked().length;
+  }
+
+  /** Manual retry of one parked photo (or all of them when no id is given). */
+  public retryParked(id?: string): number {
+    let touched = 0;
+    this.queue = this.queue.map((item) => {
+      if (!item.parkedAt || !this.ownedByCurrentSession(item)) return item;
+      if (id && item.id !== id) return item;
+      touched += 1;
+      return { ...item, retryCount: 0, parkedAt: undefined, lastError: undefined };
+    });
+    if (!touched) return 0;
+    this.saveQueue();
+    this.processQueue();
+    return touched;
   }
 
   public resetForNewSession() {
@@ -226,9 +265,7 @@ class UploadQueueManager {
     }
 
     for (;;) {
-      const activeIndex = this.queue.findIndex(
-        (i) => !isClientId(i.leadId) && this.ownedByCurrentSession(i)
-      );
+      const activeIndex = this.queue.findIndex((i) => this.canDrain(i));
       if (activeIndex === -1) break;
       const activeItem = this.queue[activeIndex];
       this.activeUploadId = activeItem.id;
@@ -253,15 +290,29 @@ class UploadQueueManager {
           console.log('[UploadQueue] Connection lost during upload. Will resume on reconnect.');
           break;
         }
+        if (isUnauthorizedError(error)) {
+          // The session is gone, not the photo. Keep it, spend no attempt, and stop: the next
+          // login (same rep) drains it.
+          console.log('[UploadQueue] Session expired during upload. Pausing; the photo is kept.');
+          break;
+        }
 
         const retryCount = (activeItem.retryCount || 0) + 1;
         console.warn(`[UploadQueue] Upload failed for item: ${activeItem.id} (attempt ${retryCount}):`, error);
 
-        if (retryCount >= 5) {
-          console.warn(`[UploadQueue] Giving up on item ${activeItem.id} after ${retryCount} attempts. Dropping.`);
-          this.removeItem(activeItem.id);
+        if (retryCount >= MAX_PHOTO_ATTEMPTS) {
+          console.warn(`[UploadQueue] Parking item ${activeItem.id} after ${retryCount} attempts. It is kept on the device.`);
+          const at = this.queue.findIndex((i) => i.id === activeItem.id);
+          if (at !== -1) {
+            const reason = (error as any)?.message;
+            this.queue[at] = {
+              ...activeItem,
+              retryCount,
+              parkedAt: new Date().toISOString(),
+              lastError: reason ? String(reason) : undefined,
+            };
+          }
           this.saveQueue();
-          this.cleanupPersistedFile(activeItem);
         } else {
           const at = this.queue.findIndex((i) => i.id === activeItem.id);
           if (at !== -1) this.queue[at] = { ...activeItem, retryCount };
@@ -433,7 +484,8 @@ class UploadQueueManager {
           leadId: item.leadId,
           category: item.categoryName,
           subcategory: item.subcategory,
-          timestamp: item.timestamp,
+          // The shared action-time key (see utils/offline-activity-log.ts); the photo's own capture time.
+          occurredAt: item.timestamp,
           coordinates: coords,
           size: 0,
           action: isAnnotated ? 'annotated_photo_uploaded' : 'photo_uploaded',

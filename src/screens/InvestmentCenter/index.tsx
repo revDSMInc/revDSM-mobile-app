@@ -38,6 +38,8 @@ import {
 } from '../../services/offlineLeadStore';
 import { hasQueuedConsent, isClientId } from '../../utils/offline-lead-work';
 import { consentFormLabel, hasFiledConsentReport } from '../../utils/consent-forms';
+import { useFiledConsents } from '../../hooks/useFiledConsents';
+import { consentAlreadyFiled } from '../../utils/consent-filed-log';
 
 interface Props {
   navigation?: NativeStackNavigationProp<any>;
@@ -84,8 +86,28 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
     String(lead?._id || lead?.id || ''),
     'consent',
   );
+  const filedLocally = useFiledConsents(lead);
 
-  const consentSigned = localConsentSigned || consentQueued || hasSignedConsent(lead) || isLeadSold;
+  /**
+   * ⚠️ FOUR sources, and the local log is the one that survives a restart.
+   *
+   * `localConsentSigned` is `useState(false)` - it resets every time this screen mounts.
+   * `consentQueued` only knows about a form submitted OFFLINE. `hasSignedConsent(lead)` reads
+   * `lead.generatedReports`, which is SERVER data and absent whenever the lead came from a cache
+   * taken before the submission. So a consent filed ONLINE, revisited offline, satisfied none of
+   * them - and the effect below auto-opened a blank form for a customer who had already signed.
+   *
+   * ⚠️ `OperationalSections` has its own copy of this decision for the card badge. Both must
+   * consult the same sources; fixing one and not the other is exactly how this bug survived a
+   * round of fixes - the badge read "Consent on file" while this screen still demanded a signature.
+   */
+  const consentSigned = consentAlreadyFiled({
+    signedThisSession: localConsentSigned,
+    queued: consentQueued,
+    filedLocally: filedLocally.consent,
+    serverFiled: hasSignedConsent(lead),
+    leadSold: isLeadSold,
+  });
 
   const handleConsentSubmit = useCallback(
     async (data: any) => {

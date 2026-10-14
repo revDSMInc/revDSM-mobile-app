@@ -26,11 +26,13 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { FundingService } from '../../../services/api/FundingService';
 import { canResumeJobBuild, fundingBelongsToCalculator, fundingPinnedToOtherCalculator } from '../utils/funding';
 import { useAuth } from '../../../hooks/useAuth';
+import { useSlowLoadHint } from '../../../hooks/useSlowLoadHint';
 import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
 import { useQueryClient } from '@tanstack/react-query';
 import { markLeadRolloutsConfirmed } from '../../../hooks/useLeadCalculatorStatus';
 import { allRolloutsConfirmed } from '../../../utils/rollout-status';
 import { isOnline } from '../../../services/connectivity';
+import { backToLeadCenter } from '../../../utils/navigate-back-to-lead-center';
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
 
@@ -53,13 +55,26 @@ interface DynamicDealCenterScreenProps {
   };
 }
 
+/**
+ * Edit mode is a DIFFERENT SCREEN, so it is split out here rather than early-returned from
+ * inside the create screen.
+ *
+ * ⚠️ It used to `return <DynamicDealEditScreen/>` after three hooks and before the other
+ * ~40, which put every remaining hook behind a conditional. React only tolerated it because
+ * `mode` never changes within a mount; it also silenced nothing - 27 rules-of-hooks errors
+ * were being carried, and the first hook added below them crashed the screen.
+ */
 export default function DynamicDealCenterScreen({ navigation, route }: DynamicDealCenterScreenProps) {
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
-  const numPadActive = useNumPadActive();
   if (route?.params?.mode === 'edit') {
     return <DynamicDealEditScreen navigation={navigation} route={route} />;
   }
+  return <DynamicDealCenterCreate navigation={navigation} route={route} />;
+}
+
+function DynamicDealCenterCreate({ navigation, route }: DynamicDealCenterScreenProps) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const numPadActive = useNumPadActive();
 
   const lead = route?.params?.lead;
   const [fundingBlock, setFundingBlock] = useState<{ ownerTitle: string } | null>(null);
@@ -96,6 +111,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     appointmentId,
     loading: isCalcLoading,
     offlineUnavailable,
+    workFromDevice,
     isSaving,
     lastUpdated,
     handleEntryChange,
@@ -392,6 +408,12 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     entries: t.entries,
   }));
 
+  // ⚠️ ABOVE every early return below. `flowStep` changes at runtime (the View-all
+  // button sets 'rollout'), so a hook placed after those returns runs on one render and
+  // not the next - "Rendered fewer hooks than expected", which crashed the screen.
+  const isLoading = isSchemaLoading || isCalcLoading || isJobBuilderConfigLoading;
+  const loadIsSlow = useSlowLoadHint(isLoading);
+
   if (flowStep === 'jobBuilder') {
     return (
       <DynamicJobBuilderScreen
@@ -448,7 +470,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onOneYearMonthlyChange={handleSetOneYearMonthly}
           onRolloutsConfirmedDone={() => {
             markLeadRolloutsConfirmed(queryClient, lead);
-            navigation?.navigate('LeadCenter', { lead, tab: 'tools' });
+            backToLeadCenter(navigation, lead);
           }}
           activeTabId={activeTabId}
           onTabSelect={setActiveTabId}
@@ -490,7 +512,6 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     );
   }
 
-  const isLoading = isSchemaLoading || isCalcLoading || isJobBuilderConfigLoading;
   const isDynamicConfigured = hasCalculatorSchema && hasJobBuilderConfig;
 
   return (
@@ -522,9 +543,27 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
       </View>
 
       {isLoading ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
           <ActivityIndicator size="large" color="#4CBB17" />
-          <Text style={{ marginTop: 12, fontSize: 13, color: '#94A3B8' }}>Loading calculator…</Text>
+          {/* ⚠️ Never a bare spinner past a few seconds. On one bar this screen used to hold
+              "Loading calculator…" for two minutes with no message and no way out — the rep
+              could not tell a slow line from a broken app. */}
+          <Text style={{ marginTop: 12, fontSize: 13, color: '#94A3B8', textAlign: 'center' }}>
+            {loadIsSlow ? 'Still loading — your connection looks slow' : 'Loading calculator…'}
+          </Text>
+          {loadIsSlow && (
+            <>
+              <Text style={{ marginTop: 6, fontSize: 12, color: '#94A3B8', textAlign: 'center', lineHeight: 18 }}>
+                You can carry on with the copy saved on this device.
+              </Text>
+              <TouchableOpacity
+                onPress={workFromDevice}
+                style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#4CBB17' }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Work offline</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       ) : offlineUnavailable ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>

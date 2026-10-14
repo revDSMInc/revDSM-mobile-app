@@ -42,7 +42,9 @@ export type CreateOutcome =
   | 'never-sent'
   | 'duplicate'
   | 'rejected'
-  | 'ambiguous';
+  | 'ambiguous'
+  // The session expired. Says nothing about the work itself, so it is neither a failure nor a retry.
+  | 'unauthorized';
 
 const DUPLICATE_LEAD_ID_RE =
   /(lead\s*_?id|lfleadid|lf\s*lead\s*id)[^.]{0,40}(already|exist|taken|duplicat|in use)|(already|exist|taken|duplicat)[^.]{0,40}(lead\s*_?id|lfleadid)|e11000/i;
@@ -77,6 +79,7 @@ export const classifyCreateOutcome = (err: any): CreateOutcome => {
     return 'ambiguous';
   }
 
+  if (status === 401) return 'unauthorized';
   if (status >= 500) return 'ambiguous';
   if (status === 408 || status === 429) return 'never-sent';
   if (status >= 400) return 'rejected';
@@ -105,6 +108,10 @@ export const resolveRetryDecision = (
       return 'failed';
     case 'ambiguous':
       return guarded ? 'retry' : 'needs-review';
+    case 'unauthorized':
+      // Online create from the form: the 401 interceptor is already signing the rep out. Do not
+      // queue (the form is about to be dismissed under a dead session) and do not call it done.
+      return 'failed';
     default:
       return 'needs-review';
   }

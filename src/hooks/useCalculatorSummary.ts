@@ -669,8 +669,8 @@ export const useCalculatorSummary = (
     if (error) setError(null);
   };
 
-  const handlePriceBlur = () => {
-    const num = Number(priceText.replace(/[^0-9.]/g, ''));
+  const handlePriceBlur = (text?: string) => {
+    const num = Number((text ?? priceText).replace(/[^0-9.]/g, ''));
     const costPrice = Math.round(results.costAtCheck ?? results.price50);
     const activePaymentMethod = activeCalc.inputs.paymentPlan;
     const planName = activePaymentMethod.startsWith('wf')

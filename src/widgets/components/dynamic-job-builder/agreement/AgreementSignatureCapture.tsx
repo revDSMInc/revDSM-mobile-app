@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal,
   View,
@@ -28,6 +28,13 @@ export function AgreementSignatureCapture({
   const [paths, setPaths] = useState<string[]>([]);
   const [current, setCurrent] = useState('');
   const currentRef = useRef('');
+  const [agreedToESign, setAgreedToESign] = useState(false);
+
+  // Each mark is its own explicit agreement, so the tick resets every time a pad opens - the
+  // initials and the signature are consented to separately. Matches the online pad.
+  useEffect(() => {
+    if (visible) setAgreedToESign(false);
+  }, [visible]);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -72,12 +79,18 @@ export function AgreementSignatureCapture({
     currentRef.current = '';
   };
 
+  const hasDrawing = paths.length > 0 || current !== '';
+  // Ink AND consent, the same gate the online pad applies - ticking alone must not enable a
+  // blank pad, and drawn ink alone must not save without the agreement.
+  const canSave = hasDrawing && agreedToESign;
+
   const handleClose = () => {
     clear();
     onClose();
   };
 
   const save = () => {
+    if (!canSave) return;
     const ref = svgRef.current;
     if (!ref || typeof ref.toDataURL !== 'function') {
       console.warn('[AgreementSignatureCapture] Svg.toDataURL unavailable');
@@ -90,8 +103,6 @@ export function AgreementSignatureCapture({
       onClose();
     });
   };
-
-  const hasDrawing = paths.length > 0 || current !== '';
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
@@ -151,6 +162,28 @@ export function AgreementSignatureCapture({
             </View>
           </View>
 
+          {/* Consent sits ABOVE the buttons, and Save stays disabled until it is ticked. */}
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => setAgreedToESign((v) => !v)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: agreedToESign }}
+            style={styles.consentRow}
+          >
+            <View
+              style={[
+                styles.consentBox,
+                {
+                  borderColor: agreedToESign ? '#1C252E' : '#919EAB',
+                  backgroundColor: agreedToESign ? '#1C252E' : 'white',
+                },
+              ]}
+            >
+              {agreedToESign ? <Icon name="check" size={14} color="white" /> : null}
+            </View>
+            <Text style={styles.consentText}>I agree to electronic signature</Text>
+          </TouchableOpacity>
+
           <View style={styles.actions}>
             <TouchableOpacity onPress={clear} style={styles.clearBtn}>
               <Icon name="eraser" size={16} color="#FF5630" style={{ marginRight: 6 }} />
@@ -162,11 +195,11 @@ export function AgreementSignatureCapture({
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={save}
-                disabled={!hasDrawing}
-                style={[styles.saveBtn, { backgroundColor: hasDrawing ? '#22C55E' : '#919EAB33' }]}
+                disabled={!canSave}
+                style={[styles.saveBtn, { backgroundColor: canSave ? '#22C55E' : '#919EAB33' }]}
               >
-                <Icon name="check" size={16} color={hasDrawing ? 'white' : '#919EABCC'} style={{ marginRight: 4 }} />
-                <Text style={[styles.saveText, { color: hasDrawing ? 'white' : '#919EABCC' }]}>Save</Text>
+                <Icon name="check" size={16} color={canSave ? 'white' : '#919EABCC'} style={{ marginRight: 4 }} />
+                <Text style={[styles.saveText, { color: canSave ? 'white' : '#919EABCC' }]}>Save</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -204,6 +237,22 @@ const styles = StyleSheet.create({
   headerTitle: { color: 'white', fontSize: 14, fontWeight: '600' },
   headerSub: { color: 'white', fontSize: 11, marginTop: 2, opacity: 0.85 },
   padWrap: { paddingHorizontal: 16, marginBottom: 16 },
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+  },
+  consentBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  consentText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#1C252E' },
   pad: {
     width: '100%',
     height: 240,

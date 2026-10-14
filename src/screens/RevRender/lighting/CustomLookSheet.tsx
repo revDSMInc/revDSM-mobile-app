@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { Modal, PanResponder, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Modal, PanResponder, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { KeyboardAvoidingView, KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Svg, { Defs, G, Path, RadialGradient, Stop, Circle } from 'react-native-svg';
 import {
@@ -128,6 +129,10 @@ export function CustomLookSheet({
   onSave: (look: CustomLook) => void;
   onClose: () => void;
 }) {
+  const insets = useSafeAreaInsets();
+  // ⚠️ A Modal's insets read 0 or stale (CLAUDE.md §6), so floor them: Android's 3-button bar
+  // is ~48dp and was drawn over the pinned Cancel / Save row.
+  const footerBottom = Math.max(insets.bottom, Platform.OS === 'android' ? 48 : 20) + 12;
   const [name, setName] = useState('');
   const [colors, setColors] = useState<string[]>([]);
   const [editing, setEditing] = useState<number | null>(null);
@@ -223,10 +228,19 @@ export function CustomLookSheet({
     closePicker();
   };
 
-  const usable = colors.filter(canGlow);
+  // A colour still open in the picker counts as chosen: Save folds it in, so the rep
+  // need not press "Add color" first.
+  const pendingColor = pickerOpen && !tooDark && (editing !== null || !full) ? current : null;
+  const withPending =
+    pendingColor === null
+      ? colors
+      : editing !== null
+        ? colors.map((c, i) => (i === editing ? pendingColor : c))
+        : [...colors, pendingColor];
+  const usable = withPending.filter(canGlow);
   const canSave = usable.length > 0;
   const autoName = defaultCustomLookName(existing ?? []);
-  const pattern = patternFor(usable.length ? usable : colors);
+  const pattern = patternFor(usable.length ? usable : withPending);
 
   const reset = () => {
     setName(''); setColors([]); setEditing(null); setPickerOpen(false);
@@ -471,7 +485,7 @@ export function CustomLookSheet({
           </KeyboardAwareScrollView>
 
           {/* Pinned: Save must be reachable without scrolling past an open picker. */}
-          <View className="flex-row px-5 pt-3 pb-8" style={{ gap: 10 }}>
+          <View className="flex-row px-5 pt-3" style={{ gap: 10, paddingBottom: footerBottom }}>
             <TouchableOpacity
               onPress={() => { reset(); onClose(); }}
               accessibilityRole="button"

@@ -13,6 +13,7 @@ import { NotificationBell } from './NotificationBell';
 import { useNavigation } from '@react-navigation/native';
 import Logo from '../../assets/svgs/light-logo';
 import { GlobalModal } from '../common/modal/GlobalModal';
+import { endActiveLeadWorkSession } from '../../utils/lead-work-session';
 
 import { createContext, useContext } from 'react';
 
@@ -73,6 +74,13 @@ export function Header({
   const activeFilterCount = parentFilterCount ?? ctx?.filterCount ?? 0;
 
   const onNavigate = (route: any) => {
+    // Going HOME is what ends the lead - the rep is back at the list, off the door.
+    //
+    // Only home. Account Settings, Job Tracker, My Learning, notifications and chat are side trips
+    // taken from INSIDE a lead and returned from, so they must leave the session open. Lead Center
+    // cannot do this itself: its handler is bound in a `useFocusEffect` and is torn down the
+    // moment any child screen opens, which is why going home from one released nothing.
+    if (route === homeRoute) endActiveLeadWorkSession().catch(() => undefined);
     if (activeOnNavigate) activeOnNavigate(route);
     else navigation.navigate(route);
   };

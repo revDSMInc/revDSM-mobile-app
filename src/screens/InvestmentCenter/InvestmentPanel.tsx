@@ -35,6 +35,7 @@ import {
 import { AddPlanModal } from './AddPlanModal';
 import { SpotlightOverlay, SpotlightState, SpotlightRect } from './SpotlightOverlay';
 import { triggerHaptic } from '../../utils/haptics';
+import { resolveRepOneYearKey, resolveOneYearDefaultKey } from '../../utils/one-year-default';
 import {
   logInvestmentOptIn,
   logInvestmentOptOut,
@@ -81,6 +82,7 @@ interface Props {
   onOptIn: (calculatorId: string, opts: { price: number; paymentMethod?: string; downPayment?: number }) => void;
   onSetInHome?: (calculatorId: string, inHome: { planKey?: string; addedPlans?: string[]; apr?: number; monthlyPayment?: number; grandTotal?: number; optInProgram?: 'inhome' | 'oneyear' | null }) => void;
   onRefresh?: () => void;
+  /** Plan key the rep set as the lead-wide default on ANY of this lead's calculators. */
 }
 
 export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig, jobBuilderConfig, descriptionSchemas, lead, onOptIn, onSetInHome, onRefresh }: Props) {
@@ -149,6 +151,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const secureLogo = useSecureLogo();
   const { user } = useAuth();
   const companyName = user?.companyName;
+  const hasLogoSource = !!(user?.companyLogo || user?.profilePicture);
 
   const logUserId = user?._id || user?.id;
   const visitIdRef = useRef(
@@ -299,12 +302,14 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const srVetDiscount = msrp * (seniorVetPct / 100);
   const preOrderDiscountVal = msrp * (discountPct / 100);
 
-  const defaultOneYearKey = useMemo(() => {
-    const fin = Object.keys(plans).filter((k) => isFinancing(plans, k));
-    return fin.find((k) => Math.round((plans[k]?.apr || 0) * 100) / 100 === 9.99) || fin.find((k) => (plans[k]?.apr || 0) > 0) || fin[0] || method;
-  }, [plans, method]);
+  // REVUIUX-444: same rule as the rollout card - `Default` is LIVE and rep-scoped (user.defaultOneYearPaymentMethod).
+  const repOneYearKey = useMemo(() => resolveRepOneYearKey(plans, user), [plans, user?.defaultOneYearPaymentMethod]);
+  const defaultOneYearKey = useMemo(
+    () => resolveOneYearDefaultKey(plans, user, method),
+    [plans, user?.defaultOneYearPaymentMethod, user?.defaultPaymentMethod, method],
+  );
   const oneYear = calculator.oneYearMonthlyPlan;
-  const oneYearMode = oneYear?.mode || 'match';
+  const oneYearMode = oneYear?.mode || (repOneYearKey ? 'default' : 'match');
   const oneYearKey =
     oneYearMode === 'match'
       ? selectedPlanKey || seedFinancingKey || defaultOneYearKey
@@ -691,7 +696,9 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         )}
         {/* The logo stands alone; the company name is only the fallback when there is no logo
             (the heading below already says "Your Investment With {company}"). */}
-        {secureLogo ? null : companyName ? (
+        {/* While a logo is configured but still resolving, show nothing — the name text flashed
+            before the logo on every calculator-tab switch. */}
+        {secureLogo || hasLogoSource ? null : companyName ? (
           <Text style={{ fontSize: 15, fontWeight: '800', fontStyle: 'italic', color: '#15803D', textTransform: 'capitalize' }}>{companyName}</Text>
         ) : !secureLogo ? (
           <Text style={{ fontSize: 15, fontWeight: '800', fontStyle: 'italic', color: '#15803D' }}>

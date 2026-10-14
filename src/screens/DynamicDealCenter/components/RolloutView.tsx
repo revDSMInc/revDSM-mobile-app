@@ -51,6 +51,7 @@ import { RevRenderSlots, type RenderPair } from './RevRenderSlots';
 import { PhotoPeekScrollLockProvider } from '../../../widgets/common/PhotoPeekScrollLock';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { OneYearMonthlyPlan, type OneYearMonthlyValue } from './OneYearMonthlyPlan';
+import { resolveRepOneYearKey, resolveOneYearDefaultKey } from '../../../utils/one-year-default';
 import { scopeSignature } from '../utils/scope-signature';
 import type { CalculatorLockState } from '../utils/job-builder-submission';
 import { NUMERIC_KEYBOARD, NUMERIC_KEYBOARD_HAS_RETURN_KEY } from '../../../utils/keyboard-type';
@@ -664,7 +665,7 @@ function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   );
 }
 
-function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, isRehashed = false, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, lockState, onResetJobBuilder, onDismissScopeWarning, onShowPackageInfo, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange, leadOneYearDefault = null }: {
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, isRehashed = false, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, lockState, onResetJobBuilder, onDismissScopeWarning, onShowPackageInfo, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
   isLowesLead: boolean;
@@ -687,7 +688,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   onDownPaymentChange: (id: string, downPayment: number) => void;
   onRendersChange: (id: string, renders: any[]) => void;
   onOneYearMonthlyChange: (id: string, plan: OneYearMonthlyValue) => void;
-  leadOneYearDefault?: { planKey: string; apr?: number } | null;
 }) {
   const { user, refreshUser } = useAuth();
   const packageInfo = useMemo(
@@ -718,16 +718,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     () => computeLogTiers(calculator.entries, verticals, pricingConfig),
     [calculator.entries, verticals, pricingConfig],
   );
-  const defaultOneYearKey = useMemo(() => {
-    const financingKeys = Object.keys(plans).filter((k) => isFinancing(plans, k));
-    if (user?.defaultPaymentMethod && isFinancing(plans, user.defaultPaymentMethod)) return user.defaultPaymentMethod;
-    return (
-      financingKeys.find((k) => Math.round((plans[k]?.apr || 0) * 100) / 100 === 9.99) ||
-      financingKeys.find((k) => (plans[k]?.apr || 0) > 0) ||
-      financingKeys[0] ||
-      method
-    );
-  }, [plans, user?.defaultPaymentMethod, method]);
+  // REVUIUX-444: the 1 Year default is the REP's (user.defaultOneYearPaymentMethod), shared by every deal on every lead.
+  const repOneYearKey = useMemo(() => resolveRepOneYearKey(plans, user), [plans, user?.defaultOneYearPaymentMethod]);
+  const defaultOneYearKey = useMemo(
+    () => resolveOneYearDefaultKey(plans, user, method),
+    [plans, user?.defaultOneYearPaymentMethod, user?.defaultPaymentMethod, method],
+  );
   const drops: any[] = calculator.dropPrice || [];
   const acceptedDrop = drops.find((d) => d.status === 'accepted');
   const activeMethod = acceptedDrop?.paymentMethod || method;
@@ -923,6 +919,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }
     FlashMessage.success(label, "Saved on your device — it'll sync when you're back online.");
   };
+
+  const setOneYearDefault = (key: string | null) =>
+    saveDefault(
+      { defaultOneYearPaymentMethod: key },
+      key ? '1 Year default plan set' : '1 Year default plan cleared'
+    );
 
   const toggleDefault = (next: boolean) =>
     saveDefault(
@@ -1272,9 +1274,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         {/* 4. COST / PAR / RETAIL tiles */}
         <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginBottom: 14 }}>
           {tiers.map((tier) => (
-            <View key={tier.label} style={{ flex: 1, alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#fff', borderWidth: tier.isRetail ? 1.5 : 1, borderColor: tier.isRetail ? '#16A34A' : '#DFE3E8', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+            <View key={tier.label} style={{ flex: 1, flexBasis: 0, minWidth: 0, alignItems: 'center', paddingVertical: 10, paddingHorizontal: 6, borderRadius: 12, backgroundColor: '#fff', borderWidth: tier.isRetail ? 1.5 : 1, borderColor: tier.isRetail ? '#16A34A' : '#DFE3E8', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
               <Text style={{ fontSize: 9, fontWeight: '900', letterSpacing: 1.5, marginBottom: 4, color: '#94A3B8', textTransform: 'uppercase' }}>{tier.label}</Text>
-              <Text style={{ fontSize: 14, fontWeight: '900', color: tier.isRetail ? '#16A34A' : '#212B36' }}>{fmt(tier.value)}</Text>
+              <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ alignSelf: 'stretch', textAlign: 'center', fontSize: 14, fontWeight: '900', color: tier.isRetail ? '#16A34A' : '#212B36' }}>{fmt(tier.value)}</Text>
             </View>
           ))}
         </View>
@@ -1419,7 +1421,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   value={calculator.oneYearMonthlyPlan ?? null}
                   onChange={(v) => onOneYearMonthlyChange(calculator.id, v)}
                   locked={false}
-                  leadDefault={leadOneYearDefault}
+                  repDefaultKey={repOneYearKey}
+                  onSetRepDefault={setOneYearDefault}
                 />
               </View>
 
@@ -1605,7 +1608,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   setShowDropInput(true);
                 }
               }}
-              style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: jobLock.isAnySubmitted ? '#CBD5E1' : '#1976D2', backgroundColor: jobLock.isAnySubmitted ? '#F1F5F9' : '#fff', opacity: jobLock.isAnySubmitted ? 0.5 : 1 }}
+              style={{ flex: 1, minHeight: 64, paddingVertical: 8, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: jobLock.isAnySubmitted ? '#CBD5E1' : '#1976D2', backgroundColor: jobLock.isAnySubmitted ? '#F1F5F9' : '#fff', opacity: jobLock.isAnySubmitted ? 0.5 : 1 }}
             >
               <Text style={{ fontSize: 12, fontWeight: '900', color: jobLock.isAnySubmitted ? '#94A3B8' : '#1976D2' }}>
                 {`+ ${['1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][drops.length] || `${drops.length + 1}th`} Drop`}
@@ -1615,7 +1618,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             {jobLock.isSubmittedTab ? (
               <TouchableOpacity
                 onPress={() => onResetJobBuilder?.()}
-                style={{ flex: 1, height: 56, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EF4444' }}
+                style={{ flex: 1, minHeight: 64, paddingVertical: 8, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EF4444' }}
               >
                 <Ionicons name="refresh" size={16} color="#fff" />
                 <Text style={{ fontSize: 12, fontWeight: '900', color: '#fff', marginLeft: 8 }}>Reset Job Builder</Text>
@@ -1624,11 +1627,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
               <TouchableOpacity
                 disabled={jobLock.isAnySubmitted}
                 onPress={openResultChooser}
-                style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: jobLock.isAnySubmitted ? '#CBD5E1' : '#F97316', backgroundColor: jobLock.isAnySubmitted ? '#F1F5F9' : '#fff', opacity: jobLock.isAnySubmitted ? 0.5 : 1 }}
+                style={{ flex: 1, minHeight: 64, paddingVertical: 8, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: jobLock.isAnySubmitted ? '#CBD5E1' : '#F97316', backgroundColor: jobLock.isAnySubmitted ? '#F1F5F9' : '#fff', opacity: jobLock.isAnySubmitted ? 0.5 : 1 }}
               >
-                <Ionicons name="document-text-outline" size={16} color={jobLock.isAnySubmitted ? '#94A3B8' : '#EA580C'} style={{ marginBottom: 2 }} />
-                <Text style={{ fontSize: 12, fontWeight: '900', color: jobLock.isAnySubmitted ? '#94A3B8' : '#EA580C', marginBottom: 1 }}>Result Lead</Text>
-                {/* Web parity (QuoteResultCard.js:964 `{!isRehashed && …}`): on a rehash
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="document-text-outline" size={16} color={jobLock.isAnySubmitted ? '#94A3B8' : '#EA580C'} style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 12, fontWeight: '900', color: jobLock.isAnySubmitted ? '#94A3B8' : '#EA580C' }}>Result Lead</Text>
+                </View>
+                                {/* Web parity (QuoteResultCard.js:964 `{!isRehashed && …}`): on a rehash
                     the price isn't carried forward from the original appointment — the rep
                     enters it in the result modal — so the button shows no locked figure. */}
                 {!isRehashed && (
@@ -1805,12 +1810,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   const [contentWidth, setContentWidth] = useState(0);
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const summaryTabsScrollViewRef = useRef<ScrollView>(null);
-  // The 1-Year monthly plan the rep set as the DEFAULT on any of this lead's calculators; every
-  // other calculator inherits it until changed there (see OneYearMonthlyPlan).
-  const leadOneYearDefault = useMemo(() => {
-    const c = calculators.find((x) => x.oneYearMonthlyPlan?.isDefault && x.oneYearMonthlyPlan?.planKey);
-    return c ? { planKey: c.oneYearMonthlyPlan!.planKey as string, apr: c.oneYearMonthlyPlan!.apr } : null;
-  }, [calculators]);
   // The inline drop-price / end-price / down-payment inputs use the in-app number pad, which
   // `KeyboardAwareScrollView` (keyboard-frame driven) never scrolls for: bring the focused one up.
   const quoteScrollRef = useRef<any>(null);
@@ -1969,7 +1968,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               onDiscountChange={(id, d) => onDiscountChange?.(id, d)}
               onDownPaymentChange={(id, dp) => onDownPaymentChange?.(id, dp)}
               onRendersChange={(id, renders) => onRendersChange?.(id, renders)}
-              leadOneYearDefault={leadOneYearDefault}
               onOneYearMonthlyChange={(id, plan) => onOneYearMonthlyChange?.(id, plan)} />
           ) : (
             <View style={{ alignItems: 'center', paddingVertical: 80 }}>

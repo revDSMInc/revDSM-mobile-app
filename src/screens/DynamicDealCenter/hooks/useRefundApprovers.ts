@@ -3,14 +3,26 @@ import { ApprovalService, type ApproverFeed } from '../../../services/api/Fundin
 import { useAuth } from '../../../hooks/useAuth';
 import { normalizeApproverFeed } from '../utils/funding';
 
-export function useRefundApprovers(enabled = true, companyIdOverride?: string) {
+/**
+ * @param cachedFeed served INSTEAD of the request when the device has no usable connection.
+ *   Without it `refundBlockers` fails on `!approverId` and every offline refund is blocked,
+ *   however much of the rest of the flow works.
+ */
+export function useRefundApprovers(
+  enabled = true,
+  companyIdOverride?: string,
+  cachedFeed?: ApproverFeed | null,
+) {
   const { user } = useAuth();
   const companyId = companyIdOverride || user?.companyId;
   const userId = user?._id || user?.id;
 
   const query = useQuery({
-    queryKey: ['refundApprovers', companyId || 'none'],
+    queryKey: ['refundApprovers', companyId || 'none', cachedFeed ? 'cached' : 'live'],
     queryFn: async (): Promise<ApproverFeed> => {
+      // ⚠️ Inside the queryFn, not via `enabled: false` — a disabled query never resolves and
+      // `isConfigured` (which reads `query.isSuccess`) would stay false forever.
+      if (cachedFeed) return cachedFeed;
       try {
         const res = await ApprovalService.approvers('refund', companyId, userId);
         const feed = normalizeApproverFeed(res?.data);

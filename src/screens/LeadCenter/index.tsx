@@ -77,6 +77,7 @@ import RNFS from 'react-native-fs';
 
 import { useLeadCenterData } from '../../hooks/useLeadCenterData';
 import { usePrecacheLeadPhotos } from '../../hooks/usePrecacheLeadPhotos';
+import { useResumeLeadOnForeground } from '../../hooks/useResumeLeadOnForeground';
 import { useGetAgreementConfig } from '../DynamicDealCenter/hooks/useAgreementConfig';
 import { useCompanyLogoBase64 } from '../../hooks/useCompanyLogoBase64';
 import { useIsOnline } from '../../hooks/useIsOnline';
@@ -164,6 +165,10 @@ export default function LeadCenterPage() {
 
   usePrecacheLeadPhotos(lead);
 
+  // ⚠️ A socket disconnect pauses the work server-side, and a plain BACKGROUND drops the socket.
+  // Without this the rep returns to an open lead while the ops board shows them paused.
+  useResumeLeadOnForeground(lead, user);
+
   const leadCenterOnline = useIsOnline();
   useGetAgreementConfig(leadCenterOnline);
   useCompanyLogoBase64(leadCenterOnline);
@@ -171,11 +176,10 @@ export default function LeadCenterPage() {
   const handleEditDeal = useCallback(() => {
     const leadId = lead?._id || lead?.id || lead?.leadId;
     if (!leadId) return;
-    const blockedEdit = offlineBlockFor('addendum', isOnline());
-    if (blockedEdit) {
-      FlashMessage.info(blockedEdit.title, blockedEdit.message);
-      return;
-    }
+    // ⚠️ The addendum gate used to refuse the EDIT SCREEN outright offline, so a rep at a door
+    // could not even open a sold deal. The refusal now lives where it belongs - on Submit, in
+    // `DynamicDealEditScreen`, which can tell a plain build change (queueable) from a refund or
+    // an attachment (not). Opening and editing is local work and always allowed.
     navigation.navigate('DynamicDealCenter', {
       lead,
       mode: 'edit',
@@ -240,7 +244,10 @@ export default function LeadCenterPage() {
     useCallback(() => {
       setHeaderActions({
         onNavigate: (target: any) => {
-          pauseLeadSessionRef.current();
+          // Only going back to the lead LIST ends the session. Account Settings, Job Tracker,
+          // My Learning, notifications and chat are side trips the rep returns from, and are
+          // part of working the lead.
+          if (target === 'Leads') pauseLeadSessionRef.current();
           navigation.navigate(target);
         },
       });

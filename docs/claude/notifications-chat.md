@@ -571,3 +571,12 @@ the same broken shape and now uses `isHttpStatus`.
 `autoConfirmManager.ts:112`, `offlinePhotoDeleteQueue.ts:180`. Each is a dead branch in the same
 way. Only the chat ones were fixed here, deliberately: the rest change behaviour in unrelated
 features and want their own testing. Migrate to `isHttpStatus` when touching them.
+
+## Chat Members sheet — type and colour aligned with the "Seen By" / "Reactions" sheets
+
+`ParticipantsModal` (`widgets/components/chat/ChatModals.tsx`) used `font-black` everywhere, a 10px `tracking-widest`
+email at `opacity-40` (unreadable grey) and a hash-coloured square avatar. It now matches the Seen By sheet in
+`ChatMessageBubble.tsx`: title `text-xl font-bold`, count badge `text-xs font-bold`, 32px close button, 44px round avatar
+from `getAvatarProps` (honours the user's `colorCode`, same colour as everywhere else in chat), name `15px font-bold`,
+email `12px` in `colors.textSecondary`. ⚠️ Keep the three sheets visually in step; don't reintroduce `font-black`
+(Public Sans has no 900 face — Android synthesises it) or opacity-dimmed text.

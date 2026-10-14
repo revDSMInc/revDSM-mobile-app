@@ -7,6 +7,9 @@ import { jobWaitState, WAITING_AMBER, WAITING_LABEL } from '../../../utils/repor
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useRevRenderRunsQuery } from '../../../hooks/useLeadQuery';
 import { useLeadCalculatorStatus } from '../../../hooks/useLeadCalculatorStatus';
+import { calcGateState } from '../../../utils/lead-calc-status';
+import { useFiledConsents } from '../../../hooks/useFiledConsents';
+import { consentAlreadyFiled } from '../../../utils/consent-filed-log';
 import { usePitchBooks } from '../../../hooks/usePitchBooks';
 import { useQueuedConsentForms } from '../../../hooks/useQueuedConsentForms';
 import type { PitchBookSummary } from '../../../utils/pitch-book';
@@ -41,7 +44,16 @@ export const ToolsSection = ({
   const hasCalc = !!calcStatus?.hasCalculator;
   const isLeadSold = lead?.status === 'sale';
   const allConfirmed = !!calcStatus?.allConfirmed || isLeadSold;
-  const investmentStatusPending = isCalcStatusFetching && !allConfirmed;
+
+  /**
+   * ⚠️ "Don't know" is NOT "not built". `calcStatus` is null when every attempt to read the
+   * status failed and nothing was cached; locking on that is what showed a rep "Please Fully
+   * Build ALL jobs first" seconds after they had built them. Unknown stays unlocked and says
+   * it is still checking - a wrong lock costs a sale, a wrong unlock costs one tap.
+   */
+  const gate = calcGateState(calcStatus, { isSold: isLeadSold });
+  const investmentLocked = gate === 'locked';
+  const investmentStatusPending = gate === 'unknown' || (isCalcStatusFetching && !allConfirmed);
   useFocusEffect(
     React.useCallback(() => {
       refetchCalcStatus?.();
@@ -132,8 +144,24 @@ export const ToolsSection = ({
   };
 
   const queuedForms = useQueuedConsentForms(lead);
-  const consentReport = findReport('consent_form') || (queuedForms.consent ? QUEUED_FORM : undefined);
-  const waiverReport = findReport('waiver_form') || (queuedForms.waiver ? QUEUED_FORM : undefined);
+  /**
+   * ⚠️ THREE sources, not one. Each alone has a blind spot, and the gap between them let a rep
+   * take a SECOND signature for a consent they had already filed:
+   *  - the generatedReport is server data, absent whenever the lead came from an older cache;
+   *  - the queue only ever knows about forms submitted OFFLINE;
+   *  - the local log is the one that covers "submitted online, read back offline".
+   */
+  const filedLocally = useFiledConsents(lead);
+  const consentReport =
+    findReport('consent_form') ||
+    (consentAlreadyFiled({ queued: queuedForms.consent, filedLocally: filedLocally.consent })
+      ? QUEUED_FORM
+      : undefined);
+  const waiverReport =
+    findReport('waiver_form') ||
+    (consentAlreadyFiled({ queued: queuedForms.waiver, filedLocally: filedLocally.waiver })
+      ? QUEUED_FORM
+      : undefined);
   const inspectionReport = findReport('inspection_report');
   const riskReport = findReport('risk_report');
 
@@ -143,6 +171,12 @@ export const ToolsSection = ({
     }
   }, [riskReport]);
 
+  /**
+   * ⚠️ Both of these just dispatch. The "already filed" decision belongs in ONE place -
+   * `useLeadCenterModals`'s `onToolAction`, which already opens the filed PDF, or says the PDF
+   * needs a connection when offline. Re-deciding it here is what produced three separate rounds
+   * of this bug; do not add a second gate to these handlers.
+   */
   const handleConsentPress = () => onAction('consent');
   const handleWaiverPress = () => onAction('waiver');
 
@@ -167,22 +201,22 @@ export const ToolsSection = ({
       />
       <ToolCard
         title="Investment Center"
-        desc={isLeadSold ? 'View finalized proposal details' : (investmentStatusPending ? 'Checking job status…' : !allConfirmed ? 'Please Fully Build ALL jobs first' : 'Present quote & 1-yr free quote')}
+        desc={isLeadSold ? 'View finalized proposal details' : (investmentStatusPending ? 'Checking job status…' : investmentLocked ? 'Please Fully Build ALL jobs first' : 'Present quote & 1-yr free quote')}
         statusText={allConfirmed ? (isLeadSold ? 'Sale finalized' : (consentReport ? 'Consent on file — present quote' : 'Ready to present')) : undefined}
         badgeText={isLeadSold ? 'SOLD' : (allConfirmed && consentReport ? 'Already Generated' : undefined)}
         badgeVariant={isLeadSold ? undefined : 'violet'}
-        locked={!allConfirmed}
+        locked={investmentLocked}
         busy={investmentStatusPending}
         icon="chart-line"
         onPress={() => {
-          if (investmentStatusPending) {
-            FlashMessage.info('Investment Center', 'Checking job status — one moment.');
-            return;
-          }
-          if (!allConfirmed) {
+          // ⚠️ Only a DEFINITE "not built" refuses. When the status is unknown (every read
+          // failed and nothing is cached) the rep goes through: a stale lock in front of a
+          // customer is far more expensive than opening a screen that turns out to be empty.
+          if (gate === 'locked') {
             FlashMessage.warning('Investment Center', 'Please build and confirm all rollouts first.');
             return;
           }
+          if (gate === 'unknown') refetchCalcStatus?.();
           onShowInvestmentCenter();
         }}
       />

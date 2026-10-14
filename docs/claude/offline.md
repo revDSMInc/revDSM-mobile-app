@@ -78,9 +78,8 @@ emptying it. `upload_photo_queue` is a session-keep key; emptying the memo made 
 erase the earlier rep's unsent photos.
 
 **Still open (not done here):** BGProcessingTask / WorkManager to resume after the process is killed;
-background `URLSession` for large files; the photo queue still drops an item after 5 failed attempts; a
-parked 401 still marks work `failed` (`classifyCreateOutcome`); no backend idempotency key. These are the
-audit's remaining high items.
+background `URLSession` for large files; no backend idempotency key (see **Hardening pass** below). The photo
+queue no longer drops after 5 attempts and a 401 no longer fails work - both fixed in the hardening pass.
 
 **Device test matrix:** airplane mode toggled while backgrounded; app left in recents vs swiped away (each
 platform); reboot with a non-empty queue; weak signal / captive portal; token expired mid-drain; low
@@ -155,11 +154,68 @@ risk report or render with no signal, but it only speaks at the tap and cannot h
 on screen. A render whose *initial* POST never reached the server **is** a genuine failure and
 stays `failed` — reported as "No connection — this render was not started", never axios' wording.
 
+## Hardening pass (audit follow-up)
 
-### REVUIUX-519: queued funding carries `calculatorId`
+What was fixed, and the rule behind each. Rules live in pure `utils/upload-retry-policy.ts`,
+`utils/offline-lead-queue.ts`, `utils/offline-lead-work.ts`, `utils/session-scope.ts` and are tested in
+`tests/offline/` (**tracked** - see below).
 
-The offline `'funding'` step (`offlineLeadStore.ts`, replaying `PUT /lead/v1/:leadId/funding`) now forwards `calculatorId`
-from the queued body (`ResultJobModal` stores it via `saveOfflineFunding`), so the server claims funding ownership when the
-queue drains, exactly as an online save does. Omitted when absent (older queued work) = ownership untouched, which the backend
-treats as a no-op. ⚠️ A replay can now 409 `FUNDING_SETTLED_ON_OTHER_CALCULATOR`; the `'funding'` step has no 409 handling (unlike the lead/outcome steps), so it throws like any other error and follows the queue's normal retry path — unverified whether that loops; check before relying on it.
-Details: `deal-center.md` → "REVUIUX-519".
+| Was | Now |
+|---|---|
+| Photo queue **deleted** an item after 5 failed attempts | It is **parked** (`parkedAt`, `lastError`): file kept, skipped by the drain, not counted by the coordinator, shown on Pending uploads with Retry / Discard (`uploadQueueManager.retryParked` / `dropQueuedItem`) |
+| A 401 marked lead work `failed`, spent a photo attempt, and spent an activity-log attempt | `classifyCreateOutcome` -> `'unauthorized'` -> `StepDecision 'pause'`: work stays `draft`, attempts untouched. Photo queue and activity log stop without spending an attempt |
+| `offline_image_uploads` was wiped on logout (files orphaned in DocumentDir) and had no owner | Added to `SESSION_KEEP_KEYS`; items carry `ownerId` (legacy items without one belong to whoever is signed in); `getUploadQueue()` returns only the signed-in rep's |
+| `offline_calculator_settings` was wiped on logout | Stored per owner as `offline_calculator_settings:<ownerId>` (kept by prefix), so a second rep can neither see nor flush it. The old un-owned key is adopted by the first rep who loads |
+| Installer image queue `break`-ed on the first failure, blocking every item behind it, with no cap | Per-item `attempts` + exponential backoff (30 s .. 15 min), parked after `MAX_INSTALLER_ATTEMPTS` (8); the loop carries on to the next item |
+| Installer queue saved a stale snapshot, erasing anything enqueued mid-sync | `updateItem` / `removeItem` read-modify-write the fresh list |
+| `[CheckInTrace]` / `[LeadSync]` diagnostics, incl. the five marked TEMPORARY | Removed (kept: `[LeadSync] CREATE queued` and `FAILED`) |
+| No single place to see what is queued | **Pending uploads** screen (`screens/PendingUploads`), entered from Profile (`PendingUploadsCard`) and the Leads banner ("See all pending uploads"). Lists work, parked photos, installer images, activity-log count |
+
+⚠️ **Parking is not dropping.** A parked photo or installer item must stay in storage with its file until the
+rep chooses. `heldCount()` / `pendingInstallerUploadCount()` exclude parked items on purpose: counting them
+makes the coordinator "stall" and give up on everything else.
+
+⚠️ **A 401 is the session, never the item.** The api interceptor is already signing the rep out; the queues
+must keep what they hold and spend no attempt. Do not map 401 back to `rejected`.
+
+⚠️ **Installer queue ownership:** items queued before this pass have no `ownerId` and are treated as the
+current rep's. Never filter on `ownerId` alone.
+
+⚠️ **`tests/` is the one tracked test folder.** `.gitignore` still ignores `__tests__/` and `*.test.ts`
+(deliberate - suites are local), with `!tests/**/*.test.ts` carved out so the offline rules run in CI.
+`tests/offline/background-upload-policy.test.ts` is a copy of the local one.
+
+### Backend request - idempotency key (NOT done; needs the API)
+
+The client cannot make a timed-out create safe on its own; today it reads the record back before retrying
+(`stepReplaySafety`), which only works for steps that have something to read. Ask the backend to accept an
+`Idempotency-Key` header (we would send the queue item's client id: `work-...`, `upload-...`, `upload_...`) on
+lead / appointment / calculator create and `uploadImages`, and to return the original response for a repeat.
+Until then a photo upload that times out after reaching the server can still produce a duplicate photo.
+
+### Still not offline (by design or not yet built)
+Installer jobs and Certificate of Completion; My Deals edit wizard / addendums (blocked with a notice);
+Zone Canvasser zone create / archive / delete (map tiles are cached, writes are not); referral, Job Tracker
+writes, chat sends (blocked with a notice, not queued).
+
+
+### Activity logs offline: coverage, one action-time key, per-lead order (2026-10-14)
+Files: `utils/offline-activity-log.ts` (pure rules), `services/offlineActivityLog.ts` (queue), `services/api/LoggerService.ts`
+(`logEvent`), `services/offlineLeadStore.ts` (id resolver), `services/background/uploadCoordinator.ts`. Tests: `tests/offline/offline-activity-log.test.ts`.
+
+| Was | Fix |
+|---|---|
+| Only a whitelist of modules was held offline; `result_lead`, `lead_result_field_entry`, `calculator_field_entry`, `view_all_calculators`, `roofline_deck`, `investment_center`, `my_deal`... fell to `sendLog`, failed and were lost (only a `console.warn`) | `isQueueableLog` is now **every module except `NON_QUEUEABLE_LOG_MODULES` (`system`)**. A new module is held by default |
+| Two names for the action time: `meta.occurredAt` (held logs) and `meta.timestamp` (lead-photo + installer-photo logs) | ONE key, `meta.occurredAt` (`ACTION_TIME_KEY`). `logEvent` stamps it first thing, on EVERY log, online or not. A caller that knows the true moment (photo capture time) passes `occurredAt` and `stampActionTime` keeps it. `imageData.timestampTaken` is the image schema's own field and stays. `leads_list`'s `meta.timestamp` is a view log, not queued, untouched |
+| Queue cap 200 silently dropped the oldest log | `MAX_QUEUED_LOGS` = 2000 |
+| A log made online right after reconnecting overtook older held ones | `logEvent` holds a log while `hasQueuedActivityLogs()` |
+| The drain ran BEFORE lead work, so a log for an offline-created lead went out with the device-only `lead-...` id and `rekeyActivityLogs` ran too late | `nextSendableLog` skips a log whose payload still holds a device id (`findUnresolvedClientIds`) **and every later log of that lead**; `setActivityLogIdResolver` swaps ids from every work's `buildIdMap` at send time (covers appointment + calculator ids, not just the lead); a drain is triggered after `rekeyActivityLogs`, at the end of `drainOfflineWork`, and as a second coordinator pass |
+
+- ⚠️ **Do NOT stamp the time in the sender or `sendLog`.** That is the reconnect time, the exact bug this fixes.
+- ⚠️ **Do NOT re-introduce a per-module whitelist.** Exclude by exception only.
+- ⚠️ The backend is not in this repo: whether it shows `meta.occurredAt` instead of its own receive time as the log's time is unverified. Backend analytics that read `meta.timestamp` on photo logs must read `meta.occurredAt`.
+- Not renamed (separate queues, not activity logs): `OfflineLeadWork.createdAt/updatedAt`, `workStarted.at`, `workEnded.at`, `fundingSubmitted.at`, the upload queue's own `timestamp`.
+
+### REVUIUX-444 — `defaultOneYearPaymentMethod` joins the queued calculator settings
+
+`utils/offline-settings.ts`: `FIELDS` + `PendingCalculatorSettings` gained `defaultOneYearPaymentMethod` (`null` = clear, sent as `null`). Everything else (merge, payload, `hasPendingSettings`, optimistic `applyPendingSettingsToUser`, replay on reconnect) is driven off `FIELDS`. See `deal-center.md` § REVUIUX-444.

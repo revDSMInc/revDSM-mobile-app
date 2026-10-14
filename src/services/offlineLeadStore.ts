@@ -11,8 +11,14 @@ import { isOnline, onReconnect } from './connectivity';
 import { getSessionOwner, registerSessionResetHook } from './sessionScope';
 import { isOwnedBy } from '../utils/session-scope';
 import { uploadQueueManager } from '../utils/uploadQueue';
-import { rekeyActivityLogs } from './offlineActivityLog';
+import {
+  rekeyActivityLogs,
+  runActivityLogDrain,
+  setActivityLogIdResolver,
+} from './offlineActivityLog';
+import { rekeyDeliveryPreference } from './offlineAgreementDelivery';
 import { describeQueuedLead, isSuccessfulCreate, messageOfError } from '../utils/offline-lead-queue';
+import { setWorkReleaseQueue } from '../utils/lead-work-session';
 import {
   applyResolvedAddress,
   coordsFromLeadPayload,
@@ -27,6 +33,7 @@ import { rekeyLeadWorkflow } from './offlineLeadStatus';
 import { offlinePhotoDeleteQueue } from './offlinePhotoDeleteQueue';
 import { leadDetailForCache } from '../utils/offline-lead-detail-cache';
 import { submitConsentForm, finalizeConsentUpload } from './api/consent-forms';
+import { markConsentFiled } from './consentFiledStore';
 import {
   consentSignatureName,
   hasFiledConsentReport,
@@ -135,15 +142,6 @@ export const putOfflineWork = (work: OfflineLeadWork): OfflineLeadWork => {
   const i = store.findIndex((w) => w.clientId === work.clientId);
   store = i === -1 ? [...store, next] : store.map((w, n) => (n === i ? next : w));
   persist();
-  console.log(
-    '[LeadSync] store %s %s origin=%s status=%s workStarted=%s rows=%s',
-    i === -1 ? 'ADD' : 'UPDATE',
-    next.clientId,
-    next.origin,
-    next.status,
-    next.workStarted ? 'YES' : 'no',
-    store.length
-  );
   return next;
 };
 
@@ -249,6 +247,67 @@ export const saveOfflineFunding = (
   funding: Record<string, unknown>
 ): OfflineLeadWork | null =>
   patchOfflineWork(workClientId, (w) => rearmStep({ ...w, funding }, 'funding'));
+
+/**
+ * A My Deals addendum raised with no signal.
+ *
+ * ⚠️ Two steps, never one. `addendumDraft` creates it; `addendumRelease` sends it to the
+ * homeowner and is skipped entirely when a refund is attached - the approver releases those.
+ */
+export const saveOfflineAddendum = (
+  workClientId: string,
+  addendum: {
+    payload: Record<string, unknown>;
+    contact: { customerEmail?: string; customerPhone?: string };
+    hasRefund: boolean;
+  }
+): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) =>
+    rearmStep(
+      {
+        ...w,
+        addendum: { ...addendum, at: new Date().toISOString() },
+        addendumDraftId: undefined,
+      },
+      'addendumDraft'
+    )
+  );
+
+/**
+ * The cheque refund that rides with a queued addendum.
+ *
+ * ⚠️ Ordered AFTER `addendumDraft`, because the server needs the draft's real id to link them.
+ * Saved alongside the addendum, not instead of it.
+ */
+export const saveOfflineAddendumRefund = (
+  workClientId: string,
+  refund: {
+    pid: string;
+    amount: number;
+    reason: string;
+    note?: string;
+    assignedToUserId?: string;
+  }
+): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) => rearmStep({ ...w, addendumRefund: refund }, 'addendumRefund'));
+
+/** A check taken in hand offline. The pid is the one the save above carries, so it addresses. */
+export const saveOfflineFundingCollected = (
+  workClientId: string,
+  pid: string
+): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) =>
+    rearmStep(
+      { ...w, fundingCollected: Array.from(new Set([...(w.fundingCollected || []), pid])) },
+      'fundingCollect'
+    )
+  );
+
+/** Submit Funding pressed offline. Ordered after `funding`, so the rows land before the submit. */
+export const saveOfflineFundingSubmit = (workClientId: string): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) =>
+    rearmStep({ ...w, fundingSubmitted: { at: new Date().toISOString() } }, 'fundingSubmit')
+  );
 
 export const addOfflineJobDocument = async (
   workClientId: string,
@@ -366,13 +425,6 @@ const workForLead = (lead: any): { id: string; work?: OfflineLeadWork } => {
   const id = String(lead?._id || lead?.id || '');
   if (!id) return { id: '' };
   const hit = mine().find((w) => w.clientId === id || w.serverIds.leadId === id);
-  console.log(
-    '[LeadSync] lookup id=%s found=%s mine=%s ids=%s',
-    id,
-    hit ? hit.clientId : 'NONE',
-    mine().length,
-    JSON.stringify(mine().map((w) => w.serverIds.leadId || w.clientId))
-  );
   return { id, work: hit };
 };
 
@@ -394,10 +446,8 @@ const adoptForLead = (lead: any, id: string): OfflineLeadWork | null => {
 export const queueLeadWorkStart = (lead: any, userId: string): boolean => {
   const { id, work } = workForLead(lead);
   if (!id || !userId) {
-    console.log('[LeadSync] check-in NOT queued: id=%s userId=%s', id || 'NONE', userId || 'NONE');
     return false;
   }
-  console.log('[LeadSync] check-in queued for %s (record %s)', id, work ? work.clientId : 'new');
   const base = work || adoptForLead(lead, id);
   if (!base) return false;
   if (base.workStarted) return true;
@@ -410,6 +460,34 @@ export const queueLeadWorkStart = (lead: any, userId: string): boolean => {
   runUpload();
   return true;
 };
+
+/**
+ * The rep left the lead with no signal. Queues the `workStartedBy: null` release.
+ *
+ * Takes a bare leadId (not a lead object) because the caller only has the stored session.
+ * Returns false when there is nothing to attach it to - a lead with no offline record was
+ * started online, and `endWorkLead` has already been tried directly.
+ */
+export const queueLeadWorkEnd = (leadId: string): boolean => {
+  load();
+  const id = String(leadId || '').trim();
+  if (!id || isClientId(id)) return false;
+  const base = beginOfflineWorkOnLead(id, '');
+  if (!base) return false;
+  putOfflineWork({
+    ...base,
+    workEnded: { at: new Date().toISOString() },
+    status: base.status === 'uploaded' ? 'draft' : base.status,
+  });
+  runUpload();
+  return true;
+};
+
+// `utils/lead-work-session` is pure (jest-loadable) and cannot import this module, so it takes
+// the queue as a hook. Registered here, at the module that owns the queue.
+setWorkReleaseQueue((leadId) => {
+  queueLeadWorkEnd(leadId);
+});
 
 export const queueCustomerUpdate = (lead: any, payload: Record<string, unknown>): boolean => {
   const { id, work } = workForLead(lead);
@@ -669,6 +747,21 @@ const isAlreadySubmitted = async (work: OfflineLeadWork): Promise<boolean> => {
   return String(lead?.jobBuilder?.status || '').toLowerCase() === 'submitted';
 };
 
+const isRefundAlreadyRaised = async (
+  leadId: string,
+  pid: string,
+  draftId: string
+): Promise<boolean> => {
+  const res = await FundingService.getFunding(leadId);
+  const row = (res?.data?.data?.funding?.payments || []).find((p) => p.pid === pid);
+  return (row?.refunds || []).some((r: any) => String(r?.draftId || '') === draftId);
+};
+
+const isFundingAlreadySubmitted = async (leadId: string): Promise<boolean> => {
+  const res = await FundingService.getFunding(leadId);
+  return res?.data?.data?.funding?.status === 'submitted';
+};
+
 const isConsentAlreadyFiled = async (leadId: string, kind: ConsentFormKind): Promise<boolean> => {
   const res = await LeadService.getSalesDealById(leadId);
   const lead = res?.data?.data || res?.data?.lead || res?.data || {};
@@ -755,6 +848,7 @@ const runStep = async (
       offlinePhotoDeleteQueue.rekeyLead(work.clientId, id);
       rekeyLeadWorkflow(work.clientId, id);
       rekeyActivityLogs(work.clientId, id);
+      rekeyDeliveryPreference(work.clientId, id);
       if (resolvedAddress) {
         patchOfflineWork(work.clientId, (w) => ({
           ...w,
@@ -876,6 +970,91 @@ const runStep = async (
       return {};
     }
 
+    case 'addendumDraft': {
+      if (!leadId) throw new Error('no lead id for the addendum');
+      const add = work.addendum!;
+      // ⚠️ The payload carries NO documents. Agreements/order sheets are inlined as base64
+      // `data:` URIs by the online path, and base64 must never sit in MMKV - it rewrites its
+      // whole store per write. Attaching a document to an offline addendum is Phase 4 of
+      // `docs/MY-DEALS-OFFLINE-PLAN.md`; until then the gate refuses to queue one.
+      const res = await LeadService.submitJobBuilderDraft(leadId, send(add.payload));
+      const body = res?.data;
+      const draftId =
+        body?.data?.draft?._id || body?.draft?._id || body?.data?._id || body?._id || null;
+      if (!draftId) throw new Error('the addendum draft came back with no id');
+      patchOfflineWork(work.clientId, (w) => ({ ...w, addendumDraftId: String(draftId) }));
+      return {};
+    }
+
+    case 'addendumRefund': {
+      if (!leadId) throw new Error('no lead id for the addendum refund');
+      const r = work.addendumRefund!;
+      const draftId = work.addendumDraftId;
+      if (!draftId) throw new Error('no draft id to link the refund to');
+      // Already raised on a previous drain: the row carries it, and a second POST would
+      // raise a duplicate refund against the same payment.
+      if (guarded && (await isRefundAlreadyRaised(leadId, r.pid, draftId))) return {};
+      await FundingService.requestRefund(leadId, r.pid, {
+        amount: r.amount,
+        // ⚠️ CHEQUE ONLY - a card refund reverses through the processor and is refused offline.
+        method: 'check',
+        reason: r.reason as any,
+        ...(r.note ? { note: r.note } : {}),
+        ...(r.assignedToUserId ? { assignedToUserId: r.assignedToUserId } : {}),
+        draftId,
+      });
+      return {};
+    }
+
+    /**
+     * Release the addendum to the homeowner.
+     *
+     * ⚠️ Reached ONLY for an addendum with no refund - `isStepApplicable` enforces that. A
+     * refund addendum is released by the approver server-side; releasing it here would put the
+     * paperwork in front of the homeowner first, and a signature taken before the approval is
+     * silently dropped for the refund.
+     */
+    case 'addendumRelease': {
+      const draftId = work.addendumDraftId;
+      if (!draftId) throw new Error('no draft id to release the addendum with');
+      try {
+        await LeadService.sendDraftSubmitEmail(draftId, { ...(work.addendum?.contact || {}) });
+      } catch (err) {
+        // The only gate on submit is `status !== 'draft'` -> 409 naming the current status, so
+        // a 409 means somebody else already moved it. That is the state this step wanted.
+        if (!readIs409(err)) throw err;
+      }
+      return {};
+    }
+
+    case 'fundingCollect': {
+      if (!leadId) throw new Error('no lead id for the collected checks');
+      // Only on a RETRY whose first attempt was ambiguous: a second POST on a row already
+      // collected is refused, and that refusal would park a sold deal. The happy path costs
+      // no extra read.
+      const already = guarded
+        ? new Set(
+            ((await FundingService.getFunding(leadId))?.data?.data?.funding?.payments || [])
+              .filter((p) => p.collected)
+              .map((p) => p.pid)
+          )
+        : new Set<string>();
+      for (const pid of work.fundingCollected || []) {
+        if (already.has(pid)) continue;
+        await FundingService.markCheckCollected(leadId, pid);
+      }
+      return {};
+    }
+
+    case 'fundingSubmit': {
+      if (!leadId) throw new Error('no lead id for the funding submit');
+      // A repeat submit is rejected, and the rejection reads like a real failure. Read the
+      // record instead: already-submitted is the state this step wanted anyway.
+      if (guarded && (await isFundingAlreadySubmitted(leadId))) return {};
+      await FundingService.submitFunding(leadId);
+      return {};
+    }
+
     case 'submit': {
       if (!leadId) throw new Error('no lead id for the submit');
       if (guarded && (await isAlreadySubmitted(work))) return {};
@@ -886,12 +1065,8 @@ const runStep = async (
     }
 
     case 'chat': {
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-      console.log('[CheckInTrace] chat step running for leadId=%s', leadId);
       if (!leadId) throw new Error('no lead id for the chat');
       const chatId = await ChatService.getChatByLeadId(leadId);
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-      console.log('[CheckInTrace] chat step resolved id=%s', chatId);
       patchOfflineWork(work.clientId, (w) => ({ ...w, chatCreated: true }));
       return {};
     }
@@ -950,6 +1125,10 @@ const runStep = async (
         patchOfflineConsent(work.clientId, form.clientId, {
           uploadedAt: new Date().toISOString(),
         });
+        // ⚠️ Keep the local "already filed" record once the queue row is gone. The queue is the
+        // only offline proof while it exists, but it is removed after a successful drain - and
+        // without this the form becomes offerable again on the next cached read.
+        markConsentFiled(consentLeadId, form.kind);
         discardOfflineDocumentFile(form.signatureUri);
         discardOfflineDocumentFile(pdfPath);
       }
@@ -959,6 +1138,17 @@ const runStep = async (
     case 'work': {
       if (!leadId) throw new Error('cannot record work on a lead with no server id');
       await LeadService.workLead(leadId, String(work.workStarted?.userId || ''));
+      await refreshLeadLists();
+      return {};
+    }
+
+    case 'workEnd': {
+      // Releasing the rep from the lead. Queued because `endWorkLead` is a bare PUT: offline it
+      // threw, the caller caught it, and the rep stayed live on the ops board for good. Runs
+      // after 'work' (UPLOAD_STEPS order), so a start and an end queued in one offline stint
+      // replay in the order they happened.
+      if (!leadId) throw new Error('cannot release work on a lead with no server id');
+      await LeadService.endWorkLead(leadId);
       await refreshLeadLists();
       return {};
     }
@@ -1030,25 +1220,10 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
   let work = putOfflineWork({ ...start, status: 'uploading' });
   let guarded = false;
 
-  console.log(
-    '[LeadSync] start %s origin=%s workStarted=%s chatCreated=%s done=%s',
-    work.clientId,
-    work.origin,
-    work.workStarted ? work.workStarted.userId : 'NONE',
-    work.chatCreated === true,
-    JSON.stringify(work.done)
-  );
 
   for (;;) {
     const step = nextUploadStep(work);
     if (!step) {
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-      console.log(
-        '[LeadSync] done %s leadId=%s steps=%s',
-        work.clientId,
-        work.serverIds.leadId || 'NONE',
-        JSON.stringify(work.done)
-      );
       const finished = putOfflineWork({ ...work, status: 'uploaded' });
       if (finished.deleteLead) removeOfflineWork(finished.clientId);
       return;
@@ -1060,8 +1235,6 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
 
     try {
       const sent = work;
-      // ⚠️ TEMPORARY DIAGNOSTIC — remove before release.
-      console.log('[LeadSync] step %s -> %s', work.clientId, step);
       const ids = await runStep(sent, step, guarded);
       const now = latest(work);
       let landed = markStepDone(now, step, ids);
@@ -1094,15 +1267,15 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
   }
 };
 
+setActivityLogIdResolver((value) => {
+  load();
+  const map: Record<string, string> = {};
+  mine().forEach((w) => Object.assign(map, buildIdMap(w)));
+  return resolveClientIds(value, map);
+});
+
 export const drainOfflineWork = async (): Promise<void> => {
   load();
-  console.log(
-    '[LeadSync] drain called online=%s alreadyDraining=%s rows=%s drainable=%s',
-    isOnline(),
-    draining,
-    mine().length,
-    uploadableWork(mine()).length
-  );
   if (draining || !isOnline()) return;
   draining = true;
   try {
@@ -1117,6 +1290,8 @@ export const drainOfflineWork = async (): Promise<void> => {
     }
   } finally {
     draining = false;
+    // Every id this pass created is now resolvable, so release the logs held back for them.
+    runActivityLogDrain();
   }
 };
 

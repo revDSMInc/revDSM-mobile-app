@@ -18,11 +18,19 @@ import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 import { useAuth } from '../../../hooks/useAuth';
 import { useIsOnline } from '../../../hooks/useIsOnline';
 import { isOnline } from '../../../services/connectivity';
-import { ensureOfflineWorkForLead, saveOfflineFunding } from '../../../services/offlineLeadStore';
+import {
+  ensureOfflineWorkForLead,
+  saveOfflineFunding,
+  saveOfflineFundingCollected,
+  saveOfflineFundingSubmit,
+} from '../../../services/offlineLeadStore';
 import {
   logFundingEditPayments,
   logFundingLinkCopied,
+  logFundingCheckCollected,
   logFundingOpened,
+  logFundingPaymentsSaved,
+  logFundingSubmitted,
   type FundingSource,
 } from '../../../utils/activity-log/funding-log';
 import {
@@ -41,7 +49,6 @@ import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
 import { FundingView } from './funding/FundingView';
 import { SendLinkModal } from './funding/SendLinkModal';
 import { DropdownChoice } from './funding/DropdownChoice';
-import { ConfirmDialog } from './ConfirmDialog';
 import { CoverageBar } from './funding/CoverageBar';
 import { BlockerList } from './funding/BlockerList';
 import { useFunding } from '../hooks/useFunding';
@@ -69,6 +76,7 @@ import {
   MULTI_METHOD_ENABLED,
   needsAttentionRowId,
   newPaymentId,
+  offlineFundingRecord,
   paymentAllocations,
   structureHint,
   structureLocked,
@@ -249,7 +257,6 @@ export function ResultJobModal({
   const { isDark } = useTheme();
   const { user } = useAuth();
   const online = useIsOnline();
-  const handleBuildRef = useRef<(() => void) | null>(null);
   const isRehashed = lead?.isRehashed === true;
   const [oneLeg, setOneLeg] = useState('No');
   const [resultType, setResultType] = useState<'sale' | 'demo'>(initialResultType || 'sale');
@@ -282,7 +289,6 @@ export function ResultJobModal({
   const [screen, setScreen] = useState<'result' | 'funding'>('result');
   const [payMode, setPayMode] = useState<PayMode>('split');
   const [noDown, setNoDown] = useState(true);
-  const [noDownWarn, setNoDownWarn] = useState(false);
   const [structureNudge, setStructureNudge] = useState(false);
   const [rows, setRows] = useState<PaymentRow[]>([]);
   const [banners, setBanners] = useState<DecisionBanner[]>([]);
@@ -292,9 +298,13 @@ export function ResultJobModal({
   const [linkUrl, setLinkUrl] = useState('');
   const [isLoadingLink, setIsLoadingLink] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Offline there is no server record, so the Funding screen is fed from the rows the rep
+  // just entered. Cleared whenever the modal reopens, with the rest of the state.
+  const [offlineRecord, setOfflineRecord] = useState<FundingRecord | null>(null);
+  const [offlineWorkId, setOfflineWorkId] = useState<string | null>(null);
 
   const isSale = resultType === 'sale';
-  const payments = funding.payments;
+  const payments = offlineRecord?.payments ?? funding.payments;
   const bankDeclined = isSale && resultChoice === 'bank_decline';
 
   const seedDownMethod = useCallback(
@@ -312,7 +322,6 @@ export function ResultJobModal({
     setScreen('result');
     setPayMode('split');
     setNoDown(!(initialDownPayment && initialDownPayment > 0));
-    setNoDownWarn(false);
     setStructureNudge(false);
     setBanners([]);
     setPriceUnlocked(false);
@@ -320,6 +329,8 @@ export function ResultJobModal({
     setLinkTarget(null);
     setLinkUrl('');
     setSaveError(null);
+    setOfflineRecord(null);
+    setOfflineWorkId(null);
     funding.clearServerBlockers();
 
     const seededPrice = initialPrice && initialPrice > 0 ? String(Math.round(initialPrice)) : '';
@@ -565,6 +576,16 @@ export function ResultJobModal({
       if (payMode === 'upfront') switchPayMode('split', true);
       setStructureNudge(false);
       if (next === 'none') setRows((prev) => prev.map((r) => (r.kind === 'down' ? { ...r, amount: '' } : r)));
+      // Picking "Down Payment" opens its first line straight away — no extra tap on
+      // "Add payment method". Inserted before the balance row so the order stays down -> bal.
+      if (next === 'split') {
+        setRows((prev) => {
+          if (prev.some((r) => r.kind === 'down')) return prev;
+          const at = prev.findIndex((r) => r.kind === 'bal');
+          const row = { pid: newPaymentId(), kind: 'down' as const, amount: '', method: '' };
+          return at < 0 ? [...prev, row] : [...prev.slice(0, at), row, ...prev.slice(at)];
+        });
+      }
       setNoDown(next === 'none');
     },
     [payMode, noDown, switchPayMode]
@@ -605,13 +626,9 @@ export function ResultJobModal({
   );
   const saleReady = resultBlockers.length === 0;
 
-  const goFunding = useCallback(async (acknowledged = false) => {
+  const goFunding = useCallback(async () => {
     if (resultBlockers.length) {
       FlashMessage.error('Not ready to confirm', resultBlockers[0]);
-      return;
-    }
-    if (payMode === 'split' && noDown && !acknowledged) {
-      setNoDownWarn(true);
       return;
     }
     const upsert = toUpsertRows(activeRows, contractNum, pricing.plans);
@@ -635,12 +652,30 @@ export function ResultJobModal({
         paymentCount: upsert.length,
         payments: upsert.map((r) => ({ kind: r.kind, method: r.method, amount: r.amount })),
       });
+      // Online this is logged by `funding.savePayments`; the offline save skips that hook.
+      logFundingPaymentsSaved({
+        ...logCtx,
+        contractPrice: Math.round(contractNum),
+        payMode,
+        payments: upsert.map((r) => ({ kind: r.kind, method: r.method, amount: r.amount })),
+        ok: true,
+      });
       setSaveError(null);
-      FlashMessage.info(
-        'Saved on this device',
-        'The payment split uploads automatically when you have signal. Carry on and build the job.',
+      // The rep gets the SAME Funding step as online. It used to jump straight to Build Job,
+      // so the split they had just entered was never shown back and Submit Funding never ran.
+      // Every row here is a check - `confirmBlockers` refuses a card or loan with no signal.
+      setOfflineWorkId(work.clientId);
+      setOfflineRecord(
+        offlineFundingRecord(String(leadLogId || work.clientId), contractNum, upsert, payMode)
       );
-      handleBuildRef.current?.();
+      logFundingOpened({
+        ...logCtx,
+        contractPrice: Math.round(contractNum),
+        paymentCount: upsert.length,
+        payMode,
+      });
+      wentToFundingRef.current = true;
+      setScreen('funding');
       return;
     }
     logResultLeadConfirmed({
@@ -683,6 +718,7 @@ export function ResultJobModal({
     setBanners(applied.banners);
     if (applied.banners.length) setPriceUnlocked(true);
     funding.clearServerBlockers();
+    setOfflineRecord(null);
     setStructureNudge(false);
     setScreen('result');
   }, [rows, activeRows, payments, contractNum, payMode, funding, logCtx]);
@@ -730,6 +766,32 @@ export function ResultJobModal({
     [funding, linkTarget]
   );
 
+  // Taking a check in hand is a real-world act, not a server one - it has to work at a door
+  // with no signal. The row is ticked on the device record and the POST is queued against the
+  // same pid the save carries.
+  const handleMarkCollected = useCallback(
+    (pid: string) => {
+      if (isOnline()) return funding.markCheckCollected(pid);
+      if (offlineWorkId) saveOfflineFundingCollected(offlineWorkId, pid);
+      // Online this is logged by `funding.markCheckCollected`; the offline tick skips that hook.
+      const row = offlineRecord?.payments.find((p) => p.pid === pid);
+      logFundingCheckCollected({
+        ...logCtx,
+        payment: row
+          ? { pid: row.pid, method: row.method, type: row.type, kind: row.kind, amount: row.amount }
+          : { pid },
+        ok: true,
+      });
+      setOfflineRecord((prev) =>
+        prev
+          ? { ...prev, payments: prev.payments.map((p) => (p.pid === pid ? { ...p, collected: true } : p)) }
+          : prev
+      );
+      return undefined;
+    },
+    [funding, offlineWorkId, offlineRecord, logCtx]
+  );
+
   const handleSetResult = useCallback(
     async (next: 'sale' | 'bank_decline') => {
       const res = await funding.setResult(next === 'bank_decline' ? 'bankDecline' : 'sale');
@@ -752,11 +814,26 @@ export function ResultJobModal({
         const res = await funding.submit();
         if (!res.ok) return;
       } else {
+        // Queued, not dropped: the save already sits behind the `funding` step, and this
+        // submits it once that lands. Without it the deal reached the office unsubmitted.
+        if (offlineWorkId) saveOfflineFundingSubmit(offlineWorkId);
+        // Online this is logged by `funding.submit`; the queued submit skips that hook.
+        logFundingSubmitted({
+          ...logCtx,
+          contractPrice: Math.round(contractNum) || 0,
+          paymentCount: offlineRecord?.payments.length ?? 0,
+          bankDecline: offlineRecord?.result === 'bankDecline',
+          ok: true,
+        });
         logResultLeadBuildJob({
           ...logCtx,
           resultType,
           contractPrice: Math.round(contractNum) || undefined,
         });
+        FlashMessage.info(
+          'Saved on this device',
+          'The funding uploads automatically when you have signal.'
+        );
       }
     } else {
       logResultLeadBuildJob({
@@ -793,12 +870,8 @@ export function ResultJobModal({
   }, [
     resultType, oneLeg, contractNum, downTotal, balanceTotal, primaryDownMethod, primaryBalanceMethod,
     allocations, demoReason, reasonExplanation, versatile, pineapple, bankDeclined, payments, funding, onConfirm,
-    logCtx,
+    logCtx, offlineWorkId, offlineRecord,
   ]);
-
-  useEffect(() => {
-    handleBuildRef.current = handleBuild;
-  }, [handleBuild]);
 
   const priceEditable = isRehashed || priceUnlocked;
   const lockedTotal = useMemo(
@@ -857,7 +930,7 @@ export function ResultJobModal({
                   onSyncAll={funding.syncAll}
                   onSyncOne={funding.syncPayment}
                   onSendLink={openSendSheet}
-                  onMarkCollected={funding.markCheckCollected}
+                  onMarkCollected={handleMarkCollected}
                   onChargeCard={funding.chargeCard}
                   onActivate={funding.activateLoan}
                   onReactivate={funding.reactivateLoan}
@@ -941,7 +1014,7 @@ export function ResultJobModal({
                   )}
 
                   {isSale && (
-                    <View style={{ backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 22, paddingHorizontal: 14, paddingTop: 16, paddingBottom: 6, marginBottom: 22 }}>
+                    <View style={{ backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 22, paddingHorizontal: 8, paddingTop: 20, paddingBottom: 16, marginBottom: 22 }}>
                       <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 1.2, textTransform: 'uppercase', color: FUND.PANEL_LABEL, paddingHorizontal: 4, paddingBottom: 14 }}>
                         Pricing
                       </Text>
@@ -1245,23 +1318,6 @@ export function ResultJobModal({
             from inside an endpoint call — lands here rather than on the app-root
             instance, which is OUTSIDE this Modal's view tree and therefore behind it.
             Last child, so it draws over the card. */}
-        {/* The app's own ConfirmDialog, drawn inline: this sheet is already a native
-            Modal and a second one must never stack on it. */}
-        <ConfirmDialog
-          inline
-          visible={noDownWarn}
-          tone="warn"
-          title="No Down Payment"
-          message="You are going with financing for the whole payment. The full contract price will be the balance, with no money collected now."
-          confirmLabel="Continue"
-          cancelLabel="Go Back"
-          onCancel={() => setNoDownWarn(false)}
-          onConfirm={() => {
-            setNoDownWarn(false);
-            goFunding(true);
-          }}
-        />
-
         <ModalFlashHost active={visible} />
       </KeyboardAvoidingView>
     </Modal>

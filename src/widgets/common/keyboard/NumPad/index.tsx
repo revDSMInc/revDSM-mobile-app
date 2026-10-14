@@ -368,7 +368,7 @@ const NumPadPanel: React.FC<{
   const doneBg = colors.primary.main;
 
   const digit = (k: string, flex = 1) => (
-    <Key key={k} a11y={k} flex={flex} height={keyHeight} bg={keyBg} pressedBg={keyDown} onPress={() => press(k as NumPadKey)}>
+    <Key key={k} a11y={k} flex={flex} height={keyHeight} bg={keyBg} pressedBg={keyDown} onPressIn={() => press(k as NumPadKey)}>
       <Text style={[styles.keyText, { color: colors.text }]}>{k}</Text>
     </Key>
   );
@@ -437,7 +437,7 @@ const NumPadPanel: React.FC<{
             {digit('4')}
             {digit('5')}
             {digit('6')}
-            <Key a11y="decimal point" height={keyHeight} bg={fnBg} pressedBg={fnDown} onPress={() => press('.')}>
+            <Key a11y="decimal point" height={keyHeight} bg={fnBg} pressedBg={fnDown} onPressIn={() => press('.')}>
               <Text style={[styles.keyText, { color: colors.text }]}>.</Text>
             </Key>
           </View>

@@ -4,6 +4,16 @@ import { storage } from '../../utils/storage';
 import { hasSession } from './index';
 import { LeadService } from './leads';
 import { isOnline, onReconnect, refreshConnectivity } from '../connectivity';
+import { getSessionOwner } from '../sessionScope';
+import { isOwnedBy } from '../../utils/session-scope';
+import {
+  MAX_INSTALLER_ATTEMPTS,
+  afterFailure,
+  installerBackoffMs,
+  isDue,
+  isUnauthorizedError,
+  rearmItem,
+} from '../../utils/upload-retry-policy';
 
 export interface OfflineUploadFile {
   localPath: string;
@@ -25,6 +35,14 @@ export interface OfflineUploadItem {
   type: 'before' | 'after';
   files: OfflineUploadFile[];
   timestamp: number;
+  /** The rep who queued it. Absent on items queued before owners existed - those belong to whoever is signed in. */
+  ownerId?: string;
+  attempts?: number;
+  lastError?: string;
+  /** Set after MAX_INSTALLER_ATTEMPTS failures: kept on the device, skipped until the rep retries. */
+  parkedAt?: string;
+  /** Backoff: do not try again before this time (ms epoch). */
+  nextAttemptAt?: number;
 }
 
 const STORAGE_KEY = 'offline_image_uploads';
@@ -44,19 +62,91 @@ async function ensureOfflineDirExists(): Promise<void> {
   }
 }
 
-export function getUploadQueue(): OfflineUploadItem[] {
+const queueListeners = new Set<() => void>();
+
+export function subscribeUploadQueue(listener: () => void): () => void {
+  queueListeners.add(listener);
+  return () => {
+    queueListeners.delete(listener);
+  };
+}
+
+function notifyQueue(): void {
+  queueListeners.forEach((l) => {
+    try {
+      l();
+    } catch {
+    }
+  });
+}
+
+/** Every item on the device, whoever queued it. Only the writers below should use this. */
+function readAllItems(): OfflineUploadItem[] {
   const data = storage.getString(STORAGE_KEY);
   if (!data) return [];
   try {
-    return JSON.parse(data);
+    const parsed = JSON.parse(data);
+    return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
     console.error('[OfflineUpload] Failed to parse queue:', e);
     return [];
   }
 }
 
-function saveUploadQueue(queue: OfflineUploadItem[]): void {
-  storage.set(STORAGE_KEY, JSON.stringify(queue));
+function writeAllItems(items: OfflineUploadItem[]): void {
+  storage.set(STORAGE_KEY, JSON.stringify(items));
+  notifyQueue();
+}
+
+const isMine = (item: OfflineUploadItem): boolean =>
+  !item.ownerId || isOwnedBy(item.ownerId, getSessionOwner());
+
+/** The signed-in rep's items (parked ones included, so the UI can still show them). */
+export function getUploadQueue(): OfflineUploadItem[] {
+  return readAllItems().filter(isMine);
+}
+
+/**
+ * ⚠️ Read-modify-write against the FRESH list. The sync loop used to save a snapshot taken
+ * before it started, which erased anything enqueued while it was running.
+ */
+function updateItem(id: string, fn: (item: OfflineUploadItem) => OfflineUploadItem): void {
+  writeAllItems(readAllItems().map((i) => (i.id === id ? fn(i) : i)));
+}
+
+function removeItem(id: string): void {
+  writeAllItems(readAllItems().filter((i) => i.id !== id));
+}
+
+/** What the background drain is still responsible for: mine, not parked, and past its backoff. */
+export function pendingInstallerUploadCount(): number {
+  if (!hasSession()) return 0;
+  const now = Date.now();
+  return getUploadQueue().filter((i) => isDue(i, now)).length;
+}
+
+export function getParkedInstallerUploads(): OfflineUploadItem[] {
+  return getUploadQueue().filter((i) => !!i.parkedAt);
+}
+
+export function retryInstallerUpload(id?: string): number {
+  let touched = 0;
+  writeAllItems(
+    readAllItems().map((i) => {
+      if (!isMine(i) || !i.parkedAt || (id && i.id !== id)) return i;
+      touched += 1;
+      return rearmItem(i);
+    })
+  );
+  if (touched) void processUploadQueue();
+  return touched;
+}
+
+export async function discardInstallerUpload(id: string): Promise<void> {
+  const item = getUploadQueue().find((i) => i.id === id);
+  if (!item) return;
+  removeItem(id);
+  await cleanupItemFiles(item);
 }
 
 export async function enqueueOfflineUpload(params: {
@@ -119,11 +209,10 @@ export async function enqueueOfflineUpload(params: {
     type: params.type,
     files,
     timestamp: Date.now(),
+    ownerId: getSessionOwner() || undefined,
   };
 
-  const queue = getUploadQueue();
-  queue.push(newItem);
-  saveUploadQueue(queue);
+  writeAllItems([...readAllItems(), newItem]);
 
   console.log(`[OfflineUpload] Successfully enqueued upload item ${itemId} with ${files.length} images.`);
 }
@@ -134,7 +223,7 @@ export function isUploadQueueSyncing(): boolean {
 
 export async function processUploadQueue(onItemProcessed?: (itemId: string, success: boolean) => void): Promise<void> {
   if (isSyncing) return;
-  const queue = getUploadQueue();
+  const queue = getUploadQueue().filter((i) => isDue(i));
   if (queue.length === 0) return;
 
   if (!hasSession()) return;
@@ -147,9 +236,8 @@ export async function processUploadQueue(onItemProcessed?: (itemId: string, succ
   isSyncing = true;
   console.log(`[OfflineUpload] Sync starting. ${queue.length} item(s) in queue.`);
 
-  let remainingQueue = [...queue];
-
   for (const item of queue) {
+    if (!isOnline()) break;
     console.log(`[OfflineUpload] Uploading item ${item.id} (${item.type} images)...`);
     try {
       const formData = new FormData();
@@ -187,8 +275,7 @@ export async function processUploadQueue(onItemProcessed?: (itemId: string, succ
       if (!allFilesExist) {
         console.warn(`[OfflineUpload] Skipping item ${item.id} due to missing local files.`);
         await cleanupItemFiles(item);
-        remainingQueue = remainingQueue.filter((q) => q.id !== item.id);
-        saveUploadQueue(remainingQueue);
+        removeItem(item.id);
         onItemProcessed?.(item.id, false);
         continue;
       }
@@ -201,9 +288,8 @@ export async function processUploadQueue(onItemProcessed?: (itemId: string, succ
       if (response && response.data) {
         console.log(`[OfflineUpload] Successfully uploaded item ${item.id} to S3.`);
         await cleanupItemFiles(item);
-        remainingQueue = remainingQueue.filter((q) => q.id !== item.id);
-        saveUploadQueue(remainingQueue);
-        
+        removeItem(item.id);
+
         DeviceEventEmitter.emit('OFFLINE_UPLOAD_SUCCESS', { jobNumber: item.jobNumber });
         
         onItemProcessed?.(item.id, true);
@@ -212,12 +298,22 @@ export async function processUploadQueue(onItemProcessed?: (itemId: string, succ
       }
     } catch (err) {
       console.error(`[OfflineUpload] Failed to process item ${item.id}:`, err);
-      break;
+      // Session gone or signal lost: not this item's fault, so it spends no attempt.
+      if (isUnauthorizedError(err) || !isOnline()) break;
+      // ⚠️ One bad item used to `break` the whole loop and block every item behind it forever.
+      // Back it off (and park it eventually) and carry on with the rest.
+      const reason = (err as any)?.message;
+      updateItem(item.id, (current) =>
+        afterFailure(current, MAX_INSTALLER_ATTEMPTS, {
+          error: reason ? String(reason) : undefined,
+          backoff: installerBackoffMs,
+        })
+      );
     }
   }
 
   isSyncing = false;
-  console.log(`[OfflineUpload] Sync processing iteration complete. ${remainingQueue.length} item(s) remaining.`);
+  console.log(`[OfflineUpload] Sync processing iteration complete. ${getUploadQueue().length} item(s) remaining.`);
 }
 
 async function cleanupItemFiles(item: OfflineUploadItem): Promise<void> {

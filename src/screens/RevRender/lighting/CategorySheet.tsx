@@ -1,6 +1,7 @@
 import React from 'react';
-import { Modal, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useBottomInset } from '../../../hooks/useBottomInset';
 import { categoriesForTab, looksInCategory } from '../../../utils/revrender-lighting/catalog';
 import { LightingState, selectedCountIn } from '../../../utils/revrender-lighting/selection';
 import { Look, LookTab } from '../../../utils/revrender-lighting/types';
@@ -40,6 +41,9 @@ export function CategorySheet({
   onPick: (category: string) => void;
   onClose: () => void;
 }) {
+  // ⚠️ Inside a Modal the safe-area insets read 0 or stale, so the 3-button Android nav bar sat on top of
+  // Close — apply a floor (CLAUDE.md §6) and keep the pinned button clear of it.
+  const bottomInset = Math.max(useBottomInset(), Platform.OS === 'android' ? 48 : 0);
   const sub = isDark ? '#919EAB' : '#637381';
   const label = isDark ? '#fff' : '#212B36';
 
@@ -69,8 +73,8 @@ export function CategorySheet({
       <View className="flex-1 justify-end" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
         <TouchableOpacity className="flex-1" activeOpacity={1} onPress={onClose} accessibilityLabel="Close" />
         <View
-          className="rounded-t-[24px] px-5 pt-3 pb-8"
-          style={{ backgroundColor: isDark ? '#1E1E1E' : '#fff', maxHeight: '85%' }}
+          className="rounded-t-[24px] px-5 pt-3"
+          style={{ backgroundColor: isDark ? '#1E1E1E' : '#fff', maxHeight: '85%', paddingBottom: bottomInset + 16 }}
         >
           <View className="items-center mb-3">
             <View className="rounded-full" style={{ width: 36, height: 4, backgroundColor: sub }} />

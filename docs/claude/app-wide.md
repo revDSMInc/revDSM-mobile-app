@@ -621,3 +621,93 @@ In the 4-column decimal pad the tall Done key rendered as a near-circle (the `Ke
 `widgets/common/NumPadScrollView.tsx` is a `ScrollView` + `collapsable={false}` content wrapper + `useNumPadScrollIntoView`, for forms whose numeric fields would otherwise sit under the in-app pad. First user: `ResultJobModal` (Down Payment amount box was half cut off); the same hook is also used directly in `DynamicTabRenderer` and `RoofWaiverModal` (see above).
 - ⚠️ **A component, not a hook call in the screen**: `useNumPadTarget` reads the NEAREST `NumPadProvider`, and every `Modal` mounts its own (`index.js`). A hook called in the modal's parent component reads the app-root provider and never fires; the component below `<Modal>` reads the right one. The same applies to `useNumPadActive` (see `PadAwareCenter` in `ResultJobModal`).
 - `contentTop` = the content container's top padding, so the offset maths stays right. Not verified on device.
+
+### Number pad: ~1 s lag between a key tap and the digit appearing
+
+Ticket: *"the custom num pad lags while pressing a key - the digit takes almost 1 second to show in the field."*
+
+Two causes, both in the tap-to-pixel path:
+- **Digits fired on `onPress` (finger UP)**, while backspace already fired on `onPressIn`. Digit and `.` keys now use `onPressIn` (`NumPadPanel`). Done stays `onPress` on purpose (it submits + blurs).
+- **Controlled fields waited for the full JS round trip** (`onChangeText` -> parent `setState` -> screen re-render -> `value` prop -> native). On a heavy screen (calculator, job builder) that is the lag. `useNumPadField.setValue` now ALWAYS writes `setNativeProps({ text })` first, so the digit shows at once, then calls `onChangeText`.
+- ⚠️ **Reconcile guard**: if a parent filters/rejects the value and does not re-render, the native text would stay ahead of state. A 300 ms settle timer compares the last RENDERED `value` (`rendered` ref, set in render, never mutated by us) with what was typed and snaps the native text back. Do not replace `rendered` with `latest.current` - that one is mutated by `setValue`, so the check could never fire.
+- Not verified on device from this session (no jest for RN components): check a controlled money field and a phone field (reformats as you type) on Android.
+
+### `widgets/common/BufferedTextInput.tsx`: debounced parent writes for heavy screens
+
+Follow-up to the number-pad lag ticket (calculator write-up in `deal-center.md` › "Calculator Summary: number-pad typing lag"). A drop-in `TextInput` that keeps the typed text in LOCAL state and tells the parent `debounceMs` (180) after the last key; it flushes immediately on blur / submit / end-editing and on unmount.
+- ⚠️ `onBlur`, `onSubmitEditing` and `onEndEditing` receive the flushed text as a **second argument**. The parent's state is still stale in that same tick, so those handlers must use it, not their own state.
+- ⚠️ Parent `value` changes are adopted only while no edit is pending (`dirty`), otherwise the parent's old value would overwrite what the rep is typing. A parent that normalises the value (e.g. `0` -> `''`) does not re-sync a locally typed `0` until the value actually changes.
+- Use it only where the parent re-render is expensive; small memoised fields should stay plain. It works with the number pad because the pad reads the `value` / `onChangeText` of this inner `TextInput`. Not verified on device.
+
+### Follow-up: controlled fields no longer get `setNativeProps({ text })` (digits flashed bold)
+
+Ticket: *"when I press a digit it shows BOLD, then turns normal a moment later."* The `setNativeProps({ text })` write added for the lag fix (above) paints the digit on Android WITHOUT the field's font style - it rendered heavy until React's own re-render applied the real style. Removing `font-black` from the field did not stop it, which proves the cause is that write, not the class.
+- `useNumPadField.setValue` is back to: **uncontrolled fields** (no `value`) use `setNativeProps` (they have no re-render to wait for); **controlled fields** only call `onChangeText` and let the re-render paint. The 300 ms settle timer and `rendered` ref were removed with it.
+- ⚠️ **Do not re-add a native text write for controlled fields.** The lag on heavy screens is handled by making the parent re-render cheap instead: `BufferedTextInput` (local state, debounced parent write) - use it on any numeric field whose screen is expensive to re-render. The first fix in this section (digits on `onPressIn`) stays.
+
+### Typed digits bold on Samsung: `fontWeightAdjustment` zeroed in `MainActivity`
+
+Ticket: *"input digits show bold in the calculator (even after reset-cache); only titles should be bold."* Not a JS style problem - the field styles were already Regular. Samsung **Bold font** / Android 12+ **Bold text** sets `Configuration.fontWeightAdjustment`, which the framework adds to an `EditText`'s typeface (`ReactEditText` is one) but NOT to React's `Text` (drawn through a `Layout`), so only typed values looked heavy, and only on devices with that setting on (one tester's screenshot of the same screen was regular).
+- `android/app/src/main/java/com/revdsm/MainActivity.kt` overrides `attachBaseContext` (API 31+) to hand the activity a configuration context with `fontWeightAdjustment = 0`. ⚠️ **Native change: needs `yarn android` (rebuild), a JS reload does nothing.** It also makes the whole app ignore the system Bold-text switch, consistent with the Public Sans ticket above.
+- ⚠️ The file is CRLF. Not verified on device from this session. The `REGULAR_INPUT_FONT` style in `dealcenter/SharedElements.tsx` stays (harmless, explicit).
+
+## RevRender lighting — "Near you" row (REVUIUX-483 §10)
+
+Backend handoff: `docs/revuiux-483-near-you-backend-handoff.md`. The Teams tab shows up to 6 nearby teams above
+the league selector (hidden while searching). Everything is computed **on device**; no new endpoint, and the
+address/coordinates go nowhere new.
+
+- **Files:** `utils/revrender-lighting/near-you.ts` (pure: `nearYou`, `resolveOrigin`, `leadCoords`,
+  `stateFromAddress`, `haversineMiles`, `NEAR_YOU_CONFIG`), origin wiring in `screens/RevRender/index.tsx`
+  (`nearYouOrigin`), row in `lighting/LightingPanel.tsx`. Test: `__tests__/utils/near-you.test.ts`.
+- **Data:** catalogue team rows now carry `lat`, `lng`, `state`, `tier` (`Look` widened). ⚠️ Test for
+  presence with `isLocatable` (has a `lat`), never `group === 'team'`; branch pro/college on `tier`, **never**
+  hard-code a league list (the backend carries it as data so a new league needs no release).
+- **Origin order:** lead coordinates (`location.coordinates` is GeoJSON `[lng, lat]`) → address geocode only
+  when the lead has none (`geocodeAddress`, once per address) → `lastKnownCoords()` (cached fix; ⚠️ never
+  call `getCaptureCoords` / request permission for this) → `getOfficeCoords(user)` → none = row hidden.
+- **State** comes from the address text (`stateFromAddress`); with none, the college rule uses its 150 mi
+  radius only. Device/office origins borrow the lead's address state when it has one.
+- **Interpretations of §10 (not spelled out there):** a 2nd team in a league counts as a "multi-team market"
+  only within `metroRadiusMi` (30) of the 1st; favourites are **not** deduped (the spec's wording is
+  ambiguous and the row must never be empty); the row is relabelled "Nearest to you" when nothing met a radius.
+- ⚠️ **Open product decisions, not coded:** Canadian teams (12) carry a province in `state` and never match a
+  US job's state — they only appear via radius/backfill. Tunables are code defaults in `NEAR_YOU_CONFIG`
+  (the backend does not serve them yet). The bundled seed `constants/revrender-looks.json` has no locations,
+  so the row appears only after the first catalogue refresh from an environment that has been re-seeded.
+- **Teams tab default (follow-up):** with a Near you result the tab shows ONLY those tiles plus a "Browse all
+  teams (268)" button; the league grid appears after picking a league (with a "Show only teams near you" link)
+  and search always searches all teams. With no result (no location, or a backend not yet re-seeded) it falls
+  back to the league grid. ⚠️ A dev-only `[NearYou]` log prints origin, located-team count and the result —
+  `locatedTeams: 0` means the API is not serving `lat` yet, not an app bug.
+- **Browse-teams sheet / nav bar (follow-up):** `CategorySheet` is a `Modal`, so its safe-area insets read 0/stale and
+  the Android 3-button bar sat over the pinned **Close** button. Bottom padding is now
+  `max(useBottomInset(), 48 on Android) + 16`. ⚠️ Don't swap it back to a fixed `pb-8`.
+
+## RevRender lighting — activity logs (Roofline Lighting mode)
+
+Ticket: *"Roofline Lighting section logs are not added"* — only `select look` was logged; everything else in the
+mode was silent. Now every interaction logs through the **same envelope as the core logs**
+(`user_id`, `module_type: 'rev_render'`, `created_by`, `meta.{leadId, jobId, screen, viewId}`).
+
+- **One screen helper, `logLighting(action, meta)`** in `screens/RevRender/index.tsx`, passed to `LightingPanel` /
+  `LightingFooter` as `onLog` (type `LightingLog`). The panel stays free of user/lead context; add new lighting
+  logs through `onLog`, don't import `logEvent` into the panel. Lighting logs carry `renderMode: 'lighting'`.
+- **Events:** `change` `render_mode` (Core ⇄ Lighting, old/new) · `change` `browse_looks_tab` (Seasons / Teams /
+  Themes / Custom, logged on every tap incl. the active one) · `change` `look_category` (category sheet pick) ·
+  `change` `team_search` (**debounced 800 ms**, never per keystroke) · `click` Browse all / Show only teams near you /
+  New custom look · `add` `custom_look` (saved) · `select` look (existing, `selected` true/false; the selected-list ✕
+  logs `selected:false`, `source:'selected_list_remove'`) · `change` `look_favourite` (hold-popover and star) ·
+  `add` "Add to renders" (lookIds/Names, `coreIncluded`) · `start` Generate (now also `coreRenders`,
+  `lightingRenders`, `lookNames`) · `delete` queue item (now `renderMode` + look id/name) · photo-guidance buttons.
+- Core "+ Add Render Combo" `add` gained `renderMode: 'core'`.
+- ⚠️ `index.tsx` is CRLF — edit with `newline=''`.
+
+## RevRender custom look sheet — footer under the system bar, Save with a pending colour
+
+- **Footer:** the pinned Cancel / Save row used a fixed `pb-8`, so Android's 3-button bar was drawn over it. It now
+  uses `Math.max(insets.bottom, android ? 48 : 20) + 12` (the Modal-insets floor rule, CLAUDE.md §6).
+- **Save enabled by a pending colour:** a colour still open in the picker (not too dark; not an "add" at the 6-colour
+  limit) counts as chosen — `withPending` in `CustomLookSheet.tsx`. Save enables and saves it without pressing
+  "Add color" first, and the dusk preview shows it live. ⚠️ Save must keep reading `usable` (derived from
+  `withPending`), not `colors`, or the pending colour is dropped on save.

@@ -18,7 +18,8 @@ import {
   type NetworkStatus,
   type RequestSignal,
 } from '../utils/network-status';
-import { probeHealthThrottled } from './health-probe';
+import { PROBE_STALL_INTERVAL_MS, probeHealthThrottled } from './health-probe';
+import { InFlightTracker, SLOW_REQUEST_MS, isProbeUrl } from '../utils/slow-request';
 
 type ConnectivityListener = (online: boolean) => void;
 type WifiListener = (wifi: boolean) => void;
@@ -164,6 +165,7 @@ const setNetState = (next: NetworkState) => {
       console.warn('[connectivity] status listener threw:', e);
     }
   });
+  syncRecoveryPoll();
   if (next.status === 'online' && previous !== 'online') {
     reconnectListeners.forEach((l) => {
       try {
@@ -185,16 +187,125 @@ export const classifyRequestError = (error: any): RequestSignal => {
   return 'transportError';
 };
 
+/**
+ * Requests currently open, so a STALL can be judged while it is happening.
+ *
+ * ⚠️ The reason this exists. `reportRequestSignal` runs in the axios interceptors, which a
+ * hanging request never reaches - so on one bar no signal is ever reported and the `/health`
+ * probe that would rescue the rep never runs. Waiting for a request to end before judging the
+ * connection cannot detect the one case where requests do not end.
+ */
+const inFlight = new InFlightTracker();
+let slowTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Probe now, and let the result move the state. Shared by the stall and failure paths.
+ *
+ * `stalled` relaxes the throttle: while a request is genuinely hanging we need another look
+ * within the timeout window, not in twenty seconds' time.
+ */
+const probeAndApply = async (stalled = false): Promise<void> => {
+  const reachable = await probeHealthThrottled(
+    Date.now(),
+    stalled ? PROBE_STALL_INTERVAL_MS : undefined
+  );
+  if (reachable === null) return; // throttled; keep the current state
+  setNetState(applyProbeResult(netState, reachable, Date.now()));
+};
+
+/**
+ * While the strip is showing, keep checking whether it still should be.
+ *
+ * ⚠️ Nothing else can clear it, and this is the bug the client hit from the other side:
+ * `applyOsConnected` only ever reaches `degraded`, and ONLY a 2xx on a real request promotes
+ * to `online`. An idle app makes no requests - so a rep who walked back into signal kept
+ * "Weak connection" (or worse, "Offline") until they happened to tap something.
+ *
+ * ⚠️ It must be a REAL authenticated call, not `/health`. A probe cannot promote to online
+ * by design: /health is cheap and unauthenticated, so it answers while the API is failing.
+ * `getMe` goes through axios, so its 2xx arrives as a normal `success` signal and recovery
+ * happens through the one sanctioned path rather than a second rule that could disagree.
+ *
+ * The poll exists ONLY while a warning is up; a healthy app pays nothing for it.
+ */
+export const RECOVERY_POLL_MS = 8_000;
+
+let recoveryTimer: ReturnType<typeof setInterval> | null = null;
+
+const recoveryCheck = async (): Promise<void> => {
+  try {
+    const { AuthService } = await import('./api/auth');
+    await AuthService.getMe();
+    // A 2xx already reported `success` through the interceptor - nothing to do here.
+  } catch {
+    // The interceptor reported the failure too. Swallow: this is a background check and an
+    // unhandled rejection here would surface as a crash on a bad line.
+  }
+};
+
+const syncRecoveryPoll = (): void => {
+  const warning = netState.status === 'offline' || netState.status === 'degraded';
+  if (warning && !recoveryTimer) {
+    recoveryTimer = setInterval(() => {
+      void recoveryCheck();
+    }, RECOVERY_POLL_MS);
+  } else if (!warning && recoveryTimer) {
+    clearInterval(recoveryTimer);
+    recoveryTimer = null;
+  }
+};
+
+const clearSlowTimer = (): void => {
+  if (slowTimer) {
+    clearTimeout(slowTimer);
+    slowTimer = null;
+  }
+};
+
+/**
+ * One request went out. Returns the id to hand back to `endRequest`.
+ *
+ * The timer is armed once for the whole batch rather than per request: it only has to notice
+ * that SOMETHING is stuck, and a timer per request on a busy screen is pure overhead.
+ */
+const armSlowTimer = (): void => {
+  if (slowTimer) return;
+  slowTimer = setTimeout(() => {
+    slowTimer = null;
+    if (!inFlight.hasSlowRequest(Date.now())) return;
+    void probeAndApply(true);
+    // ⚠️ KEEP WATCHING while the request is still stuck. The first probe is the one most
+    // likely to be lost on a weak radio, and nothing else re-arms this: the screen is blocked,
+    // so no new request comes through `beginRequest` to start another timer. Without this the
+    // rep gets ONE chance at a banner per stall.
+    armSlowTimer();
+  }, SLOW_REQUEST_MS);
+};
+
+export const beginRequest = (url?: string | null): number | null => {
+  if (isProbeUrl(url)) return null; // never measure the probe with itself
+  const id = inFlight.begin(Date.now());
+  armSlowTimer();
+  return id;
+};
+
+export const endRequest = (id: number | null): void => {
+  if (id === null) return;
+  inFlight.end(id);
+  if (inFlight.size === 0) clearSlowTimer();
+};
+
+export const __resetInFlight = (): void => {
+  inFlight.clear();
+  clearSlowTimer();
+};
+
 export const reportRequestSignal = (signal: RequestSignal): void => {
   setNetState(applyRequestSignal(netState, signal, Date.now()));
 
   if (!shouldProbe(signal)) return;
   if (netState.status === 'online' && netState.failures < FAILURES_BEFORE_LEAVING_ONLINE) return;
-  void (async () => {
-    const reachable = await probeHealthThrottled();
-    if (reachable === null) return; // too soon; keep the current state
-    setNetState(applyProbeResult(netState, reachable, Date.now()));
-  })();
+  void probeAndApply();
 };
 
 export const getNetworkStatus = (): NetworkStatus => netState.status;
@@ -220,6 +331,10 @@ export const recheckNetworkNow = async (): Promise<NetworkStatus> => {
 
 export const __resetNetworkStatus = (): void => {
   netState = initialNetworkState();
+  if (recoveryTimer) {
+    clearInterval(recoveryTimer);
+    recoveryTimer = null;
+  }
 };
 
 export const subscribeConnectivity = (listener: ConnectivityListener): (() => void) => {

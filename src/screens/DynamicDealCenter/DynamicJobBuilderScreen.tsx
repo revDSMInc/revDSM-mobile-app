@@ -1201,6 +1201,14 @@ function DynamicJobBuilderInner({
 
   const collapsingHeader = useCollapsingHeader(true, currentTab?.id);
 
+  // ⚠️ iOS: submitting an agreement / order sheet re-renders the summary, which can land back at the
+  // top WITHOUT a scroll event, leaving the header half-collapsed (faded, "blurred"). Any job-state
+  // change while on the summary re-opens it; scrolling re-collapses it as normal.
+  const resetCollapsingHeader = collapsingHeader.reset;
+  useEffect(() => {
+    if (summaryTab?.id && currentTab?.id === summaryTab.id) resetCollapsingHeader();
+  }, [jobState, summaryTab?.id, currentTab?.id, resetCollapsingHeader]);
+
   const isLastStep = currentTabIndex === nonSummaryTabs.length;
   const isFirstStep = currentTabIndex <= 0;
   const isFinalBuildStep = summaryTab
