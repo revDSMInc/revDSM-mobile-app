@@ -210,11 +210,13 @@ export function getRenderedSectionCombos(section: any, tabState: any = {}) {
 export function renumberTabCombinations(
   sections: any[] = [],
   tabState: any = {},
-  isShown: (combo: any, section: any) => boolean = () => true
+  isShown: (combo: any, section: any) => boolean = () => true,
+  restartPerSection = false
 ) {
   let next = tabState;
   let number = 0;
   sections.forEach((section: any) => {
+    if (restartPerSection) number = 0;
     const saved = tabState?.comboGroups?.[section.id]?.combinations;
     const legacy = !saved?.length && section.id === 'default' && tabState?.combinations?.length;
     const combos = getRenderedSectionCombos(section, tabState);

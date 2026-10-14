@@ -51,3 +51,28 @@ export function isComboHiddenInDealEdit(combo: any, fields: any[] = [], editMode
   if (combo?.[ADDED_IN_EDIT_KEY]) return false;
   return !comboHasSelectedColor(combo, fields);
 }
+
+const isEmptyValue = (value: any): boolean => {
+  if (value === undefined || value === null || value === '' || value === 0 || value === '0') return true;
+  if (Array.isArray(value)) return value.every(isEmptyValue);
+  if (typeof value === 'object') return Object.values(value).every(isEmptyValue);
+  return false;
+};
+
+/** True when no row field of the combination holds a value (`''`, `0`, `'0'`, empty arrays/objects are empty). */
+export function comboHasNoEnteredValue(combo: any, fields: any[] = []): boolean {
+  return flattenFields(fields).every((field) => {
+    const keys = [field?.id, field?.key].filter(Boolean) as string[];
+    return keys.every((k) => isEmptyValue(combo?.[k]));
+  });
+}
+
+/**
+ * My Deals Soffit only: a combination shows when the Deal Center sent values for it (or the rep added it);
+ * otherwise the section is just its heading + its own Add Combination. Layered ON TOP of
+ * `isComboHiddenInDealEdit`, which stays colour-only for every other tab.
+ */
+export function isSoffitComboEmptyInDealEdit(combo: any, fields: any[] = [], editMode?: boolean): boolean {
+  if (!editMode || combo?.[ADDED_IN_EDIT_KEY]) return false;
+  return comboHasNoEnteredValue(combo, fields);
+}
