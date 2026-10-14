@@ -9,6 +9,8 @@ import { logEvent } from '../services/api/LoggerService';
 import { isOnline } from '../services/connectivity';
 import { offlineBlockFor } from '../utils/offline-capability';
 import { useQueuedConsentForms } from './useQueuedConsentForms';
+import { useFiledConsents } from './useFiledConsents';
+import { consentPressAction } from '../utils/consent-filed-log';
 
 interface ModalState {
   showJobBuilder: boolean;
@@ -38,6 +40,13 @@ export const useLeadCenterModals = (
   const navigation = useNavigation<any>();
   const { user } = useAuth();
   const queuedForms = useQueuedConsentForms(lead);
+  /**
+   * ⚠️ The source that covers "filed ONLINE, reopened OFFLINE". `findReport` below reads
+   * `lead.generatedReports` (server data, missing from a lead re-read from an older cache) and
+   * `queuedForms` only knows forms submitted offline - so without this a consent signed minutes
+   * earlier fell through to `toggleModal` and asked the customer to sign a second time.
+   */
+  const filedLocally = useFiledConsents(lead);
 
   const [modals, setModals] = useState<ModalState>({
     showJobBuilder: initialTool === 'job_builder',
@@ -111,16 +120,18 @@ export const useLeadCenterModals = (
           return;
         }
         const existing = findReport('consent_form');
-        if (!existing && queuedForms.consent) {
-          FlashMessage.info('Consent is on file', FILED_NOT_LOADED);
-          return;
-        }
-        if (existing && !isOnline()) {
+        const consentAction = consentPressAction({
+          filed: !!existing || queuedForms.consent || filedLocally.consent,
+          canFetchPdf: !!existing && isOnline(),
+        });
+        if (consentAction === 'explain-offline') {
           FlashMessage.info(
             'Consent is on file',
-            'Signed and filed. Viewing the PDF needs a connection.'
+            existing
+              ? 'Signed and filed. Viewing the PDF needs a connection.'
+              : FILED_NOT_LOADED
           );
-        } else if (existing) {
+        } else if (consentAction === 'view-pdf') {
           handleOpenPdf(secureUrls[existing.reportPath] || existing.fileUrl, 'Consent Form');
         } else {
           toggleModal('showConsentModal', true);
@@ -139,16 +150,18 @@ export const useLeadCenterModals = (
           return;
         }
         const existing = findReport('waiver_form');
-        if (!existing && queuedForms.waiver) {
-          FlashMessage.info('Waiver is on file', FILED_NOT_LOADED);
-          return;
-        }
-        if (existing && !isOnline()) {
+        const waiverAction = consentPressAction({
+          filed: !!existing || queuedForms.waiver || filedLocally.waiver,
+          canFetchPdf: !!existing && isOnline(),
+        });
+        if (waiverAction === 'explain-offline') {
           FlashMessage.info(
             'Waiver is on file',
-            'Signed and filed. Viewing the PDF needs a connection.'
+            existing
+              ? 'Signed and filed. Viewing the PDF needs a connection.'
+              : FILED_NOT_LOADED
           );
-        } else if (existing) {
+        } else if (waiverAction === 'view-pdf') {
           handleOpenPdf(secureUrls[existing.reportPath] || existing.fileUrl, 'Roof Waiver');
         } else {
           toggleModal('showWaiverModal', true);
@@ -212,6 +225,9 @@ export const useLeadCenterModals = (
       queuedForms.waiver,
       queuedForms.consentPending,
       queuedForms.waiverPending,
+      // ⚠️ Without these the callback captures a stale "nothing filed" and re-opens the form.
+      filedLocally.consent,
+      filedLocally.waiver,
     ]
   );
 

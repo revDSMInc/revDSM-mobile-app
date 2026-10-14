@@ -30,6 +30,12 @@ export const SESSION_KEEP_PREFIXES: readonly string[] = [
   // Pending calculator defaults, stored PER OWNER (`offline_calculator_settings:<ownerId>`) so a
   // second rep on the handset can neither see nor flush the first rep's toggle.
   'offline_calculator_settings:',
+
+  // ⚠️ The "this consent is already filed" log. The envelope is owner-stamped, so another rep
+  // cannot read it, and clearing it would let the DUPLICATE-SIGNATURE bug back in after any
+  // sign-out: the rep would be offered a blank consent form for a lead they had already signed.
+  // Unlike the calculator status this is NOT re-derivable offline - keeping it is the fix.
+  'offline-cache:consent-filed',
 ];
 
 export const isSessionScopedKey = (key: string): boolean => {

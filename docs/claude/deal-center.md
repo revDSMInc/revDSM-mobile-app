@@ -3092,3 +3092,69 @@ A field without it shows nothing — however the pick is wired.
 A resulted sale is added to the Job Tracker automatically, so `CalculatorView` no longer renders `JobTrackerButton` under the Job Summary (the import is gone; `components/JobTrackerButton.tsx` is now unused). The body ScrollView `paddingBottom` dropped from 140 to 24 — the tabs footer is a sibling below the ScrollView, not an overlay, so the old 140 was only dead space under the button.
 
 - ⚠️ Legacy `widgets/components/dealcenter/CalculatorForm.tsx` still has its own add / go-to-tracker buttons (the non-dynamic Deal Center) — untouched. Not verified on device.
+- Follow-up (supersedes the code-only note): the closed method box shows the Investment Center string again — `GS2511, 0% APR, 6M` (`compactPlanLabel`), not just `GS2511`. One line with `adjustsFontSizeToFit` (min 0.8) so it is not cut. `codeOnly` on `shortMethodLabel` is now unused. Not verified on device.
+
+### Follow-up — My Deals Gutters tab: a gutter and its downspout are one numbered pair
+
+Ticket: *with no data from the Deal Center the Add Details screen showed the "Downspout & Accessories" heading above the Add Combination
+button; it should only show once a gutter combination exists and awaits its downspout, and the gutter and its downspout must carry the
+same "Combination #N".* Gutters tab, **edit mode only**; create flow and every other tab are untouched.
+
+- `utils/dynamic-job-builder/engine/gutter-pairing.ts` (new, pure, tested in `__tests__/gutter-pairing.test.ts`): `getGutterPairSections`
+  matches only a tab whose id ends `__gutters` (or label "Gutters") that has a section labelled `/downspout/i` plus another combination
+  section — anything else returns null and renders exactly as before.
+- The universal Add Combination alternates: gutter shown-count > downspout shown-count → the next press adds the **downspout**, else a new
+  **gutter**. `DynamicTabRenderer.tsx` `UniversalAddCombination.onAdd` uses `nextPairAddTarget`.
+- The "Downspout & Accessories" heading (`CombinationSectionBlock` `hideLabel`) shows when the downspout section has a card OR is the next
+  target (`shouldShowDownspoutHeading`); it is hidden on an empty tab and right after a downspout is paired. ⚠️ Existing downspout cards keep
+  their heading — only the empty slot loses it. Flip that rule in `shouldShowDownspoutHeading` if the heading should vanish entirely.
+- Numbering restarts per section on a pair tab: `renumberTabCombinations(..., restartPerSection)` and `comboIndexOffsets` = 0, so gutter #1 and
+  downspout #1 both read "Combination #1". ⚠️ Other tabs still number continuously across sections.
+- Section detection is by id/label, not by the hardcoded `section_…` ids in `gutter-roofline-description-generator.ts`.
+- Two tests in `combination-numbering.test.ts` (colour-filter "nothing hidden" cases) were already failing before this change.
+
+⚠️ **Pair-tab cards always carry their chip.** The Gutters sections had `showCombinationLabel: false`, so the boxes showed no "Combination #N"
+(only the Grand Total's `#1`). On a pair tab `CombinationSectionBlock` now forces the chip (`pairLabelPrefix`): gutter boxes read
+"Combination #N", downspout boxes "Downspout Combination #N". Other tabs still honour `showCombinationLabel`.
+
+### Follow-up — My Deals Soffit: one Add Combination PER heading (supersedes the colour-less-combination hide)
+
+Ticket: *Soffit showed an empty "Combination #1" under Nailer Build Out with no value from the Deal Center — then, on review, "revert to this UI":
+keep Vinyl Soffit / Porch Ceiling SqFT / Nailer Build Out headings (and the Nailer placeholder card) as they were, but give each heading its own Add
+Combination button instead of the generic one.*
+- ⚠️ **The "hide a combination in a colour-less section" attempt was reverted** (`combination-color-filter.ts` is back to colour-only) along with the
+  edit-mode "hide an empty section's heading" rule. Do NOT re-add either; the placeholder under Nailer Build Out is intended.
+- `gutter-pairing.ts` `usesPerSectionAdd(tab)` (Soffit tab only). In `DynamicTabRenderer.tsx` that tab, in edit mode, renders no
+  `UniversalAddCombination`; each `CombinationSectionBlock` shows its own button (`ownAddInEdit`) under its heading and adds to THAT section.
+- In edit mode `handleAddCombo` now adds a **blank** `_addedInEdit` combination (`createBlankCombinationItem`), as the universal button did, so
+  nothing is pre-selected. Create flow unchanged.
+- Every other tab keeps the single universal button; the Gutters pair logic above is unaffected.
+
+### Follow-up — My Deals Soffit: one Add Combination PER heading (supersedes the colour-less-combination hide)
+
+Ticket: *Soffit showed an empty "Combination #1" under Nailer Build Out with no value from the Deal Center — then, on review, "revert to this UI":
+keep the Vinyl Soffit / Porch Ceiling SqFT / Nailer Build Out headings (and the Nailer placeholder card) as they were, but give each heading its own
+Add Combination button instead of the generic one.*
+- ⚠️ **The "hide a combination in a colour-less section" attempt was reverted** (`combination-color-filter.ts` is back to colour-only) along with the
+  edit-mode "hide an empty section's heading" rule. Do NOT re-add either; the placeholder under Nailer Build Out is intended.
+- `gutter-pairing.ts` `usesPerSectionAdd(tab)` (Soffit tab only). In `DynamicTabRenderer.tsx` that tab, in edit mode, renders no
+  `UniversalAddCombination`; each `CombinationSectionBlock` shows its own button (`ownAddInEdit`) under its heading and adds to THAT section.
+- In edit mode `handleAddCombo` now adds a **blank** `_addedInEdit` combination (`createBlankCombinationItem`), as the universal button did, so
+  nothing is pre-selected. Create flow unchanged.
+- Every other tab keeps the single universal button; the Gutters pair logic above is unaffected.
+
+### Follow-up — My Deals Soffit: a combination shows only if the Deal Center sent values (refines the per-heading Add Combination)
+
+Ticket: *show a combination only when it received values from the Deal Center; otherwise just the heading with its Add Combination below.*
+- `combination-color-filter.ts` `isSoffitComboEmptyInDealEdit` (+ `comboHasNoEnteredValue`; `''`, `0`, `'0'`, empty arrays/objects = empty). Layered
+  ON TOP of `isComboHiddenInDealEdit`, which stays colour-only. Used only when `usesPerSectionAdd(tab)` (Soffit): `isComboShown` in
+  `DynamicTabRenderer` (numbering, Grand Total) and `isComboHidden` in `CombinationSectionBlock` (via `ownAddInEdit`). `_addedInEdit` always shows.
+- ⚠️ This is the generic "hide empty in a colour-less section" idea that was reverted for ALL tabs — it is deliberately Soffit-only now. Do not
+  widen it without a ticket.
+- ⚠️ A seeded `defaultValue` in a section's `defaultItem` counts as a value, so such a placeholder would show. Nailer/Vinyl/Porch have none today.
+
+### Follow-up — the Soffit rules now also apply to the Fascia tab
+
+Ticket: *same logic in the Fascia tab.* `usesPerSectionAdd` (`gutter-pairing.ts`) matches `__soffit` and `__fascia` (or those labels), so Fascia gets
+a per-section Add Combination and shows a combination only when the Deal Center sent values (or it was added in edit). Nothing else changed; the
+other tabs (Gutters pair, LeafFilter, Lighting, Gutter Guards…) are not matched.

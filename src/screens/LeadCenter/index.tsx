@@ -77,6 +77,7 @@ import RNFS from 'react-native-fs';
 
 import { useLeadCenterData } from '../../hooks/useLeadCenterData';
 import { usePrecacheLeadPhotos } from '../../hooks/usePrecacheLeadPhotos';
+import { useResumeLeadOnForeground } from '../../hooks/useResumeLeadOnForeground';
 import { useGetAgreementConfig } from '../DynamicDealCenter/hooks/useAgreementConfig';
 import { useCompanyLogoBase64 } from '../../hooks/useCompanyLogoBase64';
 import { useIsOnline } from '../../hooks/useIsOnline';
@@ -163,6 +164,10 @@ export default function LeadCenterPage() {
   } = useLeadCenterData(initialLead, user, { appointmentStarted, fromMyDeals });
 
   usePrecacheLeadPhotos(lead);
+
+  // ⚠️ A socket disconnect pauses the work server-side, and a plain BACKGROUND drops the socket.
+  // Without this the rep returns to an open lead while the ops board shows them paused.
+  useResumeLeadOnForeground(lead, user);
 
   const leadCenterOnline = useIsOnline();
   useGetAgreementConfig(leadCenterOnline);
