@@ -99,10 +99,32 @@ export type CalcGateState = 'unknown' | 'locked' | 'unlocked';
  */
 export const calcGateState = (
   status: LeadCalculatorStatus | null | undefined,
-  { isSold = false }: { isSold?: boolean } = {}
+  {
+    isSold = false,
+    isDeviceOnlyLead = false,
+  }: {
+    isSold?: boolean;
+    /**
+     * The lead exists ONLY on this device (a client id - created offline, never synced).
+     * There is no server record to be uncertain about.
+     */
+    isDeviceOnlyLead?: boolean;
+  } = {}
 ): CalcGateState => {
   if (isSold) return 'unlocked';
   if (status?.allConfirmed) return 'unlocked';
+
+  /**
+   * ⚠️ A lead that exists only on this device is a DEFINITE "not built", never "unknown".
+   *
+   * A lead created offline has no server record, so the status read is guaranteed to fail and
+   * `unknown` would unlock the Investment Center on a lead with no rollouts at all - the rep
+   * reaches a presentation screen seconds after creating the lead. "We could not ask" only
+   * deserves the benefit of the doubt when there is something to ask ABOUT; here the device
+   * holds the whole truth, and the whole truth is that nothing has been confirmed.
+   */
+  if (isDeviceOnlyLead) return 'locked';
+
   // No status at all: we have never had an answer for this lead, cached or live.
   if (!status) return 'unknown';
   return 'locked';
