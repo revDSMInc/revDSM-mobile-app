@@ -198,3 +198,12 @@ Installer jobs and Certificate of Completion; My Deals edit wizard / addendums (
 Zone Canvasser zone create / archive / delete (map tiles are cached, writes are not); referral, Job Tracker
 writes, chat sends (blocked with a notice, not queued).
 
+
+### Install availability check is skipped offline (REVDSM-1300)
+`useInstallAvailability` (used by `AppointmentSchedulerModal` and the My Deals edit wizard's install-date step)
+reads `useIsOnline()` and does not call `installer/v1/installer-dispatch/availability` while the app is offline
+or degraded. `availability` stays `null` and `loading` false, which every caller already treats as "no rules":
+all windows are offered, with no spinner and no wait on a request that cannot succeed.
+
+⚠️ Do not make offline booking depend on the scheduler. The server does not enforce windows today, so a booking
+made offline is accepted whatever the crews' load is; the manager sees it afterwards on the dispatch board.

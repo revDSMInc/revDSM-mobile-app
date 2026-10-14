@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useIsOnline } from './useIsOnline';
 import {
   fetchInstallAvailability,
   InstallAvailability,
@@ -39,7 +40,7 @@ export function windowNotice(info: InstallAvailabilityWindow | null): WindowNoti
 }
 
 /**
- * Asks the scheduler about one day while `enabled`. `availability` stays null until it
+ * Asks the scheduler about one day while `enabled` and online. `availability` stays null until it
  * answers — and for good if it never does, which callers treat as "no rules".
  */
 export function useInstallAvailability(
@@ -47,11 +48,16 @@ export function useInstallAvailability(
   leadId: string | undefined,
   enabled: boolean,
 ) {
+  const online = useIsOnline();
   const [availability, setAvailability] = useState<InstallAvailability | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Offline (or on a failing line) the scheduler cannot answer, so do not ask: no request, no
+  // spinner, and `availability` stays null, which every caller already treats as "no rules".
+  const active = enabled && online;
+
   useEffect(() => {
-    if (!enabled || !ymd) {
+    if (!active || !ymd) {
       setAvailability(null);
       setLoading(false);
       return undefined;
@@ -67,7 +73,7 @@ export function useInstallAvailability(
     return () => {
       cancelled = true;
     };
-  }, [enabled, ymd, leadId]);
+  }, [active, ymd, leadId]);
 
   return { availability, loading };
 }
