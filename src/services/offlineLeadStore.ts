@@ -11,7 +11,11 @@ import { isOnline, onReconnect } from './connectivity';
 import { getSessionOwner, registerSessionResetHook } from './sessionScope';
 import { isOwnedBy } from '../utils/session-scope';
 import { uploadQueueManager } from '../utils/uploadQueue';
-import { rekeyActivityLogs } from './offlineActivityLog';
+import {
+  rekeyActivityLogs,
+  runActivityLogDrain,
+  setActivityLogIdResolver,
+} from './offlineActivityLog';
 import { rekeyDeliveryPreference } from './offlineAgreementDelivery';
 import { describeQueuedLead, isSuccessfulCreate, messageOfError } from '../utils/offline-lead-queue';
 import { setWorkReleaseQueue } from '../utils/lead-work-session';
@@ -1262,6 +1266,13 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
   }
 };
 
+setActivityLogIdResolver((value) => {
+  load();
+  const map: Record<string, string> = {};
+  mine().forEach((w) => Object.assign(map, buildIdMap(w)));
+  return resolveClientIds(value, map);
+});
+
 export const drainOfflineWork = async (): Promise<void> => {
   load();
   if (draining || !isOnline()) return;
@@ -1278,6 +1289,8 @@ export const drainOfflineWork = async (): Promise<void> => {
     }
   } finally {
     draining = false;
+    // Every id this pass created is now resolvable, so release the logs held back for them.
+    runActivityLogDrain();
   }
 };
 

@@ -3158,3 +3158,28 @@ Ticket: *show a combination only when it received values from the Deal Center; o
 Ticket: *same logic in the Fascia tab.* `usesPerSectionAdd` (`gutter-pairing.ts`) matches `__soffit` and `__fascia` (or those labels), so Fascia gets
 a per-section Add Combination and shows a combination only when the Deal Center sent values (or it was added in edit). Nothing else changed; the
 other tabs (Gutters pair, LeafFilter, Lighting, Gutter Guards…) are not matched.
+
+### Offline parity — every Deal Center log the online flow writes is now written offline (2026-10-14)
+
+Ticket: *logs generated online are missing when the same screen is used offline* (e.g. calculator `create` / `view`).
+Cause: the offline path is a different code path (device record, no request), and several logs were written by a
+**server hook or a success branch the offline path never reaches**. Queue mechanics: `docs/claude/offline.md` (activity logs section).
+
+| Log | Online source | Offline (was → now) |
+|---|---|---|
+| `calculator` view | effect, gated `isBackendId(tab.id)` | never logged for a `calc-…` tab → gate also accepts `isClientId` |
+| `calculator` create, first tab | bootstrap after `createRemoteTab` | the offline `'mint'` seed logged nothing → logs `isFirstCalculator` |
+| `calculator` create (+ payment-method inherited) | `handleAddTab` after `createRemoteTab` | offline fell to a `local-…` tab with no log (and a doomed request) → `deviceTabFrom` mints a `calc-…` tab, saves it to the device record, logs both |
+| `calculator` duplicate | the SERVER writes it from `duplicateLog` | no request offline, so no log → `logEvent('duplicate', …)` + payment-method inherited |
+| `auto_rename` | `flushSave` / `saveDisplacedSiblings` | `flushSave` skips non-server ids → same title comparison in `persistOffline` (baseline set at hydrate / create) |
+| `funding` payments saved | `useFunding.savePayments` | `goFunding` offline path skipped the hook → `logFundingPaymentsSaved` |
+| `funding` check collected | `useFunding.markCheckCollected` | `handleMarkCollected` offline → `logFundingCheckCollected` |
+| `funding` submitted | `useFunding.submit` | queued submit in `handleBuild` → `logFundingSubmitted` |
+
+Already fine offline (no connectivity gate): field entry, rename, clear section, rollout/drop (`RolloutView`), job-builder logs,
+rollout summary, result-lead logs. The ids in these logs may be device ids; the activity-log queue holds each log until its
+lead / appointment / calculator has a server id and swaps them (`setActivityLogIdResolver`).
+
+- ⚠️ **Any new Deal Center log must be written by the UI handler, not by a service/server hook** — the offline branch of that
+  handler is where it silently goes missing. When you add an online log, look at the offline branch of the same handler.
+- ⚠️ Online funding link / card / loan / sync actions are not logged offline because the actions themselves are blocked offline (`useFunding.run`).

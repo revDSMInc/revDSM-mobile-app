@@ -976,3 +976,31 @@ Address keep the system keyboard.
 - ⚠️ Lead Create now passes `mode="inflow"` explicitly: the pad is app-wide (the patched `Modal` also mounts a default pan provider around it), and the NEAREST provider wins, so this one keeps the form-shrinks-above-the-pad layout. Its `GlobalKeyboardAvoidingView` is turned off via `onActiveChange` because it sits ABOVE this provider and cannot see it through `useNumPadActive`.
 - Follow-up: Lead Create's provider is now `<NumPadProvider layoutAnimated onActiveChange=...>` (the default mode became `inflow`, so `mode="inflow"` is implicit). ⚠️ It must NOT pass `fill`: its parent is the content-sized `modalContainer` (`maxHeight: '90%'`), where a `flex: 1` wrapper collapses. `layoutAnimated` keeps the smooth form resize this modal had before the app-wide rollout.
 - No further Lead Create change: `widgets/modals/LeadCreate/index.tsx` only had its provider props adjusted (`layoutAnimated`, no `fill`) when the pad's default mode became in-flow - see the follow-up above and `app-wide.md`.
+
+## Add New Lead: submit button pinned, no dead space under the form
+
+Ticket: *the Save & Submit button is clipped at the bottom of Add New Lead with a band of white under it.* `widgets/modals/LeadCreate/index.tsx`.
+- The button was the LAST item of the `ScrollView` with `paddingBottom: 80`, so any shrink of the viewport (the sheet is `maxHeight: 90%`, the
+  keyboard-avoiding view and in-flow pad take space) cut it and left the 80 of padding as dead white. It is now a **pinned footer outside the scroll**
+  (top hairline, `paddingBottom: footerBottom`), and the scroll's bottom padding is 16.
+- `footerBottom = max(insets.bottom, Android ? 48 : 20)` — ⚠️ insets read 0/stale inside a Modal, hence the floor (Android 3-button bar ≈ 48dp).
+- Not changed: `GlobalKeyboardAvoidingView` (`flex: 1`, `padding` on Android modals). ⚠️ If a white band still shows under the footer after the keyboard
+  closes on Android, suspect that stale `padding` lift (adjustResize + KAV doubling) before touching the form. Needs a device check.
+
+⚠️ **Follow-up — footer padding collapses while the keyboard / in-app pad is up.** The 48 floor (nav-bar clearance) sat as a dead band between the
+keyboard and the button. `footerBottom` is now 12 when `keyboardOpen` (Keyboard `keyboardDidShow`/`Hide`) or `numPadActive`, and the nav-bar floor
+otherwise. The `numPadActive` hook is also how the Android "Done"-less in-flow pad is covered, since it fires no Keyboard events.
+- ⚠️ `footerBottom` reads `keyboardOpen` and `numPadActive`, so it must be declared AFTER both `useState`s in `LeadCreate/index.tsx` (a block-scoped
+  use-before-declare is a TS error and a runtime TDZ crash on open).
+
+### Follow-up — Add New Lead: ONE keyboard behaviour for the system keyboard and the in-app pad
+
+Ticket: *system keyboard (Email) hid "Save & Submit Lead" under it while the in-app pad (Phone) left it visible — two behaviours.* `LeadCreate/index.tsx`.
+- Root cause: `KeyboardProvider` (App.tsx) makes the app edge-to-edge, so Android no longer resizes the window; RN's `KeyboardAvoidingView`
+  (via `GlobalKeyboardAvoidingView`) and a hand-measured `marginBottom` lift (tried, removed) both missed the real keyboard.
+- Now the same pair `RoofWaiverModal` / `CoCFormModal` use: `react-native-keyboard-controller` `KeyboardAvoidingView behavior="padding"` as the dimmed
+  overlay (`enabled={!numPadActive}` — the pad sizes the form itself) shrinks the sheet to the space above the keyboard, and `KeyboardAwareScrollView`
+  (`bottomOffset 24`) brings the focused field into it. The pinned footer therefore rides directly on either keyboard.
+- ⚠️ `modalContainer` MUST keep `flex: 1` (it used to come from `GlobalKeyboardAvoidingView`): `NumPadProvider`'s `flex: 1` wrapper collapses to 0
+  height in a content-sized sheet and the "+" button then shows only the dim overlay. Never make the sheet content-sized.
+- ⚠️ `scrollViewRef` is `useRef<any>` (keyboard-controller's scroll view); the `scrollTo` calls are unchanged. `footerBottom` still collapses to 12 while a keyboard is up.
