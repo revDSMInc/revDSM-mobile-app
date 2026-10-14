@@ -34,6 +34,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { markLeadRolloutsConfirmed } from '../../../hooks/useLeadCalculatorStatus';
 import { allRolloutsConfirmed } from '../../../utils/rollout-status';
 import { isOnline } from '../../../services/connectivity';
+import { backToLeadCenter } from '../../../utils/navigate-back-to-lead-center';
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
 
@@ -469,7 +470,7 @@ function DynamicDealCenterCreate({ navigation, route }: DynamicDealCenterScreenP
           onOneYearMonthlyChange={handleSetOneYearMonthly}
           onRolloutsConfirmedDone={() => {
             markLeadRolloutsConfirmed(queryClient, lead);
-            navigation?.navigate('LeadCenter', { lead, tab: 'tools' });
+            backToLeadCenter(navigation, lead);
           }}
           activeTabId={activeTabId}
           onTabSelect={setActiveTabId}
