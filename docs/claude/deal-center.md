@@ -3183,3 +3183,25 @@ lead / appointment / calculator has a server id and swaps them (`setActivityLogI
 - ⚠️ **Any new Deal Center log must be written by the UI handler, not by a service/server hook** — the offline branch of that
   handler is where it silently goes missing. When you add an online log, look at the offline branch of the same handler.
 - ⚠️ Online funding link / card / loan / sync actions are not logged offline because the actions themselves are blocked offline (`useFunding.run`).
+
+## REVUIUX-444 — the 1 Year Program default plan is REP-scoped (`defaultOneYearPaymentMethod`)
+
+Contract: `REVUIUX-444-MOBILE-HANDOFF.md`. Backend adds `user.defaultOneYearPaymentMethod` (a plan key, sibling of `defaultPaymentMethod`), written via the
+SAME `PUT /company/user/update-default-lf-calculator-settings` (`null` clears, omitted keys untouched, key NOT validated server-side), and stamps new
+calculators with `oneYearMonthlyPlan = { mode: 'default', planKey: <rep key>, apr/monthlyPayment/grandTotal: 0, isDefault: false }`. The handoff's open
+question (rep- vs lead-scoped) was settled by the ticket text: *"the plan a rep selects as default must reflect in ALL leads"* => **rep-scoped**.
+- ⚠️ **Supersedes the lead-wide `isDefault` scan** (`RolloutView.leadOneYearDefault`, `InvestmentCenter` `leadOneYearDefaultKey`, `OneYearMonthlyPlan`
+  `leadDefault`/`inherits`): all removed. The app never writes `isDefault: true` any more (always `false`); the user record is the source of truth.
+  A legacy calculator saved with `isDefault: true` is re-stamped to `false` and follows the rep default; with no rep default it falls to the 9.99% chain.
+- `utils/one-year-default.ts` (pure, `__tests__/utils/one-year-default.test.ts`): `resolveRepOneYearKey` (published FINANCING key or null — an unknown,
+  unpublished or cash key is treated as no default), `resolveOneYearDefaultKey` (rep 1 Year default > In-Home default > 9.99% > any APR > first
+  financing > method), `oneYearNeedsResync`. Used by `RolloutView` AND `InvestmentPanel` so the two screens cannot drift.
+- Write path: `SettingsService.updateCalculatorsSetting` type + `offline-settings.ts` `FIELDS`/`PendingCalculatorSettings` gained the key, so the offline queue,
+  optimistic merge (`useAuth` -> `applyPendingSettingsToUser`) and replay-on-reconnect work with no other change. `RolloutView.setOneYearDefault` goes through
+  the existing `saveDefault` (queue -> flush -> `refreshUser`), exactly like the In-Home star.
+- `OneYearMonthlyPlan.tsx`: `Default` mode is LIVE (`resolvedKey = defaultKey`), so changing the rep default moves every deal still on Default; Match / custom picks
+  stay. A sync effect re-stamps a Default calculator whose `planKey`/monthly/total is stale (the backend stamp has monthly 0 — "the app recomputes on first render").
+- ⚠️ **Fixes the two QA bugs.** Bug 1 (Match then Default lost the pick): `commit` no longer writes `isDefault` from the calculator. Bug 2 (could not set a default
+  from Match): the **MY DEFAULT PLAN** card now shows in EVERY mode (or a dashed "No default set" hint) and each plan row has a **star** that sets / clears the rep default
+  independent of mode. Picking a row is always a one-off `custom` pick; the star never switches the calculator's mode.
+- ⚠️ Not done: the web Deal Center (own ticket per the handoff). The endpoint was not exercised over HTTP by the backend dev — check once on staging. Not verified on device.

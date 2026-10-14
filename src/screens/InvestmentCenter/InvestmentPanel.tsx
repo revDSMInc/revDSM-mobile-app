@@ -35,6 +35,7 @@ import {
 import { AddPlanModal } from './AddPlanModal';
 import { SpotlightOverlay, SpotlightState, SpotlightRect } from './SpotlightOverlay';
 import { triggerHaptic } from '../../utils/haptics';
+import { resolveRepOneYearKey, resolveOneYearDefaultKey } from '../../utils/one-year-default';
 import {
   logInvestmentOptIn,
   logInvestmentOptOut,
@@ -82,10 +83,9 @@ interface Props {
   onSetInHome?: (calculatorId: string, inHome: { planKey?: string; addedPlans?: string[]; apr?: number; monthlyPayment?: number; grandTotal?: number; optInProgram?: 'inhome' | 'oneyear' | null }) => void;
   onRefresh?: () => void;
   /** Plan key the rep set as the lead-wide default on ANY of this lead's calculators. */
-  leadOneYearDefaultKey?: string | null;
 }
 
-export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig, jobBuilderConfig, descriptionSchemas, lead, onOptIn, onSetInHome, onRefresh, leadOneYearDefaultKey = null }: Props) {
+export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig, jobBuilderConfig, descriptionSchemas, lead, onOptIn, onSetInHome, onRefresh }: Props) {
   const isLeadSold = lead?.status === 'sale';
   const [selectedProgram, setSelectedProgram] = useState<'inhome' | 'oneyear' | null>(
     calculator.inHome?.optInProgram ?? null,
@@ -302,21 +302,20 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const srVetDiscount = msrp * (seniorVetPct / 100);
   const preOrderDiscountVal = msrp * (discountPct / 100);
 
-  const defaultOneYearKey = useMemo(() => {
-    const fin = Object.keys(plans).filter((k) => isFinancing(plans, k));
-    return fin.find((k) => Math.round((plans[k]?.apr || 0) * 100) / 100 === 9.99) || fin.find((k) => (plans[k]?.apr || 0) > 0) || fin[0] || method;
-  }, [plans, method]);
+  // REVUIUX-444: same rule as the rollout card - `Default` is LIVE and rep-scoped (user.defaultOneYearPaymentMethod).
+  const repOneYearKey = useMemo(() => resolveRepOneYearKey(plans, user), [plans, user?.defaultOneYearPaymentMethod]);
+  const defaultOneYearKey = useMemo(
+    () => resolveOneYearDefaultKey(plans, user, method),
+    [plans, user?.defaultOneYearPaymentMethod, user?.defaultPaymentMethod, method],
+  );
   const oneYear = calculator.oneYearMonthlyPlan;
-  // Same inheritance rule as the rollout's OneYearMonthlyPlan: nothing stored, or a bare `Default`,
-  // follows the lead-wide default; a calculator's own default pick / Match / custom is kept.
-  const oneYearInherits = !!leadOneYearDefaultKey && (!oneYear || (oneYear.mode === 'default' && !oneYear.isDefault));
-  const oneYearMode = oneYear?.mode || (leadOneYearDefaultKey ? 'default' : 'match');
+  const oneYearMode = oneYear?.mode || (repOneYearKey ? 'default' : 'match');
   const oneYearKey =
     oneYearMode === 'match'
       ? selectedPlanKey || seedFinancingKey || defaultOneYearKey
       : oneYearMode === 'custom'
         ? oneYear?.planKey || defaultOneYearKey
-        : (oneYearInherits ? leadOneYearDefaultKey : oneYear?.planKey) || defaultOneYearKey;
+        : defaultOneYearKey;
   const oneYearMonthly = useMemo(() => calcMonthly(plans, oneYearGrandTotal, oneYearKey), [plans, oneYearGrandTotal, oneYearKey]);
   const oneYearMonthlyShown = oneYearMonthly;
 

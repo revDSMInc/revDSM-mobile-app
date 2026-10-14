@@ -215,3 +215,7 @@ Files: `utils/offline-activity-log.ts` (pure rules), `services/offlineActivityLo
 - ⚠️ **Do NOT re-introduce a per-module whitelist.** Exclude by exception only.
 - ⚠️ The backend is not in this repo: whether it shows `meta.occurredAt` instead of its own receive time as the log's time is unverified. Backend analytics that read `meta.timestamp` on photo logs must read `meta.occurredAt`.
 - Not renamed (separate queues, not activity logs): `OfflineLeadWork.createdAt/updatedAt`, `workStarted.at`, `workEnded.at`, `fundingSubmitted.at`, the upload queue's own `timestamp`.
+
+### REVUIUX-444 — `defaultOneYearPaymentMethod` joins the queued calculator settings
+
+`utils/offline-settings.ts`: `FIELDS` + `PendingCalculatorSettings` gained `defaultOneYearPaymentMethod` (`null` = clear, sent as `null`). Everything else (merge, payload, `hasPendingSettings`, optimistic `applyPendingSettingsToUser`, replay on reconnect) is driven off `FIELDS`. See `deal-center.md` § REVUIUX-444.
