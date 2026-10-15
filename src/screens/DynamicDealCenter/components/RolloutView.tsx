@@ -45,7 +45,7 @@ import {
   WF_HIGH_MIN_PRICE,
 } from '../utils/dynamic-rollout-pricing';
 import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-util';
-import { logRolloutChange } from '../../../utils/activity-log/rollout-log-meta';
+import { logRolloutChange, logPreOrderDiscount } from '../../../utils/activity-log/rollout-log-meta';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 import { RevRenderSlots, type RenderPair } from './RevRenderSlots';
 import { PhotoPeekScrollLockProvider } from '../../../widgets/common/PhotoPeekScrollLock';
@@ -756,6 +756,22 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }).catch(() => {});
   };
 
+  const logDiscountChanged = (next: number) => {
+    const uid = user?._id || user?.id;
+    if (!uid || next === discountPct) return;
+    logPreOrderDiscount({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: logTiers,
+      endPrice: parseFloat(endPrice) || Number(calculator.price) || 0,
+      discountPercentage: next,
+      oldDiscountPercentage: discountPct,
+      isDefault: !!user?.defaultPercentage && user.defaultPercentage === next,
+      isConfirmed: !!(calculator as any).isRolloutConfirmed,
+    }).catch(() => {});
+  };
+
   const logPaymentMethodChanged = (newKey: string) => {
     const uid = user?._id || user?.id;
     const oldKey = method;
@@ -1379,7 +1395,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                     return (
                       <TouchableOpacity
                         key={d}
-                        onPress={() => onDiscountChange(calculator.id, d)}
+                        onPress={() => { logDiscountChanged(d); onDiscountChange(calculator.id, d); }}
                         style={{ flex: 1, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: active ? '#4CBB17' : '#E2E8F0', backgroundColor: active ? '#4CBB170D' : '#fff' }}
                       >
                         <Text style={{ fontSize: 12, fontWeight: '900', color: active ? '#15803D' : '#94A3B8' }}>{d}%</Text>
@@ -2026,6 +2042,19 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                       fieldValue: p, fieldCategory: 'rollout', oldValue: '', newValue: p,
                       action: 'rollout confirmed',
                     },
+                  }).catch(() => {});
+                  // Ticket 1308: record WHICH In-Home Pre Order discount this rollout was
+                  // confirmed with. Seeded (no oldValue) because the rep never touched the
+                  // chips - a later tap logs its own old -> new entry.
+                  logPreOrderDiscount({
+                    userId: uidC,
+                    leadId,
+                    calculator: { id: c.id, title: c.title, appointmentId: (c as any).appointmentId || appointmentId },
+                    tiers,
+                    endPrice: p,
+                    discountPercentage: c.discountPercentage || pricing.defaultPreOrder,
+                    isDefault: !!user?.defaultPercentage &&
+                      user.defaultPercentage === (c.discountPercentage || pricing.defaultPreOrder),
                   }).catch(() => {});
                 });
               }

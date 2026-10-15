@@ -4196,3 +4196,39 @@ fact down *before* it discards the evidence.
 ⚠️ Endpoints are unchanged — `user/consent/v1/mobile/create` (consent) and
 `/lead/v1/{leadId}/mobile/waiver-form` (waiver), with `finalizeConsentUpload` skipped for a waiver
 because that endpoint files its own `generatedReport` (REVDSM-1293). This change adds no request.
+
+## Ticket 1308 — Forever Record tracks WHICH In-Home Pre Order discount was used
+
+Client: *"Pls add in which in home pre order they're using. 15%, 20% or 25%. Use our same rules
+with inheriting. Changed. etc."* The Forever Record showed the rollout price, payment method and
+confirmation but never which pre-order discount produced the In-Home grand total, so a $333 total
+on a $444 MSRP could not be explained from the log.
+
+**Two moments, mirroring the payment-method rules** (`utils/activity-log/rollout-log-meta.ts`,
+`logPreOrderDiscount`):
+
+- **Seeded** — fired once from the Confirm Rollouts handler (`RolloutView.tsx`), for the value in
+  force when the rollout is confirmed. The rep never touched the chips, so this is the default.
+  `oldValue` is empty; `action: 'in home pre order discount applied'`.
+- **Changed** — fired from the chip's `onPress`, carrying old → new.
+  `action: 'in home pre order discount changed'`.
+
+Both go through `logRolloutChange`, so they inherit its `module_type: 'rollout_and_drop'` envelope,
+tier prices and `percentageOfRollout` — the portal renders them with the existing rollout rows and
+needs no new client.
+
+- The value resolves the same way the UI does: `calculator.discountPercentage || pricing.defaultPreOrder`
+  (`pricing.defaultPreOrder` comes from `useDealPricing`; the fallback is 25).
+- `meta.isDefaultDiscount` records whether the figure came from the **rep's saved default** (the
+  Default toggle writes `user.defaultPercentage`) rather than the company default — "15%" alone
+  does not say which of the two it was.
+- `fieldCategory` follows the payment-method precedent: `'drop'` once the rollout is confirmed,
+  `'rollout'` before that.
+- ⚠️ **The chip logs BEFORE `onDiscountChange`.** `logDiscountChanged` reads `discountPct` for its
+  `oldValue`, and the setter replaces it; calling them the other way round records old === new.
+- ⚠️ **Early-returns on `next === discountPct`**, so re-tapping the active chip writes nothing.
+- Offline: `rollout_and_drop` is not in `NON_QUEUEABLE_LOG_MODULES`, so these queue and replay with
+  a correct `occurredAt` like every other rollout log — no extra handling was needed.
+- ⚠️ Both files are CRLF.
+- Not verified on device, and not yet rendered in the portal: the backend/portal must display the
+  two new actions.

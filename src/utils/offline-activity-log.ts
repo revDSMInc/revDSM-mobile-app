@@ -126,3 +126,28 @@ export const nextSendableLog = (
   }
   return undefined;
 };
+
+/**
+ * Should a log that FAILED to send be queued and retried, rather than dropped?
+ *
+ * ⚠️ THE BUG THIS EXISTS TO PREVENT (ticket 1310). The Forever Record showed "CONFIRMED ROLLOUTS"
+ * with no price above it, so it looked as though the rep had confirmed a rollout without ever
+ * entering a dollar amount - which is impossible, and reads as a process failure by the rep. The
+ * two are SEPARATE log requests ("end price entered", then "rollout confirmed"), and on mobile
+ * data one of them was simply lost.
+ *
+ * Why only on cellular: `logEvent` queues when `isOnline()` is false, but on 4G the app IS
+ * online, so the log went straight out over a flaky radio - and `sendLog`'s catch merely printed
+ * a warning. A timed-out log was gone for good. On office Wi-Fi the POST essentially never fails,
+ * which is why the record always looked complete in testing.
+ *
+ * ⚠️ A 4xx must NOT be retried: the server understood us and refused, so replaying it forever
+ * just fills the queue. Only "we could not deliver it" earns a retry - the same distinction the
+ * connectivity layer draws between a transport error and a real response.
+ */
+export const shouldQueueFailedLog = (httpStatus?: number | null): boolean => {
+  if (typeof httpStatus !== 'number') return true; // no response at all: timeout, DNS, TLS, reset
+  if (httpStatus === 401) return true;             // session gone; it can go out after re-login
+  if (httpStatus >= 500) return true;              // server fault, not ours
+  return false;                                    // 4xx: the payload is the problem
+};
