@@ -403,6 +403,27 @@ branding row showed the company-name fallback until the secure URL resolved, the
 `resolveOneYearDefaultKey(plans, user, method)` (`utils/one-year-default.ts`, rep 1 Year default first) and no stored 1-Year plan + a rep default => `Default`, else `Match`.
 Full write-up: `deal-center.md` § REVUIUX-444.
 
+## Investment Center tile spun on "Checking job status…" for a brand-new lead
+
+Ticket: *a lead created a moment ago shows the Investment Center with a loading icon and "Checking job status…" though nothing was done.*
+Cause: `useLeadCalculatorStatus` returned `cached ?? null` when the appointment lookup SUCCEEDED but found no appointment (a new lead has none yet).
+`null` means "never got an answer" (`calcGateState` => `'unknown'`), so the tile showed the spinner + "Checking job status…" indefinitely.
+- `utils/lead-calc-status.ts` `statusWhenNoAppointment(cached)` => `cached ?? EMPTY_CALC_STATUS`: a successful lookup with no appointment is a real
+  "no calculators yet" (gate `locked`, "Please Fully Build ALL jobs first"). A cached/confirmed row still wins. ⚠️ A THROWN lookup still goes through
+  `onFailure()` (unknown/cached) — only the success-with-no-match path changed. Tested in `__tests__/utils/lead-calc-status.test.ts`.
+- `OperationalSections.tsx`: `investmentStatusPending` adds `&& hasCalc` to the "fetching" arm, so the small spinner shows only when jobs exist but are
+  not confirmed yet (the post-confirm window it was built for), not on every visit to a lead with no calculators. `gate === 'unknown'` is unchanged.
+- Not verified on device.
+
+### Follow-up — merge with `dev-v1-multi-tenat`: the hook uses `answered` + `land(EMPTY_CALC_STATUS)`
+
+Both branches had fixed this same bug differently and collided in `hooks/useLeadCalculatorStatus.ts`. The merged hook keeps the
+multi-tenat shape: `answered` records that the appointment lookup got a reply; no appointment + `answered` =>
+`land(EMPTY_CALC_STATUS)` (a definite "nothing built yet", locked); no appointment + not answered => `onFailure()` (unknown/cached).
+- ⚠️ The hook no longer calls `statusWhenNoAppointment` (still exported from `utils/lead-calc-status.ts` and unit-tested). Its
+  "cached wins" rule is preserved by `mergeStatus` inside `land`: a previously CONFIRMED cached row is never downgraded to empty,
+  and `land` also persists the result to disk. Do not re-introduce a bare `return null` for the answered case (new lead spins again).
+
 ## "Confirmed rollouts but Investment Center not ready" — two causes, one intermittent
 
 Client: after confirming rollouts, the Investment Center tile **sometimes** still reads "Please Fully

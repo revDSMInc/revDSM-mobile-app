@@ -63,7 +63,9 @@ export const ToolsSection = ({
     isDeviceOnlyLead,
   });
   const investmentLocked = gate === 'locked';
-  const investmentStatusPending = gate === 'unknown' || (isCalcStatusFetching && !allConfirmed);
+  // The background refetch spinner only matters when jobs EXIST but are not confirmed yet (the post-confirm window);
+  // a lead with no calculators has nothing to wait for, so it must not flash "Checking job status..." on every visit.
+  const investmentStatusPending = gate === 'unknown' || (isCalcStatusFetching && !allConfirmed && hasCalc);
   useFocusEffect(
     React.useCallback(() => {
       refetchCalcStatus?.();

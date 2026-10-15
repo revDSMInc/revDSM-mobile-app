@@ -23,7 +23,10 @@ import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
 
 export const MULTI_METHOD_ENABLED = true;
 
-export const FINANCING_BYPASS_ENABLED = true;
+
+export const FINANCING_BYPASS_ENABLED = false;
+
+export const FINANCING_BYPASS_NOTICE_ENABLED = false;
 
 export function isFinancingBypassed(payment: Pick<FundingPayment, 'type'>): boolean {
   return FINANCING_BYPASS_ENABLED && payment?.type === 'bank';
@@ -124,9 +127,100 @@ function snapshotPlan(row: PaymentRow, plans: Record<string, DealPlan>): Funding
   return {
     archivedId: `${LOCAL_ARCHIVE_PREFIX}${Math.random().toString(36).slice(2, 10)}`,
     method: methodLabelOf(plans, row.method) || row.methodLabel || row.method || '',
-    planKey: row.method,
+    planKey: row.method || methodLabelOf(plans, row.method) || row.methodLabel || '',
     ...(row.decision ? { decision: row.decision } : {}),
+    ...(row.decision ? { linkSent: true, activated: !!row.activated, approvedAmt: rowAmount(row) } : {}),
   };
+}
+
+export function isArchivableRow(row: PaymentRow): boolean {
+  return Boolean(row.decision || row.activated || row.charged || row.collected);
+}
+
+function planKeyOf(entry: FundingArchivedPlan): string {
+  return String((entry as any).planKey || entry.method || '');
+}
+
+function withoutPlan(
+  shelf: FundingArchivedPlan[],
+  key: string,
+  plans?: Record<string, DealPlan>
+): FundingArchivedPlan[] {
+  if (!key) return shelf;
+  const label = plans ? methodLabelOf(plans, key) : key;
+  return shelf.filter((a) => planKeyOf(a) !== key && a.method !== label);
+}
+
+export function visibleArchived(
+  row: Pick<PaymentRow, 'archived' | 'method'>,
+  activeLabels: string[] = [],
+  plans?: Record<string, DealPlan>
+): FundingArchivedPlan[] {
+  const seen = new Set<string>();
+  const list = withoutPlan(
+    (row.archived || []).filter((a) => {
+      const e = a as any;
+      return isLocalArchive(a) || Boolean(e.decision || e.approvedAmt != null || e.charged || e.collected || e.activated);
+    }),
+    row.method,
+    plans
+  );
+  return list.filter((a) => {
+    const label = String(a.method || planKeyOf(a));
+    if (seen.has(label) || activeLabels.includes(label)) return false;
+    seen.add(label);
+    return true;
+  });
+}
+
+export type PartialApproval =
+  | { kind: 'short'; approvedAmt: number }
+  | { kind: 'full' }
+  | { kind: 'invalid'; message: string };
+
+export function parsePartialApproval(text: string, requested: number): PartialApproval {
+  const n = Math.round(parseFloat(String(text).replace(/[^0-9.]/g, '')));
+  if (!Number.isFinite(n) || n < 1) return { kind: 'invalid', message: 'Enter the approved amount in whole dollars.' };
+  if (n >= requested) return { kind: 'full' };
+  return { kind: 'short', approvedAmt: n };
+}
+
+export function canRecordDecision(
+  p: Pick<FundingPayment, 'type' | 'linkSent' | 'decision'>,
+  opts?: { offline?: boolean }
+): boolean {
+  return p.type === 'bank' && !p.decision && (!!p.linkSent || !!opts?.offline);
+}
+
+export function applyOfflineDecision(
+  record: FundingRecord,
+  pid: string,
+  decision: FundingDecision,
+  approvedAmt?: number
+): FundingRecord {
+  return {
+    ...record,
+    payments: record.payments.map((p) => {
+      if (p.pid !== pid) return p;
+      const approved = decision === 'full' ? p.amount : decision === 'short' ? approvedAmt ?? 0 : 0;
+      return { ...p, linkSent: true, decision, requested: p.amount, approvedAmt: approved, step: Math.max(p.step, 1) };
+    }),
+  };
+}
+
+export function applyOfflineActivation(record: FundingRecord, pid: string): FundingRecord {
+  return { ...record, payments: record.payments.map((p) => (p.pid === pid ? { ...p, activated: true, step: Math.max(p.step, 2) } : p)) };
+}
+
+export function findApprovedArchive(
+  row: Pick<PaymentRow, 'archived'>,
+  key: string,
+  plans: Record<string, DealPlan>
+): FundingArchivedPlan | undefined {
+  const label = methodLabelOf(plans, key);
+  return (row.archived || []).find(
+    (a) => (planKeyOf(a) === key || a.method === label) && (a.decision === 'full' || a.decision === 'short')
+  );
 }
 
 export function swapRowMethod(
@@ -137,11 +231,19 @@ export function swapRowMethod(
 ): PaymentRow[] {
   return rows.map((r) => {
     if (r.pid !== pid) return r;
-    if (!nextKey || nextKey === r.method || !r.method || !hasLenderState(r)) {
-      return nextKey && nextKey !== r.method && r.decision
-        ? { ...r, method: nextKey, linkSent: false, activated: false, decision: null }
-        : { ...r, method: nextKey };
+    if (!nextKey || nextKey === r.method) return { ...r, method: nextKey };
+    const shelf = r.archived || [];
+    const approved = findApprovedArchive(r, nextKey, plans);
+    if (approved) return restoreRowPlan([r], pid, approved.archivedId, plans)[0];
+    if (!(r.method || r.methodLabel) || !isArchivableRow(r)) {
+      return {
+        ...r,
+        method: nextKey,
+        ...(hasLenderState(r) ? { methodLabel: undefined, linkSent: false, activated: false, decision: null } : {}),
+        archived: shelf,
+      };
     }
+    const snap = snapshotPlan(r, plans);
     return {
       ...r,
       method: nextKey,
@@ -149,7 +251,7 @@ export function swapRowMethod(
       linkSent: false,
       activated: false,
       decision: null,
-      archived: [snapshotPlan(r, plans), ...(r.archived || [])],
+      archived: [snap, ...withoutPlan(shelf, planKeyOf(snap), plans).filter((a) => a.method !== snap.method)],
     };
   });
 }
@@ -166,17 +268,21 @@ export function restoreRowPlan(
     const entry = shelf.find((a) => a.archivedId === archivedId);
     if (!entry) return r;
     const key = (entry as any).planKey || planKeyForLabel(plans, entry.method) || entry.method || '';
+    const rest = shelf;
+    const outgoing = (r.method || r.methodLabel) && isArchivableRow(r) ? [snapshotPlan(r, plans)] : [];
     return {
       ...r,
       method: key,
       methodLabel: key && plans[key] ? undefined : entry.method,
-      linkSent: false,
-      activated: false,
-      decision: null,
-      archived: [
-        ...((r.method || r.methodLabel) && hasLenderState(r) ? [snapshotPlan(r, plans)] : []),
-        ...shelf.filter((a) => a.archivedId !== archivedId),
-      ],
+      ...(entry.decision === 'full' || entry.decision === 'short'
+        ? {
+            linkSent: true,
+            activated: !!(entry as any).activated,
+            decision: entry.decision,
+            ...(entry.approvedAmt != null ? { amount: String(entry.approvedAmt) } : {}),
+          }
+        : { linkSent: false, activated: false, decision: null }),
+      archived: [...outgoing, ...rest.filter((a) => !outgoing[0] || a.method !== outgoing[0].method)],
     };
   });
 }
@@ -199,8 +305,81 @@ export function lockedMethodNote(row: PaymentRow): string {
   return 'This payment has already started, so its method is locked.';
 }
 
+/**
+ * Does the saved funding record belong to this calculator? Ownership is the server's
+ * `record.calculatorId` (null = unclaimed). A different owner means the rep is re-scoping,
+ * so the sheet must not hydrate from those rows; the server moves it or answers 409.
+ */
+export function fundingBelongsToCalculator(
+  recordCalculatorId: string | null | undefined,
+  calculatorId: string | null | undefined
+): boolean {
+  if (!recordCalculatorId || !calculatorId) return true;
+  return String(recordCalculatorId) === String(calculatorId);
+}
+
+/** Real money has moved (charged card / collected cheque) — mirrors the server's `isSettled`. A lender decision alone is not money. */
+export function hasCollectedMoney(
+  record: { payments?: Array<{ charged?: boolean; collected?: boolean }> } | null | undefined
+): boolean {
+  return (record?.payments || []).some((p) => Boolean(p.charged || p.collected));
+}
+
+/**
+ * Collected money pins the lead's funding to the calculator that took it: any OTHER calculator
+ * may not result a Sale until that is refunded. Fully-financed funding pins nothing.
+ */
+export function fundingPinnedToOtherCalculator(
+  record: { calculatorId?: string | null; payments?: Array<{ charged?: boolean; collected?: boolean }> } | null | undefined,
+  calculatorId: string | null | undefined
+): boolean {
+  if (!record?.calculatorId || !calculatorId) return false;
+  return !fundingBelongsToCalculator(record.calculatorId, calculatorId) && hasCollectedMoney(record);
+}
+
+export function isSettledPayment(p: { charged?: boolean; collected?: boolean }): boolean {
+  return Boolean(p.charged || p.collected);
+}
+
+export function withSettledRows(
+  upsert: FundingUpsertRow[],
+  record: FundingRecord | null | undefined
+): FundingUpsertRow[] {
+  const have = new Set(upsert.map((r) => r.pid));
+  const carried = (record?.payments || [])
+    .filter((p) => isSettledPayment(p) && !have.has(p.pid))
+    .map(
+      (p) =>
+        ({
+          pid: p.pid,
+          kind: p.kind,
+          method: p.method,
+          type: p.type,
+          amount: p.amount,
+        }) as FundingUpsertRow
+    );
+  return carried.length ? [...carried, ...upsert] : upsert;
+}
+
+export function scopeSwitchOptions(settledAmount: number, overage?: number) {
+  const held = `$${Math.round(settledAmount).toLocaleString()}`;
+  return {
+    reuse: `Re-use the ${held} already collected on this job scope`,
+    refund: `Refund the ${held} already collected`,
+    reuseNote:
+      overage && overage > 0
+        ? `The new contract can’t hold it all — $${Math.round(overage).toLocaleString()} would need to be refunded, which requires approvals.`
+        : '',
+  };
+}
+
+export function scopeOverCollectedBlocker(settled: number, price: number): string | null {
+  const over = settled - price;
+  return over > EPS ? `$${money(over)} more has been collected than the contract price — refund it to submit` : null;
+}
+
 export function isMethodLockedRow(row: PaymentRow): boolean {
-  return Boolean(row.charged || row.collected || row.activated);
+  return Boolean(row.charged || row.collected);
 }
 
 export function isRemovableRow(row: PaymentRow): boolean {
@@ -325,8 +504,8 @@ export function confirmBlockers(
     if (stranded.length) {
       out.push(
         stranded.length === 1
-          ? 'One payment uses a card or loan, which needs a connection — switch it to a check or reconnect'
-          : `${stranded.length} payments use a card or loan, which needs a connection — switch them to a check or reconnect`
+          ? 'One payment uses a card, which needs a connection — switch it to a check or financing, or reconnect'
+          : `${stranded.length} payments use a card, which needs a connection — switch them to a check or financing, or reconnect`
       );
     }
   }
@@ -373,7 +552,7 @@ export function methodTypeOf(plans: Record<string, DealPlan>, key?: string): Met
 
 export function methodAvailableOffline(plan?: DealPlan | null): boolean {
   if (!plan) return true;
-  return plan.type === 'cash';
+  return plan.type === 'cash' || plan.type === 'financing';
 }
 
 export function planBlockedOffline(
@@ -695,6 +874,7 @@ export function fundingBlockers(
   price: number,
   opts?: {
     setupBlocked?: boolean;
+    offline?: boolean;
   }
 ): string[] {
   const covered = coverageOK(payments, price);
@@ -707,7 +887,7 @@ export function fundingBlockers(
       : isApplicationClosed(p)
         ? `— the application ${APPLICATION_CLOSED_SHORT[p.applicationClosed as FundingApplicationClosed] || 'closed'}; send a new link`
       : isFinancingBypassed(p) ? null
-      : (p.type === 'cc' || p.type === 'bank') && !p.linkSent ? '— link not sent yet'
+      : (p.type === 'cc' || (p.type === 'bank' && !opts?.offline)) && !p.linkSent ? '— link not sent yet'
       : p.type === 'bank' && !p.decision ? '— waiting on lender decision'
       : p.type === 'bank' && !p.activated ? '— loan not activated yet'
       : p.type === 'cc' && p.step < 2 && !p.charged ? '— card not on file yet'
@@ -718,7 +898,13 @@ export function fundingBlockers(
   });
 
   const total = payments.reduce((n, p) => n + fundedAmount(p), 0);
-  if (total < price - EPS) {
+  const heldOver = scopeOverCollectedBlocker(
+    payments.filter(isSettledPayment).reduce((n, p) => n + p.amount, 0),
+    price
+  );
+  if (heldOver) {
+    out.push(heldOver);
+  } else if (total < price - EPS) {
     out.push(`$${money(price - total)} of the contract is still unassigned`);
   } else if (total > price + EPS) {
     out.push(`$${money(total - price)} more than the contract price is allocated`);

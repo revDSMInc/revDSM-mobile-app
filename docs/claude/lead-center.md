@@ -1277,6 +1277,14 @@ produces the title/message, `FlashMessage` delivers it, still inside the `setTim
 - ⚠️ The file is CRLF. Not verified on device: the case to check is airplane mode with a mix of
   on-device and remote photos — expect an amber "Partial Download … N need a connection."
 
+### Follow-up — Tools tab: Investment Center tile no longer spins on a brand-new lead
+
+`widgets/components/LeadCenter/OperationalSections.tsx` (`ToolsSection`). A lead with no appointment/calculators sat on "Checking job status…" + a spinner
+forever (root cause is in `useLeadCalculatorStatus`; full write-up in `investment-center-job-tracker.md`).
+- `investmentStatusPending` is now `gate === 'unknown' || (isCalcStatusFetching && !allConfirmed && hasCalc)`: the background-refetch spinner only shows when
+  jobs EXIST but are not confirmed (the post-confirm window). A lead with no calculators is a plain `locked` tile ("Please Fully Build ALL jobs first").
+- ⚠️ Do not drop the `hasCalc` guard to "show activity" — it re-introduces the spinner on every visit to an empty lead. `unknown` (a lookup that THREW with nothing cached) still spins.
+
 ## The Tools ▸ revRender strip re-downloaded every render on each tab switch
 
 Client report: "once the renders have been loaded they should be saved — it's still having them load
@@ -1926,3 +1934,8 @@ pre-empt that with its own queueing.
 The other two logs in this flow (`click_build_job` and `change_lead_result_reason`, both in
 `widgets/modals/lead-center/ResultLeadModal.tsx`) already fire unconditionally before
 `onSubmit`, so the full trail — reason chosen → confirm → result submitted — survives offline.
+
+
+### Lead preview photo loads from disk (`useLeadPreviewUrl`)
+
+`hooks/useLeadPreviewUrl.ts` is shared by the chat header, the thread list and other lead thumbnails. For stored (bucket) photos it now persists the last resolved URL in MMKV (`leadPreviewUrl:<bucket/path>`) and returns the `warmToLocalCache` file, so a reopened lead shows the photo with no `getSecureUrls` call and offline. Full write-up and traps: `notifications-chat.md` § "Chat header / thread-list lead photo: slow to appear". ⚠️ Never route a `googleUrl` (street view) through that cache - its signature-less path is identical for every lead. Not verified on device.

@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { LeadService } from '../services/api/leads';
+import { getWarmedLocalUri, warmToLocalCache } from '../utils/imageFileCache';
+import { Storage } from '../utils/storage';
 
 const previewUrlCache = new Map<string, string>();
+
+// The last pre-signed URL we resolved for a stored photo. `getLocalCachePath` drops the signature, so even an EXPIRED
+// url still maps to the file we downloaded - this lets a reopened chat paint the photo from disk with no API round
+// trip and no network (the old flow showed the placeholder until `getSecureUrls` answered, every cold start).
+const lastUrlKey = (cacheKey: string) => `leadPreviewUrl:${cacheKey}`;
 
 export interface LeadPreviewSource {
   bucketName?: string;
@@ -33,33 +40,56 @@ export function useLeadPreviewUrl(leadDetails: any): string | null {
   const [secureUrl, setSecureUrl] = useState<string | null>(
     cacheKey ? previewUrlCache.get(cacheKey) || null : null
   );
+  // Local file copy of the stored photo (never of a Google URL: its path has no per-lead part, so the signature-less
+  // cache key would collide across leads). Seeded synchronously when this session already warmed it.
+  const [local, setLocal] = useState<{ key: string; uri: string } | null>(() => {
+    if (!cacheKey) return null;
+    const known = getWarmedLocalUri(previewUrlCache.get(cacheKey) || Storage.getItem(lastUrlKey(cacheKey)));
+    return known ? { key: cacheKey, uri: known } : null;
+  });
+  const localUri = local && local.key === cacheKey ? local.uri : null;
 
   useEffect(() => {
     if (directGoogle || !cacheKey || !source?.bucketName || !source?.filePath) return;
-
-    const cached = previewUrlCache.get(cacheKey);
-    if (cached) {
-      setSecureUrl(cached);
-      return;
-    }
-
+    const { bucketName, filePath } = source;
     let cancelled = false;
-    LeadService.getSecureUrls([{ bucketName: source.bucketName, filePath: source.filePath }])
-      .then((res) => {
-        const item = res?.data?.data?.[0] || res?.data?.[0];
-        const url = item?.secureUrl || item?.url || null;
+
+    const run = async () => {
+      // 1. Already on disk from an earlier open: show it at once, skip the round trip.
+      const stored = Storage.getItem(lastUrlKey(cacheKey));
+      if (stored) {
+        const file = await warmToLocalCache(stored).catch(() => null);
+        if (file) {
+          if (!cancelled) setLocal({ key: cacheKey, uri: file });
+          return;
+        }
+      }
+
+      // 2. Resolve a fresh pre-signed URL, show it, and warm it to disk for next time.
+      let url = previewUrlCache.get(cacheKey) || null;
+      if (!url) {
+        try {
+          const res = await LeadService.getSecureUrls([{ bucketName, filePath }]);
+          const item = res?.data?.data?.[0] || res?.data?.[0];
+          url = item?.secureUrl || item?.url || null;
+        } catch (err: any) {
+          console.warn('[ChatThreads] Failed to resolve lead preview image:', err?.message || err);
+          return;
+        }
         if (!url) return;
         previewUrlCache.set(cacheKey, url);
-        if (!cancelled) setSecureUrl(url);
-      })
-      .catch((err) => {
-        console.warn('[ChatThreads] Failed to resolve lead preview image:', err?.message || err);
-      });
+      }
+      if (!cancelled) setSecureUrl(url);
+      Storage.setItem(lastUrlKey(cacheKey), url);
+      const file = await warmToLocalCache(url).catch(() => null);
+      if (file && !cancelled) setLocal({ key: cacheKey, uri: file });
+    };
 
+    run().catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [directGoogle, cacheKey, source?.bucketName, source?.filePath]);
 
-  return directGoogle || secureUrl;
+  return directGoogle || localUri || secureUrl;
 }

@@ -198,6 +198,8 @@ export interface FundingRecord {
   contractPrice: number;
   contractPriceUnlocked?: boolean;
   payMode?: 'split' | 'upfront';
+  /** Calculator this lead's funding is attached to; null = unclaimed. Server-owned. */
+  calculatorId?: string | null;
   status: FundingRecordStatus;
   submittedAt?: string | null;
   submittedBy?: string | null;
@@ -255,6 +257,10 @@ export type FundingErrorKind =
   | 'notFound'
   | 'delivery'
   | 'noProvider'
+  | 'settledOnOtherCalculator'
+  | 'scopeNeedsDecision'
+  | 'scopeNeedsRefundApproval'
+  | 'scopeRefundFirst'
   | 'offline'
   | 'unknown';
 
@@ -262,6 +268,11 @@ export interface FundingError {
   kind: FundingErrorKind;
   message: string;
   httpStatus?: number;
+  /** Machine code from `data.code` (e.g. FUNDING_SETTLED_ON_OTHER_CALCULATOR). */
+  code?: string;
+  /** REVUIUX-519 scope-switch refusals: what is still held (net of refunds) and what the new contract cannot hold. */
+  settledAmount?: number;
+  overage?: number;
   blockers?: string[];
   reminder?: FundingApprovalReminder;
 }
@@ -275,6 +286,13 @@ const KIND_BY_STATUS: Record<number, FundingErrorKind> = {
   502: 'delivery',
   503: 'noProvider',
 };
+
+export const FUNDING_SETTLED_ON_OTHER_CALCULATOR = 'FUNDING_SETTLED_ON_OTHER_CALCULATOR';
+export const FUNDING_SCOPE_SWITCH_NEEDS_DECISION = 'FUNDING_SCOPE_SWITCH_NEEDS_DECISION';
+export const FUNDING_SCOPE_SWITCH_NEEDS_REFUND_APPROVAL = 'FUNDING_SCOPE_SWITCH_NEEDS_REFUND_APPROVAL';
+export const FUNDING_SCOPE_SWITCH_REFUND_FIRST = 'FUNDING_SCOPE_SWITCH_REFUND_FIRST';
+
+export type SettledAction = 'reuse' | 'refund' | 'reuseWithRefund';
 
 export function isLinkEndpointUrl(url?: string | null): boolean {
   if (!url) return false;
@@ -312,11 +330,22 @@ export function classifyFundingError(
   else if (kind === 'stale' && onRemind) kind = 'remindTooSoon';
 
   const reminder = body?.reminder ?? body?.data?.reminder;
+  const code: string | undefined = typeof body?.data?.code === 'string' ? body.data.code : undefined;
+  // Match on `data.code`, never the message. A refused re-scope is not a stale record: no refetch/retry.
+  if (code === FUNDING_SETTLED_ON_OTHER_CALCULATOR) kind = 'settledOnOtherCalculator';
+  else if (code === FUNDING_SCOPE_SWITCH_NEEDS_DECISION) kind = 'scopeNeedsDecision';
+  else if (code === FUNDING_SCOPE_SWITCH_NEEDS_REFUND_APPROVAL) kind = 'scopeNeedsRefundApproval';
+  else if (code === FUNDING_SCOPE_SWITCH_REFUND_FIRST) kind = 'scopeRefundFirst';
+  const settledAmount = Number(body?.data?.settledAmount);
+  const overage = Number(body?.data?.overage);
 
   return {
     kind,
     message: body?.message || err?.message || 'Something went wrong',
     httpStatus,
+    ...(code ? { code } : {}),
+    ...(Number.isFinite(settledAmount) ? { settledAmount } : {}),
+    ...(Number.isFinite(overage) && overage > 0 ? { overage } : {}),
     ...(Array.isArray(blockers) ? { blockers } : {}),
     ...(reminder && typeof reminder === 'object' ? { reminder: reminder as FundingApprovalReminder } : {}),
   };
@@ -374,7 +403,13 @@ export const FundingService = {
 
   savePayments: (
     leadId: string,
-    payload: { contractPrice: number; payments: FundingUpsertRow[]; payMode?: 'split' | 'upfront' },
+    payload: {
+      contractPrice: number;
+      payments: FundingUpsertRow[];
+      payMode?: 'split' | 'upfront';
+      calculatorId?: string;
+      settledAction?: SettledAction;
+    },
     companyId?: string,
     userId?: string
   ): Promise<FundingResponse> => api.put(FundingEndpoints.record(leadId), payload, cfg(companyId, userId)),

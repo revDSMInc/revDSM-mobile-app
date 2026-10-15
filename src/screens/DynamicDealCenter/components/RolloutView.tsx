@@ -52,6 +52,7 @@ import { PhotoPeekScrollLockProvider } from '../../../widgets/common/PhotoPeekSc
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { OneYearMonthlyPlan, type OneYearMonthlyValue } from './OneYearMonthlyPlan';
 import { resolveRepOneYearKey, resolveOneYearDefaultKey } from '../../../utils/one-year-default';
+import { isOnline } from '../../../services/connectivity';
 import { scopeSignature } from '../utils/scope-signature';
 import type { CalculatorLockState } from '../utils/job-builder-submission';
 import { NUMERIC_KEYBOARD, NUMERIC_KEYBOARD_HAS_RETURN_KEY } from '../../../utils/keyboard-type';
@@ -956,11 +957,40 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     FlashMessage.success(label, "Saved on your device — it'll sync when you're back online.");
   };
 
-  const setOneYearDefault = (key: string | null) =>
-    saveDefault(
+  // Activity log for the 1 Year plan. `logEvent` queues the log itself when offline (action-time key, per-lead order), so
+  // nothing here needs a connectivity branch - the state is only recorded as meta for the portal.
+  const logOneYearPlan = (action: string, oldKey: string | null, newKey: string | null, extra: Record<string, any> = {}) => {
+    const uid = user?._id || user?.id;
+    if (!uid) return;
+    const currentPrice = parseFloat(endPrice) || Number(calculator.price) || 0;
+    logRolloutChange({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: logTiers,
+      percentageOfRollout: markupLabel(currentPrice, logTiers),
+      change: {
+        fieldName: 'oneYearPlan', fieldLabel: '1 Year Monthly Plan', fieldValue: currentPrice, fieldCategory: 'rollout',
+        oldValue: oldKey || '', newValue: newKey || '',
+        oldPaymentMethod: oldKey || '', newPaymentMethod: newKey || '',
+        oldPaymentMethodLabel: oldKey ? planLabelOf(plans, oldKey) : '',
+        newPaymentMethodLabel: newKey ? planLabelOf(plans, newKey) : '',
+        offline: !isOnline(),
+        action,
+        ...extra,
+      },
+    }).catch(() => {});
+  };
+
+  const setOneYearDefault = (key: string | null) => {
+    if (key !== repOneYearKey) {
+      logOneYearPlan(key ? '1 year default plan set' : '1 year default plan cleared', repOneYearKey, key, { isRepDefault: true });
+    }
+    return saveDefault(
       { defaultOneYearPaymentMethod: key },
       key ? '1 Year default plan set' : '1 Year default plan cleared'
     );
+  };
 
   const toggleDefault = (next: boolean) =>
     saveDefault(
@@ -1459,6 +1489,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   locked={false}
                   repDefaultKey={repOneYearKey}
                   onSetRepDefault={setOneYearDefault}
+                  onPlanPicked={({ oldKey, newKey, mode }) => logOneYearPlan('1 year plan changed', oldKey, newKey, { oneYearMode: mode })}
                 />
               </View>
 

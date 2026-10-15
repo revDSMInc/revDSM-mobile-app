@@ -16,6 +16,8 @@ import {
   lenderState,
   planBlockedOffline,
   showsChip,
+  methodLabelOf,
+  visibleArchived,
   type LenderTone,
   type PaymentRow,
 } from '../../utils/funding';
@@ -212,7 +214,11 @@ export function PaymentRowsGroup({
     const lender = chip ? lenderState(row, plans[row.method]?.type === 'financing') : null;
     const tone = lender ? CHIP[lender.tone] : CHIP.neutral;
     const drift = driftNote(row);
-    const archived = row.archived || [];
+    const archived = visibleArchived(
+      row,
+      allRows.filter((r) => r.pid !== row.pid).map((r) => methodLabelOf(plans, r.method) || r.methodLabel || ''),
+      plans
+    );
 
     const fieldBorder = needs ? FUND.AMBER : FUND.BORDER;
     const fieldBg = needs ? FUND.AMBER_BG : locked || row.auto ? FUND.FILL : '#fff';
