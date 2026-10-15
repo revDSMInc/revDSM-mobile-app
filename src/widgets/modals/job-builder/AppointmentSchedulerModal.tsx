@@ -208,10 +208,8 @@ export const AppointmentSchedulerModal = ({
         setAvailabilityRefresh((n) => n + 1);
         return;
       }
-      if (result.kind === 'offline') {
-        FlashMessage.warning('Connection needed', 'You need to be online to schedule this job.');
-        return;
-      }
+      // Offline (or any other failure): nothing is checked or held now; the booking carries on
+      // and the crew is assigned when the job builder syncs.
     }
 
     setIsTBD(false);
