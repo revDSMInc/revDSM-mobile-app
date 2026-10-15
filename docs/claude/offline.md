@@ -697,3 +697,129 @@ drops "link not sent yet" for a loan.
 ### 1 Year default plan - offline + activity logs
 
 The rep default (`defaultOneYearPaymentMethod`) already rides the queued calculator settings (`offline-settings.ts` `FIELDS`): `RolloutView.saveDefault` queues it first, flushes if online, and offline shows "Saved on your device - it'll sync when you're back online"; `useAuth` merges it optimistically so `repOneYearKey` (and the plan sheet's CURRENT DEFAULT) update at once, and `startCalculatorSettingsSync` replays it on reconnect. New: `RolloutView.logOneYearPlan` writes a `oneYearPlan` rollout log through `logRolloutChange` -> `logEvent`, so offline it lands in the activity-log queue with the action-time key and per-lead order like every other rollout log. Actions: `1 year default plan set` / `cleared` (`isRepDefault: true`, logged once per real change) and `1 year plan changed` (`oneYearMode`), fired from `OneYearMonthlyPlan`'s new `onPlanPicked` (only `commit`, i.e. rep taps - never the Default re-stamp effect). Meta `offline` records connectivity at tap time. ⚠️ A server rejection while online leaves the setting queued until the NEXT reconnect (no retry timer) - pre-existing behaviour. Not verified on device.
+
+---
+
+## Ticket — 4 photos became 9, then 7 (mobile data)
+
+> "In mobile data I noticed I uploaded 4 images and it is becoming 9 and some time more. In
+> back-left it goes 3 and then in manage photos it increased, and I again checked it become 7."
+
+⚠️ **An upload that times out is not an upload that failed.** Nothing was ever lost — the same
+photo was stored repeatedly.
+
+`uploadImages` inherited the **global 15 s** `REQUEST_TIMEOUT_MS` from `services/api/index.ts`.
+That is a *JSON* timeout; a 2–5 MB photo on a weak cell routinely exceeds it **while the server
+stores it perfectly**. `processQueue` caught the client-side abort, incremented `retryCount`, and
+re-sent the identical file — up to `MAX_PHOTO_ATTEMPTS` (5). 4 photos × several attempts each is
+exactly the 4 → 9 the rep saw, and the count kept moving because retries were still draining.
+
+⚠️ **The count going DOWN (9 → 7) is not the bug healing.** It is a later `refetchQueries`
+replacing an optimistic list with the server's — the duplicates are real rows either way.
+
+⚠️ The pre-upload `existingUrls` snapshot in `uploadItem` looks like a duplicate guard but is
+**not** one — it feeds `matchUploadedPhoto` for cache adoption and logging only, and nothing ever
+consulted it before sending.
+
+### The fix: three layers, and they are not alternatives
+
+1. **`PHOTO_UPLOAD_TIMEOUT_MS = 120_000`** on `LeadService.uploadImages`, which makes the
+   ambiguous window rare. ⚠️ The installer queue **already used 120 s** — only this queue was
+   left on the global 15 s. Worth remembering when adding any new multipart call: the global
+   `REQUEST_TIMEOUT_MS` is a JSON timeout and is wrong for images.
+2. **A stable idempotency key** (`utils/upload-idempotency.ts`), which makes a retry inside that
+   window harmless. Only this actually closes the hole, and it needs the server to honour it —
+   backend has agreed; spec sent separately.
+3. **Treating a duplicate-key rejection as success** in the queue.
+
+⚠️ **Scope: `PUT demo/v1/leads/:leadId/images` only.** The installer queue
+(`POST installer/v1/:jobId/images`, `utils/installer-upload.ts`) has the **same defect** — a
+timed-out attempt re-sends the image, and ⚠️ its `isRetryableUploadError` returns false for 409
+so a duplicate rejection would fall through to `failed(attempt)`, marking a safely-stored photo
+as failed. It was deliberately left alone so one endpoint ships at a time. The helpers in
+`upload-idempotency.ts` are endpoint-agnostic and can be adopted there unchanged; the key just
+needs a stable per-image local id (`photo.id`, minted at capture) and the phase folded in so
+pre- and post-install shots of one tag stay distinct.
+
+### `utils/upload-idempotency.ts`
+
+Pure module (CLAUDE.md §6 — the queue imports react-native / blob-util). 17 tests.
+
+- Sent **twice per request**: the `Idempotency-Key` header *and* an `idempotencyKey` form field.
+  ⚠️ Mobile proxies strip unexpected headers from multipart bodies more readily than form
+  fields, and this bug only shows up on exactly those networks.
+- ⚠️ **The key must derive from the item's persisted identity — never the attempt, the clock or
+  a random value.** `photoIdempotencyKey` uses `item.id`, minted at enqueue and persisted to
+  MMKV, so it survives retries, restarts and a cold drain days later. *A key regenerated per
+  attempt is not an idempotency key, it is just a slower duplicate.* A test asserts two calls
+  return the identical string.
+- ⚠️ `subcategory` is deliberately **not** in the key. Two photos in one slot are two photos; a
+  re-shot "Back Left" must still upload. Over-deduplicating loses a photo at a door, which is
+  the worse failure.
+- Returns `null` rather than fabricating a key when there is no stable id — no key is better
+  than a key that isn't stable.
+
+### ⚠️ A duplicate-key 409 is a SUCCESS
+
+`uploadQueue.ts` calls `isDuplicateUploadResponse(err)` **before** its failure handling, then
+removes the item and cleans up the file instead of parking it.
+
+Parking a safely-stored photo tells the rep to retake a door they already shot.
+
+⚠️ **The match is narrow on purpose.** It requires 409 **and** an idempotency-flavoured
+`code`/`message`. A bare 409 is NOT swallowed — `resolveAppointmentId` returns a 409 for
+"lead already has an appointment", and silently treating unrelated conflicts as success would
+hide real failures.
+
+`isIdempotentReplay(response)` reads an advisory `idempotentReplay: true` for logging only.
+⚠️ Correctness must not depend on the server setting it.
+
+### ⚠️ `data.code`, not `code` — the backend envelope
+
+The backend's responses all go through one helper emitting `{ code, message, data }` where
+**`code` is the HTTP status as a NUMBER**. Our first spec asked for `code: "IDEMPOTENT_REPLAY"`,
+which would have broken that contract across their whole API. The agreed shape is:
+
+```json
+{ "code": 409, "message": "Idempotent replay: ...", "data": { "code": "IDEMPOTENT_REPLAY" } }
+```
+
+`isDuplicateUploadResponse` therefore checks `data.code` **first**, then a *string* `body.code`,
+then the message. ⚠️ A numeric `body.code` is ignored on purpose — an envelope carrying
+`code: 409` must never be read as a marker, or every 409 from this API becomes a silent
+"success". The message match is kept only so a server shipping before us is still understood;
+⚠️ message text is not a contract and must never be the only thing we match on.
+
+### The second caller: Image Annotation
+
+⚠️ `utils/uploadQueue.ts` is **not** the only path to `PUT demo/v1/leads/:leadId/images`.
+`screens/ImageAnnotation/index.tsx` uploads annotated copies through `useUploadImagesMutation`,
+and was unprotected. `useUploadImagesMutation` now takes an optional `idempotencyKey`.
+
+⚠️ **The risk there is a different one and needs a different key.** There is no retry loop in
+the annotation screen — its catch logs and moves on — so the exposure is an axios-level
+retransmit or a double-tap of Save, not a 5-attempt burst. `annotatedPhotoIdempotencyKey` keys
+on the **rendered temp file** (`annotated_<ts>_<index>.jpg`), which is minted once per render.
+That makes it stable for one save and ⚠️ **deliberately different when the rep annotates the
+same source photo again** — that is a new upload, not a duplicate. Keying on the source photo
+id instead would silently swallow the second annotation.
+
+⚠️ Its loop sends **one request per image**, so one key still gates exactly one photo. That
+invariant is what lets the backend key on the whole request; if any caller here ever batches,
+the backend contract breaks (they log a warning when a key arrives with >1 file).
+
+### Still outstanding
+
+Existing duplicates in live records predate the fix and need a one-off backend cleanup.
+
+⚠️ **The backend proposed grouping on `(leadId, subcategory, timestampTaken, coordinates)`,
+reasoning that those are capture metadata. They are not.** We send
+`timestampTaken: item.timestamp`, and `addToQueue` sets that to `new Date().toISOString()` **when
+the photo is ENQUEUED** — never re-stamped on retry. So it does group retries (the value is
+frozen on the queue item), but two genuinely different photos enqueued in the same burst can
+share it, and `coordinates` won't separate them because both come from one GPS fix at one door.
+Grouping on it would delete real photos. They were told to use S3 `HeadObject` (size + MD5) as
+the primary identity and the quadruple only as a pre-filter.
+
+⚠️ A cleanup group larger than 5 is suspicious — `MAX_PHOTO_ATTEMPTS` is 5, so a retry run
+cannot exceed it.

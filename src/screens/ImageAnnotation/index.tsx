@@ -21,6 +21,10 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 const WebViewComponent = WebView as any;
 import Geolocation from 'react-native-geolocation-service';
 import { useUploadImagesMutation } from '../../hooks/useLeadMutation';
+import {
+  IDEMPOTENCY_FIELD,
+  annotatedPhotoIdempotencyKey,
+} from '../../utils/upload-idempotency';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { IMAGE_CATEGORIES } from '../../constants/lead-center';
 import { useAuth } from '../../hooks/useAuth';
@@ -732,8 +736,19 @@ export default function ImageAnnotationScreen() {
       formData.append('images', JSON.stringify(imageInfo));
       formData.append('category', 'salesPhotos');
 
+      /**
+       * IMPORTANT: stops a timed-out upload being stored twice. Keyed on the rendered temp
+       * file, which is minted once per annotation - so a retransmit of THIS save is collapsed,
+       * while re-annotating the same source photo later is correctly a new upload.
+       */
+      const idempotencyKey = annotatedPhotoIdempotencyKey({
+        leadId: lead._id,
+        renderUri: res.uri,
+      });
+      if (idempotencyKey) formData.append(IDEMPOTENCY_FIELD, idempotencyKey);
+
       try {
-        await uploadImagesMutation.mutateAsync({ leadId: lead._id, formData });
+        await uploadImagesMutation.mutateAsync({ leadId: lead._id, formData, idempotencyKey });
       } catch (uploadError: any) {
         console.error('Failed to upload annotated image:', uploadError?.response?.data || uploadError?.message || uploadError);
       }

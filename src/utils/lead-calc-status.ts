@@ -102,6 +102,7 @@ export const calcGateState = (
   {
     isSold = false,
     isDeviceOnlyLead = false,
+    isOffline = false,
   }: {
     isSold?: boolean;
     /**
@@ -109,6 +110,11 @@ export const calcGateState = (
      * There is no server record to be uncertain about.
      */
     isDeviceOnlyLead?: boolean;
+    /**
+     * No usable connection. `unknown` means "we could not ask"; offline we also cannot ask
+     * LATER, so the benefit of the doubt has nothing to resolve into.
+     */
+    isOffline?: boolean;
   } = {}
 ): CalcGateState => {
   if (isSold) return 'unlocked';
@@ -125,8 +131,18 @@ export const calcGateState = (
    */
   if (isDeviceOnlyLead) return 'locked';
 
-  // No status at all: we have never had an answer for this lead, cached or live.
-  if (!status) return 'unknown';
+  /**
+   * No status at all: we have never had an answer for this lead, cached or live.
+   *
+   * ONLINE this stays `unknown` and unlocks - a read can fail transiently on a lead whose
+   * rollouts the rep really did confirm, and a wrong lock in front of a customer costs a sale
+   * (see the re-lock ticket in `lead-center.md`). The refetch behind the tap resolves it.
+   *
+   * ⚠️ OFFLINE it is a definite `locked`. Nothing is cached, so the device has never seen a
+   * confirmed rollout for this lead, and no later read can arrive to correct the guess. The
+   * benefit of the doubt is only worth giving when the doubt can still be settled.
+   */
+  if (!status) return isOffline ? 'locked' : 'unknown';
   return 'locked';
 };
 

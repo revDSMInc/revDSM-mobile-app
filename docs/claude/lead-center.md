@@ -1939,3 +1939,58 @@ The other two logs in this flow (`click_build_job` and `change_lead_result_reaso
 ### Lead preview photo loads from disk (`useLeadPreviewUrl`)
 
 `hooks/useLeadPreviewUrl.ts` is shared by the chat header, the thread list and other lead thumbnails. For stored (bucket) photos it now persists the last resolved URL in MMKV (`leadPreviewUrl:<bucket/path>`) and returns the `warmToLocalCache` file, so a reopened lead shows the photo with no `getSecureUrls` call and offline. Full write-up and traps: `notifications-chat.md` § "Chat header / thread-list lead photo: slow to appear". ⚠️ Never route a `googleUrl` (street view) through that cache - its signature-less path is identical for every lead. Not verified on device.
+
+### `useUploadImagesMutation` takes an idempotency key
+
+Part of the photo-duplication fix (4 uploads became 9 on mobile data). Root cause, the key
+format and the backend contract are in [`offline.md`](offline.md); what belongs here is that
+this hook is the **second** path to `PUT demo/v1/leads/:leadId/images`.
+
+⚠️ `utils/uploadQueue.ts` is not the only caller. `useUploadImagesMutation`
+(`hooks/useLeadMutation.ts`) is used by `screens/ImageAnnotation/index.tsx` and was sending no
+key, so it sat in the backend's "absent key = old behaviour" branch and was unprotected. It now
+accepts an optional `idempotencyKey` and forwards it to `LeadService.uploadImages`.
+
+⚠️ **Optional on purpose, but pass it wherever a stable per-image id exists.** Without one, an
+upload that times out *after* the server stored the photo is re-sent and stored again — a
+timeout tells you nothing about whether the write landed.
+
+⚠️ The key for this path must come from the **rendered output**, not the source photo. See
+`offline.md` for why: re-annotating the same photo is a deliberate new upload, and a
+source-derived key would silently swallow it. `annotatedPhotoIdempotencyKey` handles this.
+
+⚠️ `JobDocsSection.tsx` also holds a `useUploadImagesMutation()` instance (line ~189) but does
+its photo uploads through `uploadQueueManager`. If anything ever starts uploading through that
+mutation handle, it needs a key too.
+
+### Follow-up — the SAME gate, the opposite bug: `unknown` unlocked a lead with nothing built
+
+Client, on Android over mobile data: *"even I didn't confirm the rollout price it's allow me to open
+the Investment Center."* The screenshot shows the offline banner and the tile reading
+*"Checking job status…"* with a spinner, i.e. `gate === 'unknown'` — which deliberately does **not**
+lock (see the rule above: *a wrong lock costs a sale; a wrong unlock costs one tap*).
+
+**Why the existing guards missed it.** `isDeviceOnlyLead` already turns an offline-CREATED lead into
+a definite `locked`. This lead was different: a real server lead (`SelfGen`, a mongo `_id`) that the
+rep had **never opened online**, so nothing was ever cached. `statusAfterFailedRead(null)` → `null`
+→ `unknown` → unlocked.
+
+**The rule, narrowed by one axis.** `calcGateState` now takes `isOffline`, and `!status` resolves:
+
+| | nothing cached | cached unconfirmed | cached confirmed |
+|---|---|---|---|
+| online | `unknown` (unlocks, refetches) | `locked` | `unlocked` |
+| offline | **`locked`** | `locked` | `unlocked` |
+
+- ⚠️ **The online half must stay `unknown`.** That is the re-lock fix: a transient read failure on a
+  lead whose rollouts the rep really did confirm must not lock the screen in front of a customer,
+  and the refetch behind the tap resolves it. Do not "simplify" both halves to `locked`.
+- ⚠️ **Offline is different in kind, not degree**: the benefit of the doubt is only worth giving when
+  the doubt can still be settled. Offline no later read can arrive, and an uncached lead has never
+  shown this device a confirmed rollout.
+- `isOffline` comes from `useIsOnline()` in `OperationalSections`, which counts `degraded` as offline
+  (deliberate, see `offline.md`) — a one-bar line that cannot complete the read gates the same as no
+  line at all.
+- Covered by `__tests__/utils/investment-gate-edges.test.ts` (19 cases), which pins **both**
+  directions: the three re-lock cases (cached-confirmed, failed-read-with-cache, local confirmation
+  outranking a stale read) and the definite negatives, each run online and offline.

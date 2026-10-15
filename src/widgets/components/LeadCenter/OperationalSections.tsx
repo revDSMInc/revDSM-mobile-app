@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, Image, ScrollView, ActivityIndicator, Animated } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { useIsOnline } from '../../../hooks/useIsOnline';
 import YearDropdown from '../../components/YearDropdown';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { jobWaitState, WAITING_AMBER, WAITING_LABEL } from '../../../utils/report-job-connectivity';
@@ -58,9 +59,11 @@ export const ToolsSection = ({
    * Center seconds after creating a lead, before building a single rollout.
    */
   const isDeviceOnlyLead = isClientId(String(lead?._id || lead?.id || ''));
+  const isOnlineNow = useIsOnline();
   const gate = calcGateState(calcStatus, {
     isSold: isLeadSold,
     isDeviceOnlyLead,
+    isOffline: !isOnlineNow,
   });
   const investmentLocked = gate === 'locked';
   // The background refetch spinner only matters when jobs EXIST but are not confirmed yet (the post-confirm window);

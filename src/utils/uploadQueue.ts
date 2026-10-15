@@ -15,6 +15,12 @@ import {
   MAX_PHOTO_ATTEMPTS,
   isUnauthorizedError,
 } from './upload-retry-policy';
+import {
+  IDEMPOTENCY_FIELD,
+  isDuplicateUploadResponse,
+  isIdempotentReplay,
+  photoIdempotencyKey,
+} from './upload-idempotency';
 
 export interface UploadQueueItem {
   id: string;
@@ -290,6 +296,22 @@ class UploadQueueManager {
           console.log('[UploadQueue] Connection lost during upload. Will resume on reconnect.');
           break;
         }
+        /**
+         * ⚠️ A duplicate-key rejection means the photo IS stored. Treat it as a success and
+         * drop the item - parking it would tell the rep a safely-stored photo had failed, and
+         * leave them retaking a door they already shot.
+         */
+        if (isDuplicateUploadResponse(error)) {
+          console.log(`[UploadQueue] ${activeItem.id} already stored server-side; completing.`);
+          this.removeItem(activeItem.id);
+          this.saveQueue();
+          this.cleanupPersistedFile(activeItem);
+          try {
+            queryClient.invalidateQueries({ queryKey: ['leads'] });
+            await queryClient.refetchQueries({ queryKey: ['lead', activeItem.leadId] });
+          } catch {}
+          continue;
+        }
         if (isUnauthorizedError(error)) {
           // The session is gone, not the photo. Keep it, spend no attempt, and stop: the next
           // login (same rep) drains it.
@@ -359,6 +381,14 @@ class UploadQueueManager {
     formData.append('images', JSON.stringify(imageInfo));
     formData.append('category', 'salesPhotos');
 
+    /**
+     * ⚠️ Derived from `item.id`, which is minted once at enqueue and persisted to MMKV - so
+     * every retry of this photo, including one after an app restart days later, sends the SAME
+     * key. A key regenerated per attempt would not deduplicate anything.
+     */
+    const idempotencyKey = photoIdempotencyKey(item);
+    if (idempotencyKey) formData.append(IDEMPOTENCY_FIELD, idempotencyKey);
+
     const existingUrls = new Set<string>();
     const userId = item.userId;
     if (userId) {
@@ -375,7 +405,13 @@ class UploadQueueManager {
       }
     }
 
-    const response = await LeadService.uploadImages(item.leadId, formData);
+    const response = await LeadService.uploadImages(item.leadId, formData, idempotencyKey);
+
+    if (isIdempotentReplay(response)) {
+      // The server recognised an earlier delivery of this exact photo. The timeout that made us
+      // retry was a lie; nothing new was stored. Treated as success - that is the whole point.
+      console.log(`[UploadQueue] ${item.id} was already stored (idempotent replay).`);
+    }
 
     this.logUploadSuccessAsync(item, response, coords, existingUrls);
 
