@@ -1252,3 +1252,11 @@ produces the title/message, `FlashMessage` delivers it, still inside the `setTim
   `successCount === attempts.length && skippedOffline === 0` → `.success`, otherwise `.warning`.
 - ⚠️ The file is CRLF. Not verified on device: the case to check is airplane mode with a mix of
   on-device and remote photos — expect an amber "Partial Download … N need a connection."
+
+### Follow-up — Tools tab: Investment Center tile no longer spins on a brand-new lead
+
+`widgets/components/LeadCenter/OperationalSections.tsx` (`ToolsSection`). A lead with no appointment/calculators sat on "Checking job status…" + a spinner
+forever (root cause is in `useLeadCalculatorStatus`; full write-up in `investment-center-job-tracker.md`).
+- `investmentStatusPending` is now `gate === 'unknown' || (isCalcStatusFetching && !allConfirmed && hasCalc)`: the background-refetch spinner only shows when
+  jobs EXIST but are not confirmed (the post-confirm window). A lead with no calculators is a plain `locked` tile ("Please Fully Build ALL jobs first").
+- ⚠️ Do not drop the `hasCalc` guard to "show activity" — it re-introduces the spinner on every visit to an empty lead. `unknown` (a lookup that THREW with nothing cached) still spins.

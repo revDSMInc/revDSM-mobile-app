@@ -8,6 +8,7 @@ import {
   mergeStatus,
   shouldPersistStatus,
   statusAfterFailedRead,
+  statusWhenNoAppointment,
   type LeadCalculatorStatus,
 } from '../utils/lead-calc-status';
 import { getSessionOwner } from '../services/sessionScope';
@@ -112,9 +113,9 @@ export function useLeadCalculatorStatus(lead: any) {
           return onFailure();
         }
       }
-      // No appointment resolved. That is a real "nothing here yet" only when we had an answer
-      // to begin with; otherwise keep whatever we knew.
-      if (!apptId) return cached ?? null;
+      // The lookup above either threw (returned already) or answered: no appointment => no calculators yet.
+      // That is a real answer, not "unknown" - null here left a new lead spinning on "Checking job status...".
+      if (!apptId) return statusWhenNoAppointment(cached);
 
       try {
         const res = await LeadService.getCalculators(apptId);

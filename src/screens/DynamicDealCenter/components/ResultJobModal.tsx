@@ -933,6 +933,7 @@ export function ResultJobModal({
                   onMarkCollected={handleMarkCollected}
                   onChargeCard={funding.chargeCard}
                   onActivate={funding.activateLoan}
+                  onRecordDecision={funding.recordDecision}
                   onReactivate={funding.reactivateLoan}
                   onEditPayments={goResult}
                   onResultAsBankDecline={() => handleSetResult('bank_decline')}

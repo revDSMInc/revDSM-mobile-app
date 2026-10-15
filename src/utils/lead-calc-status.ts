@@ -107,3 +107,15 @@ export const calcGateState = (
   if (!status) return 'unknown';
   return 'locked';
 };
+
+/**
+ * What to return when the appointment lookup SUCCEEDED but found no appointment for this lead.
+ *
+ * ⚠️ That is a real answer - "no appointment, so no calculators yet" (a lead created a moment ago) - not a
+ * lost request. Returning `null` here left a brand-new lead on "Checking job status..." with a spinner
+ * forever, because `null` means "never got an answer". A cached row still wins (a confirmed lead must not be
+ * downgraded by a lookup that merely missed it).
+ */
+export const statusWhenNoAppointment = (
+  cached?: LeadCalculatorStatus | null
+): LeadCalculatorStatus => cached ?? EMPTY_CALC_STATUS;

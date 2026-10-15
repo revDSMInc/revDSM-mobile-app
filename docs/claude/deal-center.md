@@ -3235,3 +3235,144 @@ question (rep- vs lead-scoped) was settled by the ticket text: *"the plan a rep 
   from Match): the **MY DEFAULT PLAN** card now shows in EVERY mode (or a dashed "No default set" hint) and each plan row has a **star** that sets / clears the rep default
   independent of mode. Picking a row is always a one-off `custom` pick; the star never switches the calculator's mode.
 - ⚠️ Not done: the web Deal Center (own ticket per the handoff). The endpoint was not exercised over HTTP by the backend dev — check once on staging. Not verified on device.
+
+## Scenario Simulator is back on the Funding screen (reverses its removal in `ea337a9`)
+
+Ticket: *"un-comment the finance flow for the funding payment methods and the scenario simulator UI"* (client
+message had hidden it). It was never commented out — `ea337a9` **deleted** `ScenarioSimulator.tsx`,
+`FundingService.mockProvider` / `FundingEndpoints.mockProvider`, `useFunding.mockProvider` + `mockDisabled`,
+and the `onSimulate` / `mockDisabled` props. All restored from that commit's parent, in the current style.
+
+- `funding/ScenarioSimulator.tsx` renders under the attempt history in `FundingView` (Approve full / Approve
+  partial / Decline for loans, "Homeowner saved their card" for cards; checks never appear). Copy now says
+  **Refresh at the top** (the button was "Sync" when it was written).
+- Wired through both Funding hosts: `ResultJobModal` and `DynamicDealEditScreen` pass
+  `funding.mockProvider` as `onSimulate` and `funding.mockDisabled`.
+- ⚠️ **`POST …/{pid}/mock-provider` only works when the server runs `FUNDING_PROVIDER=mock`**; otherwise it
+  404s and the panel switches to "Unavailable". A tap RECORDS an outcome only — the rep must Refresh for it
+  to land.
+- ⚠️ The reason it was removed still stands: a tap writes an invented approval/decline onto a real funding
+  record. `SCENARIO_SIMULATOR_ENABLED` in `utils/funding.ts` is the one switch — set it `false` (or tie it to
+  `__DEV__`) before a build real reps get.
+- Not verified on device; typecheck only.
+
+### Follow-up: financing rows show the full stepper again; only the Submit gate stays bypassed
+
+Ticket: the client wants the Link Sent → Approved → Activated → Funded stepper, **Send application link**
+and the Scenario Simulator for financing rows, while Submit Funding must still not wait on the lender.
+`FINANCING_BYPASS_ENABLED` is untouched (so `fundingBlockers` still ignores an unresolved `bank` row); a
+second flag, `FINANCING_BYPASS_NOTICE_ENABLED` (`utils/funding.ts`, default `false`), now controls whether
+`PaymentFundingCard` swaps the stepper/actions for `FinancingBypassNotice`. Set it `true` to get the
+"Financed through …" notice back. ⚠️ A rep can now Submit with a financing link never sent — intended.
+
+### REVUIUX-546 — the bypass is OFF; the mock lender rail replaced it (supersedes the "revert this" line above)
+
+`FINANCING_BYPASS_ENABLED` is **`false`** as of REVUIUX-546. The backend (`feat/revuiux-546-mock-lender-page`,
+`FUNDING_LENDER_PROVIDER=mock`, `MOCK_PAYMENT_PAGE_URL`) now lets a `bank` row send an application link and
+resolve via `sync`, so the rail is no longer a dead end. With the flag off the stepper, rep actions, real
+blocker sentences ("waiting on lender decision" / "loan not activated yet") and the Submit Funding gate all
+return — nothing was rewritten, only un-skipped. `FINANCING_BYPASS_NOTICE_ENABLED` is now moot (notice is
+never shown while the bypass is off). ⚠️ Delete the flags, `isFinancingBypassed`, `FinancingBypassNotice` and
+the blocker arm once QA signs off. Full reload after flipping — the flag is read at module scope.
+- The Scenario Simulator (restored earlier, `SCENARIO_SIMULATOR_ENABLED`) stays on at the client's request,
+  although the backend note says decisions can come from the link's web page instead. If the server has
+  no `mock-provider` route the panel just shows "Unavailable".
+- Companion REVUIUX-304 (`REVUIUX-304-mobile-bank-decline.md`: Complete Job sends `result: 'Sale'` for a
+  bank-declined job, `DynamicJobBuilderScreen.tsx` ~946) was NOT applied — that file isn't in the repo.
+
+### REVUIUX-546 addendum — what was verified, and the pairing rule
+
+- Mobile `fundingBlockers` is **deliberately stricter than the server's submit rule** (the server exempts
+  lender STEPS since REVDSM-1156/1159; mobile blocks on each with its own sentence). Do NOT "align" it.
+- ⚠️ **Pair:** mobile `fundedAmount` still counts an unapproved `bank` row at its requested amount; that is
+  safe only because the step sentences fire first. If the step blockers are ever deleted, port the server's
+  `if (p.type === 'bank') return p.approvedAmt ?? 0` in the same change. A legacy row with a `decision` but null
+  `approvedAmt` is the one gap (mobile full, server zero -> 409); old data only.
+- An unrun loan must block on "— link not sent yet", never on the server's "$X … still unassigned" 409.
+- Tests: `__tests__/screens/DynamicDealCenter/financing-rail.test.ts` (flag off, step blockers, decline /
+  partial / full + activate). Gitignored like every suite.
+
+### Archive shelf: only plans with a recorded status, no duplicates (`swapRowMethod` / `restoreRowPlan`)
+
+Ticket: a financing plan that only had a link generated landed in ARCHIVED METHODS; switching A -> C -> A -> C
+listed the same plan again.
+- `isArchivableRow(row)` = `decision || activated || charged || collected` (status came back on the Funding
+  screen). **`linkSent` alone no longer archives** — swapping a link-only row just resets `linkSent`/`activated`/
+  `decision` and drops the link. ⚠️ Supersedes the `hasLenderState` gate in the earlier "archive only plans that
+  have actually started" ticket; do not widen back.
+- The shelf holds ONE entry per plan key (`withoutPlan`): archiving replaces an older copy, selecting a plan
+  (dropdown or restore) removes it from the shelf, and `PaymentRowsGroup` renders `visibleArchived(row)` deduped
+  by key/label so the active plan never appears on its own shelf (also covers server-sent `archived` entries).
+- Tests: `financing-rail.test.ts` ("archive shelf"). Not verified on device; server-side archiving is untouched.
+
+### Funding screen: no "Attempt history"; Archived Methods only lists plans with a status
+
+Ticket: the Funding screen listed every attempt (LINKSENT rows, partials) under ATTEMPT HISTORY; the client wants only
+ARCHIVED METHODS, and only for plans that got a status back. `FundingView` no longer renders the attempt-history
+block (`log` is now an optional, unused prop; `attemptLog()` is untouched). `visibleArchived` (`utils/funding.ts`)
+also drops server-sent `archived` entries that carry no decision / approvedAmt / charged / collected / activated,
+so a link-only plan never shows on the shelf. ⚠️ Do not re-add the history block without asking. Not verified on device.
+
+### Archive shelf follow-up: keep every approved plan, hide any plan active on another row
+
+Ticket: two approved plans but the shelf showed one; a plan re-selected on another row stayed listed.
+- ⚠️ `swapRowMethod` bailed out on `!r.method`, so a row hydrated from the server (plan key unresolved, only
+  `methodLabel`) never archived its approved plan. Now `!(r.method || r.methodLabel)`; `snapshotPlan` stores a
+  label fallback as `planKey`.
+- Dedupe is by **label as well as key** (`withoutPlan(shelf, key, plans)`): server entries only carry `method`
+  (label), local ones a `planKey`.
+- `visibleArchived(row, activeLabels, plans)`: `PaymentRowsGroup` passes the labels of every OTHER row's current
+  method, so an approved plan already in use on a sibling row is not offered as archived. Not verified on device.
+
+### Archive shelf follow-up: picking an archived plan hides it, never deletes it
+
+Ticket: three approved plans on the shelf; picking GS2511 hid it (right) but moving on to another plan did not bring
+it back. Cause: `swapRowMethod` / `restoreRowPlan` stripped the picked plan from `archived`, and a plan re-picked
+without a new status is not archivable, so nothing re-added it. Now the shelf is only ever ADDED to (one entry per
+plan, newest wins); `visibleArchived` hides whichever plan is active on the row (and on sibling rows). ⚠️ Do not
+strip the picked plan from `row.archived` again. Not verified on device.
+
+### REVUIUX-546 — rep decision buttons replace the Scenario Simulator
+
+Ticket: the rep records what the lender told them — Approve full / Approve partial / Decline — and the card's
+rail (Link Sent -> Approved -> Activated) moves. Spec: `REVUIUX-546-mobile-rep-decision-buttons.md`.
+- `PaymentFundingCard` `DecisionButtons` ("Record the lender's decision") renders when `canRecordDecision(p)`:
+  `type === 'bank' && linkSent && !decision` (`utils/funding.ts`). Each button calls `funding.recordDecision`
+  (`POST /lead/v1/:leadId/funding/:pid/decision`, existing `FundingService.recordDecision`); `FundingView` passes
+  `onRecordDecision(pid, decision, approvedAmt)`; both hosts (`ResultJobModal`, `DynamicDealEditScreen`) wire it.
+- Partial: inline whole-dollar input, `parsePartialApproval(text, requested)` -> `short` only for `1 … requested-1`;
+  an amount `>= requested` routes to **full** (never a 422). `approvedAmt` is sent only for `short`.
+- The rail is NOT patched locally: `useFunding.run` applies the server's returned record, and `stateOf` derives
+  step 2 (done / warn on open short / bad on decline) and step 3 from it. Server 409/422 wording reaches the rep
+  through `run`'s existing error banner — do not replace it with a generic toast.
+- ⚠️ **Removed** (do not bring back): `ScenarioSimulator.tsx`, `FundingService.mockProvider` + `mock-provider`
+  endpoint, `useFunding.mockProvider`/`mockDisabled`, `SCENARIO_SIMULATOR_ENABLED`, `MOCK_PARTIAL_RATE`, the
+  `onSimulate`/`mockDisabled` props. Supersedes "Scenario Simulator is back on the Funding screen".
+- ⚠️ Mock lender page + rep buttons on the SAME row: the mock answer re-applies on every Sync (backend, mock rail
+  only). QA: drive a loan one way, not both. A decision can be re-recorded (last entry wins). Open client
+  questions: evidence for rep-entered approvals; recording without a sent link (needs a backend change).
+- Needs `FINANCING_BYPASS_ENABLED = false` (done). Tests: `financing-rail.test.ts`. Not verified on device.
+
+### Approved financing no longer locks; re-picking an approved archived plan restores it
+
+Ticket: "This financing has already been activated, so its method is locked" blocked a rep from changing an
+approved loan; and re-selecting an already-approved plan from the archive would have meant a new link + approval.
+- `isMethodLockedRow` = `charged || collected` only — **`activated` no longer locks** (a loan can be swapped; its
+  approval goes to Archived Methods). `lockedMethodNote`'s activated branch is now dead.
+- `snapshotPlan` keeps `linkSent`/`activated`/`approvedAmt` for decided rows. `findApprovedArchive(row, key, plans)`
+  finds a full/short entry for a plan; `swapRowMethod` (dropdown) and `restoreRowPlan` (Restore) then restore
+  `decision`, `linkSent`, `activated`, amount instead of resetting — no new link, no re-approval, no re-activation;
+  an activated plan stays activated, so `fundingBlockers` is empty and Submit Funding enables.
+- `DynamicDealEditScreen.selectRowMethod`: a SERVER-sent approved entry goes through `funding.restoreArchivedPlan`.
+- ⚠️ Local restore is UI state: `toUpsertRows` sends only pid/kind/method/type/amount and the server resets a row's
+  steps when its method changes, so a restore of a not-yet-saved row can be undone by the next save. Whether the
+  server lets an activated loan change method, and honours the restore, is a backend question. Not verified on device.
+
+### Funding card layout polish (decision panel)
+
+`DecisionButtons` (`PaymentFundingCard.tsx`): Approve full / Approve partial / Decline are one equal-width row
+(`flex: 1`, `numberOfLines={1}` + `adjustsFontSizeToFit`, radius 12) instead of wrapping; the busy spinner moved
+under the row so it can't push a button. The send-note panel and decision panel now share padding 14 / radius 14 /
+marginTop 14, and the Sync row sits at marginTop 16. Layout only; not verified on device.
+- Follow-up: the per-label `adjustsFontSizeToFit` made "Approve partial" render smaller than its neighbours, so it is
+  removed — all three labels share one size, and the middle one reads "Approve part" to fit the row. Not verified on device.

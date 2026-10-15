@@ -23,7 +23,10 @@ import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
 
 export const MULTI_METHOD_ENABLED = true;
 
-export const FINANCING_BYPASS_ENABLED = true;
+
+export const FINANCING_BYPASS_ENABLED = false;
+
+export const FINANCING_BYPASS_NOTICE_ENABLED = false;
 
 export function isFinancingBypassed(payment: Pick<FundingPayment, 'type'>): boolean {
   return FINANCING_BYPASS_ENABLED && payment?.type === 'bank';
@@ -124,9 +127,77 @@ function snapshotPlan(row: PaymentRow, plans: Record<string, DealPlan>): Funding
   return {
     archivedId: `${LOCAL_ARCHIVE_PREFIX}${Math.random().toString(36).slice(2, 10)}`,
     method: methodLabelOf(plans, row.method) || row.methodLabel || row.method || '',
-    planKey: row.method,
+    planKey: row.method || methodLabelOf(plans, row.method) || row.methodLabel || '',
     ...(row.decision ? { decision: row.decision } : {}),
+    ...(row.decision ? { linkSent: true, activated: !!row.activated, approvedAmt: rowAmount(row) } : {}),
   };
+}
+
+export function isArchivableRow(row: PaymentRow): boolean {
+  return Boolean(row.decision || row.activated || row.charged || row.collected);
+}
+
+function planKeyOf(entry: FundingArchivedPlan): string {
+  return String((entry as any).planKey || entry.method || '');
+}
+
+function withoutPlan(
+  shelf: FundingArchivedPlan[],
+  key: string,
+  plans?: Record<string, DealPlan>
+): FundingArchivedPlan[] {
+  if (!key) return shelf;
+  const label = plans ? methodLabelOf(plans, key) : key;
+  return shelf.filter((a) => planKeyOf(a) !== key && a.method !== label);
+}
+
+export function visibleArchived(
+  row: Pick<PaymentRow, 'archived' | 'method'>,
+  activeLabels: string[] = [],
+  plans?: Record<string, DealPlan>
+): FundingArchivedPlan[] {
+  const seen = new Set<string>();
+  const list = withoutPlan(
+    (row.archived || []).filter((a) => {
+      const e = a as any;
+      return isLocalArchive(a) || Boolean(e.decision || e.approvedAmt != null || e.charged || e.collected || e.activated);
+    }),
+    row.method,
+    plans
+  );
+  return list.filter((a) => {
+    const label = String(a.method || planKeyOf(a));
+    if (seen.has(label) || activeLabels.includes(label)) return false;
+    seen.add(label);
+    return true;
+  });
+}
+
+export type PartialApproval =
+  | { kind: 'short'; approvedAmt: number }
+  | { kind: 'full' }
+  | { kind: 'invalid'; message: string };
+
+export function parsePartialApproval(text: string, requested: number): PartialApproval {
+  const n = Math.round(parseFloat(String(text).replace(/[^0-9.]/g, '')));
+  if (!Number.isFinite(n) || n < 1) return { kind: 'invalid', message: 'Enter the approved amount in whole dollars.' };
+  if (n >= requested) return { kind: 'full' };
+  return { kind: 'short', approvedAmt: n };
+}
+
+export function canRecordDecision(p: Pick<FundingPayment, 'type' | 'linkSent' | 'decision'>): boolean {
+  return p.type === 'bank' && !!p.linkSent && !p.decision;
+}
+
+export function findApprovedArchive(
+  row: Pick<PaymentRow, 'archived'>,
+  key: string,
+  plans: Record<string, DealPlan>
+): FundingArchivedPlan | undefined {
+  const label = methodLabelOf(plans, key);
+  return (row.archived || []).find(
+    (a) => (planKeyOf(a) === key || a.method === label) && (a.decision === 'full' || a.decision === 'short')
+  );
 }
 
 export function swapRowMethod(
@@ -137,11 +208,19 @@ export function swapRowMethod(
 ): PaymentRow[] {
   return rows.map((r) => {
     if (r.pid !== pid) return r;
-    if (!nextKey || nextKey === r.method || !r.method || !hasLenderState(r)) {
-      return nextKey && nextKey !== r.method && r.decision
-        ? { ...r, method: nextKey, linkSent: false, activated: false, decision: null }
-        : { ...r, method: nextKey };
+    if (!nextKey || nextKey === r.method) return { ...r, method: nextKey };
+    const shelf = r.archived || [];
+    const approved = findApprovedArchive(r, nextKey, plans);
+    if (approved) return restoreRowPlan([r], pid, approved.archivedId, plans)[0];
+    if (!(r.method || r.methodLabel) || !isArchivableRow(r)) {
+      return {
+        ...r,
+        method: nextKey,
+        ...(hasLenderState(r) ? { methodLabel: undefined, linkSent: false, activated: false, decision: null } : {}),
+        archived: shelf,
+      };
     }
+    const snap = snapshotPlan(r, plans);
     return {
       ...r,
       method: nextKey,
@@ -149,7 +228,7 @@ export function swapRowMethod(
       linkSent: false,
       activated: false,
       decision: null,
-      archived: [snapshotPlan(r, plans), ...(r.archived || [])],
+      archived: [snap, ...withoutPlan(shelf, planKeyOf(snap), plans).filter((a) => a.method !== snap.method)],
     };
   });
 }
@@ -166,17 +245,21 @@ export function restoreRowPlan(
     const entry = shelf.find((a) => a.archivedId === archivedId);
     if (!entry) return r;
     const key = (entry as any).planKey || planKeyForLabel(plans, entry.method) || entry.method || '';
+    const rest = shelf;
+    const outgoing = (r.method || r.methodLabel) && isArchivableRow(r) ? [snapshotPlan(r, plans)] : [];
     return {
       ...r,
       method: key,
       methodLabel: key && plans[key] ? undefined : entry.method,
-      linkSent: false,
-      activated: false,
-      decision: null,
-      archived: [
-        ...((r.method || r.methodLabel) && hasLenderState(r) ? [snapshotPlan(r, plans)] : []),
-        ...shelf.filter((a) => a.archivedId !== archivedId),
-      ],
+      ...(entry.decision === 'full' || entry.decision === 'short'
+        ? {
+            linkSent: true,
+            activated: !!(entry as any).activated,
+            decision: entry.decision,
+            ...(entry.approvedAmt != null ? { amount: String(entry.approvedAmt) } : {}),
+          }
+        : { linkSent: false, activated: false, decision: null }),
+      archived: [...outgoing, ...rest.filter((a) => !outgoing[0] || a.method !== outgoing[0].method)],
     };
   });
 }
@@ -232,7 +315,7 @@ export function fundingPinnedToOtherCalculator(
 }
 
 export function isMethodLockedRow(row: PaymentRow): boolean {
-  return Boolean(row.charged || row.collected || row.activated);
+  return Boolean(row.charged || row.collected);
 }
 
 export function isRemovableRow(row: PaymentRow): boolean {

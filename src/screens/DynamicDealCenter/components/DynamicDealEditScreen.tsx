@@ -142,6 +142,7 @@ import {
   MULTI_METHOD_ENABLED,
   needsAttentionRowId,
   newPaymentId,
+  findApprovedArchive,
   restoreRowPlan,
   swapRowMethod,
   paymentAllocations,
@@ -664,9 +665,14 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           amount: effectiveRowAmount(row, activeRows, contractNum),
         });
       }
+      const approved = row && key ? findApprovedArchive(row, key, pricing.plans) : undefined;
+      if (approved && !isLocalArchive(approved)) {
+        funding.restoreArchivedPlan(pid, approved.archivedId);
+        return;
+      }
       setRows((prev) => swapRowMethod(prev, pid, key, pricing.plans));
     },
-    [rows, activeRows, contractNum, pricing.plans, fundingLog]
+    [rows, activeRows, contractNum, pricing.plans, fundingLog, funding]
   );
 
   const restorePlan = useCallback(
@@ -2270,6 +2276,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
               onMarkCollected={funding.markCheckCollected}
               onChargeCard={funding.chargeCard}
               onActivate={funding.activateLoan}
+              onRecordDecision={funding.recordDecision}
               onReactivate={funding.reactivateLoan}
               refunds={refundsOnJob(funding.payments)}
               reminderFor={(r) =>

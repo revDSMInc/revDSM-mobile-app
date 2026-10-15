@@ -402,3 +402,15 @@ branding row showed the company-name fallback until the secure URL resolved, the
 `InvestmentPanel.tsx` no longer takes `leadOneYearDefaultKey` (the lead-wide `isDefault` scan in `InvestmentCenter/index.tsx` is gone). `Default` mode uses
 `resolveOneYearDefaultKey(plans, user, method)` (`utils/one-year-default.ts`, rep 1 Year default first) and no stored 1-Year plan + a rep default => `Default`, else `Match`.
 Full write-up: `deal-center.md` § REVUIUX-444.
+
+## Investment Center tile spun on "Checking job status…" for a brand-new lead
+
+Ticket: *a lead created a moment ago shows the Investment Center with a loading icon and "Checking job status…" though nothing was done.*
+Cause: `useLeadCalculatorStatus` returned `cached ?? null` when the appointment lookup SUCCEEDED but found no appointment (a new lead has none yet).
+`null` means "never got an answer" (`calcGateState` => `'unknown'`), so the tile showed the spinner + "Checking job status…" indefinitely.
+- `utils/lead-calc-status.ts` `statusWhenNoAppointment(cached)` => `cached ?? EMPTY_CALC_STATUS`: a successful lookup with no appointment is a real
+  "no calculators yet" (gate `locked`, "Please Fully Build ALL jobs first"). A cached/confirmed row still wins. ⚠️ A THROWN lookup still goes through
+  `onFailure()` (unknown/cached) — only the success-with-no-match path changed. Tested in `__tests__/utils/lead-calc-status.test.ts`.
+- `OperationalSections.tsx`: `investmentStatusPending` adds `&& hasCalc` to the "fetching" arm, so the small spinner shows only when jobs exist but are
+  not confirmed yet (the post-confirm window it was built for), not on every visit to a lead with no calculators. `gate === 'unknown'` is unchanged.
+- Not verified on device.
