@@ -415,6 +415,15 @@ Cause: `useLeadCalculatorStatus` returned `cached ?? null` when the appointment 
   not confirmed yet (the post-confirm window it was built for), not on every visit to a lead with no calculators. `gate === 'unknown'` is unchanged.
 - Not verified on device.
 
+### Follow-up — merge with `dev-v1-multi-tenat`: the hook uses `answered` + `land(EMPTY_CALC_STATUS)`
+
+Both branches had fixed this same bug differently and collided in `hooks/useLeadCalculatorStatus.ts`. The merged hook keeps the
+multi-tenat shape: `answered` records that the appointment lookup got a reply; no appointment + `answered` =>
+`land(EMPTY_CALC_STATUS)` (a definite "nothing built yet", locked); no appointment + not answered => `onFailure()` (unknown/cached).
+- ⚠️ The hook no longer calls `statusWhenNoAppointment` (still exported from `utils/lead-calc-status.ts` and unit-tested). Its
+  "cached wins" rule is preserved by `mergeStatus` inside `land`: a previously CONFIRMED cached row is never downgraded to empty,
+  and `land` also persists the result to disk. Do not re-introduce a bare `return null` for the answered case (new lead spins again).
+
 ## "Confirmed rollouts but Investment Center not ready" — two causes, one intermittent
 
 Client: after confirming rollouts, the Investment Center tile **sometimes** still reads "Please Fully

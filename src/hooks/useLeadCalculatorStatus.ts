@@ -8,9 +8,7 @@ import {
   mergeStatus,
   shouldPersistStatus,
   statusAfterFailedRead,
-
   EMPTY_CALC_STATUS,
-
   type LeadCalculatorStatus,
 } from '../utils/lead-calc-status';
 import { getSessionOwner } from '../services/sessionScope';
@@ -130,11 +128,6 @@ export function useLeadCalculatorStatus(lead: any) {
           return onFailure();
         }
       }
-<<<<<<< HEAD
-      // The lookup above either threw (returned already) or answered: no appointment => no calculators yet.
-      // That is a real answer, not "unknown" - null here left a new lead spinning on "Checking job status...".
-      if (!apptId) return statusWhenNoAppointment(cached);
-=======
 
       if (!apptId) {
         // The server answered and there is no appointment: a definite "nothing built yet".
@@ -142,7 +135,6 @@ export function useLeadCalculatorStatus(lead: any) {
         // We never got to ask at all - keep whatever we knew.
         return onFailure();
       }
->>>>>>> dev-v1-multi-tenat
 
       try {
         const res = await LeadService.getCalculators(apptId);
