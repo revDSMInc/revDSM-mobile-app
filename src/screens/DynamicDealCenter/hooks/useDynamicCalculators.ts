@@ -35,6 +35,12 @@ import {
   resolveOfflineDealCenterSource,
   type CachedDealCenter,
 } from '../../../utils/offline-deal-center';
+import {
+  canUseLocalOnlyMode,
+  readOutcome,
+  resolveAppointmentFallback,
+  resolveOnlineLoadSource,
+} from '../../../utils/deal-center-load';
 
 export interface CalcTab {
   id: string;
@@ -170,15 +176,25 @@ function customerTitleOf(lead: any): string {
   return customerNameOf(lead) || lead?.customerName || lead?.name || lead?.title || 'Lead';
 }
 
-async function resolveAppointmentId(lead: any): Promise<string | null> {
+/**
+ * ⚠️ Returns WHY it has no id, not just that it has none.
+ *
+ * `null` used to mean both "this lead has no appointment" and "every call timed out". The
+ * caller dropped into local-only mode on either, so on one bar of LTE a lead with a confirmed
+ * rollout showed a blank calculator. `failed` separates the two.
+ */
+async function resolveAppointmentId(
+  lead: any
+): Promise<{ id: string | null; failed: boolean }> {
   const direct = lead?.appointmentId;
-  if (direct) return String(direct);
+  if (direct) return { id: String(direct), failed: false };
 
   const leadIdHuman = lead?.leadId; // human-readable id (e.g. "504")
   const selfGenLeadId = lead?._id || lead?.selfGenLeadId || lead?.id;
   const leadDate = lead?.leadDate || lead?.lead_date;
-  if (!leadIdHuman && !selfGenLeadId) return null;
+  if (!leadIdHuman && !selfGenLeadId) return { id: null, failed: false };
 
+  let lookupFailed = false;
   try {
     const res = await LeadService.getAppointments(leadDate ? { lead_date: leadDate } : undefined);
     const appts = res.data?.data || res.data || [];
@@ -187,8 +203,9 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
         (a.leadId && a.leadId !== 'N/A' && String(a.leadId) === String(leadIdHuman)) ||
         (a.selfGenLeadId && a.selfGenLeadId !== 'N/A' && String(a.selfGenLeadId) === String(selfGenLeadId))
     );
-    if (found) return String(found._id || found.id);
+    if (found) return { id: String(found._id || found.id), failed: false };
   } catch {
+    lookupFailed = true;
   }
 
   try {
@@ -199,7 +216,8 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
       selfGenLeadId,
     });
     const created = createRes.data?.data || createRes.data;
-    return created ? String(created._id || created.id) : null;
+    const createdId = created ? String(created._id || created.id) : '';
+    return createdId ? { id: createdId, failed: false } : { id: null, failed: lookupFailed };
   } catch (createErr: any) {
     const body = createErr?.response?.data ?? createErr;
     const existingId =
@@ -212,8 +230,12 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
       createErr?.response?.status === 409 ||
       createErr?.status === 409 ||
       /already has an appointment/i.test(String(body?.message || createErr?.message || ''));
-    if (is409 && existingId) return String(existingId);
-    return null;
+    if (is409 && existingId) return { id: String(existingId), failed: false };
+    // ⚠️ A 4xx/409 is an ANSWER about this lead; a timeout or network error is not. Only the
+    // latter may make the caller fall back to the cached appointment id.
+    const answered =
+      is409 || (typeof createErr?.response?.status === 'number' && createErr.response.status < 500);
+    return { id: null, failed: lookupFailed || !answered };
   }
 }
 
@@ -809,22 +831,82 @@ export function useDynamicCalculators(
         offlineModeRef.current = false;
       }
 
-      const apptId = await resolveAppointmentId(lead);
+      /**
+       * ⚠️ The snapshot is read on the ONLINE path too, before anything is concluded from a
+       * read that may never answer. `isOnline()` is true on one bar of LTE right up to the
+       * 15 s timeout, so this branch runs for exactly the reps who most need the cache.
+       */
+      const onlineCacheName = dealCenterCacheName(leadId);
+      const onlineCached = onlineCacheName
+        ? readOfflineCache<CachedDealCenter>(onlineCacheName, { userId: enteredBy || undefined })?.data
+          || null
+        : null;
+      const cachedRows = cachedCalculatorsOf(onlineCached).length;
+
+      const showCached = (apptForCache: string | null) => {
+        const hydrated: CalcTab[] = cachedCalculatorsOf(onlineCached).map((c: any) =>
+          tabFromServerCalculator(c, schemasRef.current)
+        );
+        if (!hydrated.length) return false;
+        hydrated.forEach((t) => { lastSavedTitle.current[t.id] = t.title; });
+        setTabs(retitle(hydrated));
+        setActiveTabId(hydrated[0].id);
+        if (apptForCache) {
+          setAppointmentId(apptForCache);
+          apptServerIdRef.current = apptForCache;
+        }
+        return true;
+      };
+
+      const appt = await resolveAppointmentId(lead);
       if (cancelled) return;
+      const resolved = resolveAppointmentFallback({
+        resolvedId: appt.id,
+        lookupFailed: appt.failed,
+        cachedAppointmentId: onlineCached?.appointmentId ?? null,
+      });
+      const apptId = resolved.appointmentId;
       setAppointmentId(apptId);
       apptServerIdRef.current = apptId;
 
       if (!apptId) {
-        setLoading(false); // local-only mode
+        // ⚠️ Only a lookup that ANSWERED "no appointment" may fall through to the blank
+        // local-only calculator. A timed-out lookup shows the cached quote instead.
+        if (!canUseLocalOnlyMode({ lookupFailed: appt.failed, cachedRows })) {
+          showCached(null);
+        }
+        setLoading(false);
         return;
       }
 
+      // The lookup failed and we are running on a cached appointment id: do not ask the server
+      // for calculators we cannot reach - show the snapshot and let a later mount refresh it.
+      if (resolved.source === 'cache') {
+        if (!cancelled) {
+          showCached(apptId);
+          setLoading(false);
+        }
+        return;
+      }
+
+      let threw = false;
+      let list: any[] = [];
       try {
         const res = await LeadService.getCalculators(apptId);
-        const list = res.data?.data || res.data || [];
-        if (cancelled) return;
+        const body = res.data?.data || res.data || [];
+        list = Array.isArray(body) ? body : [];
+      } catch {
+        threw = true;
+      }
+      if (cancelled) return;
 
-        if (Array.isArray(list) && list.length) {
+      try {
+        const source = resolveOnlineLoadSource({
+          outcome: readOutcome({ threw, rows: list }),
+          cachedRows,
+        });
+
+        if (source === 'server') {
           cacheDealCenterSnapshotRef.current?.(list, apptId);
           const hydrated: CalcTab[] = list.map((c: any) =>
             tabFromServerCalculator(c, schemasRef.current)
@@ -832,6 +914,11 @@ export function useDynamicCalculators(
           hydrated.forEach((t) => { lastSavedTitle.current[t.id] = t.title; });
           setTabs(retitle(hydrated));
           setActiveTabId(hydrated[0].id);
+        } else if (source === 'cache') {
+          showCached(apptId);
+        } else if (source === 'hold') {
+          // Nothing proved and nothing cached. Keep the screen as it is rather than writing a
+          // calculator we may be about to discover already exists.
         } else {
           const created = await createRemoteTab(
             apptId, customerNameOf(lead) || '1', {}, leadId, enteredBy, schemasRef.current, 1

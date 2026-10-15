@@ -4441,8 +4441,11 @@ needs no new client.
 - `meta.isDefaultDiscount` records whether the figure came from the **rep's saved default** (the
   Default toggle writes `user.defaultPercentage`) rather than the company default — "15%" alone
   does not say which of the two it was.
-- `fieldCategory` follows the payment-method precedent: `'drop'` once the rollout is confirmed,
-  `'rollout'` before that.
+- ⚠️ **`fieldCategory` is ALWAYS `'rollout'`**, before and after Confirm Rollouts. The first cut
+  copied the payment-method logger's `isConfirmed ? 'drop' : 'rollout'` flip and was corrected by
+  request: the discount is a property of the rollout itself, not of a drop, so a log written after
+  confirming must read the same as one written before. The payment-method logger keeps its own
+  flip — that one is deliberate. Do not re-add it here.
 - ⚠️ **The chip logs BEFORE `onDiscountChange`.** `logDiscountChanged` reads `discountPct` for its
   `oldValue`, and the setter replaces it; calling them the other way round records old === new.
 - ⚠️ **Early-returns on `next === discountPct`**, so re-tapping the active chip writes nothing.
@@ -4505,3 +4508,68 @@ truth again. Do not relax that — a stale overlay outranking real server data i
 ⚠️ **This `reset` is a lead RESULT, not `LeadService.resetLead`** (`lead/v1/{id}/reset`), which
 deletes uploaded documents and stays online-only. Adding that one to this set would let a replay
 destroy work the rep did after it.
+
+---
+
+## Ticket — Deal Center showed the calculator over a confirmed rollout on mobile data
+
+> "I rolled out this lead, then opened Deal Center and it showed the calculator even though I
+> rolled it out. After a few minutes when I got some internet it showed the rollout. Mostly
+> these issues are coming in mobile data."
+
+The rollout data was on the device the whole time. The bug was that the **online** loader in
+`useDynamicCalculators.ts` never read the cache, and treated reads that never answered as
+answers.
+
+⚠️ **`isOnline()` is true on one bar of LTE, right up to the 15 s timeout.** So the branch that
+runs for a rep with a weak cell signal is the *online* one — the branch with no snapshot
+fallback. The offline branch below it was always correct (`resolveOfflineDealCenterSource`); it
+simply never got the chance to run. **Do not "fix" a cache bug by only looking at the offline
+path.**
+
+Two separate failures, both of the same shape:
+
+**1. A timed-out appointment lookup looked like "this lead has no appointment."**
+`resolveAppointmentId` returned a bare `string | null`. It returns `null` when `getAppointments`
+times out, `createAppointment` times out, *and* when the lead genuinely has none — three very
+different facts collapsed into one value. The caller then did:
+
+```
+if (!apptId) { setLoading(false); return; }   // local-only mode → the blank `local-1` tab
+```
+
+It now returns `{ id, failed }`, and `failed` is set **only by a transport-level failure** —
+⚠️ a 409 or any other 4xx is an *answer about this lead* and must not count as a failure, or a
+lead that truly has no appointment would start borrowing a cached id.
+
+**2. An empty read MINTED a calculator.** The `else` arm of `if (list.length)` called
+`createRemoteTab` — a POST. A slow or partial empty response therefore created a real, empty
+calculator on the server beside the rep's real one. This is the write-side version of the same
+trap the Investment Center hit twice, and a likely contributor to **ticket 1310** (Forever
+Record showing a confirmed rollout with no price): an extra empty calculator in the list.
+
+### The rules, in `utils/deal-center-load.ts`
+
+Pure module (CLAUDE.md §6 — `useDynamicCalculators.ts` imports React Native and cannot load
+under jest). 19 tests in `__tests__/utils/deal-center-load.test.ts`.
+
+- `readOutcome` — `answered-rows` / `answered-empty` / `unanswered`. ⚠️ A throw is `unanswered`
+  **even when an empty array came with it**.
+- `resolveOnlineLoadSource` — `server` / `cache` / `mint` / `hold`. ⚠️ **`mint` is the only
+  outcome that writes**, and it is reachable from exactly one of the six input combinations:
+  `answered-empty` **and** no cached rows. A test asserts that count directly, so widening it
+  fails loudly.
+- `hold` is deliberate: nothing proved and nothing cached means **leave the screen alone**
+  rather than write a calculator we may be about to discover already exists.
+- `resolveAppointmentFallback` — a *failed* lookup may fall back to the cached appointment id; a
+  *successful* lookup that found nothing may not.
+- `canUseLocalOnlyMode` — the blank-calculator path is now reachable only when the lookup
+  answered **and** there is no snapshot.
+
+⚠️ When the appointment id itself came from the cache (`source === 'cache'`), the loader does
+**not** then call `getCalculators` — the lookup just proved the network is unreachable, so it
+renders the snapshot and lets a later mount refresh. Adding that call back costs another 15 s
+timeout for a result already known.
+
+⚠️ `flowStep` still always starts at `'calculator'`; the rollout is reached through View-all.
+That is unchanged and correct — the reported symptom was the *tabs* being blank, not the step.

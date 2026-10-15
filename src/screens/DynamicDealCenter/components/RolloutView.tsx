@@ -789,7 +789,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       discountPercentage: next,
       oldDiscountPercentage: discountPct,
       isDefault: !!user?.defaultPercentage && user.defaultPercentage === next,
-      isConfirmed: !!(calculator as any).isRolloutConfirmed,
     }).catch(() => {});
   };
 
