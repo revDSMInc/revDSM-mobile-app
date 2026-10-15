@@ -79,6 +79,7 @@ import { DynamicManagePhotosView } from '../lead-center/DynamicManagePhotosView'
 import { DynamicInspectionView } from '../lead-center/DynamicInspectionView';
 import { useInspectionSchema } from '../../../hooks/useInspectionSchema';
 import { useIsOnline } from '../../../hooks/useIsOnline';
+import { completeOfflineJobBuilder, ensureOfflineWorkForLead } from '../../../services/offlineLeadStore';
 import { FlashMessage } from '../../../config/message';
 import {
   indexSchema,
@@ -710,12 +711,17 @@ export const JobDocsSection = ({
         ...resultData,
         status: result === 'noDemo' ? 'noDemo' : result === 'notHit' ? 'notHit' : result,
       };
+      const payload = { leadData, jobState: {} };
 
-      await submitJobMutation.mutateAsync({
-        leadId: lead?._id,
-        payload: { leadData, jobState: {} },
-      });
-
+      /**
+       * ⚠️ Logged BEFORE the online/offline branch so both paths record the same thing.
+       * It sat after the `mutateAsync` instead, so the offline branch returned past it and a
+       * result taken at a door left no Forever Record entry at all - the same shape as ticket
+       * 1310, where a missing log made a rep look as though they had skipped a step.
+       *
+       * `logEvent` holds it itself when offline (`lead_result_field_entry` is queueable) and
+       * stamps `occurredAt` now, so the replay lands at the moment the rep acted.
+       */
       const userId = user?._id || user?.id;
       if (userId) {
         logEvent('submit', {
@@ -730,6 +736,42 @@ export const JobDocsSection = ({
           },
         });
       }
+
+      /**
+       * ⚠️ No Demo / Not Hit / Reset must work at a door with no signal. They are ordinary
+       * lead results on the SAME endpoint the queue's `submit` step already calls
+       * (`submitJobBuilder`), so queueing them needs no new arm - only this branch.
+       *
+       * Without it `mutateAsync` threw, the catch below closed the modal and logged to the
+       * console, and the rep saw nothing happen at all: no error, no change, no record.
+       *
+       * ⚠️ This is NOT the destructive "Reset Job Docs" (`resetLeadMutation`), which deletes
+       * uploaded documents server-side. That one stays online-only on purpose - a queued replay
+       * could land after work the rep did later and destroy it.
+       */
+      if (!isOnline) {
+        const work = ensureOfflineWorkForLead(lead);
+        if (!work) {
+          FlashMessage.error(
+            'Could not save',
+            "This lead has no offline record yet, so the result can't be held. Try again once you have a connection."
+          );
+          setShowResultModal(false);
+          return;
+        }
+        completeOfflineJobBuilder(work.clientId, payload as any);
+        FlashMessage.success(
+          'Result saved',
+          'It uploads on its own as soon as you have a connection.'
+        );
+        setShowResultModal(false);
+        return;
+      }
+
+      await submitJobMutation.mutateAsync({
+        leadId: lead?._id,
+        payload,
+      });
 
       setShowResultModal(false);
       await refetch();

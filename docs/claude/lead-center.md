@@ -1862,3 +1862,67 @@ can never clear a lead that is already confirmed. A test pins this, because the 
 Verified matrix: new online lead → locked; new offline lead → locked; confirmed online → unlocked;
 confirmed offline from MMKV → unlocked; sold → unlocked; synced lead on a weak signal with nothing
 cached → **unknown/open**, which is the original ticket above and must stay that way.
+
+---
+
+## Ticket — No Demo / Not Hit / Reset offline
+
+The three no-sale buttons in Job Docs did nothing offline: `handleResultSubmit` called
+`submitJobMutation.mutateAsync`, which threw, and the catch closed the modal and logged to the
+console. The rep got **no error, no change, no record**.
+
+⚠️ **All three are ORDINARY lead results, not separate endpoints.** A DevTools capture settled
+this — tapping Reset posts
+
+```
+leadData: { result: "reset", reason: "Not Home", status: "reset", timestamp: … }
+```
+
+to `submitJobBuilder`, exactly like No Demo and Not Hit. That is the **same endpoint the queue's
+`submit` step already calls**, so queueing them needed no new arm: just an offline branch calling
+`completeOfflineJobBuilder(work.clientId, payload)`, the same writer the Job Builder's own offline
+submit uses.
+
+⚠️ **This Reset is NOT "Reset Job Docs."** `resetLeadMutation` → `LeadService.resetLead`
+(`lead/v1/{id}/reset`) permanently deletes uploaded images and documents, and stays **online-only
+on purpose**: a queued replay could land after work the rep did later and destroy it. The two
+controls sit feet apart in the same component — do not merge their handling.
+
+### The half that was easy to miss
+
+Queueing alone was not enough. `offlineResultOverlay` accepted only `sale` and `demo`, so the
+lead still showed as **unresulted** in the leads list until it synced — and a rep who results a
+lead and sees nothing change assumes it failed and does it again. `OFFLINE_RESULTABLE` now
+carries `sale`, `demo`, `nodemo`, `nothit`, `reset`.
+
+⚠️ **`status` is not the same field as `result`.** The leads list and the lead card colour-code on
+`status`, which the no-sale payloads set separately; the overlay previously reused `result` for
+both. A test pins this.
+
+⚠️ An unrecognised result still returns `null` rather than being guessed at, and the overlay stops
+once `status === 'uploaded'` so the server becomes the truth again.
+
+⚠️ When there is no offline work record for the lead (`ensureOfflineWorkForLead` returns null —
+a server lead never opened offline) the rep is told plainly instead of the result vanishing.
+
+### Follow-up — the result log has to fire on BOTH paths
+
+The first cut of the offline branch above `return`ed before `handleResultSubmit`'s `logEvent`,
+which sat after `mutateAsync`. So a No Demo / Not Hit / Reset taken at a door reached the server
+on sync but left **no Forever Record entry** — the rep looked as though they had skipped a step.
+That is ticket 1310 in a new place: not a lost log this time, but one that was never emitted.
+
+The `logEvent('submit', …)` now sits **above** the online/offline branch, so both paths record
+the same thing once.
+
+⚠️ **Put shared telemetry before the branch, not in each arm.** Duplicating it is how the two
+copies drift; returning past it is how one disappears. There is exactly one call now.
+
+⚠️ `logEvent` does the offline handling itself — `lead_result_field_entry` is queueable, it is
+held when `isOnline()` is false and stamped with `occurredAt` at the moment of the tap, so the
+replay lands where the rep actually acted rather than at sync time. The caller must not
+pre-empt that with its own queueing.
+
+The other two logs in this flow (`click_build_job` and `change_lead_result_reason`, both in
+`widgets/modals/lead-center/ResultLeadModal.tsx`) already fire unconditionally before
+`onSubmit`, so the full trail — reason chosen → confirm → result submitted — survives offline.

@@ -4247,3 +4247,46 @@ needs no new client.
 - ⚠️ Both files are CRLF.
 - Not verified on device, and not yet rendered in the portal: the backend/portal must display the
   two new actions.
+
+---
+
+## Ticket — `offlineResultOverlay` only knew about Sale and Demo
+
+The three no-sale buttons in Job Docs (**No Demo**, **Not Hit**, **Reset**) now queue offline.
+The UI side is in [`lead-center.md`](lead-center.md); the part that lives here is the queue model.
+
+⚠️ **No new upload step was needed.** All three post the same shape to `submitJobBuilder` —
+`leadData: { result, status, reason, timestamp }` — which is exactly what the existing `submit`
+arm in `services/offlineLeadStore.ts` sends. `completeOfflineJobBuilder(workClientId, payload)`
+is the writer, the same one `DynamicJobBuilderScreen` already uses for an offline Sale.
+
+The gap was in `utils/offline-lead-work.ts`:
+
+```
+const result = String(leadData.result || '').toLowerCase();
+if (result !== 'sale' && result !== 'demo') return null;   // ← Not Hit / No Demo / Reset dropped
+```
+
+So the work queued and would have uploaded correctly, but `applyOfflineResult` put **no overlay**
+on the lead — the leads list showed it unresulted until the drain finished. ⚠️ **A rep who
+results a lead and sees nothing change does it again**, which is how one door becomes two queued
+results. The list is the only feedback they get.
+
+`OFFLINE_RESULTABLE` now holds `sale`, `demo`, `nodemo`, `nothit`, `reset` (compared
+lower-cased, since the payload uses camelCase).
+
+⚠️ **`status` is a separate field from `result`.** The overlay used to return `status: result`.
+A sale names its own status, but the no-sale outcomes carry a distinct `leadData.status`, and the
+leads list and `LeadCard` colour-code on **status** — so reusing `result` mislabels the card. It
+now returns `leadData.status || result`.
+
+⚠️ **Keep the whitelist a whitelist.** An unrecognised result still returns `null` rather than
+being passed through: an overlay built from a payload shape nobody has checked would show the rep
+a status the server will never agree with.
+
+⚠️ The overlay still stops at `status === 'uploaded'`, so once the row drains the server is the
+truth again. Do not relax that — a stale overlay outranking real server data is the harder bug.
+
+⚠️ **This `reset` is a lead RESULT, not `LeadService.resetLead`** (`lead/v1/{id}/reset`), which
+deletes uploaded documents and stays online-only. Adding that one to this set would let a replay
+destroy work the rep did after it.
