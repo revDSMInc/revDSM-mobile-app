@@ -112,6 +112,8 @@ export async function bookInstallSlot(params: {
   date: string;
   /** The window text booking stores, e.g. "8:00 AM - 12:00 PM". */
   timeWindow: string;
+  /** The job is being sold: a lead is only `sale` once its job builder is submitted. */
+  isSale?: boolean;
 }): Promise<BookInstallResult> {
   try {
     const res = await api.post<any>(InstallBookEndpoint, params);

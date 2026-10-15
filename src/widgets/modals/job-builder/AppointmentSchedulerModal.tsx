@@ -42,6 +42,8 @@ interface AppointmentSchedulerModalProps {
   initialView?: 'date' | 'time';
   requireScheduleAmendment?: boolean;
   leadId?: string;
+  /** The job is being sold, so booking the time also assigns a crew. */
+  isSale?: boolean;
   lead?: any;
   scheduleTime?: { date?: string; timeWindow?: string; reason?: string };
 }
@@ -60,6 +62,7 @@ export const AppointmentSchedulerModal = ({
   initialView,
   requireScheduleAmendment = false,
   leadId,
+  isSale,
   lead,
   scheduleTime,
 }: AppointmentSchedulerModalProps) => {
@@ -187,6 +190,7 @@ export const AppointmentSchedulerModal = ({
         leadId,
         date: format(selectedDate, 'yyyy-MM-dd'),
         timeWindow: currentWindow.value,
+        isSale,
       });
       setBooking(false);
 

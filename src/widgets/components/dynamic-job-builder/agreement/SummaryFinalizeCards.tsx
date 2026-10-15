@@ -771,6 +771,7 @@ export function SummaryFinalizeCards({
         customerName={customerName}
         isEdit={isEditingAppt}
         leadId={leadId}
+        isSale={!!isSale}
         initialDate={scheduleTime?.date}
         initialTimeWindow={scheduleTime?.timeWindow}
       />
