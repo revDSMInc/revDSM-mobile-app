@@ -104,13 +104,18 @@ export const AppointmentSchedulerModal = ({
   // Booking the time on "Yes" is in flight, and a counter that re-asks the scheduler when a time was taken.
   const [booking, setBooking] = useState(false);
   const [availabilityRefresh, setAvailabilityRefresh] = useState(0);
+  // Windows on the picked day that "Yes" found no crew for, so they are not offered again.
+  const [failedWindows, setFailedWindows] = useState<string[]>([]);
+  // A new job (not an edit) with a lead is checked and booked when the rep taps "Yes",
+  // not while picking a date. Everything else keeps the check it always had.
+  const checkOnYes = !isEdit && !!leadId;
 
   // What the scheduler says about the chosen day. Until it answers — or if it never
   // does — every window is offered exactly as before.
   const { availability, loading: availabilityLoading } = useInstallAvailability(
     format(selectedDate, 'yyyy-MM-dd'),
     leadId,
-    visible && view === 'time' && !isTBD,
+    visible && view === 'time' && !isTBD && !checkOnYes,
     availabilityRefresh,
   );
   const offered = useOfferedWindows(windows, availability);
@@ -118,7 +123,7 @@ export const AppointmentSchedulerModal = ({
   const { blocked: blockedDays } = useInstallCalendarAvailability(
     currentMonth,
     leadId,
-    visible && view === 'date',
+    visible && view === 'date' && !checkOnYes,
     availabilityRefresh,
   );
   const currentWindow = offered[timeSlotIdx] ?? offered[0] ?? windows[0];
@@ -153,6 +158,7 @@ export const AppointmentSchedulerModal = ({
     if (getDay(date) === 0) return; // Disable Sunday
     setSelectedDate(date);
     setTimeSlotIdx(0);
+    setFailedWindows([]);
     setIsTBD(false);
     setView('time');
   };
@@ -165,6 +171,7 @@ export const AppointmentSchedulerModal = ({
       }
       setSelectedDate(nextDay);
       setTimeSlotIdx(0);
+      setFailedWindows([]);
     } else {
       setTimeSlotIdx((prev) => prev + 1);
     }
@@ -195,10 +202,10 @@ export const AppointmentSchedulerModal = ({
       setBooking(false);
 
       if (result.kind === 'taken') {
-        FlashMessage.warning('Time no longer available', result.message);
+        // No crew for this window: say so on this screen and let the rep try the other
+        // window or another date. Nothing was booked.
+        setFailedWindows((prev) => (prev.includes(currentWindow.value) ? prev : [...prev, currentWindow.value]));
         setAvailabilityRefresh((n) => n + 1);
-        setTimeSlotIdx(0);
-        setView('date');
         return;
       }
       if (result.kind === 'offline') {
@@ -212,6 +219,20 @@ export const AppointmentSchedulerModal = ({
     onBooked?.(bookedAppointmentData(false));
   };
 
+  // The window "Yes" just found no crew for, and the other one if it has not failed too.
+  const noCrewForCurrent = checkOnYes && failedWindows.includes(currentWindow.value);
+  const otherWindowIdx = offered.findIndex((w, i) => i !== timeSlotIdx && !failedWindows.includes(w.value));
+
+  const handleTryOtherWindow = () => {
+    if (otherWindowIdx >= 0) setTimeSlotIdx(otherWindowIdx);
+  };
+
+  const handlePickAnotherDate = () => {
+    setFailedWindows([]);
+    setTimeSlotIdx(0);
+    setView('date');
+  };
+
   const handleConfirmTBDStep = () => {
     setIsTBD(true);
     setView('success');
@@ -223,6 +244,7 @@ export const AppointmentSchedulerModal = ({
     setTimeout(() => {
       setView('date');
       setTimeSlotIdx(0);
+      setFailedWindows([]);
       setTbdReason('');
       setIsTBD(false);
       setAmendmentOpen(false);
@@ -498,6 +520,27 @@ export const AppointmentSchedulerModal = ({
                   <View style={{ alignItems: 'center', marginBottom: 40 }}>
                     <ActivityIndicator color="#22C55E" />
                     <Text style={{ color: '#94a3b8', fontWeight: '700', marginTop: 12 }}>Checking availability…</Text>
+                  </View>
+                ) : noCrewForCurrent ? (
+                  <View style={{ alignItems: 'center', width: '100%' }}>
+                    <Text style={{ fontSize: 18, fontWeight: '900', color: '#334155', marginBottom: 8 }}>No crew available</Text>
+                    <Text style={{ color: '#94a3b8', fontWeight: '700', textAlign: 'center', marginBottom: 32 }}>
+                      {`No crew can take this job on ${format(selectedDate, 'EEEE, MMM d')} from ${currentWindow.label}.`}
+                    </Text>
+                    {otherWindowIdx >= 0 && (
+                      <TouchableOpacity onPress={handleTryOtherWindow} style={{ width: '100%', marginBottom: 12 }}>
+                        <View style={{ height: 56, backgroundColor: '#22C55E', borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>
+                            {`Try ${offered[otherWindowIdx].label}`}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity onPress={handlePickAnotherDate} style={{ width: '100%' }}>
+                      <View style={{ height: 56, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center', backgroundColor: 'white' }}>
+                        <Text style={{ color: '#475569', fontWeight: '900', fontSize: 14 }}>Pick Another Date</Text>
+                      </View>
+                    </TouchableOpacity>
                   </View>
                 ) : offered.length === 0 ? (
                   <View style={{ alignItems: 'center', width: '100%' }}>

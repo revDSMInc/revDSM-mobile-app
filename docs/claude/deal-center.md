@@ -3228,3 +3228,7 @@ against the schedule as it is at that moment and assigns the crew it picks (firs
 - `offline` (no response at all): "You need to be online to schedule this job." and the rep stays on the screen. Lance: scheduling requires a connection.
 - Any other failure (`error`, 5xx, demo lead, nothing to assign) lets the booking continue as before; `submitJobBuilder` still tries to assign a lead that has no crew yet.
 - ⚠️ Not done on the edit flow (`isEdit`, My Deals): rescheduling a job that already has a crew does not re-pick a crew.
+
+### Create flow: availability is checked on "Yes" only (REVDSM-1300)
+In `AppointmentSchedulerModal`, a NEW job with a lead (`!isEdit && leadId`, `checkOnYes`) no longer asks the scheduler when a date is picked (no per-day check, no calendar dimming). The one check is the **Yes** tap: the server checks that exact window (8-12 or 12-4) and assigns the crew. No crew -> a "No crew available" panel on the same screen with **Try <other window>** (only if it has not failed too) and **Pick Another Date**. Edit flows (`isEdit`) and callers without a `leadId` keep the earlier checks.
+- A demo has its window checked too (409 if no crew) but no crew is assigned; only a sale is assigned.
