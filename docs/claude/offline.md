@@ -219,3 +219,453 @@ Files: `utils/offline-activity-log.ts` (pure rules), `services/offlineActivityLo
 ### REVUIUX-444 — `defaultOneYearPaymentMethod` joins the queued calculator settings
 
 `utils/offline-settings.ts`: `FIELDS` + `PendingCalculatorSettings` gained `defaultOneYearPaymentMethod` (`null` = clear, sent as `null`). Everything else (merge, payload, `hasPendingSettings`, optimistic `applyPendingSettingsToUser`, replay on reconnect) is driven off `FIELDS`. See `deal-center.md` § REVUIUX-444.
+
+⚠️ **Every queue's `start*Sync()` is registered in `hooks/useAppInitialization.ts`**, beside
+`startOfflineWorkSync` / `startPhotoQueueSync` / `startActivityLogSync` / `startMapFilterSync`. A
+queue that drains only when its own screen mounts never drains at a door — register it there, not
+in a component.
+
+## Queue 6 — agreement delivery preference (REVUIUX-391)
+
+`utils/offline-agreement-delivery.ts` (rule), `services/offlineAgreementDelivery.ts` (MMKV queue,
+key `offline-agreement-delivery`), drained from `useAppInitialization` via
+`startDeliveryPreferenceSync()`. Endpoint: `PUT pdf-reports/v1/agreement/{leadId}/delivery-preference`.
+
+⚠️ **This one BLOCKED THE SALE, which is why it became a queue.** The prompt asking how the
+homeowner wants the signed copy gates Generate Agreement, and `onConfirmed()` only fired once the
+PUT resolved — so a rep at a door with no signal could not reach the agreement at all. Every other
+queue here exists so work is not *lost*; this one exists so work is not *prevented*.
+
+⚠️ **Full-state PUT ⇒ one row per lead, replaced wholesale, and no attempt counter** — the same
+shape as the map-filter queue. Only the rep's last choice matters; replaying an earlier one would
+overwrite it with stale data.
+
+⚠️ **The prompt reopens on the QUEUED choice, not the lead's default.** Without that, a rep who
+reopened the prompt offline saw it reset to the prefill and would reasonably assume their first
+answer was lost.
+
+⚠️ Keyed off the error, not only `isOnline()`: a PUT that dies mid-flight queues too, rather than
+showing a failure for something the device can hold. Rows are owner-scoped
+(`replayableDeliveryWrites`), so another login's choice is never replayed.
+
+Ticket context and the online flow: [`deal-center.md`](deal-center.md).
+
+### Follow-up — Queue 6 now holds client-id rows, and re-keys them
+
+The delivery prompt was suppressed for a lead created at a door (`!isClientId(leadId)`), so the
+queue never saw the commonest offline case. It now asks on those leads too, which means the queue
+has to hold a row keyed by a **client** id.
+
+⚠️ **A client-id row must be RE-KEYED before it can be sent.** Replaying
+`PUT pdf-reports/v1/agreement/{leadId}/delivery-preference` against a client id files the
+preference on a lead the server has never heard of — the counterfeit-id trap recorded above.
+`rekeyDeliveryPreference(fromId, toId)` is called from the `lead` sync step in
+`offlineLeadStore.ts`, beside `rekeyActivityLogs` / `rekeyLeadWorkflow` / the photo-queue re-key.
+
+⚠️ **Any queue that can hold a row for an offline-created lead needs a re-key, and a call in that
+same block.** The row is written before the lead exists; nothing else will repair it, and the
+drain cannot tell a client id from a real one. This is the fourth queue to need it — add the call
+when adding the queue, not after a bug report.
+
+⚠️ The re-key drains immediately after rewriting the row, so a preference queued before the lead
+synced is sent as soon as the lead has a real id, rather than waiting for the next reconnect.
+
+Ticket context and the prompt side: [`deal-center.md`](deal-center.md).
+
+### Follow-up — Queues 7 and 8: Submit Funding, and a cheque taken in hand
+
+Result Lead ▸ Confirm offline is **three writes, not one**, and the order is load-bearing. Only
+the first existed; the other two were silently dropped. See `deal-center.md` for the UI side.
+
+| Step | Fires when | Safety |
+|---|---|---|
+| `funding` | Confirm — the split itself (already existed) | `idempotent` (full-state PUT) |
+| `fundingCollect` | "Mark collected" on a down-payment cheque | `guarded` |
+| `fundingSubmit` | Submit Funding | `guarded` |
+
+⚠️ **Both new steps hang off `funding`** — `isStepApplicable` requires `!!work.funding`. Neither
+can address a row the save has not created yet, which is also why they sit after it in
+`UPLOAD_STEPS` and before `submit`.
+
+⚠️ **NOT `idempotent`, unlike the save above them.** Both address rows by pid and the server
+refuses the repeat. Under `idempotent` an ambiguous failure retries blind, reads the refusal as a
+real failure, and parks a sold deal in `needs-review`. Under `guarded` the retry READS the record
+first — `isFundingAlreadySubmitted`, and the `collected` pids — and treats "already done" as the
+state it wanted. The read is gated on `guarded`, so the happy path costs nothing.
+
+⚠️ **These pids need NO re-key, and that is the exception worth knowing.** Every other queue
+holding an offline-created row needs one (four so far — see the note above). `newPaymentId()` mints
+the pid **on the device** and the `funding` save sends it in the upsert, so the server adopts the
+device's own id. A later POST to `/funding/{pid}/check-collected` therefore addresses correctly
+with no rewriting. Contrast the lead id, which the server mints and the device can only guess at.
+
+⚠️ **Don't reach for `submitFunding`'s error shape to detect a repeat.** The already-submitted
+refusal is not a documented status, and `normalizeApiError` strips `.response` anyway. Read
+`funding.status === 'submitted'` off the record instead — the same shape `isAlreadySubmitted` uses
+for the job builder.
+
+**"Sync all" now hides when nothing is syncable** (`payments.some(canSync)`, i.e. a card or loan
+row with a link sent), and the header reads "Nothing to check on". Offline that is always the case.
+It was never harmful — `syncAll` no-ops on an empty row set — but a Sync button at a door with no
+signal is a promise the screen cannot keep.
+
+## Queue 0 — My Deals edit opens offline (Phase 1 of the My Deals plan)
+
+`utils/offline-deal-edit.ts` (pure rules) + `utils/offline-query-cache.ts` (storage). Not a queue —
+a **read-path snapshot**, numbered 0 because it feeds the addendum queues that follow.
+Full plan and phases: [`docs/MY-DEALS-OFFLINE-PLAN.md`](../MY-DEALS-OFFLINE-PLAN.md).
+
+One envelope per lead, key `deal-edit:<leadId>`, owner-scoped, holding the five things the edit
+wizard reads: `outcome`, `calculator`, `portalJobBuilder`, `approvers`, `funding`.
+
+⚠️ **This screen was BROKEN offline, not blocked — a different failure from every other queue
+here.** Its four queries each wrap their call in `try/catch → return null`, so offline they
+*resolve*. The loading gate clears and the rep gets a half-seeded wizard with blank prices, on a
+screen that amends a signed contract. There is no way to tell a genuinely empty field from one
+that failed to load.
+
+⚠️ **Serve a cached value from INSIDE the `queryFn`, never via `enabled: false`.** A disabled
+query in TanStack v5 keeps `isLoading` **true forever**, so the screen hangs on its spinner — the
+exact symptom being fixed. The same applies anywhere `isSuccess` is read (see `useRefundApprovers`
+in [`deal-center.md`](deal-center.md)).
+
+⚠️ **The refusal must render ABOVE the loading gate**, for the same reason: offline the gate
+clears, so a refusal placed after it never shows.
+
+⚠️ **`buildDealEditCache` returns null without `portalJobBuilder`.** A half-loaded screen must
+never overwrite a good snapshot with a worse one — a rep reopening on a flaky line keeps the copy
+that works. This is the write-side mirror of `isUsableDealEditCache`.
+
+⚠️ **`dealEditCacheChanged` compares object IDENTITY before serialising.** MMKV rewrites its whole
+store per write and this screen re-renders constantly; TanStack returns the same object until data
+changes, so reopening an unchanged deal writes nothing. The deep compare is only a fallback for a
+refetch that produced equal-but-new objects. Without this guard the feature sits on the hot path
+and taxes every unrelated write in the app.
+
+⚠️ **The write effect early-returns while serving FROM the cache**, or the screen rewrites its own
+snapshot with a copy of itself.
+
+## The leads list kept saying "Resume Appointment" on a lead resulted offline
+
+Reported from a device with three screenshots. A rep resulted a self-gen lead at a door with no
+signal. **Lead Center showed "Resulted — Sale"; the leads list card, on the same lead at the same
+moment, still offered "Resume Appointment".** It only caught up after reconnecting and syncing.
+
+`LeadCard.getLeadState` decides RESULTED with
+`!NON_RESULTED_STATUSES.includes(lead.status)`, where the list is
+`['lfLead', 'selfGenerated', 'scheduled']`. Offline the submit is queued, so the server's
+`status` on the device is still `selfGenerated` — the card is reading the truth it was given.
+
+**`applyOfflineResult` already existed and already handled this**, including matching by client
+id. The leads list simply never called it: `screens/Leads/index.tsx › withWorkflow` mapped
+`applyOfflineWorkflow` only, while Lead Center gets the overlay through
+`useLeadCenterData:295`. One `.map()` was missing.
+
+⚠️ **TWO SCREENS DISAGREEING ABOUT ONE LEAD IS WORSE THAN EITHER BEING WRONG.** The rep cannot
+tell which to believe and may redo work they have already finished — on a sold job. When an
+overlay exists, every surface that renders that record has to apply it; a half-applied overlay is
+its own bug class.
+
+⚠️ **`withWorkflow` is the single funnel** in that file — rehash, archived, today and pending-lead
+paths all pass through it. Add overlays there, not at the call sites, or the next path added
+quietly skips them.
+
+⚠️ **Order matters: result first, then workflow.** The workflow overlay carries check-in/resume
+marks; the result overlay supersedes them once the lead is sold.
+
+⚠️ **The overlay dies on `status === 'uploaded'`** (`offlineResultOverlay`), so the server's own
+record takes over the moment the submit lands — it never pins the card to what this device sent.
+
+`LeadCard` is the only consumer of that component, so this was the one surface affected. My Deals
+reads a different (sold-deals) list and is covered by the My Deals offline plan.
+
+## Queues 9 & 10 — a My Deals addendum raised at the door (Phase 2)
+
+`utils/offline-addendum.ts` (what may be queued) + the `addendumDraft` / `addendumRelease` steps
+in `utils/offline-lead-work.ts`, synced from `services/offlineLeadStore.ts`. Plan and phases:
+[`docs/MY-DEALS-OFFLINE-PLAN.md`](../MY-DEALS-OFFLINE-PLAN.md).
+
+The rep is at a job they already sold, the customer asks for gutters too, and the addendum has to
+be raisable with no signal.
+
+⚠️ **TWO STEPS, NEVER ONE — this is the rule the whole feature hangs on.** The backend requires
+`create draft → (refund) → release`, and **`addendumRelease` is never applicable when
+`addendum.hasRefund`**. A refund addendum released by the device reaches the homeowner *ahead of
+its approval*; the refund machine then refuses `pendingApproval → customerSigned` with a bare
+`return`, so **the signature is silently dropped, can never be asked for again, and the money
+never moves.** No error, no retry, no trace. The approver releases those server-side
+(`ApprovalHandler → releaseAddendumForApprovedRefund`).
+
+⚠️ **The server will NOT protect us here.** The refund's draft lookup is `.select('_id')` — it
+does not check the draft's status, so it happily attaches a refund to an addendum already sent or
+signed. The ordering has to be right on the client.
+
+⚠️ **A refund addendum has NO release step at all.** Do not add a tidy-looking "finish the job"
+step; that would be the bug.
+
+⚠️ **Both steps are `guarded`, never `idempotent`.** A replayed create files a **second**
+addendum on the customer. `addendumRelease` treats a 409 as done: the only server gate is
+`status !== 'draft'`, so a 409 means somebody else already moved it — which is the state the step
+wanted. Same shape as `readIs409` elsewhere in this file.
+
+⚠️ **Nothing binary in the payload.** `addendumOfflineBlock` refuses an addendum carrying a new
+agreement or order sheet, so the queued payload can never hold a base64 `data:` URI (R2 of the
+plan). Attachments are Phase 4.
+
+⚠️ **`offline_lead_work` is already in `SESSION_KEEP_KEYS`** — verified, not assumed — so a
+queued addendum survives logout. That is the bug that silently destroyed five queues before.
+
+**`utils/offline-capability.ts › addendum` is no longer a blanket block.** It stays for callers
+that genuinely cannot queue; the edit flow uses `addendumOfflineBlock`, which distinguishes a
+plain build change (queueable) from a refund or an attachment (not).
+
+### Follow-up — Queue 11: a cheque refund rides with the addendum (Phase 3)
+
+`utils/offline-addendum.ts` gained `refundMethodAvailableOffline` + `CARD_REFUND_OFFLINE_MSG`,
+and `addendumOfflineBlock` now takes the chosen `refundMethod`.
+
+⚠️ **CHEQUE and CARD are different kinds of operation, not degrees of risk.** A cheque refund is
+only a RECORD that the office will post one — nothing moves on submit, so it queues like any
+other write. A card refund REVERSES the charge through the processor: it can decline, part-settle
+or error, none of which a device can resolve. That is the whole reason one queues and the other
+cannot.
+
+⚠️ **Only an EXPLICIT cheque queues** — the rule is `method === 'check'`, deliberately **not**
+`method !== 'card'`. An unset method must never fall through as "fine", or the refund is filed as
+a cheque the rep never chose. The first implementation here had the looser check and a test
+caught it; keep the strict form.
+
+⚠️ **A queueable cheque refund must not mask a blocked attachment.** The block reports the card
+refund first when both apply (it is the more serious), but still reports documents when the
+refund itself is fine — otherwise an addendum would queue having silently dropped its agreement.
+
+⚠️ **The refund message names the ALTERNATIVE, not just the problem**: *"Take it as a cheque, or
+raise this once you have signal."* A rep at a table can act on the first half immediately.
+
+Step ordering and the release rule: see the Queues 9 & 10 ticket above. Phases:
+[`docs/MY-DEALS-OFFLINE-PLAN.md`](../MY-DEALS-OFFLINE-PLAN.md).
+
+---
+
+## Follow-up — "2 bars of LTE and it says Offline"
+
+Client, on a phone that was **online with two bars**: *"Online and Offline | 2 bars of signal —
+Offline banner showed."* Screenshot confirmed it: LTE, two bars, requests working, and the amber
+*"Offline — showing saved data"* strip across the top. Two independent defects, either of which
+alone produces it.
+
+### 1. One lost packet was being read as a dead network
+
+`probeHealth` was a **single** `GET /health`. Every failure path — abort, DNS, TLS, refused —
+funnels into `return false`, and `applyProbeResult(false)` calls `settle(..., 'offline',
+{ force: true })`, which **skips the 5 s dwell**. So one dropped packet on a weak radio
+instantly relabelled a working phone as offline, with no second opinion and no settling period.
+
+On one bar a dropped request is *routine*, not exceptional. The probe was treating the most
+common event on a weak link as proof of the rarest one.
+
+⚠️ **Offline must mean "we looked more than once and found nothing."** `probeHealth` now retries
+up to `PROBE_FAILURES_BEFORE_OFFLINE` (2) with a `PROBE_RETRY_GAP_MS` (400 ms) gap, and returns
+`false` only if **every** attempt came back empty. Any real answer — including `'slow'` — settles
+immediately, so a healthy line still costs exactly **one** request. A captive portal still
+answers consistently, so it is still caught, just at the cap.
+
+### 2. Nothing could clear the strip while the app sat idle
+
+The other half, and the reason it *stayed* up. `applyOsConnected` resolves to **`degraded`**,
+never `online` — deliberately, because a connected interface is not proof the API is serving.
+Only a **2xx on a real request** promotes to `online`. But a probe only runs on a stall or a
+transport error, and **an idle app makes no requests at all**. A rep who walked back into signal
+kept the warning until they happened to tap something.
+
+⚠️ `syncRecoveryPoll` in `connectivity.ts` now polls **only while a warning is showing**, every
+`RECOVERY_POLL_MS` (8 s), and disarms the moment the status leaves offline/degraded — a healthy
+app pays nothing.
+
+⚠️ **The poll calls `AuthService.getMe()`, NOT `/health`.** This is the important part. A probe
+is not allowed to promote to online (see below), so polling `/health` would have recovered
+nothing. `getMe` goes through axios, so its 2xx arrives as an ordinary `success` signal and
+recovery happens through the **one** sanctioned path, rather than a second rule that could
+drift out of agreement with the first.
+
+### The rule I tried to break, and why it stands
+
+My first attempt made `applyProbeResult(true)` settle straight to `online`. It was wrong, and
+the existing test *"⚠️ a probe can NEVER promote to online — it proves reachable, not serving"*
+caught it. `/health` is cheap and unauthenticated: it answers happily while the real API is
+failing, so promoting on it would tell a rep they were fine while every save failed.
+
+What a healthy probe now does instead is **clear the failure run** (`failures: 0`), so the next
+transport error starts counting from scratch rather than re-settling to offline instantly. That
+gets the benefit without touching the rule.
+
+⚠️ **Do not "simplify" the retry back to a single fetch**, and do not let a probe promote to
+`online`. Each of those re-creates one of the two halves of this bug.
+
+---
+
+## Ticket — NetInfo was asking Google whether our API was up
+
+Client reports clustered on **mobile data (LTE/5G)**; the team tests on office WiFi and could
+reproduce almost none of it.
+
+⚠️ **`NetInfo.configure()` had never been called**, so the library ran on its defaults — and the
+default is:
+
+```
+reachabilityUrl: 'https://clients3.google.com/generate_204'
+```
+
+**The app's offline banner was driven by whether GOOGLE answered, not whether our API did.** That
+verdict is not a hint: `isInternetReachable === false` flows through `resolveOnline` →
+`applyOsDisconnected`, which force-settles to offline **past the dwell**.
+
+Wrong in both directions on a rep's cellular connection:
+- a carrier that blocks, throttles or intercepts that endpoint (it is a well-known captive-portal
+  probe) marks the app OFFLINE while our API is perfectly reachable;
+- Google answering says nothing about our backend, so the app insists it is online while every
+  real request fails.
+
+`configureReachability()` in `services/connectivity.ts` now points it at `HEALTH_URL`, called from
+`startConnectivityMonitor` **before** the listener is added so the first reported state already
+used our url. Timeouts: request 8 s (must clear a cold TLS handshake on a weak cell — NetInfo's
+default is 15 s), retry 10 s while failing, 60 s while healthy.
+
+⚠️ **`useNativeReachability: false`.** Android's native check reports the OS's captive-portal
+verdict, which is about *the internet*, not about *us*.
+
+⚠️ **`HEALTH_URL` is exported from `health-probe.ts` and shared.** Two different health targets
+would let the two halves of connectivity disagree about whether the rep is online.
+
+⚠️ A `configure` failure is caught and logged: NetInfo falls back to its defaults, which is
+degraded but still working.
+
+### Why WiFi could never show this
+
+| | WiFi | LTE/5G at a door |
+|---|---|---|
+| RTT | 10–30 ms | 100–1500 ms |
+| Packet loss | ~0 % | routine |
+| TLS handshake | ~50 ms | 0.5–3 s (≈3 round trips) |
+| IP address | stable | **changes on cell handoff** |
+| Middleboxes | none | carrier proxies, NAT, throttling |
+
+Measured from a good line: the Google endpoint answers in ~0.26 s, `api.np.revdsm.com/health` in
+~1.03 s. Both multiply on cellular — and only the second one matters.
+
+⚠️ **Every threshold in this area was originally calibrated against WiFi numbers.** When changing
+one, reason about the LTE column, not the WiFi one.
+
+### Connection diagnostics
+
+`widgets/components/ConnectionDiagnosticsCard.tsx` (in Profile, beside the offline-data card)
+shows status, radio generation, NetInfo's reachability verdict, **the url being tested**, time
+since the last successful `/health`, its duration, pending sync count and a badly-skewed clock —
+with *Check now* and *Share*. Rules are pure in `utils/connection-diagnostics.ts`.
+
+⚠️ The url line exists because that is exactly what nobody could see: a default that quietly
+pointed somewhere else. Keep it on the card.
+
+⚠️ `health-probe.ts` records `lastSuccessAt` / `lastDurationMs` for display **only** — they must
+never feed a decision, or diagnostics become load-bearing.
+
+### Follow-up — "Weak connection" on a 46 Mbps line
+
+Caught by the diagnostics card contradicting the banner **on the same screen**: status *Weak
+connection*, but **Reachable: yes**, last `/health` success **2 s ago in 249 ms**, 46 Mbps down,
+10 ms ping. (The card paid for itself here — without it this is unfalsifiable.)
+
+Two independent defects, either one enough.
+
+**1. An OS connect event was treated as evidence of a weak link.**
+
+`applyOsConnected` force-settled to `degraded` whenever NetInfo reported a connection — and
+NetInfo fires on routine events: signal-strength changes, interface detail updates, a Wi-Fi roam,
+every cell handoff. So a perfectly healthy app was knocked into the warning state repeatedly, and
+only a later 2xx could undo it. Mobile data reconnects constantly, which is why the client saw
+this far more than the team did.
+
+⚠️ **A connect event means only "we are no longer definitely OFFLINE."** It now returns the state
+untouched when already `online` or `degraded`, and lifts `offline`/`unknown` to `degraded`.
+Returning the SAME OBJECT when already degraded matters too: re-stamping restarted `changedAt`
+and so re-armed the dwell on every radio event, blocking recovery.
+
+**2. The recovery poll was armed only on a status CHANGE.**
+
+`syncRecoveryPoll()` sat below the early return in `setNetState`, so an app that settled into
+`degraded` and then stopped changing never started polling — nothing ever asked whether the line
+had recovered. It is now called on the unchanged path too, and once from
+`startConnectivityMonitor` for whatever state the app starts in.
+
+⚠️ **The no-promote rule still stands**: `applyProbeResult(true)` must NOT reach `online`.
+`/health` is unauthenticated and answers while the real API is failing; only a 2xx on a real
+request proves we are being served. That is why recovery goes through `getMe`, not the probe —
+do not "simplify" the poll into a probe.
+
+⚠️ `syncRecoveryPoll` is declared below `setNetState` and `startConnectivityMonitor`. Safe today
+because every call is inside a function body (evaluated after module load) — a module-level call
+would hit the TDZ and crash at startup.
+
+---
+
+## Ticket 1310 — a Forever Record showing a confirmed rollout with no price
+
+Portal ticket: *"Why is investment center showing what price was rolled out but rollout & drops
+is NOT? He couldn't have confirmed roll out unless there was a dollar amount filled in."* The
+record made it look like a process failure by the rep.
+
+Reproduced by comparing two records of the same flow: the one built on **Wi-Fi** shows
+*"Rollout Price $333 (RETAIL + 67%)"* directly above **CONFIRMED ROLLOUTS**; the one built on
+**4G** shows the confirmation with **no price line**.
+
+### Root cause: a failed log was thrown away
+
+They are two SEPARATE requests — `logEndPriceEntered` ("end price entered") fires on commit, then
+`rolloutConfirmed` fires on the tap, both via `logRolloutChange` → `logEvent`. One was delivered
+and the other lost.
+
+`logEvent` queues only when `isOnline()` is **false**. On mobile data the app IS online, so the
+log went straight to `sendLog`, whose catch did this and nothing more:
+
+```
+console.warn(`[Logger] ✗ ${eventType} …`);
+```
+
+⚠️ **A timed-out activity log was gone for good.** `sendLog` uses bare `axios` (not the
+retry-aware client), with no queue behind it. On office Wi-Fi that POST essentially never fails,
+which is exactly why every record looked complete in testing and only the field saw gaps.
+
+### The fix
+
+`sendLog` now queues a failed log through the existing `queueActivityLog`, gated by
+`shouldQueueFailedLog(status)` in `utils/offline-activity-log.ts`:
+
+| failure | queued? | why |
+|---|---|---|
+| no response (timeout, DNS, TLS, reset) | yes | it never arrived |
+| 5xx | yes | server faulted; the payload is fine |
+| 401 | yes | goes out after the next sign-in |
+| other 4xx | **no** | the server understood and refused — replaying forever just fills the queue |
+
+⚠️ **It re-stamps with the ORIGINAL `occurredAt`**, so a replayed entry lands where the rep
+actually did the thing, not at the time it finally got through. A Forever Record in the wrong
+order is its own bug.
+
+⚠️ **`attachLocation: false` on the queued copy.** Location was already resolved before the send;
+re-resolving on replay attaches where the rep is at RETRY time, which is somewhere else entirely.
+
+⚠️ **The guard is `!rethrow`, and that is load-bearing.** The queue drain calls `sendLog` with
+`rethrow = true`, so a failed REPLAY rethrows into the queue's own attempt counter instead of
+re-queueing itself. Without it a permanently failing log would multiply on every drain.
+
+### Pre-existing test failures fixed in passing
+
+`__tests__/utils/offline-activity-log.test.ts` still imported `QUEUEABLE_LOG_MODULES`, which
+became `NON_QUEUEABLE_LOG_MODULES` in an earlier commit — the suite had been failing to even load.
+
+⚠️ **That rename inverted the model: an allow-list became a deny-list, so everything except
+`system` is now queued.** The old allow-list existed to keep per-field modules
+(`calculator_field_entry`, `lead_result_field_entry`) out of the queue — they fire PER KEYSTROKE,
+one offline quote is hundreds of rows, and MMKV rewrites its whole store on every write.
+`MAX_QUEUED_LOGS` is now the only thing holding that back. If a device in a dead zone starts
+filling up or replay gets slow, look here first.

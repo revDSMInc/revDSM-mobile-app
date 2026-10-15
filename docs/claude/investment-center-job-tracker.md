@@ -402,3 +402,114 @@ branding row showed the company-name fallback until the secure URL resolved, the
 `InvestmentPanel.tsx` no longer takes `leadOneYearDefaultKey` (the lead-wide `isDefault` scan in `InvestmentCenter/index.tsx` is gone). `Default` mode uses
 `resolveOneYearDefaultKey(plans, user, method)` (`utils/one-year-default.ts`, rep 1 Year default first) and no stored 1-Year plan + a rep default => `Default`, else `Match`.
 Full write-up: `deal-center.md` § REVUIUX-444.
+
+## "Confirmed rollouts but Investment Center not ready" — two causes, one intermittent
+
+Client: after confirming rollouts, the Investment Center tile **sometimes** still reads "Please Fully
+Build ALL jobs first". Not reproducible on the dev's device. It is two independent bugs; the
+first explains the intermittency, the second is permanent when it bites.
+
+### 1. The early-unlock only armed on one of four exits (the intermittent one)
+
+`markLeadRolloutsConfirmed` (see the note above) is what bridges the gap between the rep confirming
+and the server knowing it — the confirmation rides the **debounced** save engine
+(`SAVE_DEBOUNCE_MS = 1500` plus the round trip), while the tile reads the server on focus. But it
+fired only from `onRolloutsConfirmedDone`, the "Jobs Built — Back to Tools" button.
+
+⚠️ That is **not** the only way out of the rollout. The header **back arrow** (`onBack`), hardware
+back, and the 10-minute **auto-confirm** (`RolloutView.checkAndAutoConfirm`, which fires
+`onConfirmRollouts` on a timer and which the rep never sees) all leave without arming it. Each of
+those then races the PUT: win it on office wifi and the tile is open, lose it on weak LTE and it
+reads locked. That is the whole shape of the report — **a timing bug is exactly what reproduces on
+some devices and not others**, and the client's screenshot is on 2-bar LTE.
+
+Fix: `DynamicDealCenterScreen`'s `onConfirmRollouts` now arms the grace at the moment of
+**confirmation**, guarded on that confirm completing the whole set. `onRolloutsConfirmedDone` keeps
+its call (it just refreshes the timestamp).
+
+⚠️ The guard matters: the override asserts `allConfirmed` outright, so confirming one of three
+calculators must not arm it. The set is projected from the `confirmed` array rather than re-read
+from `tabs`, because `handleConfirmRollouts`' state update has not landed yet when this runs.
+
+⚠️ Known, accepted edge: confirm everything, then add a NEW calculator and leave within the 60 s
+grace, and the tile is briefly unlocked. The window self-clears and the server re-locks it. The
+"Jobs Built" path always had this property.
+
+### 2. Two disagreeing definitions of "all confirmed" (the permanent one)
+
+`RolloutView.visibleCalculators` hid calculators whose title is a bare number (`"1"`), so the rollout
+screen **cannot confirm one**. `useLeadCalculatorStatus` counted a calculator as `real` — and gated
+on it — as soon as it was `named || hasValue`, so a bare-number calculator **with an entered value**
+counted. A lead holding one therefore read "all rollouts confirmed / LOCKED" in the Deal Center and
+"Please Fully Build ALL jobs first" in the Lead Center, **forever**, with nothing the rep could do:
+the calculator blocking the tile was not on the screen that confirms them.
+
+Fix: both sides now call `allRolloutsConfirmed` from the new pure `utils/rollout-status.ts`
+(`isPlaceholderCalculatorTitle` / `rolloutCalculators` / `allRolloutsConfirmed`), tested in
+`__tests__/utils/rollout-status.test.ts`.
+
+⚠️ `hasCalculator` deliberately stays on the looser `real` rule. It answers "did the rep build
+anything", which is a different question from "is everything the rollout can confirm confirmed".
+Do not collapse the two.
+
+⚠️ A **blank** title is NOT a placeholder — `RolloutView` shows those, so the gate must count them.
+The regex is `/^\d+$/` on the trimmed title and nothing else; a test pins this.
+
+⚠️ Do not re-inline either filter. They drifted once and produced a bug no amount of tapping could
+clear.
+
+Not verified on a device (the intermittent half needs a slow connection to see at all). `tsc` 45
+errors (unchanged baseline, none in the changed files), `eslint` identical to HEAD across all three
+changed files (327 problems / 27 errors, all pre-existing), `jest` 551 pass / 37 suites — the 9 new
+ones cover the shared predicate.
+
+---
+
+## The consent gate re-opened a form the customer had already signed
+
+Client: *"submitted the form => become offline => went back => press the investment center again =>
+and it's allow me to submit the form again instead of showing investment center."* A second
+signature request for a consent already on file. Full diagnosis of the underlying cause (the local
+filed log) is in [`lead-center.md`](lead-center.md); this is the Investment Center half.
+
+`screens/InvestmentCenter/index.tsx` computed its own `consentSigned`:
+
+```
+const consentSigned = localConsentSigned || consentQueued || hasSignedConsent(lead) || isLeadSold;
+```
+
+Every term is false after *submitted online → went offline → reopened the screen*:
+
+- `localConsentSigned` is `useState(false)`, so it **resets on every mount** — it only ever
+  describes a signature taken during this visit to the screen.
+- `consentQueued` (`hasQueuedConsent`) only knows about forms submitted **offline**; one sent
+  online never enters the queue.
+- `hasSignedConsent(lead)` → `hasFiledConsentReport` reads `lead.generatedReports`, **server data**,
+  absent whenever the lead was re-read from a cache taken before the submission.
+
+With all three false, the auto-open effect (`consentAutoOpenedRef`, ~line 257) fired
+`setShowConsent(true)` and presented a blank Customer Consent Form.
+
+The gate now calls `consentAlreadyFiled` (`utils/consent-filed-log.ts`), fed by
+`useFiledConsents(lead)` — the persisted, owner-scoped record written on **every** successful
+submission, online or offline.
+
+⚠️ **This is the same shape as "Two disagreeing definitions of all confirmed" above.** That ticket
+ends with *"do not re-inline either filter"*; this is that warning coming true in a different
+place. `OperationalSections` (the Lead Center card badge) and this screen each had their own copy,
+only the card was fixed first, and the result was the app contradicting itself — the badge read
+**"Consent on file — present quote"** with the **"Already Generated"** chip while the screen behind
+it demanded a signature. A gate that exists twice will disagree; put it in one predicate.
+
+⚠️ When touching this, grep `hasFiledConsentReport|hasQueuedConsent` and check every hit. Anything
+used as a GATE belongs on `consentAlreadyFiled`. The exception is `knownFiledBefore` in
+`services/offlineLeadStore.ts`, which feeds `isConsentAlreadyFiled` — a replay guard that does a
+fresh `getSalesDealById` read before re-posting a queued form. That one is deliberately
+server-truth, not device-truth; routing it through the cached predicate would let a duplicate
+replay through.
+
+⚠️ `localConsentSigned` is kept as the `signedThisSession` input rather than deleted: it is the
+only source that knows about a signature taken seconds ago, before anything has been persisted.
+
+Not verified on a device — the sequence to check is submit online → airplane mode → reopen the
+Investment Center, which is the path the first fix missed.
