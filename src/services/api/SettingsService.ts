@@ -27,6 +27,7 @@ export const SettingsService = {
   updateCalculatorsSetting: (data: {
     defaultPaymentMethod?: string | null;
     defaultPercentage?: number | null;
+    defaultOneYearPaymentMethod?: string | null;   // REVUIUX-444
   }): Promise<AxiosResponse<any>> =>
     api.put('/company/user/update-default-lf-calculator-settings', data),
 };

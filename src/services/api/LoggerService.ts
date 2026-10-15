@@ -3,8 +3,8 @@ import { ENV } from '../../config/env';
 import { Storage } from '../../utils/storage';
 import Geolocation from 'react-native-geolocation-service';
 import { isOnline } from '../connectivity';
-import { queueActivityLog, setActivityLogSender } from '../offlineActivityLog';
-import { isQueueableLog, stampOfflineLog } from '../../utils/offline-activity-log';
+import { hasQueuedActivityLogs, queueActivityLog, setActivityLogSender } from '../offlineActivityLog';
+import { isQueueableLog, stampActionTime, stampOfflineLog } from '../../utils/offline-activity-log';
 
 const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
 
@@ -138,7 +138,11 @@ export const logEvent = async (eventType: string, details: any = {}) => {
   const isPublic = details.isPublic || false;
   if (!userId && !isPublic) return;
 
-  const meta = { ...(details.meta || {}) };
+  // The moment of the ACTION, taken before anything can wait (a held log, a slow location lookup, a
+  // dead connection). It is the same `meta.occurredAt` on every path, so the backend never has to
+  // guess between the action time and the time the request finally went out.
+  const actionAt = new Date().toISOString();
+  const meta: Record<string, any> = stampActionTime({ ...(details.meta || {}) }, actionAt);
   if (details.action && meta.action == null) {
     meta.action = details.action;
   }
@@ -182,19 +186,20 @@ export const logEvent = async (eventType: string, details: any = {}) => {
     return;
   }
 
-  if (!isOnline() && isQueueableLog(details.module_type)) {
-    const occurredAt = new Date().toISOString();
+  // Held when offline, and ALSO while older held logs are still waiting: sending this one straight
+  // away would put it ahead of actions the rep took earlier.
+  if ((!isOnline() || hasQueuedActivityLogs()) && isQueueableLog(details.module_type)) {
     if (attachLocation && cachedLocation && Date.now() - cachedLocation.at < LOCATION_TTL_MS) {
       meta.lat = cachedLocation.lat;
       meta.long = cachedLocation.long;
     }
-    const heldMeta = stampOfflineLog(meta, occurredAt);
+    const heldMeta = stampOfflineLog(meta, meta.occurredAt);
     queueActivityLog({
       eventType,
       payload: { ...payload, meta: heldMeta },
       meta: heldMeta,
       attachLocation: false,
-      occurredAt,
+      occurredAt: heldMeta.occurredAt,
     });
     if (isDev) console.log(`[Logger] ⤓ ${eventType} held offline (${details.module_type})`);
     return;

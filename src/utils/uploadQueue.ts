@@ -484,7 +484,8 @@ class UploadQueueManager {
           leadId: item.leadId,
           category: item.categoryName,
           subcategory: item.subcategory,
-          timestamp: item.timestamp,
+          // The shared action-time key (see utils/offline-activity-log.ts); the photo's own capture time.
+          occurredAt: item.timestamp,
           coordinates: coords,
           size: 0,
           action: isAnnotated ? 'annotated_photo_uploaded' : 'photo_uploaded',

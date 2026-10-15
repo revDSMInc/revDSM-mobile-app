@@ -2,9 +2,11 @@ import { AppState } from 'react-native';
 import { Storage } from '../utils/storage';
 import { isOnline, onReconnect } from './connectivity';
 import { isUnauthorizedError } from '../utils/upload-retry-policy';
+import { findUnresolvedClientIds } from '../utils/offline-lead-work';
 import { getSessionOwner, registerSessionResetHook } from './sessionScope';
 import {
   appendQueuedLog,
+  nextSendableLog,
   replayableLogs,
   rekeyQueuedLogs,
   settleQueuedLog,
@@ -23,6 +25,21 @@ let sender: LogSender | null = null;
 export const setActivityLogSender = (fn: LogSender): void => {
   sender = fn;
 };
+
+// Swaps a device-only id (lead / appointment / calculator created offline) for its server id once
+// that step has uploaded. Registered by `offlineLeadStore`, which owns the id maps.
+type IdResolver = (value: Record<string, any>) => Record<string, any>;
+let resolveIds: IdResolver = (v) => v;
+
+export const setActivityLogIdResolver = (fn: IdResolver): void => {
+  resolveIds = fn;
+};
+
+const resolvedPayload = (entry: QueuedActivityLog): Record<string, any> =>
+  resolveIds(entry.payload);
+
+const hasUnresolvedIds = (entry: QueuedActivityLog): boolean =>
+  findUnresolvedClientIds(resolvedPayload(entry)).length > 0;
 
 const load = (): void => {
   if (loaded) return;
@@ -72,6 +89,15 @@ export const rekeyActivityLogs = (fromId: string, toId: string): void => {
   if (next === store) return;
   store = next;
   persist();
+  // The lead now exists, so the logs held back for it can go.
+  if (isOnline()) runActivityLogDrain();
+};
+
+// True while any log of this rep is waiting. `logEvent` uses it so a log made after reconnecting
+// joins the line behind the older held ones instead of overtaking them.
+export const hasQueuedActivityLogs = (): boolean => {
+  load();
+  return replayableLogs(store, getSessionOwner()).length > 0;
 };
 
 export const queuedActivityLogCount = (): number => {
@@ -90,11 +116,11 @@ export const drainActivityLogs = async (): Promise<void> => {
   draining = true;
   try {
     for (;;) {
-      const next = replayableLogs(store, getSessionOwner())[0];
+      const next = nextSendableLog(store, getSessionOwner(), hasUnresolvedIds);
       if (!next || !isOnline()) return;
       let outcome: 'sent' | 'failed' = 'sent';
       try {
-        await sender(next);
+        await sender({ ...next, payload: resolvedPayload(next) });
       } catch (e: any) {
         // A 401 is the session, not the log: keep it, spend no attempt, and stop.
         if (isUnauthorizedError(e)) return;

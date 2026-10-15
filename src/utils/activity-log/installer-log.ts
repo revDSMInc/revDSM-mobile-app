@@ -316,7 +316,7 @@ const photoMeta = (meta: InstallerPhotoLogMeta, action: string) =>
   compact({
     category: meta.category,
     subcategory: meta.subcategory,
-    timestamp: meta.timestamp,
+    occurredAt: meta.timestamp,
     coordinates: meta.coordinates ?? null,
     size: meta.size ?? 0,
     action,

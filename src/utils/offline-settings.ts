@@ -1,12 +1,14 @@
 export interface PendingCalculatorSettings {
   defaultPaymentMethod?: string | null;
   defaultPercentage?: number | null;
+  /** REVUIUX-444: the rep's 1 Year Program default plan key (sibling of `defaultPaymentMethod`, never a reuse of it). */
+  defaultOneYearPaymentMethod?: string | null;
   updatedAt: string;
 }
 
 export type CalculatorSettingsPatch = Omit<Partial<PendingCalculatorSettings>, 'updatedAt'>;
 
-const FIELDS = ['defaultPaymentMethod', 'defaultPercentage'] as const;
+const FIELDS = ['defaultPaymentMethod', 'defaultPercentage', 'defaultOneYearPaymentMethod'] as const;
 
 export const mergePendingSettings = (
   current: PendingCalculatorSettings | null | undefined,

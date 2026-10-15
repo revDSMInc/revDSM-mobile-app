@@ -8,6 +8,7 @@ import {
   planLabelOf,
   isFinancing,
 } from '../hooks/useDealPricing';
+import { oneYearNeedsResync } from '../../../utils/one-year-default';
 
 export type OneYearMonthlyValue = {
   mode: 'match' | 'default' | 'custom';
@@ -27,8 +28,10 @@ interface Props {
   value: OneYearMonthlyValue;
   onChange: (v: OneYearMonthlyValue) => void;
   locked?: boolean;
-  /** The lead-wide default plan (set on ANY of this lead's calculators); null when none. */
-  leadDefault?: { planKey: string; apr?: number } | null;
+  /** REVUIUX-444: the REP's own 1 Year default plan key (`user.defaultOneYearPaymentMethod`, already validated); null when none. */
+  repDefaultKey?: string | null;
+  /** Star in the plan sheet: set (key) or clear (null) the rep's default. Independent of `mode`. */
+  onSetRepDefault?: (key: string | null) => void;
 }
 
 // "2521 (12 Months 0% ...)" -> "2521"; falls back to the whole label when there is no code.
@@ -42,56 +45,54 @@ const aprPercent = (apr: any): number => {
   return n < 1 ? n * 100 : n;
 };
 
-export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey, base, value, onChange, locked = false, leadDefault = null }: Props) {
+export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey, base, value, onChange, locked = false, repDefaultKey = null, onSetRepDefault }: Props) {
   const [showPicker, setShowPicker] = useState(false);
   const pickerScrollRef = useRef<ScrollView>(null);
-  // A calculator INHERITS the lead's default plan until the rep changes it there: nothing stored yet,
-  // or `Default` clicked without a pick of its own. An explicit Match / custom pick (or its own
-  // default pick, `isDefault`) is the rep's decision for this calculator and is never overwritten.
-  const inherits = !!leadDefault && (!value || (value.mode === 'default' && !value.isDefault));
-  const mode = value?.mode || (leadDefault ? 'default' : 'match');
-
-  const effectiveDefaultKey = inherits && leadDefault ? leadDefault.planKey : value?.isDefault && value.planKey ? value.planKey : defaultKey;
+  // `defaultKey` already puts the rep's default first (see `resolveOneYearDefaultKey`), so `Default` mode is always LIVE:
+  // changing the rep default moves every deal still on `Default`; Match / custom picks are the rep's decision and stay.
+  const mode = value?.mode || (repDefaultKey ? 'default' : 'match');
 
   const resolvedKey = useMemo(() => {
     if (mode === 'match') return inHomeMethod;
-    if (mode === 'default') return effectiveDefaultKey;
+    if (mode === 'default') return defaultKey;
     return value?.planKey || defaultKey;
-  }, [mode, inHomeMethod, effectiveDefaultKey, defaultKey, value?.planKey]);
+  }, [mode, inHomeMethod, defaultKey, value?.planKey]);
 
   const monthly = useMemo(() => calcMonthly(plans, base, resolvedKey), [plans, base, resolvedKey]);
   const financing = isFinancing(plans, resolvedKey);
 
-  const commit = (nextMode: 'match' | 'default' | 'custom', nextKey?: string, asLeadDefault = false) => {
+  // ⚠️ `isDefault` is never set from the app any more: the user record owns the default (REVUIUX-444). Writing it on a
+  // mode change is what used to erase the rep's pick when they tapped Match then Default.
+  const commit = (nextMode: 'match' | 'default' | 'custom', nextKey?: string) => {
     if (locked) return;
-    const key =
-      nextMode === 'match' ? inHomeMethod : nextMode === 'default' ? (nextKey || effectiveDefaultKey) : (nextKey || defaultKey);
-    const m = calcMonthly(plans, base, key);
+    const key = nextMode === 'match' ? inHomeMethod : nextMode === 'default' ? defaultKey : (nextKey || defaultKey);
     onChange({
       mode: nextMode,
       planKey: key,
       apr: plans[key]?.apr,
-      monthlyPayment: m,
+      monthlyPayment: calcMonthly(plans, base, key),
       grandTotal: base,
-      // Only a plan the rep PICKED while on Default becomes the lead-wide default.
-      isDefault: nextMode === 'default' && (asLeadDefault || !!value?.isDefault),
+      isDefault: false,
     });
   };
 
-  // Persist an inherited default (a calculator created later, or one still on a bare `Default`).
+  // Stamp / re-stamp a `Default` calculator: a new one arrives from the backend with monthly 0 (it prices nothing), and a
+  // changed rep default must reach every deal still on Default.
+  const defaultMonthly = useMemo(() => calcMonthly(plans, base, defaultKey), [plans, base, defaultKey]);
+  const defaultApr = plans[defaultKey]?.apr;
   useEffect(() => {
-    if (locked || !leadDefault || !inherits) return;
-    if (value && value.planKey === leadDefault.planKey) return;
+    if (locked || mode !== 'default') return;
+    if (!oneYearNeedsResync(value, defaultKey, defaultMonthly, base, !!repDefaultKey)) return;
     onChange({
       mode: 'default',
-      planKey: leadDefault.planKey,
-      apr: plans[leadDefault.planKey]?.apr,
-      monthlyPayment: calcMonthly(plans, base, leadDefault.planKey),
+      planKey: defaultKey,
+      apr: defaultApr,
+      monthlyPayment: defaultMonthly,
       grandTotal: base,
       isDefault: false,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leadDefault?.planKey, inherits, value?.planKey, locked]);
+  }, [locked, mode, defaultKey, defaultMonthly, defaultApr, base, !!repDefaultKey, value?.mode, value?.planKey, value?.monthlyPayment, value?.grandTotal, value?.isDefault]);
 
   const financingCategories = useMemo(
     () =>
@@ -189,9 +190,9 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                 each row the plan's FULL label + APR, with the monthly on the right,
                 matching the rollout's payment picker. */}
             <ScrollView ref={pickerScrollRef} contentContainerStyle={{ padding: 16 }}>
-              {/* The lead-wide default plan - only while the rep is on Default. Picking a plan
-                  below while on Default replaces it; `Change` just points the rep at the list. */}
-              {mode === 'default' && !!plans[effectiveDefaultKey] && (
+              {/* The REP's default plan (REVUIUX-444) - shown in EVERY mode so it can be seen and changed from Match too.
+                  The star on a row sets it; it is independent of the Match / Default toggle. */}
+              {repDefaultKey && !!plans[repDefaultKey] ? (
                 <View style={{ marginBottom: 14 }}>
                   <Text style={{ fontSize: 9, fontWeight: '900', color: '#4CBB17', letterSpacing: 0.5, marginBottom: 6 }}>MY DEFAULT PLAN</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: '#4CBB17', borderRadius: 12, backgroundColor: '#4CBB170D', paddingHorizontal: 14, paddingVertical: 12 }}>
@@ -200,10 +201,10 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                     </View>
                     <View style={{ flex: 1, paddingRight: 8 }}>
                       <Text style={{ fontSize: 11.5, fontWeight: '900', color: '#1C252E', lineHeight: 15 }}>
-                        {`${plans[effectiveDefaultKey]?.provider ? plans[effectiveDefaultKey].provider + ' ' : ''}${planCodeOf(planLabelOf(plans, effectiveDefaultKey))}${calcMonthly(plans, base, effectiveDefaultKey) > 0 ? ` \u00B7 ${fmt(calcMonthly(plans, base, effectiveDefaultKey))}/mo` : ''}`}
+                        {`${plans[repDefaultKey]?.provider ? plans[repDefaultKey].provider + ' ' : ''}${planCodeOf(planLabelOf(plans, repDefaultKey))}${calcMonthly(plans, base, repDefaultKey) > 0 ? ` \u00B7 ${fmt(calcMonthly(plans, base, repDefaultKey))}/mo` : ''}`}
                       </Text>
-                      {!!(plans[effectiveDefaultKey]?.shortlabel || plans[effectiveDefaultKey]?.displayMonths) && (
-                        <Text style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>{plans[effectiveDefaultKey]?.shortlabel || plans[effectiveDefaultKey]?.displayMonths}</Text>
+                      {!!(plans[repDefaultKey]?.shortlabel || plans[repDefaultKey]?.displayMonths) && (
+                        <Text style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>{plans[repDefaultKey]?.shortlabel || plans[repDefaultKey]?.displayMonths}</Text>
                       )}
                     </View>
                     <TouchableOpacity
@@ -213,7 +214,12 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                       <Text style={{ fontSize: 11, fontWeight: '900', color: '#4CBB17' }}>Change</Text>
                     </TouchableOpacity>
                   </View>
-                  <Text style={{ fontSize: 9, color: '#94A3B8', marginTop: 6 }}>Pre-selected on every new deal.</Text>
+                  <Text style={{ fontSize: 9, color: '#94A3B8', marginTop: 6 }}>Pre-selected on every new deal, on every lead. Tap the star again to clear it.</Text>
+                </View>
+              ) : (
+                <View style={{ marginBottom: 14, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E1', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12 }}>
+                  <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', letterSpacing: 0.5, marginBottom: 4 }}>MY DEFAULT PLAN</Text>
+                  <Text style={{ fontSize: 11, color: '#637381', lineHeight: 15 }}>No default set. Tap the star on a plan to make it your 1 Year default for every deal.</Text>
                 </View>
               )}
               {financingCategories.length === 0 ? (
@@ -229,12 +235,12 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                     {cat.plans.map((key) => {
                       const m = calcMonthly(plans, base, key);
                       const isSel = resolvedKey === key;
-                      const isMyDefault = mode === 'default' && key === effectiveDefaultKey;
+                      const isMyDefault = key === repDefaultKey;
                       return (
                         <TouchableOpacity
                           key={key}
                           activeOpacity={0.85}
-                          onPress={() => { if (mode === 'default') commit('default', key, true); else commit('custom', key); setShowPicker(false); }}
+                          onPress={() => { commit('custom', key); setShowPicker(false); }}
                           style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: isSel ? 2 : 1, borderColor: isSel ? '#4CBB17' : '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 9, backgroundColor: isSel ? '#4CBB170D' : '#fff' }}
                         >
                           <View style={{ flex: 1, paddingRight: 12 }}>
@@ -249,6 +255,15 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                             <Text style={{ fontSize: 11.5, fontWeight: '900', color: '#1C252E', lineHeight: 15 }}>{planLabelOf(plans, key)}</Text>
                           </View>
                           <Text style={{ fontSize: 13, fontWeight: '900', color: '#60A5FA' }}>{m > 0 ? `${fmt(m)}/mo` : '—'}</Text>
+                          {!!onSetRepDefault && (
+                            <TouchableOpacity
+                              onPress={() => onSetRepDefault(isMyDefault ? null : key)}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              style={{ marginLeft: 10 }}
+                            >
+                              <Ionicons name={isMyDefault ? 'star' : 'star-outline'} size={20} color={isMyDefault ? '#4CBB17' : '#94A3B8'} />
+                            </TouchableOpacity>
+                          )}
                         </TouchableOpacity>
                       );
                     })}

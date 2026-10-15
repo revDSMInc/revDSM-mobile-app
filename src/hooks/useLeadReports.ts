@@ -473,11 +473,13 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
       try {
         updateJobStateAndPersistence(prev => {
           const next = [...prev];
-          next[index].status = 'running';
-          next[index].progress = 0;
+          if (next[index]) {
+            next[index].status = 'running';
+            next[index].progress = 0;
+          }
           return next;
         });
-        
+
         startMockProgress();
 
         const res = await LeadService.generateRevRender(job.payload);
@@ -506,8 +508,10 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
           completedCount++;
           updateJobStateAndPersistence(prev => {
             const next = [...prev];
-            next[index].status = 'completed';
-            next[index].progress = 100;
+            if (next[index]) {
+              next[index].status = 'completed';
+              next[index].progress = 100;
+            }
             return next;
           });
           if (completedCount === total) {
@@ -555,8 +559,10 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
               completedCount++;
               updateJobStateAndPersistence(prev => {
                 const next = [...prev];
-                next[index].status = 'completed';
-                next[index].progress = 100;
+                if (next[index]) {
+                  next[index].status = 'completed';
+                  next[index].progress = 100;
+                }
                 return next;
               });
             } else if (batchStatus === 'failed' || batchStatus === 'cancelled' || (batchFinished && anyFailed)) {
@@ -635,8 +641,10 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
 
         updateJobStateAndPersistence(prev => {
           const next = [...prev];
-          next[index].status = 'failed';
-          next[index].error = errorMsg;
+          if (next[index]) {
+            next[index].status = 'failed';
+            next[index].error = errorMsg;
+          }
           return next;
         });
 

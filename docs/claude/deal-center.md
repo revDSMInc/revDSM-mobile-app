@@ -3159,6 +3159,53 @@ Ticket: *same logic in the Fascia tab.* `usesPerSectionAdd` (`gutter-pairing.ts`
 a per-section Add Combination and shows a combination only when the Deal Center sent values (or it was added in edit). Nothing else changed; the
 other tabs (Gutters pair, LeafFilter, Lighting, Gutter Guards…) are not matched.
 
+### Offline parity — every Deal Center log the online flow writes is now written offline (2026-10-14)
+
+Ticket: *logs generated online are missing when the same screen is used offline* (e.g. calculator `create` / `view`).
+Cause: the offline path is a different code path (device record, no request), and several logs were written by a
+**server hook or a success branch the offline path never reaches**. Queue mechanics: `docs/claude/offline.md` (activity logs section).
+
+| Log | Online source | Offline (was → now) |
+|---|---|---|
+| `calculator` view | effect, gated `isBackendId(tab.id)` | never logged for a `calc-…` tab → gate also accepts `isClientId` |
+| `calculator` create, first tab | bootstrap after `createRemoteTab` | the offline `'mint'` seed logged nothing → logs `isFirstCalculator` |
+| `calculator` create (+ payment-method inherited) | `handleAddTab` after `createRemoteTab` | offline fell to a `local-…` tab with no log (and a doomed request) → `deviceTabFrom` mints a `calc-…` tab, saves it to the device record, logs both |
+| `calculator` duplicate | the SERVER writes it from `duplicateLog` | no request offline, so no log → `logEvent('duplicate', …)` + payment-method inherited |
+| `auto_rename` | `flushSave` / `saveDisplacedSiblings` | `flushSave` skips non-server ids → same title comparison in `persistOffline` (baseline set at hydrate / create) |
+| `funding` payments saved | `useFunding.savePayments` | `goFunding` offline path skipped the hook → `logFundingPaymentsSaved` |
+| `funding` check collected | `useFunding.markCheckCollected` | `handleMarkCollected` offline → `logFundingCheckCollected` |
+| `funding` submitted | `useFunding.submit` | queued submit in `handleBuild` → `logFundingSubmitted` |
+
+Already fine offline (no connectivity gate): field entry, rename, clear section, rollout/drop (`RolloutView`), job-builder logs,
+rollout summary, result-lead logs. The ids in these logs may be device ids; the activity-log queue holds each log until its
+lead / appointment / calculator has a server id and swaps them (`setActivityLogIdResolver`).
+
+- ⚠️ **Any new Deal Center log must be written by the UI handler, not by a service/server hook** — the offline branch of that
+  handler is where it silently goes missing. When you add an online log, look at the offline branch of the same handler.
+- ⚠️ Online funding link / card / loan / sync actions are not logged offline because the actions themselves are blocked offline (`useFunding.run`).
+
+## REVUIUX-444 — the 1 Year Program default plan is REP-scoped (`defaultOneYearPaymentMethod`)
+
+Contract: `REVUIUX-444-MOBILE-HANDOFF.md`. Backend adds `user.defaultOneYearPaymentMethod` (a plan key, sibling of `defaultPaymentMethod`), written via the
+SAME `PUT /company/user/update-default-lf-calculator-settings` (`null` clears, omitted keys untouched, key NOT validated server-side), and stamps new
+calculators with `oneYearMonthlyPlan = { mode: 'default', planKey: <rep key>, apr/monthlyPayment/grandTotal: 0, isDefault: false }`. The handoff's open
+question (rep- vs lead-scoped) was settled by the ticket text: *"the plan a rep selects as default must reflect in ALL leads"* => **rep-scoped**.
+- ⚠️ **Supersedes the lead-wide `isDefault` scan** (`RolloutView.leadOneYearDefault`, `InvestmentCenter` `leadOneYearDefaultKey`, `OneYearMonthlyPlan`
+  `leadDefault`/`inherits`): all removed. The app never writes `isDefault: true` any more (always `false`); the user record is the source of truth.
+  A legacy calculator saved with `isDefault: true` is re-stamped to `false` and follows the rep default; with no rep default it falls to the 9.99% chain.
+- `utils/one-year-default.ts` (pure, `__tests__/utils/one-year-default.test.ts`): `resolveRepOneYearKey` (published FINANCING key or null — an unknown,
+  unpublished or cash key is treated as no default), `resolveOneYearDefaultKey` (rep 1 Year default > In-Home default > 9.99% > any APR > first
+  financing > method), `oneYearNeedsResync`. Used by `RolloutView` AND `InvestmentPanel` so the two screens cannot drift.
+- Write path: `SettingsService.updateCalculatorsSetting` type + `offline-settings.ts` `FIELDS`/`PendingCalculatorSettings` gained the key, so the offline queue,
+  optimistic merge (`useAuth` -> `applyPendingSettingsToUser`) and replay-on-reconnect work with no other change. `RolloutView.setOneYearDefault` goes through
+  the existing `saveDefault` (queue -> flush -> `refreshUser`), exactly like the In-Home star.
+- `OneYearMonthlyPlan.tsx`: `Default` mode is LIVE (`resolvedKey = defaultKey`), so changing the rep default moves every deal still on Default; Match / custom picks
+  stay. A sync effect re-stamps a Default calculator whose `planKey`/monthly/total is stale (the backend stamp has monthly 0 — "the app recomputes on first render").
+- ⚠️ **Fixes the two QA bugs.** Bug 1 (Match then Default lost the pick): `commit` no longer writes `isDefault` from the calculator. Bug 2 (could not set a default
+  from Match): the **MY DEFAULT PLAN** card now shows in EVERY mode (or a dashed "No default set" hint) and each plan row has a **star** that sets / clears the rep default
+  independent of mode. Picking a row is always a one-off `custom` pick; the star never switches the calculator's mode.
+- ⚠️ Not done: the web Deal Center (own ticket per the handoff). The endpoint was not exercised over HTTP by the backend dev — check once on staging. Not verified on device.
+
 ### Install calendar dims days no crew can take (REVDSM-1300)
 `InstallDateCalendar` (this screen) and the calendar in `AppointmentSchedulerModal` call
 `useInstallCalendarAvailability(month, leadId, enabled)`, which posts one month to
