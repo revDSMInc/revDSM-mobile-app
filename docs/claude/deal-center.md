@@ -3158,3 +3158,26 @@ Ticket: *show a combination only when it received values from the Deal Center; o
 Ticket: *same logic in the Fascia tab.* `usesPerSectionAdd` (`gutter-pairing.ts`) matches `__soffit` and `__fascia` (or those labels), so Fascia gets
 a per-section Add Combination and shows a combination only when the Deal Center sent values (or it was added in edit). Nothing else changed; the
 other tabs (Gutters pair, LeafFilter, Lighting, Gutter Guards…) are not matched.
+
+### Install calendar dims days no crew can take (REVDSM-1300)
+`InstallDateCalendar` (this screen) and the calendar in `AppointmentSchedulerModal` call
+`useInstallCalendarAvailability(month, leadId, enabled)`, which posts one month to
+`installer/v1/installer-dispatch/availability/calendar` and dulls out (disables, `#e2e8f0` like Sundays and past
+days) every day whose `available` is false. Lance's rule: a day with no crew for this job is not selectable.
+
+- ⚠️ **Dim nothing unless it is certain.** `blockedDates` is empty when the call fails, the app is offline,
+  `enforced` is false, or the user can override (managers book over a full day, Step 3). The per-day check
+  (`useInstallAvailability`) still decides what a picked day offers, so a failed calendar call never blocks booking.
+- Months already answered are kept per `leadId|yyyy-MM`; a failed month is asked again when it is next shown.
+- A rep never sees which crew: this call carries no crew names.
+
+### "Yes" books the time and assigns the crew (REVDSM-1300)
+In the create flow (`!isEdit` with a `leadId`), **Yes** on *Does this time work for the customer?* calls
+`bookInstallSlot` -> `POST installer/v1/installer-dispatch/availability/book`. The server re-checks the window
+against the schedule as it is at that moment and assigns the crew it picks (first come, first served; sales only).
+`SummaryFinalizeCards` now passes `leadId` to the modal, which also makes its availability checks job-aware.
+
+- `taken` (409): "Time no longer available", the scheduler is asked again (`availabilityRefresh`) and the rep goes back to the calendar.
+- `offline` (no response at all): "You need to be online to schedule this job." and the rep stays on the screen. Lance: scheduling requires a connection.
+- Any other failure (`error`, 5xx, demo lead, nothing to assign) lets the booking continue as before; `submitJobBuilder` still tries to assign a lead that has no crew yet.
+- ⚠️ Not done on the edit flow (`isEdit`, My Deals): rescheduling a job that already has a crew does not re-pick a crew.

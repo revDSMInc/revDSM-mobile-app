@@ -1423,3 +1423,15 @@ A field without it shows nothing — however the pick is wired.
 - ⚠️ **Deliberately looser than web**: no Versa Max / Sale gate (the ticket: show it whenever `< 2.5` is picked). Re-add the profile / demo checks in
   `resolveBuiltinFieldNotice` if reps complain of it on Versa. A label other than "Gutter Opening Width" needs `field.notice` authored in the portal.
 - Test: `__tests__/field-notice.test.ts` (gitignored dir). Not verified on device.
+
+### Install calendar dims days no crew can take (REVDSM-1300)
+`InstallDateCalendar` (this screen) and the calendar in `AppointmentSchedulerModal` call
+`useInstallCalendarAvailability(month, leadId, enabled)`, which posts one month to
+`installer/v1/installer-dispatch/availability/calendar` and dulls out (disables, `#e2e8f0` like Sundays and past
+days) every day whose `available` is false. Lance's rule: a day with no crew for this job is not selectable.
+
+- ⚠️ **Dim nothing unless it is certain.** `blockedDates` is empty when the call fails, the app is offline,
+  `enforced` is false, or the user can override (managers book over a full day, Step 3). The per-day check
+  (`useInstallAvailability`) still decides what a picked day offers, so a failed calendar call never blocks booking.
+- Months already answered are kept per `leadId|yyyy-MM`; a failed month is asked again when it is next shown.
+- A rep never sees which crew: this call carries no crew names.

@@ -17,8 +17,10 @@ import {
   startOfToday,
 } from 'date-fns';
 import { LeadService } from '../../../services/api/leads';
+import { bookInstallSlot } from '../../../services/api/installAvailability';
 import {
   useInstallAvailability,
+  useInstallCalendarAvailability,
   useOfferedWindows,
   windowInfo,
   windowNotice,
@@ -96,6 +98,9 @@ export const AppointmentSchedulerModal = ({
   const [timeSlotIdx, setTimeSlotIdx] = useState(0);
   const [tbdReason, setTbdReason] = useState('');
   const [isTBD, setIsTBD] = useState(false);
+  // Booking the time on "Yes" is in flight, and a counter that re-asks the scheduler when a time was taken.
+  const [booking, setBooking] = useState(false);
+  const [availabilityRefresh, setAvailabilityRefresh] = useState(0);
 
   // What the scheduler says about the chosen day. Until it answers — or if it never
   // does — every window is offered exactly as before.
@@ -103,8 +108,16 @@ export const AppointmentSchedulerModal = ({
     format(selectedDate, 'yyyy-MM-dd'),
     leadId,
     visible && view === 'time' && !isTBD,
+    availabilityRefresh,
   );
   const offered = useOfferedWindows(windows, availability);
+  // Days no crew can take are dulled out on the calendar. Empty until it answers.
+  const { blocked: blockedDays } = useInstallCalendarAvailability(
+    currentMonth,
+    leadId,
+    visible && view === 'date',
+    availabilityRefresh,
+  );
   const currentWindow = offered[timeSlotIdx] ?? offered[0] ?? windows[0];
   const notice = windowNotice(windowInfo(currentWindow, availability));
 
@@ -163,7 +176,33 @@ export const AppointmentSchedulerModal = ({
           customerName,
         };
 
-  const handleAcceptSlot = () => {
+  const handleAcceptSlot = async () => {
+    if (booking) return;
+
+    // First come, first served: the server books the time and assigns the crew at this
+    // moment, so a time someone else just took is caught here, not at the end of the job.
+    if (!isEdit && leadId) {
+      setBooking(true);
+      const result = await bookInstallSlot({
+        leadId,
+        date: format(selectedDate, 'yyyy-MM-dd'),
+        timeWindow: currentWindow.value,
+      });
+      setBooking(false);
+
+      if (result.kind === 'taken') {
+        FlashMessage.warning('Time no longer available', result.message);
+        setAvailabilityRefresh((n) => n + 1);
+        setTimeSlotIdx(0);
+        setView('date');
+        return;
+      }
+      if (result.kind === 'offline') {
+        FlashMessage.warning('Connection needed', 'You need to be online to schedule this job.');
+        return;
+      }
+    }
+
     setIsTBD(false);
     setView('success');
     onBooked?.(bookedAppointmentData(false));
@@ -358,7 +397,7 @@ export const AppointmentSchedulerModal = ({
             const isToday = isSameDay(day, new Date());
             const isPast = day < startOfToday();
             const isSunday = getDay(day) === 0;
-            const isDisabled = isPast || isSunday;
+            const isDisabled = isPast || isSunday || blockedDays.has(format(day, 'yyyy-MM-dd'));
 
             return (
               <TouchableOpacity
@@ -514,7 +553,7 @@ export const AppointmentSchedulerModal = ({
                     </View>
                   </TouchableOpacity>
 
-                  <TouchableOpacity onPress={handleAcceptSlot} style={{ flex: 1 }}>
+                  <TouchableOpacity onPress={handleAcceptSlot} disabled={booking} style={{ flex: 1, opacity: booking ? 0.7 : 1 }}>
                     <View
                       style={{
                         height: 56,
@@ -529,9 +568,13 @@ export const AppointmentSchedulerModal = ({
                         elevation: 4,
                       }}
                     >
-                      <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>
-                        {notice?.tone === 'warn' ? 'Yes, Book Anyway' : 'Yes'}
-                      </Text>
+                      {booking ? (
+                        <ActivityIndicator color="white" />
+                      ) : (
+                        <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>
+                          {notice?.tone === 'warn' ? 'Yes, Book Anyway' : 'Yes'}
+                        </Text>
+                      )}
                     </View>
                   </TouchableOpacity>
                 </View>

@@ -56,6 +56,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { useIsOnline } from '../../../hooks/useIsOnline';
 import {
   useInstallAvailability,
+  useInstallCalendarAvailability,
   useOfferedWindows,
   windowInfo,
   windowNotice,
@@ -1850,6 +1851,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 <InstallDateCalendar
                   selectedDate={proposedDate || parsedScheduleDate}
                   onSelect={handleInlineDateSelect}
+                  leadId={lead?._id}
                 />
 
                 <Text style={styles.calendarHint}>Sundays unavailable</Text>
@@ -2733,11 +2735,15 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 function InstallDateCalendar({
   selectedDate,
   onSelect,
+  leadId,
 }: {
   selectedDate: Date | null;
   onSelect: (day: Date) => void;
+  leadId?: string;
 }) {
   const [currentMonth, setCurrentMonth] = useState<Date>(() => selectedDate || new Date());
+  // Days no crew can take are dulled out. Empty until the scheduler answers.
+  const { blocked: blockedDays } = useInstallCalendarAvailability(currentMonth, leadId, true);
   const daysInMonth = eachDayOfInterval({ start: startOfMonth(currentMonth), end: endOfMonth(currentMonth) });
   const startDay = getDay(startOfMonth(currentMonth));
   const dayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -2775,7 +2781,8 @@ function InstallDateCalendar({
         {daysInMonth.map((day, i) => {
           const isSelected = selectedDate ? isSameDay(day, selectedDate) : false;
           const isToday = isSameDay(day, new Date());
-          const isDisabled = day < startOfToday() || getDay(day) === 0;
+          const isDisabled =
+            day < startOfToday() || getDay(day) === 0 || blockedDays.has(format(day, 'yyyy-MM-dd'));
           return (
             <TouchableOpacity
               key={i}

@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { endOfMonth, format, startOfMonth, startOfToday } from 'date-fns';
 import { useIsOnline } from './useIsOnline';
 import {
   fetchInstallAvailability,
+  fetchInstallCalendarAvailability,
   InstallAvailability,
   InstallAvailabilityWindow,
+  InstallCalendarAvailability,
 } from '../services/api/installAvailability';
 
 export interface BookableWindow {
@@ -47,6 +50,8 @@ export function useInstallAvailability(
   ymd: string | null,
   leadId: string | undefined,
   enabled: boolean,
+  /** Bump to ask again for the same day (e.g. after a time was taken). */
+  refreshKey = 0,
 ) {
   const online = useIsOnline();
   const [availability, setAvailability] = useState<InstallAvailability | null>(null);
@@ -73,7 +78,7 @@ export function useInstallAvailability(
     return () => {
       cancelled = true;
     };
-  }, [active, ymd, leadId]);
+  }, [active, ymd, leadId, refreshKey]);
 
   return { availability, loading };
 }
@@ -106,4 +111,56 @@ export function useOfferedWindows<T extends BookableWindow>(
   availability: InstallAvailability | null,
 ): T[] {
   return useMemo(() => offeredWindows(all, availability), [all, availability]);
+}
+
+/**
+ * The days to dull out: those where no crew can take the job. A manager can book over a
+ * full day (Step 3), so for them nothing is dimmed.
+ */
+export function blockedDates(calendar: InstallCalendarAvailability | null): Set<string> {
+  if (!calendar?.enforced || calendar.canOverride) return new Set();
+  return new Set(calendar.days.filter((day) => !day.available).map((day) => day.date));
+}
+
+/**
+ * Asks the scheduler which days of `month` are bookable while `enabled`. Months already
+ * answered are kept, so paging back and forth costs nothing. `blocked` stays empty until
+ * it answers, and for good if it never does, which callers treat as "dim nothing".
+ */
+export function useInstallCalendarAvailability(
+  month: Date,
+  leadId: string | undefined,
+  enabled: boolean,
+  refreshKey = 0,
+) {
+  const [byMonth, setByMonth] = useState<Record<string, InstallCalendarAvailability | null>>({});
+  const asked = useRef(new Set<string>());
+  const monthKey = format(month, 'yyyy-MM');
+  const cacheKey = `${leadId || ''}|${monthKey}|${refreshKey}`;
+
+  useEffect(() => {
+    if (!enabled || asked.current.has(cacheKey)) return undefined;
+    asked.current.add(cacheKey);
+    let cancelled = false;
+    const today = startOfToday();
+    const first = startOfMonth(month) < today ? today : startOfMonth(month);
+    const last = endOfMonth(month);
+    if (last < today) return undefined;
+    fetchInstallCalendarAvailability({
+      startDate: format(first, 'yyyy-MM-dd'),
+      endDate: format(last, 'yyyy-MM-dd'),
+      leadId,
+    }).then((result) => {
+      if (cancelled) return;
+      if (!result) asked.current.delete(cacheKey); // try again next time it is shown
+      setByMonth((prev) => ({ ...prev, [cacheKey]: result }));
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, cacheKey]);
+
+  const blocked = useMemo(() => blockedDates(byMonth[cacheKey] ?? null), [byMonth, cacheKey]);
+  return { blocked };
 }
