@@ -36,6 +36,7 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 
 import { useTheme } from '../../theme/ThemeProvider';
 import { PendingUploadsCard } from '../../widgets/components/PendingUploadsCard';
+import { ConnectionDiagnosticsCard } from '../../widgets/components/ConnectionDiagnosticsCard';
 import { Header } from '../../widgets/common/MainHeader';
 import { CustomInput } from '../../widgets/common/CustomInput';
 import { CustomButton } from '../../widgets/common/CustomButton';
@@ -989,6 +990,10 @@ export default function ProfilePage() {
                   )}
                 </TouchableOpacity>
               </View>
+
+              {/* Connection diagnostics: what the app believes, and which url it is testing.
+                  A rep can read this out when they report "it said offline". */}
+              <ConnectionDiagnosticsCard />
 
               <PendingUploadsCard />
 

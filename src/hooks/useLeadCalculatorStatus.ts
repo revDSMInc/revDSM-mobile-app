@@ -8,6 +8,7 @@ import {
   mergeStatus,
   shouldPersistStatus,
   statusAfterFailedRead,
+  EMPTY_CALC_STATUS,
   type LeadCalculatorStatus,
 } from '../utils/lead-calc-status';
 import { getSessionOwner } from '../services/sessionScope';
@@ -98,10 +99,25 @@ export function useLeadCalculatorStatus(lead: any) {
       };
 
       let apptId: string | null = directAppt ? String(directAppt) : null;
+
+      /**
+       * ⚠️ TWO DIFFERENT "no appointment" CASES, and conflating them is a bug in either
+       * direction:
+       *
+       *  - the lookup THREW - we do not know, so keep what we knew (`onFailure`);
+       *  - the lookup SUCCEEDED and this lead is not in it - that is a definite answer. No
+       *    appointment means no calculators, which means nothing is confirmed.
+       *
+       * Returning `null` for the second case reported "don't know", which does not lock, and a
+       * rep could open the Investment Center on a lead created seconds earlier with no rollouts
+       * at all. `answered` records that the server did reply.
+       */
+      let answered = !!apptId;
       if (!apptId && (leadIdHuman || selfGenLeadId)) {
         try {
           const res = await LeadService.getAppointments(leadDate ? { lead_date: leadDate } : undefined);
           const appts = res.data?.data || res.data || [];
+          answered = true;
           const found = (appts as any[]).find(
             (a) =>
               (a.leadId && a.leadId !== 'N/A' && String(a.leadId) === String(leadIdHuman)) ||
@@ -112,9 +128,13 @@ export function useLeadCalculatorStatus(lead: any) {
           return onFailure();
         }
       }
-      // No appointment resolved. That is a real "nothing here yet" only when we had an answer
-      // to begin with; otherwise keep whatever we knew.
-      if (!apptId) return cached ?? null;
+
+      if (!apptId) {
+        // The server answered and there is no appointment: a definite "nothing built yet".
+        if (answered) return land(EMPTY_CALC_STATUS);
+        // We never got to ask at all - keep whatever we knew.
+        return onFailure();
+      }
 
       try {
         const res = await LeadService.getCalculators(apptId);

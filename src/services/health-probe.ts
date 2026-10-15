@@ -1,6 +1,10 @@
 import { ENV } from '../config/env';
 
-const HEALTH_URL = `${ENV.API_URL.replace(/\/+$/, '')}/health`;
+/**
+ * The one definition of "is our backend up". Exported so NetInfo's own reachability check uses
+ * the SAME url - two different health targets would disagree about being online.
+ */
+export const HEALTH_URL = `${ENV.API_URL.replace(/\/+$/, '')}/health`;
 
 /**
  * ⚠️ Was 2 s, which is INSIDE the noise on a weak radio. Measured cold TLS to the live API is
@@ -32,6 +36,18 @@ export const PROBE_STALL_INTERVAL_MS = 4_000;
 
 let lastProbeAt = 0;
 let inFlight: Promise<ProbeResult> | null = null;
+
+/**
+ * Diagnostics only - never used to decide anything.
+ *
+ * A rep saying "it showed offline" is unanswerable without these: we cannot tell a dead API from
+ * one lost packet on a weak cell. Reading them out turns the report into a fact.
+ */
+let lastSuccessAt: number | null = null;
+let lastDurationMs: number | null = null;
+
+export const getLastHealthSuccessAt = (): number | null => lastSuccessAt;
+export const getLastHealthDurationMs = (): number | null => lastDurationMs;
 
 let clockSkewMs: number | null = null;
 
@@ -74,8 +90,11 @@ const attemptProbe = async (): Promise<ProbeResult> => {
     if (body?.ok !== true) return false; // captive portal, or something else answering
 
     if (typeof body.ts === 'number') clockSkewMs = body.ts - Date.now();
+    const elapsed = Date.now() - startedAt;
+    lastSuccessAt = Date.now();
+    lastDurationMs = elapsed;
     // Reachable - but say HOW reachable, so a crawling line is not called offline.
-    return Date.now() - startedAt >= PROBE_SLOW_MS ? 'slow' : true;
+    return elapsed >= PROBE_SLOW_MS ? 'slow' : true;
   } catch {
     return false;
   } finally {
@@ -124,4 +143,6 @@ export const __resetHealthProbe = (): void => {
   lastProbeAt = 0;
   inFlight = null;
   clockSkewMs = null;
+  lastSuccessAt = null;
+  lastDurationMs = null;
 };
