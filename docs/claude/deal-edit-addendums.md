@@ -1423,3 +1423,137 @@ A field without it shows nothing — however the pick is wired.
 - ⚠️ **Deliberately looser than web**: no Versa Max / Sale gate (the ticket: show it whenever `< 2.5` is picked). Re-add the profile / demo checks in
   `resolveBuiltinFieldNotice` if reps complain of it on Versa. A label other than "Gutter Opening Width" needs `field.notice` authored in the portal.
 - Test: `__tests__/field-notice.test.ts` (gitignored dir). Not verified on device.
+
+## Cancel Job: the payload logged is the ENVELOPE, not the `lead` passed in
+
+Debug logging added to `LeadService.cancelLead` while chasing a cancel issue.
+
+⚠️ **Logged inside `cancelLead`, where the body is built — not at the `handleCancelJob` call site.**
+The screen calls `cancelLead(leadId, lead)` and passes the whole lead, so logging the argument looks
+right and is wrong: cancel is **not** a delete or an archive, it POSTs the job-builder endpoint
+(`lead/v1/{leadId}/job-builder`) with a **fixed envelope** — eleven named `leadData` fields plus
+`result: 'cancelled'` and an empty `jobState`. Logging `lead` would print dozens of fields that are
+never sent and omit the defaulting (`?? ''` / `?? null`) that decides what actually goes.
+
+⚠️ **Routed through `sanitizeForLog`, never raw.** A lead loaded from the sales portal can carry
+base64 documents, and with DevTools attached every logged string crosses the CDP websocket — that
+was most of an 18 s upload once already.
+
+The arrow function gained a block body (`=> { … return api.post(…) }`) to hold the log. ⚠️ The
+`return` is load-bearing: dropping it makes `cancelLead` resolve `undefined`, and
+`handleCancelJob`'s `await` would succeed instantly on a request that never happened — a cancel that
+flashes success, logs the timeline event and navigates back while the server was never told.
+
+Remove the `console.log` before release; the comments above it should go with it.
+
+## Ticket — the edit wizard opens offline (My Deals offline, Phase 1)
+
+`DynamicDealEditScreen.tsx`. The rep is at a job they already sold, the customer asks for gutters
+too, and they open My Deals to raise an addendum — at a door, often with no signal.
+
+Plan, phases and the open questions: [`docs/MY-DEALS-OFFLINE-PLAN.md`](../MY-DEALS-OFFLINE-PLAN.md).
+The snapshot rules live in [`offline.md`](offline.md); the approver warming in
+[`deal-center.md`](deal-center.md).
+
+**What changed in this screen**
+
+- Reads the `deal-edit:<leadId>` snapshot **once into a ref**, not per render.
+- Each of the three queries returns the snapshot's value when `usingCache`.
+- A new refusal state renders **above** `if (isLoading)` when there is no snapshot.
+- One `useEffect` writes the snapshot after a successful **online** open.
+
+⚠️ **Only THREE writes exist in this 3000-line file** — `submitJobBuilderDraft` (~1335),
+`requestRefund` (~1348) and `sendDraftSubmitEmail` (~1376) — plus `cancelLead` (~1238). Phase 1
+touches none of them; it is read-path only. Do not assume the file's size implies a wide network
+surface.
+
+⚠️ **`sendDraftSubmitEmail` is a misleading name.** It is
+`PATCH lead/v1/job-builder-draft/{draftId}/submit` (`services/api/leads.ts:323`) — the call that
+**releases the addendum to the homeowner**, not a mail helper.
+
+⚠️ **Its `if (draftId && !refundRaised)` guard at ~1373 is LOAD-BEARING, and correct today.** A
+refund addendum must not be released by the client; the approver releases it server-side. The
+refund machine refuses `pendingApproval → customerSigned` with a bare `return`, so if the customer
+signs before the approver decides, **the signature is silently dropped and can never be asked for
+again**. Do not "tidy" this condition, and do not let a future queue step call that endpoint for a
+refund addendum. (A backend note flagged this call as unconditional at line 1964 — that is not
+correct for this branch: 1964 is unrelated JSX and there is exactly one call site.)
+
+⚠️ **`portalRecord` is the RAW axios response** — the screen reads `portalRecord?.portalJobBuilder`
+off it at ~380. The snapshot stores it raw for that reason; unwrapping it would silently change
+the shape the wizard seeds from.
+
+⚠️ **This file is LF**, while `DynamicDealCenter/utils/dynamic-deal-diff.ts` and
+`dynamic-job-builder/agreement/SummaryFinalizeCards.tsx` in the same flow are **CRLF**. Check per
+file with `file`; an earlier plan draft asserted this screen was CRLF and was wrong.
+
+### Follow-up — Submit queues the addendum offline (My Deals offline, Phase 2)
+
+`handleSubmit` gained an `if (!isOnline())` branch ahead of
+`LeadService.submitJobBuilderDraft(...)`. The payload is already built entirely from local state,
+so it queues as-is.
+
+```
+offline → addendumOfflineBlock({ hasRefund, newDocumentCount })
+        → blocked?  flash and return
+        → else      ensureOfflineWorkForLead → saveOfflineAddendum → goBack
+```
+
+⚠️ **The gate is checked AFTER the payload is built, on purpose.** `agreementsPayload` /
+`orderSheetsPayload` are what tell us whether a new attachment is present, and they only exist
+once `collectInlineDocs` has run. Moving the check earlier would need that logic duplicated.
+
+⚠️ **`hasRefund` is `!!activeRefund`**, the same value the online path feeds to
+`addendumReleasePlan`. Keep the two reading the same source — if they ever diverge, an addendum
+queued as "no refund" would be released to the homeowner by the device.
+
+⚠️ **The queued contact is the FORMATTED phone** (`toE164USPhone`), matching what the online
+release sends. The submit payload stays E.164 — see the earlier ticket in this file.
+
+⚠️ **`navigation.goBack()` after queueing**, because the rep has finished. Staying on the wizard
+would invite a second submit, and the draft step is `guarded` precisely because a repeat files a
+second addendum.
+
+⚠️ **The online path is untouched.** Everything above sits behind `!isOnline()`; the
+draft → refund → release chain and its `!refundRaised` guard are exactly as they were.
+
+Queue mechanics: [`offline.md`](offline.md). Entry point: [`lead-center.md`](lead-center.md).
+Phases and what is still blocked: [`docs/MY-DEALS-OFFLINE-PLAN.md`](../MY-DEALS-OFFLINE-PLAN.md).
+
+### Follow-up — Confirm on Job Price no longer dead-ends offline (Phase 3)
+
+Reported with a device screenshot: step 2 ▸ **Confirm** flashed *"Save payments needs a
+connection. Nothing was sent"* and nothing happened.
+
+`goFunding` did `const res = await funding.savePayments(...); if (!res.ok) return;`. Offline
+`useFunding.run` refuses and returns `{ ok: false }`, so Confirm stopped dead — **the rep could
+never reach step 4**, which made the Phase 2 addendum queue unreachable by the price-change route.
+
+⚠️ **This was a FOURTH write the first audit of this file missed.** The sweep grepped
+`await (LeadService|FundingService)\.` and `\.(post|put|patch|delete)\(`, and this one goes
+through the `funding` **hook** — invisible to all three patterns. When auditing a screen's
+network writes, grep the hook surface (`funding\.`, `useFunding`) as well.
+
+⚠️ **TWO routes reach Review, and only one was broken.** Price unchanged → **Next · Review**
+(`handleNextToReview`) is purely local and always worked offline. Price changed → **Confirm**
+(`goFunding`) was the blocked path. A build-only edit therefore queued end-to-end even before
+this fix, which is why the gap survived a round of testing.
+
+**Fix:** offline, `goFunding` writes the split through `saveOfflineFunding`, builds a device-held
+record with `offlineFundingRecord(...)`, and advances to the funding sub-screen as online does.
+
+⚠️ **`funding` is SHADOWED, not patched at 24 call sites.** `serverFunding` is the hook; `funding`
+is a `useMemo` that overlays `record`/`payments` from the device when the offline record exists.
+One shadow fixes every reader — a per-call-site fix leaves whichever reader someone adds next
+rendering a blank funding screen.
+
+⚠️ **The card option is hidden offline AND the seed no longer pre-selects it.**
+`setRefundMethod(refundSourceRow?.type === 'cc' && online ? 'card' : 'check')` — without the
+`online` term the rep gets a pre-selected method the picker does not show, so they can neither
+see nor change it.
+
+⚠️ **The success flash differs when a refund rides along**: the customer is NOT sent the addendum
+on reconnect, the approver releases it. Saying "sent to the customer automatically" there would
+be a lie the rep repeats to the homeowner.
+
+Queue mechanics: [`offline.md`](offline.md). Steps: [`deal-center.md`](deal-center.md).

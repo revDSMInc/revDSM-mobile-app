@@ -1402,12 +1402,18 @@ export default function LeadCenterPage() {
                       lead,
                       sectionImages,
                       onNavToDocs: () => setActiveTab('job_docs'),
+                      // ⚠⚠ These callbacks travel as NAVIGATION PARAMS, so they close over the
+                      // `lead` of THIS Lead Center. With a second Lead Center pushed on top
+                      // (push notification, Notifications screen, chat), RevRender would call
+                      // this closure and file every render under the wrong lead - the client's
+                      // "revRender generated in another lead". Always honour the id RevRender
+                      // sends; never fall back to the captured `lead`.
                       onGenerate: async (payload: any) => {
-                        handleStartRevRenders([payload]);
+                        handleStartRevRenders([payload], payload?.leadId);
                         return null;
                       },
                       onGenerateAll: (body: { payloads: any[]; leadId: string; jobId: string }) => {
-                        handleStartRevRenders(body.payloads);
+                        handleStartRevRenders(body.payloads, body.leadId);
                       }
                     });
                   } else if (toolId === 'inspection-download') {

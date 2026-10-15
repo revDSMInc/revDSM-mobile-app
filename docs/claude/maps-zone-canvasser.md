@@ -1004,3 +1004,170 @@ Ticket: *system keyboard (Email) hid "Save & Submit Lead" under it while the in-
 - ⚠️ `modalContainer` MUST keep `flex: 1` (it used to come from `GlobalKeyboardAvoidingView`): `NumPadProvider`'s `flex: 1` wrapper collapses to 0
   height in a content-sized sheet and the "+" button then shows only the dim overlay. Never make the sheet content-sized.
 - ⚠️ `scrollViewRef` is `useRef<any>` (keyboard-controller's scroll view); the `scrollTo` calls are unchanged. `footerBottom` still collapses to 12 while a keyboard is up.
+
+### Follow-up — merge conflict with `dev-qs-offline`'s address resolution, both kept
+
+Merging `dev-v1-multi-tenat` into `dev-qs-offline` conflicted in `LeadCreate/index.tsx`'s submit
+handler: this ticket's `leadLocation = location || (await geocodeAddress(form.address))` (the
+Lahore-pin fix above) against `dev-qs-offline`'s own, unrelated `resolveSyncAddress`/`reverseGeocode`
+offline flow for the ADDRESS TEXT (a rep-typed address must never be replaced by a geocode — see that
+util's own doc comment). **Both are needed, and don't overlap**: one resolves `fullAddress` (the
+string), the other resolves `location` (the coordinates payload) — resolved by keeping both blocks
+and computing `submitAddress` and `leadLocation` side by side, then using `leadLocation` consistently
+in the LF-lead branch's `location` field (HEAD's conflict side had a stray `location` there instead of
+`leadLocation`, inconsistent with the unconflicted Self-Gen branch two cases below it — fixed to match).
+
+⚠️ **Correction — this DID change offline behavior, caught in a follow-up audit.** `dev-v1-multi-tenat`
+had never gone through the offline work at all (confirmed: it is literally the merge-base commit, with
+no commits of its own — the "merge" carried in nothing new), so `geocodeAddress` unguarded is what
+`LeadCreate` looked like *before* `dev-qs-offline` existed. Carrying it back in via the conflict
+resolution reintroduced an **un-gated network call inside `handleSubmit`, ahead of the `!isOnline()`
+queue-and-park branch** — every OTHER network call this offline work added
+(`handleGetCurrentLocation`'s reverse-geocode, `handleAddressSearch`'s autocomplete, the
+`reverseGeocode` call just above this one) is `isOnline()`-gated; this one was not. Not a crash or a
+lost lead (`geocodeAddress` swallows its own errors to `null`, so offline it still resolves to
+`location || null` and the lead still queues via `enqueueOfflineLead`), but it added a doomed network
+attempt to every offline submit with no GPS fix, and — in a currently-unreachable but fragile
+combination (see the placeholder-fill guards this file already has) — could forward-geocode a
+`"📍 lat, lng"` placeholder string instead of parsing it back to coordinates.
+
+**Fixed**: `leadLocation` now tries `parseCoordsPlaceholder(form.address)` before falling to a geocode,
+and the geocode itself is gated `isOnline() ? await geocodeAddress(form.address) : null` — same
+discipline as every other network call in this handler, and the "geocode failure sends NO location"
+rule above is unchanged (still `null`, never a stale `location` fallback).
+
+## First / Last Name auto-capitalize on Add New Lead
+
+Ticket: *"Auto CAP first letter of first and last name."* `onChangeText` for both fields now runs the
+typed text through a local `capitalizeFirst` (uppercases index 0 only, leaves the rest untouched — a
+`.toLowerCase()` on the remainder would fight a rep typing `McDonald` or `O'Brien`), paired with
+`autoCapitalize="words"` on the underlying `TextInput` as a keyboard-level hint (`CustomInput` defaults
+to `autoCapitalize="none"`; the prop passed here overrides it). Cosmetic only — no change to validation,
+payload shape, or the offline queue.
+
+## Map list view: Price `$` sign matched to the amount's colour, no gap
+
+Ticket: *"make the dollar color black and also remove the space between dollar and number."*
+`MapDetailScreen`'s list-view job card (`renderItem` inside the `FlatList`, the Price column) had the
+`$` in green (`text-[#2EDE56]`) with a `mr-1` gap before the amount, which read as disconnected from
+the black/slate price figure beside it. `$` now shares the amount's own class
+(`text-slate-800 dark:text-zinc-200 font-bold`, same as the number) and `mr-1` is dropped so the two
+sit flush. Cosmetic only — the Date/Rep rows below it, which use the SAME green, are untouched (only
+the Price row's `$` was in scope).
+
+## Sales List: distance (filter + per-result)
+
+Ticket: *"Sales Rep | Sales List | Distance — filter by distance. Results should also have
+distance."*
+
+### The rules live in `utils/sales-pins.ts`
+
+`getJobCoords`, `distanceInMiles` (haversine), `getJobDistanceMiles`, `formatDistanceMiles`,
+`compareByDistance` — pure and RN-free, so they are testable; `MapDetail` pulls in React Native.
+
+⚠️ **`location.coordinates` is GeoJSON `[longitude, latitude]`** — the opposite order from every
+`{ latitude, longitude }` object in the app. Read the obvious way round, a Florida job (27.95,
+-82.46) lands at -82.46, 27.95 in the Southern Ocean: wrong by thousands of miles rather than
+visibly broken. Same trap as `offline-lead-location.ts`.
+
+⚠️ **An unknown distance is `null`, never `0`.** A job with no coordinates is not "0 miles away" —
+0 would sort it to the top of the distance order and print as the nearest door on the card. It
+renders as `—` and `compareByDistance` sends it to the END of the list in either direction.
+
+⚠️ **`MapDetail`'s own `getDistanceInMiles` / `toRad` were deleted.** They were a second definition
+of the same maths; the radius filter now calls the shared helper. Do not reintroduce a local copy.
+
+### The filter was silently doing nothing without a searched address
+
+The modal has had a **"Select Distance"** radius picker all along, but the filter was gated on
+`filters.centerCoords && filters.radius > 0` — so choosing a radius did **nothing** unless the rep
+had *also* searched a location. A filter that silently no-ops is worse than one that is absent,
+because the rep believes the list is filtered.
+
+It now centres on `filters.centerCoords || userLocation` — the searched location when there is one,
+otherwise the rep's own GPS fix.
+
+⚠️ **Skipped entirely when there is no origin at all** (no search AND no fix yet). Filtering against
+nothing would empty the list until the GPS lock lands, which reads as "no jobs near me".
+
+⚠️ `userLocation` is now a dependency of `baseFilteredLeads`. Without it the list would not
+re-filter when the fix arrives.
+
+### The list
+
+- **Order By ▸ Distance** — a fifth sort option. With no fix yet every comparison is 0, so the list
+  keeps its incoming order rather than shuffling when the fix lands.
+- **A Distance field on each card**, sharing a two-column row with Rep. ⚠️ Distance keeps its own
+  column when the rep is not the job owner (no Rep block), rather than jumping to the left edge.
+- `formatDistanceMiles`: one decimal under 100 miles, none above it — a tenth of a mile matters when
+  choosing the next door and is false precision at three digits.
+
+Tests: `__tests__/utils/sales-pins-distance.test.ts` (19), including the axis order and the
+positionless-job ordering.
+
+### Follow-up: split into Distance Ascending / Distance Descending
+
+Ticket: *"instead of Distance it should be Distance Ascending and Distance Descending like the
+other [options], and then leads should show accordingly."* The single "Distance" entry didn't match
+the Price/Date options, which each have an explicit direction, and there was no way to see the
+farthest jobs first.
+
+- `compareByDistance(a, b, origin, descending?)` gained a fourth, optional `descending` param
+  (default `false`, so every existing caller/test is unaffected) that flips `da - db` to `db - da`.
+  The ⚠️ null-handling (positionless jobs always sort to the END, in EITHER direction) is unchanged —
+  only checked at the end, after both nulls are ruled out.
+- `MapDetail`'s `sortOption` type/state and `sortLabels` map split `'distance'` into
+  `'distance_asc'` ("Distance Ascending") and `'distance_desc'` ("Distance Descending"), matching the
+  `price_asc`/`price_desc` and `date_asc`/`date_desc` naming already used there.
+
+---
+
+## Ticket — `offline-cache:consent-filed` is session-KEPT
+
+`utils/session-scope.ts` decides what survives a sign-out. `SESSION_KEEP_PREFIXES` gained
+`'offline-cache:consent-filed'`, the local record of which consent forms / roof waivers have
+already been filed for a lead (written by `services/consentFiledStore.ts`; rules in
+`utils/consent-filed-log.ts`). Background: [`lead-center.md`](lead-center.md).
+
+⚠️ **This one is NOT re-derivable, which is why it is kept.** Most offline-cache rows are a
+convenience — the server can rebuild them, so clearing them on sign-out costs a refetch. This row
+cannot be rebuilt without a connection, and losing it re-opens the duplicate-signature bug: the rep
+is offered a blank consent form for a lead the customer has already signed. Compare
+`lead-calc-status:*`, which is deliberately NOT kept precisely because the server can answer for it.
+
+⚠️ **Keeping it does not leak it between reps.** The value goes through the owner-stamped envelope
+(`utils/offline-cache-envelope.ts`), and `decodeEnvelope` returns null when `parsed.userId` does not
+match the caller's owner — so a second rep on the same handset reads nothing. Keeping a key and
+scoping a key are separate mechanisms; do not "fix" one by removing the other.
+
+⚠️ `SESSION_KEEP_PREFIXES` is matched with `startsWith`, so the entry covers every
+`offline-cache:consent-filed:<ownerId>` key without listing owners.
+
+---
+
+## Profile — the connection diagnostics card
+
+`<ConnectionDiagnosticsCard />` sits in `screens/Profile/index.tsx` between the **OFFLINE DATA**
+card and `<PendingUploadsCard />`, in the same maintenance stack as the offline map packs. The
+component is `widgets/components/ConnectionDiagnosticsCard.tsx`; the reasoning and the
+connectivity bug behind it are in [`offline.md`](offline.md).
+
+Why it is in Profile: the client's complaints cluster on mobile data and none of them reproduce on
+office WiFi, so the rep needs something they can read out. It shows status, radio generation
+(LTE vs 5G), NetInfo's reachability verdict, **the url reachability is testing**, time since the
+last successful `/health` and how long it took, the pending sync count and a badly-skewed device
+clock — with *Check now* and *Share*.
+
+⚠️ **It is a read-out, not a control.** Everything on it is display-only except *Check now*
+(`recheckNetworkNow`). Nothing here may become load-bearing: `getLastHealthSuccessAt` /
+`getLastHealthDurationMs` exist for this card alone and must never feed a decision.
+
+⚠️ **Do not drop the url line.** NetInfo's default `reachabilityUrl` pointed at
+`clients3.google.com` for the life of the app and nothing printed it, which is exactly why the
+false-offline reports went unexplained. That line is the one that makes a wrong target visible.
+
+⚠️ It calls `NetInfo.fetch()` and subscribes on mount for the radio details (`type`,
+`details.cellularGeneration`) — `useNetworkStatus` alone does not carry them.
+
+⚠️ `Profile/index.tsx` is **CRLF**; keep `newline=''` on both read and write when scripting edits
+to it (CLAUDE.md §6).

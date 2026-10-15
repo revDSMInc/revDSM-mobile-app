@@ -85,11 +85,27 @@ export const applyOsDisconnected = (
   now: number = Date.now()
 ): NetworkState => settle({ ...state, failures: 0 }, 'offline', now, { force: true });
 
+/**
+ * The OS says an interface is up.
+ *
+ * ⚠️ THIS IS NOT EVIDENCE OF A WEAK LINK. It used to force-settle to `degraded`, which put
+ * "Weak connection" on screen for a rep on 46 Mbps WiFi whose /health answered in 249 ms. NetInfo
+ * fires on routine events - signal-strength changes, interface details, a Wi-Fi roam - so every
+ * one of those knocked a perfectly healthy app into the warning state, and only a later 2xx could
+ * undo it. Reconnecting repeatedly is normal on mobile data, which is why the client saw it most.
+ *
+ * What a connect event actually tells us: we are no longer definitely OFFLINE. Anything beyond
+ * that has to be proved by a real request (`applyRequestSignal`) or a probe.
+ */
 export const applyOsConnected = (
   state: NetworkState,
   now: number = Date.now()
-): NetworkState =>
-  state.status === 'online' ? state : settle(state, 'degraded', now, { force: true });
+): NetworkState => {
+  // Already have a verdict worth keeping - a connect event must not downgrade it.
+  if (state.status === 'online' || state.status === 'degraded') return state;
+  // Coming back from offline/unknown: we can work, but nothing has proved the link is healthy.
+  return settle(state, 'degraded', now, { force: true });
+};
 
 export const isEffectivelyOffline = (status: NetworkStatus): boolean =>
   status === 'offline' || status === 'degraded';

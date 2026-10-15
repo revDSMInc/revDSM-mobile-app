@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Storage } from '../utils/storage';
+import { renderTargetLeadId, shouldRefetchAfterRenders } from '../utils/revrender-attribution';
 import { LeadService } from '../services/api/leads';
 import { FlashMessage } from '../config/message';
 import ReactNativeBlobUtil from 'react-native-blob-util';
@@ -396,16 +397,36 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     }
   };
 
-  const handleStartRevRenders = async (payloads: any[]) => {
+  /**
+   * `targetLeadId` is the lead the RENDERS belong to, which is not always this hook's lead.
+   *
+   * ⚠️ REPORTED BY A CLIENT: "revRender generated in another lead." This hook is bound to one
+   * Lead Center via `useLeadReports(lead, refetch)`, and `onGenerateAll` is handed to the
+   * RevRender screen as a NAVIGATION PARAM - so it is a closure over the lead of whichever Lead
+   * Center pushed that screen. With two Lead Centers in the stack (a push notification, the
+   * Notifications screen or chat opening lead B while lead A is still below), RevRender called
+   * lead A's closure and every render was filed under lead A.
+   *
+   * RevRender already sends the right id - `{ payloads, leadId, jobId }` - and the caller used to
+   * drop it. Passing it through fixes the attribution at its source.
+   *
+   * ⚠️ Resolve it ONCE here. The five uses below (the job-list storage key written in three
+   * places, the pre-gen run fetch, and the final cache invalidation) must all agree; a stray
+   * `lead?._id` left among them re-creates the bug for whichever half still reads the closure.
+   */
+  const handleStartRevRenders = async (payloads: any[], targetLeadId?: string) => {
+    const renderLeadId = renderTargetLeadId(targetLeadId, leadId);
+    const jobsKey = `rev_render_jobs_${renderLeadId}`;
+
     const total = payloads.length;
     const initialJobs = payloads.map((p, i) => ({ id: i, status: 'pending', payload: p, progress: 0 }));
     setRevRenderJobs(initialJobs);
-    Storage.setItem(`rev_render_jobs_${lead?._id || lead?.id}`, JSON.stringify(initialJobs));
+    Storage.setItem(jobsKey, JSON.stringify(initialJobs));
 
     try {
       existingRunIdsRef.current.clear();
-      if (leadId) {
-        const res = await LeadService.getRevRenderRuns(leadId);
+      if (renderLeadId) {
+        const res = await LeadService.getRevRenderRuns(renderLeadId);
         const runs = res.data?.runs || res.data?.data?.runs || [];
         runs.forEach((r: any) => {
           const id = r.runId || r._id || r.id;
@@ -424,7 +445,7 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     const updateJobStateAndPersistence = (updater: (prev: any[]) => any[]) => {
       setRevRenderJobs(prev => {
         const next = updater(prev);
-        Storage.setItem(`rev_render_jobs_${lead?._id || lead?.id}`, JSON.stringify(next));
+        Storage.setItem(jobsKey, JSON.stringify(next));
         return next;
       });
     };
@@ -659,10 +680,12 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     const finalizeQueue = async () => {
       FlashMessage.info('RevRender Batch finished', 'Check results in Tools tab');
       setRevRenderJobs([]);
-      Storage.removeItem(`rev_render_jobs_${lead?._id || lead?.id}`);
+      Storage.removeItem(jobsKey);
 
-      queryClient.invalidateQueries({ queryKey: ['revrender-runs', lead?._id || lead?.id] });
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ['revrender-runs', renderLeadId] });
+      // ⚠️ `refetch` belongs to THIS hook's lead. When the renders were for another lead it
+      // would refresh the wrong screen, so only refresh when the two are the same.
+      if (shouldRefetchAfterRenders(renderLeadId, leadId)) refetch();
     };
 
 

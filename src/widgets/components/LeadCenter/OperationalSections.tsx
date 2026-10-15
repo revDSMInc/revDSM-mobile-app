@@ -8,6 +8,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useRevRenderRunsQuery } from '../../../hooks/useLeadQuery';
 import { useLeadCalculatorStatus } from '../../../hooks/useLeadCalculatorStatus';
 import { calcGateState } from '../../../utils/lead-calc-status';
+import { isClientId } from '../../../utils/offline-lead-work';
 import { useFiledConsents } from '../../../hooks/useFiledConsents';
 import { consentAlreadyFiled } from '../../../utils/consent-filed-log';
 import { usePitchBooks } from '../../../hooks/usePitchBooks';
@@ -51,7 +52,16 @@ export const ToolsSection = ({
    * Build ALL jobs first" seconds after they had built them. Unknown stays unlocked and says
    * it is still checking - a wrong lock costs a sale, a wrong unlock costs one tap.
    */
-  const gate = calcGateState(calcStatus, { isSold: isLeadSold });
+  /**
+   * ⚠️ A lead created OFFLINE has no server record, so the status read always fails. Without
+   * this it resolved to "unknown", which does not lock - and a rep could open the Investment
+   * Center seconds after creating a lead, before building a single rollout.
+   */
+  const isDeviceOnlyLead = isClientId(String(lead?._id || lead?.id || ''));
+  const gate = calcGateState(calcStatus, {
+    isSold: isLeadSold,
+    isDeviceOnlyLead,
+  });
   const investmentLocked = gate === 'locked';
   // The background refetch spinner only matters when jobs EXIST but are not confirmed yet (the post-confirm window);
   // a lead with no calculators has nothing to wait for, so it must not flash "Checking job status..." on every visit.

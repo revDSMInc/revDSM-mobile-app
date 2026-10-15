@@ -8,7 +8,9 @@ import {
   mergeStatus,
   shouldPersistStatus,
   statusAfterFailedRead,
-  statusWhenNoAppointment,
+
+  EMPTY_CALC_STATUS,
+
   type LeadCalculatorStatus,
 } from '../utils/lead-calc-status';
 import { getSessionOwner } from '../services/sessionScope';
@@ -99,10 +101,25 @@ export function useLeadCalculatorStatus(lead: any) {
       };
 
       let apptId: string | null = directAppt ? String(directAppt) : null;
+
+      /**
+       * ⚠️ TWO DIFFERENT "no appointment" CASES, and conflating them is a bug in either
+       * direction:
+       *
+       *  - the lookup THREW - we do not know, so keep what we knew (`onFailure`);
+       *  - the lookup SUCCEEDED and this lead is not in it - that is a definite answer. No
+       *    appointment means no calculators, which means nothing is confirmed.
+       *
+       * Returning `null` for the second case reported "don't know", which does not lock, and a
+       * rep could open the Investment Center on a lead created seconds earlier with no rollouts
+       * at all. `answered` records that the server did reply.
+       */
+      let answered = !!apptId;
       if (!apptId && (leadIdHuman || selfGenLeadId)) {
         try {
           const res = await LeadService.getAppointments(leadDate ? { lead_date: leadDate } : undefined);
           const appts = res.data?.data || res.data || [];
+          answered = true;
           const found = (appts as any[]).find(
             (a) =>
               (a.leadId && a.leadId !== 'N/A' && String(a.leadId) === String(leadIdHuman)) ||
@@ -113,9 +130,19 @@ export function useLeadCalculatorStatus(lead: any) {
           return onFailure();
         }
       }
+<<<<<<< HEAD
       // The lookup above either threw (returned already) or answered: no appointment => no calculators yet.
       // That is a real answer, not "unknown" - null here left a new lead spinning on "Checking job status...".
       if (!apptId) return statusWhenNoAppointment(cached);
+=======
+
+      if (!apptId) {
+        // The server answered and there is no appointment: a definite "nothing built yet".
+        if (answered) return land(EMPTY_CALC_STATUS);
+        // We never got to ask at all - keep whatever we knew.
+        return onFailure();
+      }
+>>>>>>> dev-v1-multi-tenat
 
       try {
         const res = await LeadService.getCalculators(apptId);

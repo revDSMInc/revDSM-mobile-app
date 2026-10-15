@@ -580,3 +580,104 @@ email at `opacity-40` (unreadable grey) and a hash-coloured square avatar. It no
 from `getAvatarProps` (honours the user's `colorCode`, same colour as everywhere else in chat), name `15px font-bold`,
 email `12px` in `colors.textSecondary`. ⚠️ Keep the three sheets visually in step; don't reintroduce `font-black`
 (Public Sans has no 900 face — Android synthesises it) or opacity-dimmed text.
+
+## Chat activity log: `meta.files[]` to match web
+
+Ticket: *"currently while we are sending the appointment photo, we are generating the log with the
+below payload … we have to change the payload same like the web, you can see filepath and some other
+keys are include, do the same thing in my log as well"* — and the same for a plain image send.
+
+Mobile logged a flattened `fileName` string only, so the portal knew a photo had been sent but not
+WHICH object: no `filePath`, no `bucketName`, no `category`/`subcategory`.
+
+### The shared mapper
+
+New **`src/utils/activity-log/chat-log-files.ts`** → `buildChatLogFiles(files)`, emitting the six keys
+web sends per row: `fileName`, `bucketName`, `filePath`, `fileType`, `category`, `subcategory`.
+
+Pure and RN-free for the usual reason — `hooks/useChatLogic.ts` imports React Native and cannot load
+under jest. Used by all three file-bearing sends so they cannot drift.
+
+Also aligned with web on all three: `message: ' '` (was `''`) and `resetCycle: 0`.
+
+### ⚠️ Two of the three logs had to MOVE, and this is the point of the ticket
+
+| Send | Files are | Log fires |
+|---|---|---|
+| `sendAppointmentPhotos` | already in S3 (posts references) | **after** it (see `fileSize` below) |
+| `sendGalleryAssets` | uploaded by this request | **after** it |
+| `sendImageAsMessage` | uploaded by this request | **after** it |
+| `handleDocumentAttach` | uploaded by this request | **after** it |
+| `handleSendVoiceNote` | uploaded by this request | **after** it |
+
+All five file-bearing sends now carry `files[]`. The only `logEvent('send')` calls without it are the
+two `messageType: 'text'` ones, which have no files.
+
+⚠️ **`filePath` is an S3 object path that does not exist until the server has stored the file.**
+Logging an upload before the request could only ever have recorded a local `file://` uri, which is
+useless to the portal. So `ChatService.sendFileMessage` / `sendFilesMessage` now **return** the stored
+message (they were `Promise<void>`, discarding it) and the log reads `stored.files`.
+
+⚠️ **Never log a signed URL as `filePath`.** It expires within the hour, so the record would carry a
+dead link — the same trap as the image cache (`app-wide.md`).
+
+⚠️ A failed upload now logs NOTHING, which is correct: nothing was sent. Previously it logged a send
+that never happened.
+
+⚠️ `fileSize` on the single-image log was a hard-coded **12000**. Web sends the file COUNT here, not a
+byte size, so it is now `1` — a fabricated 12000 read as a real measurement.
+
+⚠️ In `buildChatLogFiles`, `type` is checked LAST for `fileType`: an optimistic bubble carries
+`type: 'image'` (the GiftedChat kind, not a mime type), so a real `fileType`/`mimeType` must win.
+
+Tests: `__tests__/utils/chat-log-files.test.ts` (8), including the ticket's exact web row.
+
+### Follow-up — the document and voice sends
+
+`handleDocumentAttach` was the case in the second report (`messageType: 'pdf'`, no `files[]`).
+
+- ⚠️ It logged only **`docs[0]`**, so a rep attaching three files logged one. Each document is its own
+  request, so the stored rows are now gathered from every response (`storedDocs.flatMap`), and
+  `fileName` joins all of them.
+- ⚠️ `fileSize` was the picker's **BYTE size** (142786 in the report). Web sends the file COUNT in that
+  field, so it is now `docs.length` — consistent with the other sends.
+
+`handleSendVoiceNote` keeps two things the others do not, deliberately:
+
+- **`duration`** (`recordingTime`), which the portal shows.
+- **A real `fileSize`**, because a voice note's size is actually measured (`RNFS.stat`) rather than
+  guessed. ⚠️ The `12000` still in that function is only the fallback when the `stat` throws.
+
+Its `fileName`/`fileSize` are computed inside the `user?._id` guard before the send (the `stat` is
+worth doing once) and carried to the post-send log in `voiceLogMeta`.
+
+### Follow-up — `fileSize` per file row, as a real byte count
+
+*"put the fileSize inside files array, and it should be the actual size of the file like 142786 …
+you have to do it for all the other logs as well"*.
+
+`meta.fileSize` (the file COUNT) stays where it is; each row in `meta.files[]` now also carries its
+own **byte** size. New `normalizeLogFileSize` reads it from whichever key the source used.
+
+⚠️ **Three spellings, because three sources disagree.** The server sends `size` / `fileSize` /
+`file_size` — the same spread `ChatService.normalizeFileSize` already handles for display — the image
+picker sends `fileSize`, and the document picker sends `size`. Reading only one silently logs 0.
+
+Where each send's real size comes from:
+
+| Send | Size source |
+|---|---|
+| `handleDocumentAttach` | document picker's `size` |
+| `sendGalleryAssets` | image picker's `fileSize` — ⚠️ it was being DROPPED in `handleAttach`'s `asset` map and is now carried through |
+| `handleSendVoiceNote` | the `RNFS.stat` it already performed |
+| `sendImageAsMessage` | a new best-effort `RNFS.stat` of the local upload path |
+| `sendAppointmentPhotos` | **the server only** |
+
+⚠️ **`sendAppointmentPhotos` had to move to a post-send log too**, which is not obvious: its S3 PATH
+was known up front (it posts references), but the per-file BYTE SIZE is not — the device never
+downloads these photos. So `ChatService.sendAppointmentPhotos` now returns the stored message like the
+upload methods, and the log reads its rows. It falls back to the sent payload (path and category
+intact, size 0) when the response carries none.
+
+⚠️ `normalizeLogFileSize` returns **0, never undefined**, so the key is always present — and a genuine
+0-byte file is preserved rather than being treated as missing.
