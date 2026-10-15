@@ -1994,3 +1994,207 @@ rep had **never opened online**, so nothing was ever cached. `statusAfterFailedR
 - Covered by `__tests__/utils/investment-gate-edges.test.ts` (19 cases), which pins **both**
   directions: the three re-lock cases (cached-confirmed, failed-read-with-cache, local confirmation
   outranking a stale read) and the definite negatives, each run online and offline.
+
+## Leaving a lead from a CHILD screen released nothing
+
+`utils/lead-work-session.ts` (`endActiveLeadWorkSession`), `widgets/common/MainHeader.tsx`.
+The two calls that end a lead session: the `lead_session` / `session_pause` activity log, and
+`PUT lead/v1/{leadId}/work` with `{ workStartedBy: null }` (`LeadService.endWorkLead`).
+
+Reported: both fire when the rep leaves from **Lead Center**, but not when they leave from a child
+screen — Deal Center, Job Builder, the Pitch Book — using the header. The lead stayed open on the
+server and the rep stayed live on the ops board.
+
+⚠️ **`useFocusEffect` is the wrong lifecycle for "the rep left the lead".** Lead Center registers
+its header handler inside one:
+
+```ts
+useFocusEffect(useCallback(() => {
+  setHeaderActions({ onNavigate: (t) => { pauseLeadSessionRef.current(); navigation.navigate(t); } });
+  return () => setHeaderActions({ onNavigate: null });   // <- runs on BLUR, not unmount
+}, ...));
+```
+
+Opening any child screen blurs Lead Center, so the cleanup nulls `onNavigate` and the header falls
+back to a plain `navigation.navigate`. The session is only released if the rep happens to leave
+from Lead Center itself.
+
+The fix is in `MainHeader`'s single `onNavigate`, which every header route goes through (home
+logo, notification bell, chat). It calls `endActiveLeadWorkSession()`, which reads the session
+from **MMKV rather than props**, so it needs no lead object and works from any screen.
+
+⚠️ **Both paths clear the stored session SYNCHRONOUSLY before any await**, which is what stops a
+double-send: Lead Center's `pauseLeadSession` (guarded by `hasLoggedPauseRef`) and
+`endActiveLeadWorkSession` can both run on the same tap, and whichever is second finds no session
+and no-ops. Keep the `clearLeadWorkSession()` call before the `await` if either is refactored.
+
+⚠️ **Fire-and-forget on purpose** — navigation must not wait on two network calls, and a rep
+leaving a door often has no signal. The pause log queues offline (`QUEUEABLE_LOG_MODULES` includes
+`lead_session`); `endWorkLead` is skipped for a client-id lead, whose queued work carries it.
+
+The back button was already covered: popping Lead Center runs its unmount effect
+(`return () => pauseLeadSessionRef.current()`), which fires even when the pop comes from a child
+screen further up the stack.
+
+### Follow-up — logout, and the account-popover routes
+
+Two further exits were reported after the header fix.
+
+**Account Settings / Job Tracker / My Learning must NOT end the session.** They are side trips a
+rep takes from inside a lead and returns from — part of working it. `AccountPopover` is handed
+`MainHeader`'s own `onNavigate`, so an earlier version of this fix ended the session on all three;
+corrected to fire only on the home route. The session ends when the rep reaches the lead LIST,
+whether they get there from Lead Center, a child screen, or one of these side trips.
+
+**Logout was a real gap.** `useAuth.logout` already called `endInstallerWorkSession('logout')` for
+an installer's job but had no equivalent for a rep's lead, so logging out mid-appointment left the
+lead open on the server and the rep live on the ops board. `endActiveLeadWorkSession()` now runs
+there too.
+
+⚠️ **Ordered BEFORE `setSessionHeader(null)`.** Both the pause log and `endWorkLead` need the
+bearer token; moving this call below the header reset makes them 401 silently.
+
+⚠️ **It must never throw** — a failed release cannot be allowed to abort a logout, and a rep often
+logs out with no signal. `endActiveLeadWorkSession` catches both calls internally and clears the
+stored session first, so an offline logout still ends it locally and
+`endStaleLeadWorkSession` tidies the server side on next launch.
+
+⚠️ **The 401 auto-logout path (`services/api/index.ts`) is deliberately NOT wired up.** The token
+is already invalid there, so `endWorkLead` would simply 401 again; the stale-session sweep on next
+launch is the correct cleanup for that case.
+
+## Three surfaces, three different photo counts
+
+`utils/lead-photo-counts.ts` (the rule), `widgets/components/LeadCenter/JobDocsSection.tsx`.
+
+Reported with a screenshot: the download modal said *"Successfully downloaded all 3 photos"* while
+Manage Photos and Download Images both read **(1)** and the progress row read **1/46 slots** — for
+the same lead, on the same screen.
+
+Each surface counted a different thing:
+
+| Surface | Counted |
+|---|---|
+| Manage Photos / Download Images buttons | `filledSlots` — configured slots holding ≥1 photo |
+| Progress row "N photos" | slot photos only, with annotated dropped by an explicit `return` |
+| Download modal | every image in `sectionImages` — extras and annotated included |
+
+⚠️ **An EXTRA can never raise `filledSlots`** — it has no configured slot to fill. An **ANNOTATED**
+photo was skipped outright. Both are real photos the rep took and can see in Manage Photos, so a
+rep who added one watched the number stay still and reasonably assumed the app had lost it.
+
+`countLeadPhotos` is now the single rule: every distinct photo counts once, wherever it sits, and
+each extra and annotation brings its own slot so the denominator grows with them. One slot photo +
+one extra + one annotation on a 46-slot schema reads **3/48 slots · 3 photos**, with **(3)** on
+both buttons — matching what Download Images actually saves.
+
+⚠️ **Dedupe by photo identity (`s3url || uri || _id`), never by slot.** A shot lives in both the
+server list and the upload queue for one refetch after it lands, and would otherwise count twice —
+the same per-slot surplus trap recorded in [`offline.md`](offline.md).
+
+⚠️ **The static (non-dynamic) path had the same annotated exclusion** and was fixed with it. Both
+paths now agree.
+
+The info icon left of the row explains why the total moves. It is an **in-card popover, not a
+Modal** — this screen already stacks several, and iOS silently drops a presentation requested while
+another is dismissing (CLAUDE.md §6).
+
+---
+
+## Ticket — the rep returns to an open lead, but the board shows them paused
+
+Context from the field: a lead stayed **ON SITE** on the ops board after the rep had gone, because
+backgrounding or killing the app drops the socket and nothing released the lead. The backend fixed
+that half by **pausing the work when the socket disconnects**.
+
+That pause fires on a *plain background* too. A rep who glances at a text and returns five seconds
+later is standing at the same door, looking at the same open lead — and the server has them paused.
+Nothing re-asserted it: `useLeadCenterData`'s `LeadService.workLead` call is keyed on
+`lead._id` / `user._id`, which do not change when the app comes back to the foreground.
+
+`hooks/useResumeLeadOnForeground.ts` (mounted in `screens/LeadCenter/index.tsx` beside
+`usePrecacheLeadPhotos`) re-claims it: `PUT` via `LeadService.workLead(leadId, userId)`, then
+`SocketManager.joinLeadOnsiteWatch(leadId)` — the pause explicitly left that watch
+(`logLeadSessionPause`), so it has to be rejoined. Decision rules are pure in
+`utils/lead-session-resume.ts`.
+
+⚠️ **It logs `lead_resume`, never `lead_check_in`.** The rep never left; a second check-in would
+double-count the visit.
+
+⚠️ **`inactive → active` is NOT a return.** iOS sends `inactive` for the app switcher, the
+notification shade, permission sheets and incoming-call banners. Only `background → active`
+counts, or the app fires a resume every time a banner appears.
+
+⚠️ **Only re-claim the lead that is still on screen** (`skip-left-lead`). If the rep backgrounded
+on lead A and came back having navigated away, re-asserting A puts them ON SITE at a door they are
+not standing at — the exact bug this ticket is about, pointing the other way. The check runs
+*before* the duration check so a wrong lead is never re-claimed on a technicality.
+
+⚠️ **The resume is deliberately NOT queued on failure.** Being ON SITE is a statement about *right
+now*; replaying it later would put the rep at a door they left hours ago. This is the opposite of
+the rule for `endWorkLead`, which **is** queued (`setWorkReleaseQueue`) — releasing a lead late is
+harmless, claiming one late is not.
+
+⚠️ This does not conflict with `endStaleLeadWorkSession`: that runs only on **cold launch**
+(`useAppInitialization`), so kill-and-relaunch releases the lead while background-and-return
+re-claims it.
+
+⚠️ Skipped for an offline lead (`isClientId`) and when offline — there is no server record to
+re-claim, and the queued work carries the check-in.
+
+## Ticket — crash on Lead Center while revRender was generating (`next[index]` undefined)
+
+TestFlight crash, 3 devices across 1.1.0 and 1.1.1, reproduced locally: open Lead Center, start a
+revRender, watch the strip. The app dies with no JS error in the debugger.
+
+**The stack says JS, not native.** Frames 0-18 are all `hermesvm`, and frame 11 is
+`Interpreter::caseIteratorBegin` — the `IteratorBegin` bytecode, i.e. a spread / `for...of` /
+destructure. Above the JS boundary sit `RuntimeScheduler_Modern::runEventLoopTick` →
+`Task::execute` → `jsi::Function::call`: a **scheduled callback**, not a component render. That
+pair (Hermes iterator + no render frames) points at a `setTimeout` continuation, which is what the
+revRender batch poll in `hooks/useLeadReports.ts` is.
+
+**Root cause.** `runRender(job, index)` captures `index` in its closure and polls for minutes. Each
+state write does `const next = [...prev]` and then `next[index].status = …`. Four of the fourteen
+`next[index]` writes had **no `if (next[index])` guard** while the other ten did — guards had been
+added only where a crash had previously been seen. When `prev` is shorter than the captured
+`index`, the write throws.
+
+`prev` gets shorter three ways, all normal rep behaviour:
+- `setRevRenderJobs([])` in `finalizeQueue` — clears the array while other polls are still looping.
+- The restore effect (`Storage.getItem('rev_render_jobs_<leadId>')`) replaces the array with a
+  persisted one of a different length.
+- That effect re-runs on `leadId` change — switching leads swaps the array under in-flight polls.
+
+Fixed by guarding the four writes (`'running'` start, the no-`batchId` completion, the batch-done
+completion, and the `catch` failure) exactly like their neighbours.
+
+- ⚠️ **Why nothing appears in the debugger.** The throw is inside a React state updater passed to
+  `setRevRenderJobs`, which runs outside the poll loop's own `try/catch (pollErr)`. It is not a
+  catchable JS error at that point — it aborts the VM, so the console stays empty and only the
+  native crash log survives. Do not conclude "no error in Metro" means "not a JS bug".
+- ⚠️ **Never dereference `next[index]` unguarded in this file.** Any new state write in `runRender`
+  needs the same guard; the array can always be shorter than the closure's `index`.
+- ⚠️ The file is CRLF.
+- Fix verified statically; the crash path itself was not re-run on device from this session.
+
+### Follow-up — why the guard is safe (asked before merging)
+
+Checked explicitly, because a skipped state write looks like it could strand a batch or disturb the
+offline queues. It cannot:
+
+- **The in-range path is unchanged.** Running the old and new updater side by side on an in-range
+  `index` gives byte-identical output. The guard only engages where the old code threw, so there is
+  no working behaviour to regress.
+- ⚠️ **Completion does NOT depend on these writes.** `completedCount` is a closure variable
+  incremented *before* each `updateJobStateAndPersistence` call, and `finalizeQueue()` fires on
+  `completedCount === total`, never on array contents. A skipped UI write cannot leave a batch
+  hanging — do not "simplify" this by deriving completion from `revRenderJobs`, which would couple
+  it to exactly the array that can be cleared mid-poll.
+- **No offline coupling.** `useLeadReports.ts` imports nothing from the offline system (no
+  `offline*`, `uploadQueue`, `connectivity` or `session-scope`). It owns `risk_job_<leadId>` and
+  `rev_render_jobs_<leadId>` in MMKV, and neither key appears in `utils/session-scope.ts`, so
+  neither is in a queue, a drain order, or the logout-survival list.
+- **Consumers are index-safe.** `OperationalSections` reads the array only through `.some()`,
+  `.reduce()`, `.length` and `.map()`, with a `revRenderJobs = []` prop default. Nothing indexes
+  into it, so a shorter array renders correctly.

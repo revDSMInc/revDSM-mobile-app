@@ -4509,6 +4509,121 @@ truth again. Do not relax that — a stale overlay outranking real server data i
 deletes uploaded documents and stays online-only. Adding that one to this set would let a replay
 destroy work the rep did after it.
 
+### Follow-up — the Deal Center spinner on a weak line
+
+The screen in the "one bar" client video (see `offline.md` for the connectivity side).
+
+⚠️ **A bare spinner is a promise the screen cannot keep.** `isLoading` ORs three query flags and
+gated the whole screen, so on a stalled line the rep got "Loading calculator…" with no message,
+no progress and no way out — indistinguishable from a broken app.
+
+`useSlowLoadHint(isLoading)` flips true after 4 s, and the spinner then names the problem and
+offers **Work offline**.
+
+⚠️ **`workFromDevice` exists because `isOnline()` is not enough.** `deviceIsAuthoritative` in
+`useDynamicCalculators` was `!isOnline() || isClientId(...) || hasUnsyncedDealCenter(...)`. On one
+bar `isOnline()` is **true**, so the cached quote already on the device was unreachable precisely
+when it was needed. `preferDevice` forces that branch; the bootstrap key includes it
+(`${leadId}:${device|net}`) so opting in re-runs the bootstrap rather than being swallowed by the
+"already bootstrapped" guard.
+
+⚠️ **Known, pre-existing: every hook in `DynamicDealCenterScreen` sits below an early return**
+(`route?.params?.mode === 'edit'`, line ~63) — 28 `rules-of-hooks` errors, one of which is now
+`useSlowLoadHint`. It is latent (the param does not change within a mount) but it is real, and
+fixing it means splitting the edit mode into its own component. Worth a ticket; deliberately not
+attempted inside a connectivity fix.
+
+## Ticket — crash: "Rendered fewer hooks than expected" on View all
+
+Reported from a client device with a red-box screenshot: pressing the **blue grid button**
+(View all) in the Deal Center crashed the screen outright.
+
+**The exact cause.** `DynamicDealCenterScreen` had an early return at the top —
+`if (route?.params?.mode === 'edit') return <DynamicDealEditScreen/>` — placed after three
+hooks and before the other ~40. React tolerated that only because `mode` never changes within
+a mount. But it meant **every remaining hook in the file was formally conditional**, which the
+linter had been reporting as 27 `rules-of-hooks` errors for a long time.
+
+Two further early returns sit mid-body: `flowStep === 'jobBuilder'` and `flowStep === 'rollout'`.
+`useSlowLoadHint` (added for the weak-connection ticket) landed *below* them. `flowStep` DOES
+change at runtime — View all calls `setFlowStep('rollout')` — so:
+
+| render | flowStep | hooks run |
+|---|---|---|
+| 1 | `calculator` | …N, including `useSlowLoadHint` |
+| 2 | `rollout` | …N−1 — returns at the `rollout` branch first |
+
+Fewer hooks on render 2 than render 1 is exactly what React refuses. Crash.
+
+⚠️ **The 27 pre-existing errors were not noise — they were the loaded gun.** Any hook added
+below those returns would have done this. A previous pass recorded them as "latent, worth a
+ticket" and added a hook anyway; that was wrong, and this crash was the result.
+
+**The fix, both halves:**
+1. `useSlowLoadHint` hoisted above every early return.
+2. Edit mode split into its own component. `DynamicDealCenterScreen` is now a two-line router
+   (`mode === 'edit'` → `DynamicDealEditScreen`, else → `DynamicDealCenterCreate`), and all the
+   create-flow hooks live in `DynamicDealCenterCreate` with nothing conditional above them.
+   `rules-of-hooks` on this file: **28 → 0**.
+
+⚠️ **Do not re-add an early return above the hooks in `DynamicDealCenterCreate`.** Route on a
+prop in the wrapper and render a different component instead — that is what the wrapper is for.
+
+**Swept the rest of the app.** The only other `rules-of-hooks` findings are
+`DynamicTabRenderer.tsx` (10, behind `if (tab.isSummary)`) — safe in practice because it is
+mounted with `key={currentTab.id}`, so a tab change remounts rather than re-rendering — and one
+in `CalculatorSummary.tsx`, which is the naming rule on a Reanimated render prop, not
+conditional ordering. Neither can produce this crash today; the TabRenderer one is the same
+trap waiting for someone to add a hook below line 1297.
+
+---
+
+## Ticket — "Jobs Built — Back to Tools" stacked a second Lead Center
+
+Pressing **Jobs Built — Back to Tools** landed on Lead Center, but pressing back from there went
+to Lead Center *again* instead of the leads list — identically from the header arrow, the Android
+hardware back and the iOS swipe, since all three simply pop.
+
+`onRolloutsConfirmedDone` called:
+
+```
+navigation?.navigate('LeadCenter', { lead, tab: 'tools' });
+```
+
+⚠️ **`navigate` only REUSES an existing route when the params match.** With different params
+React Navigation pushes a new copy, so the stack became
+`Leads → LeadCenter → DynamicDealCenter → LeadCenter`.
+
+⚠️ **A blind `goBack()` is NOT the fix.** `DynamicDealCenter` is opened from Lead Center,
+Investment Center, Deal Detail, notifications and push routing. `goBack` would return to whichever
+of those pushed it, and from a push there may be no Lead Center in the stack at all.
+
+`utils/back-to-lead-center.ts` (pure, tested) plans it from `navigation.getState().routes`, and
+`utils/navigate-back-to-lead-center.ts` applies it: **pop** when a Lead Center is already below,
+**navigate** only when there is none.
+
+⚠️ **The NEAREST Lead Center below the top, not the first.** A rep can legitimately be in
+`LeadCenter(A) → DealCenter → LeadCenter(B) → DealCenter`; popping to A would throw away a screen
+they still expect behind them.
+
+⚠️ **A Lead Center on TOP of the stack is not a pop target** — popping zero screens would leave
+the rep where they are with the button doing nothing.
+
+⚠️ **The Tools tab is selected by a `SET_PARAMS` dispatch targeting the Lead Center route's
+`key`.** A bare `navigation.setParams` writes to the route owning the navigation object — the Deal
+Center being left — and would silently do nothing. It runs AFTER the pop and its failure is
+swallowed: being on the right screen matters more than the right tab. (Popping restores Lead
+Center as the rep left it, so without this a rep who had switched to Job Docs would return there.)
+
+⚠️ Popping preserves the existing Lead Center's own params (`fromMyDeals`, appointment state);
+re-navigating with fresh params would quietly reset them.
+
+⚠️ Every step is defensive and falls back to the original `navigate`. This is a button pressed in
+front of a customer — a navigation throw here would crash the app mid-deal.
+
+Other screens that return to Lead Center (Investment Center, Deal Detail, Job Builder, RevRender)
+already use `goBack()` and were correct; they are untouched.
+
 ---
 
 ## Ticket — Deal Center showed the calculator over a confirmed rollout on mobile data

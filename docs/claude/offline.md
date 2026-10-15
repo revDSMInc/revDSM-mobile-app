@@ -823,3 +823,204 @@ the primary identity and the quadruple only as a pre-filter.
 
 ⚠️ A cleanup group larger than 5 is suspicious — `MAX_PHOTO_ATTEMPTS` is 5, so a retry run
 cannot exceed it.
+
+## The check-in log that logout deleted
+
+`utils/session-scope.ts` (`SESSION_KEEP_KEYS`), `services/offlineActivityLog.ts`.
+
+Reported with the `[LeadSync]` / `[CheckInTrace]` diagnostics on a device. A rep started an
+appointment **offline**, came back online, and:
+
+- the lead's status DID change to "Resume Appointment";
+- **no `lead_check_in` ever reached the server**;
+- after a logout/login the lead read "Start Appointment" again.
+
+The trace showed the log was captured correctly — `[CheckInTrace] logEvent lead_check_in
+online=false queueable=true` — so it was held in `offline_activity_logs` as designed.
+
+⚠️ **Logout deleted it.** `resetSessionStorage()` clears every MMKV key that is not in
+`SESSION_KEEP_KEYS`, and that set listed only `offline_lead_work` and `upload_photo_queue`. The
+`work` PUT therefore survived (hence "Resume"), while the check-in log, the workflow marks, the
+photo deletes, the map filters and the delivery preference were all wiped — **five queues**, each
+holding work the rep had already done.
+
+⚠️ **Any owner-scoped queue MUST be listed in `SESSION_KEEP_KEYS` when it is added.** Every one of
+them already filters by `ownerId` on replay (`replayableLogs`, `replayableFilterWrites`, …), so
+keeping the key is safe for the next login — a different user never sees another's rows. Clearing
+it is what loses work. This is the single easiest way to silently destroy a queue: the queue code
+itself looks perfectly correct.
+
+⚠️ **The reset hooks are NOT the bug and must stay.** They clear the in-memory copy and set
+`loaded = false`, which forces a re-read from MMKV on next use — the behaviour `offlineLeadStore`
+has always relied on. Removing them would leave one login's rows in memory under the next.
+
+Also fixed: `queueActivityLog` now drains on enqueue when already online, as the other queues do.
+A log held during a BRIEF dropout previously waited for the next `onReconnect`, which may never
+come in that session.
+
+⚠️ A first device cannot verify this. `markLeadCheckedInOffline` is a local display mark, so the
+status looks right there either way — check the portal's Forever Record, or a second device.
+
+### Follow-up — the queue was kept, but still never drained
+
+Two devices, one lead: the iPhone that started the appointment offline showed "Resume"; a second
+device logging in as the same rep showed "Start". **The second device is the only honest one** —
+`markOfflineCheckIn` is a LOCAL overlay (`applyOfflineWorkflow` rewrites `workflowState` on the
+device that queued it), so the first device looks correct whether or not anything reached the
+server.
+
+Keeping the key (above) stopped logout deleting the queue. Two further faults stopped it draining:
+
+⚠️ **`onReconnect` is not enough on its own.** `startActivityLogSync` only drained on reconnect
+plus once at mount. A rep who reconnects, kills the app, and reopens it **already online** never
+gets a reconnect event, and the mount drain races `initialize()` setting the session owner and
+token. `offlineLeadStore` has always had three triggers — `onReconnect`, `AppState` 'active', and a
+60s sweep — and the activity log now has the same three. Any new queue should.
+
+⚠️ **"No session yet" was burning the retry budget.** `settleQueuedLog` discards an entry after
+`MAX_LOG_ATTEMPTS` (5), and the sender throws `no session to replay an activity log with` when the
+token has not been restored yet. That counted as a real failure, so a handful of launches could
+**silently destroy a check-in the rep genuinely made**. `drainActivityLogs` now returns early
+without a session owner or token rather than letting the sender throw.
+
+⚠️ Do not read "the `work` PUT returned 200" as "the lead is checked in". They are different
+writes: `PUT lead/v1/{id}/work` records who is working the lead, and the `lead_check_in` activity
+log is what the portal's Forever Record and the lead's own history show. A lead can have one
+without the other, which is exactly the state this ticket was reported in.
+
+## The lead RELEASE had no queue (only half of "leaving a lead" survived offline)
+
+`utils/offline-lead-work.ts` (the `workEnd` step), `services/offlineLeadStore.ts`
+(`queueLeadWorkEnd`), `utils/lead-work-session.ts`. Endpoint:
+`PUT lead/v1/{leadId}/work` with `{ workStartedBy: null }`.
+
+Leaving a lead sends two things: the `lead_session` / `session_pause` activity log, and the work
+release. Asked to confirm the fix worked online AND offline, only the log did:
+
+| | Offline |
+|---|---|
+| pause log | queued — `lead_session` is in `QUEUEABLE_LOG_MODULES` |
+| work release | **lost** — `endWorkLead` is a bare PUT, the caller caught the throw |
+
+⚠️ **The rep stayed live on the ops board permanently.** Nothing retried it: the stale-session
+sweep clears the stored session *before* the call, so once it failed there was no record left to
+sweep. A rep leaving a door with no signal looked busy on that lead until someone intervened.
+
+The release is now the `workEnd` step on the existing lead-work queue rather than a sixth queue —
+it is the same full-state PUT on the same endpoint the start already uses.
+
+⚠️ **Ordered `work` → `chat` → `workEnd`.** `chat` must stay immediately after `work` (it mirrors
+the online flow, and a test asserts it); the release goes after both, so a start and an end queued
+in one offline stint replay in the order they happened.
+
+⚠️ **`workEnd` is lead-state, not a document step.** It belongs after `consent` in `UPLOAD_STEPS`
+for the same reason `work` and `archive` do — releasing the rep must never hold a signed form or a
+sale behind it.
+
+⚠️ **Skipped once `submit` is set.** A sold lead is submitted, not released; `submit` carries the
+final state.
+
+⚠️ **`lead-work-session.ts` must stay RN-free** (CLAUDE.md §6). Importing `offlineLeadStore` or
+`services/connectivity` into it pulls in netinfo and the whole suite stops loading — which is what
+happened on the first attempt. It takes the queue through `setWorkReleaseQueue`, registered by
+`offlineLeadStore` at module load.
+
+### Ticket — "one bar": a connection that is alive but unusable
+
+Client video: a rep on **1 bar of 5G** sat on "Loading calculator…" indefinitely. He described it
+as a "1 signal issue" and he was right about the cause.
+
+⚠️ **ONE BAR IS WORSE THAN NO BARS, and that is the whole bug.** Every offline path in this app
+is reached THROUGH failure: a request dies → `transportError` → `/health` probe → offline →
+cached copy. On one bar nothing ever fails. The phone is attached to a tower, the socket opens,
+the request just crawls. No failure, no signal, no probe, no fallback. **Airplane mode worked
+better than one bar.**
+
+**Why `/health` was never called** (the backend dev asked us to verify this, so it is recorded):
+`reportRequestSignal` runs only in the axios response/error interceptors, and `shouldProbe` admits
+only `transportError`. A hanging request reaches neither interceptor. With the old 120 s timeout
+and `FAILURES_BEFORE_LEAVING_ONLINE = 2`, the earliest possible probe was **4 minutes** in. The
+debugger showed nothing because there was nothing to log. `recheckNetworkNow` was also **dead
+code** — defined, never called.
+
+**The fix: judge a request while it is still running.** `utils/slow-request.ts` holds an
+`InFlightTracker`; `beginRequest`/`endRequest` bracket every call from the axios interceptors, and
+a request still open after `SLOW_REQUEST_MS` (3 s) fires the probe directly.
+
+⚠️ **The probe must skip its own URL** (`isProbeUrl`), or a slow probe triggers another probe.
+
+⚠️ **One timer for the whole batch, not one per request.** It only has to notice that *something*
+is stuck; a timer per request on a busy screen is pure overhead.
+
+**Timeout 120 s → 15 s.** 120 s is what the rep actually waited, twice, because TanStack retries
+once. A request unanswered that long on a field device is not coming.
+
+**Three banner states, not five.** The backend dev proposed a five-bucket latency table
+(Healthy/Degraded/Weak/Very weak/Offline). Measured `/health` on `api.np.revdsm.com`: **warm
+median 239 ms, p90 358 ms, max 606 ms — but 1018 ms cold**, nearly all TLS handshake. The probe
+uses bare `fetch`, outside the axios pool, so it pays that cold cost often. A 350 ms "Healthy"
+ceiling would have misfired on **17%** of requests on a *good* office connection. `utils/
+connection-banner.ts` keeps three states, because the rep can take exactly three actions.
+
+⚠️ **The weak banner never says "offline".** The rep can still work; "offline" sends them hunting
+for signal instead of carrying on.
+
+⚠️ **Hysteresis is asymmetric** — `BANNER_WORSEN_MS` 600 ms, `BANNER_RECOVER_MS` 4 s. Warning is
+cheap; clearing a warning while the line is still flapping is what makes a strip nobody reads.
+
+⚠️ **`degraded` still counts as offline for `useIsOnline`** (19 consumers). That is deliberate and
+was not changed: a weak line should route writes to the queues exactly as a dead one does.
+`useNetworkStatus` is the hook for anything that needs to tell the two apart.
+
+### Follow-up — the strip keeps the original amber
+
+Reviewed on device and corrected. The first cut gave **offline** a slate-grey bar (`#E2E8F0`
+on `#334155`) and reserved amber for **weak**. Rejected: slate reads as disabled chrome, so the
+eye slides straight off the one state that most needs reading.
+
+⚠️ **Offline keeps `#FFF1C6` on `#7A4100`, 11pt weight 600 — do not restyle it.** That is the
+app's established "read this" bar and it predates this ticket; the only change to the offline
+state is two words of copy.
+
+⚠️ **Weak is a LIGHTER AMBER (`#FFF8E4`), never a second hue.** Same family on purpose: it is the
+same kind of message one step less urgent, and a rep should not have to learn two colours to read
+one strip. The foreground stays `#7A4100` so both states are legible against either background.
+
+⚠️ **One text weight, not a bold title plus a lighter detail.** A weight split inside an 11pt line
+reads as two separate messages. `bannerFor()` returns `title` and `detail` separately so the rule
+stays testable, and the component joins them into one sentence (`"${title}. ${detail}"`) in a
+single `<Text>` — the split is for the tests, not for the eye.
+
+### Follow-up — three ways the one-bar fix would still have failed on a weak radio
+
+Found by re-reading the first cut against a *weak* radio rather than a *dead* one. All three
+were latent: the logic was right for "no signal" and wrong for "bad signal", which is the case
+the ticket exists for.
+
+**1. A slow probe reported the server DEAD.** `PROBE_TIMEOUT_MS` was 2 s, but measured cold TLS
+to the live API is **1.0–2.4 s on a good wired line** and the handshake is most of it — on one
+bar it routinely exceeds 2 s. An aborted probe returns `false`, and `applyProbeResult(false)`
+**force-settles to offline**, skipping the dwell. So the rep with a working-but-weak line was
+told they had none. Timeout is now **6 s**.
+
+⚠️ **`false` from the probe means UNREACHABLE, never "slow".** Anything that cannot tell the two
+apart must not return `false`. `probeHealth` now returns `true | 'slow' | false`
+(`PROBE_SLOW_MS` = 1.5 s), and `applyProbeResult` maps both `true` and `'slow'` to **degraded** —
+only `false` reaches offline.
+
+**2. One probe per stall, and the first is the likeliest to be lost.** `beginRequest` armed the
+timer only `if (!slowTimer)`; the timer nulled itself when it fired. Nothing re-armed it, because
+the screen is blocked — no new request comes through `beginRequest`. `armSlowTimer()` now
+re-arms itself while anything is still stuck.
+
+**3. The re-arm was then eaten by the throttle.** `PROBE_MIN_INTERVAL_MS` is 20 s, which outlives
+the whole 15 s stall, so every re-probe returned `null`. Added `PROBE_STALL_INTERVAL_MS` (4 s),
+passed by `probeAndApply(stalled = true)`.
+
+⚠️ **The stall throttle must stay well under the axios timeout.** If it ever creeps above
+`15 s − SLOW_REQUEST_MS` the re-probe silently stops happening and the behaviour reverts to one
+probe per stall, with nothing failing to show it. A test pins this relationship.
+
+**Verified across both radios.** TLS needs ~3 RTT before first byte; at edge-of-cell LTE
+(~1.2 s RTT) a cold probe lands ~3.8 s — inside the 6 s timeout, correctly reporting `'slow'`.
+5G at one bar (~300 ms RTT) lands ~1.05 s and reports quick.
