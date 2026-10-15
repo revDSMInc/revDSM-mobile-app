@@ -4400,3 +4400,14 @@ calculator switch on a lead with money held now asks the rep instead of refusing
 - Not done: routing straight into the addendum/refund flow from `refundDue`; the My Deals edit wizard's own re-scope; offline
   (the queued `funding` step sends no `settledAction`, so a scope switch with money held still needs signal). Open with the
   client: whether the refund rule applies to a scope switch, and whether Submit may wait on approvals. Not verified on device.
+
+
+## 1 Year plan sheet - `Change` opens a choose-default mode (star removed)
+
+`OneYearMonthlyPlan.tsx`: the per-row star is gone. Tapping a row in the normal sheet only picks the plan for THIS deal (`commit('custom', key)`). The **Change** button on the MY DEFAULT PLAN card (and **Choose** on the no-default card) sets `chooseDefault`: a green "Choose your default plan / Done" banner replaces the card, rows show radios + a `CURRENT DEFAULT` badge, and tapping a non-default row opens a confirm sheet ("Set X as your default? / Replaces Y / Set as default / Cancel"). Confirm => `onSetRepDefault(key)` + `commit('custom', key)` + close. ⚠️ The confirm sheet is an absolute in-card overlay, NOT a second `Modal` (never stack native Modals). The default cannot be cleared from the sheet any more (`onSetRepDefault(null)` is still supported by the prop). Not verified on device.
+
+`OneYearMonthlyPlan.tsx` `activeSeg`: the Match / Default toggle highlights what is DISPLAYED, not the stored `mode` - a `custom` pick equal to the rep default (checked first) or the In-Home plan lights that segment instead of leaving both blank; a plan matching neither still lights neither. The helper line still follows the stored mode. Not verified on device.
+
+### 1 Year plan - activity logs + offline (follow-up to the choose-default sheet)
+
+`RolloutView.logOneYearPlan` writes a `oneYearPlan` rollout log (`logRolloutChange` -> `logEvent`, so offline it joins the activity-log queue with its action-time key) for `1 year default plan set` / `cleared` (`setOneYearDefault`, only when the key really changes) and `1 year plan changed` (new `OneYearMonthlyPlan` prop `onPlanPicked`, fired from `commit` only). ⚠️ `onPlanPicked` must NOT fire from the Default re-stamp effect - that is not a rep action and would flood the log. Meta `offline` = connectivity at tap time. The default itself already queues via `saveDefault` -> `offline-settings.ts`; details in `offline.md` § "1 Year default plan - offline + activity logs". Not verified on device.
