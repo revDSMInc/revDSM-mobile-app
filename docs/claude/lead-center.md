@@ -1870,3 +1870,8 @@ can never clear a lead that is already confirmed. A test pins this, because the 
 Verified matrix: new online lead → locked; new offline lead → locked; confirmed online → unlocked;
 confirmed offline from MMKV → unlocked; sold → unlocked; synced lead on a weak signal with nothing
 cached → **unknown/open**, which is the original ticket above and must stay that way.
+
+
+### Lead preview photo loads from disk (`useLeadPreviewUrl`)
+
+`hooks/useLeadPreviewUrl.ts` is shared by the chat header, the thread list and other lead thumbnails. For stored (bucket) photos it now persists the last resolved URL in MMKV (`leadPreviewUrl:<bucket/path>`) and returns the `warmToLocalCache` file, so a reopened lead shows the photo with no `getSecureUrls` call and offline. Full write-up and traps: `notifications-chat.md` § "Chat header / thread-list lead photo: slow to appear". ⚠️ Never route a `googleUrl` (street view) through that cache - its signature-less path is identical for every lead. Not verified on device.

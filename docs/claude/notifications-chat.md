@@ -681,3 +681,7 @@ intact, size 0) when the response carries none.
 
 ⚠️ `normalizeLogFileSize` returns **0, never undefined**, so the key is always present — and a genuine
 0-byte file is preserved rather than being treated as missing.
+
+## Chat header / thread-list lead photo: slow to appear (street view or uploaded)
+
+`useLeadPreviewUrl` showed the home placeholder until `LeadService.getSecureUrls` answered (module-memory cache only, so EVERY cold start), then the `<Image>` downloaded the pre-signed S3 file (which defeats the native image cache). Now, for stored (bucket) photos only: the last resolved URL is persisted in MMKV (`leadPreviewUrl:<bucket/path>`), and `warmToLocalCache` maps it to the on-disk file (`getLocalCachePath` drops the signature, so an expired URL still finds the file). A reopened chat paints from disk with no API call and no network; first open resolves the URL, shows it, and warms it to disk. The thread list uses the same hook, so its thumbnails pre-warm the header's. ⚠️ Never warm a `googleUrl` (street view) through this cache: its signature-less path has no per-lead part, so every lead would share one file. Google URLs still load directly. A changed photo changes `bucket/filePath`, hence the key. Not verified on device.
