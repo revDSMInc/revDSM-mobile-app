@@ -3232,3 +3232,46 @@ against the schedule as it is at that moment and assigns the crew it picks (firs
 ### Create flow: availability is checked on "Yes" only (REVDSM-1300)
 In `AppointmentSchedulerModal`, a NEW job with a lead (`!isEdit && leadId`, `checkOnYes`) no longer asks the scheduler when a date is picked (no per-day check, no calendar dimming). The one check is the **Yes** tap: the server checks that exact window (8-12 or 12-4) and assigns the crew. No crew -> a "No crew available" panel on the same screen with **Try <other window>** (only if it has not failed too) and **Pick Another Date**. Edit flows (`isEdit`) and callers without a `leadId` keep the earlier checks.
 - A demo has its window checked too (409 if no crew) but no crew is assigned; only a sale is assigned.
+
+## REVDSM-1300 - install scheduling on mobile: APIs, when they fire, and how availability is checked
+
+Everything below is on the rep app; the rules themselves live in the backend (`InstallSchedulingService`,
+`SchedulingEngine`). Code: `services/api/installAvailability.ts` (calls), `hooks/useInstallAvailability.ts`
+(hooks), `widgets/modals/job-builder/AppointmentSchedulerModal.tsx` (create flow),
+`screens/DynamicDealCenter/components/DynamicDealEditScreen.tsx` (My Deals edit wizard).
+
+### APIs used (all need the rep's bearer token; base URL is `ENV.API_URL`)
+
+| # | Method + path | Called from | Body | When it fires |
+|---|---|---|---|---|
+| 1 | `POST installer/v1/installer-dispatch/availability` | `fetchInstallAvailability` via `useInstallAvailability` | `{ date: 'yyyy-MM-dd', leadId? }` | Once a day is picked and the **time** step shows - **only** in flows that do not check on Yes (edit flows, and callers with no `leadId`). Re-asked if the date or `refreshKey` changes. Not sent while offline. |
+| 2 | `POST installer/v1/installer-dispatch/availability/calendar` | `fetchInstallCalendarAvailability` via `useInstallCalendarAvailability` | `{ startDate, endDate, leadId? }` (one month; start is clamped to today) | When a calendar month is shown - in `DynamicDealEditScreen` (`InstallDateCalendar`) and in the scheduler modal **only** when it is not checking on Yes. One call per month, cached per `leadId|month|refreshKey`. |
+| 3 | `POST installer/v1/installer-dispatch/availability/book` | `bookInstallSlot` in `handleAcceptSlot` | `{ leadId, date: 'yyyy-MM-dd', timeWindow: '8:00 AM - 12:00 PM', isSale }` | The rep taps **Yes** on "Does this time work for the customer?" - create flow only (`!isEdit && leadId`). |
+| 4 | `POST lead/v1/{leadId}/job-builder` (`LeadService.submitJobBuilder`) | Complete Job | the job builder payload (existing) | Not new, but the backend now also tries to assign a crew here for a lead that still has none (safety net if Yes did not assign). |
+| 5 | `POST` lead draft upsert (`LeadService.upsertLeadDraft`) | amendment flow | `{ scheduleTime }` (existing) | Edit flow with an amendment only. Unchanged by 1300. |
+
+### Create flow (new job): the check is on "Yes" only
+`checkOnYes = !isEdit && !!leadId`. Picking a date and moving between the two windows call **no** API. Tapping **Yes**:
+1. `POST .../availability/book` with that date and exactly that window.
+2. The server runs the scheduler for that one window (see "How the server decides"), and if a crew qualifies and the lead is a sale it creates the `InstallerAssignment`.
+3. Result handling (`BookInstallResult`):
+
+| Server answer | Result | What the rep sees |
+|---|---|---|
+| `200 { assigned: true/false }` | `booked` | Moves on to the success step. `assigned: false` (demo, switch off, manager override, already has a crew) is not an error. |
+| `409` | `taken` | **"No crew available - No crew can take this job on <day> from <window>"** with **Try <other window>** (only if it has not failed too) and **Pick Another Date**. Nothing is booked. |
+| no response at all (offline / timeout) | `offline` | Flash "Connection needed - You need to be online to schedule this job." Stays on the screen. |
+| any other status (400/500) | `error` | Booking continues as before; `submitJobBuilder` retries the assignment. |
+
+### How the server decides (same engine behind calls 1, 2 and 3)
+- **Windows:** morning 8:00 AM - 12:00 PM, afternoon 12:00 PM - 4:00 PM.
+- A crew qualifies for a window when **projected arrival <= window close - arrival buffer** (default 60 min: 11:00 AM / 3:00 PM).
+- **Projected arrival:** a crew's first job of the day arrives at its start time (default 8:00 AM, or the window opening if later); every later job arrives at the previous job's end + drive time.
+- **Eligibility:** within the crew's start/cutoff hours (default 8:00 AM / 8:00 PM, a hard stop - the rest of a long job carries to the next day), job duration from Global Estimates (or the crew's override, scaled for crew size), competencies, weekly availability and time off.
+- **Choosing a crew:** earliest eligible arrival, then the tie-breaker (least drive time / lightest load / round-robin).
+- **Drive time:** OpenRouteService matrix when the backend has `ORS_API_KEY`, otherwise a distance estimate; a crew's first job counts its warehouse leg only for tie-breaking and the saved `drive`.
+- **Managers** (install dispatch / dispatch center / sales command center permission) can book a full window: calls 1-2 report `canOverride` and nothing is dimmed or blocked; call 3 assigns no crew for them.
+- Call 2 reports, per day, whether any window has a qualifying crew; call 1 reports each window with its crew and arrival (crew names are for managers, not shown to reps).
+
+### What never blocks a booking
+Calls 1 and 2 resolve to `null` on any failure and the screens then offer everything; the offline case skips them entirely. Only a `409` (no crew) or being offline on **Yes** stops a rep.
