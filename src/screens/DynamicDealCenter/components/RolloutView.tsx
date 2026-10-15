@@ -733,6 +733,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const logCalculator = { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId };
 
   const loggedPriceRef = useRef<number | null>(calculator.price ? Number(calculator.price) : null);
+  const seededDiscountRef = useRef(false);
   const logEndPriceEntered = () => {
     const p = parseFloat(endPrice) || 0;
     if (loggedPriceRef.current === p) return;
@@ -754,11 +755,30 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         action: 'end price entered',
       },
     }).catch(() => {});
+    // Ticket 1308: the In-Home Pre Order discount becomes meaningful the moment there is a
+    // price to apply it to, so it is seeded here rather than at Confirm Rollouts. Once per
+    // calculator - editing the price again must not re-log a discount that did not change.
+    if (!seededDiscountRef.current) {
+      seededDiscountRef.current = true;
+      logPreOrderDiscount({
+        userId: uid,
+        leadId,
+        calculator: logCalculator,
+        tiers: logTiers,
+        endPrice: p,
+        discountPercentage: discountPct,
+        isDefault: !!user?.defaultPercentage && user.defaultPercentage === discountPct,
+      }).catch(() => {});
+    }
   };
 
   const logDiscountChanged = (next: number) => {
     const uid = user?._id || user?.id;
     if (!uid || next === discountPct) return;
+    // A rep who taps a chip BEFORE entering a price has stated their choice explicitly, so the
+    // seed is spent: otherwise the later price entry would log the default underneath this
+    // change and the Forever Record would read 20% -> 15%.
+    seededDiscountRef.current = true;
     logPreOrderDiscount({
       userId: uid,
       leadId,
@@ -2042,19 +2062,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                       fieldValue: p, fieldCategory: 'rollout', oldValue: '', newValue: p,
                       action: 'rollout confirmed',
                     },
-                  }).catch(() => {});
-                  // Ticket 1308: record WHICH In-Home Pre Order discount this rollout was
-                  // confirmed with. Seeded (no oldValue) because the rep never touched the
-                  // chips - a later tap logs its own old -> new entry.
-                  logPreOrderDiscount({
-                    userId: uidC,
-                    leadId,
-                    calculator: { id: c.id, title: c.title, appointmentId: (c as any).appointmentId || appointmentId },
-                    tiers,
-                    endPrice: p,
-                    discountPercentage: c.discountPercentage || pricing.defaultPreOrder,
-                    isDefault: !!user?.defaultPercentage &&
-                      user.defaultPercentage === (c.discountPercentage || pricing.defaultPreOrder),
                   }).catch(() => {});
                 });
               }

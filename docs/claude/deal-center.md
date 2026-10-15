@@ -4207,9 +4207,13 @@ on a $444 MSRP could not be explained from the log.
 **Two moments, mirroring the payment-method rules** (`utils/activity-log/rollout-log-meta.ts`,
 `logPreOrderDiscount`):
 
-- **Seeded** — fired once from the Confirm Rollouts handler (`RolloutView.tsx`), for the value in
-  force when the rollout is confirmed. The rep never touched the chips, so this is the default.
-  `oldValue` is empty; `action: 'in home pre order discount applied'`.
+- **Seeded** — fired from `logEndPriceEntered` (`RolloutView.tsx`), i.e. when the rep commits the
+  Rollout End Price, alongside the debounced `PUT /lfcalculators/:id`. The discount only means
+  something once there is a price to apply it to, and the rep sees the entry while still on the
+  screen. `oldValue` is empty; `action: 'in home pre order discount applied'`.
+  ⚠️ **Not at Confirm Rollouts** — it was there in the first cut and was moved by request; do not
+  move it back. Guarded by `seededDiscountRef` so editing the price again does not re-log an
+  unchanged discount.
 - **Changed** — fired from the chip's `onPress`, carrying old → new.
   `action: 'in home pre order discount changed'`.
 
@@ -4227,8 +4231,19 @@ needs no new client.
 - ⚠️ **The chip logs BEFORE `onDiscountChange`.** `logDiscountChanged` reads `discountPct` for its
   `oldValue`, and the setter replaces it; calling them the other way round records old === new.
 - ⚠️ **Early-returns on `next === discountPct`**, so re-tapping the active chip writes nothing.
-- Offline: `rollout_and_drop` is not in `NON_QUEUEABLE_LOG_MODULES`, so these queue and replay with
-  a correct `occurredAt` like every other rollout log — no extra handling was needed.
+- ⚠️ **A chip tap spends the seed** (`seededDiscountRef.current = true` in `logDiscountChanged`).
+  A rep who picks a discount before typing a price has stated their choice; without this the later
+  price entry would log the default *underneath* the change and the record would read 20% → 15%.
+- **Offline is covered, and verified**: `rollout_and_drop` is not in `NON_QUEUEABLE_LOG_MODULES`
+  (only `'system'` is), so `logEvent` holds these in the activity-log queue and replays them with
+  the `occurredAt` taken when the rep acted, not when the request finally goes out. Nothing in
+  `logEndPriceEntered` or `logDiscountChanged` awaits the network, so both run the same offline.
+  `__tests__/utils/pre-order-discount-offline.test.ts` covers queueability, the action-time stamp,
+  field survival through `stampOfflineLog`, and queue ordering behind the end-price log.
+- ⚠️ `discountPct` can never be falsy (which would hit the `!opts.discountPercentage` early return):
+  `calculator.discountPercentage || pricing.defaultPreOrder`, and `DISCOUNT_FALLBACK` in
+  `useDealPricing.ts` guarantees `defaultPreOrder: 25` even when the discount config is missing —
+  which is exactly the offline case.
 - ⚠️ Both files are CRLF.
 - Not verified on device, and not yet rendered in the portal: the backend/portal must display the
   two new actions.
