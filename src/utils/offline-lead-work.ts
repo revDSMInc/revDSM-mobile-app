@@ -21,6 +21,8 @@ export type UploadStep =
   | 'addendumRefund'
   | 'addendumRelease'
   | 'fundingCollect'
+  | 'fundingDecision'
+  | 'fundingActivate'
   | 'fundingSubmit'
   | 'submit'
   | 'consent'
@@ -44,6 +46,8 @@ export const UPLOAD_STEPS: readonly UploadStep[] = [
   'addendumRefund',
   'addendumRelease',
   'fundingCollect',
+  'fundingDecision',
+  'fundingActivate',
   'fundingSubmit',
   'submit',
   'consent',
@@ -204,6 +208,15 @@ export interface OfflineLeadWork {
    * above - the server keeps it, so no re-keying is needed here.
    */
   fundingCollected?: string[];
+  /**
+   * Lender answers the rep recorded offline, by `pid` (last write per pid wins).
+   *
+   * ⚠️ The drain sends the link first if the server has none: the decision endpoint answers 409
+   * "Send the application link first" otherwise, and offline the link could not be created.
+   */
+  fundingDecisions?: { pid: string; decision: 'full' | 'short' | 'declined'; approvedAmt?: number }[];
+  /** Loans the rep activated offline, by `pid`. Ordered after `fundingDecision`. */
+  fundingActivated?: string[];
   submit?: Record<string, unknown>;
   chatCreated?: boolean;
   done: UploadStep[];
@@ -292,6 +305,10 @@ export const isStepApplicable = (work: OfflineLeadWork, step: UploadStep): boole
       return !!work.addendum && !work.addendum.hasRefund && !!work.addendumDraftId;
     case 'fundingCollect':
       return !!work.fundingCollected?.length && !!work.funding;
+    case 'fundingDecision':
+      return !!work.fundingDecisions?.length && !!work.funding;
+    case 'fundingActivate':
+      return !!work.fundingActivated?.length && !!work.funding;
     case 'fundingSubmit':
       return !!work.fundingSubmitted && !!work.funding;
     case 'submit':

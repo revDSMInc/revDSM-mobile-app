@@ -4367,3 +4367,36 @@ fact down *before* it discards the evidence.
 ⚠️ Endpoints are unchanged — `user/consent/v1/mobile/create` (consent) and
 `/lead/v1/{leadId}/mobile/waiver-form` (waiver), with `finalizeConsentUpload` skipped for a waiver
 because that endpoint files its own `generatedReport` (REVDSM-1293). This change adds no request.
+
+### Offline financing on the Result Lead sheet
+
+Financing (`type: 'financing'`) is selectable offline; cards stay blocked (`methodAvailableOffline`). On the offline
+Funding screen a loan row shows a "No signal" banner, the rep records Approve full / part / Decline and activates
+(`handleRecordDecision` / `handleActivate` in `ResultJobModal` -> device record + queue). Sync / Send link are hidden
+offline. Queue details and the link-stamping caveat: `offline.md` "Queues 9 and 10". Not verified on device.
+
+### REVUIUX-519 (scope switch): collected money is reused or refunded, not blocked
+
+Spec: `REVUIUX-519-mobile-scope-switch-addendum.md` (+ backend `e918bdd3`/`1deee65d`/`c166efcf`). Funding is lead-level; a
+calculator switch on a lead with money held now asks the rep instead of refusing. Jira was NOT readable from this session
+(no Jira tool) — built from the markdown only; the client's comments 30464 / 29849 / 30088 were not re-checked.
+- **Contract:** `PUT /lead/v1/:leadId/funding` takes `settledAction: 'reuse' | 'refund' | 'reuseWithRefund'`
+  (`FundingService.savePayments`, `useFunding.savePayments(price, rows, payMode, settledAction)`). `calculatorId` was already sent.
+  Three 409s keyed on **`data.code`** (never the URL/message) become kinds `scopeNeedsDecision` / `scopeNeedsRefundApproval` /
+  `scopeRefundFirst` with `settledAmount` / `overage` (`classifyFundingError`); `useFunding.report` shows no banner for them.
+  `FUNDING_SCOPE_SWITCH_OVER_ALLOCATED` never shipped — do not add it.
+- **UI:** `funding/ScopeSwitchPrompt.tsx`, an in-card overlay (never a nested Modal) rendered by `ResultJobModal` after Confirm:
+  decision (re-use $X / refund $X, the re-use option warns when `overage` is present) -> `goFunding('reuse'|'refund')`;
+  approval (server `message` verbatim, Yes -> `reuseWithRefund`, No -> nothing written); refund-first (message + OK).
+  `refundDue` from the 200 shows as an amber "refund due" card on the Funding screen — it is NOT stored or re-read.
+- ⚠️ **Settled rows are re-sent** (`withSettledRows` in `utils/funding.ts`): a row with `charged || collected` missing from the
+  payload makes the server refuse the whole save ("Cannot remove $1,000 AMEX"). Keep their original pids.
+- ⚠️ **`DynamicDealCenterScreen.handleResultJob` no longer pre-blocks** a Sale when another calculator holds collected money
+  (`fundingPinnedToOtherCalculator` gate removed; the helper stays exported, the `fundingBlock` dialogs are now unreachable).
+  Supersedes "collected money pins the lead to its calculator" and "Do NOT build the carry-over/refund flow".
+- ⚠️ Blockers match the server (15 Oct wording): settled total above the price reads "$X more has been collected than the contract
+  price — refund it to submit" (`scopeOverCollectedBlocker`); the old "more than the contract price is allocated" stays for
+  un-collected over-allocation. Coverage is net of live refunds server-side; mobile `fundedAmount` is still gross — known gap.
+- Not done: routing straight into the addendum/refund flow from `refundDue`; the My Deals edit wizard's own re-scope; offline
+  (the queued `funding` step sends no `settledAction`, so a scope switch with money held still needs signal). Open with the
+  client: whether the refund rule applies to a scope switch, and whether Submit may wait on approvals. Not verified on device.

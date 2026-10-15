@@ -303,6 +303,29 @@ export const saveOfflineFundingCollected = (
     )
   );
 
+/** The lender's answer, recorded by the rep with no signal. Re-recording a pid replaces the earlier entry. */
+export const saveOfflineFundingDecision = (
+  workClientId: string,
+  entry: { pid: string; decision: 'full' | 'short' | 'declined'; approvedAmt?: number }
+): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) =>
+    rearmStep(
+      {
+        ...w,
+        fundingDecisions: [...(w.fundingDecisions || []).filter((d) => d.pid !== entry.pid), entry],
+        // A fresh answer supersedes an activation queued against the old one.
+        fundingActivated: (w.fundingActivated || []).filter((pid) => pid !== entry.pid),
+      },
+      'fundingDecision'
+    )
+  );
+
+/** A loan activated offline. The decision it depends on is queued ahead of it. */
+export const saveOfflineFundingActivate = (workClientId: string, pid: string): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) =>
+    rearmStep({ ...w, fundingActivated: Array.from(new Set([...(w.fundingActivated || []), pid])) }, 'fundingActivate')
+  );
+
 /** Submit Funding pressed offline. Ordered after `funding`, so the rows land before the submit. */
 export const saveOfflineFundingSubmit = (workClientId: string): OfflineLeadWork | null =>
   patchOfflineWork(workClientId, (w) =>
@@ -1042,6 +1065,35 @@ const runStep = async (
       for (const pid of work.fundingCollected || []) {
         if (already.has(pid)) continue;
         await FundingService.markCheckCollected(leadId, pid);
+      }
+      return {};
+    }
+
+    case 'fundingDecision': {
+      if (!leadId) throw new Error('no lead id for the lender decisions');
+      const rows = (await FundingService.getFunding(leadId))?.data?.data?.funding?.payments || [];
+      for (const d of work.fundingDecisions || []) {
+        const row = rows.find((p) => p.pid === d.pid);
+        if (!row) throw new Error('the financing row has not reached the server');
+        if (guarded && row.decision === d.decision && (d.decision !== 'short' || row.approvedAmt === d.approvedAmt)) continue;
+        if (!row.linkSent) {
+          await FundingService.getLink(leadId, d.pid);
+          await FundingService.markLinkSent(leadId, d.pid, { channel: 'qr' });
+        }
+        await FundingService.recordDecision(leadId, d.pid, {
+          decision: d.decision,
+          ...(d.decision === 'short' ? { approvedAmt: d.approvedAmt } : {}),
+        });
+      }
+      return {};
+    }
+
+    case 'fundingActivate': {
+      if (!leadId) throw new Error('no lead id for the loan activation');
+      const rows = guarded ? (await FundingService.getFunding(leadId))?.data?.data?.funding?.payments || [] : [];
+      for (const pid of work.fundingActivated || []) {
+        if (rows.find((p) => p.pid === pid)?.activated) continue;
+        await FundingService.activateLoan(leadId, pid);
       }
       return {};
     }

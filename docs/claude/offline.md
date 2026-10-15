@@ -669,3 +669,27 @@ became `NON_QUEUEABLE_LOG_MODULES` in an earlier commit — the suite had been f
 one offline quote is hundreds of rows, and MMKV rewrites its whole store on every write.
 `MAX_QUEUED_LOGS` is now the only thing holding that back. If a device in a dead zone starts
 filling up or replay gets slow, look here first.
+
+### Follow-up — Queues 9 and 10: offline financing (`fundingDecision`, `fundingActivate`)
+
+Ticket: financing plans were disabled with no signal, but the rep now records the lender's answer and activates the
+loan in the app, so a loan has to be finishable offline. UI side: [`deal-center.md`](deal-center.md).
+
+| Step | Fires when | Safety |
+|---|---|---|
+| `fundingDecision` | rep taps Approve full / part / Decline offline | `guarded` (reads the record; skips a pid whose decision already matches) |
+| `fundingActivate` | rep taps "Authorize & activate" offline | `guarded` (skips a pid already `activated`) |
+
+Order in `UPLOAD_STEPS`: `funding` -> `fundingCollect` -> **`fundingDecision` -> `fundingActivate`** -> `fundingSubmit`.
+Both hang off `funding` (`isStepApplicable` needs `!!work.funding`), and address rows by the device-minted pid, so
+**no re-key** (same exception as `fundingCollect`). `methodAvailableOffline` now allows `financing`; a **card** is
+still blocked (it needs a processor link). Offline the card hides Send link / Sync and shows a banner; the device
+record is ticked by `applyOfflineDecision` / `applyOfflineActivation`, and `fundingBlockers(..., { offline: true })`
+drops "link not sent yet" for a loan.
+- ⚠️ **The server answers 409 "Send the application link first" on a decision with no link**, and offline the link
+  could not be made. The drain therefore does `getLink` + `markLinkSent({ channel: 'qr' })` when the row has
+  `linkSent: false`, then records the decision. That stamps a "qr" send the homeowner never scanned — an audit-trail
+  compromise pending the client's answer on "record a decision with no link" (needs a backend change to do properly).
+- ⚠️ Re-recording a pid replaces its queued entry and drops a queued activation (an activation of the old answer).
+- Not covered: My Deals edit (`DynamicDealEditScreen`) offline funding; offline activity logs for decision/activate.
+  Not verified on device. Tests: `financing-rail.test.ts` ("offline financing").

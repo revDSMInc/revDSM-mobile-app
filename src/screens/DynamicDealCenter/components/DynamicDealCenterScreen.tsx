@@ -24,7 +24,7 @@ import { resolveFundingSource } from '../../../utils/activity-log/funding-log';
 import { LeadService, resolveLeadCalculatorId } from '../../../services/api/leads';
 import { ConfirmDialog } from './ConfirmDialog';
 import { FundingService } from '../../../services/api/FundingService';
-import { canResumeJobBuild, fundingBelongsToCalculator, fundingPinnedToOtherCalculator } from '../utils/funding';
+import { canResumeJobBuild, fundingBelongsToCalculator } from '../utils/funding';
 import { useAuth } from '../../../hooks/useAuth';
 import { useSlowLoadHint } from '../../../hooks/useSlowLoadHint';
 import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
@@ -185,14 +185,6 @@ function DynamicDealCenterCreate({ navigation, route }: DynamicDealCenterScreenP
           user?._id || user?.id
         );
         const record = res.data?.data?.funding ?? null;
-        // Collected money (down payment charged / cheque) pins the lead to the calculator that took it.
-        // Fully-financed funding pins nothing, so sibling calculators may still be resulted.
-        if (fundingPinnedToOtherCalculator(record, calculatorId)) {
-          const ownerTitle =
-            tabs.find((t) => String(t.id) === String(record?.calculatorId))?.title || 'another calculator';
-          setFundingBlock({ ownerTitle });
-          return;
-        }
         if (canResumeJobBuild(record) && fundingBelongsToCalculator(record?.calculatorId, calculatorId)) {
           resumeRef.current.checking = false;
           openSheet(true);
@@ -205,7 +197,7 @@ function DynamicDealCenterCreate({ navigation, route }: DynamicDealCenterScreenP
       }
       openSheet();
     },
-    [lead, user, pricing.plans, tabs]
+    [lead, user]
   );
 
   const submittedCalculatorId = jobResetLocally ? null : resolveSubmittedCalculatorId(lead);

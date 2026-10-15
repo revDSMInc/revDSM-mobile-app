@@ -39,6 +39,7 @@ interface Props {
   onResultAsBankDecline: () => void;
   onReactivate?: () => void;
   onRecordDecision?: (decision: 'full' | 'short' | 'declined', approvedAmt?: number) => void;
+  offline?: boolean;
 }
 
 function ActionButton({ label, onPress, alt, tone, busy, disabled }: {
@@ -182,6 +183,7 @@ export function PaymentFundingCard({
   onResultAsBankDecline,
   onReactivate,
   onRecordDecision,
+  offline,
 }: Props) {
   const steps = FLOW[p.type] || [];
   const bypassed = FINANCING_BYPASS_NOTICE_ENABLED && isFinancingBypassed(p);
@@ -262,7 +264,7 @@ export function PaymentFundingCard({
             without this the card is indistinguishable from one never sent. */}
         {!!closedNote && !bankDeclined && <Banner tone="warn">{closedNote}</Banner>}
 
-        {(p.type === 'cc' || p.type === 'bank') && !p.linkSent && !bankDeclined && (
+        {(p.type === 'cc' || p.type === 'bank') && !p.linkSent && !bankDeclined && !(offline && p.type === 'bank') && (
           <ActionButton
             label={
               linkBlocked
@@ -369,7 +371,14 @@ export function PaymentFundingCard({
           </View>
         )}
 
-        {!!onRecordDecision && canRecordDecision(p) && !bankDeclined && (
+        {offline && p.type === 'bank' && !p.linkSent && !p.decision && (
+          <Banner tone="warn">
+            No signal — the application link can’t be created yet. Record the lender’s answer below once you have it; it is
+            saved on this device and sent when you reconnect.
+          </Banner>
+        )}
+
+        {!!onRecordDecision && canRecordDecision(p, { offline }) && !bankDeclined && (
           <DecisionButtons payment={p} busy={isBusy} onRecord={onRecordDecision} />
         )}
 
@@ -404,7 +413,7 @@ export function PaymentFundingCard({
 
         {/* Status check — only while a third party still owes an answer. A check has
             no external system to poll and `sync` refuses it (spec §5.8). */}
-        {canSync(p) && !finished && (
+        {canSync(p) && !finished && !offline && (
           <View style={{ marginTop: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: FUND.MUTED }}>
               {p.syncedAt ? `Synced ${formatStamp(p.syncedAt)}` : 'Awaiting response'}

@@ -185,8 +185,31 @@ export function parsePartialApproval(text: string, requested: number): PartialAp
   return { kind: 'short', approvedAmt: n };
 }
 
-export function canRecordDecision(p: Pick<FundingPayment, 'type' | 'linkSent' | 'decision'>): boolean {
-  return p.type === 'bank' && !!p.linkSent && !p.decision;
+export function canRecordDecision(
+  p: Pick<FundingPayment, 'type' | 'linkSent' | 'decision'>,
+  opts?: { offline?: boolean }
+): boolean {
+  return p.type === 'bank' && !p.decision && (!!p.linkSent || !!opts?.offline);
+}
+
+export function applyOfflineDecision(
+  record: FundingRecord,
+  pid: string,
+  decision: FundingDecision,
+  approvedAmt?: number
+): FundingRecord {
+  return {
+    ...record,
+    payments: record.payments.map((p) => {
+      if (p.pid !== pid) return p;
+      const approved = decision === 'full' ? p.amount : decision === 'short' ? approvedAmt ?? 0 : 0;
+      return { ...p, linkSent: true, decision, requested: p.amount, approvedAmt: approved, step: Math.max(p.step, 1) };
+    }),
+  };
+}
+
+export function applyOfflineActivation(record: FundingRecord, pid: string): FundingRecord {
+  return { ...record, payments: record.payments.map((p) => (p.pid === pid ? { ...p, activated: true, step: Math.max(p.step, 2) } : p)) };
 }
 
 export function findApprovedArchive(
@@ -312,6 +335,47 @@ export function fundingPinnedToOtherCalculator(
 ): boolean {
   if (!record?.calculatorId || !calculatorId) return false;
   return !fundingBelongsToCalculator(record.calculatorId, calculatorId) && hasCollectedMoney(record);
+}
+
+export function isSettledPayment(p: { charged?: boolean; collected?: boolean }): boolean {
+  return Boolean(p.charged || p.collected);
+}
+
+export function withSettledRows(
+  upsert: FundingUpsertRow[],
+  record: FundingRecord | null | undefined
+): FundingUpsertRow[] {
+  const have = new Set(upsert.map((r) => r.pid));
+  const carried = (record?.payments || [])
+    .filter((p) => isSettledPayment(p) && !have.has(p.pid))
+    .map(
+      (p) =>
+        ({
+          pid: p.pid,
+          kind: p.kind,
+          method: p.method,
+          type: p.type,
+          amount: p.amount,
+        }) as FundingUpsertRow
+    );
+  return carried.length ? [...carried, ...upsert] : upsert;
+}
+
+export function scopeSwitchOptions(settledAmount: number, overage?: number) {
+  const held = `$${Math.round(settledAmount).toLocaleString()}`;
+  return {
+    reuse: `Re-use the ${held} already collected on this job scope`,
+    refund: `Refund the ${held} already collected`,
+    reuseNote:
+      overage && overage > 0
+        ? `The new contract can’t hold it all — $${Math.round(overage).toLocaleString()} would need to be refunded, which requires approvals.`
+        : '',
+  };
+}
+
+export function scopeOverCollectedBlocker(settled: number, price: number): string | null {
+  const over = settled - price;
+  return over > EPS ? `$${money(over)} more has been collected than the contract price — refund it to submit` : null;
 }
 
 export function isMethodLockedRow(row: PaymentRow): boolean {
@@ -440,8 +504,8 @@ export function confirmBlockers(
     if (stranded.length) {
       out.push(
         stranded.length === 1
-          ? 'One payment uses a card or loan, which needs a connection — switch it to a check or reconnect'
-          : `${stranded.length} payments use a card or loan, which needs a connection — switch them to a check or reconnect`
+          ? 'One payment uses a card, which needs a connection — switch it to a check or financing, or reconnect'
+          : `${stranded.length} payments use a card, which needs a connection — switch them to a check or financing, or reconnect`
       );
     }
   }
@@ -488,7 +552,7 @@ export function methodTypeOf(plans: Record<string, DealPlan>, key?: string): Met
 
 export function methodAvailableOffline(plan?: DealPlan | null): boolean {
   if (!plan) return true;
-  return plan.type === 'cash';
+  return plan.type === 'cash' || plan.type === 'financing';
 }
 
 export function planBlockedOffline(
@@ -810,6 +874,7 @@ export function fundingBlockers(
   price: number,
   opts?: {
     setupBlocked?: boolean;
+    offline?: boolean;
   }
 ): string[] {
   const covered = coverageOK(payments, price);
@@ -822,7 +887,7 @@ export function fundingBlockers(
       : isApplicationClosed(p)
         ? `— the application ${APPLICATION_CLOSED_SHORT[p.applicationClosed as FundingApplicationClosed] || 'closed'}; send a new link`
       : isFinancingBypassed(p) ? null
-      : (p.type === 'cc' || p.type === 'bank') && !p.linkSent ? '— link not sent yet'
+      : (p.type === 'cc' || (p.type === 'bank' && !opts?.offline)) && !p.linkSent ? '— link not sent yet'
       : p.type === 'bank' && !p.decision ? '— waiting on lender decision'
       : p.type === 'bank' && !p.activated ? '— loan not activated yet'
       : p.type === 'cc' && p.step < 2 && !p.charged ? '— card not on file yet'
@@ -833,7 +898,13 @@ export function fundingBlockers(
   });
 
   const total = payments.reduce((n, p) => n + fundedAmount(p), 0);
-  if (total < price - EPS) {
+  const heldOver = scopeOverCollectedBlocker(
+    payments.filter(isSettledPayment).reduce((n, p) => n + p.amount, 0),
+    price
+  );
+  if (heldOver) {
+    out.push(heldOver);
+  } else if (total < price - EPS) {
     out.push(`$${money(price - total)} of the contract is still unassigned`);
   } else if (total > price + EPS) {
     out.push(`$${money(total - price)} more than the contract price is allocated`);

@@ -33,6 +33,7 @@ interface Props {
   onActivate: (pid: string) => void;
   onReactivate?: (pid: string) => void;
   onRecordDecision?: (pid: string, decision: Decision, approvedAmt?: number) => void;
+  offline?: boolean;
   onEditPayments: () => void;
   onResultAsBankDecline: () => void;
   onUndoBankDecline: () => void;
@@ -92,6 +93,7 @@ export function FundingView({
   onActivate,
   onReactivate,
   onRecordDecision,
+  offline,
   onEditPayments,
   onResultAsBankDecline,
   onUndoBankDecline,
@@ -99,7 +101,7 @@ export function FundingView({
   const upfront = payMode === 'upfront';
   // Nothing to poll when every row is a check - that is the whole board offline, where
   // the button would also have no server to ask.
-  const anySyncable = payments.some((p) => canSync(p));
+  const anySyncable = !offline && payments.some((p) => canSync(p));
   const down = payments.filter((p) => p.kind === 'down');
   const balance = payments.filter((p) => p.kind === 'bal');
 
@@ -117,6 +119,7 @@ export function FundingView({
       onChargeCard={() => onChargeCard(p.pid)}
       onActivate={() => onActivate(p.pid)}
       onReactivate={onReactivate ? () => onReactivate(p.pid) : undefined}
+      offline={offline}
       onRecordDecision={onRecordDecision ? (d, amt) => onRecordDecision(p.pid, d, amt) : undefined}
       onSync={() => onSyncOne(p.pid)}
       onEditPayments={onEditPayments}

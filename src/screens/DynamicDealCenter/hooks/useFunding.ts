@@ -14,6 +14,7 @@ import {
   type FundingRefundReason,
   type FundingResult,
   type FundingUpsertRow,
+  type SettledAction,
 } from '../../../services/api/FundingService';
 import {
   logFundingCardCharged,
@@ -168,6 +169,11 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         case 'settledOnOtherCalculator':
           FlashMessage.warning('Funding is on another job scope', error.message);
           break;
+        case 'scopeNeedsDecision':
+        case 'scopeNeedsRefundApproval':
+        case 'scopeRefundFirst':
+          // The sheet turns these into a prompt; a banner on top of it would be noise.
+          break;
         case 'notFound':
           await refetch();
           FlashMessage.error(context, error.message);
@@ -252,8 +258,9 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
     async (
       contractPrice: number,
       payments: FundingUpsertRow[],
-      payMode = 'split'
-    ): Promise<FundingActionResult> => {
+      payMode = 'split',
+      settledAction?: SettledAction
+    ): Promise<FundingActionResult<{ refundDue?: number }>> => {
       setIsSaving(true);
       try {
         const res = await run('Save payments', () =>
@@ -265,6 +272,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
               payMode: payMode === 'upfront' ? 'upfront' : 'split',
               // Lets the server claim (or move) ownership; omitted = leave it untouched.
               ...(logCtx?.calculatorId ? { calculatorId: String(logCtx.calculatorId) } : {}),
+              ...(settledAction ? { settledAction } : {}),
             },
             companyId,
             actorId
