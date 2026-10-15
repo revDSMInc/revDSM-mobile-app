@@ -2198,3 +2198,118 @@ offline queues. It cannot:
 - **Consumers are index-safe.** `OperationalSections` reads the array only through `.some()`,
   `.reduce()`, `.length` and `.map()`, with a `revRenderJobs = []` prop default. Nothing indexes
   into it, so a shorter array renders correctly.
+
+### Follow-up 2 — the real hole: "never asked" was being read as "don't know"
+
+The `isOffline` narrowing above was not enough. Client, on **mobile data, iOS TestFlight**: *"even
+though I created the new lead, opened the lead center, somehow I am able to open the Investment
+Center even I didn't confirm the rollout price"* — repeatedly.
+
+**Why the offline rule missed it.** Mobile data is **online**, so `isOffline` was false. The lead is
+a real server lead, so `isDeviceOnlyLead` was false. `useLeadCalculatorStatus` seeds `initialData`
+from the MMKV cache, and a brand-new lead has nothing cached — so the first render has
+`data === undefined` while the read is still in flight. That fell through to `unknown`, which does
+not lock, and the rep could tap through **before the first answer ever arrived**.
+
+**The distinction that was missing.** `unknown` conflated two different situations:
+
+| | meaning | deserves benefit of the doubt? |
+|---|---|---|
+| asked, reply lost | the rep may well have confirmed | **yes** — a wrong lock costs a sale |
+| never asked | no answer has ever arrived for this lead | **no** — there is no evidence of anything |
+
+`calcGateState` now takes `hasAnswered` (TanStack `isSuccess` from the hook). With no status:
+`!hasAnswered` → `locked`; otherwise the `isOffline` rule above applies.
+
+- ⚠️ **`hasAnswered` is about the READ, not the data.** A successful read that says "no calculators"
+  sets it true and produces a definite `locked` through the normal path. It must come from
+  `isSuccess`, not from `!!data`.
+- ⚠️ **The default is now SAFE**: `calcGateState(undefined)` with no options returns `locked`, not
+  `unknown`. A new call site that forgets to pass `hasAnswered` fails closed.
+- ⚠️ The re-lock ticket still holds and is pinned by tests: asked-before-and-lost stays `unknown`
+  online, a confirmed cache unlocks offline, and a local confirmation still outranks a stale read.
+- ⚠️ **TestFlight builds lag the branch.** The first `isOffline` fix was not in the build this was
+  reported against; check the build's commit before concluding a gate fix did not work.
+- `__tests__/utils/investment-gate-edges.test.ts` — 26 cases across `{status} x {offline} x
+  {answered}`, pinning both directions.
+
+### revRender runs appearing on a lead that never had any (the READ side)
+
+> Screenshots: Job Docs showing **"0/46 slots · 0 photos"**, and revRender on the same lead
+> showing **"13 Runs"** with other leads' images.
+
+⚠️ **This is NOT the same bug as the attribution fix** recorded under `useLeadReports`
+(`renderTargetLeadId`). That one fixes which lead a render is filed against when it is
+GENERATED. This one is which runs a lead DISPLAYS when read back — the earlier fix could not
+have addressed it, so "already fixed" was wrong.
+
+Two independent causes, both now closed, in `utils/revrender-attribution.ts`:
+
+**1. ⚠️ A device-only lead asked the server about itself.** An offline-created lead's `_id` is
+a client id (`lead-1760...`). `useRevRenderRunsQuery` was `enabled: !!leadId`, so it still sent
+`GET /rev-render/v1/runs?leadId=lead-1760...`. A server that ignores or fails to match an
+unknown `leadId` answers with *something*, and whatever came back was rendered as this lead's
+history. **The lead cannot have server-side runs, so the request must not be made at all** —
+`canFetchRenderRuns(leadId)` now gates both `enabled` and the `queryFn`.
+
+**2. ⚠️ Nothing verified that a returned run belonged to this lead.** `buildRevRenderPairs`
+(`OperationalSections.tsx`) **drops each run's `leadId`** while mapping, so a bad response could
+not be detected downstream — and `cachedFetch` then wrote it into
+`offline-cache:revrender-runs:<leadId>`, where it survived restarts. `runsBelongingToLead` now
+filters **inside the `queryFn`, before the write**, so the cache cannot be poisoned.
+
+⚠️ **A run with NO lead id is KEPT.** Older runs predate the field and dropping them would
+silently erase real render history — the opposite failure and the harder one to notice. Only a
+run that positively names a *different* lead is rejected.
+
+⚠️ **`orderedRuns` filters a second time on purpose.** A cache written before this fix still
+holds another lead's runs on real devices, and a device-only lead must show none whatever is on
+disk. Since `buildRevRenderPairs` discards `leadId`, that memo is the last point where
+ownership can still be checked. Do not "simplify" it away as redundant.
+
+The other two consumers (`DynamicDealCenter/components/RevRenderSlots.tsx`,
+`InvestmentCenter/InvestmentPanel.tsx`) go through the same hook and are covered by the
+query-level guard; they need no filter of their own.
+
+### Inspection photos: a stuck spinner, and a count that goes backwards
+
+> "Back was uploaded before and the loader is still showing... sometimes the loader keeps
+> showing even though it will be done."
+> "During uploading the number changes - I uploaded 4 images, during uploading it becomes 3,
+> and then after a second it becomes 4 again."
+
+⚠️ **One shape of bug behind both: the count and the spinner are each derived from two sources
+that briefly disagree** — the server's `salesPhotos` and the device upload queue. On Wi-Fi the
+disagreement lasts milliseconds; on 4G it is long enough for the rep to watch. Rules and 20
+tests in `utils/photo-upload-progress.ts`.
+
+**The stuck spinner.** `uploadingKeys[key]` (`useDynamicInspectionCapture.ts`) is an optimistic
+flag set at capture, and it was cleared in exactly **one** place: the effect keyed on
+`salesPhotosSignature`. If that refetch returned stale data, failed, or the photo came back
+under a slightly different subcategory, the signature never changed and **nothing else ever
+cleared the flag** — the slot span for the rest of the session.
+
+⚠️ **A spinner must never depend on a single success path.** The queue listener now clears the
+flag too: an item that has left the queue is not uploading, whatever the server says. Both
+paths clear it and neither is required. ⚠️ That effect must stay **below** the
+`uploadingKeys` / `pendingUploadKeyRef` declarations — it calls `sync()` synchronously on
+mount, so placed above them it throws on the TDZ, and tsc does **not** catch it.
+
+**The count dip.** `dynamicCounts` (`JobDocsSection.tsx`) is `server photos + queued items`.
+The queue item is dropped the instant its PUT resolves; the server list only changes when a
+refetch lands. In between the photo is in **neither** set and the number falls.
+
+Two complementary fixes — ⚠️ they are not alternatives:
+
+1. `uploadQueue.ts` **awaits** `refetchQueries` before `removeItem`. ⚠️ Do not make this
+   fire-and-forget to "speed up the drain" — the await *is* the fix.
+2. A refetch can still resolve without the new row (read-after-write lag), so the manager
+   records `recentlyCompleted` slots and `dynamicCounts` counts them as `settling`.
+   ⚠️ Recorded **before** `removeItem`, because `removeItem` notifies listeners and one
+   running in between would see the very dip being fixed. ⚠️ A settling slot stops counting as
+   soon as the server row appears, or the count flickers *upward* instead, and it is bounded
+   by `RECENTLY_COMPLETED_TTL_MS` so a row that never arrives is not claimed forever.
+
+⚠️ `countInFlightPhotos` dedupes by **slot**, so a queued item and its server row during the
+overlap are one photo. A monotonic-sequence test asserts the count stays 4 through all six
+stages of the handover — that is the regression to protect.

@@ -10,6 +10,7 @@ import { useRevRenderRunsQuery } from '../../../hooks/useLeadQuery';
 import { useLeadCalculatorStatus } from '../../../hooks/useLeadCalculatorStatus';
 import { calcGateState } from '../../../utils/lead-calc-status';
 import { isClientId } from '../../../utils/offline-lead-work';
+import { runsBelongingToLead } from '../../../utils/revrender-attribution';
 import { useFiledConsents } from '../../../hooks/useFiledConsents';
 import { consentAlreadyFiled } from '../../../utils/consent-filed-log';
 import { usePitchBooks } from '../../../hooks/usePitchBooks';
@@ -41,8 +42,12 @@ export const ToolsSection = ({
 }: any) => {
   const { colors, isDark } = useTheme();
 
-  const { data: calcStatus, refetch: refetchCalcStatus, isFetching: isCalcStatusFetching } =
-    useLeadCalculatorStatus(lead);
+  const {
+    data: calcStatus,
+    refetch: refetchCalcStatus,
+    isFetching: isCalcStatusFetching,
+    isSuccess: hasCalcStatusAnswered,
+  } = useLeadCalculatorStatus(lead);
   const hasCalc = !!calcStatus?.hasCalculator;
   const isLeadSold = lead?.status === 'sale';
   const allConfirmed = !!calcStatus?.allConfirmed || isLeadSold;
@@ -64,6 +69,7 @@ export const ToolsSection = ({
     isSold: isLeadSold,
     isDeviceOnlyLead,
     isOffline: !isOnlineNow,
+    hasAnswered: hasCalcStatusAnswered,
   });
   const investmentLocked = gate === 'locked';
   // The background refetch spinner only matters when jobs EXIST but are not confirmed yet (the post-confirm window);
@@ -117,9 +123,16 @@ export const ToolsSection = ({
   );
 
   const orderedRuns = React.useMemo(() => {
-    const pairs = buildRevRenderPairs(runs || []);
+    /**
+     * ⚠️ Filtered AGAIN here, although the query already does it. A cache written before that
+     * guard existed still holds another lead's runs, and a device-only lead must show none
+     * whatever is on disk. `buildRevRenderPairs` drops each run's `leadId`, so this is the last
+     * point where ownership can still be checked.
+     */
+    const owned = isDeviceOnlyLead ? [] : runsBelongingToLead(runs || [], lead?._id);
+    const pairs = buildRevRenderPairs(owned);
     return [...pairs].reverse();
-  }, [runs]);
+  }, [runs, lead?._id, isDeviceOnlyLead]);
 
   React.useEffect(() => {
     if (orderedRuns && orderedRuns.length > 0) {

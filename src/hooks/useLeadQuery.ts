@@ -3,6 +3,10 @@ import { LeadService } from '../services/api/leads';
 import { isOnline } from '../services/connectivity';
 import { OFFLINE_CACHE, cachedFetch } from '../utils/offline-query-cache';
 import { useAuth } from './useAuth';
+import {
+  canFetchRenderRuns,
+  runsBelongingToLead,
+} from '../utils/revrender-attribution';
 
 export const useLeadQuery = (leadId: string, initialData?: any) => {
   const { user } = useAuth();
@@ -27,16 +31,21 @@ export const useRevRenderRunsQuery = (leadId: string) => {
   return useQuery({
     queryKey: ['revrender-runs', leadId],
     queryFn: async () => {
-      if (!leadId) return [];
+      // IMPORTANT: a device-only lead has no server-side runs, and asking about a client id
+      // returned other leads' renders. See utils/revrender-attribution.ts.
+      if (!canFetchRenderRuns(leadId)) return [];
       return cachedFetch<any[]>(
         `${OFFLINE_CACHE.REVRENDER_RUNS}:${leadId}`,
         async () => {
           const res = await LeadService.getRevRenderRuns(leadId);
-          return res.data?.runs || res.data?.data?.runs || [];
+          const rows = res.data?.runs || res.data?.data?.runs || [];
+          // IMPORTANT: verify ownership BEFORE the result reaches the offline cache, or one
+          // bad response is persisted against this lead and survives a restart.
+          return runsBelongingToLead(rows, leadId);
         },
         { online: isOnline(), userId }
       );
     },
-    enabled: !!leadId,
+    enabled: canFetchRenderRuns(leadId),
   });
 };

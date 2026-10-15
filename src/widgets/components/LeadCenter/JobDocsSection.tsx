@@ -239,11 +239,15 @@ export const JobDocsSection = ({
   const [conflict, setConflict] = useState<any | null>(null);
 
   const pendingUploadRef = useRef<Promise<any> | null>(null);
+  const [recentlyCompleted, setRecentlyCompleted] = useState<any[]>(() =>
+    uploadQueueManager.getRecentlyCompleted()
+  );
 
   useEffect(() => {
     const unsubscribe = uploadQueueManager.addListener(() => {
       const currentQueue = uploadQueueManager.getQueue();
       setQueueItems([...currentQueue]);
+      setRecentlyCompleted(uploadQueueManager.getRecentlyCompleted());
       refetch();
     });
 
@@ -1460,6 +1464,32 @@ export const JobDocsSection = ({
         subcategory: it.subcategory,
       }));
 
+    /**
+     * ⚠️ A photo that has drained from the queue but whose server row has not arrived yet is
+     * in NEITHER list, and the count dips ("4 becomes 3, then 4 again"). Counting it here
+     * keeps the number monotonic through the handover.
+     *
+     * ⚠️ Only counted while the slot is genuinely absent from `photos` - once the server row
+     * lands this must contribute nothing, or the count flickers UPWARD instead.
+     */
+    const serverSlotKeys = new Set(
+      photos.map((p: any) => `${norm(p?.category)}||${norm(p?.subcategory)}`)
+    );
+    const settling = (recentlyCompleted || [])
+      .filter((r: any) => r.leadId === lead?._id)
+      .filter((r: any) => !serverSlotKeys.has(`${norm(r.categoryName)}||${norm(r.subcategory)}`))
+      .filter(
+        (r: any) =>
+          !pending.some(
+            (p: any) => norm(p.category) === norm(r.categoryName) && norm(p.subcategory) === norm(r.subcategory)
+          )
+      )
+      .map((r: any) => ({
+        uri: `settling://${r.categoryName}/${r.subcategory}`,
+        category: r.categoryName,
+        subcategory: r.subcategory,
+      }));
+
     let totalSlots = 0;
     const configuredKeys = new Set<string>();
     configuredProducts.forEach((prod: any) => {
@@ -1474,8 +1504,8 @@ export const JobDocsSection = ({
 
     // One rule for every surface - see `utils/lead-photo-counts`. Extras and annotated photos
     // count, and each brings its own slot, so the denominator grows as the rep adds them.
-    return countLeadPhotos([...photos, ...pending], configuredKeys, totalSlots);
-  }, [isDynamicInspection, configuredProducts, lead?.salesPhotos, queueItems, lead?._id, deletedUrls]);
+    return countLeadPhotos([...photos, ...pending, ...settling], configuredKeys, totalSlots);
+  }, [isDynamicInspection, configuredProducts, lead?.salesPhotos, queueItems, lead?._id, deletedUrls, recentlyCompleted]);
 
   const displayTotal = useMemo(() => {
     if (dynamicCounts) return dynamicCounts.slots;

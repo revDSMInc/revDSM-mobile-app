@@ -103,6 +103,7 @@ export const calcGateState = (
     isSold = false,
     isDeviceOnlyLead = false,
     isOffline = false,
+    hasAnswered = false,
   }: {
     isSold?: boolean;
     /**
@@ -115,6 +116,12 @@ export const calcGateState = (
      * LATER, so the benefit of the doubt has nothing to resolve into.
      */
     isOffline?: boolean;
+    /**
+     * A status read has answered at least once for this lead (TanStack `isSuccess`), even if
+     * the answer was "no calculators". Distinguishes "we asked and lost the reply" from
+     * "we have never asked".
+     */
+    hasAnswered?: boolean;
   } = {}
 ): CalcGateState => {
   if (isSold) return 'unlocked';
@@ -142,7 +149,19 @@ export const calcGateState = (
    * confirmed rollout for this lead, and no later read can arrive to correct the guess. The
    * benefit of the doubt is only worth giving when the doubt can still be settled.
    */
-  if (!status) return isOffline ? 'locked' : 'unknown';
+  if (!status) {
+    /**
+     * ⚠️ `unknown` is for a read that ASKED and lost the reply - the rep may well have
+     * confirmed, and a wrong lock in front of a customer costs a sale (the re-lock ticket).
+     *
+     * It is NOT for a lead nobody has successfully read yet. A brand-new lead on a slow line
+     * renders before its first read lands; treating that as "don't know" let the rep open the
+     * Investment Center seconds after creating the lead, with no rollout confirmed at all.
+     * No answer has ever arrived => there is no evidence of a confirmed rollout => locked.
+     */
+    if (!hasAnswered) return 'locked';
+    return isOffline ? 'locked' : 'unknown';
+  }
   return 'locked';
 };
 

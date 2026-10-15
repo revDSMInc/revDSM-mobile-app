@@ -1024,3 +1024,38 @@ probe per stall, with nothing failing to show it. A test pins this relationship.
 **Verified across both radios.** TLS needs ~3 RTT before first byte; at edge-of-cell LTE
 (~1.2 s RTT) a cold probe lands ~3.8 s — inside the 6 s timeout, correctly reporting `'slow'`.
 5G at one bar (~300 ms RTT) lands ~1.05 s and reports quick.
+
+### The drain must not leave a photo in neither set
+
+A follow-up to the duplication ticket above, from the same reports: **"during uploading the
+number changes — I uploaded 4 images, it becomes 3, then a second later 4 again."** The UI side
+of this (the counter, and a spinner that never stopped) is in
+[`lead-center.md`](lead-center.md); what belongs here is what the queue now guarantees.
+
+Every surface that counts photos counts `server salesPhotos + queued items`. That arithmetic is
+only correct if a photo is in at least one of those sets at every instant. It was not: the queue
+item is dropped the moment its PUT resolves, while the server list changes only when a refetch
+lands.
+
+**1. `refetchQueries` is awaited inside `uploadItem`, before `processQueue` calls
+`removeItem`.** ⚠️ **Do not make this fire-and-forget to "speed up the drain"** — the await *is*
+the fix, and on a weak cell the window it closes is seconds long, not milliseconds.
+
+**2. `recentlyCompleted` covers the residual lag.** Even an awaited refetch can resolve with a
+list that does not yet contain the new photo (read-after-write on the backend). The manager
+therefore keeps a short list of just-drained slots, exposed as `getRecentlyCompleted()`, which
+`JobDocsSection` counts as `settling`.
+
+⚠️ **Recorded BEFORE `removeItem`, not after.** `removeItem` calls `notifyListeners`, so a
+listener running between the removal and the record would observe the exact dip being fixed.
+
+⚠️ **Bounded by `RECENTLY_COMPLETED_TTL_MS` (60 s)** via `pruneRecentlyCompleted`. A row that
+never arrives must stop being claimed, or the count silently overstates what the office will
+actually receive — a worse failure than the flicker, because nothing visibly goes wrong.
+
+⚠️ A settling slot must stop counting **as soon as its server row appears**, or the count
+flickers *upward* instead. The dedupe is by **slot**, not by file identity, because the queue
+item and the server row describe the same photo with different ids.
+
+Rules and tests: `utils/photo-upload-progress.ts` (20 tests), including a monotonic-sequence
+test asserting the count stays 4 through all six stages of the handover.
