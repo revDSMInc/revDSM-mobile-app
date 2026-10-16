@@ -1144,3 +1144,58 @@ logs nothing. `screens/Leads` already treated a lead created at the door (`creat
   rule lives in one place: the plan's module wins, and an at-the-door lead falls back to `lead_check_in` (which also queues the work-start).
 - ⚠️ `lead_review` must not queue a work-start or mark the lead checked in; both callers keep that guard.
 - Online is unchanged: `executeStartAppointmentFlow` logs from the same plan, and the lead already has coordinates there.
+
+---
+
+## Ticket — check-in showed "Resume" on one device and "Start" on another
+
+> "I created a lead offline and became online — this phone shows Resume Appointment. I logged
+> in on another device and the status had not changed, because the check-in was never called;
+> it was showing from cache."
+
+⚠️ **Not a merge regression.** The `!work.submit` guard in `isStepApplicable('work')` is intact
+and deliberate (its explanatory comment was stripped by the "remove all comments" commit
+`160ef22`, which is probably what made it look lost). The reported lead was **unresulted**, so
+that guard was never involved.
+
+Two faults, and the second hid the first:
+
+1. The queued `work` call had genuinely not reached the server, so the second device was
+   **correct** — the lead really was not checked in server-side.
+2. The first device could not tell, because `applyOfflineWorkflow` painted `resume` from its
+   own overlay for a full `OFFLINE_WORKFLOW_TTL_MS` (24 h) and **nothing could ever retire an
+   entry** — there was no clear path anywhere in `utils/offline-lead-status.ts` or
+   `services/offlineLeadStatus.ts`.
+
+### The rule
+
+⚠️ **The overlay stands in for a check-in the server has not heard about — it never offers a
+second opinion about one it has.** Once the queued step drains it must go quiet and let the
+server answer, *even when the answer is unwelcome*. A local guess that outlives the fact it was
+guessing about hides the disagreement, which is worse than being wrong: the rep sees a
+confident, stale "Resume" and never learns their check-in is missing.
+
+### What changed
+
+- `applyOfflineWorkflow` takes an optional `pending` predicate. ⚠️ Omitting it keeps the old
+  behaviour, for callers that cannot see the queue.
+- `hasPendingCheckIn(all, leadId)` (`utils/offline-lead-work.ts`) is that predicate, wired in
+  `screens/Leads/index.tsx`. ⚠️ **It matches on BOTH `clientId` and `serverIds.leadId`** — a
+  lead created offline is checked in under its client id and only later gets a server id, so
+  matching one alone makes the overlay vanish the instant the lead syncs, which is the opposite
+  error.
+- `clearOfflineCheckIn` / `clearLeadCheckedInOffline` drop the entry, called from the `work`
+  step's drain in `offlineLeadStore.ts` ⚠️ **under both ids**, for the same reason.
+
+⚠️ The clear fires when the **`work` step** drains, not when the lead does — a lead can sync
+long before the check-in queued against it.
+
+⚠️ `clearOfflineCheckIn` returns the **same object** when nothing changed, so a drain for a
+lead with no overlay does not trigger a write or a re-render.
+
+### Still true, and separate
+
+The `work` step is still skipped for a **resulted** lead (`!work.submit`). That remains correct:
+the result is the stronger statement about where the lead got to, and flipping a sold door back
+to `resume` on the ops board is worse than not recording the check-in — which the activity log
+has captured anyway.

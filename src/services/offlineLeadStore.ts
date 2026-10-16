@@ -30,7 +30,10 @@ import {
 } from '../utils/offline-lead-location';
 import { reverseGeocode } from '../utils/places';
 import { queryClient } from './api/queryClient';
-import { rekeyLeadWorkflow } from './offlineLeadStatus';
+import {
+  clearLeadCheckedInOffline,
+  rekeyLeadWorkflow,
+} from './offlineLeadStatus';
 import { offlinePhotoDeleteQueue } from './offlinePhotoDeleteQueue';
 import { leadDetailForCache } from '../utils/offline-lead-detail-cache';
 import { submitConsentForm, finalizeConsentUpload } from './api/consent-forms';
@@ -1198,6 +1201,13 @@ const runStep = async (
     case 'work': {
       if (!leadId) throw new Error('cannot record work on a lead with no server id');
       await LeadService.workLead(leadId, String(work.workStarted?.userId || ''));
+      /**
+       * The server now knows about this check-in, so the local overlay must stop speaking -
+       * otherwise this phone keeps painting "Resume Appointment" from its own cache while
+       * another device reads the server and disagrees.
+       */
+      clearLeadCheckedInOffline(leadId);
+      clearLeadCheckedInOffline(work.clientId);
       await refreshLeadLists();
       return {};
     }

@@ -2,6 +2,7 @@ import { Storage } from '../utils/storage';
 import { registerSessionResetHook } from './sessionScope';
 import {
   applyOfflineWorkflow,
+  clearOfflineCheckIn,
   markOfflineCheckIn,
   pruneOfflineWorkflow,
   rekeyOfflineWorkflow,
@@ -59,6 +60,18 @@ export const subscribeOfflineWorkflow = (listener: () => void): (() => void) => 
 export const markLeadCheckedInOffline = (leadId: unknown): void => {
   load();
   const next = markOfflineCheckIn(store, leadId);
+  if (next === store) return;
+  store = next;
+  persist();
+};
+
+/**
+ * The queued check-in reached the server, so the local overlay has nothing left to stand in
+ * for. From here the server's `workflowState` is the only answer.
+ */
+export const clearLeadCheckedInOffline = (leadId: unknown): void => {
+  load();
+  const next = clearOfflineCheckIn(store, leadId);
   if (next === store) return;
   store = next;
   persist();

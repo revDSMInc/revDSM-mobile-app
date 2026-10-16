@@ -32,6 +32,7 @@ import ZoneCanvasserMap from '../../widgets/modals/ZoneCanvasserMap';
 import { LeadCard } from '../../widgets/components/LeadCard';
 import { PendingLeadsBanner } from '../../widgets/components/PendingLeadsBanner';
 import {
+  hasPendingCheckIn,
   applyOfflineResult,
   offlineArchivedLeads,
   offlineLeadsForTab,
@@ -207,7 +208,11 @@ export default function LeadsPage() {
     const withWorkflow = (list: any[] | null | undefined) =>
       applyOfflineActions(list)
         .map((l) => applyOfflineResult(l, offlineWork))
-        .map((l) => applyOfflineWorkflow(l, offlineWorkflow));
+        .map((l) =>
+          applyOfflineWorkflow(l, offlineWorkflow, Date.now(), (id) =>
+            hasPendingCheckIn(offlineWork, id)
+          )
+        );
     if (isRehash) return withWorkflow(serverLeads);
     if (isArchivedTab) {
       const archivedHere = offlineArchivedLeads(offlineWork, { serverLeadIds });

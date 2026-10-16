@@ -335,6 +335,28 @@ export const isStepApplicable = (work: OfflineLeadWork, step: UploadStep): boole
 export const isStepPending = (work: OfflineLeadWork, step: UploadStep): boolean =>
   !work.done.includes(step) && isStepApplicable(work, step);
 
+/**
+ * Is a check-in for this lead still waiting to reach the server?
+ *
+ * ⚠️ Matches on BOTH ids. A lead created offline is queued under a client id and keeps it
+ * until the `lead` step drains, so a check-in made before the sync is filed under the client
+ * id while the list now shows the server id. Matching only one of them makes the overlay
+ * vanish the moment the lead syncs, which is the opposite error.
+ */
+export const hasPendingCheckIn = (
+  all: OfflineLeadWork[] | null | undefined,
+  leadId: unknown
+): boolean => {
+  const id = String(leadId ?? '').trim();
+  if (!id) return false;
+  return (all || []).some(
+    (w) =>
+      !!w &&
+      (w.clientId === id || w.serverIds?.leadId === id) &&
+      isStepPending(w, 'work')
+  );
+};
+
 export const rearmStep = (work: OfflineLeadWork, step: UploadStep): OfflineLeadWork =>
   work.done.includes(step) ? { ...work, done: work.done.filter((s) => s !== step) } : work;
 
