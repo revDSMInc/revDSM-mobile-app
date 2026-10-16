@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { View, Text, TouchableOpacity, Modal, Pressable, Dimensions, StyleSheet } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { FULL_PACKAGE_INCLUDES } from '../utils/tab-naming';
+import { FULL_PACKAGE_INCLUDES, getPackageSizeLabel } from '../utils/tab-naming';
 
 export interface PackageAnchorRect {
   x: number;
@@ -14,6 +14,7 @@ export function FullPackageTitle({
   isFullPackage,
   title,
   extras,
+  sizeLabel,
   size,
   weight = '900',
   color,
@@ -25,6 +26,8 @@ export function FullPackageTitle({
   isFullPackage: boolean;
   title?: string;
   extras?: string;
+  /** `SM` / `MD` / `LG`... from `getPackageSizeLabel(title)`; rendered as `(SM)` after the extras. */
+  sizeLabel?: string;
   size: number;
   weight?: any;
   color: string;
@@ -34,6 +37,8 @@ export function FullPackageTitle({
   style?: any;
 }) {
   const infoRef = useRef<View>(null);
+  // Every surface that passes the calculator's title gets its SM / MD / LG rank for free.
+  const rank = sizeLabel ?? getPackageSizeLabel(title);
 
   if (!isFullPackage) {
     return (
@@ -53,6 +58,14 @@ export function FullPackageTitle({
           style={{ fontSize: size, fontWeight: weight, color, marginLeft: 4, flexShrink: 1 }}
         >
           +{extras}
+        </Text>
+      )}
+      {!!rank && (
+        <Text
+          numberOfLines={1}
+          style={{ fontSize: size, fontWeight: weight, color, marginLeft: 4 }}
+        >
+          ({rank})
         </Text>
       )}
       <TouchableOpacity

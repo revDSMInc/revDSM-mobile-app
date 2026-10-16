@@ -5,7 +5,7 @@ import {
   StyleSheet,
   TouchableOpacity,
 } from 'react-native';
-import Svg, { Path, Mask, Rect, G } from 'react-native-svg';
+import Svg, { Path, Mask, Rect, G, Line, Circle, Polygon } from 'react-native-svg';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
@@ -19,17 +19,22 @@ import {
   zoomOrigin,
 } from '../../../utils/zoom-transform';
 import { DraggableText } from './DraggableText';
+import { arrowGeometry, circleRadiusPx, type AnnotationShape } from '../../../utils/annotation-shapes';
 
 const MAX_ZOOM_SCALE = 5;
 
 interface AnnotationCanvasProps {
   canvasLayout: { width: number; height: number };
-  activeTool: 'none' | 'zoom' | 'draw' | 'text';
+  activeTool: 'none' | 'zoom' | 'draw' | 'text' | 'shape';
   currentPhoto: any;
   activeImageIndex: number;
   currentStrokes: any[];
   activeStroke?: any;
   subscribeActiveStroke?: (cb: (stroke: any) => void) => () => void;
+  currentShapes?: AnnotationShape[];
+  /** Live preview of the shape being drawn / moved / resized (a full shape; `null` when idle). */
+  subscribeActiveShape?: (cb: (shape: AnnotationShape | null) => void) => () => void;
+  selectedShapeId?: string | null;
   currentTexts: any[];
   getPathData: (points: any[]) => string;
   selectedTextId: string | null;
@@ -51,6 +56,9 @@ export const AnnotationCanvas = ({
   activeStroke,
   subscribeActiveStroke,
   currentTexts,
+  currentShapes,
+  subscribeActiveShape,
+  selectedShapeId,
   getPathData,
   selectedTextId,
   setSelectedTextId,
@@ -82,6 +90,21 @@ export const AnnotationCanvas = ({
     return subscribeActiveStroke(setLiveStroke);
   }, [subscribeActiveStroke]);
   const drawingStroke = liveStroke || activeStroke || null;
+
+  const [liveShape, setLiveShape] = useState<AnnotationShape | null>(null);
+  useEffect(() => {
+    if (!subscribeActiveShape) return;
+    return subscribeActiveShape(setLiveShape);
+  }, [subscribeActiveShape]);
+
+  // Committed shapes with the in-flight one swapped in (edit) or appended (new), in draw order.
+  const shapesToRender = useMemo(() => {
+    const base = currentShapes || [];
+    if (!liveShape) return base;
+    return base.some((sh) => sh.id === liveShape.id)
+      ? base.map((sh) => (sh.id === liveShape.id ? liveShape : sh))
+      : [...base, liveShape];
+  }, [currentShapes, liveShape]);
 
   const committedPaths = useMemo(() => {
     const eraser: Array<{ id: any; d: string; width: number }> = [];
@@ -116,6 +139,7 @@ export const AnnotationCanvas = ({
     savedTy.value = 0;
     reportScale(1);
     setLiveStroke(null);
+    setLiveShape(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeImageIndex]);
 
@@ -162,6 +186,55 @@ export const AnnotationCanvas = ({
       { scale: scale.value },
     ],
   }));
+
+  const renderShape = (shape: AnnotationShape) => {
+    const W = canvasLayout.width;
+    const H = canvasLayout.height;
+    const x1 = shape.p1.px * W;
+    const y1 = shape.p1.py * H;
+    const x2 = shape.p2.px * W;
+    const y2 = shape.p2.py * H;
+    const common = { stroke: shape.color, strokeWidth: shape.width, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+    switch (shape.kind) {
+      case 'line':
+        return <Line key={shape.id} x1={x1} y1={y1} x2={x2} y2={y2} {...common} />;
+      case 'arrow': {
+        const g = arrowGeometry(x1, y1, x2, y2, shape.width);
+        return (
+          <G key={shape.id}>
+            <Line x1={x1} y1={y1} x2={g.shaftEnd.x} y2={g.shaftEnd.y} {...common} />
+            <Polygon
+              points={`${g.tip.x},${g.tip.y} ${g.left.x},${g.left.y} ${g.right.x},${g.right.y}`}
+              fill={shape.color}
+              stroke={shape.color}
+              strokeWidth={shape.width * 0.4}
+              strokeLinejoin="round"
+            />
+          </G>
+        );
+      }
+      case 'circle':
+        return <Circle key={shape.id} cx={x1} cy={y1} r={circleRadiusPx(shape, W, H)} fill="none" {...common} />;
+      case 'rect':
+        return (
+          <Rect
+            key={shape.id}
+            x={Math.min(x1, x2)}
+            y={Math.min(y1, y2)}
+            width={Math.abs(x2 - x1)}
+            height={Math.abs(y2 - y1)}
+            fill="none"
+            {...common}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
+  // Handles of the selected shape: drawn at a constant on-screen size whatever the zoom.
+  const selectedShape = selectedShapeId ? shapesToRender.find((sh) => sh.id === selectedShapeId) : null;
+  const handleR = 8 / (jsScale > 0 ? jsScale : 1);
 
   const renderCanvas = () => {
     return (
@@ -250,18 +323,38 @@ export const AnnotationCanvas = ({
                   />
                 )}
               </G>
+
+              {/* Shapes sit above the ink and are not touched by the eraser mask. */}
+              {shapesToRender.map(renderShape)}
+
+              {selectedShape && activeTool === 'shape' && (
+                <G>
+                  {([selectedShape.p1, selectedShape.p2] as const).map((pt, i) => (
+                    <Circle
+                      key={i}
+                      cx={pt.px * canvasLayout.width}
+                      cy={pt.py * canvasLayout.height}
+                      r={handleR}
+                      fill="#FFFFFF"
+                      stroke="#72BD00"
+                      strokeWidth={handleR * 0.4}
+                    />
+                  ))}
+                </G>
+              )}
             </Svg>
           </View>
 
           {/* Drawing/Tapping Responder Overlay */}
-          {(activeTool === 'draw' || activeTool === 'text') && (
+          {(activeTool === 'draw' || activeTool === 'text' || activeTool === 'shape') && (
             <View
               style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.01)' }]}
               {...panResponder.panHandlers}
             />
           )}
 
-          {/* Draggable Text Notes Layer */}
+          {/* Draggable Text Notes Layer - inert while placing shapes, so a drag that starts over a note still draws. */}
+          <View style={StyleSheet.absoluteFill} pointerEvents={activeTool === 'shape' ? 'none' : 'box-none'}>
           {currentTexts.map(text => (
             <DraggableText
               key={text.id}
@@ -277,6 +370,7 @@ export const AnnotationCanvas = ({
               dragEnabled={!zoomEnabled}
             />
           ))}
+          </View>
         </Animated.View>
       </View>
     );

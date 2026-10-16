@@ -408,6 +408,20 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
                       +{calc.packageExtras}
                     </Text>
                   )}
+                  {/* The SM / MD / LG rank, so two packages at different prices stay tellable apart. */}
+                  {!!calc.packageSize && (
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.tabText,
+                        { marginLeft: 4 },
+                        isActive ? styles.activeTabText : styles.inactiveTabText,
+                        isCurrentlyDragging && styles.draggingTabText,
+                      ]}
+                    >
+                      ({calc.packageSize})
+                    </Text>
+                  )}
                   <TouchableOpacity
                     ref={(node) => { infoRefs.current[idx] = node; }}
                     onPress={() => reportPackageInfo(calc, idx)}

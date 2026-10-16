@@ -1949,6 +1949,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                         <FullPackageTitle
                           isFullPackage
                           extras={packageByCalcId[calc.id]?.extras}
+                          title={calc.title}
                           size={14}
                           color={isActive ? '#212B36' : '#637381'}
                           iconColor={isActive ? '#16A34A' : '#94A3B8'}

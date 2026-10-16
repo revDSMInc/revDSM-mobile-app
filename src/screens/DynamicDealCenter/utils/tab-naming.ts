@@ -195,6 +195,18 @@ export function describeFullPackage(
   };
 }
 
+/**
+ * The `(SM)` / `(MD)` / `(LG)` ... rank `computeDerivedTitles` appended to a calculator's title, as the bare label
+ * (`'SM'`), or `''` when it has none. A full package's tab shows only the box + extras, so without this two packages
+ * quoted at different prices (the rank is by price) look identical. Reads the TITLE on purpose: that string is the one
+ * place the rank is already decided (price levels, ties, inherited suffix), so the tab can never disagree with it.
+ */
+export function getPackageSizeLabel(title?: string | null): string {
+  const bare = String(title || '').replace(/\u26A0\uFE0F?/g, '').trim();
+  const m = bare.match(/\((SM|MD|LG|XL|XXL(?:-\d+)?)\)$/);
+  return m ? m[1] : '';
+}
+
 export interface TabNameInput {
   id: string;
   entries: Record<string, CalculatorEntry>;

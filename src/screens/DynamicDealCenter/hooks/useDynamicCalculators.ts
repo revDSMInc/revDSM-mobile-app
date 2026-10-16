@@ -1197,16 +1197,53 @@ export function useDynamicCalculators(
             }
           : undefined;
       if (appointmentId) {
+        // OPTIMISTIC: the copy appears and is selected on the tap; the POST runs behind it and the real id is
+        // swapped in when it lands. Awaiting the POST first made the rep stare at nothing for the round trip.
+        const defaults = inheritedDefaults();
+        const tempId = `local-${Date.now()}`;
+        const temp: CalcTab = {
+          id: tempId,
+          title: placeholder,
+          entries,
+          totals: source.totals ? JSON.parse(JSON.stringify(source.totals)) : computeTotals(entries),
+          paymentMethod: (source as any).paymentMethod ?? defaults.paymentMethod,
+          discountPercentage: (source as any).discountPercentage ?? defaults.discountPercentage,
+        };
+        const withTemp = retitle([...tabsRef.current, temp]);
+        tabsRef.current = withTemp;
+        setTabs(withTemp);
+        setActiveTabId(tempId);
+
         const created = await createRemoteTab(appointmentId, placeholder, entries, leadId, enteredBy, schemasRef.current, position, {
-          ...inheritedDefaults(),
+          ...defaults,
           ...(source.totals ? { totals: JSON.parse(JSON.stringify(source.totals)) } : {}),
           ...(sourceBackendId ? { originalCalculatorId: sourceBackendId } : {}),
           ...(duplicateLog ? { duplicateLog } : {}),
         });
         if (created) {
+          const latest = tabsRef.current.find((t) => t.id === tempId);
+          if (!latest) {
+            // The rep deleted the copy before the server answered: do not leave an orphan row behind.
+            LeadService.deleteCalculator(created.id).catch(() => {});
+            return;
+          }
           lastSavedTitle.current[created.id] = created.title; // baseline for auto_rename
-          setTabs((p) => retitle([...p, created]));
-          setActiveTabId(created.id);
+          // Keep what is on screen (the rep may already have typed into the copy); take the server's identity.
+          const merged: CalcTab = {
+            ...created,
+            ...latest,
+            id: created.id,
+            persisted: true,
+            paymentMethod: latest.paymentMethod ?? created.paymentMethod,
+            discountPercentage: latest.discountPercentage ?? created.discountPercentage,
+          };
+          const swapped = retitle(tabsRef.current.map((t) => (t.id === tempId ? merged : t)));
+          tabsRef.current = swapped;
+          setTabs(swapped);
+          setActiveTabId((cur) => (cur === tempId ? created.id : cur));
+          cacheTabsSnapshotRef.current?.(swapped);
+          // Edits made while the POST was in flight were never sent (a `local-` tab is not saved): send them now.
+          if (latest.entries !== temp.entries || latest.totals !== temp.totals) markDirty(created.id);
           const inheritedPaymentMethod = (source as any).paymentMethod || '';
           if (enteredBy && inheritedPaymentMethod) {
             logPaymentMethodInherited({
@@ -1223,14 +1260,15 @@ export function useDynamicCalculators(
               ...(leadId ? { leadId } : {}),
             }).catch(() => {});
           }
-          return;
         }
+        // On failure the copy simply stays as the local-only tab the old fallback produced.
+        return;
       }
       const local: CalcTab = { id: `local-${Date.now()}`, title: placeholder, entries, totals: source.totals ? JSON.parse(JSON.stringify(source.totals)) : computeTotals(entries) };
       setTabs((p) => retitle([...p, local]));
       setActiveTabId(local.id);
     },
-    [tabs, appointmentId, leadId, enteredBy, retitle, inheritedDefaults, onDevice, deviceTabFrom]
+    [tabs, appointmentId, leadId, enteredBy, retitle, inheritedDefaults, onDevice, deviceTabFrom, markDirty]
   );
 
   const handleDeleteTab = useCallback(
