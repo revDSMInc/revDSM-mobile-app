@@ -4411,3 +4411,280 @@ calculator switch on a lead with money held now asks the rep instead of refusing
 ### 1 Year plan - activity logs + offline (follow-up to the choose-default sheet)
 
 `RolloutView.logOneYearPlan` writes a `oneYearPlan` rollout log (`logRolloutChange` -> `logEvent`, so offline it joins the activity-log queue with its action-time key) for `1 year default plan set` / `cleared` (`setOneYearDefault`, only when the key really changes) and `1 year plan changed` (new `OneYearMonthlyPlan` prop `onPlanPicked`, fired from `commit` only). ⚠️ `onPlanPicked` must NOT fire from the Default re-stamp effect - that is not a rep action and would flood the log. Meta `offline` = connectivity at tap time. The default itself already queues via `saveDefault` -> `offline-settings.ts`; details in `offline.md` § "1 Year default plan - offline + activity logs". Not verified on device.
+
+## Ticket 1308 — Forever Record tracks WHICH In-Home Pre Order discount was used
+
+Client: *"Pls add in which in home pre order they're using. 15%, 20% or 25%. Use our same rules
+with inheriting. Changed. etc."* The Forever Record showed the rollout price, payment method and
+confirmation but never which pre-order discount produced the In-Home grand total, so a $333 total
+on a $444 MSRP could not be explained from the log.
+
+**Two moments, mirroring the payment-method rules** (`utils/activity-log/rollout-log-meta.ts`,
+`logPreOrderDiscount`):
+
+- **Seeded** — fired from `logEndPriceEntered` (`RolloutView.tsx`), i.e. when the rep commits the
+  Rollout End Price, alongside the debounced `PUT /lfcalculators/:id`. The discount only means
+  something once there is a price to apply it to, and the rep sees the entry while still on the
+  screen. `oldValue` is empty; `action: 'in home pre order discount applied'`.
+  ⚠️ **Not at Confirm Rollouts** — it was there in the first cut and was moved by request; do not
+  move it back. Guarded by `seededDiscountRef` so editing the price again does not re-log an
+  unchanged discount.
+- **Changed** — fired from the chip's `onPress`, carrying old → new.
+  `action: 'in home pre order discount changed'`.
+
+Both go through `logRolloutChange`, so they inherit its `module_type: 'rollout_and_drop'` envelope,
+tier prices and `percentageOfRollout` — the portal renders them with the existing rollout rows and
+needs no new client.
+
+- The value resolves the same way the UI does: `calculator.discountPercentage || pricing.defaultPreOrder`
+  (`pricing.defaultPreOrder` comes from `useDealPricing`; the fallback is 25).
+- `meta.isDefaultDiscount` records whether the figure came from the **rep's saved default** (the
+  Default toggle writes `user.defaultPercentage`) rather than the company default — "15%" alone
+  does not say which of the two it was.
+- ⚠️ **`fieldCategory` is ALWAYS `'rollout'`**, before and after Confirm Rollouts. The first cut
+  copied the payment-method logger's `isConfirmed ? 'drop' : 'rollout'` flip and was corrected by
+  request: the discount is a property of the rollout itself, not of a drop, so a log written after
+  confirming must read the same as one written before. The payment-method logger keeps its own
+  flip — that one is deliberate. Do not re-add it here.
+- ⚠️ **The chip logs BEFORE `onDiscountChange`.** `logDiscountChanged` reads `discountPct` for its
+  `oldValue`, and the setter replaces it; calling them the other way round records old === new.
+- ⚠️ **Early-returns on `next === discountPct`**, so re-tapping the active chip writes nothing.
+- ⚠️ **A chip tap spends the seed** (`seededDiscountRef.current = true` in `logDiscountChanged`).
+  A rep who picks a discount before typing a price has stated their choice; without this the later
+  price entry would log the default *underneath* the change and the record would read 20% → 15%.
+- **Offline is covered, and verified**: `rollout_and_drop` is not in `NON_QUEUEABLE_LOG_MODULES`
+  (only `'system'` is), so `logEvent` holds these in the activity-log queue and replays them with
+  the `occurredAt` taken when the rep acted, not when the request finally goes out. Nothing in
+  `logEndPriceEntered` or `logDiscountChanged` awaits the network, so both run the same offline.
+  `__tests__/utils/pre-order-discount-offline.test.ts` covers queueability, the action-time stamp,
+  field survival through `stampOfflineLog`, and queue ordering behind the end-price log.
+- ⚠️ `discountPct` can never be falsy (which would hit the `!opts.discountPercentage` early return):
+  `calculator.discountPercentage || pricing.defaultPreOrder`, and `DISCOUNT_FALLBACK` in
+  `useDealPricing.ts` guarantees `defaultPreOrder: 25` even when the discount config is missing —
+  which is exactly the offline case.
+- ⚠️ Both files are CRLF.
+- Not verified on device, and not yet rendered in the portal: the backend/portal must display the
+  two new actions.
+
+---
+
+## Ticket — `offlineResultOverlay` only knew about Sale and Demo
+
+The three no-sale buttons in Job Docs (**No Demo**, **Not Hit**, **Reset**) now queue offline.
+The UI side is in [`lead-center.md`](lead-center.md); the part that lives here is the queue model.
+
+⚠️ **No new upload step was needed.** All three post the same shape to `submitJobBuilder` —
+`leadData: { result, status, reason, timestamp }` — which is exactly what the existing `submit`
+arm in `services/offlineLeadStore.ts` sends. `completeOfflineJobBuilder(workClientId, payload)`
+is the writer, the same one `DynamicJobBuilderScreen` already uses for an offline Sale.
+
+The gap was in `utils/offline-lead-work.ts`:
+
+```
+const result = String(leadData.result || '').toLowerCase();
+if (result !== 'sale' && result !== 'demo') return null;   // ← Not Hit / No Demo / Reset dropped
+```
+
+So the work queued and would have uploaded correctly, but `applyOfflineResult` put **no overlay**
+on the lead — the leads list showed it unresulted until the drain finished. ⚠️ **A rep who
+results a lead and sees nothing change does it again**, which is how one door becomes two queued
+results. The list is the only feedback they get.
+
+`OFFLINE_RESULTABLE` now holds `sale`, `demo`, `nodemo`, `nothit`, `reset` (compared
+lower-cased, since the payload uses camelCase).
+
+⚠️ **`status` is a separate field from `result`.** The overlay used to return `status: result`.
+A sale names its own status, but the no-sale outcomes carry a distinct `leadData.status`, and the
+leads list and `LeadCard` colour-code on **status** — so reusing `result` mislabels the card. It
+now returns `leadData.status || result`.
+
+⚠️ **Keep the whitelist a whitelist.** An unrecognised result still returns `null` rather than
+being passed through: an overlay built from a payload shape nobody has checked would show the rep
+a status the server will never agree with.
+
+⚠️ The overlay still stops at `status === 'uploaded'`, so once the row drains the server is the
+truth again. Do not relax that — a stale overlay outranking real server data is the harder bug.
+
+⚠️ **This `reset` is a lead RESULT, not `LeadService.resetLead`** (`lead/v1/{id}/reset`), which
+deletes uploaded documents and stays online-only. Adding that one to this set would let a replay
+destroy work the rep did after it.
+
+### Follow-up — the Deal Center spinner on a weak line
+
+The screen in the "one bar" client video (see `offline.md` for the connectivity side).
+
+⚠️ **A bare spinner is a promise the screen cannot keep.** `isLoading` ORs three query flags and
+gated the whole screen, so on a stalled line the rep got "Loading calculator…" with no message,
+no progress and no way out — indistinguishable from a broken app.
+
+`useSlowLoadHint(isLoading)` flips true after 4 s, and the spinner then names the problem and
+offers **Work offline**.
+
+⚠️ **`workFromDevice` exists because `isOnline()` is not enough.** `deviceIsAuthoritative` in
+`useDynamicCalculators` was `!isOnline() || isClientId(...) || hasUnsyncedDealCenter(...)`. On one
+bar `isOnline()` is **true**, so the cached quote already on the device was unreachable precisely
+when it was needed. `preferDevice` forces that branch; the bootstrap key includes it
+(`${leadId}:${device|net}`) so opting in re-runs the bootstrap rather than being swallowed by the
+"already bootstrapped" guard.
+
+⚠️ **Known, pre-existing: every hook in `DynamicDealCenterScreen` sits below an early return**
+(`route?.params?.mode === 'edit'`, line ~63) — 28 `rules-of-hooks` errors, one of which is now
+`useSlowLoadHint`. It is latent (the param does not change within a mount) but it is real, and
+fixing it means splitting the edit mode into its own component. Worth a ticket; deliberately not
+attempted inside a connectivity fix.
+
+## Ticket — crash: "Rendered fewer hooks than expected" on View all
+
+Reported from a client device with a red-box screenshot: pressing the **blue grid button**
+(View all) in the Deal Center crashed the screen outright.
+
+**The exact cause.** `DynamicDealCenterScreen` had an early return at the top —
+`if (route?.params?.mode === 'edit') return <DynamicDealEditScreen/>` — placed after three
+hooks and before the other ~40. React tolerated that only because `mode` never changes within
+a mount. But it meant **every remaining hook in the file was formally conditional**, which the
+linter had been reporting as 27 `rules-of-hooks` errors for a long time.
+
+Two further early returns sit mid-body: `flowStep === 'jobBuilder'` and `flowStep === 'rollout'`.
+`useSlowLoadHint` (added for the weak-connection ticket) landed *below* them. `flowStep` DOES
+change at runtime — View all calls `setFlowStep('rollout')` — so:
+
+| render | flowStep | hooks run |
+|---|---|---|
+| 1 | `calculator` | …N, including `useSlowLoadHint` |
+| 2 | `rollout` | …N−1 — returns at the `rollout` branch first |
+
+Fewer hooks on render 2 than render 1 is exactly what React refuses. Crash.
+
+⚠️ **The 27 pre-existing errors were not noise — they were the loaded gun.** Any hook added
+below those returns would have done this. A previous pass recorded them as "latent, worth a
+ticket" and added a hook anyway; that was wrong, and this crash was the result.
+
+**The fix, both halves:**
+1. `useSlowLoadHint` hoisted above every early return.
+2. Edit mode split into its own component. `DynamicDealCenterScreen` is now a two-line router
+   (`mode === 'edit'` → `DynamicDealEditScreen`, else → `DynamicDealCenterCreate`), and all the
+   create-flow hooks live in `DynamicDealCenterCreate` with nothing conditional above them.
+   `rules-of-hooks` on this file: **28 → 0**.
+
+⚠️ **Do not re-add an early return above the hooks in `DynamicDealCenterCreate`.** Route on a
+prop in the wrapper and render a different component instead — that is what the wrapper is for.
+
+**Swept the rest of the app.** The only other `rules-of-hooks` findings are
+`DynamicTabRenderer.tsx` (10, behind `if (tab.isSummary)`) — safe in practice because it is
+mounted with `key={currentTab.id}`, so a tab change remounts rather than re-rendering — and one
+in `CalculatorSummary.tsx`, which is the naming rule on a Reanimated render prop, not
+conditional ordering. Neither can produce this crash today; the TabRenderer one is the same
+trap waiting for someone to add a hook below line 1297.
+
+---
+
+## Ticket — "Jobs Built — Back to Tools" stacked a second Lead Center
+
+Pressing **Jobs Built — Back to Tools** landed on Lead Center, but pressing back from there went
+to Lead Center *again* instead of the leads list — identically from the header arrow, the Android
+hardware back and the iOS swipe, since all three simply pop.
+
+`onRolloutsConfirmedDone` called:
+
+```
+navigation?.navigate('LeadCenter', { lead, tab: 'tools' });
+```
+
+⚠️ **`navigate` only REUSES an existing route when the params match.** With different params
+React Navigation pushes a new copy, so the stack became
+`Leads → LeadCenter → DynamicDealCenter → LeadCenter`.
+
+⚠️ **A blind `goBack()` is NOT the fix.** `DynamicDealCenter` is opened from Lead Center,
+Investment Center, Deal Detail, notifications and push routing. `goBack` would return to whichever
+of those pushed it, and from a push there may be no Lead Center in the stack at all.
+
+`utils/back-to-lead-center.ts` (pure, tested) plans it from `navigation.getState().routes`, and
+`utils/navigate-back-to-lead-center.ts` applies it: **pop** when a Lead Center is already below,
+**navigate** only when there is none.
+
+⚠️ **The NEAREST Lead Center below the top, not the first.** A rep can legitimately be in
+`LeadCenter(A) → DealCenter → LeadCenter(B) → DealCenter`; popping to A would throw away a screen
+they still expect behind them.
+
+⚠️ **A Lead Center on TOP of the stack is not a pop target** — popping zero screens would leave
+the rep where they are with the button doing nothing.
+
+⚠️ **The Tools tab is selected by a `SET_PARAMS` dispatch targeting the Lead Center route's
+`key`.** A bare `navigation.setParams` writes to the route owning the navigation object — the Deal
+Center being left — and would silently do nothing. It runs AFTER the pop and its failure is
+swallowed: being on the right screen matters more than the right tab. (Popping restores Lead
+Center as the rep left it, so without this a rep who had switched to Job Docs would return there.)
+
+⚠️ Popping preserves the existing Lead Center's own params (`fromMyDeals`, appointment state);
+re-navigating with fresh params would quietly reset them.
+
+⚠️ Every step is defensive and falls back to the original `navigate`. This is a button pressed in
+front of a customer — a navigation throw here would crash the app mid-deal.
+
+Other screens that return to Lead Center (Investment Center, Deal Detail, Job Builder, RevRender)
+already use `goBack()` and were correct; they are untouched.
+
+---
+
+## Ticket — Deal Center showed the calculator over a confirmed rollout on mobile data
+
+> "I rolled out this lead, then opened Deal Center and it showed the calculator even though I
+> rolled it out. After a few minutes when I got some internet it showed the rollout. Mostly
+> these issues are coming in mobile data."
+
+The rollout data was on the device the whole time. The bug was that the **online** loader in
+`useDynamicCalculators.ts` never read the cache, and treated reads that never answered as
+answers.
+
+⚠️ **`isOnline()` is true on one bar of LTE, right up to the 15 s timeout.** So the branch that
+runs for a rep with a weak cell signal is the *online* one — the branch with no snapshot
+fallback. The offline branch below it was always correct (`resolveOfflineDealCenterSource`); it
+simply never got the chance to run. **Do not "fix" a cache bug by only looking at the offline
+path.**
+
+Two separate failures, both of the same shape:
+
+**1. A timed-out appointment lookup looked like "this lead has no appointment."**
+`resolveAppointmentId` returned a bare `string | null`. It returns `null` when `getAppointments`
+times out, `createAppointment` times out, *and* when the lead genuinely has none — three very
+different facts collapsed into one value. The caller then did:
+
+```
+if (!apptId) { setLoading(false); return; }   // local-only mode → the blank `local-1` tab
+```
+
+It now returns `{ id, failed }`, and `failed` is set **only by a transport-level failure** —
+⚠️ a 409 or any other 4xx is an *answer about this lead* and must not count as a failure, or a
+lead that truly has no appointment would start borrowing a cached id.
+
+**2. An empty read MINTED a calculator.** The `else` arm of `if (list.length)` called
+`createRemoteTab` — a POST. A slow or partial empty response therefore created a real, empty
+calculator on the server beside the rep's real one. This is the write-side version of the same
+trap the Investment Center hit twice, and a likely contributor to **ticket 1310** (Forever
+Record showing a confirmed rollout with no price): an extra empty calculator in the list.
+
+### The rules, in `utils/deal-center-load.ts`
+
+Pure module (CLAUDE.md §6 — `useDynamicCalculators.ts` imports React Native and cannot load
+under jest). 19 tests in `__tests__/utils/deal-center-load.test.ts`.
+
+- `readOutcome` — `answered-rows` / `answered-empty` / `unanswered`. ⚠️ A throw is `unanswered`
+  **even when an empty array came with it**.
+- `resolveOnlineLoadSource` — `server` / `cache` / `mint` / `hold`. ⚠️ **`mint` is the only
+  outcome that writes**, and it is reachable from exactly one of the six input combinations:
+  `answered-empty` **and** no cached rows. A test asserts that count directly, so widening it
+  fails loudly.
+- `hold` is deliberate: nothing proved and nothing cached means **leave the screen alone**
+  rather than write a calculator we may be about to discover already exists.
+- `resolveAppointmentFallback` — a *failed* lookup may fall back to the cached appointment id; a
+  *successful* lookup that found nothing may not.
+- `canUseLocalOnlyMode` — the blank-calculator path is now reachable only when the lookup
+  answered **and** there is no snapshot.
+
+⚠️ When the appointment id itself came from the cache (`source === 'cache'`), the loader does
+**not** then call `getCalculators` — the lookup just proved the network is unreachable, so it
+renders the snapshot and lets a later mount refresh. Adding that call back costs another 15 s
+timeout for a result already known.
+
+⚠️ `flowStep` still always starts at `'calculator'`; the rollout is reached through View-all.
+That is unchanged and correct — the reported symptom was the *tabs* being blank, not the step.

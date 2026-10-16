@@ -1171,3 +1171,34 @@ false-offline reports went unexplained. That line is the one that makes a wrong 
 
 ⚠️ `Profile/index.tsx` is **CRLF**; keep `newline=''` on both read and write when scripting edits
 to it (CLAUDE.md §6).
+
+## Ticket — Add New Lead: the address box is READ-ONLY offline (GPS only)
+
+Client: *"in offline mode we don't allow user to add the address manually (make sure only in
+offline), reason google places not worked in offline. Only default user will go with the lat long
+which we are getting from GPS."*
+
+`widgets/modals/LeadCreate/index.tsx`. One derived flag, `addressLockedOffline = !online`
+(`useIsOnline`, so a `degraded` one-bar line counts as offline too), drives four things:
+
+- `editable={!fromZone && !addressLockedOffline}` — the same shape the zone-canvasser lock already
+  used, so the two locks compose instead of fighting.
+- The placeholder becomes *"Tap the pin to capture your GPS position"* instead of a street address.
+- The disabled grey (`#EDEDED`) that `fromZone` already used, so the box reads as locked.
+- The hint no longer invites typing: it now says the street address is filled in on reconnect.
+
+- ⚠️ **Typing offline also DESTROYED the GPS fix.** `handleAddressSearch` does `setLocation(null)`
+  on every keystroke (correct online — the typed text supersedes the pin). Offline there is no
+  Places call to produce a replacement, so a rep who typed one character lost the only position the
+  device had. The read-only field removes that path entirely; do not "allow typing but keep the
+  coordinates" without rewriting that handler.
+- The GPS pin button stays enabled offline (`disabled={fromZone}` only) — it is the one way to fill
+  the field, and the new placeholder points at it.
+- The ✕ clear button still works offline and deliberately leaves `location` set: it blanks the box
+  so the pin reappears and the rep can re-capture. Without it a wrong fix would be unfixable.
+- Submit validation (`!form.address`) is unaffected — offline the box holds the coordinate string,
+  which is non-empty.
+- ⚠️ **Online behaviour is untouched**, as asked: Places autocomplete, free typing and the
+  suggestion list all behave exactly as before.
+- ⚠️ The file has MIXED CRLF and LF endings; match the surrounding block when editing.
+- Not verified on device.

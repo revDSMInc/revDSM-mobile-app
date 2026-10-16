@@ -568,6 +568,27 @@ export const hasPendingConsent = (
   kind: ConsentFormKind
 ): boolean => hasQueuedConsent(items, leadId, kind, true);
 
+/**
+ * The results a rep can record at a door with no connection.
+ *
+ * ⚠️ This used to be `sale` and `demo` only, so **No Demo, Not Hit and Reset** were queued
+ * (they share the `submit` step and the same `submitJobBuilder` endpoint) but the leads list
+ * still showed the lead as unresulted until it synced. A rep resulting a lead and seeing nothing
+ * change assumes it failed and does it again.
+ *
+ * ⚠️ These three are ORDINARY lead results, not the destructive "Reset Job Docs"
+ * (`LeadService.resetLead`, `lead/v1/{id}/reset`), which wipes uploaded documents and is a
+ * different control entirely. Do not conflate them: queueing that one would let a replay destroy
+ * work the rep did after it.
+ */
+export const OFFLINE_RESULTABLE: ReadonlySet<string> = new Set([
+  'sale',
+  'demo',
+  'nodemo',
+  'nothit',
+  'reset',
+]);
+
 export const offlineResultOverlay = (
   work: OfflineLeadWork | null | undefined
 ): Record<string, any> | null => {
@@ -578,10 +599,16 @@ export const offlineResultOverlay = (
   if (!leadData) return null;
 
   const result = String(leadData.result || '').toLowerCase();
-  if (result !== 'sale' && result !== 'demo') return null;
+  if (!OFFLINE_RESULTABLE.has(result)) return null;
 
+  /**
+   * ⚠️ `status` is NOT always the result. A sale/demo names its own status, but the
+   * no-sale outcomes carry a distinct one (`leadData.status`), which is what the leads list and
+   * the lead card colour-code on. Reusing `result` for both showed a resulted lead as unresulted
+   * until it synced.
+   */
   return {
-    status: result,
+    status: String(leadData.status || result),
     result: leadData.result,
     originalContractPrice: leadData.originalContractPrice,
     lastPriceQuoted: leadData.lastPriceQuoted,

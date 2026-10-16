@@ -1387,3 +1387,116 @@ the moment it is needed.
 rep nothing is coming, seconds after they asked for it. While `awaitingRenders` the panel shows a
 spinner and "Generating your renders… about 30 seconds each", and the header reads
 `N ready · generating…` rather than a count the rep can see is stale.
+
+## iOS build & launch traps (Xcode target membership, build DB)
+
+### Blank app on launch: `SceneDelegate.swift` was never added to the Xcode target
+
+Ticket: *app launched to a black screen with a working status bar — in the simulator, in a local
+Release build, and on TestFlight.* Native came up fine (status bar, scene, window); no JS ever ran.
+
+**Root cause.** `ios/revDSM_Sales/SceneDelegate.swift` existed on disk but was absent from
+`project.pbxproj` entirely — no `PBXFileReference`, no `PBXBuildFile`, not in Compile Sources. So the
+class was never compiled into the binary, and the console said so on every launch:
+
+```
+UIWindowSceneSessionRoleApplication contained UISceneDelegateClassName key,
+but could not load class with name "revDSM_Sales.SceneDelegate".
+```
+
+`Info.plist` names `$(PRODUCT_MODULE_NAME).SceneDelegate` as the scene delegate; UIKit could not
+resolve it, so the scene got **no delegate**, nothing ever called
+`factory.startReactNative(withModuleName:in:launchOptions:)`, and the window stayed empty.
+
+- ⚠️ **A Swift file on disk is not in the build.** It must appear in the target's Compile Sources.
+  Add it in Xcode (right-click the group › Add Files, **Reference files in place**, tick the target) —
+  hand-editing `project.pbxproj` needs four separate entries and is easy to corrupt.
+- ⚠️ **`could not load class with name "<Module>.<Class>"` means the class is not in the binary.**
+  Check Compile Sources first; `$(PRODUCT_MODULE_NAME)` resolution is the rarer second cause.
+- The symptom is identical in Debug and Release, which is what makes it confusing: Metro being up or
+  down changes nothing, so the usual "is Metro running / --reset-cache" path is a dead end. **If the
+  status bar renders but the app is black in BOTH Debug and TestFlight, read the device console for a
+  scene-delegate line before suspecting Metro or the JS.**
+- Ruled out on the way, all three innocent: `config/env.ts` throwing on a missing key (the `.env`
+  values *are* correctly inlined into a production bundle — verified by extracting `API_URL`'s value
+  from a `--dev false` Hermes bundle with `strings`), the `UIApplicationSceneManifest` entry itself
+  (present and correct), and the `SceneDelegate` implementation (correct — it binds the window to the
+  scene via `UIWindow(windowScene:)` and borrows the factory from `AppDelegate`).
+
+### `bundleURL()` and the `#if DEBUG` implicit-return scare (NOT the blank-screen cause)
+
+While chasing the blank screen above, `ReactNativeDelegate.bundleURL()` in `AppDelegate.swift` looked
+like a second bug: neither `#if DEBUG` branch had an explicit `return`. Explicit `return`s were added
+and are worth keeping for clarity.
+
+- ⚠️ **This was never the cause.** Swift's implicit return reaches inside `#if`/`#else`, so the
+  original compiled and returned correctly. Do not cite it as the fix, and do not "restore parity"
+  by removing the `return`s either — they are harmless and clearer.
+
+### Xcode "database is locked" is not a project error
+
+`unable to attach DB: ... build.db: database is locked. Possibly there are two concurrent builds
+running in the same filesystem location.` means exactly what it says: Xcode and a second builder
+(a terminal `xcodebuild`, or an interrupted earlier build that left a `build.db-journal`) hit the
+same DerivedData.
+
+- Fix: make sure no `xcodebuild`/`XCBBuildService` is running, then delete
+  `DerivedData/<project>-<hash>/Build/Intermediates.noindex/XCBuildData`. Xcode regenerates it; it
+  costs one full rebuild and leaves `Pods.build` and the rest of DerivedData alone. Nuking all of
+  DerivedData is not necessary.
+- ⚠️ Don't run `xcodebuild` from a terminal while Xcode is building the same workspace — that is how
+  the lock gets created in the first place.
+
+## `MainHeader.onNavigate` ends the rep's lead session
+
+`widgets/common/MainHeader.tsx`. Every header route funnels through one `onNavigate`, which calls
+`endActiveLeadWorkSession()` **only when the destination is `homeRoute`** (`Leads`, or
+`InstallerDashboard` for an installer).
+
+⚠️ **Only home ends the lead.** Account Settings, Job Tracker, My Learning, the notification bell
+and chat are side trips a rep takes from INSIDE a lead and returns from — they are part of working
+it. An earlier version fired on every header navigation and ended the session on all of them, which
+is wrong. Lead Center's own `HeaderContext` handler gates on the same destination.
+
+⚠️ **Do not remove that call as "the header shouldn't know about leads".** It is there because the
+header is the only component that sees *every* way a rep leaves a lead. Lead Center used to bind
+its own handler through `HeaderContext`, but inside a `useFocusEffect` — which tears down the
+moment a child screen (Deal Center, Job Builder, Pitch Book) opens, so leaving from there released
+nothing and the rep stayed live on the ops board.
+
+⚠️ **Fire-and-forget, and it must stay that way.** Navigation must never wait on two network
+calls, and a rep leaving a door often has no signal. It is also safe to call unconditionally: it
+reads the active session from MMKV and no-ops when none is open, so it costs nothing on screens
+that have no lead.
+
+Full ticket, including why both paths clear the stored session before awaiting (the double-send
+guard): [`lead-center.md`](lead-center.md).
+
+## Ticket — the axios timeout, and noticing a stall from the interceptors
+
+Changed in `services/api/index.ts`. Full ticket, including why `/health` was never being called:
+[`offline.md`](offline.md).
+
+**`timeout: 120000` → `REQUEST_TIMEOUT_MS = 15_000`.** Two minutes is what a rep on 1 bar of 5G
+actually waited in a client video — and twice over, because the TanStack default is `retry: 1`
+(`services/api/queryClient.ts`), so the real ceiling was **four minutes** of dead screen. A
+request that has not answered in 15 s on a field device is not going to; the cached copy is the
+better answer.
+
+⚠️ **The timeout is the ceiling on every offline fallback in the app.** Nothing downstream — no
+banner, no cache, no queue — can engage until the request gives up, because all of it is reached
+through the error interceptor. Raising this number again silently lengthens every one of them.
+
+**Both interceptors now bracket the request**: the request interceptor calls `beginRequest(config
+.url)` and stashes the id on `config.__inFlightId`; both response handlers call `endRequest(...)`.
+That lets `services/connectivity.ts` fire the `/health` probe **while a request is still open**,
+which is the only way to detect a connection that stalls instead of failing.
+
+⚠️ **The id must be released on BOTH paths.** A miss on the error branch leaks an entry that never
+clears, and the tracker then reports a permanent stall — the app would sit in "Weak connection"
+for the rest of the session. Both `endRequest` calls read through `?? null`, so a request that
+never reached the request interceptor (an axios config error) is a no-op rather than a throw.
+
+⚠️ **`beginRequest` returns `null` for the probe's own URL**, so the probe is never measured as
+traffic by the thing it feeds. The probe uses bare `fetch`, not this instance, so it is only
+reachable here if someone routes it through axios later — the guard is cheap insurance.

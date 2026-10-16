@@ -138,12 +138,6 @@ export function useDynamicInspectionCapture({
   }, [leadId]);
 
   const [pendingUploads, setPendingUploads] = useState(() => uploadQueueManager.getQueue());
-  useEffect(() => {
-    setPendingUploads([...uploadQueueManager.getQueue()]);
-    return uploadQueueManager.addListener(() => {
-      setPendingUploads([...uploadQueueManager.getQueue()]);
-    });
-  }, []);
   const pendingBySlot = useMemo(
     () => indexPendingBySlot(pendingUploads as any, leadId),
     [pendingUploads, leadId]
@@ -172,6 +166,46 @@ export function useDynamicInspectionCapture({
   const pendingMovesRef = useRef<Map<string, string>>(new Map());
   const knownPhotosRef = useRef<Record<string, CapturedPhoto[]>>({});
   const pendingUploadKeyRef = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    /**
+     * ⚠️ The QUEUE is the spinner's authority, not `uploadingKeys`.
+     *
+     * `uploadingKeys[key]` is an optimistic flag set at capture time, and it used to be
+     * cleared in exactly ONE place: the effect keyed on `salesPhotosSignature`. If that
+     * refetch returned stale data, failed, or the photo came back under a slightly different
+     * subcategory, the signature never changed and nothing else ever cleared the flag - the
+     * slot span for the rest of the session ("Back was uploaded before and the loader is
+     * still showing"). A spinner must never depend on a single success path.
+     *
+     * Once an item has left the queue it is no longer uploading, whatever the server says, so
+     * this listener clears the flag too. Both paths clear it; neither is required.
+     */
+    const sync = () => {
+      const queue = uploadQueueManager.getQueue();
+      setPendingUploads([...queue]);
+
+      const stillQueued = new Set(
+        queue
+          .filter((it: any) => it.leadId === leadId)
+          .map((it: any) => subKey(it.categoryName, it.subcategory))
+      );
+      setUploadingKeys((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        Object.entries(pendingUploadKeyRef.current).forEach(([sk, key]) => {
+          if (!stillQueued.has(sk) && next[key]) {
+            delete next[key];
+            delete pendingUploadKeyRef.current[sk];
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+    };
+    sync();
+    return uploadQueueManager.addListener(sync);
+  }, [leadId]);
 
   const salesPhotosSignature = useMemo(() => {
     const photos = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];

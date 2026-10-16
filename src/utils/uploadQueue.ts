@@ -15,6 +15,21 @@ import {
   MAX_PHOTO_ATTEMPTS,
   isUnauthorizedError,
 } from './upload-retry-policy';
+import {
+  IDEMPOTENCY_FIELD,
+  isDuplicateUploadResponse,
+  isIdempotentReplay,
+  photoIdempotencyKey,
+} from './upload-idempotency';
+import { pruneRecentlyCompleted } from './photo-upload-progress';
+
+export interface RecentlyCompletedUpload {
+  leadId: string;
+  categoryName: string;
+  subcategory: string;
+  userId?: string;
+  completedAt: number;
+}
 
 export interface UploadQueueItem {
   id: string;
@@ -39,6 +54,7 @@ export interface UploadQueueItem {
 
 class UploadQueueManager {
   private queue: UploadQueueItem[] = [];
+  private recentlyCompleted: RecentlyCompletedUpload[] = [];
   private isProcessing = false;
   private activeUploadId: string | null = null;
   private onQueueChangeListeners: (() => void)[] = [];
@@ -74,6 +90,20 @@ class UploadQueueManager {
 
   public getQueue() {
     return this.queue.filter((i) => this.ownedByCurrentSession(i));
+  }
+
+  /**
+   * ⚠️ Slots whose upload finished but whose server row has not appeared yet.
+   *
+   * `refetchQueries` is awaited before the item is dropped, but it can still resolve with a
+   * list that does not include the new photo (read-after-write lag on a slow cell). For that
+   * window the photo is in neither the queue nor `salesPhotos`, and any count built from
+   * those two alone dips. Counting these keeps it monotonic. Bounded by
+   * RECENTLY_COMPLETED_TTL_MS so a row that never arrives stops being claimed.
+   */
+  public getRecentlyCompleted(): RecentlyCompletedUpload[] {
+    this.recentlyCompleted = pruneRecentlyCompleted(this.recentlyCompleted);
+    return this.recentlyCompleted.filter((r) => isOwnedBy(r.userId, getSessionOwner()));
   }
 
   public getActiveUploadId(): string | null {
@@ -274,6 +304,20 @@ class UploadQueueManager {
         console.log(`[UploadQueue] Uploading item: ${activeItem.id} for slot: ${activeItem.subcategory}`);
         await this.uploadItem(activeItem);
 
+        // ⚠️ Recorded BEFORE the item leaves the queue: `removeItem` notifies listeners, and a
+        // listener that ran between the removal and this record would see the dip we are
+        // fixing.
+        this.recentlyCompleted = [
+          ...pruneRecentlyCompleted(this.recentlyCompleted),
+          {
+            leadId: activeItem.leadId,
+            categoryName: activeItem.categoryName,
+            subcategory: activeItem.subcategory,
+            userId: activeItem.userId,
+            completedAt: Date.now(),
+          },
+        ];
+
         this.removeItem(activeItem.id);
         this.saveQueue();
         this.cleanupPersistedFile(activeItem); // fire-and-forget: delete the durable copy
@@ -289,6 +333,22 @@ class UploadQueueManager {
         if (!this.checkOnline()) {
           console.log('[UploadQueue] Connection lost during upload. Will resume on reconnect.');
           break;
+        }
+        /**
+         * ⚠️ A duplicate-key rejection means the photo IS stored. Treat it as a success and
+         * drop the item - parking it would tell the rep a safely-stored photo had failed, and
+         * leave them retaking a door they already shot.
+         */
+        if (isDuplicateUploadResponse(error)) {
+          console.log(`[UploadQueue] ${activeItem.id} already stored server-side; completing.`);
+          this.removeItem(activeItem.id);
+          this.saveQueue();
+          this.cleanupPersistedFile(activeItem);
+          try {
+            queryClient.invalidateQueries({ queryKey: ['leads'] });
+            await queryClient.refetchQueries({ queryKey: ['lead', activeItem.leadId] });
+          } catch {}
+          continue;
         }
         if (isUnauthorizedError(error)) {
           // The session is gone, not the photo. Keep it, spend no attempt, and stop: the next
@@ -359,6 +419,14 @@ class UploadQueueManager {
     formData.append('images', JSON.stringify(imageInfo));
     formData.append('category', 'salesPhotos');
 
+    /**
+     * ⚠️ Derived from `item.id`, which is minted once at enqueue and persisted to MMKV - so
+     * every retry of this photo, including one after an app restart days later, sends the SAME
+     * key. A key regenerated per attempt would not deduplicate anything.
+     */
+    const idempotencyKey = photoIdempotencyKey(item);
+    if (idempotencyKey) formData.append(IDEMPOTENCY_FIELD, idempotencyKey);
+
     const existingUrls = new Set<string>();
     const userId = item.userId;
     if (userId) {
@@ -375,7 +443,13 @@ class UploadQueueManager {
       }
     }
 
-    const response = await LeadService.uploadImages(item.leadId, formData);
+    const response = await LeadService.uploadImages(item.leadId, formData, idempotencyKey);
+
+    if (isIdempotentReplay(response)) {
+      // The server recognised an earlier delivery of this exact photo. The timeout that made us
+      // retry was a lie; nothing new was stored. Treated as success - that is the whole point.
+      console.log(`[UploadQueue] ${item.id} was already stored (idempotent replay).`);
+    }
 
     this.logUploadSuccessAsync(item, response, coords, existingUrls);
 
@@ -387,6 +461,21 @@ class UploadQueueManager {
       console.warn('[UploadQueue] Could not adopt local file into image cache:', adoptErr);
     }
 
+    /**
+     * ⚠️ The refetch is AWAITED before `processQueue` removes the item, so the photo is never
+     * in neither set. Reported as "I uploaded 4 images, during uploading it becomes 3, then a
+     * second later 4 again": the count is `server photos + queued items`, and the moment the
+     * queue item is dropped while the server list is still stale, the photo belongs to
+     * neither and the number falls.
+     *
+     * ⚠️ Do not make this fire-and-forget to "speed up the drain". The await IS the fix, and
+     * on a slow cell the window it closes is seconds long, not milliseconds.
+     *
+     * ⚠️ `refetchQueries` can still resolve with a server list that does not yet include this
+     * photo (read-after-write lag). That residual flicker is covered on the UI side by
+     * `utils/photo-upload-progress.ts`, which counts a just-drained slot until the server row
+     * appears - the two fixes are complementary, not alternatives.
+     */
     try {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       await queryClient.refetchQueries({ queryKey: ['lead', item.leadId] });

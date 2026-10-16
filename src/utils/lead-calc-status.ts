@@ -102,6 +102,8 @@ export const calcGateState = (
   {
     isSold = false,
     isDeviceOnlyLead = false,
+    isOffline = false,
+    hasAnswered = false,
   }: {
     isSold?: boolean;
     /**
@@ -109,6 +111,17 @@ export const calcGateState = (
      * There is no server record to be uncertain about.
      */
     isDeviceOnlyLead?: boolean;
+    /**
+     * No usable connection. `unknown` means "we could not ask"; offline we also cannot ask
+     * LATER, so the benefit of the doubt has nothing to resolve into.
+     */
+    isOffline?: boolean;
+    /**
+     * A status read has answered at least once for this lead (TanStack `isSuccess`), even if
+     * the answer was "no calculators". Distinguishes "we asked and lost the reply" from
+     * "we have never asked".
+     */
+    hasAnswered?: boolean;
   } = {}
 ): CalcGateState => {
   if (isSold) return 'unlocked';
@@ -125,8 +138,30 @@ export const calcGateState = (
    */
   if (isDeviceOnlyLead) return 'locked';
 
-  // No status at all: we have never had an answer for this lead, cached or live.
-  if (!status) return 'unknown';
+  /**
+   * No status at all: we have never had an answer for this lead, cached or live.
+   *
+   * ONLINE this stays `unknown` and unlocks - a read can fail transiently on a lead whose
+   * rollouts the rep really did confirm, and a wrong lock in front of a customer costs a sale
+   * (see the re-lock ticket in `lead-center.md`). The refetch behind the tap resolves it.
+   *
+   * ⚠️ OFFLINE it is a definite `locked`. Nothing is cached, so the device has never seen a
+   * confirmed rollout for this lead, and no later read can arrive to correct the guess. The
+   * benefit of the doubt is only worth giving when the doubt can still be settled.
+   */
+  if (!status) {
+    /**
+     * ⚠️ `unknown` is for a read that ASKED and lost the reply - the rep may well have
+     * confirmed, and a wrong lock in front of a customer costs a sale (the re-lock ticket).
+     *
+     * It is NOT for a lead nobody has successfully read yet. A brand-new lead on a slow line
+     * renders before its first read lands; treating that as "don't know" let the rep open the
+     * Investment Center seconds after creating the lead, with no rollout confirmed at all.
+     * No answer has ever arrived => there is no evidence of a confirmed rollout => locked.
+     */
+    if (!hasAnswered) return 'locked';
+    return isOffline ? 'locked' : 'unknown';
+  }
   return 'locked';
 };
 

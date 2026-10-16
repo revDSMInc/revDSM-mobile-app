@@ -1,6 +1,14 @@
 import api, { hasSession } from './index';
 import { AxiosResponse } from 'axios';
 import { ENV } from '../../config/env';
+import { IDEMPOTENCY_HEADER } from '../../utils/upload-idempotency';
+
+/**
+ * Photo uploads get their own timeout. The global 15s suits JSON; a 2-5 MB image on a weak
+ * cell routinely needs longer, and timing out mid-store is exactly what created duplicates.
+ * Matches the installer queue, which already used 120s.
+ */
+const PHOTO_UPLOAD_TIMEOUT_MS = 120_000;
 
 export const resolveLeadCalculatorId = (lead: any): string | null =>
   lead?.selectedCalculatorId ||
@@ -169,9 +177,22 @@ export const LeadService = {
   updateLeadOutcomeByCalculator: (leadId: string, calculatorId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.outcomeByCalculator(leadId, calculatorId), payload),
 
-  uploadImages: (leadId: string, formData: FormData): Promise<AxiosResponse<any>> =>
+  /**
+   * IMPORTANT: `idempotencyKey` is what stops a timed-out retry becoming a duplicate photo. See
+   * `utils/upload-idempotency.ts`. The long timeout matters too: the global 15 s is a JSON
+   * timeout, and a 2-5 MB photo on a weak cell exceeds it while the server stores it fine.
+   */
+  uploadImages: (
+    leadId: string,
+    formData: FormData,
+    idempotencyKey?: string | null
+  ): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.images(leadId), formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: {
+        'Content-Type': 'multipart/form-data',
+        ...(idempotencyKey ? { [IDEMPOTENCY_HEADER]: idempotencyKey } : {}),
+      },
+      timeout: PHOTO_UPLOAD_TIMEOUT_MS,
     }),
   deleteImage: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.delete(LeadEndpoints.images(leadId), { data: payload }),

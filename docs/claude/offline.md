@@ -698,6 +698,372 @@ drops "link not sent yet" for a loan.
 
 The rep default (`defaultOneYearPaymentMethod`) already rides the queued calculator settings (`offline-settings.ts` `FIELDS`): `RolloutView.saveDefault` queues it first, flushes if online, and offline shows "Saved on your device - it'll sync when you're back online"; `useAuth` merges it optimistically so `repOneYearKey` (and the plan sheet's CURRENT DEFAULT) update at once, and `startCalculatorSettingsSync` replays it on reconnect. New: `RolloutView.logOneYearPlan` writes a `oneYearPlan` rollout log through `logRolloutChange` -> `logEvent`, so offline it lands in the activity-log queue with the action-time key and per-lead order like every other rollout log. Actions: `1 year default plan set` / `cleared` (`isRepDefault: true`, logged once per real change) and `1 year plan changed` (`oneYearMode`), fired from `OneYearMonthlyPlan`'s new `onPlanPicked` (only `commit`, i.e. rep taps - never the Default re-stamp effect). Meta `offline` records connectivity at tap time. ⚠️ A server rejection while online leaves the setting queued until the NEXT reconnect (no retry timer) - pre-existing behaviour. Not verified on device.
 
+---
+
+## Ticket — 4 photos became 9, then 7 (mobile data)
+
+> "In mobile data I noticed I uploaded 4 images and it is becoming 9 and some time more. In
+> back-left it goes 3 and then in manage photos it increased, and I again checked it become 7."
+
+⚠️ **An upload that times out is not an upload that failed.** Nothing was ever lost — the same
+photo was stored repeatedly.
+
+`uploadImages` inherited the **global 15 s** `REQUEST_TIMEOUT_MS` from `services/api/index.ts`.
+That is a *JSON* timeout; a 2–5 MB photo on a weak cell routinely exceeds it **while the server
+stores it perfectly**. `processQueue` caught the client-side abort, incremented `retryCount`, and
+re-sent the identical file — up to `MAX_PHOTO_ATTEMPTS` (5). 4 photos × several attempts each is
+exactly the 4 → 9 the rep saw, and the count kept moving because retries were still draining.
+
+⚠️ **The count going DOWN (9 → 7) is not the bug healing.** It is a later `refetchQueries`
+replacing an optimistic list with the server's — the duplicates are real rows either way.
+
+⚠️ The pre-upload `existingUrls` snapshot in `uploadItem` looks like a duplicate guard but is
+**not** one — it feeds `matchUploadedPhoto` for cache adoption and logging only, and nothing ever
+consulted it before sending.
+
+### The fix: three layers, and they are not alternatives
+
+1. **`PHOTO_UPLOAD_TIMEOUT_MS = 120_000`** on `LeadService.uploadImages`, which makes the
+   ambiguous window rare. ⚠️ The installer queue **already used 120 s** — only this queue was
+   left on the global 15 s. Worth remembering when adding any new multipart call: the global
+   `REQUEST_TIMEOUT_MS` is a JSON timeout and is wrong for images.
+2. **A stable idempotency key** (`utils/upload-idempotency.ts`), which makes a retry inside that
+   window harmless. Only this actually closes the hole, and it needs the server to honour it —
+   backend has agreed; spec sent separately.
+3. **Treating a duplicate-key rejection as success** in the queue.
+
+⚠️ **Scope: `PUT demo/v1/leads/:leadId/images` only.** The installer queue
+(`POST installer/v1/:jobId/images`, `utils/installer-upload.ts`) has the **same defect** — a
+timed-out attempt re-sends the image, and ⚠️ its `isRetryableUploadError` returns false for 409
+so a duplicate rejection would fall through to `failed(attempt)`, marking a safely-stored photo
+as failed. It was deliberately left alone so one endpoint ships at a time. The helpers in
+`upload-idempotency.ts` are endpoint-agnostic and can be adopted there unchanged; the key just
+needs a stable per-image local id (`photo.id`, minted at capture) and the phase folded in so
+pre- and post-install shots of one tag stay distinct.
+
+### `utils/upload-idempotency.ts`
+
+Pure module (CLAUDE.md §6 — the queue imports react-native / blob-util). 17 tests.
+
+- Sent **twice per request**: the `Idempotency-Key` header *and* an `idempotencyKey` form field.
+  ⚠️ Mobile proxies strip unexpected headers from multipart bodies more readily than form
+  fields, and this bug only shows up on exactly those networks.
+- ⚠️ **The key must derive from the item's persisted identity — never the attempt, the clock or
+  a random value.** `photoIdempotencyKey` uses `item.id`, minted at enqueue and persisted to
+  MMKV, so it survives retries, restarts and a cold drain days later. *A key regenerated per
+  attempt is not an idempotency key, it is just a slower duplicate.* A test asserts two calls
+  return the identical string.
+- ⚠️ `subcategory` is deliberately **not** in the key. Two photos in one slot are two photos; a
+  re-shot "Back Left" must still upload. Over-deduplicating loses a photo at a door, which is
+  the worse failure.
+- Returns `null` rather than fabricating a key when there is no stable id — no key is better
+  than a key that isn't stable.
+
+### ⚠️ A duplicate-key 409 is a SUCCESS
+
+`uploadQueue.ts` calls `isDuplicateUploadResponse(err)` **before** its failure handling, then
+removes the item and cleans up the file instead of parking it.
+
+Parking a safely-stored photo tells the rep to retake a door they already shot.
+
+⚠️ **The match is narrow on purpose.** It requires 409 **and** an idempotency-flavoured
+`code`/`message`. A bare 409 is NOT swallowed — `resolveAppointmentId` returns a 409 for
+"lead already has an appointment", and silently treating unrelated conflicts as success would
+hide real failures.
+
+`isIdempotentReplay(response)` reads an advisory `idempotentReplay: true` for logging only.
+⚠️ Correctness must not depend on the server setting it.
+
+### ⚠️ `data.code`, not `code` — the backend envelope
+
+The backend's responses all go through one helper emitting `{ code, message, data }` where
+**`code` is the HTTP status as a NUMBER**. Our first spec asked for `code: "IDEMPOTENT_REPLAY"`,
+which would have broken that contract across their whole API. The agreed shape is:
+
+```json
+{ "code": 409, "message": "Idempotent replay: ...", "data": { "code": "IDEMPOTENT_REPLAY" } }
+```
+
+`isDuplicateUploadResponse` therefore checks `data.code` **first**, then a *string* `body.code`,
+then the message. ⚠️ A numeric `body.code` is ignored on purpose — an envelope carrying
+`code: 409` must never be read as a marker, or every 409 from this API becomes a silent
+"success". The message match is kept only so a server shipping before us is still understood;
+⚠️ message text is not a contract and must never be the only thing we match on.
+
+### The second caller: Image Annotation
+
+⚠️ `utils/uploadQueue.ts` is **not** the only path to `PUT demo/v1/leads/:leadId/images`.
+`screens/ImageAnnotation/index.tsx` uploads annotated copies through `useUploadImagesMutation`,
+and was unprotected. `useUploadImagesMutation` now takes an optional `idempotencyKey`.
+
+⚠️ **The risk there is a different one and needs a different key.** There is no retry loop in
+the annotation screen — its catch logs and moves on — so the exposure is an axios-level
+retransmit or a double-tap of Save, not a 5-attempt burst. `annotatedPhotoIdempotencyKey` keys
+on the **rendered temp file** (`annotated_<ts>_<index>.jpg`), which is minted once per render.
+That makes it stable for one save and ⚠️ **deliberately different when the rep annotates the
+same source photo again** — that is a new upload, not a duplicate. Keying on the source photo
+id instead would silently swallow the second annotation.
+
+⚠️ Its loop sends **one request per image**, so one key still gates exactly one photo. That
+invariant is what lets the backend key on the whole request; if any caller here ever batches,
+the backend contract breaks (they log a warning when a key arrives with >1 file).
+
+### Still outstanding
+
+Existing duplicates in live records predate the fix and need a one-off backend cleanup.
+
+⚠️ **The backend proposed grouping on `(leadId, subcategory, timestampTaken, coordinates)`,
+reasoning that those are capture metadata. They are not.** We send
+`timestampTaken: item.timestamp`, and `addToQueue` sets that to `new Date().toISOString()` **when
+the photo is ENQUEUED** — never re-stamped on retry. So it does group retries (the value is
+frozen on the queue item), but two genuinely different photos enqueued in the same burst can
+share it, and `coordinates` won't separate them because both come from one GPS fix at one door.
+Grouping on it would delete real photos. They were told to use S3 `HeadObject` (size + MD5) as
+the primary identity and the quadruple only as a pre-filter.
+
+⚠️ A cleanup group larger than 5 is suspicious — `MAX_PHOTO_ATTEMPTS` is 5, so a retry run
+cannot exceed it.
+
+## The check-in log that logout deleted
+
+`utils/session-scope.ts` (`SESSION_KEEP_KEYS`), `services/offlineActivityLog.ts`.
+
+Reported with the `[LeadSync]` / `[CheckInTrace]` diagnostics on a device. A rep started an
+appointment **offline**, came back online, and:
+
+- the lead's status DID change to "Resume Appointment";
+- **no `lead_check_in` ever reached the server**;
+- after a logout/login the lead read "Start Appointment" again.
+
+The trace showed the log was captured correctly — `[CheckInTrace] logEvent lead_check_in
+online=false queueable=true` — so it was held in `offline_activity_logs` as designed.
+
+⚠️ **Logout deleted it.** `resetSessionStorage()` clears every MMKV key that is not in
+`SESSION_KEEP_KEYS`, and that set listed only `offline_lead_work` and `upload_photo_queue`. The
+`work` PUT therefore survived (hence "Resume"), while the check-in log, the workflow marks, the
+photo deletes, the map filters and the delivery preference were all wiped — **five queues**, each
+holding work the rep had already done.
+
+⚠️ **Any owner-scoped queue MUST be listed in `SESSION_KEEP_KEYS` when it is added.** Every one of
+them already filters by `ownerId` on replay (`replayableLogs`, `replayableFilterWrites`, …), so
+keeping the key is safe for the next login — a different user never sees another's rows. Clearing
+it is what loses work. This is the single easiest way to silently destroy a queue: the queue code
+itself looks perfectly correct.
+
+⚠️ **The reset hooks are NOT the bug and must stay.** They clear the in-memory copy and set
+`loaded = false`, which forces a re-read from MMKV on next use — the behaviour `offlineLeadStore`
+has always relied on. Removing them would leave one login's rows in memory under the next.
+
+Also fixed: `queueActivityLog` now drains on enqueue when already online, as the other queues do.
+A log held during a BRIEF dropout previously waited for the next `onReconnect`, which may never
+come in that session.
+
+⚠️ A first device cannot verify this. `markLeadCheckedInOffline` is a local display mark, so the
+status looks right there either way — check the portal's Forever Record, or a second device.
+
+### Follow-up — the queue was kept, but still never drained
+
+Two devices, one lead: the iPhone that started the appointment offline showed "Resume"; a second
+device logging in as the same rep showed "Start". **The second device is the only honest one** —
+`markOfflineCheckIn` is a LOCAL overlay (`applyOfflineWorkflow` rewrites `workflowState` on the
+device that queued it), so the first device looks correct whether or not anything reached the
+server.
+
+Keeping the key (above) stopped logout deleting the queue. Two further faults stopped it draining:
+
+⚠️ **`onReconnect` is not enough on its own.** `startActivityLogSync` only drained on reconnect
+plus once at mount. A rep who reconnects, kills the app, and reopens it **already online** never
+gets a reconnect event, and the mount drain races `initialize()` setting the session owner and
+token. `offlineLeadStore` has always had three triggers — `onReconnect`, `AppState` 'active', and a
+60s sweep — and the activity log now has the same three. Any new queue should.
+
+⚠️ **"No session yet" was burning the retry budget.** `settleQueuedLog` discards an entry after
+`MAX_LOG_ATTEMPTS` (5), and the sender throws `no session to replay an activity log with` when the
+token has not been restored yet. That counted as a real failure, so a handful of launches could
+**silently destroy a check-in the rep genuinely made**. `drainActivityLogs` now returns early
+without a session owner or token rather than letting the sender throw.
+
+⚠️ Do not read "the `work` PUT returned 200" as "the lead is checked in". They are different
+writes: `PUT lead/v1/{id}/work` records who is working the lead, and the `lead_check_in` activity
+log is what the portal's Forever Record and the lead's own history show. A lead can have one
+without the other, which is exactly the state this ticket was reported in.
+
+## The lead RELEASE had no queue (only half of "leaving a lead" survived offline)
+
+`utils/offline-lead-work.ts` (the `workEnd` step), `services/offlineLeadStore.ts`
+(`queueLeadWorkEnd`), `utils/lead-work-session.ts`. Endpoint:
+`PUT lead/v1/{leadId}/work` with `{ workStartedBy: null }`.
+
+Leaving a lead sends two things: the `lead_session` / `session_pause` activity log, and the work
+release. Asked to confirm the fix worked online AND offline, only the log did:
+
+| | Offline |
+|---|---|
+| pause log | queued — `lead_session` is in `QUEUEABLE_LOG_MODULES` |
+| work release | **lost** — `endWorkLead` is a bare PUT, the caller caught the throw |
+
+⚠️ **The rep stayed live on the ops board permanently.** Nothing retried it: the stale-session
+sweep clears the stored session *before* the call, so once it failed there was no record left to
+sweep. A rep leaving a door with no signal looked busy on that lead until someone intervened.
+
+The release is now the `workEnd` step on the existing lead-work queue rather than a sixth queue —
+it is the same full-state PUT on the same endpoint the start already uses.
+
+⚠️ **Ordered `work` → `chat` → `workEnd`.** `chat` must stay immediately after `work` (it mirrors
+the online flow, and a test asserts it); the release goes after both, so a start and an end queued
+in one offline stint replay in the order they happened.
+
+⚠️ **`workEnd` is lead-state, not a document step.** It belongs after `consent` in `UPLOAD_STEPS`
+for the same reason `work` and `archive` do — releasing the rep must never hold a signed form or a
+sale behind it.
+
+⚠️ **Skipped once `submit` is set.** A sold lead is submitted, not released; `submit` carries the
+final state.
+
+⚠️ **`lead-work-session.ts` must stay RN-free** (CLAUDE.md §6). Importing `offlineLeadStore` or
+`services/connectivity` into it pulls in netinfo and the whole suite stops loading — which is what
+happened on the first attempt. It takes the queue through `setWorkReleaseQueue`, registered by
+`offlineLeadStore` at module load.
+
+### Ticket — "one bar": a connection that is alive but unusable
+
+Client video: a rep on **1 bar of 5G** sat on "Loading calculator…" indefinitely. He described it
+as a "1 signal issue" and he was right about the cause.
+
+⚠️ **ONE BAR IS WORSE THAN NO BARS, and that is the whole bug.** Every offline path in this app
+is reached THROUGH failure: a request dies → `transportError` → `/health` probe → offline →
+cached copy. On one bar nothing ever fails. The phone is attached to a tower, the socket opens,
+the request just crawls. No failure, no signal, no probe, no fallback. **Airplane mode worked
+better than one bar.**
+
+**Why `/health` was never called** (the backend dev asked us to verify this, so it is recorded):
+`reportRequestSignal` runs only in the axios response/error interceptors, and `shouldProbe` admits
+only `transportError`. A hanging request reaches neither interceptor. With the old 120 s timeout
+and `FAILURES_BEFORE_LEAVING_ONLINE = 2`, the earliest possible probe was **4 minutes** in. The
+debugger showed nothing because there was nothing to log. `recheckNetworkNow` was also **dead
+code** — defined, never called.
+
+**The fix: judge a request while it is still running.** `utils/slow-request.ts` holds an
+`InFlightTracker`; `beginRequest`/`endRequest` bracket every call from the axios interceptors, and
+a request still open after `SLOW_REQUEST_MS` (3 s) fires the probe directly.
+
+⚠️ **The probe must skip its own URL** (`isProbeUrl`), or a slow probe triggers another probe.
+
+⚠️ **One timer for the whole batch, not one per request.** It only has to notice that *something*
+is stuck; a timer per request on a busy screen is pure overhead.
+
+**Timeout 120 s → 15 s.** 120 s is what the rep actually waited, twice, because TanStack retries
+once. A request unanswered that long on a field device is not coming.
+
+**Three banner states, not five.** The backend dev proposed a five-bucket latency table
+(Healthy/Degraded/Weak/Very weak/Offline). Measured `/health` on `api.np.revdsm.com`: **warm
+median 239 ms, p90 358 ms, max 606 ms — but 1018 ms cold**, nearly all TLS handshake. The probe
+uses bare `fetch`, outside the axios pool, so it pays that cold cost often. A 350 ms "Healthy"
+ceiling would have misfired on **17%** of requests on a *good* office connection. `utils/
+connection-banner.ts` keeps three states, because the rep can take exactly three actions.
+
+⚠️ **The weak banner never says "offline".** The rep can still work; "offline" sends them hunting
+for signal instead of carrying on.
+
+⚠️ **Hysteresis is asymmetric** — `BANNER_WORSEN_MS` 600 ms, `BANNER_RECOVER_MS` 4 s. Warning is
+cheap; clearing a warning while the line is still flapping is what makes a strip nobody reads.
+
+⚠️ **`degraded` still counts as offline for `useIsOnline`** (19 consumers). That is deliberate and
+was not changed: a weak line should route writes to the queues exactly as a dead one does.
+`useNetworkStatus` is the hook for anything that needs to tell the two apart.
+
+### Follow-up — the strip keeps the original amber
+
+Reviewed on device and corrected. The first cut gave **offline** a slate-grey bar (`#E2E8F0`
+on `#334155`) and reserved amber for **weak**. Rejected: slate reads as disabled chrome, so the
+eye slides straight off the one state that most needs reading.
+
+⚠️ **Offline keeps `#FFF1C6` on `#7A4100`, 11pt weight 600 — do not restyle it.** That is the
+app's established "read this" bar and it predates this ticket; the only change to the offline
+state is two words of copy.
+
+⚠️ **Weak is a LIGHTER AMBER (`#FFF8E4`), never a second hue.** Same family on purpose: it is the
+same kind of message one step less urgent, and a rep should not have to learn two colours to read
+one strip. The foreground stays `#7A4100` so both states are legible against either background.
+
+⚠️ **One text weight, not a bold title plus a lighter detail.** A weight split inside an 11pt line
+reads as two separate messages. `bannerFor()` returns `title` and `detail` separately so the rule
+stays testable, and the component joins them into one sentence (`"${title}. ${detail}"`) in a
+single `<Text>` — the split is for the tests, not for the eye.
+
+### Follow-up — three ways the one-bar fix would still have failed on a weak radio
+
+Found by re-reading the first cut against a *weak* radio rather than a *dead* one. All three
+were latent: the logic was right for "no signal" and wrong for "bad signal", which is the case
+the ticket exists for.
+
+**1. A slow probe reported the server DEAD.** `PROBE_TIMEOUT_MS` was 2 s, but measured cold TLS
+to the live API is **1.0–2.4 s on a good wired line** and the handshake is most of it — on one
+bar it routinely exceeds 2 s. An aborted probe returns `false`, and `applyProbeResult(false)`
+**force-settles to offline**, skipping the dwell. So the rep with a working-but-weak line was
+told they had none. Timeout is now **6 s**.
+
+⚠️ **`false` from the probe means UNREACHABLE, never "slow".** Anything that cannot tell the two
+apart must not return `false`. `probeHealth` now returns `true | 'slow' | false`
+(`PROBE_SLOW_MS` = 1.5 s), and `applyProbeResult` maps both `true` and `'slow'` to **degraded** —
+only `false` reaches offline.
+
+**2. One probe per stall, and the first is the likeliest to be lost.** `beginRequest` armed the
+timer only `if (!slowTimer)`; the timer nulled itself when it fired. Nothing re-armed it, because
+the screen is blocked — no new request comes through `beginRequest`. `armSlowTimer()` now
+re-arms itself while anything is still stuck.
+
+**3. The re-arm was then eaten by the throttle.** `PROBE_MIN_INTERVAL_MS` is 20 s, which outlives
+the whole 15 s stall, so every re-probe returned `null`. Added `PROBE_STALL_INTERVAL_MS` (4 s),
+passed by `probeAndApply(stalled = true)`.
+
+⚠️ **The stall throttle must stay well under the axios timeout.** If it ever creeps above
+`15 s − SLOW_REQUEST_MS` the re-probe silently stops happening and the behaviour reverts to one
+probe per stall, with nothing failing to show it. A test pins this relationship.
+
+**Verified across both radios.** TLS needs ~3 RTT before first byte; at edge-of-cell LTE
+(~1.2 s RTT) a cold probe lands ~3.8 s — inside the 6 s timeout, correctly reporting `'slow'`.
+5G at one bar (~300 ms RTT) lands ~1.05 s and reports quick.
+
+### The drain must not leave a photo in neither set
+
+A follow-up to the duplication ticket above, from the same reports: **"during uploading the
+number changes — I uploaded 4 images, it becomes 3, then a second later 4 again."** The UI side
+of this (the counter, and a spinner that never stopped) is in
+[`lead-center.md`](lead-center.md); what belongs here is what the queue now guarantees.
+
+Every surface that counts photos counts `server salesPhotos + queued items`. That arithmetic is
+only correct if a photo is in at least one of those sets at every instant. It was not: the queue
+item is dropped the moment its PUT resolves, while the server list changes only when a refetch
+lands.
+
+**1. `refetchQueries` is awaited inside `uploadItem`, before `processQueue` calls
+`removeItem`.** ⚠️ **Do not make this fire-and-forget to "speed up the drain"** — the await *is*
+the fix, and on a weak cell the window it closes is seconds long, not milliseconds.
+
+**2. `recentlyCompleted` covers the residual lag.** Even an awaited refetch can resolve with a
+list that does not yet contain the new photo (read-after-write on the backend). The manager
+therefore keeps a short list of just-drained slots, exposed as `getRecentlyCompleted()`, which
+`JobDocsSection` counts as `settling`.
+
+⚠️ **Recorded BEFORE `removeItem`, not after.** `removeItem` calls `notifyListeners`, so a
+listener running between the removal and the record would observe the exact dip being fixed.
+
+⚠️ **Bounded by `RECENTLY_COMPLETED_TTL_MS` (60 s)** via `pruneRecentlyCompleted`. A row that
+never arrives must stop being claimed, or the count silently overstates what the office will
+actually receive — a worse failure than the flicker, because nothing visibly goes wrong.
+
+⚠️ A settling slot must stop counting **as soon as its server row appears**, or the count
+flickers *upward* instead. The dedupe is by **slot**, not by file identity, because the queue
+item and the server row describe the same photo with different ids.
+
+Rules and tests: `utils/photo-upload-progress.ts` (20 tests), including a monotonic-sequence
+test asserting the count stays 4 through all six stages of the handover.
+
+---
+
+### Activity-log runtime trace (2026-10-14)
+
 - **Runtime trace (dev builds only):** `offlineActivityLog.ts` prints `[ActivityLogQueue]` lines when a drain starts (count + per-lead
   totals, then each log, then the ones held back for an unsynced lead), the exact body of every upload, and `OK` / `FAILED` / `401`
   per log. Payloads go through `sanitizeForLog`. `dumpActivityLogQueue()` (also on `globalThis`) prints what is queued right now.
