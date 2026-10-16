@@ -227,6 +227,17 @@ Files: `utils/offline-activity-log.ts` (`newActivityLogId`), `services/api/Logge
 - ⚠️ The id must stay a **v4 UUID**: the backend ignores anything else and generates its own. An older backend simply accepts the field as the row's id.
 - `leads.ts` `logUserActivity` posts without an id and is not queued; it is unchanged.
 
+### Offline-created lead: the real creation time goes up with the lead (2026-10-16)
+Files: `services/offlineLeadStore.ts` (`runStep`, case `'lead'`).
+
+| Was | Fix |
+|---|---|
+| A lead made offline was created on the server only at sync, so the Forever Record's Lead Origin showed the reconnect time (7:04) for a lead made at 6:55 | The `lead` step adds `leadCreationTimestamp: work.createdAt` (ISO UTC) to the create body when `work.origin === 'created-offline'`. The backend already read that field; it now keeps it if it is not in the future and not older than 30 days, else it stamps its own clock |
+
+- ⚠️ **Online creates send nothing** — the server stamps them. Do not add the field to the online `LeadCreate` payload.
+- ⚠️ It must stay an ISO string **with `Z`**: the backend parses a bare string in the office timezone.
+- Leads already on the server, and uploads from older app builds, keep the backend's fallback (check-in time, self-generated leads only).
+
 ### REVUIUX-444 — `defaultOneYearPaymentMethod` joins the queued calculator settings
 
 `utils/offline-settings.ts`: `FIELDS` + `PendingCalculatorSettings` gained `defaultOneYearPaymentMethod` (`null` = clear, sent as `null`). Everything else (merge, payload, `hasPendingSettings`, optimistic `applyPendingSettingsToUser`, replay on reconnect) is driven off `FIELDS`. See `deal-center.md` § REVUIUX-444.

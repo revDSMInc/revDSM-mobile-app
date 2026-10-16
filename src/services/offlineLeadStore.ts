@@ -858,7 +858,14 @@ const runStep = async (
 
   switch (step) {
     case 'lead': {
-      const body = send(work.lead) as Record<string, any>;
+      // The lead is created on the server only now, possibly hours after the rep made it. Send
+      // the moment it was queued so Lead Origin shows when it was really created. Only for
+      // work created offline; an online create sends nothing and the server stamps it.
+      const queued = send(work.lead) as Record<string, any>;
+      const body =
+        work.origin === 'created-offline' && !queued.leadCreationTimestamp
+          ? { ...queued, leadCreationTimestamp: work.createdAt }
+          : queued;
       const resolvedAddress = await resolveQueuedLeadAddress(body);
       const res = await LeadService.createLead(
         resolvedAddress ? applyResolvedAddress(body, resolvedAddress) : body
