@@ -68,11 +68,13 @@ const sendLog = (
       if (token) {
         headers.Authorization = `Bearer ${token}`;
       }
-      await axios.post(`${baseUrl}/user-activity-log/v1/create`, payload, {
+      const res = await axios.post(`${baseUrl}/user-activity-log/v1/create`, payload, {
         headers,
         timeout: 15000,
       });
       if (isDev) console.log(`[Logger] ✓ ${eventType}`);
+      // Handed back so the offline replay can print what the server answered.
+      return { status: res.status, data: res.data };
     } catch (err: any) {
       console.warn(
         `[Logger] ✗ ${eventType} — ${err?.response?.status ?? 'no response'}:`,

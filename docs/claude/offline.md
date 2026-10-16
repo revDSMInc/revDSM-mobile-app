@@ -697,3 +697,19 @@ drops "link not sent yet" for a loan.
 ### 1 Year default plan - offline + activity logs
 
 The rep default (`defaultOneYearPaymentMethod`) already rides the queued calculator settings (`offline-settings.ts` `FIELDS`): `RolloutView.saveDefault` queues it first, flushes if online, and offline shows "Saved on your device - it'll sync when you're back online"; `useAuth` merges it optimistically so `repOneYearKey` (and the plan sheet's CURRENT DEFAULT) update at once, and `startCalculatorSettingsSync` replays it on reconnect. New: `RolloutView.logOneYearPlan` writes a `oneYearPlan` rollout log through `logRolloutChange` -> `logEvent`, so offline it lands in the activity-log queue with the action-time key and per-lead order like every other rollout log. Actions: `1 year default plan set` / `cleared` (`isRepDefault: true`, logged once per real change) and `1 year plan changed` (`oneYearMode`), fired from `OneYearMonthlyPlan`'s new `onPlanPicked` (only `commit`, i.e. rep taps - never the Default re-stamp effect). Meta `offline` records connectivity at tap time. ⚠️ A server rejection while online leaves the setting queued until the NEXT reconnect (no retry timer) - pre-existing behaviour. Not verified on device.
+
+- **Runtime trace (dev builds only):** `offlineActivityLog.ts` prints `[ActivityLogQueue]` lines when a drain starts (count + per-lead
+  totals, then each log, then the ones held back for an unsynced lead), the exact body of every upload, and `OK` / `FAILED` / `401`
+  per log. Payloads go through `sanitizeForLog`. `dumpActivityLogQueue()` (also on `globalThis`) prints what is queued right now.
+
+### Follow-up - the runtime trace now prints each log's server response (2026-10-15)
+
+Ticket: *console the payload AND the response of every log while the offline queue syncs.* `sendLog` (`services/api/LoggerService.ts`)
+used to discard the `POST /user-activity-log/v1/create` reply; it now returns `{ status, data }` and the drain in
+`services/offlineActivityLog.ts` prints it under the exact body it sent (`OK` + `response <status>: ...`, or `FAILED` + `response body: ...`
+from `e.response.data`, so a backend rejection shows its reason).
+
+- ⚠️ Dev builds only (`__DEV__`), and every payload/response goes through `sanitizeForLog` (strings over 512 chars print as `<string N chars>`).
+  Do NOT print the raw body: a document or base64 field would flood the CDP socket (see CLAUDE.md §6).
+- ⚠️ The return value of `sendLog` is only read by the replay sender; fire-and-forget callers ignore it, so keep it side-effect free.
+- Not traced: the lead-work queue (`offlineLeadStore`) and the photo queue (`uploadQueue`) - separate queues with their own requests.
