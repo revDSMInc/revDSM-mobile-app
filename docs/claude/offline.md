@@ -1224,6 +1224,52 @@ Replaying one the server already received is harmless; losing one it never recei
 `status: 'draft'`, `serverIds.leadId` set and `done: ['lead']` — so the drain starts at `work`
 rather than trying to re-create the lead.
 
+## Ticket — "Weak connection" and "Offline" on a strong line
+
+> "I have a strong connection and it shows me weak signal bar, and sometimes the offline bar.
+> Mostly on mobile data, but sometimes on strong Wi-Fi too."
+
+⚠️ **The probe was measuring the TLS HANDSHAKE, not link health.** Measured against the live
+API (`https://api.np.revdsm.com/health`) from a good WIRED connection:
+
+| | time |
+|---|---|
+| Cold request (new TLS handshake) | **~1.00 s** |
+| — of which TLS alone | ~0.75 s |
+| Warm request (connection reused) | ~0.25 s |
+| Server processing | ~0.23 s |
+
+`probeHealth` uses `fetch`, which does **not** share axios's connection pool, so nearly every
+probe pays the full handshake. The server is fast; the measurement was not measuring it.
+
+Against that, the old thresholds were wrong by construction:
+
+- `PROBE_SLOW_MS` was **1,500 ms**, so a perfectly healthy app sat ~500 ms from the "Weak
+  connection" warning and ordinary jitter crossed it → **1,500 → 4,000 ms** (~4× measured).
+- `PROBE_TIMEOUT_MS` was **6,000 ms**. A congested handshake can exceed that, and ⚠️ **two
+  aborted probes force-settle straight to OFFLINE past the dwell** → **6,000 → 10,000 ms**.
+
+⚠️ **These are FALSE-POSITIVE budgets, not latency targets.** Being slow to notice a real
+outage costs a few seconds of queued work that drains anyway; being wrong about it strands the
+rep in front of a customer. Spend the time.
+
+⚠️ **MEASURE BEFORE RETUNING.** `__tests__/utils/health-probe.test.ts` asserts both constants
+against the measured cold cost (~1 s) so they cannot be tuned back down by intuition. If the
+API's real latency changes, measure it and move the constants and those assertions together.
+
+### Why mobile data showed it most, but Wi-Fi sometimes too
+
+Cellular multiplies the handshake (higher RTT, more retransmits), so it crossed 1,500 ms
+constantly. Congested or distant Wi-Fi crosses it occasionally — which is exactly the reported
+pattern, and the thing that distinguishes this from a radio problem.
+
+⚠️ Not changed, and deliberately: **a probe still never promotes to `online`.** `/health` is
+unauthenticated and cheap, so it answers happily while the real API is failing — only a 2xx on
+a real request proves we are being served. A genuine success clears `degraded` immediately
+(`applyRequestSignal`), so the warning is not sticky once real traffic flows.
+
+---
+
 ### ⚠️ The `pending` predicate was WRONG — a regression I introduced, now reverted
 
 The first overlay fix gated `applyOfflineWorkflow` on `hasPendingCheckIn` — "the overlay only

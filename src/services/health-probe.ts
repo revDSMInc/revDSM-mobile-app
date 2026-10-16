@@ -7,18 +7,37 @@ import { ENV } from '../config/env';
 export const HEALTH_URL = `${ENV.API_URL.replace(/\/+$/, '')}/health`;
 
 /**
- * ⚠️ Was 2 s, which is INSIDE the noise on a weak radio. Measured cold TLS to the live API is
- * 1.0-2.4 s on a good wired line, and the handshake is most of it; on one bar it routinely
- * exceeds 2 s. A probe that aborts reports `false`, and `applyProbeResult(false)` force-settles
- * straight to OFFLINE - so the old value told a rep with a working line that they had none.
+ * ⚠️ Was 2 s, then 6 s. Measured cold TLS to the live API is ~1.0 s on a good WIRED line and
+ * the handshake is ~0.75 s of it; on one bar, or on congested Wi-Fi, it routinely multiplies.
+ * A probe that aborts reports `false`, and two of those force-settle straight to OFFLINE past
+ * the dwell - which is how a rep on a working line was told they had none.
+ *
+ * ⚠️ This is a FALSE-OFFLINE budget, not a latency target. Being slow to notice a real outage
+ * costs a few seconds of queued work that drains anyway; being wrong about it strands the rep.
+ * Spend the time.
  */
-export const PROBE_TIMEOUT_MS = 6_000;
+export const PROBE_TIMEOUT_MS = 10_000;
 
 /**
  * Past this, the server answered but the line is too slow to work on normally.
  * Distinguishes "slow" from "dead", which the old boolean could not.
+ *
+ * ⚠️ MEASURE BEFORE CHANGING THIS. It was 1,500 ms, which reported "Weak connection" on a
+ * wired line and on strong Wi-Fi. Measured against the live API from a good connection:
+ *
+ *   cold request (new TLS handshake) ... ~1.00 s   <- what a probe almost always costs
+ *     of which TLS alone ............... ~0.75 s
+ *   warm request (connection reused) ... ~0.25 s
+ *   server processing .................. ~0.23 s
+ *
+ * The probe uses `fetch`, which does not share axios's connection pool, so nearly every probe
+ * pays the full handshake. At 1,500 ms a perfectly healthy app sat ~500 ms from the warning,
+ * and ordinary jitter crossed it. **The probe was measuring TLS setup, not link health.**
+ *
+ * 4,000 ms is ~4x the measured cold cost - comfortably clear of a healthy handshake, still
+ * well inside PROBE_TIMEOUT_MS, and still catching a line that is genuinely crawling.
  */
-export const PROBE_SLOW_MS = 1_500;
+export const PROBE_SLOW_MS = 4_000;
 
 /**
  * Idle throttle: with nothing stuck, one probe per 20 s is plenty.
