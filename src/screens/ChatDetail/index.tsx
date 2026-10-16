@@ -926,6 +926,7 @@ export default function ChatDetailScreen() {
       style={{ backgroundColor: colors.background }}
     >
       <ChatHeader
+        leadId={isChannel ? undefined : leadId}
         customerName={customerName}
         description={description}
         leadPreview={{ previewImage: routePreviewImage, previewImages: routePreviewImages }}
