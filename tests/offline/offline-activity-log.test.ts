@@ -1,6 +1,7 @@
 import {
   appendQueuedLog,
   isQueueableLog,
+  newActivityLogId,
   nextSendableLog,
   stampActionTime,
   stampOfflineLog,
@@ -110,5 +111,34 @@ describe('offline check-in log', () => {
   });
   it('keeps the planned module when there is one', () => {
     expect(offlineCheckInModule({ shouldCallWork: true, logModule: 'lead_resume' }, true)).toBe('lead_resume');
+  });
+});
+
+describe('a stable id per log (no duplicate rows on retry)', () => {
+  const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  it('makes a v4 UUID, the only shape the backend accepts', () => {
+    for (let i = 0; i < 50; i += 1) expect(newActivityLogId()).toMatch(UUID_V4);
+  });
+
+  it('makes a different id each time', () => {
+    const ids = new Set(Array.from({ length: 500 }, () => newActivityLogId()));
+    expect(ids.size).toBe(500);
+  });
+
+  it('keeps the id, and the original action time, when the log is held, retried and re-queued', () => {
+    const id = newActivityLogId();
+    const first = log('a', 'lead1', {
+      payload: { user_activity_log_id: id, meta: { leadId: 'lead1', occurredAt: '2026-10-14T07:00:00.000Z' } },
+    });
+    // What a failed send does: queue a copy of the payload with the stamped meta.
+    const requeued = {
+      ...first,
+      payload: { ...first.payload, meta: stampOfflineLog(first.payload.meta, first.payload.meta.occurredAt) },
+    };
+    const queue = appendQueuedLog(appendQueuedLog([], first), { ...requeued, id: 'b' });
+
+    expect(queue.map((l) => l.payload.user_activity_log_id)).toEqual([id, id]);
+    expect(queue[1].payload.meta.occurredAt).toBe('2026-10-14T07:00:00.000Z');
   });
 });

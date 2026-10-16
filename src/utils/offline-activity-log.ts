@@ -28,6 +28,24 @@ export const MAX_LOG_ATTEMPTS = 5;
 // already knows the true moment (a photo's capture time) passes it in and it is kept.
 export const ACTION_TIME_KEY = 'occurredAt';
 
+// ONE id per log, made when the action happens and sent again on every attempt (`user_activity_log_id`).
+// The server stores a log under that id once, so a send the app gave up on (15 s timeout) but the server
+// finished no longer becomes a second row when the log is retried or re-queued. A v4 UUID, because that
+// is the only shape the backend accepts from a client.
+export const newActivityLogId = (): string => {
+  const bytes = new Uint8Array(16);
+  const c = (globalThis as any).crypto;
+  if (c && typeof c.getRandomValues === 'function') {
+    c.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 16; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
+
 export const stampActionTime = <T extends Record<string, any>>(
   meta: T,
   at: string

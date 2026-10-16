@@ -216,6 +216,17 @@ Files: `utils/offline-activity-log.ts` (pure rules), `services/offlineActivityLo
 - ⚠️ The backend is not in this repo: whether it shows `meta.occurredAt` instead of its own receive time as the log's time is unverified. Backend analytics that read `meta.timestamp` on photo logs must read `meta.occurredAt`.
 - Not renamed (separate queues, not activity logs): `OfflineLeadWork.createdAt/updatedAt`, `workStarted.at`, `workEnded.at`, `fundingSubmitted.at`, the upload queue's own `timestamp`.
 
+### Activity logs: one stable id per log, so a retry is not a second row (2026-10-16)
+Files: `utils/offline-activity-log.ts` (`newActivityLogId`), `services/api/LoggerService.ts` (`logEvent` stamps `payload.user_activity_log_id`). Test: `tests/offline/offline-activity-log.test.ts`.
+
+| Was | Fix |
+|---|---|
+| A send that timed out (15 s) but that the server finished was retried or re-queued, and every attempt added a row: one check-in showed 5 times (= `MAX_LOG_ATTEMPTS`) on the Forever Record | `logEvent` makes ONE v4 UUID per log. The held, retried and failure re-queued copies all spread the same `payload`, so they carry it. The backend stores a log once per `user_activity_log_id` and answers a repeat with the stored row (200) |
+
+- ⚠️ **Make the id in `logEvent`, never in `sendLog` or the drain** — an id made per attempt is a new log every time, i.e. the bug.
+- ⚠️ The id must stay a **v4 UUID**: the backend ignores anything else and generates its own. An older backend simply accepts the field as the row's id.
+- `leads.ts` `logUserActivity` posts without an id and is not queued; it is unchanged.
+
 ### REVUIUX-444 — `defaultOneYearPaymentMethod` joins the queued calculator settings
 
 `utils/offline-settings.ts`: `FIELDS` + `PendingCalculatorSettings` gained `defaultOneYearPaymentMethod` (`null` = clear, sent as `null`). Everything else (merge, payload, `hasPendingSettings`, optimistic `applyPendingSettingsToUser`, replay on reconnect) is driven off `FIELDS`. See `deal-center.md` § REVUIUX-444.

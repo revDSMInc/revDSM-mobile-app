@@ -4,7 +4,13 @@ import { Storage } from '../../utils/storage';
 import Geolocation from 'react-native-geolocation-service';
 import { isOnline } from '../connectivity';
 import { hasQueuedActivityLogs, queueActivityLog, setActivityLogSender } from '../offlineActivityLog';
-import { isQueueableLog, shouldQueueFailedLog, stampActionTime, stampOfflineLog } from '../../utils/offline-activity-log';
+import {
+  isQueueableLog,
+  newActivityLogId,
+  shouldQueueFailedLog,
+  stampActionTime,
+  stampOfflineLog,
+} from '../../utils/offline-activity-log';
 
 const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
 
@@ -197,6 +203,9 @@ export const logEvent = async (eventType: string, details: any = {}) => {
   const attachLocation = timeInMinutes >= 540 && timeInMinutes <= 1260;
 
   const payload: any = {
+    // Stable for this log's whole life: held, retried and re-queued copies all carry it, so the
+    // server can tell a repeat from a new action.
+    user_activity_log_id: newActivityLogId(),
     user_id: userId,
     action_type: eventType,
     module_type: details.module_type,
