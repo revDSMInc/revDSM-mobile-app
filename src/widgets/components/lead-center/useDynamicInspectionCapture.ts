@@ -15,6 +15,7 @@ import { getCaptureCoords } from '../../../utils/capture-location';
 import { useIsOnline } from '../../../hooks/useIsOnline';
 import { resolveS3Url } from '../../../utils/s3-utils';
 import { logEvent } from '../../../services/api/LoggerService';
+import { latestAnnotatedPerBase } from '../../../utils/annotation-restore';
 import {
   indexSchema,
   getCapturableSlots,
@@ -742,7 +743,8 @@ export function useDynamicInspectionCapture({
           if (sub.toLowerCase().includes('(annotated)')) out.push({ subcategory: sub, photo });
         });
       });
-      return out;
+      // A re-annotated photo must show only its latest annotated copy (REVUIUX-558).
+      return latestAnnotatedPerBase(out);
     },
     [photosBySubcat, scopeCat]
   );

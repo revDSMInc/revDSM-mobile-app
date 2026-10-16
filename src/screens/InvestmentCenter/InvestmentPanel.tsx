@@ -764,6 +764,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
             <FullPackageTitle
               isFullPackage
               extras={packageInfo.extras}
+              title={calculator.title}
               size={22}
               color="#1C252E"
               iconColor="#16A34A"

@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { TabContextMenu, type TabContextMenuHandle } from './TabContextMenu';
 import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Feather from 'react-native-vector-icons/Feather';
@@ -16,7 +17,7 @@ import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-uti
 import { computeCalculatorTiers } from '../utils/dynamic-rollout-pricing';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 import { withPlanFee, type DealPlan } from '../hooks/useDealPricing';
-import { describeFullPackage } from '../utils/tab-naming';
+import { describeFullPackage, getPackageSizeLabel } from '../utils/tab-naming';
 import { FullPackageTitle, FullPackageInfoModal, type PackageAnchorRect } from './FullPackageBadge';
 import { useAuth } from '../../../hooks/useAuth';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
@@ -524,7 +525,7 @@ export function CalculatorView({
   useNumPadScrollIntoView(bodyScrollRef, bodyContentRef, 16);
   const lockedMethod = activeTab?.paymentMethod || user?.defaultPaymentMethod || defaultMethod || 'check';
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
-  const [menuIdx, setMenuIdx] = useState<number | null>(null);
+  const tabMenuRef = useRef<TabContextMenuHandle>(null);
   const [packageInfoVisible, setPackageInfoVisible] = useState(false);
   const [packageAnchor, setPackageAnchor] = useState<PackageAnchorRect | null>(null);
   const openPackageInfo = useCallback((rect: PackageAnchorRect | null) => {
@@ -676,10 +677,10 @@ export function CalculatorView({
     isRolloutConfirmed: t.isRolloutConfirmed,
     isFullPackage: pkg.isFullPackage,
     packageExtras: pkg.extras,
+    packageSize: pkg.isFullPackage ? getPackageSizeLabel(t.title) : '',
     };
   }), [tabs, verticals, customerTabName]);
   const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === activeTabId));
-  const menuTab = menuIdx !== null ? tabs[menuIdx] : null;
 
   return (
     <KeyboardAvoidingView
@@ -778,7 +779,7 @@ export function CalculatorView({
                 activeIdx={activeIdx}
                 setActiveIdx={(idx) => tabs[idx] && onTabSelect?.(tabs[idx].id)}
                 onReorder={(newOrder, newActiveIdx) => onReorderTabs?.(newOrder.map((c: any) => c._id), newOrder[newActiveIdx]?._id)}
-                setMenuVisible={(idx) => setMenuIdx(idx)}
+                setMenuVisible={(idx) => tabMenuRef.current?.open(idx)}
                 onDragStateChange={setIsDragging}
                 tabsScrollViewRef={tabsScrollRef}
                 scrollXRef={scrollXRef}
@@ -809,30 +810,13 @@ export function CalculatorView({
         anchorRect={packageAnchor}
       />
 
-      {/* Tab context menu (duplicate / rename / delete) */}
-      <Modal transparent visible={menuIdx !== null} animationType="fade" onRequestClose={() => setMenuIdx(null)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.2)' }} onPress={() => setMenuIdx(null)}>
-          <View style={{ position: 'absolute', bottom: 90, left: 20, right: 20, backgroundColor: '#fff', borderRadius: 16, padding: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 10 }}>
-            {onDuplicateTab && menuTab && (
-              <TouchableOpacity onPress={() => { onDuplicateTab(menuTab.id); setMenuIdx(null); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12 }}>
-                <Feather name="copy" size={18} color="#637381" />
-                <Text style={{ marginLeft: 12, fontSize: 14, fontWeight: '600', color: '#1C252E' }}>Duplicate</Text>
-              </TouchableOpacity>
-            )}
-            {onDeleteTab && menuTab && tabs.length > 1 && (
-              <TouchableOpacity onPress={() => { setDeleteModal({ visible: true, tabId: menuTab.id, name: menuTab.title }); setMenuIdx(null); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12 }}>
-                <Feather name="trash-2" size={18} color="#FF5630" />
-                <Text style={{ marginLeft: 12, fontSize: 14, fontWeight: '600', color: '#FF5630' }}>Delete</Text>
-              </TouchableOpacity>
-            )}
-            <View style={{ height: 1, backgroundColor: '#F1F5F9', marginVertical: 4 }} />
-            <TouchableOpacity onPress={() => setMenuIdx(null)} style={{ flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12 }}>
-              <Feather name="x" size={18} color="#919EAB" />
-              <Text style={{ marginLeft: 12, fontSize: 14, fontWeight: '600', color: '#919EAB' }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </Pressable>
-      </Modal>
+      {/* Tab context menu (duplicate / delete) - self-contained so opening it does not re-render this screen. */}
+      <TabContextMenu
+        ref={tabMenuRef}
+        tabs={tabs}
+        onDuplicateTab={onDuplicateTab}
+        onDeleteRequest={onDeleteTab ? (id, name) => setDeleteModal({ visible: true, tabId: id, name }) : undefined}
+      />
 
       {/* Delete confirmation */}
       <Modal transparent visible={deleteModal.visible} animationType="fade" onRequestClose={() => setDeleteModal({ visible: false, tabId: '', name: '' })}>

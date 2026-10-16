@@ -1,5 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import SocketManager from '../services/SocketManager';
+import {
+  isInstallingToday,
+  isPendingInstall,
+  isPendingRehash,
+} from '../screens/ChatThreads/utils/deal-link';
 
 export const useChatThreads = (
   user: any,
@@ -25,6 +30,7 @@ export const useChatThreads = (
       
       let serverStatus = '';
       if (statusFilter === 'unresultedleads') serverStatus = 'Unresulted Leads';
+      else if (statusFilter === 'pendingrehash') serverStatus = 'Pending Rehash';
       else if (statusFilter === 'pendinginstall') serverStatus = 'Pending Install';
       else if (statusFilter === 'installingtoday') serverStatus = 'Installing Today';
       else if (statusFilter === 'alreadyinstalled') serverStatus = 'Already Installed';
@@ -123,18 +129,12 @@ export const useChatThreads = (
     } else if (statusFilter === 'unresultedleads') {
       const nonResulted = ['lfLead', 'lf', 'selfGenerated', 'scheduled', 'issued', 'confirmed', 'confirmedIssued', 'preview'];
       result = result.filter((c) => nonResulted.includes(c.leadDetails?.status || ''));
+    } else if (statusFilter === 'pendingrehash') {
+      result = result.filter((c) => isPendingRehash(c.leadDetails));
     } else if (statusFilter === 'pendinginstall') {
-      const now = new Date();
-      result = result.filter((c) => 
-        c.leadDetails?.status === 'sale' && 
-        c.leadDetails?.installationDate && 
-        new Date(c.leadDetails.installationDate) > now
-      );
+      result = result.filter((c) => isPendingInstall(c.leadDetails));
     } else if (statusFilter === 'installingtoday') {
-      const todayStr = new Date().toISOString().split('T')[0];
-      result = result.filter((c) => 
-        c.leadDetails?.installationDate?.startsWith(todayStr)
-      );
+      result = result.filter((c) => isInstallingToday(c.leadDetails));
     } else if (statusFilter === 'alreadyinstalled') {
       const now = new Date();
       result = result.filter((c) => 

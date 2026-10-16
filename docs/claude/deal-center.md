@@ -4704,3 +4704,23 @@ only when `offlineDirty` (a change the debounce has not written). Details and th
 Behaviour is unchanged. Details: `docs/claude/offline.md` (offline lead check-in follow-up).
 
 - ⚠️ Keep the `lead_review` guard: it must not mark the lead checked in or queue a work-start.
+
+
+## Duplicate calculator tab is optimistic online (no wait for the POST)
+
+`useDynamicCalculators.handleDuplicateTab` used to `await createRemoteTab(...)` (a `POST /appointments/{id}/lfcalculators` carrying the full ~100+ entry array) BEFORE showing the copy, so Duplicate sat dead for the round trip. Now the online branch adds a `local-<ts>` copy (entries/totals/payment/discount cloned from the source) and selects it on the tap, then POSTs behind it and swaps the real id in (`tabsRef`, `setTabs`, `activeTabId` only if still on the temp, `cacheTabsSnapshotRef`).
+- ⚠️ **The merge keeps the on-screen tab** (`{ ...created, ...latest, id, persisted: true }`), not the server's copy - the rep may already be typing into it. A `local-` tab is never saved (`flushSave` requires `persisted && isBackendId`), so if `entries`/`totals` changed while the POST was in flight the swap calls `markDirty(created.id)` to PUT them.
+- ⚠️ **Deleted before the POST answered** => `deleteCalculator(created.id)` so no orphan server row. **POST failed** => the copy stays as the local-only tab the old fallback made. The `duplicate` log still rides the POST (`duplicateLog`); the payment-method-inherited log fires after the swap.
+- Offline / device-authoritative duplicate (`deviceTabFrom`) was already instant and is untouched. Add (+) is still awaited - same pattern would apply. Not verified on device.
+
+
+### Follow-up: the tab's three-dot menu opens instantly (`TabContextMenu`)
+
+The Duplicate / Delete / Cancel menu's open state lived in `CalculatorView` (`menuIdx`), so tapping the dots re-rendered that whole screen - every tab, the field list, the footer - before the `Modal` could paint, and `animationType="fade"` added its duration on top. It is now `DynamicDealCenter/components/TabContextMenu.tsx`: a `memo`'d component that owns its own open state and is opened through a ref (`tabMenuRef.current?.open(idx)` from `HorizontalDraggableTabs.setMenuVisible`), with `animationType="none"`. ⚠️ Do NOT lift the open state back into `CalculatorView`. Delete still goes through the parent's confirmation (`onDeleteRequest` -> `setDeleteModal`); the classic `screens/DealCenter/index.tsx` menu is a separate copy and was not changed. Not verified on device.
+
+## REVUIUX-557 - package tabs carry the SM / MD / LG rank (Deal Center + Investment Center)
+
+Ticket: *"Add in our SM MD LG logic etc for packages"* (subtask of REVUIUX-518). `computeDerivedTitles` already ranks same-base calculators by price into `(SM)` / `(LG)` (`(SM)/(MD)/(LG)/(XL)...` from three levels up), but a FULL-PACKAGE tab renders only the box + `+extras` + ⓘ and never printed the title, so three packages quoted at different prices looked identical (the screenshot: three bare cube tabs).
+- `tab-naming.ts` `getPackageSizeLabel(title)` returns the bare `SM`/`MD`/`LG`/`XL`/`XXL[-n]` from the title's trailing `(..)` (⚠️ markers stripped), else `''`. It reads the TITLE on purpose - the rank, tie handling and inherited-suffix logic are already decided there, so the badge cannot disagree with the name the portal sees. No ranking logic was duplicated or changed.
+- Rendered as `(SM)` after the extras on: the calculator footer tabs (`CalculatorView.tabCalcs.packageSize` -> `HorizontalDraggableTabs`), and every `FullPackageTitle` that is handed a `title` (new optional `sizeLabel` prop, default `getPackageSizeLabel(title)`): the quote-card header, Result Job chooser/sheet, the rollout strip tabs (now pass `title={calc.title}`), the Investment Center tab row, and the Investment panel package heading (now passes `title`).
+- ⚠️ Only shown when `isFullPackage` - non-package tabs already print their full name incl. the suffix. ⚠️ A package whose price TIES another keeps the portal title `⚠️ ... (SM) ⚠️`; the tab shows only the `(SM)` (the dynamic flow opts out of the classic duplicate-warning icon via `getIsDuplicate={() => false}`) - not changed here. A lone package (one price level) has no rank, so no suffix. Not verified on device.

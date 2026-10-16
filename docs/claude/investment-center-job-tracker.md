@@ -539,3 +539,8 @@ Investment Center, which is the path the first fix missed.
 ## Investment Center: titles centred (header, total card, program cards)
 
 `InvestmentCenter/index.tsx` header: the title sat ~20px right of screen centre because only the back button took width on the left; a 34px spacer on the right balances it. `letterSpacing` adds trailing space after the last glyph, so the spaced caps titles (`TOTAL INVESTMENT`, program card titles, `PRICE LOCK`) get a matching `paddingLeft`. ⚠️ Do not give the header spacer a different width from the back button. The inclusion bullets stay left-aligned on purpose (a list); only the titles above them are centred. Not verified on device.
+
+
+## REVUIUX-557 - Investment Center package tabs / heading show the SM / MD / LG rank
+
+`InvestmentCenter/index.tsx` tab row already passed `title` to `FullPackageTitle`; `InvestmentPanel.tsx`'s package heading now passes `title={calculator.title}` too, so both print `(SM)` / `(MD)` / `(LG)` after the box + extras (derived by `getPackageSizeLabel(title)`, `DynamicDealCenter/utils/tab-naming.ts`). ⚠️ The rank comes from the calculator's TITLE - the Investment Center's own `useDynamicCalculators` copy must keep retitling, or a stale title would show a stale rank. Full write-up and traps: `deal-center.md` § REVUIUX-557. Not verified on device.

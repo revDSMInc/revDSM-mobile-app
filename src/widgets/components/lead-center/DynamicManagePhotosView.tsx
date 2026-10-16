@@ -21,6 +21,13 @@ import {
   type InspectionSlot,
 } from './dynamic-inspection-schema-utils';
 import { useNavigation } from '@react-navigation/native';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { LeadService } from '../../../services/api/leads';
+import {
+  findOriginalPhoto,
+  indexAnnotationDocs,
+  stripAnnotatedSuffix,
+} from '../../../utils/annotation-restore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CategoryTabStrip, ProductDropdown } from './DynamicInspectionRenderer';
 import { useDynamicInspectionCapture, type CapturedPhoto } from './useDynamicInspectionCapture';
@@ -237,6 +244,26 @@ export function DynamicManagePhotosView({
     [annotated],
   );
 
+  // Saved annotation docs, so an annotated photo can be re-opened with its marks (REVUIUX-558).
+  const annotationLeadId: string | undefined = lead?._id || lead?.id;
+  const queryClient = useQueryClient();
+  const { data: annotationResponse } = useQuery({
+    queryKey: ['leadAnnotations', annotationLeadId],
+    queryFn: async () => (await LeadService.getAnnotations(annotationLeadId as string)).data,
+    enabled: !!annotationLeadId && online,
+    staleTime: 30_000,
+  });
+  const annotationDocs = useMemo(() => indexAnnotationDocs(annotationResponse), [annotationResponse]);
+
+  // Secure url of every clean (slot / extra) photo, by `_id` - the base a re-edit draws over.
+  const secureUrlById = useMemo(() => {
+    const m = new Map<string, string>();
+    [...sections.flatMap((sec) => sec.cards), ...extraCards].forEach((c) => {
+      if (c.photo._id && c.photo.secureUrl) m.set(c.photo._id, c.photo.secureUrl);
+    });
+    return m;
+  }, [sections, extraCards]);
+
   const moveTargetCount = useMemo(() => {
     const { leafCategories } = indexSchema(activeCategories);
     return leafCategories.reduce(
@@ -322,23 +349,51 @@ export function DynamicManagePhotosView({
     }
   };
 
+  const isAnnotatedCard = (card: PhotoCard) => card.key.startsWith('annotated-');
+
   const openAnnotationForSelection = () => {
     const cards = [...selectedMap.values()].filter((c) => c.photo.secureUrl);
     if (!cards.length) return;
-    const selectedPhotos = cards.map((c) => ({
-      uri: c.photo.secureUrl as string,
-      index: 0,
-      s3url: c.photo.s3url,
-      id: c.photo._id || c.photo.s3url || c.key,
-      subcategory: c.storageName,
-      categoryName: c.photo.category || (c.cat.label as string),
-    }));
+    const allPhotos: any[] = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
+    const selectedPhotos = cards.map((c) => {
+      const common = {
+        index: 0,
+        s3url: c.photo.s3url,
+        categoryName: c.photo.category || (c.cat.label as string),
+      };
+      if (!isAnnotatedCard(c) || !c.photo._id) {
+        return {
+          ...common,
+          uri: c.photo.secureUrl as string,
+          id: c.photo._id || c.photo.s3url || c.key,
+          subcategory: c.storageName,
+          salesPhotoId: c.photo._id || null,
+        };
+      }
+      // Re-edit of an annotated copy. With saved marks AND the clean original on hand, draw over the original with
+      // the marks restored; otherwise (web-written doc, no doc, original gone) draw on top of the flattened copy.
+      const doc = annotationDocs.get(c.photo._id);
+      const orig = findOriginalPhoto(c.photo as any, allPhotos, doc);
+      const origUri = orig?._id ? secureUrlById.get(orig._id) : undefined;
+      const marks = doc?.marks && origUri ? doc.marks : null;
+      return {
+        ...common,
+        uri: (marks ? origUri : c.photo.secureUrl) as string,
+        id: c.photo._id,
+        subcategory: stripAnnotatedSuffix(c.storageName),
+        existingAnnotationId: c.photo._id,
+        salesPhotoId: orig?._id || doc?.originalId || null,
+        initialMarks: marks,
+        staleUris: c.photo.secureUrl ? [c.photo.secureUrl] : [],
+      };
+    });
     onClose();
     navigation.navigate('ImageAnnotation', {
       selectedPhotos,
       lead,
       onSaveSuccess: () => {
         exitSelectMode();
+        queryClient.invalidateQueries({ queryKey: ['leadAnnotations', annotationLeadId] });
         refetch?.();
         onReopen?.();
       },
@@ -386,9 +441,11 @@ export function DynamicManagePhotosView({
     const busy = !!capture.deletingKeys[card.key] || !!capture.movingKeys?.[card.key];
     const isPending = (card.photo as any)?.isPending === true;
     const isSelected = selectedMap.has(card.key);
-    const alreadyAnnotated = annotatedBaseKeys.has(
-      `${card.cat.id}::${card.label.trim().toLowerCase()}`,
-    );
+    // The base photo is locked once annotated (one annotated photo per base photo); the annotated copy itself is
+    // what gets re-selected to edit.
+    const alreadyAnnotated =
+      !isAnnotatedCard(card) &&
+      annotatedBaseKeys.has(`${card.cat.id}::${card.label.trim().toLowerCase()}`);
     const lockedFromSelect = selectMode && selectable && (alreadyAnnotated || isPending);
     const selectableNow = selectMode && selectable && !lockedFromSelect;
 
@@ -749,9 +806,8 @@ export function DynamicManagePhotosView({
                 </View>
               )}
 
-              {/* + ANNOTATED — display + delete only. Mobile's annotation screen
-                  has no re-edit path (it always appends " (Annotated)"), so these
-                  are deliberately not re-selectable. */}
+              {/* + ANNOTATED — selectable to RE-EDIT in place (REVUIUX-558). The base
+                  photo stays locked in select mode: one annotated photo per base. */}
               {annotated.length > 0 && (
                 <View style={{ marginTop: 8 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
@@ -764,7 +820,7 @@ export function DynamicManagePhotosView({
                     </Text>
                   </View>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GAP }}>
-                    {annotated.map((card) => renderCard(card))}
+                    {annotated.map((card) => renderCard(card, { selectable: true }))}
                   </View>
                 </View>
               )}
