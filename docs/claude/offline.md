@@ -1193,6 +1193,65 @@ long before the check-in queued against it.
 ⚠️ `clearOfflineCheckIn` returns the **same object** when nothing changed, so a drain for a
 lead with no overlay does not trigger a write or a re-render.
 
+### ⚠️ The ONLINE check-in failure was swallowed — the other half of this bug
+
+The overlay fix above made the first device honest, but the check-in still never reached the
+server. The missing piece was on the **online** path, not the offline one.
+
+`isOfflineLead(item)` tests `lead.__offline`. Once a lead created offline has synced it comes
+back from the server **without** that flag, so pressing Start Appointment takes the ONLINE
+branch in `screens/Leads/index.tsx`. That branch called `executeStartAppointmentFlow`, and its
+catch did only this:
+
+```
+catch (err) { console.log('Action Error:', err); navigate('LeadCenter', { lead: item }); }
+```
+
+⚠️ **A timed-out `workLead` was swallowed entirely.** The rep was navigated into the Lead
+Center as though the check-in had succeeded; the server never learned they were on site; their
+own card said "Resume Appointment" from the local overlay while a manager's said "Start
+Appointment"; and the ops board never showed them at the door. Same rule as everywhere else in
+this module: **an unanswered question is not a negative answer.**
+
+The catch now queues the check-in exactly as the offline branch does
+(`markLeadCheckedInOffline` + `queueLeadWorkStart`), gated on `plan.shouldCallWork` so a lead
+that was never eligible is not queued.
+
+⚠️ Safe to replay: the `work` step is a PUT of who is on the lead, classified `idempotent`.
+Replaying one the server already received is harmless; losing one it never received is not.
+
+⚠️ `queueLeadWorkStart` works for a synced lead because `adoptExistingWork` mints a record with
+`status: 'draft'`, `serverIds.leadId` set and `done: ['lead']` — so the drain starts at `work`
+rather than trying to re-create the lead.
+
+### ⚠️ The `pending` predicate was WRONG — a regression I introduced, now reverted
+
+The first overlay fix gated `applyOfflineWorkflow` on `hasPendingCheckIn` — "the overlay only
+speaks while the work step is still queued." It sounded right and broke the card a different
+way.
+
+⚠️ **The step completes the moment `workLead` returns 2xx, but the list is redrawn from a
+SEPARATE read that can lag the write.** In that window the step was done (so the overlay was
+suppressed) and the server list had not caught up (so it said "Start Appointment") — the card
+flipped back seconds after the rep started, which is worse than the stale overlay it replaced.
+
+The corrected model: **the overlay stands in for a check-in the server has not CONFIRMED, not
+for one we have not yet sent.**
+
+- `screens/Leads/index.tsx` passes **no predicate** — ⚠️ do not reintroduce one.
+- The `work` step drain calls `refreshLeadLists()` **first**, then `serverSaysCheckedIn(leadId)`
+  (a read-back of `workflowState` / `workStartedBy`), and only clears the overlay if the
+  server agrees.
+- ⚠️ `serverSaysCheckedIn` returns **false on a failed read**, which KEEPS the overlay. An
+  unanswered question is not a negative answer, and the safe side is to go on showing the rep
+  what they did.
+- If the server never agrees, `OFFLINE_WORKFLOW_TTL_MS` still bounds the overlay, so it cannot
+  outlive the day.
+
+⚠️ The general trap: **"we sent it" and "a later read reflects it" are different facts.** Any
+local overlay retired on the first will flicker on a connection slow enough to separate them.
+The photo-count fix in this same file is the same lesson.
+
 ### Still true, and separate
 
 The `work` step is still skipped for a **resulted** lead (`!work.submit`). That remains correct:

@@ -32,7 +32,6 @@ import ZoneCanvasserMap from '../../widgets/modals/ZoneCanvasserMap';
 import { LeadCard } from '../../widgets/components/LeadCard';
 import { PendingLeadsBanner } from '../../widgets/components/PendingLeadsBanner';
 import {
-  hasPendingCheckIn,
   applyOfflineResult,
   offlineArchivedLeads,
   offlineLeadsForTab,
@@ -208,11 +207,20 @@ export default function LeadsPage() {
     const withWorkflow = (list: any[] | null | undefined) =>
       applyOfflineActions(list)
         .map((l) => applyOfflineResult(l, offlineWork))
-        .map((l) =>
-          applyOfflineWorkflow(l, offlineWorkflow, Date.now(), (id) =>
-            hasPendingCheckIn(offlineWork, id)
-          )
-        );
+        /**
+         * ⚠️ NO `pending` predicate here, deliberately.
+         *
+         * Gating the overlay on "is the work step still queued" looked right and was wrong:
+         * the step completes the moment `workLead` returns 2xx, but the LIST is redrawn from
+         * a separate read that can still lag the write. For that window neither the overlay
+         * nor the server said "checked in", and the card fell back to "Start Appointment"
+         * seconds after the rep had started.
+         *
+         * The overlay is retired by `clearLeadCheckedInOffline`, called from the drain only
+         * once the server's OWN read agrees - so it can never outlive the fact it stands for,
+         * and never dies before it.
+         */
+        .map((l) => applyOfflineWorkflow(l, offlineWorkflow));
     if (isRehash) return withWorkflow(serverLeads);
     if (isArchivedTab) {
       const archivedHere = offlineArchivedLeads(offlineWork, { serverLeadIds });
@@ -498,6 +506,27 @@ export default function LeadsPage() {
     } catch (err) {
       console.log('Action Error:', err);
       await persistActiveLeadId(item._id);
+      /**
+       * ⚠️ The online check-in FAILED, and this used to swallow it: the rep was navigated
+       * into the Lead Center as though nothing had happened, while the server never learned
+       * they were on site. On their own phone the card said "Resume Appointment" (local
+       * overlay); on a manager's it still said "Start Appointment", and the ops board never
+       * showed them at the door.
+       *
+       * A timed-out `workLead` is an unanswered question, not a "no" - so it is queued and
+       * replayed like any other offline check-in. ⚠️ The `work` step is idempotent (a PUT of
+       * who is on the lead), so replaying one the server did receive is harmless; losing one
+       * it did not is not.
+       */
+      try {
+        const plan = planStartAppointment(item, userLocation);
+        if (plan.shouldCallWork) {
+          markLeadCheckedInOffline(item._id || (item as any).id);
+          queueLeadWorkStart(item, String(user?._id || (user as any)?.id || ''));
+        }
+      } catch (queueErr) {
+        console.warn('[Leads] could not queue the failed check-in:', queueErr);
+      }
       navigation.navigate('LeadCenter', { lead: item });
     } finally {
       setNavigatingLeadId(null);

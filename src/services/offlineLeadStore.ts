@@ -835,6 +835,25 @@ type StepResult = {
   calculators?: Record<string, string>;
 };
 
+/**
+ * Does the SERVER now say this rep is on the lead?
+ *
+ * ⚠️ Read back rather than assumed. A 2xx on `workLead` means the write was accepted, not that
+ * a subsequent read reflects it - and the card is drawn from the read.
+ *
+ * ⚠️ A failed read returns FALSE, which keeps the overlay. An unanswered question is not a
+ * negative answer, and the safe side here is to go on showing the rep what they did.
+ */
+const serverSaysCheckedIn = async (leadId: string): Promise<boolean> => {
+  try {
+    const res = await LeadService.getSalesDealById(leadId);
+    const lead = res?.data?.data || res?.data?.lead || res?.data || {};
+    return lead?.workflowState === 'resume' || !!lead?.workStartedBy;
+  } catch {
+    return false;
+  }
+};
+
 const refreshLeadLists = async (): Promise<void> => {
   try {
     await queryClient.invalidateQueries({ queryKey: ['leads'] });
@@ -1214,13 +1233,23 @@ const runStep = async (
       if (!leadId) throw new Error('cannot record work on a lead with no server id');
       await LeadService.workLead(leadId, String(work.workStarted?.userId || ''));
       /**
-       * The server now knows about this check-in, so the local overlay must stop speaking -
-       * otherwise this phone keeps painting "Resume Appointment" from its own cache while
-       * another device reads the server and disagrees.
+       * ⚠️ The overlay is cleared ONLY AFTER the refetch, and only if the server's own list
+       * now agrees the rep is on the lead.
+       *
+       * Clearing it before the refetch left a window where neither the overlay nor the server
+       * said "checked in", and the card fell back to "Start Appointment" on a connection slow
+       * enough for the read to lag the write. The overlay stands in for a check-in the server
+       * has not CONFIRMED - not merely for one we have not yet sent.
+       *
+       * If the server has not caught up, the overlay STAYS and the next drain pass or a
+       * later check-in clears it. It is still bounded by OFFLINE_WORKFLOW_TTL_MS, so it
+       * cannot outlive the day even if the server never agrees.
        */
-      clearLeadCheckedInOffline(leadId);
-      clearLeadCheckedInOffline(work.clientId);
       await refreshLeadLists();
+      if (await serverSaysCheckedIn(leadId)) {
+        clearLeadCheckedInOffline(leadId);
+        clearLeadCheckedInOffline(work.clientId);
+      }
       return {};
     }
 
