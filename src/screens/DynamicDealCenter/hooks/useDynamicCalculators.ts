@@ -493,10 +493,14 @@ export function useDynamicCalculators(
   const offlineLogCtx = useRef({ enteredBy: '', leadId: '' as string | undefined, appointmentId: '' as string | undefined });
   offlineLogCtx.current = { enteredBy, leadId: leadId || undefined, appointmentId: appointmentId || undefined };
 
+  // True while this instance holds a change the debounced device save has not written yet.
+  const offlineDirty = useRef(false);
+
   const persistOffline = useCallback((explicit?: CalcTab[]) => {
     const workId = offlineWorkIdRef.current;
     if (!workId) return;
     if (!offlineModeRef.current && isOnline()) return;
+    offlineDirty.current = false;
     // Online logs `auto_rename` when a save changes a tab's title (flushSave); a device save never
     // reaches flushSave, so the same comparison is made here.
     (explicit || tabsRef.current).forEach((t) => {
@@ -541,6 +545,7 @@ export function useDynamicCalculators(
   const scheduleSave = useCallback((tabId: string) => {
     if (offlineModeRef.current || !isBackendId(tabId) || !isOnline()) {
       offlineModeRef.current = true;
+      offlineDirty.current = true;
       if (offlineWorkIdRef.current) {
         if (offlineTimer.current) clearTimeout(offlineTimer.current);
         offlineTimer.current = setTimeout(() => persistOfflineRef.current?.(), SAVE_DEBOUNCE_MS);
@@ -974,7 +979,10 @@ export function useDynamicCalculators(
     return () => {
       Object.values(timers).forEach((t) => clearTimeout(t));
       if (offlineTimer.current) clearTimeout(offlineTimer.current);
-      persistOfflineRef.current?.();
+      // ⚠️ Only a pending change is flushed. The Investment Center mounts its own copy of this hook and
+      // stays mounted under the Deal Center it opens, so an unconditional save here replaced the device
+      // record with that copy's stale tabs when the rep finished the deal.
+      if (offlineDirty.current) persistOfflineRef.current?.();
       tabsRef.current.forEach((tab) => {
         if (tab.persisted && isBackendId(tab.id) && dirtyMap[tab.id]) {
           LeadService.updateCalculator(tab.id, buildPayloadRef.current(tab)).catch(() => {});

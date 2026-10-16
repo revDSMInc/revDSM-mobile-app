@@ -602,7 +602,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const totalCardEl = (
     <View style={{ borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#fff' }}>
       <View style={{ backgroundColor: '#1E293B', paddingVertical: 12, alignItems: 'center' }}>
-        <Text style={{ fontSize: 13, fontWeight: '900', color: '#fff', letterSpacing: 1 }}>TOTAL INVESTMENT</Text>
+        <Text style={{ fontSize: 13, fontWeight: '900', color: '#fff', letterSpacing: 1, paddingLeft: 1, textAlign: 'center' }}>TOTAL INVESTMENT</Text>
       </View>
       <View style={{ backgroundColor: '#fff', paddingVertical: 22, alignItems: 'center' }}>
         <Text style={{ fontSize: 34, fontWeight: '900', color: '#15803D' }}>{fmt(msrp)}</Text>

@@ -39,8 +39,17 @@ export const setActivityLogIdResolver = (fn: IdResolver): void => {
 const resolvedPayload = (entry: QueuedActivityLog): Record<string, any> =>
   resolveIds(entry.payload);
 
+// Holding only helps while something can still create the missing server id. Once no offline work is
+// waiting to upload, a device id left in a log will never resolve, and holding it would also block
+// every later log of that lead for good - so it is sent as it is. Registered by `offlineLeadStore`.
+let holdIsUseful: () => boolean = () => true;
+
+export const setActivityLogHoldPolicy = (fn: () => boolean): void => {
+  holdIsUseful = fn;
+};
+
 const hasUnresolvedIds = (entry: QueuedActivityLog): boolean =>
-  findUnresolvedClientIds(resolvedPayload(entry)).length > 0;
+  holdIsUseful() && findUnresolvedClientIds(resolvedPayload(entry)).length > 0;
 
 // Runtime trace of the activity-log queue (dev builds only). Payloads go through `sanitizeForLog` so a
 // document or base64 string can never flood the CDP socket.

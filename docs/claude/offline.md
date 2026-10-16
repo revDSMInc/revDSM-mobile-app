@@ -1079,3 +1079,46 @@ from `e.response.data`, so a backend rejection shows its reason).
   Do NOT print the raw body: a document or base64 field would flood the CDP socket (see CLAUDE.md §6).
 - ⚠️ The return value of `sendLog` is only read by the replay sender; fire-and-forget callers ignore it, so keep it side-effect free.
 - Not traced: the lead-work queue (`offlineLeadStore`) and the photo queue (`uploadQueue`) - separate queues with their own requests.
+
+### Follow-up - the photo log must carry the photo (2026-10-16)
+
+Ticket: *an offline lead's photos are logged but the images do not show on the portal.* The portal draws a `photo_uploaded` /
+`annotated_photo_uploaded` log from `meta.imageData.s3url` (+ `image_url`), written in `uploadQueue.logUploadSuccessAsync` after the upload.
+
+- Cause: the row was found by category + subcategory + "not on the lead before the upload". After an offline sync that failed twice over:
+  the pre-upload `workLead` fetch can fail, leaving `existingUrls` empty (so an OLDER photo of the same slot matched), and the 5-poll lookup
+  (about 15 s) gave up while the server list lagged, then **sent the log with `s3url: ''`**.
+- Fix (`utils/uploadQueue.ts`): `pickUploadedPhoto` matches first on the `timestampTaken` the upload sent (the server stores it verbatim, so it
+  names this photo), then the old slot rule. The lookup now waits up to ~2 min (`1,2,3,5,5,10,15,30,60 s`) for the row before logging.
+- Same ticket, one key: the `annotated_photos` logs in `ImageAnnotation` and the delete log in `useDynamicInspectionCapture` now carry
+  `meta.occurredAt` instead of `meta.timestamp`.
+- ⚠️ The log is still fire-and-forget: if the app is killed during the wait it is lost (the photo itself is already uploaded). A log with
+  an empty `image_url` after ~2 min means the row never appeared on the lead - look at the upload, not the log.
+- ⚠️ Do not go back to matching on category/subcategory alone. `pickUploadedPhoto` needs React Native to load, so it has no jest test.
+
+### Follow-up - Investment Center completion: logs must not be held forever or overwritten (2026-10-16)
+
+Ticket: *a lead completed through the Investment Center loses logs / images / agreement / order sheet offline, while the Deal Center path is fine.*
+The Investment Center hands off to the SAME `DynamicDealCenter` -> `ResultJobModal` -> funding -> job builder screens (`resultOptIn` nav param), so the
+log builders are shared. What differs is that `InvestmentCenter/index.tsx` mounts its OWN `useDynamicCalculators` and stays mounted under the Deal Center.
+
+- A log naming a device id nothing can resolve blocked every later log of that lead for good (`nextSendableLog` holds the lead). Holding now applies only
+  while offline work is still waiting to upload (`setActivityLogHoldPolicy` -> `uploadableWork(mine()).length > 0`, registered in `offlineLeadStore`). Once
+  nothing can create the id, the log is sent as it is rather than lost behind it.
+- The Investment Center's hook copy saved its stale tabs over the device record when it unmounted (`useDynamicCalculators` cleanup). The unmount flush now runs
+  only when that instance has a pending change (`offlineDirty`).
+- ⚠️ A work stuck `failed` / `needs-review` is not "uploadable", so its logs are released with the device id. They arrive on the server but under an id it
+  does not know; fix the stuck work, not the policy.
+- ⚠️ Not found in the code: any Investment-only log builder or document path. If logs are still missing, read the dev `[ActivityLogQueue]` output of one
+  Investment run: the "held back" block names the id that is not resolving.
+
+### Follow-up - the offline lead check-in log from the Zone Canvasser (2026-10-16)
+
+Ticket: *`lead_check_in` log missing offline.* Offline, "start appointment" writes the check-in log only when the geofence plan (`planStartAppointment` /
+`planZoneCanvasserStartAppointment`) says the rep is in range. A lead created offline has no coordinates until it syncs, so the plan finds it out of range and
+logs nothing. `screens/Leads` already treated a lead created at the door (`createdAtTheDoor`) as a check-in; `widgets/modals/ZoneCanvasserMap.tsx` did not.
+
+- Both screens now ask `offlineCheckInModule(plan, atTheDoor)` (`utils/offline-lead-work.ts`, tested in `tests/offline/offline-activity-log.test.ts`), so the
+  rule lives in one place: the plan's module wins, and an at-the-door lead falls back to `lead_check_in` (which also queues the work-start).
+- ⚠️ `lead_review` must not queue a work-start or mark the lead checked in; both callers keep that guard.
+- Online is unchanged: `executeStartAppointmentFlow` logs from the same plan, and the lead already has coordinates there.

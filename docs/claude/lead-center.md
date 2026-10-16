@@ -2313,3 +2313,22 @@ Two complementary fixes — ⚠️ they are not alternatives:
 ⚠️ `countInFlightPhotos` dedupes by **slot**, so a queued item and its server row during the
 overlap are one photo. A monotonic-sequence test asserts the count stays 4 through all six
 stages of the handover — that is the regression to protect.
+
+### Follow-up - "Photo tagging needs to sync first" uses the app's dialog (2026-10-16)
+
+The offline notice for a lead whose photo categories were never downloaded (`inspectionSchemaUnavailable`) was a native `Alert.alert`, which
+ignores the app theme. `widgets/components/LeadCenter/JobDocsSection.tsx` now shows `DynamicDealCenter/components/ConfirmDialog`
+(`tone="warn"`, `hideCancel`, `confirmLabel="OK"`) from `showSchemaSyncNotice`, raised by both `handleStartTakingPhotos` and `openLegacyTagModal`.
+
+- ⚠️ `ConfirmDialog` is its own native `Modal`: raise it only when no other modal is presenting (CLAUDE.md §6, never stack native Modals).
+  Both call sites run before the tag / capture modal opens and return straight after.
+- Other `Alert.alert` calls in this file (delete failed, permission denied, no photos...) are still native.
+
+### Follow-up - photo-delete log uses `meta.occurredAt` (2026-10-16)
+
+`widgets/components/lead-center/useDynamicInspectionCapture.ts` (the `deleted_image` log, module `inspection_photo` / `annotated_photos`) wrote the
+photo's capture time as `meta.timestamp`. Every activity log now carries ONE action-time key, `meta.occurredAt` (see `docs/claude/offline.md`), and a
+delete's action time is when the rep deleted it, so it is now `new Date().toISOString()` under `occurredAt`. `imageData.timestampTaken` still
+holds the photo's own capture time.
+
+- ⚠️ Do not put the capture time back into the log's time key: the portal reads `occurredAt` as "when this happened".

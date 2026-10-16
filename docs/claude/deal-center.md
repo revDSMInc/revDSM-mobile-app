@@ -4688,3 +4688,19 @@ timeout for a result already known.
 
 ⚠️ `flowStep` still always starts at `'calculator'`; the rollout is reached through View-all.
 That is unchanged and correct — the reported symptom was the *tabs* being blank, not the step.
+
+### Follow-up - the Investment Center's calculator hook no longer overwrites the device record (2026-10-16)
+
+`useDynamicCalculators` is mounted twice when a deal is completed from the Investment Center (its own copy plus the Deal Center it navigates to with
+`resultOptIn`). The unmount cleanup always called `persistOffline()`, so the Investment Center's stale tabs replaced what the Deal Center had saved. It now flushes
+only when `offlineDirty` (a change the debounce has not written). Details and the log side: `docs/claude/offline.md` (Investment Center follow-up).
+
+- ⚠️ Any new write to the device record from this hook must go through `persistOffline` or set `offlineDirty`, or the unmount flush will skip it.
+
+### Follow-up - Leads list offline check-in uses the shared rule (2026-10-16)
+
+`screens/Leads/index.tsx` (`handleActionPress`, offline branch) decided the check-in log inline (`plan.logModule || (atTheDoor ? 'lead_check_in' : '')`). It now calls
+`offlineCheckInModule(plan, atTheDoor)` from `utils/offline-lead-work.ts`, the same function the Zone Canvasser map uses, so the two entry points cannot drift.
+Behaviour is unchanged. Details: `docs/claude/offline.md` (offline lead check-in follow-up).
+
+- ⚠️ Keep the `lead_review` guard: it must not mark the lead checked in or queue a work-start.

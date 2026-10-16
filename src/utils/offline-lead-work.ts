@@ -789,3 +789,17 @@ export const workLeadId = (work: OfflineLeadWork): string =>
 
 export const createdAtTheDoor = (work: OfflineLeadWork | null | undefined): boolean =>
   !!work && work.origin === 'created-offline' && isStepPending(work, 'lead');
+
+/**
+ * Which check-in log an offline "start appointment" writes ('' = none). Online, the geofence plan
+ * decides. A lead created offline carries no coordinates yet (they are resolved at sync), so the
+ * plan finds it "out of range" and logs nothing - the rep who just made the lead at the door still
+ * checked in, so that lead is a check-in whatever the plan says.
+ */
+export const offlineCheckInModule = (
+  plan: { shouldCallWork: boolean; logModule: string },
+  atTheDoor: boolean
+): string => {
+  if (!plan.shouldCallWork && !atTheDoor) return '';
+  return plan.logModule || (atTheDoor ? 'lead_check_in' : '');
+};

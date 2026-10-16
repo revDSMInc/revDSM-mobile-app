@@ -14,6 +14,7 @@ import { uploadQueueManager } from '../utils/uploadQueue';
 import {
   rekeyActivityLogs,
   runActivityLogDrain,
+  setActivityLogHoldPolicy,
   setActivityLogIdResolver,
 } from './offlineActivityLog';
 import { rekeyDeliveryPreference } from './offlineAgreementDelivery';
@@ -1324,6 +1325,11 @@ setActivityLogIdResolver((value) => {
   const map: Record<string, string> = {};
   mine().forEach((w) => Object.assign(map, buildIdMap(w)));
   return resolveClientIds(value, map);
+});
+
+setActivityLogHoldPolicy(() => {
+  load();
+  return uploadableWork(mine()).length > 0;
 });
 
 export const drainOfflineWork = async (): Promise<void> => {

@@ -500,15 +500,30 @@ class UploadQueueManager {
 
   private matchUploadedPhoto(response: any, item: UploadQueueItem, existingUrls: Set<string>): any | null {
     const rows = response?.data?.salesPhotos || response?.data?.data?.salesPhotos || [];
-    if (!Array.isArray(rows)) return null;
+    return Array.isArray(rows) ? this.pickUploadedPhoto(rows, item, existingUrls) : null;
+  }
+
+  /**
+   * ⚠️ Matched on the `timestampTaken` the upload SENT first. A photo that was queued offline keeps
+   * its own capture time, and the server stores it verbatim, so it names this exact photo whatever
+   * else is on the lead. The category/subcategory + "not there before" rule alone picked the wrong
+   * row (or none) when the pre-upload fetch failed - `existingUrls` was then empty - or when several
+   * photos share a slot, and the log went out with an empty image.
+   */
+  private pickUploadedPhoto(rows: any[], item: UploadQueueItem, existingUrls: Set<string>): any | null {
+    const sameSlot = (p: any) =>
+      p?.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
+      p?.subcategory?.toLowerCase() === item.subcategory?.toLowerCase();
+    const sentAt = Date.parse(String(item.timestamp || ''));
+    const sameMoment = (p: any) => {
+      const at = Date.parse(String(p?.timestampTaken || ''));
+      return !Number.isNaN(sentAt) && !Number.isNaN(at) && at === sentAt;
+    };
+    const withUrl = [...rows].reverse().filter((p: any) => p?.s3url);
     return (
-      [...rows].reverse().find(
-        (p: any) =>
-          p?.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
-          p?.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
-          p?.s3url &&
-          !existingUrls.has(p.s3url)
-      ) || null
+      withUrl.find((p: any) => sameSlot(p) && sameMoment(p)) ||
+      withUrl.find((p: any) => sameSlot(p) && !existingUrls.has(p.s3url)) ||
+      null
     );
   }
 
@@ -532,36 +547,28 @@ class UploadQueueManager {
         s3url = immediateMatch.s3url;
         bucketName = immediateMatch.bucketName || '';
       } else {
-        let refreshAttempt = 0;
-        const maxRefreshAttempts = 5;
-        let waitTime = 1000;
-        let foundPhoto = false;
-
-        while (!foundPhoto && refreshAttempt < maxRefreshAttempts) {
-          await new Promise<void>((resolve) => setTimeout(resolve, waitTime));
+        // The server list can lag the upload, and after an offline sync many photos land at once. Wait
+        // for THIS photo's row (about two minutes at most) rather than send the log with no image:
+        // the portal draws the picture from `imageData.s3url`, so an empty one is an empty log.
+        const waits = [1000, 2000, 3000, 5000, 5000, 10000, 15000, 30000, 60000];
+        for (const wait of waits) {
+          await new Promise<void>((resolve) => setTimeout(resolve, wait));
           try {
             const leadRes = await LeadService.workLead(item.leadId, userId);
             const refreshedLead = leadRes.data?.data || leadRes.data;
-            if (refreshedLead?.salesPhotos && Array.isArray(refreshedLead.salesPhotos)) {
-              const matched = [...refreshedLead.salesPhotos].reverse().find(
-                (p: any) =>
-                  p.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
-                  p.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
-                  p.s3url &&
-                  !existingUrls.has(p.s3url)
-              );
-              if (matched && matched.s3url) {
-                s3url = matched.s3url;
-                bucketName = matched.bucketName || '';
-                foundPhoto = true;
-                break;
-              }
+            const rows = Array.isArray(refreshedLead?.salesPhotos) ? refreshedLead.salesPhotos : [];
+            const matched = this.pickUploadedPhoto(rows, item, existingUrls);
+            if (matched?.s3url) {
+              s3url = matched.s3url;
+              bucketName = matched.bucketName || '';
+              break;
             }
           } catch (err) {
-            console.warn(`[UploadQueue] Refresh attempt ${refreshAttempt + 1} failed:`, err);
+            console.warn('[UploadQueue] Photo lookup for the activity log failed:', err);
           }
-          refreshAttempt++;
-          waitTime = Math.min(waitTime + 1000, 5000);
+        }
+        if (!s3url) {
+          console.warn(`[UploadQueue] Could not find the uploaded photo for ${item.id}; logging it without an image url`);
         }
       }
 

@@ -101,7 +101,7 @@ export default function ImageAnnotationScreen() {
         meta: {
           action: 'opened_annotation_dialog',
           total_images: selectedPhotos.length,
-          timestamp: new Date().toISOString(),
+          occurredAt: new Date().toISOString(),
         },
       });
     }
@@ -771,7 +771,7 @@ export default function ImageAnnotationScreen() {
         meta: {
           action: 'saved_annotated_images',
           image_count: results.length,
-          timestamp: new Date().toISOString(),
+          occurredAt: new Date().toISOString(),
         },
       });
     }

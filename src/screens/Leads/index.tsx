@@ -39,6 +39,7 @@ import {
   pendingLeadArchives,
   pendingLeadDeletes,
   createdAtTheDoor,
+  offlineCheckInModule,
 } from '../../utils/offline-lead-work';
 import {
   getOfflineWork,
@@ -464,9 +465,9 @@ export default function LeadsPage() {
         const plan = planStartAppointment(item, userLocation);
         const atTheDoor = createdAtTheDoor(findOfflineWorkForLead(item));
         if (plan.shouldCallWork || atTheDoor) {
-          const logModule = plan.logModule || (atTheDoor ? 'lead_check_in' : '');
+          const logModule = offlineCheckInModule(plan, atTheDoor);
           if (logModule) {
-            void logLeadActionClick(user, logModule, item);
+            void logLeadActionClick(user, logModule as any, item);
           }
           if (logModule !== 'lead_review') {
             markLeadCheckedInOffline(item._id || (item as any).id);

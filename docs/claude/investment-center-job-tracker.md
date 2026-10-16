@@ -534,3 +534,8 @@ only source that knows about a signature taken seconds ago, before anything has 
 
 Not verified on a device — the sequence to check is submit online → airplane mode → reopen the
 Investment Center, which is the path the first fix missed.
+
+
+## Investment Center: titles centred (header, total card, program cards)
+
+`InvestmentCenter/index.tsx` header: the title sat ~20px right of screen centre because only the back button took width on the left; a 34px spacer on the right balances it. `letterSpacing` adds trailing space after the last glyph, so the spaced caps titles (`TOTAL INVESTMENT`, program card titles, `PRICE LOCK`) get a matching `paddingLeft`. ⚠️ Do not give the header spacer a different width from the back button. The inclusion bullets stay left-aligned on purpose (a list); only the titles above them are centred. Not verified on device.

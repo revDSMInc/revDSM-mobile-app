@@ -33,6 +33,7 @@ import { convertJpegToPdf as sharedConvertJpegToPdf } from '../../../utils/jpeg-
 import { useAuth } from '../../../hooks/useAuth';
 import SocketManager from '../../../services/SocketManager';
 import { logEvent } from '../../../services/api/LoggerService';
+import { ConfirmDialog } from '../../../screens/DynamicDealCenter/components/ConfirmDialog';
 import { getLocalCachePath, getWarmedLocalUri } from '../../../utils/imageFileCache';
 import {
   downloadResultMessage,
@@ -221,6 +222,8 @@ export const JobDocsSection = ({
 
   const [taggingAsset, setTaggingAsset] = useState<any>(null);
   const [showTagModal, setShowTagModal] = useState(false);
+  // The app's own dialog, not a native Alert: the system one ignores the app theme.
+  const [showSchemaSyncNotice, setShowSchemaSyncNotice] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
   const [showDynamicCapture, setShowDynamicCapture] = useState(false);
   const { configuredProducts, productsLoading, schemaResolved } = useInspectionSchema({ enabled: true });
@@ -986,10 +989,7 @@ export const JobDocsSection = ({
 
   const handleStartTakingPhotos = () => {
     if (inspectionSchemaUnavailable) {
-      Alert.alert(
-        'Photo tagging needs to sync first',
-        'Your photo categories have not been downloaded to this device yet. Connect once and reopen this lead — after that, taking photos works offline.'
-      );
+      setShowSchemaSyncNotice(true);
       return;
     }
     if (isDynamicInspection) {
@@ -1008,10 +1008,7 @@ export const JobDocsSection = ({
   const openLegacyTagModal = useCallback(
     (next: boolean) => {
       if (next && inspectionSchemaUnavailable) {
-        Alert.alert(
-          'Photo tagging needs to sync first',
-          'Your photo categories have not been downloaded to this device yet. Connect once and reopen this lead — after that, taking photos works offline.'
-        );
+        setShowSchemaSyncNotice(true);
         return;
       }
       setShowTagModal(next);
@@ -1541,6 +1538,16 @@ export const JobDocsSection = ({
 
   return (
     <View className="px-4 py-2" style={{ flex: 1 }}>
+      <ConfirmDialog
+        visible={showSchemaSyncNotice}
+        tone="warn"
+        hideCancel
+        title="Photo tagging needs to sync first"
+        message="Your photo categories have not been downloaded to this device yet. Connect once and reopen this lead — after that, taking photos works offline."
+        confirmLabel="OK"
+        onConfirm={() => setShowSchemaSyncNotice(false)}
+        onCancel={() => setShowSchemaSyncNotice(false)}
+      />
       {/* Pending addendum — its OWN section, ABOVE the contract card, so the two
           statuses read as separate blocks (web `deal-banners.js` places its bar in the
           same slot). Renders null when nothing is pending, so the normal deal is

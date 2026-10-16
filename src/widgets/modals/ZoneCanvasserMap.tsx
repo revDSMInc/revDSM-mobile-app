@@ -25,9 +25,9 @@ import {
   planZoneCanvasserStartAppointment,
 } from '../../utils/lead-activity-log';
 import { isOnline } from '../../services/connectivity';
-import { queueLeadWorkStart } from '../../services/offlineLeadStore';
+import { findOfflineWorkForLead, queueLeadWorkStart } from '../../services/offlineLeadStore';
 import { markLeadCheckedInOffline } from '../../services/offlineLeadStatus';
-import { isOfflineLead } from '../../utils/offline-lead-work';
+import { createdAtTheDoor, isOfflineLead, offlineCheckInModule } from '../../utils/offline-lead-work';
 import type { ZoneCanvasserMapProps } from '../../types/zone-canvasser';
 
 export default function ZoneCanvasserMap({
@@ -64,11 +64,13 @@ export default function ZoneCanvasserMap({
       try {
         await persistActiveLeadId(leadId);
         const plan = planZoneCanvasserStartAppointment(lead, z.userLocation);
-        if (plan.shouldCallWork) {
-          if (plan.logModule) {
-            void logLeadActionClick(user, plan.logModule, lead);
+        const atTheDoor = createdAtTheDoor(findOfflineWorkForLead(lead));
+        if (plan.shouldCallWork || atTheDoor) {
+          const logModule = offlineCheckInModule(plan, atTheDoor);
+          if (logModule) {
+            void logLeadActionClick(user, logModule as any, lead);
           }
-          if (plan.logModule !== 'lead_review') {
+          if (logModule !== 'lead_review') {
             markLeadCheckedInOffline(leadId);
             queueLeadWorkStart(lead, String(user?._id || user?.id || ''));
           }

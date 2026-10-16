@@ -96,3 +96,19 @@ describe('replay order per lead', () => {
     expect(q[0].id).toBe('1');
   });
 });
+
+import { offlineCheckInModule } from '../../src/utils/offline-lead-work';
+
+describe('offline check-in log', () => {
+  it('follows the geofence plan when the lead is not at the door', () => {
+    expect(offlineCheckInModule({ shouldCallWork: true, logModule: 'lead_check_in' }, false)).toBe('lead_check_in');
+    expect(offlineCheckInModule({ shouldCallWork: true, logModule: 'lead_review' }, false)).toBe('lead_review');
+    expect(offlineCheckInModule({ shouldCallWork: false, logModule: '' }, false)).toBe('');
+  });
+  it('logs a check-in for a lead created offline even though the plan found it out of range', () => {
+    expect(offlineCheckInModule({ shouldCallWork: false, logModule: '' }, true)).toBe('lead_check_in');
+  });
+  it('keeps the planned module when there is one', () => {
+    expect(offlineCheckInModule({ shouldCallWork: true, logModule: 'lead_resume' }, true)).toBe('lead_resume');
+  });
+});

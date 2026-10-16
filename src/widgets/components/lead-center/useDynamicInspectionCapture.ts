@@ -606,7 +606,7 @@ export function useDynamicInspectionCapture({
               leadId,
               category: logCategory,
               subcategory: logSub,
-              timestamp: photo.timestampTaken || new Date().toISOString(),
+              occurredAt: new Date().toISOString(),
               coordinates: photo.coordinates || null,
               size: (photo as any).size || 0,
               action: 'deleted_image',
