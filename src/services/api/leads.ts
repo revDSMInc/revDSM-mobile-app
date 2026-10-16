@@ -37,6 +37,8 @@ export const LeadEndpoints = {
   saveFilters: (leadId: string) => `lead/v1/${leadId}/saved-filters`,
   images: (leadId: string) => `demo/v1/leads/${leadId}/images`,
   updateImagePosition: (leadId: string) => `demo/v1/leads/${leadId}/images/position`,
+  annotations: (leadId: string) => `demo/v1/leads/${leadId}/annotations`,
+  upsertAnnotation: (leadId: string, imageId: string) => `demo/v1/leads/${leadId}/images/${imageId}/annotation`,
   reset: (leadId: string) => `lead/v1/${leadId}/reset`,
   additionalSlots: (leadId: string) => `leads/${leadId}/additional-slots`,
   digitalConsent: 'consent/digital',
@@ -192,6 +194,13 @@ export const LeadService = {
         'Content-Type': 'multipart/form-data',
         ...(idempotencyKey ? { [IDEMPOTENCY_HEADER]: idempotencyKey } : {}),
       },
+      timeout: PHOTO_UPLOAD_TIMEOUT_MS,
+    }),
+  getAnnotations: (leadId: string): Promise<AxiosResponse<any>> => api.get(LeadEndpoints.annotations(leadId)),
+  /** Re-edit: overwrites an existing annotated image IN PLACE (same subdocument, same s3url). */
+  upsertAnnotation: (leadId: string, imageId: string, formData: FormData): Promise<AxiosResponse<any>> =>
+    api.patch(LeadEndpoints.upsertAnnotation(leadId, imageId), formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
       timeout: PHOTO_UPLOAD_TIMEOUT_MS,
     }),
   deleteImage: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>

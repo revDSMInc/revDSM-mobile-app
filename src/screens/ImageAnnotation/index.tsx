@@ -30,7 +30,11 @@ import { IMAGE_CATEGORIES } from '../../constants/lead-center';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { useWarmedImageUris } from '../../hooks/useWarmedImageUris';
-import { warmToLocalCache } from '../../utils/imageFileCache';
+import { forgetWarmedUri, warmToLocalCache } from '../../utils/imageFileCache';
+import { LeadService } from '../../services/api/leads';
+import { queryClient } from '../../services/api/queryClient';
+import { FlashMessage } from '../../config/message';
+import { buildMobileAnnotationData, countMarks } from '../../utils/annotation-restore';
 
 import { AnnotationCanvas } from '../../widgets/components/LeadCenter/AnnotationCanvas';
 import { AnnotationTextToolbar } from '../../widgets/components/LeadCenter/AnnotationTextToolbar';
@@ -64,6 +68,14 @@ interface SectionImage {
   subcategory?: string;
   categoryName?: string;
   isOptimistic?: boolean;
+  /** Re-edit: `_id` of the annotated copy being edited. Its upload is a PATCH that overwrites it in place. */
+  existingAnnotationId?: string | null;
+  /** `_id` of the clean ORIGINAL photo - stored with the annotation so a later re-edit can find its base. */
+  salesPhotoId?: string | null;
+  /** Re-edit: saved marks to put back on the canvas (only when `uri` is the clean original). */
+  initialMarks?: { strokes: any[]; texts: any[]; shapes: any[] } | null;
+  /** Re-edit: remote urls of the annotated copy whose cached bytes are stale once it is overwritten. */
+  staleUris?: string[];
 }
 
 export default function ImageAnnotationScreen() {
@@ -97,9 +109,30 @@ export default function ImageAnnotationScreen() {
   const [activeSize, setActiveSize] = useState<number>(5);
   const [showColorPanel, setShowColorPanel] = useState<boolean>(false);
 
-  const [strokesMap, setStrokesMap] = useState<Record<string, any[]>>({});
-  const [textsMap, setTextsMap] = useState<Record<string, any[]>>({});
-  const [shapesMap, setShapesMap] = useState<Record<string, AnnotationShape[]>>({});
+  // Re-edit seeds the canvas with the marks saved on the annotated copy; `initialCount` is the "nothing changed yet"
+  // baseline so opening a photo does not read as unsaved work.
+  const seededMarks = useRef(
+    (() => {
+      const strokes: Record<string, any[]> = {};
+      const texts: Record<string, any[]> = {};
+      const shapes: Record<string, AnnotationShape[]> = {};
+      const count: Record<string, number> = {};
+      (selectedPhotos as SectionImage[]).forEach((p) => {
+        const m = p?.initialMarks;
+        if (!m) return;
+        const pid = p.id || p.uri;
+        strokes[pid] = m.strokes || [];
+        texts[pid] = m.texts || [];
+        shapes[pid] = (m.shapes || []) as AnnotationShape[];
+        count[pid] = countMarks(m);
+      });
+      return { strokes, texts, shapes, count };
+    })(),
+  ).current;
+
+  const [strokesMap, setStrokesMap] = useState<Record<string, any[]>>(seededMarks.strokes);
+  const [textsMap, setTextsMap] = useState<Record<string, any[]>>(seededMarks.texts);
+  const [shapesMap, setShapesMap] = useState<Record<string, AnnotationShape[]>>(seededMarks.shapes);
   const [activeShapeKind, setActiveShapeKind] = useState<ShapeKind>('arrow');
   const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
   const [historyMap, setHistoryMap] = useState<Record<string, any[]>>({});
@@ -150,7 +183,7 @@ export default function ImageAnnotationScreen() {
     );
 
     return () => backHandler.remove();
-  }, [strokesMap, textsMap, shapesMap, onCancel]);
+  }, [strokesMap, textsMap, shapesMap, historyMap, onCancel]);
 
   const canvasLayout = useMemo(() => {
     if (!containerLayout || !imageSize) {
@@ -779,16 +812,25 @@ export default function ImageAnnotationScreen() {
     return `data:image/jpeg;base64,${base64Data}`;
   };
 
+  const marksFor = (pId: string) => ({
+    strokes: strokesMap[pId] || [],
+    texts: textsMap[pId] || [],
+    shapes: shapesMap[pId] || [],
+  });
+
+  // True when the rep changed this photo since it opened (a re-edit's restored marks do not count).
+  const isEditedPhoto = (pId: string) =>
+    countMarks(marksFor(pId)) !== (seededMarks.count[pId] || 0) || (historyMap[pId] || []).length > 0;
+
   const handleSaveAll = async () => {
     setIsSaving(true);
     saveResultsRef.current = [];
     
     const photosToProcess = selectedPhotos.filter((photo: any) => {
       const pId = photo.id || photo.uri;
-      const strokes = strokesMap[pId] || [];
-      const texts = textsMap[pId] || [];
-      const shapes = shapesMap[pId] || [];
-      return strokes.length > 0 || texts.length > 0 || shapes.length > 0;
+      // A re-edit is saved whenever it was touched, even if every mark was removed (that restores the clean photo).
+      if (photo.existingAnnotationId) return isEditedPhoto(pId);
+      return countMarks(marksFor(pId)) > 0;
     });
 
     if (photosToProcess.length === 0) {
@@ -934,12 +976,45 @@ export default function ImageAnnotationScreen() {
     setSaveProgressText('Uploading annotated images...');
 
     const coords = await (locationRef.current || requestCoords());
+    let reEditFailures = 0;
+    let reEditSaved = 0;
     
     for (let i = 0; i < results.length; i++) {
       const res = results[i];
       setSaveProgressText(`Uploading annotated image ${i + 1} of ${results.length}...`);
       
       const orig = res.originalPhoto;
+      const origKey = orig.id || orig.uri;
+      const annotationData = buildMobileAnnotationData(marksFor(origKey), orig.salesPhotoId);
+
+      if (orig.existingAnnotationId) {
+        // Re-edit: overwrite the existing annotated image in place (one annotated photo per base photo). No new
+        // photo row is created, so there is no duplicate to guard with an idempotency key - a retried PATCH just
+        // writes the same bytes again.
+        const patch = new FormData();
+        patch.append('file', {
+          uri: res.uri,
+          type: 'image/jpeg',
+          name: `annotated_${Date.now()}.jpg`,
+        } as any);
+        patch.append('annotationData', JSON.stringify(annotationData));
+        try {
+          await LeadService.upsertAnnotation(lead._id, orig.existingAnnotationId, patch);
+          reEditSaved += 1;
+          // Same s3url + same file name = same local cache path, so the old bytes would keep showing.
+          await Promise.all((orig.staleUris || []).map((u: string) => forgetWarmedUri(u)));
+        } catch (patchError: any) {
+          reEditFailures += 1;
+          console.error('Failed to update annotated image:', patchError?.response?.data || patchError?.message || patchError);
+        }
+        try {
+          await ReactNativeBlobUtil.fs.unlink(res.uri.replace('file://', ''));
+        } catch (cleanupError) {
+          console.warn('Failed to delete temp file:', cleanupError);
+        }
+        continue;
+      }
+
       const annotatedSubcategory = `${orig.subcategory} (Annotated)`;
       
       const formData = new FormData();
@@ -959,6 +1034,13 @@ export default function ImageAnnotationScreen() {
       ];
 
       formData.append('images', JSON.stringify(imageInfo));
+      // Linked to the clean original so the copy can be re-edited later (same field the web app sends).
+      formData.append(
+        'annotations',
+        JSON.stringify([
+          orig.salesPhotoId ? { salesPhotoId: orig.salesPhotoId, annotationData } : null,
+        ]),
+      );
       formData.append('category', 'salesPhotos');
 
       /**
@@ -1000,15 +1082,23 @@ export default function ImageAnnotationScreen() {
         },
       });
     }
+    if (reEditSaved > 0) {
+      // Fresh signatures, so the overwritten image is not served from a cached url.
+      queryClient.invalidateQueries({ queryKey: ['secureUrls'] });
+      queryClient.invalidateQueries({ queryKey: ['lead', lead._id] });
+    }
+    if (reEditFailures > 0) {
+      FlashMessage.error('Not saved', `${reEditFailures} annotated photo${reEditFailures === 1 ? '' : 's'} could not be updated. Try again.`);
+    }
     onSaveSuccess?.();
     navigation.goBack();
   };
 
   const handleBackPress = () => {
-    const hasUnsavedChanges =
-      Object.values(strokesMap).some(s => s.length > 0) ||
-      Object.values(textsMap).some(t => t.length > 0) ||
-      Object.values(shapesMap).some(sh => sh.length > 0);
+    const hasUnsavedChanges = (selectedPhotos as SectionImage[]).some((p) => {
+      const pid = p.id || p.uri;
+      return countMarks(marksFor(pid)) !== (seededMarks.count[pid] || 0) || (historyMap[pid] || []).length > 0;
+    });
     if (hasUnsavedChanges) {
       Alert.alert(
         'Discard Changes',
