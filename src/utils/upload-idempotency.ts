@@ -79,6 +79,51 @@ export const annotatedPhotoIdempotencyKey = (input: {
 };
 
 /**
+ * The key for one queued LEAD create (`POST lead/v1/create`).
+ *
+ * ⚠️ Why a lead needs one at all, when photos needed one for a different reason: lead creation
+ * was classified `unique-key` - retry on an ambiguous failure only if the payload carries
+ * something the server will reject twice. An **Issued** lead has `lfLeadId`; a **Self Gen**
+ * has nothing unique, because two real leads can share a name and an address. So the rule had
+ * nothing to test, and a timed-out create either duplicated the lead or stranded the rep's
+ * typing. The key is what gives Self Gen the same protection Issued already had.
+ *
+ * ⚠️ It is the device's own `clientId`, minted once when the lead is queued and persisted with
+ * it - so a retry five minutes later, or after an app restart a week later, sends the IDENTICAL
+ * key. Anything regenerated per attempt would deduplicate nothing.
+ *
+ * ⚠️ Returns null for a lead that was never queued (no clientId). An online create cannot be
+ * retried by the queue, so there is nothing to deduplicate and no key is sent - which the
+ * server treats as today's behaviour.
+ */
+export const leadCreateIdempotencyKey = (clientId: unknown): string | null => {
+  const raw = String(clientId ?? '').trim();
+  if (!raw) return null;
+  const safe = sanitize(raw, 120);
+  return safe || null;
+};
+
+/**
+ * ⚠️ The server is still creating this lead and asked us to come back.
+ *
+ * Deliberately NOT a 409. For a photo a 409 means "stored, stop" and the client drops the
+ * item; mid-create there is no lead `_id` to hand back yet, so dropping it would strand every
+ * calculator, photo and outcome queued against that lead. The server answers 503 instead,
+ * which is retryable, and the retry gets the replay.
+ *
+ * ⚠️ Matched on `data.code`, not on the status: a generic 503 from a load balancer or gateway
+ * is a different event and must stay an ordinary ambiguous failure.
+ */
+export const isIdempotentInProgress = (err: unknown): boolean => {
+  const e = err as any;
+  const status = e?.httpStatus ?? e?.response?.status ?? e?.status;
+  if (status !== 503) return false;
+  const body = e?.response?.data ?? e?.data ?? {};
+  const code = String(body?.data?.code ?? body?.code ?? '').toUpperCase();
+  return code === 'IDEMPOTENT_IN_PROGRESS';
+};
+
+/**
  * ⚠️ A replayed key is a SUCCESS, not an error.
  *
  * If the server chooses to answer a duplicate with 409 rather than replaying the original 200,

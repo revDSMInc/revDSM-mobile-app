@@ -1,7 +1,7 @@
 import api, { hasSession } from './index';
 import { AxiosResponse } from 'axios';
 import { ENV } from '../../config/env';
-import { IDEMPOTENCY_HEADER } from '../../utils/upload-idempotency';
+import { IDEMPOTENCY_FIELD, IDEMPOTENCY_HEADER } from '../../utils/upload-idempotency';
 
 /**
  * Photo uploads get their own timeout. The global 15s suits JSON; a 2-5 MB image on a weak
@@ -130,7 +130,18 @@ export const sanitizeCalculatorPayload = (payload: any): any => {
 };
 
 export const LeadService = {
-  createLead: (data: any): Promise<AxiosResponse<any>> => api.post(LeadEndpoints.create, data),
+  /**
+   * IMPORTANT: `idempotencyKey` is what stops a timed-out retry creating a SECOND lead. It is
+   * the queued lead's device clientId, identical on every retry. Sent as both the standard
+   * header and a body field, because some mobile proxies strip unexpected headers. Omitted on
+   * an online create, which the queue never retries. See utils/upload-idempotency.ts.
+   */
+  createLead: (data: any, idempotencyKey?: string | null): Promise<AxiosResponse<any>> =>
+    api.post(
+      LeadEndpoints.create,
+      idempotencyKey ? { ...data, [IDEMPOTENCY_FIELD]: idempotencyKey } : data,
+      idempotencyKey ? { headers: { [IDEMPOTENCY_HEADER]: idempotencyKey } } : undefined
+    ),
   getSalesLeads: (repId: string, params?: any): Promise<AxiosResponse<any>> => {
     const query = new URLSearchParams({ repId, ...params }).toString();
     return api.get(`${LeadEndpoints.salesPortal}?${query}`);

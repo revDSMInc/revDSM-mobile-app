@@ -1199,3 +1199,73 @@ The `work` step is still skipped for a **resulted** lead (`!work.submit`). That 
 the result is the stronger statement about where the lead got to, and flipping a sold door back
 to `resume` on the ops board is worse than not recording the check-in — which the activity log
 has captured anyway.
+
+---
+
+## Ticket — a lead created offline could be created twice
+
+> "I sold that lead in offline but one lead was created automatically at that time."
+
+Same shape as the photo duplication: a create that **times out after the server already made
+the lead**, retried, making a second one. The protection that should have caught it could not.
+
+### ⚠️ Why the existing guard missed it
+
+Lead creation was classified `unique-key` in `stepReplaySafety`: on an ambiguous failure,
+retry only if the payload carries something the server will reject twice.
+
+- An **Issued (LF)** lead has `lfLeadId` — unique server-side, so it was protected.
+- A **Self Gen has nothing unique.** Two real leads can legitimately share a name and an
+  address, so `hasServerUniqueKey` returns false for every one of them.
+
+The rule therefore had nothing to test and fell through to `needs-review` — which **discarded
+the rep's typed lead** while the create they could not see had often already landed. The same
+gap was behind the separate report of a Self Gen vanishing on a timed-out connection.
+
+⚠️ Telling detail: the **appointment** step has had a `findExistingAppointment` re-read before
+creating all along. The lead step never had an equivalent.
+
+### What changed (backend live 2026-10-16)
+
+- `leadCreateIdempotencyKey(clientId)` — the key is the work's **own `clientId`**, minted once
+  when the lead is queued and persisted with it, so a retry minutes or a week later sends the
+  identical value. ⚠️ Returns `null` for an unqueued lead: an **online** create is never
+  retried by the queue, sends no key, and keeps today's behaviour exactly.
+- `LeadService.createLead(data, idempotencyKey?)` sends it as both the `Idempotency-Key`
+  header and an `idempotencyKey` body field (mobile proxies strip unexpected headers from
+  some requests).
+- `stepReplaySafety('lead')` → **`idempotent`**. ⚠️ Only valid because the server honours the
+  key. Reverting the server without reverting this turns an occasional duplicate into a
+  reliable one.
+- `resolveRetryDecision(outcome, payload, serverHonoursIdempotencyKey = true)` — the flag
+  exists so the behaviour can be switched off in one place.
+
+### ⚠️ The replay returns the lead, not a 409
+
+Agreed with the backend deliberately. A photo replay only has to say "stored"; a **lead replay
+must hand back the original `_id`**, because the appointment, calculators, photos and outcome
+all attach to it. A 409 — which our client reads as "stored, drop it" — would have stranded
+every one of them.
+
+So: completed replay → **200 with the original lead** (`idempotentReplay: true`), and a create
+still in flight → **503** with `data.code: "IDEMPOTENT_IN_PROGRESS"`, which is retryable.
+`isIdempotentInProgress` matches on **`data.code`, never the status** — a generic 503 from a
+load balancer is a different event and must stay an ordinary ambiguous failure.
+
+### ⚠️ A duplicate error is still NOT success for a Self Gen
+
+Unchanged, and the reasoning inverts once a key exists: the server **replays** a key it has
+already seen rather than rejecting it, so a duplicate error on a keyed create is a genuine
+collision, not evidence the first attempt landed. Only `lfLeadId` proves that.
+
+⚠️ That `duplicate` branch is now scoped with `step === 'lead'` explicitly. It used to read
+`safety === 'unique-key'`, which happened to mean the same thing; reclassifying `lead` broke
+the coupling, and dropping the check outright made **every** step return `done` on a duplicate
+whenever the lead carried an `lfLeadId` — an appointment collision says nothing about the
+lead's unique key. A test caught it.
+
+### Retention
+
+⚠️ The spec first said 24 h, which was wrong: a parked lead is kept **indefinitely** and the
+rep can retry it days later from Pending Uploads. Backend set retention above that window. A
+retry after the key expires would create exactly the duplicate this prevents.

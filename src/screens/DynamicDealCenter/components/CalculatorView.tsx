@@ -23,6 +23,11 @@ import { useAuth } from '../../../hooks/useAuth';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 import { useNumPadActive } from '../../../widgets/common/keyboard/NumPad';
 import { useNumPadScrollIntoView } from '../../../hooks/useNumPadScrollIntoView';
+import {
+  ADD_TAB_BLOCKED_MESSAGE,
+  ADD_TAB_BLOCKED_TITLE,
+  canAddCalculatorTab,
+} from '../../../utils/calculator-tab-gate';
 import { FlashMessage } from '../../../config/message';
 import {
   changeKind,
@@ -518,6 +523,23 @@ export function CalculatorView({
   customerTabName = '',
 }: CalculatorViewProps) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+  /**
+   * ⚠️ Looks at EVERY tab, not just the active one. The rep can add a tab, switch away
+   * and press plus again from elsewhere - gating on the active tab alone would still
+   * leave blanks behind, which is the thing being prevented.
+   */
+  const addTabGate = useMemo(() => {
+    /**
+     * ⚠️ The ACTIVE tab is judged on the live `entries` prop, not on its copy inside `tabs`.
+     * `entries` is what the rep is typing into right now; the `tabs` entry for it is written
+     * by the same render, but reading the prop makes the gate independent of that ordering.
+     * A gate that lags one keystroke behind is a gate that blocks a tab the rep just filled.
+     */
+    const live = (tabs || []).map((t) =>
+      t && t.id === activeTabId ? { ...t, entries: entries || t.entries } : t
+    );
+    return canAddCalculatorTab(live as any, activeTabId);
+  }, [tabs, activeTabId, entries]);
   const { user } = useAuth();
   const numPadActive = useNumPadActive();
   const bodyScrollRef = useRef<ScrollView>(null);
@@ -791,9 +813,40 @@ export function CalculatorView({
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
             {onAddTab && (
-              <TouchableOpacity onPress={onAddTab} style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#F4F6F8', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
+              /**
+               * ⚠️ `Pressable`, not `TouchableOpacity`, and never `disabled`.
+               *
+               * A disabled button swallows the tap and the rep learns nothing - they press it
+               * again, then ask why the app is broken. The whole point of the gate is the
+               * explanation, which can only fire if the press lands. `hitSlop` matters too:
+               * this sits in a 44pt row beside a draggable tab strip, where a few stray pixels
+               * are the difference between a tap and nothing at all.
+               *
+               * ⚠️ The style is a plain OBJECT, never Pressable's `({ pressed }) => ({...})`
+               * form. The chrome here (grey fill, border, radius) is the same as the original
+               * TouchableOpacity and must stay byte-identical - a style callback rendered the
+               * button as a bare icon with no card behind it.
+               */
+              <Pressable
+                onPress={() => {
+                  const gate = addTabGate;
+                  if (!gate.allowed) {
+                    FlashMessage.warning(
+                      gate.title || ADD_TAB_BLOCKED_TITLE,
+                      gate.message || ADD_TAB_BLOCKED_MESSAGE
+                    );
+                    return;
+                  }
+                  onAddTab();
+                }}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Add calculator"
+                accessibilityState={{ disabled: !addTabGate.allowed }}
+                style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#F4F6F8', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', opacity: addTabGate.allowed ? 1 : 0.4 }}
+              >
                 <Ionicons name="add" size={24} color="#1C252E" />
-              </TouchableOpacity>
+              </Pressable>
             )}
             <TouchableOpacity onPress={onViewAll} style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#2169f3', alignItems: 'center', justifyContent: 'center' }}>
               <Ionicons name="grid" size={20} color="#fff" />

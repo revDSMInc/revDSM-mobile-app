@@ -29,6 +29,7 @@ import {
   resolveSyncAddress,
 } from '../utils/offline-lead-location';
 import { reverseGeocode } from '../utils/places';
+import { leadCreateIdempotencyKey } from '../utils/upload-idempotency';
 import { queryClient } from './api/queryClient';
 import {
   clearLeadCheckedInOffline,
@@ -870,8 +871,19 @@ const runStep = async (
           ? { ...queued, leadCreationTimestamp: work.createdAt }
           : queued;
       const resolvedAddress = await resolveQueuedLeadAddress(body);
+      /**
+       * ⚠️ The key is the work's own `clientId`, so every retry of THIS lead - minutes later
+       * or after an app restart a week later - sends the identical value and the server
+       * replays the first create instead of making a second lead.
+       *
+       * The replay comes back in the normal create shape carrying the ORIGINAL `_id`, which
+       * is why the id handling below needs no special case: `readCreatedId` finds it either
+       * way, and the rekeys then attach the appointment, calculators and photos to the real
+       * lead. A 409 here would have had no id to give and would have stranded all of that.
+       */
       const res = await LeadService.createLead(
-        resolvedAddress ? applyResolvedAddress(body, resolvedAddress) : body
+        resolvedAddress ? applyResolvedAddress(body, resolvedAddress) : body,
+        leadCreateIdempotencyKey(work.clientId)
       );
       if (!isSuccessfulCreate(res?.data)) {
         throw Object.assign(new Error(res?.data?.message || 'create refused'), { response: res });

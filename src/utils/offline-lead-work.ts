@@ -79,8 +79,23 @@ export const stepReplaySafety = (step: UploadStep): ReplaySafety => {
     case 'archive':
     case 'delete':
       return 'idempotent';
+    /**
+     * ⚠️ `idempotent` ONLY because the server honours our idempotency key on
+     * `POST lead/v1/create` (deployed 2026-10-16). Do NOT set this without that.
+     *
+     * It was `unique-key`: retry an ambiguous failure only if the payload carries something
+     * the server will reject twice. An Issued lead has `lfLeadId`; a **Self Gen has nothing
+     * unique**, because two real leads can share a name and an address. So the rule had
+     * nothing to test and fell through to `needs-review` - the rep's typed lead sat parked
+     * while the create they could not see had often already landed, which is how one door
+     * became two leads.
+     *
+     * With the key, a replay returns the ORIGINAL lead and its `_id`, so retrying is safe for
+     * both lead types. ⚠️ Reverting the server without reverting this would turn an
+     * occasional duplicate into a reliable one.
+     */
     case 'lead':
-      return 'unique-key';
+      return 'idempotent';
     case 'remoteSignature':
       return 'guarded';
     case 'consent':
@@ -457,7 +472,21 @@ export const resolveStepDecision = (
     case 'rejected':
       return 'failed';
     case 'duplicate':
-      return safety === 'unique-key' && hasServerUniqueKey(work.lead) ? 'done' : 'needs-review';
+      /**
+       * ⚠️ Scoped to the LEAD step explicitly. It used to read `safety === 'unique-key'`,
+       * which happened to mean the same thing; reclassifying `lead` to `idempotent` broke
+       * that coupling, and dropping the check outright made EVERY step return `done` on a
+       * duplicate whenever the lead carried an `lfLeadId` - an appointment collision is not
+       * evidence about the lead's unique key.
+       *
+       * An Issued lead's create still resolves to `done`: the server rejected it on
+       * `lfLeadId`, which proves the first create landed.
+       *
+       * ⚠️ A duplicate on a KEYED create is a genuine conflict, not a replay: the server
+       * replays a key it has already seen rather than rejecting it. So a Self Gen duplicate
+       * still goes to needs-review for a human to look at.
+       */
+      return step === 'lead' && hasServerUniqueKey(work.lead) ? 'done' : 'needs-review';
     case 'ambiguous':
       if (safety === 'idempotent') return 'retry';
       if (safety === 'guarded') return 'retry-guarded';

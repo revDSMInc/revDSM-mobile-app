@@ -4724,3 +4724,132 @@ Ticket: *"Add in our SM MD LG logic etc for packages"* (subtask of REVUIUX-518).
 - `tab-naming.ts` `getPackageSizeLabel(title)` returns the bare `SM`/`MD`/`LG`/`XL`/`XXL[-n]` from the title's trailing `(..)` (⚠️ markers stripped), else `''`. It reads the TITLE on purpose - the rank, tie handling and inherited-suffix logic are already decided there, so the badge cannot disagree with the name the portal sees. No ranking logic was duplicated or changed.
 - Rendered as `(SM)` after the extras on: the calculator footer tabs (`CalculatorView.tabCalcs.packageSize` -> `HorizontalDraggableTabs`), and every `FullPackageTitle` that is handed a `title` (new optional `sizeLabel` prop, default `getPackageSizeLabel(title)`): the quote-card header, Result Job chooser/sheet, the rollout strip tabs (now pass `title={calc.title}`), the Investment Center tab row, and the Investment panel package heading (now passes `title`).
 - ⚠️ Only shown when `isFullPackage` - non-package tabs already print their full name incl. the suffix. ⚠️ A package whose price TIES another keeps the portal title `⚠️ ... (SM) ⚠️`; the tab shows only the `(SM)` (the dynamic flow opts out of the classic duplicate-warning icon via `getIsDuplicate={() => false}`) - not changed here. A lone package (one price level) has no rank, so no suffix. Not verified on device.
+
+---
+
+## Ticket — the plus button must not create a second empty calculator
+
+> "When we create a new calculator by pressing plus, disable the plus button until he adds
+> something in that empty tab. If in the first tab he didn't add anything, the rep should be
+> unable to create a new calculator. Show a splash message so the rep understands why."
+
+Rules and 20 tests in `utils/calculator-tab-gate.ts` (pure — `CalculatorView` imports React
+Native, CLAUDE.md §6).
+
+### ⚠️ An "empty" tab is NOT a tab with no entries
+
+This is the whole trap. `mergeFullEntries` seeds **every field in the schema** with
+`inputValue: 0`, so a brand-new tab already carries a complete entries map.
+`Object.keys(entries).length === 0` is therefore **never** true, and a gate written that way
+silently never fires — it looks correct and does nothing. `hasAnyFieldValue` tests the
+*values*, not the keys.
+
+### ⚠️ What counts as "touched" is deliberately generous
+
+`isTabEmpty` returns false for a typed quantity, non-zero totals, a price, a confirmed
+rollout, a selected render **or** a drop. A tab can carry real work with no quantity typed on
+it, and blocking the plus button in front of a customer because the app disagreed about what
+work looks like is far worse than letting one extra tab through. When in doubt, allow.
+
+⚠️ A **negative** value counts — a credit is an entry.
+
+### ⚠️ The message never quotes the tab's title
+
+First wording was `"2" is still empty`. A calculator is **named from what it contains**
+(`G (LG)`, `G (SM)`), so a tab with nothing in it is *always* still on its placeholder: a bare
+position number. Quoting that reads like a name the rep chose, points at a tab that exists
+under no such name, and the number shifts as tabs are added, deleted or reordered.
+`utils/rollout-status.ts` already encodes the same fact in `isPlaceholderCalculatorTitle` (an
+all-digits title is a placeholder).
+
+Two fixed strings instead, chosen by whether the empty tab is the one in view:
+
+- `ADD_TAB_BLOCKED_MESSAGE` — "Add at least one item to this calculator before starting
+  another one."
+- `ADD_TAB_BLOCKED_MESSAGE_OTHER` — "One of your calculators is still empty. Add at least one
+  item to it before starting another one."
+
+`canAddCalculatorTab` takes `activeTabId` to pick between them. ⚠️ Tests assert the message
+contains neither the placeholder number **nor** a real title — the rule is about the wording,
+not about which titles happen to be safe.
+
+### ⚠️ Gated on ANY empty tab, not the active one
+
+The rep can add a tab, switch away and press plus again from elsewhere. Gating on
+`activeTabId` alone would still leave blanks behind, which is the thing being prevented. The
+message names the offending tab when there is more than one, so the rep knows where to go.
+
+### ⚠️ No tabs at all is NOT blocked
+
+`canAddCalculatorTab([])` allows. The first calculator is created by the screen itself; a gate
+that refused here would leave a lead with no way to start. A test pins this.
+
+### The button stays pressable
+
+⚠️ It is dimmed (`opacity 0.4`) and carries `accessibilityState.disabled`, but it is **not** a
+`disabled` TouchableOpacity. A disabled button swallows the tap and the rep learns nothing —
+they press it again and then ask why the app is broken. It stays tappable and explains itself
+with `FlashMessage.warning`.
+
+### ⚠️ The regression this shipped with — a stale closure, not a stale rule
+
+First version blocked the button **permanently** and showed **no message**, even after the rep
+filled the tab. The gate logic was correct; its INPUT was stale.
+
+`handleAddTab` is a `useCallback` whose dep array is **`tabs.length`, not `tabs`** — a
+pre-existing optimisation, since adding a tab is the only thing that changes the length.
+Typing a quantity does not, so the captured `tabs` stayed frozen at the empty state. The guard
+read it, refused, and returned **before any UI ran**, which is why no flash appeared either.
+
+Both halves are now read live:
+
+- the hook reads **`tabsRef.current`**, the pattern that hook already uses elsewhere for
+  exactly this reason — ⚠️ never the captured `tabs` prop;
+- `CalculatorView` overlays the **active tab's live `entries` prop** over its copy in `tabs`,
+  so the gate cannot lag one keystroke behind the field the rep is typing into.
+
+⚠️ **The general lesson, which is not about this gate:** a predicate is only as fresh as what
+you hand it, and adding a read to an existing callback silently inherits that callback's
+staleness. Check the dep array before putting a new condition inside an old `useCallback`.
+
+### ⚠️ The button is a `Pressable` with `hitSlop`, not a `TouchableOpacity`
+
+Second report after the stale-closure fix: the button dimmed correctly, but tapping it showed
+**no message**. Everything else checked out — the decision object carries both `title` and
+`message` (printed for the real three-tab state), `FlashMessage.warning` works elsewhere in
+this same file, and there is exactly one global flash host, mounted in `App.tsx`. The only
+unproven link was the tap reaching the handler.
+
+⚠️ **That add button sits in a 44pt row immediately beside `HorizontalDraggableTabs`**, and
+this repo already records the trap: *a sibling `GestureDetector` swallows touches whatever its
+`zIndex`* (CLAUDE.md §6). It is now a `Pressable` with `hitSlop={8}` and a pressed-state
+opacity, which hit-tests more predictably next to a gesture handler and gives the rep visible
+feedback that the press registered.
+
+⚠️ **Its style is a plain OBJECT, never `Pressable`'s `({ pressed }) => ({...})` form.** The
+first attempt used the callback form and the button rendered as a bare `+` icon with no grey
+card behind it — the chrome was silently dropped. Same family as the `FlashMessage` trap in
+CLAUDE.md §6: a style a library merges or re-evaluates loses keys. The style object is
+byte-identical to the original `TouchableOpacity`, plus `opacity` for the blocked state, and
+should stay that way.
+
+⚠️ **Never give this button `disabled`.** A disabled button swallows the tap, so the
+explanation — the entire point of the gate — can never fire. It stays pressable and refuses
+out loud.
+
+⚠️ The handler falls back to `ADD_TAB_BLOCKED_TITLE` / `ADD_TAB_BLOCKED_MESSAGE` rather than
+passing `''`, so a decision missing its text can never produce a silent empty flash.
+
+⚠️ **Not confirmed on device.** The gesture conflict is the most likely cause, not a proven
+one. If the button visibly dims on press and there is still no message, the tap IS landing and
+the flash is being swallowed instead — that is a different fix (a local `ModalFlashHost` on
+this screen), not more work on the touch target.
+
+### Both layers
+
+`handleAddTab` (`useDynamicCalculators.ts`) re-checks and returns **quietly** — the UI owns the
+message, and two flashes for one tap is worse than none. The hook is the only writer, so a
+future caller that forgets the check still cannot create the blank tab.
+
+⚠️ The gate reads only local tab state and never consults connectivity, so it behaves
+identically offline and online. A test pins that too.

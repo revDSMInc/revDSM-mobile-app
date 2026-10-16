@@ -41,6 +41,7 @@ import {
   resolveAppointmentFallback,
   resolveOnlineLoadSource,
 } from '../../../utils/deal-center-load';
+import { canAddCalculatorTab } from '../../../utils/calculator-tab-gate';
 
 export interface CalcTab {
   id: string;
@@ -1061,6 +1062,19 @@ export function useDynamicCalculators(
   );
 
   const handleAddTab = useCallback(async () => {
+    /**
+     * ⚠️ Second line of defence. `CalculatorView` already refuses and explains, but the gate
+     * belongs here too: this is the only writer, and a future caller that forgets the check
+     * would silently create the blank tab the rule exists to prevent. Returns quietly - the
+     * UI owns the message, and two flashes for one tap is worse than none.
+     *
+     * ⚠️ READS `tabsRef.current`, NOT `tabs`. This callback's dep array is `tabs.length`, so
+     * the captured `tabs` is frozen at the last length change - typing a quantity does not
+     * change the length, so the closure still holds the EMPTY tabs. Reading the prop here
+     * blocked the button forever once the gate was added, with no message, because the hook
+     * returned before any UI ran.
+     */
+    if (!canAddCalculatorTab(tabsRef.current as any, activeTabId).allowed) return;
     const placeholder = String(tabs.length + 1);
     if (onDevice() && offlineWorkIdRef.current) {
       const defaults = inheritedDefaults();
