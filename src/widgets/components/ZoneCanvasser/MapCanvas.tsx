@@ -23,6 +23,7 @@ import { BuildingMapMarker } from './BuildingMapMarker';
 import { ClusterMapMarker } from './ClusterMapMarker';
 import { UserLocationMarker } from './UserLocationMarker';
 import { useSalesMapPins, SalesLeadPinsLayer, SalesLeadPinsModals } from './SalesLeadPins';
+import type { FilterState } from '../../modals/MapFiltersModal';
 
 Mapbox.setAccessToken(ENV.MAPBOX_ACCESS_TOKEN);
 
@@ -52,6 +53,8 @@ type Props = {
   onTouchEnd: () => void;
   onRegionChangeComplete?: (region: Region) => void;
   leadPinsEnabled?: boolean;
+  leadPinFilters?: FilterState;
+  userLocation?: { latitude: number; longitude: number } | null;
 };
 
 const DEFAULT_REGION: Region = {
@@ -104,10 +107,12 @@ export function MapCanvas({
   onTouchEnd,
   onRegionChangeComplete,
   leadPinsEnabled = false,
+  leadPinFilters,
+  userLocation,
 }: Props) {
   const rectangleDrawing = isDrawingMode && drawType === 'rectangle';
   const salesPinsEnabled = leadPinsEnabled && !isDrawingMode;
-  const salesPins = useSalesMapPins({ enabled: salesPinsEnabled, cameraRef });
+  const salesPins = useSalesMapPins({ enabled: salesPinsEnabled, cameraRef, filters: leadPinFilters, userLocation });
   const [mapRegion, setMapRegion] = useState<Region>(
     initialRegion ?? DEFAULT_REGION
   );

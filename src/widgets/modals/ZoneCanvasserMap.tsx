@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, StatusBar, Platform, type TextInput } from 'react-native';
 import { useBottomInset } from '../../hooks/useBottomInset';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -29,6 +29,8 @@ import { findOfflineWorkForLead, queueLeadWorkStart } from '../../services/offli
 import { markLeadCheckedInOffline } from '../../services/offlineLeadStatus';
 import { createdAtTheDoor, isOfflineLead, offlineCheckInModule } from '../../utils/offline-lead-work';
 import type { ZoneCanvasserMapProps } from '../../types/zone-canvasser';
+import { MapFiltersModal, countAppliedMapFilters, type FilterState } from './MapFiltersModal';
+import { DEFAULT_MAP_FILTERS } from '../../utils/map-job-filters';
 
 export default function ZoneCanvasserMap({
   visible,
@@ -42,6 +44,10 @@ export default function ZoneCanvasserMap({
   const workMutation = useWorkLeadMutation();
   const z = useZoneCanvasser({ visible, user });
   const searchInputRef = useRef<TextInput>(null);
+  // Header funnel -> the same filter sheet the Map screen uses, applied to the sales pins (client-side, not persisted).
+  const [showFilters, setShowFilters] = useState(false);
+  const [pinFilters, setPinFilters] = useState<FilterState>(DEFAULT_MAP_FILTERS);
+  const appliedFilterCount = countAppliedMapFilters(pinFilters);
 
   const handleSelectResult = (val: string) => {
     z.setResultsModalOpen(false);
@@ -142,9 +148,9 @@ export default function ZoneCanvasserMap({
         <Header
           onFilterPress={() => {
             if (z.isDrawingMode) return;
-            searchInputRef.current?.focus();
+            setShowFilters(true);
           }}
-          filterCount={0}
+          filterCount={appliedFilterCount}
           onNavigate={(route: string) => {
             if (route === 'Leads') {
               onClose();
@@ -206,6 +212,8 @@ export default function ZoneCanvasserMap({
             onTouchEnd={z.handleTouchEnd}
             onRegionChangeComplete={z.handleMapRegionChange}
             leadPinsEnabled={visible && z.showLeadPins}
+            leadPinFilters={pinFilters}
+            userLocation={z.userLocation}
           />
 
           <MapDrawTools
@@ -286,6 +294,19 @@ export default function ZoneCanvasserMap({
         {/* Bottom safe-area spacer: ends the map ABOVE the system navigation bar / home
             indicator, so every bottom control (draw toolbar, zoom stack, legend) clears it. */}
         <View style={{ height: bottomInset, backgroundColor: isDark ? colors.background : '#0E2A1C' }} />
+
+        {/* Rendered inside this modal's own tree (a sibling native Modal at the app root would sit BEHIND it). */}
+        <MapFiltersModal
+          visible={showFilters}
+          onClose={() => setShowFilters(false)}
+          filters={pinFilters}
+          onApply={(f) => {
+            setPinFilters(f);
+            // Filtering hidden pins would look like "nothing matched" - show them.
+            if (countAppliedMapFilters(f) > 0 && !z.showLeadPins) z.setShowLeadPins(true);
+          }}
+          onReset={() => setPinFilters(DEFAULT_MAP_FILTERS)}
+        />
 
         <ZoneCanvasserModals
           user={user}

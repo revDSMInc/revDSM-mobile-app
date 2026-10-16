@@ -12,6 +12,8 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { logEvent } from '../../../services/api/LoggerService';
 import { logMapPinSelected, logFavoriteJobClick } from '../../../utils/activity-log/map-activity-log';
 import { getPinCategory, pinSortKeyExpression } from '../../../utils/sales-pins';
+import { filterMapJobs } from '../../../utils/map-job-filters';
+import type { FilterState } from '../../modals/MapFiltersModal';
 
 const MARKER_GREEN = require('../../../assets/images/map/marker-green.png');
 const MARKER_INSTALLED = require('../../../assets/images/map/marker-installed.png');
@@ -49,9 +51,14 @@ export type SalesMapPins = ReturnType<typeof useSalesMapPins>;
 export function useSalesMapPins({
   enabled,
   cameraRef,
+  filters,
+  userLocation,
 }: {
   enabled: boolean;
   cameraRef: React.RefObject<Camera | null>;
+  /** The header filter's `MapFiltersModal` state; omitted/default = show every pin. */
+  filters?: FilterState;
+  userLocation?: { latitude: number; longitude: number } | null;
 }) {
   const { user } = useAuth();
   const [leads, setLeads] = useState<any[]>([]);
@@ -82,9 +89,14 @@ export function useSalesMapPins({
     }
   }, [enabled, fetchAllJobs]);
 
+  const filteredLeads = useMemo(
+    () => (filters ? filterMapJobs(leads, filters, { user, userLocation }) : leads),
+    [leads, filters, user, userLocation]
+  );
+
   const validLeads = useMemo(
     () =>
-      leads.filter((l: any) => {
+      filteredLeads.filter((l: any) => {
         const jn = l?.jobNumber;
         if (typeof jn === 'string' && jn.startsWith('TAM')) {
           const num = parseInt(jn.substring(3), 10);
@@ -92,7 +104,7 @@ export function useSalesMapPins({
         }
         return l?.location?.coordinates && l.location.coordinates.length >= 2;
       }),
-    [leads]
+    [filteredLeads]
   );
 
   const leadsByIdRef = useRef<Map<string, any>>(new Map());
