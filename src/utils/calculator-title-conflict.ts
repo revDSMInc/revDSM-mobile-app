@@ -85,6 +85,10 @@ export const conflictingTitle = (tabs: TitledTab[] | undefined | null): string |
 export const tabsNeedingRename = (tabs: TitledTab[] | undefined | null): TitledTab[] =>
   findTitleConflicts(tabs).flatMap((group) => group.slice(1));
 
+/** Small counts read better as words; past that the digit is clearer. */
+const numberWord = (n: number): string =>
+  ['', '', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'][n] || String(n);
+
 export const TITLE_CONFLICT_HEADING = 'Calculators must be different';
 
 /**
@@ -102,11 +106,21 @@ export const TITLE_CONFLICT_HEADING = 'Calculators must be different';
  * The cause is the same online and offline, so the wording does not change between them.
  */
 export const titleConflictMessage = (tabs: TitledTab[] | undefined | null): string => {
+  const [group = []] = findTitleConflicts(tabs);
   const title = conflictingTitle(tabs);
+
+  // ⚠️ COUNT THE GROUP, never assume a pair. Duplicating twice gives three identical tabs, and
+  // "Two calculators" in front of three of them reads as a different problem than the one on
+  // screen. The spares are everything past the first, so that plural has to follow the count too.
+  const count = Math.max(group.length, 2);
+  const subject = `${numberWord(count)} calculators are`;
+  const quantifier = count === 2 ? 'both' : 'all';
   const named = title
-    ? `Two calculators are both "${title}" with the same products and pricing.`
-    : 'Two calculators have the same products and pricing.';
-  return `${named} Each one must be a different job scope — change the products or quantities on one of them, or delete the spare tab.`;
+    ? `${subject} ${quantifier} "${title}" with the same products and pricing.`
+    : `${subject} ${quantifier} the same products and pricing.`;
+  const spares = count > 2 ? 'delete the spare tabs' : 'delete the spare tab';
+
+  return `${named} Each one must be a different job scope — change the products or quantities so they differ, or ${spares}.`;
 };
 
 /**

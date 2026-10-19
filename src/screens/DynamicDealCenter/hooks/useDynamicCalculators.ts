@@ -3,7 +3,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { LeadService } from '../../../services/api/leads';
 import type { CalculatorEntry, CalculatorTotals, CalculatorSchema } from '../types/calculator';
 import { computeDerivedTitles } from '../utils/tab-naming';
-import { computeTitleSaveOrder, getUniquePersistableTitles, TEMP_TITLE_PREFIX } from '../utils/title-save-order';
+import { computeTitleSaveOrder, getUniquePersistableTitles, resolvePersistableTitle, TEMP_TITLE_PREFIX } from '../utils/title-save-order';
 import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries';
 import {
   normalizeSingleAcceptedDrop,
@@ -338,6 +338,13 @@ export function useDynamicCalculators(
   const needsFollowUp = useRef<Record<string, boolean>>({});
   const dirty = useRef<Record<string, boolean>>({});
   const lastSavedTitle = useRef<Record<string, string>>({});
+  /**
+   * The baseline for the OFFLINE `auto_rename` log only.
+   *
+   * ⚠️ Deliberately separate from `lastSavedTitle`, which must hold only server-acknowledged
+   * titles because `resolveSafeTitle` uses it to decide what is safe to send.
+   */
+  const lastOfflineLoggedTitle = useRef<Record<string, string>>({});
   const loggedViewIds = useRef<Set<string>>(new Set());
   const bootstrapLeadRef = useRef<string | null>(null);
 
@@ -405,13 +412,30 @@ export function useDynamicCalculators(
     []
   );
 
+  /**
+   * ⚠️ The title we SEND, which is not always the title we SHOW.
+   *
+   * `computeDerivedTitles` gives two same-priced tabs the same decorated name (`⚠️ G ⚠️`) on
+   * purpose, so the rep can see the pair is ambiguous. The server refuses a duplicate outright
+   * (409 "LFCalculator title must be unique..."), so that decorated name must never be persisted.
+   *
+   * ⚠️ Online this worked by accident: `lastSavedTitle` held the title the SERVER confirmed
+   * (the placeholder "2"), so the fallback was already unique. Offline nothing is ever confirmed,
+   * and `persistOffline` was writing the DERIVED title into the same map - so the fallback handed
+   * back `⚠️ S ⚠️` and every queued copy carried it. The lead then could not drain.
+   * `resolvePersistableTitle` falls back to the position placeholder instead, as online does.
+   */
   const resolveSafeTitle = useCallback((tab: CalcTab): string => {
-    const derived = computeDerivedTitles(
-      titleInputs(tabsRef.current),
-      schemasRef.current || [],
-    );
-    const persistable = getUniquePersistableTitles(derived);
-    return persistable[tab.id] || lastSavedTitle.current[tab.id] || tab.title || '1';
+    const list = tabsRef.current;
+    const derived = computeDerivedTitles(titleInputs(list), schemasRef.current || []);
+    const idx = list.findIndex((t) => t.id === tab.id);
+    return resolvePersistableTitle({
+      tabId: tab.id,
+      derived,
+      lastSaved: lastSavedTitle.current,
+      position: (idx >= 0 ? idx : list.length) + 1,
+      currentTitle: tab.title,
+    });
   }, [titleInputs]);
 
   const buildPayload = useCallback(
@@ -504,10 +528,16 @@ export function useDynamicCalculators(
     offlineDirty.current = false;
     // Online logs `auto_rename` when a save changes a tab's title (flushSave); a device save never
     // reaches flushSave, so the same comparison is made here.
+    //
+    // ⚠️ THIS LOOP IS FOR LOGGING ONLY - it must NOT write into `lastSavedTitle`.
+    // That map means "a title the SERVER has acknowledged", and `resolveSafeTitle` trusts it as a
+    // uniqueness fallback. Writing the DERIVED display title here made the ambiguous `⚠️ S ⚠️`
+    // look confirmed, so every queued duplicate was sent with that same title and the lead stuck
+    // on a 409 no retry could clear. Offline nothing is acknowledged, so nothing is recorded here.
     (explicit || tabsRef.current).forEach((t) => {
-      const prevTitle = lastSavedTitle.current[t.id];
+      const prevTitle = lastOfflineLoggedTitle.current[t.id] ?? lastSavedTitle.current[t.id];
       if (prevTitle === undefined) {
-        lastSavedTitle.current[t.id] = t.title;
+        lastOfflineLoggedTitle.current[t.id] = t.title;
         return;
       }
       if (prevTitle === t.title || t.title.startsWith(TEMP_TITLE_PREFIX)) return;
@@ -521,7 +551,7 @@ export function useDynamicCalculators(
           leadId: ctx.leadId,
         }).catch(() => {});
       }
-      lastSavedTitle.current[t.id] = t.title;
+      lastOfflineLoggedTitle.current[t.id] = t.title;
     });
     const calculators: OfflineCalculatorWork[] = (explicit || tabsRef.current).map((t) => ({
       clientId: t.id,

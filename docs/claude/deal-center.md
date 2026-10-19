@@ -4880,6 +4880,12 @@ which sent the rep hunting for a control that does not exist. A title is DERIVED
 and prices, so the only real fixes are **change the products/quantities on one** or **delete the
 spare tab** — those are what the message now names.
 
+⚠️ **Count the colliding group — it is not always a pair.** Duplicating twice gives THREE tabs
+with one name; the first wording said "Two calculators" in front of three of them, which reads as
+a different problem than the one on screen. `titleConflictMessage` now takes the count from the
+group (`both` / `all`, and `the spare tab` / `the spare tabs`) and counts only the colliding
+group, not every tab open.
+
 ⚠️ **The same rule runs online and offline, on purpose.** Online the 409 returns while the rep is
 still on the screen; offline the POST is queued, the job is completed, and the 409 only surfaces
 when the queue drains — too late to rename anything. Do not make this online-only: nothing should
@@ -4902,3 +4908,43 @@ through untouched.
 
 *Not done:* the rollout is blocked but the duplicate tab is not auto-renamed — the rep chooses the
 name, since the two tabs are usually meant to be different scopes (that is why they duplicated).
+
+### Follow-up — the offline payload sent the DISPLAY title (the real cause of the 409)
+
+The guard above stops the rep reaching the rollout, but the question underneath was better:
+**online, duplicating a tab succeeds; offline the same action 409s.** The payloads differ:
+
+| | `title` sent to `POST /appointments/{id}/lfcalculators` |
+|---|---|
+| Online | `"2"` — the position placeholder |
+| Offline | `"⚠️ S ⚠️"` — the **derived display title** |
+
+⚠️ **The displayed title and the saved title are two different things.** `computeDerivedTitles`
+gives two same-priced tabs one shared, decorated name so the rep can SEE the pair is ambiguous;
+`getUniquePersistableTitles` then drops any title held by more than one tab, precisely so it is
+never persisted. Both paths run that gate — what differed was the **fallback** in
+`resolveSafeTitle` (`hooks/useDynamicCalculators.ts`):
+
+```
+persistable[tab.id] || lastSavedTitle.current[tab.id] || tab.title || '1'
+```
+
+Online, `lastSavedTitle` holds the title **the server confirmed** (`created.title`, i.e. `"2"`),
+so the fallback was already unique and the bug was invisible. Offline nothing is ever confirmed —
+and `persistOffline`'s `auto_rename` logging loop was writing the **derived** title into that same
+map. The ambiguous name therefore looked "saved", the fallback returned it, and every queued copy
+carried it. The 409 then could not be retried away.
+
+Two changes:
+- `utils/title-save-order.ts` gains `resolvePersistableTitle` + `isAmbiguousTitle` (pure, 12 tests,
+  including a property test that a whole strip of identical tabs always resolves to distinct
+  titles). It refuses an ambiguous title **even from `lastSaved`** and falls back to the position
+  placeholder, which is what online sends.
+- `persistOffline`'s logging loop now writes to its own `lastOfflineLoggedTitle` ref.
+
+⚠️ **`lastSavedTitle` means "a title the SERVER acknowledged" — never write a local/derived title
+into it.** It is load-bearing for uniqueness, not just for the `auto_rename` log. That conflation
+is the whole bug.
+
+⚠️ `utils/title-save-order.ts` is **pure ASCII** (CRLF) — the warning marks are written as
+`'⚠️'` escapes. Do not paste the literal characters in.
