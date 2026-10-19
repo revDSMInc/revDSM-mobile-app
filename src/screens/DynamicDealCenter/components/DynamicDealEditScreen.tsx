@@ -61,6 +61,7 @@ import {
   windowInfo,
   windowNotice,
 } from '../../../hooks/useInstallAvailability';
+import { bookInstallSlot } from '../../../services/api/installAvailability';
 import { readOfflineCache, writeOfflineCache } from '../../../utils/offline-query-cache';
 import { addendumOfflineBlock } from '../../../utils/offline-addendum';
 import {
@@ -273,6 +274,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const [dateStep, setDateStep] = useState<'intro' | 'calendar' | 'time' | 'success'>('intro');
   const [proposedDate, setProposedDate] = useState<Date | null>(null);
   const [proposedSlotIdx, setProposedSlotIdx] = useState(0);
+  // "Yes" books the time (REVDSM-1300); a counter re-asks the scheduler when a time was just taken.
+  const [installBooking, setInstallBooking] = useState(false);
+  const [installAvailabilityRefresh, setInstallAvailabilityRefresh] = useState(0);
 
   // What the scheduler says about the chosen day. Until it answers — or if it never
   // does — every window is offered exactly as before.
@@ -281,6 +285,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       proposedDate ? format(proposedDate, 'yyyy-MM-dd') : null,
       lead?._id,
       dateStep === 'time',
+      installAvailabilityRefresh,
     );
   const offeredInstallWindows = useOfferedWindows(INSTALL_WINDOWS, installAvailability);
   const currentInstallWindow =
@@ -1319,8 +1324,27 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setDateStep('calendar');
   }, [proposedSlotIdx, proposedDate, dealLogTarget, offeredInstallWindows]);
 
-  const handleAcceptProposedTime = useCallback(() => {
-    if (!proposedDate) return;
+  const handleAcceptProposedTime = useCallback(async () => {
+    if (!proposedDate || installBooking) return;
+    // First come, first served, as in the job builder: the server re-checks and holds the crew
+    // as a draft right now, so a time someone else just took is caught here, not at submit.
+    // Only `taken` stops the rep; offline or any other failure carries on as before.
+    if (leadId) {
+      setInstallBooking(true);
+      const booked = await bookInstallSlot({
+        leadId,
+        date: format(proposedDate, 'yyyy-MM-dd'),
+        timeWindow: currentInstallWindow.value,
+        isSale: (lead?.result || 'Sale') === 'Sale',
+      });
+      setInstallBooking(false);
+      if (booked.kind === 'taken') {
+        FlashMessage.error('No crew available', booked.message);
+        setProposedSlotIdx(0);
+        setInstallAvailabilityRefresh((n) => n + 1);
+        return;
+      }
+    }
     const nextDate = format(proposedDate, 'M/d/yyyy');
     const nextWindow = currentInstallWindow.value;
     if (dealLogTarget) {
@@ -1335,7 +1359,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setScheduleDate(nextDate);
     setScheduleTimeWindow(nextWindow);
     setDateStep('success');
-  }, [proposedDate, currentInstallWindow, dealLogTarget, scheduleDate, scheduleTimeWindow]);
+  }, [proposedDate, currentInstallWindow, dealLogTarget, scheduleDate, scheduleTimeWindow, installBooking, leadId, lead?.result]);
 
   const handleFinishInstallDate = useCallback(() => {
     setDateStep('intro');
@@ -1545,6 +1569,27 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         );
         navigation?.goBack();
         return;
+      }
+
+      // REVDSM-1300: a changed install time is checked against crew availability and held for
+      // the crew as a draft before the addendum goes out — the same booking the job builder
+      // makes on "Yes". Only `taken` stops the submit; an error or an unreachable server
+      // leaves the addendum exactly as it was before, and the server skips a lead that
+      // already has a crew.
+      if (scheduleChanged && scheduleDate && scheduleDate !== 'TBD') {
+        const day = new Date(scheduleDate);
+        if (!isNaN(day.getTime())) {
+          const booked = await bookInstallSlot({
+            leadId,
+            date: format(day, 'yyyy-MM-dd'),
+            timeWindow: scheduleTimeWindow,
+            isSale: isSaleResult,
+          });
+          if (booked.kind === 'taken') {
+            FlashMessage.error('Install time unavailable', booked.message);
+            return;
+          }
+        }
       }
 
       const draftRes = await LeadService.submitJobBuilderDraft(leadId, payload);

@@ -1435,3 +1435,19 @@ days) every day whose `available` is false. Lance's rule: a day with no crew for
   (`useInstallAvailability`) still decides what a picked day offers, so a failed calendar call never blocks booking.
 - Months already answered are kept per `leadId|yyyy-MM`; a failed month is asked again when it is next shown.
 - A rep never sees which crew: this call carries no crew names.
+
+### Submitting a changed install time books the crew as a draft (REVDSM-1300)
+`handleSubmit` in `DynamicDealEditScreen.tsx` calls `bookInstallSlot` (the same `installer/v1/installer-dispatch/availability/book`
+the job builder's "Yes" uses) just before `submitJobBuilderDraft`, when `scheduleChanged` and the date is not TBD. The server
+re-checks availability and competencies, and holds the crew as a `draft`, which already blocks that crew for the next rep.
+
+- **The same booking also runs on "Yes"** in the install-date step (`handleAcceptProposedTime`), as in the job builder:
+  `taken` shows a "No crew available" flash, re-asks the scheduler (`installAvailabilityRefresh`) so the taken window drops
+  out of the offered list, and keeps the rep on the time step. The submit call is then a final safeguard.
+- Only `taken` (409) stops the submit: a flash "Install time unavailable" and the rep picks another time. An error, or an
+  unreachable server, leaves the addendum exactly as before. The offline branch returns earlier, so nothing is booked offline.
+- ⚠️ The server skips a lead that already has a scheduled crew (`already-assigned`), so changing the time of an already
+  scheduled deal is NOT re-booked or moved by this call. That needs its own rescheduling rule.
+- ⚠️ Nothing here promotes the draft to `scheduled` yet: when it should be scheduled is still to be decided.
+  `InstallerHandler.activateDraftAssignment` is the backend call that does it.
+- Not verified on device; no jest test (the screen imports RN).
