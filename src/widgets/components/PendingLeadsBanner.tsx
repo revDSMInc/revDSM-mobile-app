@@ -15,6 +15,7 @@ import {
   subscribeOfflineWork,
 } from '../../services/offlineLeadStore';
 import { useIsOnline } from '../../hooks/useIsOnline';
+import { describeQueueError } from '../../utils/calculator-title-conflict';
 import { useNavigation } from '@react-navigation/native';
 
 interface Props {
@@ -162,7 +163,7 @@ export const PendingLeadsBanner: React.FC<Props> = ({ colors, isDark }) => {
                   staring at a lead that says "waiting" for a reason nothing on screen will name. */}
               {!!item.lastError && (item.status === 'failed' || item.attempts > 0) && (
                 <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6, lineHeight: 15 }}>
-                  {item.lastError}
+                  {describeQueueError(item.lastError)}
                 </Text>
               )}
 

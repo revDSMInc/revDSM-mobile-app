@@ -1,4 +1,5 @@
 import React, { useCallback } from 'react';
+import { describeQueueError } from '../../utils/calculator-title-conflict';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -40,7 +41,7 @@ const workStatus = (w: OfflineLeadWork, online: boolean) => {
           'This may already be on the server. Check your leads first, and only retry if it is missing.',
       };
     case 'failed':
-      return { label: "Couldn't be uploaded", tone: RED, detail: w.lastError };
+      return { label: "Couldn't be uploaded", tone: RED, detail: describeQueueError(w.lastError) };
     case 'uploading':
       return { label: 'Uploading…', tone: '#2563EB', detail: undefined };
     default:
@@ -221,7 +222,7 @@ export default function PendingUploadsScreen() {
                 title={p.subcategory || p.categoryName || 'Photo'}
                 subtitle="Kept on this device · upload failed"
                 tone={RED}
-                detail={p.lastError}
+                detail={describeQueueError(p.lastError)}
               >
                 <Btn label="Retry" onPress={() => uploadQueueManager.retryParked(p.id)} />
                 <Btn label="Discard" onPress={() => discardPhoto(p)} tone={RED} />
@@ -234,7 +235,7 @@ export default function PendingUploadsScreen() {
                 title={`Job ${i.jobNumber} · ${i.type === 'before' ? 'before' : 'after'} images`}
                 subtitle="Kept on this device · upload failed"
                 tone={RED}
-                detail={i.lastError}
+                detail={describeQueueError(i.lastError)}
               >
                 <Btn label="Retry" onPress={() => retryInstallerUpload(i.id)} />
                 <Btn label="Discard" onPress={() => discardInstaller(i)} tone={RED} />
@@ -255,7 +256,7 @@ export default function PendingUploadsScreen() {
                   title={w.label || 'Untitled'}
                   subtitle={`${s.label} · ${p.done}/${p.total} steps`}
                   tone={s.tone}
-                  detail={w.lastError}
+                  detail={describeQueueError(w.lastError)}
                 />
               );
             })}

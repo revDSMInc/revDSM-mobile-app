@@ -1396,3 +1396,36 @@ lead's unique key. A test caught it.
 ⚠️ The spec first said 24 h, which was wrong: a parked lead is kept **indefinitely** and the
 rep can retry it days later from Pending Uploads. Backend set retention above that window. A
 retry after the key expires would create exactly the duplicate this prevents.
+
+## Ticket — a queued lead that can NEVER drain (duplicate calculator title)
+
+A lead sat in the pending list at **"Couldn't be uploaded — 1 of 3 uploaded"** showing the raw
+server string *"LFCalculator title must be unique within this appointment for the current user"*.
+
+The full diagnosis and the fix that prevents it are in `docs/claude/deal-center.md`; the queue
+side is here. `POST /appointments/{id}/lfcalculators` answers **409** when two calculators in an
+appointment share a title, which happens when a rep duplicates a tab (both copies price the same,
+so `computeDerivedTitles` cannot separate them and marks the pair `⚠️ G ⚠️`).
+
+⚠️ **This is a POISON ITEM: retrying cannot fix it.** Every other failure in the queue is worth a
+retry — signal came back, the server was briefly down. This one replays a payload the server will
+refuse identically every time, so **Try again** loops forever. The rep must open the deal and
+rename a tab; nothing the queue does on its own will clear it.
+
+`utils/calculator-title-conflict.ts` exports `describeQueueError`, now applied wherever the queue
+prints `lastError` — `widgets/components/PendingLeadsBanner.tsx` and `screens/PendingUploads/`
+(the status row and all three detail props). It replaces the server string with wording that says
+to rename and that retrying will keep failing.
+
+⚠️ The wording names **changing the products or deleting the spare tab**, never "rename": there
+is no rename control in the UI, and the tabs are usually locked by then. See the trap in
+`docs/claude/deal-center.md`.
+
+⚠️ **It matches on BOTH "lfcalculator" and "title must be unique"**, not on the 409 status — the
+status is not kept, only `lastError` is. Both halves are required so an unrelated 409 passes
+through untouched; a translator that swallowed other failures would hide real errors behind
+advice that does not apply.
+
+⚠️ **The real fix is upstream** — the rollout is now blocked before such a calculator can be
+queued (`onViewAll` in `DynamicDealCenterScreen.tsx`), so this message should only ever be seen by
+leads queued by a build from before that guard.

@@ -4853,3 +4853,52 @@ future caller that forgets the check still cannot create the blank tab.
 
 ⚠️ The gate reads only local tab state and never consults connectivity, so it behaves
 identically offline and online. A test pins that too.
+
+## Ticket — duplicate calculator title strands an offline lead (409)
+
+Client report: a lead stuck at **"Couldn't be uploaded — 1 of 3 uploaded"** with
+*"LFCalculator title must be unique within this appointment for the current user"*. Pressing
+**Try again** replays the same payload, so it fails forever.
+
+`POST /appointments/{id}/lfcalculators` answers **409** when two calculators in one appointment
+share a title for the same user. The rep gets there by **duplicating a tab**: `handleDuplicateTab`
+(`hooks/useDynamicCalculators.ts`) deliberately copies the source's totals so both tabs price
+identically, and `computeDerivedTitles` (`utils/tab-naming.ts`) ranks the size suffix **by price**
+— equal price means no rank to separate them, so both land on the same name and the pair is
+marked `⚠️ G ⚠️`. That marker was already the signal; nothing acted on it.
+
+The guard is in `components/DynamicDealCenterScreen.tsx` on **`onViewAll`** (the blue button into
+the rollout, and the only path to `setFlowStep('rollout')`): `hasTitleConflict(tabs)` blocks the
+step and raises a `FlashMessage.warning` naming the duplicated title. Rules are pure in
+`utils/calculator-title-conflict.ts` (26 tests).
+
+⚠️ **Do NOT tell the rep to "rename" the tab — there is no rename in the UI.** `TabContextMenu`
+offers Duplicate and Delete only (`onRenameTab` is plumbed through `CalculatorView` but never
+reachable), and by the time the pair exists both tabs are usually rollout-confirmed and **locked**,
+so editing is refused too. The first cut of this message said "long-press the tab to rename one",
+which sent the rep hunting for a control that does not exist. A title is DERIVED from the products
+and prices, so the only real fixes are **change the products/quantities on one** or **delete the
+spare tab** — those are what the message now names.
+
+⚠️ **The same rule runs online and offline, on purpose.** Online the 409 returns while the rep is
+still on the screen; offline the POST is queued, the job is completed, and the 409 only surfaces
+when the queue drains — too late to rename anything. Do not make this online-only: nothing should
+reach the queue that the server is going to refuse.
+
+⚠️ **Compare titles with the decorations STRIPPED.** `normalizeTitleForUniqueness` removes the
+`⚠️` marks and the `📦 +` full-package prefix and lower-cases the rest, because `⚠️ G ⚠️` and `G`
+are one title to the server. A comparison that kept them would miss the exact collision this
+exists to catch.
+
+⚠️ **An untitled tab is not a conflict.** A fresh tab has no derived name (`computeDerivedTitles`
+falls back to its index), so empty titles are skipped — otherwise two new tabs would block the
+rollout.
+
+⚠️ **A lead already in the queue with this error is stuck and retrying cannot fix it.**
+`describeQueueError` replaces the raw server string in `PendingLeadsBanner.tsx` and
+`screens/PendingUploads/index.tsx` with wording that tells the rep to open the deal and rename.
+It matches on **both** "lfcalculator" and "title must be unique" so an unrelated 409 passes
+through untouched.
+
+*Not done:* the rollout is blocked but the duplicate tab is not auto-renamed — the rep chooses the
+name, since the two tabs are usually meant to be different scopes (that is why they duplicated).

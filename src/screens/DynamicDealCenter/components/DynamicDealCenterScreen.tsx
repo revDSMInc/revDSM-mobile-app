@@ -19,6 +19,11 @@ import { createRehashDraftLatch, latchRehashDrafts, releaseRehashDrafts, isRehas
 import { buildDealCenterData } from '../utils/build-deal-center-data';
 import { resolveSubmittedCalculatorId } from '../utils/job-builder-submission';
 import { FlashMessage } from '../../../config/message';
+import {
+  hasTitleConflict,
+  titleConflictMessage,
+  TITLE_CONFLICT_HEADING,
+} from '../../../utils/calculator-title-conflict';
 import { buildSectionLabelMap } from '../utils/item-format';
 import { resolveFundingSource } from '../../../utils/activity-log/funding-log';
 import { LeadService, resolveLeadCalculatorId } from '../../../services/api/leads';
@@ -632,6 +637,24 @@ function DynamicDealCenterCreate({ navigation, route }: DynamicDealCenterScreenP
           onDeleteTab={handleDeleteTab}
           onReorderTabs={handleReorderTabs}
           onViewAll={() => {
+            /*
+             * ⚠️ Two tabs resolving to the SAME title cannot both be saved: the server answers
+             * 409 "LFCalculator title must be unique within this appointment for the current
+             * user" on `POST /appointments/{id}/lfcalculators`. Duplicating a tab is how the rep
+             * gets there - the copy carries the source's totals, so both price the same, and
+             * `computeDerivedTitles` has no price rank to separate them (it marks the pair
+             * `⚠️ G ⚠️`).
+             *
+             * Stopping here is what makes it survivable OFFLINE. Online the 409 comes back while
+             * the rep is still on this screen; offline the POST is queued, the job is completed,
+             * and the 409 only lands when the queue drains - leaving the lead stuck on
+             * "Couldn't be uploaded" with Try again replaying the same duplicate title forever.
+             * Same rule both ways on purpose: nothing reaches the queue the server will refuse.
+             */
+            if (hasTitleConflict(tabs)) {
+              FlashMessage.warning(TITLE_CONFLICT_HEADING, titleConflictMessage(tabs));
+              return;
+            }
             const uId = user?._id || user?.id;
             if (uId) logViewAllCalculators(uId).catch(() => {});
             setFlowStep('rollout');
