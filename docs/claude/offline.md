@@ -1047,6 +1047,28 @@ probe per stall, with nothing failing to show it. A test pins this relationship.
 (~1.2 s RTT) a cold probe lands ~3.8 s — inside the 6 s timeout, correctly reporting `'slow'`.
 5G at one bar (~300 ms RTT) lands ~1.05 s and reports quick.
 
+### Documents signed offline are shown from the local file (2026-10-19)
+
+The Lead Center side of this is the ticket in `docs/claude/lead-center.md`; recorded here because
+`utils/offline-job-documents.ts` is part of the offline surface.
+
+`addOfflineJobDocument` (`services/offlineLeadStore.ts`) already persists every offline document to
+`DocumentDirectory/offline-job-documents/` and records it on the work item, so the bytes are on disk
+from the moment the customer signs. Nothing read them back: the contract card resolves only
+`lead.jobBuilderDocuments`, which the server fills, so a lead sold offline showed "0 Files".
+`utils/offline-job-documents.ts` (pure, 20 tests) merges the queued copies into that view — no new
+storage and no new request, since the file is already written, and `DocumentItem` opens a `file://`
+PDF exactly like a signed S3 url.
+
+⚠️ **A row with `uploadedAt` is never shown.** `markDocumentUploaded` calls
+`discardOfflineDocumentFile` the instant the upload lands, so an uploaded row points at a path that
+no longer exists. `pendingQueuedDocuments` drops it and the server copy takes its place. Do not
+"fix" this by keeping uploaded rows — they open to nothing.
+
+⚠️ **Queued rows are suppressed once the server has caught up** (`serverRows.length >=
+queued.length`). During the sync window the same agreement exists in both places, and a plain
+concat shows the customer two copies of one contract.
+
 ### The drain must not leave a photo in neither set
 
 A follow-up to the duplication ticket above, from the same reports: **"during uploading the

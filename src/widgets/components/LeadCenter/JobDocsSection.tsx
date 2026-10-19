@@ -80,7 +80,13 @@ import { DynamicManagePhotosView } from '../lead-center/DynamicManagePhotosView'
 import { DynamicInspectionView } from '../lead-center/DynamicInspectionView';
 import { useInspectionSchema } from '../../../hooks/useInspectionSchema';
 import { useIsOnline } from '../../../hooks/useIsOnline';
-import { completeOfflineJobBuilder, ensureOfflineWorkForLead } from '../../../services/offlineLeadStore';
+import {
+  completeOfflineJobBuilder,
+  ensureOfflineWorkForLead,
+  findOfflineWorkForLead,
+  subscribeOfflineWork,
+} from '../../../services/offlineLeadStore';
+import { mergeQueuedDocuments } from '../../../utils/offline-job-documents';
 import { FlashMessage } from '../../../config/message';
 import {
   indexSchema,
@@ -1431,6 +1437,34 @@ export const JobDocsSection = ({
     };
   }, [lead?.jobBuilderDocuments, lead?._id]);
 
+  /**
+   * Agreements and order sheets signed offline, shown before they reach the server.
+   *
+   * The job builder already writes every offline document to disk and records it on the lead's
+   * offline work item (`addOfflineJobDocument`), so the bytes are local from the moment the
+   * customer signs. `resolvedDocuments` above is server-only - `jobBuilderDocuments` is filled by
+   * the API - so a lead sold offline showed "0 Files" next to documents the rep had just watched
+   * being signed. Merging the queued copies in fixes that with no new storage and no new request:
+   * the file is already there, and `DocumentItem` opens a `file://` PDF exactly like a signed URL.
+   *
+   * The merge is DERIVED, not written back into `resolvedDocuments`, so the resolve effect above
+   * stays the single owner of server state and a drain cannot race it.
+   */
+  const [queuedDocuments, setQueuedDocuments] = useState<any[]>([]);
+
+  useEffect(() => {
+    const read = () => setQueuedDocuments(findOfflineWorkForLead(lead)?.documents || []);
+    read();
+    // Re-read on every store change: the rows disappear as the queue drains, and the server
+    // copies take their place through `lead.jobBuilderDocuments`.
+    return subscribeOfflineWork(read);
+  }, [lead]);
+
+  const displayDocuments = useMemo(
+    () => mergeQueuedDocuments(resolvedDocuments, queuedDocuments),
+    [resolvedDocuments, queuedDocuments]
+  );
+
 
 
   const globalCounts = useMemo(() => {
@@ -1594,7 +1628,7 @@ export const JobDocsSection = ({
         leadDraft={leadDraft}
         isDark={isDark}
         colors={colors}
-        resolvedDocuments={resolvedDocuments}
+        resolvedDocuments={displayDocuments}
         expandedDocs={expandedDocs}
         setExpandedDocs={setExpandedDocs}
         setShowEditModal={onEditContract ? () => onEditContract() : setShowEditModal}
@@ -1794,6 +1828,8 @@ export const JobDocsSection = ({
         title={scannerType === 'agreement' ? 'Scan Agreement' : scannerType === 'orderSheet' ? 'Scan Order Sheet' : 'Scan Down Payment Receipt'}
         leadId={lead?._id || ''}
         category={scannerType}
+        /* Server rows only: a queued document has no server id, so the scanner could not
+           address it for removal. */
         initialFiles={
           resolvedDocuments[scannerType === 'agreement' ? 'agreements' : scannerType === 'orderSheet' ? 'orderSheets' : 'downPaymentReceipts'] || []
         }

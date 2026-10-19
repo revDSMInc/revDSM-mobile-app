@@ -111,6 +111,16 @@ export const DocumentItem = ({ doc, isDark, colors, onOpen, onImagePreview }: an
           <Text className="text-[10px] font-black text-gray-400 uppercase tracking-widest mt-0.5">
             {isImage ? 'IMAGE' : 'PDF'} • {(doc.size !== undefined && doc.size !== null) ? (doc.size / 1024).toFixed(0) + ' KB' : 'Size N/A'}
           </Text>
+          {/* Signed offline and still in the upload queue. It opens from the local file, so the
+              rep can show it to the customer - this only says it has not reached the server. */}
+          {doc.pendingUpload && (
+            <View className="flex-row items-center gap-1 mt-1">
+              <Icon name="cloud-upload-outline" size={11} color="#B76E00" />
+              <Text className="text-[9px] font-black uppercase tracking-widest" style={{ color: '#B76E00' }}>
+                Saved on device - uploads when online
+              </Text>
+            </View>
+          )}
         </View>
       </View>
       {opening ? (

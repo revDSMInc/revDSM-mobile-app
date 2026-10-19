@@ -2333,7 +2333,6 @@ holds the photo's own capture time.
 
 - ⚠️ Do not put the capture time back into the log's time key: the portal reads `occurredAt` as "when this happened".
 
-
 ## REVUIUX-559 - Image Annotation: shapes (arrow / line / circle / box) + two export bugs
 
 Ticket: *"Add in shape functionality - where I can adjust size and color: arrows, straight lines, circles, squares/rectangles."* New **Shapes** tool beside Zoom / Draw / Text (`screens/ImageAnnotation/index.tsx`, `widgets/components/LeadCenter/AnnotationCanvas.tsx`, pure maths in `utils/annotation-shapes.ts`, tests `__tests__/utils/annotation-shapes.test.ts`).
@@ -2357,3 +2356,35 @@ Ticket (Lance): *"Not letting me annotate an existing annotated photo. I know on
 - Not done / not verified: the classic (non-dynamic) `ManagePhotosModal` flow is untouched; restored text / stroke sizes are in px so a different screen size draws them proportionally off; offline re-edit fails with a flash (annotation saves were never queued). Needs a device check: annotate -> re-open -> marks restored -> move/delete one -> save -> same single photo updated, no duplicate.
 
 - **Follow-up - only the latest annotated copy shows.** Device test: after a re-edit "+ ANNOTATED" listed TWO Front-Right cards, the older one failing to load ("Tap to retry"). `getAnnotatedFor` (`useDynamicInspectionCapture.ts`) now passes through `latestAnnotatedPerBase`: one annotated copy per category + base subcategory, newest `timestampTaken` (later row on a tie / unknown time). ⚠️ This HIDES the stale row, it does not delete it, and the cause is unconfirmed - if the PATCH really leaves a second row on the server (or moves the s3url and orphans the old one) that is backend behaviour to check; the web app would show the same duplicate. Do not "fix" it by deleting rows client-side without that answer.
+
+### Documents signed offline show in the contract card before they sync (2026-10-19)
+
+A lead created and sold offline showed **"0 Files"** under Agreement Documents / Order Sheets /
+Down Payment Receipts, next to documents the rep had just watched the customer sign.
+
+Root cause: the bytes were already on disk and nothing read them. `addOfflineJobDocument`
+(`services/offlineLeadStore.ts`) copies every offline document to
+`DocumentDirectory/offline-job-documents/` and records it on the lead's work item, but
+`JobDocsSection`'s resolve effect reads only `lead.jobBuilderDocuments`, which **only the server
+fills**. So the card was server-only by construction and could not show a queued document.
+
+`utils/offline-job-documents.ts` (pure, 20 tests) merges the queued copies into the groups the
+card already renders; `JobDocsSection` subscribes to the offline store and passes the **derived**
+`displayDocuments` to `ContractDetailsCard`. The counts and rows both read that prop, so the
+badge and the list pick it up with no further change. `DocumentItem` shows a
+"Saved on device - uploads when online" line when `doc.pendingUpload` is set.
+
+No new storage and no new request: the file is already there, and `DocumentItem` opens a
+`file://` PDF through `handleOpenPdf` exactly like a signed S3 URL.
+
+- ⚠️ **An uploaded row is NOT shown.** `markDocumentUploaded` calls `discardOfflineDocumentFile`
+  the instant the upload lands, so a row carrying `uploadedAt` points at a path that no longer
+  exists; `pendingQueuedDocuments` drops it. The server copy arrives in `jobBuilderDocuments` to
+  take its place. Do not "fix" this by keeping uploaded rows — they open to nothing.
+- ⚠️ **The merge is derived, never written back into `resolvedDocuments`.** That state stays the
+  resolve effect's alone, so a drain landing mid-resolve cannot race it.
+- ⚠️ **Queued rows go after the server rows, and are suppressed once the server has caught up**
+  (`serverRows.length >= queued.length`). During the sync window the same agreement exists in
+  both places, and a plain concat shows the customer two copies of one contract.
+- ⚠️ **The scanner's `initialFiles` still takes server-only `resolvedDocuments`** — a queued
+  document has no server id, so the scanner could not address it for removal.
