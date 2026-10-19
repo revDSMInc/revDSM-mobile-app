@@ -1374,3 +1374,17 @@ lead's unique key. A test caught it.
 ⚠️ The spec first said 24 h, which was wrong: a parked lead is kept **indefinitely** and the
 rep can retry it days later from Pending Uploads. Backend set retention above that window. A
 retry after the key expires would create exactly the duplicate this prevents.
+
+
+## Annotated photos ride the upload queue (background, offline-safe Save)
+
+Full write-up and UX rules: `lead-center.md` § "Annotation Save: background + offline-safe, NO loader". What belongs here:
+- `UploadQueueItem` gained `annotation?: UploadQueueAnnotation` (`utils/uploadQueue.ts`). `mode: 'new'` is the normal `PUT demo/v1/leads/:id/images` plus the web's `annotations` field, still idempotency-keyed from `item.id`. `mode: 'reedit'` goes through `uploadAnnotationEdit` -> `PATCH demo/v1/leads/:id/images/:annotatedId/annotation` (multipart `file` + `annotationData`), no idempotency key because it overwrites in place.
+- `services/annotationSaveService.ts` is a SECOND, short-lived queue in front of this one: it holds the marks + a durable original until the photo is flattened (`services/annotationRenderer.ts`, `utils/annotation-render-html.ts`), then calls `uploadQueueManager.addToQueue`. Its MMKV key `annotation_save_jobs` is owner-stamped and listed in `SESSION_KEEP_KEYS`.
+- ⚠️ Re-edit success must forget the stale local cache (`forgetWarmedUri` on `staleUris`) and refresh `secureUrls` / `leads` / `leadAnnotations` / the lead: the s3url and file name do not change, so the cache path does not either.
+- ⚠️ A re-edit does NOT run the add-style "poll for the new row" log (there is no new row); it logs `annotated_photo_updated` with the existing s3url.
+- ⚠️ The job drain waits (no attempt spent) when the original is only a remote url and the device is offline; render failures are dropped after 3 attempts with a flash.
+
+- **Follow-up - a re-edit adopts its new bytes into the image cache** (`uploadAnnotationEdit` in `utils/uploadQueue.ts`): after `forgetWarmedUri(staleUris)` it calls `adoptLocalFileAsCached(item.uri, staleUris[0])`, so the edited photo paints from disk the moment the lead refreshes, with no download and no spinner. ⚠️ forget THEN adopt - adopt does nothing when a cached file exists at that path. The UI side (pending cards shown before upload) is in `lead-center.md` § "Annotation Save".
+
+- **Follow-up - the local JPEG is adopted under EVERY url form** (`UploadQueueManager.adoptUnderEveryUrlForm`, `utils/uploadQueue.ts`): the raw `resolveS3Url(s3url)` and the signed url from `getSecureUrls`, for a new annotation after the upload and for a re-edit. The card that takes over paints first from the raw url and then the signed one, and the cache is keyed by url, so a form left out is a download and a visible flicker. Best effort: a failure only logs.

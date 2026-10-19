@@ -40,6 +40,7 @@ import { NumPadProvider } from './src/widgets/common/keyboard/NumPad';
 import { queryClient } from './src/services/api/queryClient';
 import SplashScreen from './src/screens/Splash';
 import { useAuth } from './src/hooks/useAuth';
+import { AnnotationRenderHost } from './src/widgets/common/AnnotationRenderHost';
 
 const MAX_BOOTSTRAP_WAIT_MS = 8000;
 
@@ -125,6 +126,8 @@ function AppContent() {
         <RootNavigator currentRouteName={currentRouteName} />
       </NavigationContainer>
       </NumPadProvider>
+      {/* Canvas for flattening annotated photos in the background, so Save can close the editor at once. */}
+      <AnnotationRenderHost />
       <FlashMessage position="top" />
       {splashMounted && (
         <Animated.View

@@ -29,8 +29,13 @@ import Animated, {
 import Icon from 'react-native-vector-icons/Ionicons';
 
 import { useWarmedImageUris } from '../../hooks/useWarmedImageUris';
+import { forgetWarmedUri } from '../../utils/imageFileCache';
 
 const { width: SW, height: SH } = Dimensions.get('window');
+const isRemoteUri = (u: string) => /^https?:/i.test(u);
+// Google Maps images (street view) are fetched plainly, exactly as the thumbnail that opened the gallery fetched them:
+// `force-cache` + progressive rendering never finished on iOS for them (an endless spinner / black screen).
+const isGoogleMapsUri = (u: string) => /^https?:\/\/maps\.(googleapis|google)\.com\//i.test(u);
 const THUMB = 52;
 const THUMB_GAP = 8;
 
@@ -49,6 +54,7 @@ interface ImageGalleryModalProps {
 const ZoomablePage = React.memo(
   ({
     uri,
+    fallbackUri,
     width,
     height,
     active,
@@ -59,6 +65,8 @@ const ZoomablePage = React.memo(
     onRequestClose,
   }: {
     uri: string;
+    /** The remote original, tried when a local copy fails to draw. */
+    fallbackUri?: string;
     width: number;
     height: number;
     active: boolean;
@@ -74,8 +82,20 @@ const ZoomablePage = React.memo(
     const ty = useSharedValue(0);
     const savedTx = useSharedValue(0);
     const savedTy = useSharedValue(0);
-    const opacity = useSharedValue(0);
-    const [loading, setLoading] = useState(true);
+    // A file already on the device is shown at full opacity at once (never parked at 0 waiting for an event that may not
+    // come); only a remote image fades in. A spinner is likewise only for bytes that are really still arriving.
+    const opacity = useSharedValue(isRemoteUri(uri) ? 0 : 1);
+    const [loading, setLoading] = useState(() => isRemoteUri(uri));
+    // The source actually drawn: `uri`, or - if a local copy fails to decode - the remote original.
+    const [src, setSrc] = useState(uri);
+    const [broken, setBroken] = useState(false);
+
+    useEffect(() => {
+      setSrc(uri);
+      setBroken(false);
+      setLoading(isRemoteUri(uri));
+      opacity.value = isRemoteUri(uri) ? 0 : 1;
+    }, [uri]);
 
     useEffect(() => {
       if (!active) {
@@ -175,25 +195,40 @@ const ZoomablePage = React.memo(
         <Animated.View
           style={{ width, height, justifyContent: 'center', alignItems: 'center' }}
         >
-          {uri ? (
+          {broken ? (
+            <View style={{ alignItems: 'center' }}>
+              <Icon name="image-outline" size={48} color="#555" />
+              <Text style={{ color: '#777', fontSize: 12, marginTop: 8 }}>Could not load this photo</Text>
+            </View>
+          ) : src ? (
             <>
               <Animated.Image
-                source={{ uri, cache: 'force-cache' }}
+                source={isGoogleMapsUri(src) ? { uri: src } : { uri: src, cache: 'force-cache' }}
                 style={[{ width, height }, imgStyle]}
                 resizeMode="contain"
-                progressiveRenderingEnabled
+                progressiveRenderingEnabled={!isGoogleMapsUri(src)}
                 fadeDuration={0}
                 onLoadStart={() => {
-                  setLoading(true);
-                  opacity.value = 0;
+                  if (isRemoteUri(src)) {
+                    setLoading(true);
+                    opacity.value = 0;
+                  }
                 }}
                 onLoadEnd={() => {
                   setLoading(false);
-                  opacity.value = withTiming(1, { duration: 180 });
+                  opacity.value = isRemoteUri(src) ? withTiming(1, { duration: 180 }) : 1;
                 }}
                 onError={() => {
+                  // A local copy that will not draw (corrupt / never an image): drop it and use the remote original.
+                  if (!isRemoteUri(src) && fallbackUri && isRemoteUri(fallbackUri)) {
+                    void forgetWarmedUri(fallbackUri);
+                    setSrc(fallbackUri);
+                    setLoading(true);
+                    opacity.value = 0;
+                    return;
+                  }
                   setLoading(false);
-                  opacity.value = withTiming(1);
+                  setBroken(true);
                 }}
               />
               {loading && (
@@ -390,6 +425,7 @@ export const ImageGalleryModal = ({
               renderItem={({ item, index: i }) => (
                 <ZoomablePage
                   uri={srcOf(item.uri)}
+                  fallbackUri={item.uri}
                   width={SW}
                   height={mediaH}
                   active={i === index}

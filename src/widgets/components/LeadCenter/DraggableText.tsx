@@ -22,6 +22,9 @@ interface DraggableTextProps {
   handleMoveText: (id: string, newPx: number, newPy: number) => void;
   zoomScale?: number;
   dragEnabled?: boolean;
+  /** A second finger landed on the note: hand the live touches to the canvas's pinch-zoom. */
+  onTwoFingerTouches?: (touches: any[]) => void;
+  onTwoFingerEnd?: () => void;
 }
 
 export const DraggableText = ({
@@ -35,6 +38,8 @@ export const DraggableText = ({
   handleMoveText,
   zoomScale = 1,
   dragEnabled = true,
+  onTwoFingerTouches,
+  onTwoFingerEnd,
 }: DraggableTextProps) => {
   const startPx = useRef(text.px);
   const startPy = useRef(text.py);
@@ -61,6 +66,11 @@ export const DraggableText = ({
 
   const isSelected = text.id === selectedTextId;
 
+  const onTwoFingerTouchesRef = useRef(onTwoFingerTouches);
+  const onTwoFingerEndRef = useRef(onTwoFingerEnd);
+  onTwoFingerTouchesRef.current = onTwoFingerTouches;
+  onTwoFingerEndRef.current = onTwoFingerEnd;
+
   const textPanResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => textStateRef.current.dragEnabled,
@@ -70,6 +80,12 @@ export const DraggableText = ({
         startPy.current = textStateRef.current.text.py;
       },
       onPanResponderMove: (evt, gestureState) => {
+        // A second finger means a pinch-zoom / two-finger pan, not a drag: hold the note where it is.
+        if (evt.nativeEvent.touches.length > 1) {
+          onTwoFingerTouchesRef.current?.(evt.nativeEvent.touches);
+          return;
+        }
+        onTwoFingerEndRef.current?.();
         const { text: currentText, canvasLayout: currentLayout, zoomScale: currentScale, layout: box } =
           textStateRef.current;
         const scale = currentScale > 0 ? currentScale : 1;
@@ -79,7 +95,9 @@ export const DraggableText = ({
         const nextPy = Math.min(startPy.current + deltaPy, maxFraction(currentLayout.height, box?.height));
         handleMoveText(currentText.id, nextPx, nextPy);
       },
+      onPanResponderTerminate: () => onTwoFingerEndRef.current?.(),
       onPanResponderRelease: (evt, gestureState) => {
+        onTwoFingerEndRef.current?.();
         const distance = Math.sqrt(gestureState.dx * gestureState.dx + gestureState.dy * gestureState.dy);
         if (distance < 8) {
           setSelectedTextId(textStateRef.current.text.id);

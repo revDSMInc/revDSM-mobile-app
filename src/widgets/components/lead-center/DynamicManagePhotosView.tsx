@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../../../services/api/leads';
+import { FlashMessage } from '../../../config/message';
 import {
   findOriginalPhoto,
   indexAnnotationDocs,
@@ -45,6 +46,9 @@ import { indexPendingBySlot, pendingStatusFor, photoTileState } from '../../../u
 import { offlinePhotoDeleteQueue } from '../../../services/offlinePhotoDeleteQueue';
 import { useIsOnline } from '../../../hooks/useIsOnline';
 import { uploadQueueManager } from '../../../utils/uploadQueue';
+import { usePendingAnnotations } from '../../../hooks/usePendingAnnotations';
+import { annotationIdentity, type PendingAnnotationJobView } from '../../../utils/pending-annotations';
+import { AnnotationOverlayPreview } from './AnnotationOverlayPreview';
 
 const GREEN = '#4CBB17';
 const RED = '#EF4444';
@@ -218,19 +222,74 @@ export function DynamicManagePhotosView({
     [leafs, capture],
   );
 
+  // Annotated photos saved on the device but not on the server yet - shown the moment the rep taps Save.
+  const pendingAnnotations = usePendingAnnotations(lead?._id || lead?.id);
+  // Handover without a gap: the last job's marks per card, kept so they can sit over the image until it has painted.
+  const lastJobRef = useRef(new Map<string, PendingAnnotationJobView>());
+  const [annotLoaded, setAnnotLoaded] = useState<Record<string, true>>({});
+  const annotationProductKey = (selectedProduct?.name as string) || (selectedProduct?.id as string) || '';
+
   const annotated = useMemo(
     () =>
-      leafs.flatMap((cat) =>
-        (capture.getAnnotatedFor?.(cat.label as string) || []).map(({ subcategory, photo }, i) => ({
-          cat,
-          label: subcategory.replace(/\(Annotated\)/i, '').trim() || subcategory,
-          storageName: subcategory,
-          slot: { name: subcategory, storageName: subcategory } as InspectionSlot,
-          key: `annotated-${cat.id}-${photo.s3url || photo._id || i}`,
-          photo,
-        })),
-      ),
-    [leafs, capture],
+      leafs.flatMap((cat) => {
+        const server: PhotoCard[] = (capture.getAnnotatedFor?.(cat.label as string) || []).map(
+          ({ subcategory, photo }, i) => ({
+            cat,
+            label: subcategory.replace(/\(Annotated\)/i, '').trim() || subcategory,
+            storageName: subcategory,
+            slot: { name: subcategory, storageName: subcategory } as InspectionSlot,
+            // ⚠️ KEY = identity (category + base photo), never the s3url: it must be the SAME across pending -> queued ->
+            // uploaded -> server copy, or the card remounts and its image blanks for a moment at the handover.
+            key: `annotated-${cat.id}-${(subcategory.replace(/\(Annotated\)/i, '').trim() || subcategory).toLowerCase()}`,
+            photo,
+          }),
+        );
+        const scoped = norm(annotationProductKey ? `${annotationProductKey} \u2014 ${cat.label}` : (cat.label as string));
+        const mine = pendingAnnotations.filter((pa) => norm(pa.categoryName) === scoped);
+        if (!mine.length) return server;
+
+        // Re-edit: the existing card shows the new image straight away (local file, or the marks over the original).
+        const cards = server.map((card) => {
+          const pa = mine.find((x) => x.mode === 'reedit' && x.existingAnnotationId && x.existingAnnotationId === card.photo._id);
+          if (!pa) return card;
+          return {
+            ...card,
+            photo: {
+              ...card.photo,
+              secureUrl: pa.previewUri || card.photo.secureUrl,
+              isPending: true,
+              _annotPending: pa,
+            } as CapturedPhoto,
+          };
+        });
+        // New: its own card, unless the server copy has already landed for that photo (the queue refetches the lead
+        // BEFORE it drops the item, so for a moment both exist).
+        mine
+          .filter((pa) => pa.mode === 'new')
+          .forEach((pa) => {
+            const base = pa.baseSubcategory.toLowerCase();
+            if (cards.some((c) => c.label.toLowerCase() === base && !(c.photo as any)._annotPending)) return;
+            cards.push({
+              cat,
+              label: pa.baseSubcategory,
+              storageName: `${pa.baseSubcategory} (Annotated)`,
+              slot: { name: pa.baseSubcategory, storageName: `${pa.baseSubcategory} (Annotated)` } as InspectionSlot,
+              key: `annotated-${cat.id}-${pa.baseSubcategory.toLowerCase()}`,
+              photo: {
+                secureUrl: pa.previewUri,
+                category: pa.categoryName,
+                subcategory: `${pa.baseSubcategory} (Annotated)`,
+                timestampTaken: pa.timestamp,
+                isPending: true,
+                isOptimistic: true,
+                pendingId: pa.queueId,
+                _annotPending: pa,
+              } as CapturedPhoto,
+            });
+          });
+        return cards;
+      }),
+    [leafs, capture, pendingAnnotations, annotationProductKey],
   );
 
   const annotatedBaseKeys = useMemo(
@@ -352,7 +411,18 @@ export function DynamicManagePhotosView({
   const isAnnotatedCard = (card: PhotoCard) => card.key.startsWith('annotated-');
 
   const openAnnotationForSelection = () => {
-    const cards = [...selectedMap.values()].filter((c) => c.photo.secureUrl);
+    const withUrl = [...selectedMap.values()].filter((c) => c.photo.secureUrl);
+    // Annotating needs the photo's bytes. Offline, a photo that was never downloaded exists only as a signed url and
+    // would open a blank editor - leave it out and say why (saving itself works offline, see annotationSaveService).
+    const cards = withUrl.filter(
+      (c) => online || !/^https?:/i.test(c.photo.secureUrl as string) || !!warmedUris[c.photo.secureUrl as string],
+    );
+    if (cards.length < withUrl.length) {
+      FlashMessage.warning(
+        'Photo not on this device',
+        'Connect once to open that photo, then you can annotate it offline.',
+      );
+    }
     if (!cards.length) return;
     const allPhotos: any[] = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
     const selectedPhotos = cards.map((c) => {
@@ -440,6 +510,12 @@ export function DynamicManagePhotosView({
     const unavailableOffline = tileState === 'unavailable' && !!uri;
     const busy = !!capture.deletingKeys[card.key] || !!capture.movingKeys?.[card.key];
     const isPending = (card.photo as any)?.isPending === true;
+    const annot = (card.photo as any)?._annotPending;
+    if (annot?.job) lastJobRef.current.set(card.key, annot.job);
+    // Once the flattened image / server copy is what the card shows, the marks drawn over the original stay on top
+    // ONLY until that image has painted, so the swap is invisible.
+    const holdJob =
+      !annot?.job && isAnnotatedCard(card) && !annotLoaded[card.key] ? lastJobRef.current.get(card.key) : undefined;
     const isSelected = selectedMap.has(card.key);
     // The base photo is locked once annotated (one annotated photo per base photo); the annotated copy itself is
     // what gets re-selected to edit.
@@ -485,7 +561,14 @@ export function DynamicManagePhotosView({
                 exists only as a pre-signed S3 url; if this screen was never opened with a
                 connection its bytes were never warmed, so offline there is nothing to draw and
                 no way to fetch it. That tile used to spin forever. It now says so. */}
-            {tileState === 'ready' || tileState === 'loading' ? (
+            {annot?.job ? (
+              // Saved but not flattened yet: the marks drawn over the original, so the card never waits.
+              <AnnotationOverlayPreview
+                job={annot.job}
+                width={cardWidth - 3}
+                height={(cardWidth - 3) / 1.6}
+              />
+            ) : tileState === 'ready' || tileState === 'loading' ? (
               <LoadingImage
                 uri={(tileState === 'ready' ? localUri : undefined) || uri!}
                 style={{ width: '100%', height: '100%' }}
@@ -494,6 +577,9 @@ export function DynamicManagePhotosView({
                 unavailableLabel={online ? 'Tap to retry' : 'Needs a connection'}
                 onRetry={() => {
                   void forgetWarmedUri(uri).then(() => refetch?.());
+                }}
+                onLoaded={() => {
+                  if (isAnnotatedCard(card)) setAnnotLoaded((p) => (p[card.key] ? p : { ...p, [card.key]: true }));
                 }}
               />
             ) : uri ? (
@@ -513,6 +599,12 @@ export function DynamicManagePhotosView({
               </View>
             ) : (
               <Icon name="image-outline" size={24} color="#C4CDD5" />
+            )}
+
+            {holdJob && (
+              <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} pointerEvents="none">
+                <AnnotationOverlayPreview job={holdJob} width={cardWidth - 3} height={(cardWidth - 3) / 1.6} />
+              </View>
             )}
 
             {/* Selection bubble / already-annotated badge */}
@@ -548,7 +640,15 @@ export function DynamicManagePhotosView({
           {/* A queued photo shows its state instead of actions. */}
           {!selectMode && isPending && (() => {
             const isInFlight = (card.photo as any)?.pendingId === activeUploadId;
-            const st = pendingStatusFor(isInFlight, online);
+            // A saved-but-not-yet-flattened annotation has no queue item (nothing to cancel); a re-edit's card is the
+            // EXISTING server photo, so its trash must never cancel / delete anything.
+            const noDelete = !!annot && (annot.mode === 'reedit' || !annot.queueId || !!annot.ghost);
+            const st =
+              annot?.ghost
+                ? { status: 'uploaded', label: 'Uploaded', icon: 'check-circle', color: GREEN, spinner: false }
+                : annot && !annot.queueId
+                ? { status: 'saving', label: 'Saving\u2026', icon: 'content-save', color: '#F59E0B', spinner: true }
+                : pendingStatusFor(isInFlight, online);
             return (
               <View
                 style={{
@@ -573,7 +673,7 @@ export function DynamicManagePhotosView({
                     cancels the upload rather than calling the server, because nothing has been
                     sent yet (see `resolveDeleteTarget`). Hidden only while the bytes are actually
                     in flight, where cancelling would lose the s3url needed to clean up after. */}
-                {!isInFlight && (
+                {!isInFlight && !noDelete && (
                   <TouchableOpacity
                     disabled={busy}
                     onPress={() =>

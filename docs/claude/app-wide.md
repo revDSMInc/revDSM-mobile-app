@@ -1500,3 +1500,20 @@ never reached the request interceptor (an axios config error) is a no-op rather 
 ⚠️ **`beginRequest` returns `null` for the probe's own URL**, so the probe is never measured as
 traffic by the thing it feeds. The probe uses bare `fetch`, not this instance, so it is only
 reachable here if someone routes it through axios later — the guard is cheap insurance.
+
+
+## `AnnotationRenderHost` - an app-root hidden WebView
+
+`widgets/common/AnnotationRenderHost.tsx`, mounted once in `App.tsx` beside `FlashMessage`. Zero-size and invisible, it is the canvas `services/annotationRenderer.ts` draws on, so an annotated photo can be flattened after the annotation screen has closed (Save no longer blocks). ⚠️ Keep it mounted at the ROOT - a WebView inside the screen dies with the screen and takes in-flight renders with it. Its page is `utils/annotation-render-html.ts`. Details: `lead-center.md` § "Annotation Save".
+
+
+## Photos already on the device must not show a spinner when a screen is reopened
+
+Report (Manage Photos): *"every time I come on this screen all the images show loading, even ones I already viewed - only a NEW or newly annotated image should show it."* Two causes, both fixed:
+- `widgets/common/LoadingImage.tsx` started with `loading = true` for EVERY image and waited for `onLoadEnd`, so a photo that was already a `file://` on the device flashed a spinner on each mount. It now only spins for a REMOTE uri that has not loaded yet this session (`needsSpinner`: not a local file and not in `loadedKeys`, keyed by the url WITHOUT its query so a re-signed url does not look new). ⚠️ Do not put the spinner back for local files - it is meant for bytes that are really still arriving.
+- `utils/imageFileCache.ts`: `warmedPaths` is in memory only, so on a cold start every saved photo had no known local file and drew from its remote url (spinner + re-download) until an async `exists` came back. Cache files are now ALSO recorded in MMKV (`imgcache:<path>`, via `rememberWarmed`), and `getWarmedLocalUri` answers from that index synchronously, so the first render already points at the file. The index is only a hint: `verifyIndexedUri` confirms it on disk once per session, and `hooks/useWarmedImageUris.ts` falls back to the url (and re-warms) for any entry the OS purged. ⚠️ Anything that deletes a cache file must go through `forgetWarmedPath` (it also clears the index) or a stale index would point at a missing file. The `imgcache:` keys are session-scoped, so a logout only loses the cold seed, never a photo.
+- Not verified on device: kill + relaunch, open Manage Photos - saved photos paint with no spinner; a genuinely new photo still spins until it arrives.
+
+- **Follow-up - `LoadingImage` holds the previous image across a uri change.** When `uri` changes after a first paint (a pending photo handing over to its server copy, a re-edit's new bytes), the old image stays under the new one until the new one has painted, and `onLoaded` fires when it has. ⚠️ Do not replace that with a plain `<Image source={{uri}}>` swap - the tile blanks while the new file decodes. The spinner is suppressed while a previous image is being held.
+
+- **Follow-up - `getLocalCachePath` keeps the query for Google Maps urls** (`utils/imageFileCache.ts`, `isQueryKeyedUrl`). The rule "drop the signature so a re-signed url still hits the cache" is right for S3 but wrong for `maps.googleapis.com` / `maps.google.com`, where location / size / heading live in the query: all leads' street views shared one file. ⚠️ Any other host whose query is the identity needs adding there. See `notifications-chat.md` (street-view header picture).

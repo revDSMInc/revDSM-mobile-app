@@ -8,7 +8,7 @@ import { AppState } from 'react-native';
 import { isOnline, onReconnect } from '../services/connectivity';
 import { getSessionOwner, registerSessionResetHook } from '../services/sessionScope';
 import { isOwnedBy } from './session-scope';
-import { adoptLocalFileAsCached } from './imageFileCache';
+import { adoptLocalFileAsCached, forgetWarmedUri } from './imageFileCache';
 import { resolveS3Url } from './s3-utils';
 import { isCacheFile } from './image-cache-policy';
 import {
@@ -31,6 +31,24 @@ export interface RecentlyCompletedUpload {
   completedAt: number;
 }
 
+/**
+ * An annotated photo riding the queue (services/annotationSaveService.ts). `new` = PUT a fresh "(Annotated)" photo and
+ * link its marks to the original; `reedit` = PATCH the existing annotated copy in place (one annotated photo per base).
+ */
+export interface UploadQueueAnnotation {
+  mode: 'new' | 'reedit';
+  /** The mobile annotation JSON (utils/annotation-restore.ts) stored on the server beside the image. */
+  annotationData: any;
+  /** `_id` of the clean ORIGINAL photo. */
+  salesPhotoId?: string | null;
+  /** reedit: `_id` / s3url / bucket of the annotated copy being overwritten. */
+  existingAnnotationId?: string | null;
+  existingS3url?: string | null;
+  existingBucket?: string | null;
+  /** reedit: remote urls whose cached bytes are stale once the image is overwritten. */
+  staleUris?: string[];
+}
+
 export interface UploadQueueItem {
   id: string;
   leadId: string;
@@ -50,6 +68,7 @@ export interface UploadQueueItem {
    */
   parkedAt?: string;
   lastError?: string;
+  annotation?: UploadQueueAnnotation;
 }
 
 class UploadQueueManager {
@@ -401,6 +420,11 @@ class UploadQueueManager {
       throw err;
     }
 
+    if (item.annotation?.mode === 'reedit' && item.annotation.existingAnnotationId) {
+      await this.uploadAnnotationEdit(item, isLocalFile);
+      return;
+    }
+
     const formData = new FormData();
     formData.append('files', {
       uri: isLocalFile ? this.toFileUri(item.uri) : item.uri,
@@ -417,6 +441,17 @@ class UploadQueueManager {
       },
     ];
     formData.append('images', JSON.stringify(imageInfo));
+    if (item.annotation) {
+      // Links the marks to the clean original so the copy can be re-edited later (the field web sends too).
+      formData.append(
+        'annotations',
+        JSON.stringify([
+          item.annotation.salesPhotoId
+            ? { salesPhotoId: item.annotation.salesPhotoId, annotationData: item.annotation.annotationData }
+            : null,
+        ]),
+      );
+    }
     formData.append('category', 'salesPhotos');
 
     /**
@@ -457,6 +492,7 @@ class UploadQueueManager {
       const uploaded = this.matchUploadedPhoto(response, item, existingUrls);
       const uploadedUrl = uploaded?.secureUrl || resolveS3Url(uploaded?.s3url);
       if (uploadedUrl) await adoptLocalFileAsCached(item.uri, uploadedUrl);
+      if (item.annotation && uploaded?.s3url) await this.adoptUnderEveryUrlForm(item.uri, uploaded.s3url, uploaded.bucketName);
     } catch (adoptErr) {
       console.warn('[UploadQueue] Could not adopt local file into image cache:', adoptErr);
     }
@@ -495,6 +531,87 @@ class UploadQueueManager {
       }
     } catch (cleanupError) {
       console.warn('[UploadQueue] Failed to delete temporary cache file:', cleanupError);
+    }
+  }
+
+  /**
+   * Re-edit of an annotated photo: PATCH overwrites the existing annotated image in place - no new row, so no
+   * idempotency key is needed (a replay writes the same bytes again).
+   *
+   * ⚠️ Same s3url + same file name = same local cache path, so the old bytes would keep showing: the stale urls are
+   * forgotten and the signed-url / lead queries refreshed.
+   */
+  private async uploadAnnotationEdit(item: UploadQueueItem, isLocalFile: boolean): Promise<void> {
+    const ann = item.annotation!;
+    const formData = new FormData();
+    formData.append('file', {
+      uri: isLocalFile ? this.toFileUri(item.uri) : item.uri,
+      type: item.type,
+      name: item.name,
+    } as any);
+    formData.append('annotationData', JSON.stringify(ann.annotationData));
+
+    await LeadService.upsertAnnotation(item.leadId, ann.existingAnnotationId as string, formData);
+
+    try {
+      await Promise.all((ann.staleUris || []).map((u) => forgetWarmedUri(u)));
+      // The cache path ignores the signature, so the NEW bytes go straight in under the same key: the card then paints
+      // the edited photo from disk the instant the lead refreshes, with no download and no loader.
+      const sameKeyUrl = (ann.staleUris || [])[0];
+      if (sameKeyUrl) await adoptLocalFileAsCached(item.uri, sameKeyUrl);
+      if (ann.existingS3url) {
+        await this.adoptUnderEveryUrlForm(item.uri, ann.existingS3url, ann.existingBucket || undefined);
+      }
+    } catch {}
+    try {
+      queryClient.invalidateQueries({ queryKey: ['secureUrls'] });
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['leadAnnotations', item.leadId] });
+      await queryClient.refetchQueries({ queryKey: ['lead', item.leadId] });
+    } catch (qcErr) {
+      console.warn('[UploadQueue] Failed to refresh queries after an annotation edit:', qcErr);
+    }
+
+    if (item.userId) {
+      logEvent('update', {
+        user_id: item.userId,
+        module_type: 'annotated_photos',
+        created_by: item.userId,
+        meta: {
+          leadId: item.leadId,
+          category: item.categoryName,
+          subcategory: item.subcategory,
+          occurredAt: item.timestamp,
+          action: 'annotated_photo_updated',
+          image_url: ann.existingS3url || '',
+          imageData: {
+            s3url: ann.existingS3url || '',
+            bucketName: ann.existingBucket || '',
+            category: item.categoryName,
+            subcategory: item.subcategory,
+            timestampTaken: item.timestamp,
+          },
+        },
+      });
+    }
+  }
+
+  /**
+   * ⚠️ The card that takes over from a just-uploaded annotation first paints from the RAW s3 url
+   * (`useDynamicInspectionCapture` uses `resolveS3Url` "so the tile never sits empty") and then from the SIGNED one. The
+   * image cache is keyed by url (query dropped), and those two forms can differ, so the local JPEG is stored under BOTH
+   * before the queue item - and with it the local file - is dropped. Any form left out is a download, i.e. a flicker.
+   */
+  private async adoptUnderEveryUrlForm(localUri: string, s3url: string, bucketName?: string): Promise<void> {
+    try {
+      await adoptLocalFileAsCached(localUri, resolveS3Url(s3url));
+      const res = await LeadService.getSecureUrls([{ bucketName: bucketName || '', filePath: s3url }]);
+      const data = res?.data?.data || res?.data || [];
+      const entry = Array.isArray(data) ? data.find((d: any) => d?.filePath === s3url) || data[0] : null;
+      const signed = entry?.secureUrl || entry?.url;
+      if (signed) await adoptLocalFileAsCached(localUri, signed);
+    } catch (e) {
+      console.warn('[UploadQueue] Could not warm the cache under every url form:', e);
     }
   }
 

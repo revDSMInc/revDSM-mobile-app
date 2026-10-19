@@ -10,12 +10,14 @@ import {
   Dimensions,
   ActivityIndicator,
   StyleSheet,
+  Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import MCIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useQuery } from '@tanstack/react-query';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useAuth } from '../../../hooks/useAuth';
+import { useBottomInset } from '../../../hooks/useBottomInset';
 import { useSecureUrls } from '../../../hooks/useSecureUrls';
 import { LeadService } from '../../../services/api/leads';
 import { ENV } from '../../../config/env';
@@ -93,6 +95,8 @@ export const LeadImagePickerModal = ({
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const screenWidth = Dimensions.get('window').width;
+  // A Modal's own safe-area insets read 0 / stale, and the Android 3-button / gesture bar then sat over the Send bar.
+  const bottomInset = Math.max(useBottomInset(), Platform.OS === 'android' ? 48 : 0);
 
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState(0);
@@ -124,7 +128,11 @@ export const LeadImagePickerModal = ({
   const leadPhotos = useMemo(() => {
     const photos =
       (initialSalesPhotos && initialSalesPhotos.length ? initialSalesPhotos : lead?.salesPhotos) || [];
-    return photos.filter((p: any) => p?.s3url && isSelectablePhotoCategory(p.category));
+    // Originals only: an annotated copy ("<slot> (Annotated)") is a derived image and must not be offered here. Tabs, counts
+    // and selection all derive from this list, so one filter covers them.
+    return photos.filter(
+      (p: any) => p?.s3url && isSelectablePhotoCategory(p.category) && !/\(annotated\)/i.test(String(p.subcategory || '')),
+    );
   }, [initialSalesPhotos, lead?.salesPhotos]);
 
   const { data: secureMap, isLoading: urlsLoading } = useSecureUrls(leadPhotos);
@@ -273,7 +281,7 @@ export const LeadImagePickerModal = ({
           activeOpacity={1}
           onPress={(e) => e.stopPropagation()}
           className="rounded-t-3xl overflow-hidden"
-          style={{ backgroundColor: colors.card, maxHeight: '78%' }}
+          style={{ backgroundColor: colors.card, maxHeight: '78%', paddingBottom: bottomInset }}
         >
           {/* Grab handle */}
           <View className="items-center pt-2.5 pb-1">
