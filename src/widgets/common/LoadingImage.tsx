@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -23,7 +23,16 @@ interface LoadingImageProps {
   spinnerSize?: 'small' | 'large';
   unavailableLabel?: string;
   onRetry?: () => void;
+  /** Fired once the CURRENT uri has painted (the swap from the previous image is then complete). */
+  onLoaded?: () => void;
 }
+
+// A photo that is already a file on the device, or that has loaded once this session, must not flash a spinner every
+// time its screen is reopened - the spinner is for bytes that really are still arriving.
+const isLocalUri = (u: string) => !/^https?:/i.test(u);
+const stableKey = (u: string) => u.split('?')[0];
+const loadedKeys = new Set<string>();
+const needsSpinner = (u: string) => !isLocalUri(u) && !loadedKeys.has(stableKey(u));
 
 export const LoadingImage: React.FC<LoadingImageProps> = ({
   uri,
@@ -34,13 +43,26 @@ export const LoadingImage: React.FC<LoadingImageProps> = ({
   spinnerSize = 'small',
   unavailableLabel = 'Tap to retry',
   onRetry,
+  onLoaded,
 }) => {
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => needsSpinner(uri));
   const [failed, setFailed] = useState(false);
 
+  // ⚠️ When the uri changes (a pending photo handing over to its server copy, a re-edit's new bytes), the PREVIOUS image
+  // stays on screen underneath until the new one has painted - otherwise the tile blanks for a moment while the new file
+  // is decoded. `paintedRef` = the current uri has loaded; `lastRef` = the uri that was showing before.
+  const [prevUri, setPrevUri] = useState<string | null>(null);
+  const lastRef = useRef(uri);
+  const paintedRef = useRef(false);
+
   useEffect(() => {
+    if (lastRef.current !== uri) {
+      if (paintedRef.current) setPrevUri(lastRef.current);
+      lastRef.current = uri;
+      paintedRef.current = false;
+    }
     setFailed(false);
-    setLoading(true);
+    setLoading(needsSpinner(uri) && !paintedRef.current);
   }, [uri]);
 
   if (failed) {
@@ -67,12 +89,26 @@ export const LoadingImage: React.FC<LoadingImageProps> = ({
 
   return (
     <View style={containerStyle ?? { width: '100%', height: '100%' }}>
+      {prevUri && prevUri !== uri && (
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <Image source={{ uri: prevUri }} style={style} resizeMode={resizeMode} />
+        </View>
+      )}
       <Image
         source={{ uri }}
         style={style}
         resizeMode={resizeMode}
-        onLoadStart={() => setLoading(true)}
-        onLoadEnd={() => setLoading(false)}
+        onLoadStart={() => {
+          if (needsSpinner(uri) && !prevUri) setLoading(true);
+        }}
+        onLoadEnd={() => {
+          if (loadedKeys.size > 800) loadedKeys.clear();
+          loadedKeys.add(stableKey(uri));
+          paintedRef.current = true;
+          setLoading(false);
+          setPrevUri(null);
+          onLoaded?.();
+        }}
         onError={() => {
           setLoading(false);
           setFailed(true);

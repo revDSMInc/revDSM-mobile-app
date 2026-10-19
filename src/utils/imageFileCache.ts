@@ -1,5 +1,6 @@
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import { isOnline } from '../services/connectivity';
+import { storage } from './storage';
 import {
   DEFAULT_CACHE_BUDGET_BYTES,
   formatBytes,
@@ -20,10 +21,15 @@ export const hashString = (s: string): string => {
 export const isRemoteImageUrl = (url?: string | null): url is string =>
   typeof url === 'string' && /^https?:\/\//i.test(url);
 
+// ⚠️ Google Maps image urls (street view / static map) carry EVERYTHING that identifies the picture - location, size,
+// heading - in the QUERY. Dropping it, as for a signed S3 url, made every lead's street view share one cache file.
+const isQueryKeyedUrl = (url: string): boolean => /^https?:\/\/maps\.(googleapis|google)\.com\//i.test(url);
+
 export const getLocalCachePath = (url: string) => {
   if (!url) return null;
-  const cleanUrl = url.split('?')[0]; // drop the signature so re-signs still hit cache
-  const filename = cleanUrl.split('/').pop();
+  // drop the signature so re-signs still hit cache - except where the query IS the identity (see above)
+  const cleanUrl = isQueryKeyedUrl(url) ? url : url.split('?')[0];
+  const filename = url.split('?')[0].split('/').pop();
   if (!filename) return null;
   const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
   return `${ReactNativeBlobUtil.fs.dirs.CacheDir}/revrender_${hashString(cleanUrl)}_${safeName}`;
@@ -94,11 +100,59 @@ const warmedPaths = new Map<string, string>();
 export const getWarmedLocalUri = (url?: string | null): string | null => {
   if (!isRemoteImageUrl(url)) return null;
   const path = getLocalCachePath(url);
-  return (path && warmedPaths.get(path)) || null;
+  if (!path) return null;
+  const known = warmedPaths.get(path);
+  if (known) return known;
+  try {
+    if (storage.getString(INDEX_PREFIX + path)) {
+      const localUri = `file://${path}`;
+      warmedPaths.set(path, localUri);
+      return localUri;
+    }
+  } catch {
+  }
+  return null;
+};
+
+// ⚠️ Which cache files exist is also kept in MMKV so the FIRST render after an app launch can already point at the file
+// on disk. `warmedPaths` alone is empty on a cold start, so every already-saved photo drew from its remote url (a
+// spinner and a re-download) until an async `exists` check came back. The index is a hint, verified once per session
+// by `verifyIndexedUri`; it is session-scoped (cleared on logout), which only costs that cold seed.
+const INDEX_PREFIX = 'imgcache:';
+const verifiedPaths = new Set<string>();
+
+const rememberWarmed = (path: string, localUri: string) => {
+  warmedPaths.set(path, localUri);
+  try {
+    storage.set(INDEX_PREFIX + path, '1');
+  } catch {
+  }
 };
 
 const forgetWarmedPath = (path: string) => {
   warmedPaths.delete(path);
+  verifiedPaths.delete(path);
+  try {
+    storage.remove(INDEX_PREFIX + path);
+  } catch {
+  }
+};
+
+/** Confirms (once per session) that an INDEXED cache file is really on disk; forgets it when it is not. */
+export const verifyIndexedUri = async (url?: string | null): Promise<boolean> => {
+  if (!isRemoteImageUrl(url)) return true;
+  const path = getLocalCachePath(url);
+  if (!path) return false;
+  if (verifiedPaths.has(path)) return true;
+  try {
+    if (await ReactNativeBlobUtil.fs.exists(path)) {
+      verifiedPaths.add(path);
+      return true;
+    }
+  } catch {
+  }
+  forgetWarmedPath(path);
+  return false;
 };
 
 export const forgetWarmedUri = async (url?: string | null): Promise<void> => {
@@ -120,7 +174,8 @@ export const warmToLocalCache = async (url?: string | null): Promise<string | nu
   const localUri = `file://${path}`;
   try {
     if (await ReactNativeBlobUtil.fs.exists(path)) {
-      warmedPaths.set(path, localUri);
+      rememberWarmed(path, localUri);
+      verifiedPaths.add(path);
       return localUri;
     }
   } catch {
@@ -132,7 +187,8 @@ export const warmToLocalCache = async (url?: string | null): Promise<string | nu
   try {
     const ok = await downloadImage(url, path);
     if (ok) {
-      warmedPaths.set(path, localUri);
+      rememberWarmed(path, localUri);
+      verifiedPaths.add(path);
       void enforceImageCacheBudget();
     }
     return ok ? localUri : null;
@@ -226,14 +282,16 @@ export const adoptLocalFileAsCached = async (
   try {
     if (!(await ReactNativeBlobUtil.fs.exists(src))) return false;
     if (await ReactNativeBlobUtil.fs.exists(path)) {
-      warmedPaths.set(path, `file://${path}`);
+      rememberWarmed(path, `file://${path}`);
+      verifiedPaths.add(path);
       return true;
     }
     const tempPath = `${path}.adopt`;
     await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => {});
     await ReactNativeBlobUtil.fs.cp(src, tempPath);
     await ReactNativeBlobUtil.fs.mv(tempPath, path);
-    warmedPaths.set(path, `file://${path}`);
+    rememberWarmed(path, `file://${path}`);
+    verifiedPaths.add(path);
     void enforceImageCacheBudget();
     return true;
   } catch {

@@ -8,6 +8,8 @@ export const SESSION_KEEP_KEYS: ReadonlySet<string> = new Set([
 
   'offline_lead_work',
   'upload_photo_queue',
+  // Annotated photos waiting to be flattened + queued (services/annotationSaveService.ts); owner-stamped.
+  'annotation_save_jobs',
 
   // Every OWNER-SCOPED queue belongs here. Each already filters by `ownerId` on replay, so
   // keeping it is safe for the next login, and clearing it DESTROYS work the rep did at a door.

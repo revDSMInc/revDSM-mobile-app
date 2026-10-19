@@ -770,6 +770,8 @@ export function SummaryFinalizeCards({
         onUpload={handleScheduleAndUpload}
         customerName={customerName}
         isEdit={isEditingAppt}
+        leadId={leadId}
+        isSale={!!isSale}
         initialDate={scheduleTime?.date}
         initialTimeWindow={scheduleTime?.timeWindow}
       />

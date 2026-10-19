@@ -30,7 +30,7 @@ export function pickLeadPreviewSource(leadDetails: any): LeadPreviewSource | nul
   return null;
 }
 
-export function useLeadPreviewUrl(leadDetails: any): string | null {
+export function useLeadPreviewUrl(leadDetails: any, options?: { warmGoogle?: boolean }): string | null {
   const source = useMemo(() => pickLeadPreviewSource(leadDetails), [leadDetails]);
 
   const directGoogle = !source?.bucketName && source?.googleUrl ? source.googleUrl : null;
@@ -48,6 +48,27 @@ export function useLeadPreviewUrl(leadDetails: any): string | null {
     return known ? { key: cacheKey, uri: known } : null;
   });
   const localUri = local && local.key === cacheKey ? local.uri : null;
+
+  // A street-view / static-map thumbnail can be kept on disk too, but ONLY where one lead's picture is wanted at once
+  // (the chat header - the list would download one per row). Its cache key includes the query (imageFileCache), so
+  // leads cannot collide. Opening the gallery then paints from disk instead of fetching the same picture a second time.
+  const [googleLocal, setGoogleLocal] = useState<{ url: string; uri: string } | null>(() => {
+    const known = options?.warmGoogle && directGoogle ? getWarmedLocalUri(directGoogle) : null;
+    return known && directGoogle ? { url: directGoogle, uri: known } : null;
+  });
+  useEffect(() => {
+    if (!options?.warmGoogle || !directGoogle) return;
+    let cancelled = false;
+    warmToLocalCache(directGoogle)
+      .then((file) => {
+        if (file && !cancelled) setGoogleLocal({ url: directGoogle, uri: file });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [directGoogle, options?.warmGoogle]);
+  const googleUri = directGoogle && googleLocal?.url === directGoogle ? googleLocal.uri : directGoogle;
 
   useEffect(() => {
     if (directGoogle || !cacheKey || !source?.bucketName || !source?.filePath) return;
@@ -91,5 +112,5 @@ export function useLeadPreviewUrl(leadDetails: any): string | null {
     };
   }, [directGoogle, cacheKey, source?.bucketName, source?.filePath]);
 
-  return directGoogle || localUri || secureUrl;
+  return googleUri || localUri || secureUrl;
 }

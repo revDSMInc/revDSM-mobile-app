@@ -1212,3 +1212,8 @@ Report: tapping the funnel on the Zone Canvasser map "did nothing" - `ZoneCanvas
 - **One filter implementation:** `utils/map-job-filters.ts` (`filterMapJobs`, `isJobOwner`, `DEFAULT_MAP_FILTERS`) was lifted out of `MapDetail/index.tsx`, which now calls it - the Map list and the Zone pins cannot drift. Behaviour is identical (incl. the hidden TAM30000-30032 demo jobs); the two debug `console.log`s were dropped. ⚠️ `SalesLeadPins.tsx` still has its own `isJobOwner` copy for the job card - not merged.
 - ⚠️ The modal renders INSIDE `ZoneCanvasserMap`'s `<Modal>` tree - a root-level sibling would be hidden behind the full-screen native modal. Applying any filter while PINS is OFF switches PINS on (otherwise "no pins" reads as "nothing matched"). The funnel is ignored while drawing a zone (as before).
 - Address search stays the search bar; the filter sheet's own location/job search only narrows the pins. Not verified on device.
+
+
+### Follow-up - annotation job sync starts at app init; `annotation_save_jobs` survives logout
+
+`hooks/useAppInitialization.ts` now also calls `startAnnotationJobSync()` right after `startPhotoQueueSync()` (resumes annotation jobs left by a killed app, re-runs on reconnect / foreground), and `utils/session-scope.ts` lists `annotation_save_jobs` in `SESSION_KEEP_KEYS`. ⚠️ Anything new that holds rep work in MMKV must be added to that list (and to `tests/offline/session-scope-keys.test.ts`) or a sign-out destroys it. See `lead-center.md` § "Annotation Save" and `offline.md`.

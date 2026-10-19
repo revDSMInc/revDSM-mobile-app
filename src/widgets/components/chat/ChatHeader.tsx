@@ -24,7 +24,7 @@ const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
 };
 
 function LeadHeaderThumbnail({ leadPreview, title }: { leadPreview: any; title?: string }) {
-  const thumbnailUrl = useLeadPreviewUrl(leadPreview);
+  const thumbnailUrl = useLeadPreviewUrl(leadPreview, { warmGoogle: true });
   const [preview, setPreview] = useState<string | null>(null);
 
   if (thumbnailUrl) {

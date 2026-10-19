@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   Image,
   Alert,
-  ActivityIndicator,
   TextInput,
   StyleSheet,
   Dimensions,
@@ -15,28 +14,18 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { WebView } from 'react-native-webview';
-import ReactNativeBlobUtil from 'react-native-blob-util';
 
-const WebViewComponent = WebView as any;
 import Geolocation from 'react-native-geolocation-service';
-import { useUploadImagesMutation } from '../../hooks/useLeadMutation';
-import {
-  IDEMPOTENCY_FIELD,
-  annotatedPhotoIdempotencyKey,
-} from '../../utils/upload-idempotency';
+import { enqueueAnnotationJobs } from '../../services/annotationSaveService';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { IMAGE_CATEGORIES } from '../../constants/lead-center';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { useWarmedImageUris } from '../../hooks/useWarmedImageUris';
-import { forgetWarmedUri, warmToLocalCache } from '../../utils/imageFileCache';
-import { LeadService } from '../../services/api/leads';
-import { queryClient } from '../../services/api/queryClient';
 import { FlashMessage } from '../../config/message';
 import { buildMobileAnnotationData, countMarks } from '../../utils/annotation-restore';
 
-import { AnnotationCanvas } from '../../widgets/components/LeadCenter/AnnotationCanvas';
+import { AnnotationCanvas, type TwoFingerZoomApi } from '../../widgets/components/LeadCenter/AnnotationCanvas';
 import { AnnotationTextToolbar } from '../../widgets/components/LeadCenter/AnnotationTextToolbar';
 import {
   MIN_SHAPE_DRAG_PX,
@@ -84,8 +73,6 @@ export default function ImageAnnotationScreen() {
   const { user } = useAuth();
   const { selectedPhotos = [], lead, onSaveSuccess, onCancel } = route.params || {};
   const openedLoggedRef = useRef(false);
-
-  const uploadImagesMutation = useUploadImagesMutation();
 
   const [activeImageIndex, setActiveImageIndex] = useState<number>(0);
   const currentPhoto = selectedPhotos[activeImageIndex];
@@ -374,8 +361,51 @@ export default function ImageAnnotationScreen() {
     []
   );
 
+  // Set once a second finger lands: that is a pinch-zoom / two-finger pan (handled by the canvas's gesture handler),
+  // so whatever the first finger had started - a stroke, a shape, a text tap - is thrown away, and nothing is
+  // committed when the fingers lift.
+  const multiTouchRef = useRef(false);
+  const twoFingerZoomRef = useRef<TwoFingerZoomApi | null>(null);
+  const abortForMultiTouch = () => {
+    multiTouchRef.current = true;
+    activeStrokeRef.current = null;
+    lastPointRef.current = null;
+    cancelScheduledStroke();
+    emitLiveStroke();
+    shapeGestureRef.current = null;
+    liveShapeRef.current = null;
+    cancelScheduledShape();
+    emitLiveShape();
+  };
+
+  // Wraps the whole photo area (the photo AND the dark margin around it). It never claims a one-finger touch, but takes
+  // over as soon as a second finger moves - from the drawing overlay or a text note if they already hold the touch -
+  // so two-finger pinch / pan zooms wherever the fingers are and in every tool, including none.
+  const zoomResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponderCapture: (evt) => evt.nativeEvent.touches.length > 1,
+      onPanResponderGrant: (evt) => twoFingerZoomRef.current?.touches(evt.nativeEvent.touches),
+      onPanResponderMove: (evt) => twoFingerZoomRef.current?.touches(evt.nativeEvent.touches),
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderRelease: () => twoFingerZoomRef.current?.release(),
+      onPanResponderTerminate: () => twoFingerZoomRef.current?.release(),
+    })
+  ).current;
+
   const panResponder = useRef(
     PanResponder.create({
+      onPanResponderStart: (evt) => {
+        if (evt.nativeEvent.touches.length > 1) {
+          abortForMultiTouch();
+          twoFingerZoomRef.current?.touches(evt.nativeEvent.touches);
+        }
+      },
+      // The system took the touch: same as a second finger, and any pinch in flight ends.
+      onPanResponderTerminate: () => {
+        abortForMultiTouch();
+        twoFingerZoomRef.current?.release();
+      },
       onStartShouldSetPanResponder: () => {
         const { activeTool } = stateRef.current;
         return activeTool === 'draw' || activeTool === 'text' || activeTool === 'shape';
@@ -385,6 +415,8 @@ export default function ImageAnnotationScreen() {
         return activeTool === 'draw' || activeTool === 'shape';
       },
       onPanResponderGrant: (evt, gestureState) => {
+        multiTouchRef.current = evt.nativeEvent.touches.length > 1;
+        if (multiTouchRef.current) return;
         const { activeTool, activeDrawTool, activeColor, activeSize, photoId, canvasLayout } = stateRef.current;
         if (activeTool === 'draw') {
           if (!photoId) return;
@@ -434,6 +466,15 @@ export default function ImageAnnotationScreen() {
         }
       },
       onPanResponderMove: (evt, gestureState) => {
+        const touches = evt.nativeEvent.touches;
+        if (touches.length > 1) {
+          if (!multiTouchRef.current) abortForMultiTouch();
+          twoFingerZoomRef.current?.touches(touches); // two fingers = pinch-zoom + pan, in every tool
+          return;
+        }
+        // Back to one finger after a pinch: end the pinch, but draw nothing until every finger has lifted.
+        twoFingerZoomRef.current?.touches(touches);
+        if (multiTouchRef.current) return;
         const { activeTool, canvasLayout, zoomScale } = stateRef.current;
         if (activeTool === 'draw' && activeStrokeRef.current) {
           const scale = zoomScale > 0 ? zoomScale : 1;
@@ -472,6 +513,11 @@ export default function ImageAnnotationScreen() {
         }
       },
       onPanResponderRelease: (evt, gestureState) => {
+        twoFingerZoomRef.current?.release();
+        if (multiTouchRef.current) {
+          multiTouchRef.current = false;
+          return;
+        }
         const { activeTool, photoId, canvasLayout } = stateRef.current;
         if (activeTool === 'draw') {
           cancelScheduledStroke();
@@ -755,21 +801,12 @@ export default function ImageAnnotationScreen() {
     setActiveTool('none');
   };
 
+  // Brief guard against a double tap while the job is written (milliseconds). There is deliberately NO loader: Save
+  // writes a job to disk and closes; flattening and uploading happen in the background (annotationSaveService).
   const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [saveProgressText, setSaveProgressText] = useState<string>('');
-  const webViewRef = useRef<any>(null);
-  
-  const [mountWebView, setMountWebView] = useState<boolean>(false);
+  const savingRef = useRef(false);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setMountWebView(true);
-    }, 600);
-    return () => clearTimeout(timer);
-  }, []);
-
-  const saveQueueRef = useRef<any[]>([]);
-  const saveResultsRef = useRef<any[]>([]);
+  // Fetched while the rep edits, so Save never waits on a GPS fix.
   const locationRef = useRef<Promise<{ latitude: number; longitude: number }> | null>(null);
 
   const requestCoords = (): Promise<{ latitude: number; longitude: number }> =>
@@ -787,30 +824,10 @@ export default function ImageAnnotationScreen() {
       );
     });
 
-  const getBase64FromUri = async (uri: string): Promise<string> => {
-    if (uri.startsWith('file://')) {
-      const cleanPath = uri.replace('file://', '');
-      const data = await ReactNativeBlobUtil.fs.readFile(cleanPath, 'base64');
-      return `data:image/jpeg;base64,${data}`;
-    }
-
-    try {
-      const cached = await warmToLocalCache(uri);
-      if (cached) {
-        const data = await ReactNativeBlobUtil.fs.readFile(cached.replace('file://', ''), 'base64');
-        return `data:image/jpeg;base64,${data}`;
-      }
-    } catch {
-    }
-
-    const res = await ReactNativeBlobUtil.config({ fileCache: true }).fetch('GET', uri, {
-      'Accept-Encoding': 'identity',
-    });
-    const path = res.path();
-    const base64Data = await ReactNativeBlobUtil.fs.readFile(path, 'base64');
-    await ReactNativeBlobUtil.fs.unlink(path);
-    return `data:image/jpeg;base64,${base64Data}`;
-  };
+  useEffect(() => {
+    locationRef.current = requestCoords();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const marksFor = (pId: string) => ({
     strokes: strokesMap[pId] || [],
@@ -823,9 +840,8 @@ export default function ImageAnnotationScreen() {
     countMarks(marksFor(pId)) !== (seededMarks.count[pId] || 0) || (historyMap[pId] || []).length > 0;
 
   const handleSaveAll = async () => {
-    setIsSaving(true);
-    saveResultsRef.current = [];
-    
+    if (savingRef.current) return;
+
     const photosToProcess = selectedPhotos.filter((photo: any) => {
       const pId = photo.id || photo.uri;
       // A re-edit is saved whenever it was touched, even if every mark was removed (that restores the clean photo).
@@ -834,261 +850,79 @@ export default function ImageAnnotationScreen() {
     });
 
     if (photosToProcess.length === 0) {
-      setIsSaving(false);
       onCancel?.();
       navigation.goBack();
       return;
     }
 
-    locationRef.current = requestCoords();
+    savingRef.current = true;
+    setIsSaving(true);
 
-    setSaveProgressText('Downloading original images...');
-
-    const base64Promises = photosToProcess.map(async (photo: any) => {
-      try {
-        const base64 = await getBase64FromUri(photo.uri);
-        return { pId: photo.id || photo.uri, base64 };
-      } catch (e) {
-        console.error('Failed to get base64 for photo:', photo.uri, e);
-        return { pId: photo.id || photo.uri, base64: null };
-      }
-    });
-
-    const base64Results = await Promise.all(base64Promises);
-    const base64Map: Record<string, string> = {};
-    base64Results.forEach(res => {
-      if (res.base64) {
-        base64Map[res.pId] = res.base64;
-      }
-    });
-
-    if (!mountWebView) {
-      setMountWebView(true);
-      await new Promise<void>(resolve => setTimeout(resolve, 300));
-    }
-
-    saveQueueRef.current = photosToProcess.map((photo: any) => ({
-      ...photo,
-      base64Data: base64Map[photo.id || photo.uri] || null
-    }));
-
-    setSaveProgressText(`Preparing image 1 of ${photosToProcess.length}...`);
-    processNextInQueue(0);
-  };
-
-  const processNextInQueue = async (idx: number) => {
-    if (idx >= saveQueueRef.current.length) {
-      uploadProcessedImages(saveResultsRef.current);
-      return;
-    }
-    
-    const photo = saveQueueRef.current[idx];
-    setSaveProgressText(`Drawing annotations for image ${idx + 1} of ${saveQueueRef.current.length}...`);
-    
     try {
-      const base64Data = photo.base64Data || await getBase64FromUri(photo.uri);
-      const pId = photo.id || photo.uri;
+      // A cached fix is near-instant; never hold the rep for a slow one.
+      const coords = await Promise.race([
+        locationRef.current || requestCoords(),
+        new Promise<{ latitude: number; longitude: number }>((resolve) =>
+          setTimeout(() => resolve({ latitude: 0, longitude: 0 }), 400),
+        ),
+      ]);
 
-      const strokes = strokesMap[pId] || [];
-      const texts = textsMap[pId] || [];
-
-      const normalizedStrokes = strokes.map(s => ({
-        isEraser: s.isEraser,
-        color: s.color,
-        width: s.width,
-        points: s.points
-      }));
-
-      // fontStyle + opacity were never sent, so Bold / Italic / Opacity set in the style panel showed on screen but
-      // were flattened to regular, fully opaque text in the saved photo.
-      const normalizedTexts = texts.map(t => ({
-        text: t.text,
-        color: t.color,
-        fontSize: t.fontSize,
-        fontStyle: t.fontStyle,
-        opacity: t.opacity,
-        px: t.px,
-        py: t.py
-      }));
-
-      const normalizedShapes = (shapesMap[pId] || []).map((sh) => ({
-        kind: sh.kind,
-        color: sh.color,
-        width: sh.width,
-        p1: sh.p1,
-        p2: sh.p2,
-      }));
-
-      const message = {
-        backgroundImageBase64: base64Data,
-        layoutWidth: canvasLayout.width,
-        layoutHeight: canvasLayout.height,
-        strokes: normalizedStrokes,
-        texts: normalizedTexts,
-        shapes: normalizedShapes,
-        imageIndex: idx
-      };
-      
-      webViewRef.current?.postMessage(JSON.stringify(message));
-    } catch (e) {
-      console.error('Rasterization failed for index:', idx, e);
-      processNextInQueue(idx + 1);
-    }
-  };
-
-  const handleWebViewMessage = async (event: any) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data);
-      if (data.status === 'success') {
-        const cleanBase64 = data.base64.replace(/^data:image\/\w+;base64,/, '');
-        const tempPath = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/annotated_${Date.now()}_${data.imageIndex}.jpg`;
-        
-        await ReactNativeBlobUtil.fs.writeFile(tempPath, cleanBase64, 'base64');
-        
-        const originalPhoto = saveQueueRef.current[data.imageIndex];
-        saveResultsRef.current.push({
-          uri: `file://${tempPath}`,
-          originalPhoto
-        });
-        
-        processNextInQueue(data.imageIndex + 1);
-      } else {
-        console.warn('WebView canvas drawing failed:', data.message);
-        processNextInQueue(data.imageIndex + 1);
-      }
-    } catch (e) {
-      console.error('WebView message handling error:', e);
-      if (saveQueueRef.current) {
-        const activeIdx = saveResultsRef.current.length;
-        processNextInQueue(activeIdx + 1);
-      }
-    }
-  };
-
-  const uploadProcessedImages = async (results: any[]) => {
-    if (results.length === 0) {
-      setIsSaving(false);
-      onCancel?.();
-      navigation.goBack();
-      return;
-    }
-
-    setSaveProgressText('Uploading annotated images...');
-
-    const coords = await (locationRef.current || requestCoords());
-    let reEditFailures = 0;
-    let reEditSaved = 0;
-    
-    for (let i = 0; i < results.length; i++) {
-      const res = results[i];
-      setSaveProgressText(`Uploading annotated image ${i + 1} of ${results.length}...`);
-      
-      const orig = res.originalPhoto;
-      const origKey = orig.id || orig.uri;
-      const annotationData = buildMobileAnnotationData(marksFor(origKey), orig.salesPhotoId);
-
-      if (orig.existingAnnotationId) {
-        // Re-edit: overwrite the existing annotated image in place (one annotated photo per base photo). No new
-        // photo row is created, so there is no duplicate to guard with an idempotency key - a retried PATCH just
-        // writes the same bytes again.
-        const patch = new FormData();
-        patch.append('file', {
-          uri: res.uri,
-          type: 'image/jpeg',
-          name: `annotated_${Date.now()}.jpg`,
-        } as any);
-        patch.append('annotationData', JSON.stringify(annotationData));
-        try {
-          await LeadService.upsertAnnotation(lead._id, orig.existingAnnotationId, patch);
-          reEditSaved += 1;
-          // Same s3url + same file name = same local cache path, so the old bytes would keep showing.
-          await Promise.all((orig.staleUris || []).map((u: string) => forgetWarmedUri(u)));
-        } catch (patchError: any) {
-          reEditFailures += 1;
-          console.error('Failed to update annotated image:', patchError?.response?.data || patchError?.message || patchError);
-        }
-        try {
-          await ReactNativeBlobUtil.fs.unlink(res.uri.replace('file://', ''));
-        } catch (cleanupError) {
-          console.warn('Failed to delete temp file:', cleanupError);
-        }
-        continue;
-      }
-
-      const annotatedSubcategory = `${orig.subcategory} (Annotated)`;
-      
-      const formData = new FormData();
-      formData.append('files', {
-        uri: res.uri,
-        type: 'image/jpeg',
-        name: `annotated_${Date.now()}.jpg`,
-      } as any);
-
-      const imageInfo = [
-        {
-          category: orig.categoryName || orig.category || '',
-          subcategory: annotatedSubcategory,
-          timestampTaken: new Date().toISOString(),
+      const jobs = photosToProcess.map((photo: SectionImage) => {
+        const pId = photo.id || photo.uri;
+        const marks = marksFor(pId);
+        const category = photo.categoryName || (photo as any).category || '';
+        const baseSub = String(photo.subcategory || '').replace(/\s*\(Annotated\)\s*$/i, '').trim();
+        const annotationData = buildMobileAnnotationData(marks, photo.salesPhotoId);
+        return {
+          leadId: lead._id,
+          // The local copy the screen already warmed, so the job needs no download.
+          originalUri: warmedUris[photo.uri] || photo.uri,
+          layoutWidth: canvasLayout.width,
+          layoutHeight: canvasLayout.height,
+          strokes: marks.strokes,
+          texts: marks.texts,
+          shapes: marks.shapes,
+          categoryName: category,
+          subcategory: `${baseSub} (Annotated)`,
           coordinates: coords,
-        },
-      ];
-
-      formData.append('images', JSON.stringify(imageInfo));
-      // Linked to the clean original so the copy can be re-edited later (same field the web app sends).
-      formData.append(
-        'annotations',
-        JSON.stringify([
-          orig.salesPhotoId ? { salesPhotoId: orig.salesPhotoId, annotationData } : null,
-        ]),
-      );
-      formData.append('category', 'salesPhotos');
-
-      /**
-       * IMPORTANT: stops a timed-out upload being stored twice. Keyed on the rendered temp
-       * file, which is minted once per annotation - so a retransmit of THIS save is collapsed,
-       * while re-annotating the same source photo later is correctly a new upload.
-       */
-      const idempotencyKey = annotatedPhotoIdempotencyKey({
-        leadId: lead._id,
-        renderUri: res.uri,
+          annotation: photo.existingAnnotationId
+            ? {
+                mode: 'reedit' as const,
+                annotationData,
+                salesPhotoId: photo.salesPhotoId,
+                existingAnnotationId: photo.existingAnnotationId,
+                existingS3url: photo.s3url,
+                staleUris: photo.staleUris || [],
+              }
+            : {
+                mode: 'new' as const,
+                annotationData,
+                salesPhotoId: photo.salesPhotoId,
+              },
+        };
       });
-      if (idempotencyKey) formData.append(IDEMPOTENCY_FIELD, idempotencyKey);
 
-      try {
-        await uploadImagesMutation.mutateAsync({ leadId: lead._id, formData, idempotencyKey });
-      } catch (uploadError: any) {
-        console.error('Failed to upload annotated image:', uploadError?.response?.data || uploadError?.message || uploadError);
-      }
-      
-      try {
-        const cleanPath = res.uri.replace('file://', '');
-        await ReactNativeBlobUtil.fs.unlink(cleanPath);
-      } catch (cleanupError) {
-        console.warn('Failed to delete temp file:', cleanupError);
-      }
+      await enqueueAnnotationJobs(jobs);
+    } catch (e) {
+      console.error('Could not save the annotations:', e);
+      savingRef.current = false;
+      setIsSaving(false);
+      FlashMessage.error('Not saved', 'Could not save your annotations. Please try again.');
+      return;
     }
 
-    setIsSaving(false);
     const userId = user?._id || user?.id;
-    if (userId && results.length > 0) {
+    if (userId) {
       logEvent('save', {
         user_id: userId,
         created_by: userId,
         module_type: 'annotated_photos',
         meta: {
           action: 'saved_annotated_images',
-          image_count: results.length,
+          image_count: photosToProcess.length,
           occurredAt: new Date().toISOString(),
         },
       });
-    }
-    if (reEditSaved > 0) {
-      // Fresh signatures, so the overwritten image is not served from a cached url.
-      queryClient.invalidateQueries({ queryKey: ['secureUrls'] });
-      queryClient.invalidateQueries({ queryKey: ['lead', lead._id] });
-    }
-    if (reEditFailures > 0) {
-      FlashMessage.error('Not saved', `${reEditFailures} annotated photo${reEditFailures === 1 ? '' : 's'} could not be updated. Try again.`);
     }
     onSaveSuccess?.();
     navigation.goBack();
@@ -1148,18 +982,8 @@ export default function ImageAnnotationScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Loading Overlay */}
-        {isSaving && (
-          <View className="absolute inset-0 bg-black/85 z-50 items-center justify-center p-6">
-            <ActivityIndicator size="large" color="#72BD00" />
-            <Text className="text-white font-bold text-base mt-4 text-center">
-              {saveProgressText}
-            </Text>
-          </View>
-        )}
-
         {selectedPhotos.length > 0 && currentPhoto && (
-          <View className="flex-1 flex-col justify-between">
+          <View className="flex-1 flex-col justify-between" {...zoomResponder.panHandlers}>
             {/* Space Given to it Container */}
             <View
               onLayout={(e) => {
@@ -1190,6 +1014,7 @@ export default function ImageAnnotationScreen() {
                 handleDeleteTextNote={handleDeleteTextNote}
                 handleMoveText={handleMoveText}
                 onZoomChange={setZoomScale}
+                twoFingerZoomRef={twoFingerZoomRef}
               />
             </View>
 
@@ -1569,185 +1394,6 @@ export default function ImageAnnotationScreen() {
         )}
       </SafeAreaView>
 
-      {/* Hidden WebView for high-res rasterization */}
-      {mountWebView && (
-        <View style={{ width: 0, height: 0, opacity: 0, position: 'absolute' }}>
-          <WebViewComponent
-            ref={webViewRef}
-            onMessage={handleWebViewMessage}
-            originWhitelist={['*']}
-            source={{
-              html: `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                  <style>
-                    body, html { margin: 0; padding: 0; overflow: hidden; background: transparent; }
-                    canvas { display: none; }
-                  </style>
-                </head>
-                <body>
-                  <canvas id="canvas"></canvas>
-                  <script>
-                    document.addEventListener("message", function(event) {
-                      handleMessage(JSON.parse(event.data));
-                    });
-                    window.addEventListener("message", function(event) {
-                      handleMessage(JSON.parse(event.data));
-                    });
-
-                    async function handleMessage(data) {
-                      try {
-                        const canvas = document.getElementById("canvas");
-                        const ctx = canvas.getContext("2d");
-
-                        const img = new Image();
-                        img.onload = function() {
-                          const w = img.naturalWidth || img.width;
-                          const h = img.naturalHeight || img.height;
-                          canvas.width = w;
-                          canvas.height = h;
-
-                          ctx.drawImage(img, 0, 0);
-
-                          // Ink is drawn on its OWN transparent layer and then laid over the photo: an eraser stroke
-                          // ('destination-out') on the photo canvas itself punched transparent holes in the PICTURE,
-                          // which a JPEG saves as black, instead of rubbing out only the pen marks as the preview does.
-                          if (data.strokes && data.strokes.length) {
-                            const layer = document.createElement('canvas');
-                            layer.width = w;
-                            layer.height = h;
-                            const lctx = layer.getContext('2d');
-                            data.strokes.forEach(stroke => {
-                              if (stroke.points.length === 0) return;
-
-                              lctx.beginPath();
-                              lctx.lineCap = 'round';
-                              lctx.lineJoin = 'round';
-
-                              if (stroke.isEraser) {
-                                lctx.globalCompositeOperation = 'destination-out';
-                                lctx.lineWidth = stroke.width * (w / data.layoutWidth);
-                              } else {
-                                lctx.globalCompositeOperation = 'source-over';
-                                lctx.strokeStyle = stroke.color;
-                                lctx.lineWidth = stroke.width * (w / data.layoutWidth);
-                              }
-
-                              const firstPoint = stroke.points[0];
-                              lctx.moveTo(firstPoint.px * w, firstPoint.py * h);
-
-                              stroke.points.forEach(pt => {
-                                lctx.lineTo(pt.px * w, pt.py * h);
-                              });
-
-                              lctx.stroke();
-                            });
-                            ctx.drawImage(layer, 0, 0);
-                          }
-
-                          // Shapes: same maths as utils/annotation-shapes.ts (arrowGeometry) - keep the two in step.
-                          if (data.shapes) {
-                            const sScale = w / data.layoutWidth;
-                            data.shapes.forEach(sh => {
-                              const x1 = sh.p1.px * w, y1 = sh.p1.py * h;
-                              const x2 = sh.p2.px * w, y2 = sh.p2.py * h;
-                              const lw = sh.width * sScale;
-                              ctx.lineCap = 'round';
-                              ctx.lineJoin = 'round';
-                              ctx.strokeStyle = sh.color;
-                              ctx.fillStyle = sh.color;
-                              ctx.lineWidth = lw;
-                              ctx.beginPath();
-                              if (sh.kind === 'line') {
-                                ctx.moveTo(x1, y1);
-                                ctx.lineTo(x2, y2);
-                                ctx.stroke();
-                              } else if (sh.kind === 'arrow') {
-                                const dx = x2 - x1, dy = y2 - y1;
-                                const len = Math.hypot(dx, dy) || 1;
-                                const ux = dx / len, uy = dy / len;
-                                const headLen = Math.min(Math.max(14 * sScale, lw * 4.5), len * 0.6);
-                                const bx = x2 - ux * headLen, by = y2 - uy * headLen;
-                                const half = headLen * Math.tan(Math.PI / 7);
-                                const shaft = headLen * 0.85;
-                                ctx.moveTo(x1, y1);
-                                ctx.lineTo(x2 - ux * shaft, y2 - uy * shaft);
-                                ctx.stroke();
-                                ctx.beginPath();
-                                ctx.moveTo(x2, y2);
-                                ctx.lineTo(bx - uy * half, by + ux * half);
-                                ctx.lineTo(bx + uy * half, by - ux * half);
-                                ctx.closePath();
-                                ctx.lineWidth = lw * 0.4;
-                                ctx.fill();
-                                ctx.stroke();
-                              } else if (sh.kind === 'circle') {
-                                const r = Math.hypot((sh.p2.px - sh.p1.px) * data.layoutWidth, (sh.p2.py - sh.p1.py) * data.layoutHeight) * sScale;
-                                ctx.arc(x1, y1, r, 0, Math.PI * 2);
-                                ctx.stroke();
-                              } else if (sh.kind === 'rect') {
-                                ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
-                                ctx.stroke();
-                              }
-                            });
-                          }
-
-                          ctx.globalCompositeOperation = 'source-over';
-
-                          if (data.texts) {
-                            data.texts.forEach(textObj => {
-                              const textScale = w / data.layoutWidth;
-                              const fontSize = textObj.fontSize * textScale;
-                              
-                              let fontStylePrefix = "";
-                              if (textObj.fontStyle === 'bold') {
-                                fontStylePrefix = "bold ";
-                              } else if (textObj.fontStyle === 'italic') {
-                                fontStylePrefix = "italic ";
-                              } else if (textObj.fontStyle === 'bold-italic') {
-                                fontStylePrefix = "italic bold ";
-                              }
-                              ctx.font = fontStylePrefix + fontSize + "px sans-serif";
-                              
-                              ctx.globalAlpha = textObj.opacity !== undefined ? textObj.opacity : 1.0;
-                              ctx.fillStyle = textObj.color || '#FFFFFF';
-                              ctx.fillText(textObj.text, textObj.px * w, textObj.py * h + fontSize * 0.8);
-                              ctx.globalAlpha = 1.0;
-                            });
-                          }
-
-                          const base64 = canvas.toDataURL("image/jpeg", 0.85);
-                          window.ReactNativeWebView.postMessage(JSON.stringify({
-                            status: 'success',
-                            imageIndex: data.imageIndex,
-                            base64: base64
-                          }));
-                        };
-                        img.onerror = function() {
-                          window.ReactNativeWebView.postMessage(JSON.stringify({
-                            status: 'error',
-                            imageIndex: data.imageIndex,
-                            message: 'Image load failed'
-                          }));
-                        };
-                        img.src = data.backgroundImageBase64;
-                      } catch (e) {
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          status: 'error',
-                          imageIndex: data.imageIndex,
-                          message: e.message
-                        }));
-                      }
-                    }
-                  </script>
-                </body>
-                </html>
-              `
-            }}
-          />
-        </View>
-      )}
     </GestureHandlerRootView>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Image,
@@ -8,7 +8,6 @@ import {
 import Svg, { Path, Mask, Rect, G, Line, Circle, Polygon } from 'react-native-svg';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  runOnJS,
   useAnimatedStyle,
   useSharedValue,
 } from 'react-native-reanimated';
@@ -45,6 +44,21 @@ interface AnnotationCanvasProps {
   handleDeleteTextNote: (id: string) => void;
   handleMoveText: (id: string, newPx: number, newPy: number) => void;
   onZoomChange?: (scale: number) => void;
+  /**
+   * Two-finger zoom for Draw / Text / Shapes. The touch responder that owns those tools reports its live touches
+   * here (`touches`) and tells us when they lift (`release`); the canvas turns two of them into a pinch + pan.
+   */
+  twoFingerZoomRef?: React.MutableRefObject<TwoFingerZoomApi | null>;
+}
+
+export interface PageTouch {
+  pageX: number;
+  pageY: number;
+}
+
+export interface TwoFingerZoomApi {
+  touches: (list: PageTouch[]) => void;
+  release: () => void;
 }
 
 export const AnnotationCanvas = ({
@@ -68,6 +82,7 @@ export const AnnotationCanvas = ({
   handleDeleteTextNote,
   handleMoveText,
   onZoomChange,
+  twoFingerZoomRef,
 }: AnnotationCanvasProps) => {
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -75,10 +90,6 @@ export const AnnotationCanvas = ({
   const ty = useSharedValue(0);
   const savedTx = useSharedValue(0);
   const savedTy = useSharedValue(0);
-  const focalX = useSharedValue(0);
-  const focalY = useSharedValue(0);
-  const originX = useSharedValue(0);
-  const originY = useSharedValue(0);
   const boxW = useSharedValue(0);
   const boxH = useSharedValue(0);
 
@@ -145,29 +156,95 @@ export const AnnotationCanvas = ({
 
   const zoomEnabled = activeTool === 'zoom';
 
-  const pinch = Gesture.Pinch()
-    .enabled(zoomEnabled)
-    .onStart((e) => {
-      focalX.value = e.focalX - boxW.value / 2;
-      focalY.value = e.focalY - boxH.value / 2;
-      originX.value = zoomOrigin(focalX.value, savedTx.value, savedScale.value);
-      originY.value = zoomOrigin(focalY.value, savedTy.value, savedScale.value);
-    })
-    .onUpdate((e) => {
-      const next = clampZoomScale(savedScale.value * e.scale, MAX_ZOOM_SCALE);
-      scale.value = next;
-      tx.value = anchoredTranslate(focalX.value, originX.value, next, boxW.value);
-      ty.value = anchoredTranslate(focalY.value, originY.value, next, boxH.value);
-    })
-    .onEnd(() => {
-      savedScale.value = scale.value;
-      savedTx.value = tx.value;
-      savedTy.value = ty.value;
-      runOnJS(reportScale)(scale.value);
-    });
+  // The pinch is driven from a touch responder's live touches in EVERY tool (Zoom, Draw, Text, Shapes, none) - see
+  // `twoFingerZoomRef`. RNGH's pinch never fired once a JS PanResponder held the touch, so it is not used at all.
+  const frameRef = useRef<View>(null);
+  const pinchState = useRef({
+    on: false,
+    ready: false,
+    rect: null as null | { cx: number; cy: number },
+    startDist: 1,
+    startScale: 1,
+    startTx: 0,
+    startTy: 0,
+    focal: { x: 0, y: 0 },
+    originX: 0,
+    originY: 0,
+  }).current;
 
+  useEffect(() => {
+    pinchState.rect = null; // the frame moved / resized: measure again on the next pinch
+  }, [canvasLayout.width, canvasLayout.height, pinchState]);
+
+  const centroid = (a: PageTouch, b: PageTouch) => ({ x: (a.pageX + b.pageX) / 2, y: (a.pageY + b.pageY) / 2 });
+  const spread = (a: PageTouch, b: PageTouch) => Math.max(1, Math.hypot(a.pageX - b.pageX, a.pageY - b.pageY));
+
+  const armPinch = () => {
+    const f = pinchState.focal;
+    const { cx, cy } = pinchState.rect!;
+    pinchState.originX = zoomOrigin(f.x - cx, pinchState.startTx, pinchState.startScale);
+    pinchState.originY = zoomOrigin(f.y - cy, pinchState.startTy, pinchState.startScale);
+    pinchState.ready = true;
+  };
+
+  const beginPinch = (a: PageTouch, b: PageTouch) => {
+    pinchState.on = true;
+    pinchState.ready = false;
+    pinchState.startDist = spread(a, b);
+    pinchState.startScale = scale.value;
+    pinchState.startTx = tx.value;
+    pinchState.startTy = ty.value;
+    pinchState.focal = centroid(a, b);
+    if (pinchState.rect) {
+      armPinch();
+    } else {
+      // The frame never moves while a photo is open, so one measurement serves every later pinch.
+      frameRef.current?.measure((_x, _y, w, h, pageX, pageY) => {
+        pinchState.rect = { cx: pageX + w / 2, cy: pageY + h / 2 };
+        if (pinchState.on && !pinchState.ready) armPinch();
+      });
+    }
+  };
+
+  const updatePinch = (a: PageTouch, b: PageTouch) => {
+    if (!pinchState.ready || !pinchState.rect) return;
+    const next = clampZoomScale(pinchState.startScale * (spread(a, b) / pinchState.startDist), MAX_ZOOM_SCALE);
+    const f = centroid(a, b);
+    scale.value = next;
+    // The CURRENT centroid, so the photo follows the fingers (pan) as well as scaling about them.
+    tx.value = anchoredTranslate(f.x - pinchState.rect.cx, pinchState.originX, next, boxW.value);
+    ty.value = anchoredTranslate(f.y - pinchState.rect.cy, pinchState.originY, next, boxH.value);
+  };
+
+  const finishPinch = () => {
+    if (!pinchState.on) return;
+    pinchState.on = false;
+    pinchState.ready = false;
+    savedScale.value = scale.value;
+    savedTx.value = tx.value;
+    savedTy.value = ty.value;
+    reportScale(scale.value);
+  };
+
+  const twoFingerTouches = (list: PageTouch[]) => {
+    if (list.length > 1) {
+      if (!pinchState.on) beginPinch(list[0], list[1]);
+      else updatePinch(list[0], list[1]);
+    } else {
+      finishPinch();
+    }
+  };
+
+  // Re-assigned every render so it always sees the current shared values; the ref object itself is stable.
+  if (twoFingerZoomRef) {
+    twoFingerZoomRef.current = { touches: twoFingerTouches, release: finishPinch };
+  }
+
+  // One finger pans the zoomed photo in Zoom mode AND with no tool selected (a one-finger touch is otherwise free
+  // there). maxPointers 1: two fingers belong to the JS pinch above, which pans with the centroid itself.
   const pan = Gesture.Pan()
-    .enabled(zoomEnabled)
+    .enabled(zoomEnabled || activeTool === 'none')
+    .maxPointers(1)
     .onUpdate((e) => {
       tx.value = clampPan(savedTx.value, e.translationX, scale.value, boxW.value);
       ty.value = clampPan(savedTy.value, e.translationY, scale.value, boxH.value);
@@ -177,7 +254,7 @@ export const AnnotationCanvas = ({
       savedTy.value = ty.value;
     });
 
-  const composed = Gesture.Simultaneous(pan, pinch);
+  const composed = Gesture.Simultaneous(pan);
 
   const zoomStyle = useAnimatedStyle(() => ({
     transform: [
@@ -239,6 +316,8 @@ export const AnnotationCanvas = ({
   const renderCanvas = () => {
     return (
       <View
+        ref={frameRef}
+        collapsable={false}
         style={{
           width: canvasLayout.width,
           height: canvasLayout.height,
@@ -368,6 +447,8 @@ export const AnnotationCanvas = ({
               handleMoveText={handleMoveText}
               zoomScale={jsScale}
               dragEnabled={!zoomEnabled}
+              onTwoFingerTouches={twoFingerTouches}
+              onTwoFingerEnd={finishPinch}
             />
           ))}
           </View>

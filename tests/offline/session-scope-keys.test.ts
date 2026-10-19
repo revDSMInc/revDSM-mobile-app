@@ -9,6 +9,7 @@ describe('what survives a logout', () => {
   it.each([
     'offline_lead_work',
     'upload_photo_queue',
+    'annotation_save_jobs',
     'offline_activity_logs',
     'offline_lead_workflow',
     'offline-photo-deletes',
