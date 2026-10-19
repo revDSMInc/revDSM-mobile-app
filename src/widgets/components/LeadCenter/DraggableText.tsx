@@ -185,6 +185,7 @@ export const DraggableText = ({
   );
 
   return (
+    <>
     <View
       {...textPanResponder.panHandlers}
       onLayout={(e) => {
@@ -245,47 +246,38 @@ export const DraggableText = ({
             }}
           />
 
-          {/* Connecting vertical line & Menu. The menu is kept inside the photo: the canvas frame clips
-              (overflow: hidden), so a menu centred on a note near an edge was cut off. */}
-          {(() => {
-            const textLeft = text.px * canvasLayout.width;
-            const textTop = text.py * canvasLayout.height;
-            const spaceAbove = textTop;
-            const spaceBelow = canvasLayout.height - (textTop + layout.height);
-            const placeAbove = spaceAbove >= MENU_CLEARANCE || spaceAbove >= spaceBelow;
-            const centred = textLeft + layout.width / 2 - MENU_WIDTH / 2;
-            const menuLeft = Math.max(0, Math.min(canvasLayout.width - MENU_WIDTH, centred)) - textLeft;
-            const edge = placeAbove ? { bottom: '100%' as const } : { top: '100%' as const };
-            const gap = placeAbove ? { marginBottom: 20 } : { marginTop: 20 };
-            return (
-              <>
-                <View
-                  style={{
-                    position: 'absolute',
-                    ...edge,
-                    left: layout.width / 2,
-                    width: 1,
-                    height: 20,
-                    backgroundColor: '#72BD00',
-                  }}
-                />
-                <View
-                  style={{
-                    position: 'absolute',
-                    ...edge,
-                    ...gap,
-                    left: menuLeft,
-                    width: MENU_WIDTH,
-                    zIndex: 9999,
-                  }}
-                >
-                  {renderContextMenu()}
-                </View>
-              </>
-            );
-          })()}
         </>
       )}
     </View>
+
+    {/* ⚠️ The menu is a SIBLING of the note, not a child. It sits outside the note's own box, and on Android a touch outside a
+        parent's bounds never reaches its children - so Edit Text / Adjust Style / Delete did nothing. As a sibling it lives in
+        the canvas-sized notes layer, where every pixel of it is hittable. Kept inside the photo because the canvas frame clips. */}
+    {isSelected && layout && (() => {
+      const textLeft = text.px * canvasLayout.width;
+      const textTop = text.py * canvasLayout.height;
+      const spaceAbove = textTop;
+      const spaceBelow = canvasLayout.height - (textTop + layout.height);
+      const placeAbove = spaceAbove >= MENU_CLEARANCE || spaceAbove >= spaceBelow;
+      const centred = textLeft + layout.width / 2 - MENU_WIDTH / 2;
+      const menuLeft = Math.max(0, Math.min(canvasLayout.width - MENU_WIDTH, centred));
+      const lineLeft = textLeft + layout.width / 2;
+      const edgeFor = (gapPx: number) =>
+        placeAbove
+          ? { bottom: canvasLayout.height - textTop + gapPx }
+          : { top: textTop + layout.height + gapPx };
+      return (
+        <>
+          <View
+            pointerEvents="none"
+            style={{ position: 'absolute', ...edgeFor(0), left: lineLeft, width: 1, height: 20, backgroundColor: '#72BD00' }}
+          />
+          <View style={{ position: 'absolute', ...edgeFor(20), left: menuLeft, width: MENU_WIDTH, zIndex: 9999 }}>
+            {renderContextMenu()}
+          </View>
+        </>
+      );
+    })()}
+    </>
   );
 };

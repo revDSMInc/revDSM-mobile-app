@@ -14,6 +14,8 @@ interface AnnotationTextToolbarProps {
   setShowStylePanel: (show: boolean) => void;
   showFontDropdown: boolean;
   setShowFontDropdown: (show: boolean) => void;
+  /** Done / handle: closes the panel AND the note's menu (the screen also deselects the note). */
+  onDone?: () => void;
 }
 
 export const AnnotationTextToolbar = ({
@@ -22,7 +24,15 @@ export const AnnotationTextToolbar = ({
   setShowStylePanel,
   showFontDropdown,
   setShowFontDropdown,
+  onDone,
 }: AnnotationTextToolbarProps) => {
+
+  // Closing the panel also closes its font dropdown, so the next open starts clean.
+  const closePanel = () => {
+    setShowFontDropdown(false);
+    setShowStylePanel(false);
+    onDone?.();
+  };
 
   const textColor = selectedText.color || '#FFFFFF';
   const textOpacity = selectedText.opacity !== undefined ? selectedText.opacity : 1.0;
@@ -39,10 +49,34 @@ export const AnnotationTextToolbar = ({
 
   return (
     <View style={{ backgroundColor: '#121614', borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 36 }}>
-      {/* top drag chevron handle */}
-      <TouchableOpacity onPress={() => setShowStylePanel(false)} style={{ alignSelf: 'center', paddingVertical: 8 }}>
-        <View style={{ width: 40, height: 5, borderRadius: 2.5, backgroundColor: 'rgba(255,255,255,0.3)' }} />
-      </TouchableOpacity>
+      {/* Header: grab handle (tap closes) + an explicit Done button. The handle alone was the only way out and nobody found it. */}
+      <View style={{ alignItems: 'center', justifyContent: 'center', minHeight: 36 }}>
+        <TouchableOpacity
+          onPress={closePanel}
+          hitSlop={{ top: 10, bottom: 10, left: 40, right: 40 }}
+          style={{ alignSelf: 'center', paddingVertical: 8 }}
+        >
+          <View style={{ width: 40, height: 5, borderRadius: 2.5, backgroundColor: 'rgba(255,255,255,0.3)' }} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={closePanel}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel="Done adjusting style"
+          style={{
+            position: 'absolute',
+            right: 0,
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: 14,
+            paddingVertical: 7,
+            borderRadius: 999,
+            backgroundColor: '#72BD00',
+          }}
+        >
+          <Icon name="check" size={16} color="#fff" />
+          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12, marginLeft: 4 }}>Done</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Colors row */}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginVertical: 16 }}>

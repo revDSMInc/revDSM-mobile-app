@@ -567,6 +567,11 @@ export default function ImageAnnotationScreen() {
           const { locationX, locationY } = evt.nativeEvent;
           const px = locationX / canvasLayout.width;
           const py = locationY / canvasLayout.height;
+          // A tap on the canvas closes the previous note's menu / style panel AND starts a new note here - the menu used to
+          // stay open over the image and get in the way of the new text.
+          setSelectedTextId(null);
+          setShowStylePanel(false);
+          setShowFontDropdown(false);
           setEditingTextId(null);
           setTextInputValue('');
           setPendingTextPos({ px, py });
@@ -1103,6 +1108,8 @@ export default function ImageAnnotationScreen() {
                 setShowStylePanel={setShowStylePanel}
                 showFontDropdown={showFontDropdown}
                 setShowFontDropdown={setShowFontDropdown}
+                // Done also hides the note's Edit / Adjust / Delete menu - it only shows while a note is selected.
+                onDone={() => setSelectedTextId(null)}
               />
             )}
 

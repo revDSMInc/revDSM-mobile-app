@@ -96,7 +96,8 @@ export const LeadImagePickerModal = ({
   const { user } = useAuth();
   const screenWidth = Dimensions.get('window').width;
   // A Modal's own safe-area insets read 0 / stale, and the Android 3-button / gesture bar then sat over the Send bar.
-  const bottomInset = Math.max(useBottomInset(), Platform.OS === 'android' ? 48 : 0);
+  // iOS floors too: a Modal's insets can read 0 / stale there as well, which would put the Send bar on the home indicator.
+  const bottomInset = Math.max(useBottomInset(), Platform.OS === 'android' ? 48 : 20);
 
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState(0);
