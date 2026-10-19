@@ -2357,3 +2357,11 @@ Ticket (Lance): *"Not letting me annotate an existing annotated photo. I know on
 - Not done / not verified: the classic (non-dynamic) `ManagePhotosModal` flow is untouched; restored text / stroke sizes are in px so a different screen size draws them proportionally off; offline re-edit fails with a flash (annotation saves were never queued). Needs a device check: annotate -> re-open -> marks restored -> move/delete one -> save -> same single photo updated, no duplicate.
 
 - **Follow-up - only the latest annotated copy shows.** Device test: after a re-edit "+ ANNOTATED" listed TWO Front-Right cards, the older one failing to load ("Tap to retry"). `getAnnotatedFor` (`useDynamicInspectionCapture.ts`) now passes through `latestAnnotatedPerBase`: one annotated copy per category + base subcategory, newest `timestampTaken` (later row on a tie / unknown time). ⚠️ This HIDES the stale row, it does not delete it, and the cause is unconfirmed - if the PATCH really leaves a second row on the server (or moves the s3url and orphans the old one) that is backend behaviour to check; the web app would show the same duplicate. Do not "fix" it by deleting rows client-side without that answer.
+
+
+### Annotation text notes and their menu stay inside the photo
+
+Report: a note dragged to the right edge went past the photo and its Edit Text / Adjust Style / Delete menu was cut off by the canvas frame (`overflow: hidden`). `widgets/components/LeadCenter/DraggableText.tsx`:
+- **The note's whole box (text + padding) is clamped to the photo**, not just its top-left corner (`handleMoveText` only clamped `0..1`, so the right/bottom could overflow). The limit is `(canvas - measuredBox) / canvas`, applied while dragging AND by an effect that pulls a note back once its size is known - covers a tap placed near an edge, a longer edit, and a bigger font from Adjust Style.
+- **The menu is clamped horizontally** to `[0, canvasWidth - 140]` (the connector line still points at the note's centre) and flips above/below by real space (`MENU_CLEARANCE` 148px, else whichever side has more room) instead of the old fixed `py >= 0.2` rule.
+- ⚠️ Positions are stored normalised and the export places text at `px * w`, so a note kept inside here stays inside the saved photo; the export font (`sans-serif`) can be a few px wider than the on-screen one. Not verified on device.
