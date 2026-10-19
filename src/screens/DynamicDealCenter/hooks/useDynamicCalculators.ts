@@ -73,6 +73,11 @@ export interface CalcTab {
     optInProgram?: 'inhome' | 'oneyear' | null;
   } | null;
   descriptions?: string[];
+  /**
+   * The same scope lines grouped by trade, for the Investment Center's
+   * "<categoryName> Installation:" headings. Carried verbatim from the API.
+   */
+  descriptionsByCategory?: Array<{ categoryId?: string; categoryName?: string; descriptions?: string[] }>;
   manualTitle?: string;
   pricemarkup?: string;
   priceScopeSig?: string;
@@ -129,6 +134,9 @@ function tabFromServerCalculator(c: any, schemas: CalculatorSchema[]): CalcTab {
     oneYearMonthlyPlan: c?.oneYearMonthlyPlan || null,
     inHome: c?.inHome ?? c?.in_home ?? null,
     descriptions: Array.isArray(c?.descriptions) ? c.descriptions : [],
+    // ⚠️ This mapper is a WHITELIST - a field not copied here never reaches the Investment
+    // Center, and the grouped headings would silently never appear.
+    descriptionsByCategory: Array.isArray(c?.descriptionsByCategory) ? c.descriptionsByCategory : [],
     persisted: true,
   };
 }

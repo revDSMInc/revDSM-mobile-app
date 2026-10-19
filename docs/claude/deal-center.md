@@ -5018,3 +5018,15 @@ is the whole bug.
 
 ⚠️ `utils/title-save-order.ts` is **pure ASCII** (CRLF) — the warning marks are written as
 `'⚠️'` escapes. Do not paste the literal characters in.
+
+### Follow-up — `tabFromServerCalculator` is a whitelist (`descriptionsByCategory`)
+
+`lfcalculators` now returns `descriptionsByCategory` beside the flat `descriptions`, used by the
+Investment Center to group its scope bullets under a `<categoryName> Installation:` heading (full
+ticket: `docs/claude/investment-center-job-tracker.md`). `CalcTab` carries the field and
+`tabFromServerCalculator` (`hooks/useDynamicCalculators.ts`) now copies it.
+
+⚠️ **`tabFromServerCalculator` names every field it keeps — anything missing is silently dropped.**
+The Investment Center takes its calculator from this hook, so a new API field that is not added to
+that mapper never arrives: the consuming screen looks correct in code and renders nothing on
+device, with no error anywhere. Add the field here when the API grows one.

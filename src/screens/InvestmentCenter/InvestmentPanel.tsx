@@ -22,6 +22,7 @@ import {
   screenUnitPriceFromSchemas,
 } from '../DynamicDealCenter/utils/dynamic-rollout-pricing';
 import { buildInvestmentJobScope } from '../DynamicDealCenter/utils/investment-job-scope';
+import { buildScopeGroups, flattenScopeGroups } from '../../utils/investment-scope-groups';
 import { formatAmountInput, stripAmount } from '../DynamicDealCenter/utils/format-amount';
 import { resolveActiveDownPayment } from '../DynamicDealCenter/utils/drop-prices';
 import { ProgramCard } from './ProgramCard';
@@ -372,6 +373,21 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   }, [calculator.entries, verticals]);
 
   const inclusions = jobScope.length > 0 ? jobScope : productNames;
+
+  /**
+   * The same bullets, grouped under a "<categoryName> Installation:" heading.
+   *
+   * `descriptionsByCategory` arrives beside the flat `descriptions` list. A group with no
+   * category name renders as loose bullets, which is also the whole-panel fallback when the API
+   * (or an offline cache written before this field existed) sends only the flat list - so the
+   * panel never goes blank on older data.
+   */
+  const descriptionsByCategory = (calculator as any)?.descriptionsByCategory;
+  const scopeGroups = useMemo(
+    () => buildScopeGroups(descriptionsByCategory, inclusions),
+    [descriptionsByCategory, inclusions],
+  );
+  const hasScopeLines = flattenScopeGroups(scopeGroups).length > 0;
 
   const packageInfo = useMemo(
     () => describeFullPackage(calculator.entries || {}, verticals || []),
@@ -772,15 +788,54 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
             />
           </View>
         )}
-        {inclusions.length === 0 ? (
+        {!hasScopeLines ? (
           <Text style={{ fontSize: 12, color: '#94A3B8', textAlign: 'center', fontStyle: 'italic' }}>
             Job scope will appear once products are configured.
           </Text>
         ) : (
-          inclusions.map((line, i) => (
-            <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10, paddingHorizontal: 4 }}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#4CBB17', marginTop: 7, marginRight: 10 }} />
-              <Text style={{ flex: 1, fontSize: 14, color: '#1C252E', lineHeight: 20 }}>{line}</Text>
+          scopeGroups.map((group, gi) => (
+            <View key={gi} style={{ marginBottom: gi < scopeGroups.length - 1 ? 6 : 0 }}>
+              {/* A group with no category name keeps the original look: bullets, no heading. */}
+              {!!group.heading && (
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: '800',
+                    color: '#16324F',
+                    marginBottom: 8,
+                    marginTop: gi === 0 ? 0 : 6,
+                    paddingHorizontal: 4,
+                  }}
+                >
+                  {group.heading}
+                </Text>
+              )}
+              {group.lines.map((line, i) => (
+                <View
+                  key={i}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'flex-start',
+                    marginBottom: 10,
+                    paddingHorizontal: 4,
+                    paddingLeft: group.heading ? 10 : 4,
+                  }}
+                >
+                  {/* Black under a trade heading; an uncategorised bullet keeps the original
+                      green, so that group looks exactly as it always has. */}
+                  <View
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: 3,
+                      backgroundColor: group.heading ? '#1C252E' : '#4CBB17',
+                      marginTop: 7,
+                      marginRight: 10,
+                    }}
+                  />
+                  <Text style={{ flex: 1, fontSize: 14, color: '#1C252E', lineHeight: 20 }}>{line}</Text>
+                </View>
+              ))}
             </View>
           ))
         )}

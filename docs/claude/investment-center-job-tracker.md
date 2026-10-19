@@ -544,3 +544,47 @@ Investment Center, which is the path the first fix missed.
 ## REVUIUX-557 - Investment Center package tabs / heading show the SM / MD / LG rank
 
 `InvestmentCenter/index.tsx` tab row already passed `title` to `FullPackageTitle`; `InvestmentPanel.tsx`'s package heading now passes `title={calculator.title}` too, so both print `(SM)` / `(MD)` / `(LG)` after the box + extras (derived by `getPackageSizeLabel(title)`, `DynamicDealCenter/utils/tab-naming.ts`). ⚠️ The rank comes from the calculator's TITLE - the Investment Center's own `useDynamicCalculators` copy must keep retitling, or a stale title would show a stale rank. Full write-up and traps: `deal-center.md` § REVUIUX-557. Not verified on device.
+
+## "Includes the Following" is grouped by trade (2026-10-19)
+
+The scope bullets on the Investment Center now sit under a **`<categoryName> Installation:`**
+heading per trade, from the API's new `descriptionsByCategory` (returned beside the flat
+`descriptions` on `lfcalculators`):
+
+```
+Soffit Installation:
+  • Install Soffit
+  • Installation: Install J Channel on structure every 12", cut and install soffit...
+  • Install soffit on Porch Ceiling
+Gutter Installation:
+  • Install Gutters and Downspouts
+  • Installation: Align, pitch, install hidden hangers every 20-25"...
+  • Install Wedges for slanted/step fascia        <- no categoryName: plain bullet, no heading
+```
+
+Rules are pure in `utils/investment-scope-groups.ts` (14 tests); `InvestmentCenter/InvestmentPanel.tsx`
+renders `scopeGroups` and gates its empty state on `flattenScopeGroups(...)` instead of `inclusions`.
+
+⚠️ **`tabFromServerCalculator` (`hooks/useDynamicCalculators.ts`) is a WHITELIST.** The Investment
+Center gets its calculator from that hook, so a field not copied in that mapper never arrives and
+the headings would silently never render. `descriptionsByCategory` is now carried there explicitly —
+the same trap applies to any future API field.
+
+⚠️ **An entry with no `categoryName` keeps the OLD look** — plain bullets, no heading. That is also
+the whole-panel fallback when only the flat list is present (older API, or an offline cache written
+before this field existed), so the panel never goes blank on old data.
+
+⚠️ **The API's order is preserved exactly.** The server decides which trade leads the quote;
+sorting here (alphabetically, or named-before-unnamed) would reorder what the customer reads
+before signing.
+
+⚠️ **A category name already ending in "Installation" is not doubled up** — the portal lets a
+category be named anything, and "Soffit Installation Installation:" would go out on a signed quote.
+
+⚠️ A group with no usable line is dropped, so an empty category cannot print a bare heading with
+nothing under it.
+
+⚠️ **The bullet COLOUR also keys off the heading**: black (`#1C252E`) under a trade heading,
+the original green (`#4CBB17`) for an uncategorised bullet. Driven off `group.heading`, not off a
+separate flag, so the fallback group (older API / pre-field offline cache) stays green on its own
+— do not hard-code one colour for the list.
