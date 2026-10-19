@@ -14,6 +14,7 @@ import { uploadQueueManager } from '../utils/uploadQueue';
 import {
   rekeyActivityLogs,
   runActivityLogDrain,
+  setActivityLogHoldPolicy,
   setActivityLogIdResolver,
 } from './offlineActivityLog';
 import { rekeyDeliveryPreference } from './offlineAgreementDelivery';
@@ -28,8 +29,12 @@ import {
   resolveSyncAddress,
 } from '../utils/offline-lead-location';
 import { reverseGeocode } from '../utils/places';
+import { leadCreateIdempotencyKey } from '../utils/upload-idempotency';
 import { queryClient } from './api/queryClient';
-import { rekeyLeadWorkflow } from './offlineLeadStatus';
+import {
+  clearLeadCheckedInOffline,
+  rekeyLeadWorkflow,
+} from './offlineLeadStatus';
 import { offlinePhotoDeleteQueue } from './offlinePhotoDeleteQueue';
 import { leadDetailForCache } from '../utils/offline-lead-detail-cache';
 import { submitConsentForm, finalizeConsentUpload } from './api/consent-forms';
@@ -301,6 +306,29 @@ export const saveOfflineFundingCollected = (
       { ...w, fundingCollected: Array.from(new Set([...(w.fundingCollected || []), pid])) },
       'fundingCollect'
     )
+  );
+
+/** The lender's answer, recorded by the rep with no signal. Re-recording a pid replaces the earlier entry. */
+export const saveOfflineFundingDecision = (
+  workClientId: string,
+  entry: { pid: string; decision: 'full' | 'short' | 'declined'; approvedAmt?: number }
+): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) =>
+    rearmStep(
+      {
+        ...w,
+        fundingDecisions: [...(w.fundingDecisions || []).filter((d) => d.pid !== entry.pid), entry],
+        // A fresh answer supersedes an activation queued against the old one.
+        fundingActivated: (w.fundingActivated || []).filter((pid) => pid !== entry.pid),
+      },
+      'fundingDecision'
+    )
+  );
+
+/** A loan activated offline. The decision it depends on is queued ahead of it. */
+export const saveOfflineFundingActivate = (workClientId: string, pid: string): OfflineLeadWork | null =>
+  patchOfflineWork(workClientId, (w) =>
+    rearmStep({ ...w, fundingActivated: Array.from(new Set([...(w.fundingActivated || []), pid])) }, 'fundingActivate')
   );
 
 /** Submit Funding pressed offline. Ordered after `funding`, so the rows land before the submit. */
@@ -807,6 +835,25 @@ type StepResult = {
   calculators?: Record<string, string>;
 };
 
+/**
+ * Does the SERVER now say this rep is on the lead?
+ *
+ * ⚠️ Read back rather than assumed. A 2xx on `workLead` means the write was accepted, not that
+ * a subsequent read reflects it - and the card is drawn from the read.
+ *
+ * ⚠️ A failed read returns FALSE, which keeps the overlay. An unanswered question is not a
+ * negative answer, and the safe side here is to go on showing the rep what they did.
+ */
+const serverSaysCheckedIn = async (leadId: string): Promise<boolean> => {
+  try {
+    const res = await LeadService.getSalesDealById(leadId);
+    const lead = res?.data?.data || res?.data?.lead || res?.data || {};
+    return lead?.workflowState === 'resume' || !!lead?.workStartedBy;
+  } catch {
+    return false;
+  }
+};
+
 const refreshLeadLists = async (): Promise<void> => {
   try {
     await queryClient.invalidateQueries({ queryKey: ['leads'] });
@@ -834,10 +881,28 @@ const runStep = async (
 
   switch (step) {
     case 'lead': {
-      const body = send(work.lead) as Record<string, any>;
+      // The lead is created on the server only now, possibly hours after the rep made it. Send
+      // the moment it was queued so Lead Origin shows when it was really created. Only for
+      // work created offline; an online create sends nothing and the server stamps it.
+      const queued = send(work.lead) as Record<string, any>;
+      const body =
+        work.origin === 'created-offline' && !queued.leadCreationTimestamp
+          ? { ...queued, leadCreationTimestamp: work.createdAt }
+          : queued;
       const resolvedAddress = await resolveQueuedLeadAddress(body);
+      /**
+       * ⚠️ The key is the work's own `clientId`, so every retry of THIS lead - minutes later
+       * or after an app restart a week later - sends the identical value and the server
+       * replays the first create instead of making a second lead.
+       *
+       * The replay comes back in the normal create shape carrying the ORIGINAL `_id`, which
+       * is why the id handling below needs no special case: `readCreatedId` finds it either
+       * way, and the rekeys then attach the appointment, calculators and photos to the real
+       * lead. A 409 here would have had no id to give and would have stranded all of that.
+       */
       const res = await LeadService.createLead(
-        resolvedAddress ? applyResolvedAddress(body, resolvedAddress) : body
+        resolvedAddress ? applyResolvedAddress(body, resolvedAddress) : body,
+        leadCreateIdempotencyKey(work.clientId)
       );
       if (!isSuccessfulCreate(res?.data)) {
         throw Object.assign(new Error(res?.data?.message || 'create refused'), { response: res });
@@ -965,6 +1030,7 @@ const runStep = async (
         contractPrice: Number(body?.contractPrice) || 0,
         payments: Array.isArray(body?.payments) ? body.payments : [],
         payMode: body?.payMode === 'upfront' ? 'upfront' : 'split',
+        ...(body?.calculatorId ? { calculatorId: String(body.calculatorId) } : {}),
       });
       return {};
     }
@@ -1041,6 +1107,35 @@ const runStep = async (
       for (const pid of work.fundingCollected || []) {
         if (already.has(pid)) continue;
         await FundingService.markCheckCollected(leadId, pid);
+      }
+      return {};
+    }
+
+    case 'fundingDecision': {
+      if (!leadId) throw new Error('no lead id for the lender decisions');
+      const rows = (await FundingService.getFunding(leadId))?.data?.data?.funding?.payments || [];
+      for (const d of work.fundingDecisions || []) {
+        const row = rows.find((p) => p.pid === d.pid);
+        if (!row) throw new Error('the financing row has not reached the server');
+        if (guarded && row.decision === d.decision && (d.decision !== 'short' || row.approvedAmt === d.approvedAmt)) continue;
+        if (!row.linkSent) {
+          await FundingService.getLink(leadId, d.pid);
+          await FundingService.markLinkSent(leadId, d.pid, { channel: 'qr' });
+        }
+        await FundingService.recordDecision(leadId, d.pid, {
+          decision: d.decision,
+          ...(d.decision === 'short' ? { approvedAmt: d.approvedAmt } : {}),
+        });
+      }
+      return {};
+    }
+
+    case 'fundingActivate': {
+      if (!leadId) throw new Error('no lead id for the loan activation');
+      const rows = guarded ? (await FundingService.getFunding(leadId))?.data?.data?.funding?.payments || [] : [];
+      for (const pid of work.fundingActivated || []) {
+        if (rows.find((p) => p.pid === pid)?.activated) continue;
+        await FundingService.activateLoan(leadId, pid);
       }
       return {};
     }
@@ -1137,7 +1232,24 @@ const runStep = async (
     case 'work': {
       if (!leadId) throw new Error('cannot record work on a lead with no server id');
       await LeadService.workLead(leadId, String(work.workStarted?.userId || ''));
+      /**
+       * ⚠️ The overlay is cleared ONLY AFTER the refetch, and only if the server's own list
+       * now agrees the rep is on the lead.
+       *
+       * Clearing it before the refetch left a window where neither the overlay nor the server
+       * said "checked in", and the card fell back to "Start Appointment" on a connection slow
+       * enough for the read to lag the write. The overlay stands in for a check-in the server
+       * has not CONFIRMED - not merely for one we have not yet sent.
+       *
+       * If the server has not caught up, the overlay STAYS and the next drain pass or a
+       * later check-in clears it. It is still bounded by OFFLINE_WORKFLOW_TTL_MS, so it
+       * cannot outlive the day even if the server never agrees.
+       */
       await refreshLeadLists();
+      if (await serverSaysCheckedIn(leadId)) {
+        clearLeadCheckedInOffline(leadId);
+        clearLeadCheckedInOffline(work.clientId);
+      }
       return {};
     }
 
@@ -1271,6 +1383,11 @@ setActivityLogIdResolver((value) => {
   const map: Record<string, string> = {};
   mine().forEach((w) => Object.assign(map, buildIdMap(w)));
   return resolveClientIds(value, map);
+});
+
+setActivityLogHoldPolicy(() => {
+  load();
+  return uploadableWork(mine()).length > 0;
 });
 
 export const drainOfflineWork = async (): Promise<void> => {

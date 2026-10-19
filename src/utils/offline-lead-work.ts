@@ -21,6 +21,8 @@ export type UploadStep =
   | 'addendumRefund'
   | 'addendumRelease'
   | 'fundingCollect'
+  | 'fundingDecision'
+  | 'fundingActivate'
   | 'fundingSubmit'
   | 'submit'
   | 'consent'
@@ -44,6 +46,8 @@ export const UPLOAD_STEPS: readonly UploadStep[] = [
   'addendumRefund',
   'addendumRelease',
   'fundingCollect',
+  'fundingDecision',
+  'fundingActivate',
   'fundingSubmit',
   'submit',
   'consent',
@@ -75,8 +79,23 @@ export const stepReplaySafety = (step: UploadStep): ReplaySafety => {
     case 'archive':
     case 'delete':
       return 'idempotent';
+    /**
+     * ⚠️ `idempotent` ONLY because the server honours our idempotency key on
+     * `POST lead/v1/create` (deployed 2026-10-16). Do NOT set this without that.
+     *
+     * It was `unique-key`: retry an ambiguous failure only if the payload carries something
+     * the server will reject twice. An Issued lead has `lfLeadId`; a **Self Gen has nothing
+     * unique**, because two real leads can share a name and an address. So the rule had
+     * nothing to test and fell through to `needs-review` - the rep's typed lead sat parked
+     * while the create they could not see had often already landed, which is how one door
+     * became two leads.
+     *
+     * With the key, a replay returns the ORIGINAL lead and its `_id`, so retrying is safe for
+     * both lead types. ⚠️ Reverting the server without reverting this would turn an
+     * occasional duplicate into a reliable one.
+     */
     case 'lead':
-      return 'unique-key';
+      return 'idempotent';
     case 'remoteSignature':
       return 'guarded';
     case 'consent':
@@ -204,6 +223,15 @@ export interface OfflineLeadWork {
    * above - the server keeps it, so no re-keying is needed here.
    */
   fundingCollected?: string[];
+  /**
+   * Lender answers the rep recorded offline, by `pid` (last write per pid wins).
+   *
+   * ⚠️ The drain sends the link first if the server has none: the decision endpoint answers 409
+   * "Send the application link first" otherwise, and offline the link could not be created.
+   */
+  fundingDecisions?: { pid: string; decision: 'full' | 'short' | 'declined'; approvedAmt?: number }[];
+  /** Loans the rep activated offline, by `pid`. Ordered after `fundingDecision`. */
+  fundingActivated?: string[];
   submit?: Record<string, unknown>;
   chatCreated?: boolean;
   done: UploadStep[];
@@ -292,6 +320,10 @@ export const isStepApplicable = (work: OfflineLeadWork, step: UploadStep): boole
       return !!work.addendum && !work.addendum.hasRefund && !!work.addendumDraftId;
     case 'fundingCollect':
       return !!work.fundingCollected?.length && !!work.funding;
+    case 'fundingDecision':
+      return !!work.fundingDecisions?.length && !!work.funding;
+    case 'fundingActivate':
+      return !!work.fundingActivated?.length && !!work.funding;
     case 'fundingSubmit':
       return !!work.fundingSubmitted && !!work.funding;
     case 'submit':
@@ -317,6 +349,28 @@ export const isStepApplicable = (work: OfflineLeadWork, step: UploadStep): boole
 
 export const isStepPending = (work: OfflineLeadWork, step: UploadStep): boolean =>
   !work.done.includes(step) && isStepApplicable(work, step);
+
+/**
+ * Is a check-in for this lead still waiting to reach the server?
+ *
+ * ⚠️ Matches on BOTH ids. A lead created offline is queued under a client id and keeps it
+ * until the `lead` step drains, so a check-in made before the sync is filed under the client
+ * id while the list now shows the server id. Matching only one of them makes the overlay
+ * vanish the moment the lead syncs, which is the opposite error.
+ */
+export const hasPendingCheckIn = (
+  all: OfflineLeadWork[] | null | undefined,
+  leadId: unknown
+): boolean => {
+  const id = String(leadId ?? '').trim();
+  if (!id) return false;
+  return (all || []).some(
+    (w) =>
+      !!w &&
+      (w.clientId === id || w.serverIds?.leadId === id) &&
+      isStepPending(w, 'work')
+  );
+};
 
 export const rearmStep = (work: OfflineLeadWork, step: UploadStep): OfflineLeadWork =>
   work.done.includes(step) ? { ...work, done: work.done.filter((s) => s !== step) } : work;
@@ -418,7 +472,21 @@ export const resolveStepDecision = (
     case 'rejected':
       return 'failed';
     case 'duplicate':
-      return safety === 'unique-key' && hasServerUniqueKey(work.lead) ? 'done' : 'needs-review';
+      /**
+       * ⚠️ Scoped to the LEAD step explicitly. It used to read `safety === 'unique-key'`,
+       * which happened to mean the same thing; reclassifying `lead` to `idempotent` broke
+       * that coupling, and dropping the check outright made EVERY step return `done` on a
+       * duplicate whenever the lead carried an `lfLeadId` - an appointment collision is not
+       * evidence about the lead's unique key.
+       *
+       * An Issued lead's create still resolves to `done`: the server rejected it on
+       * `lfLeadId`, which proves the first create landed.
+       *
+       * ⚠️ A duplicate on a KEYED create is a genuine conflict, not a replay: the server
+       * replays a key it has already seen rather than rejecting it. So a Self Gen duplicate
+       * still goes to needs-review for a human to look at.
+       */
+      return step === 'lead' && hasServerUniqueKey(work.lead) ? 'done' : 'needs-review';
     case 'ambiguous':
       if (safety === 'idempotent') return 'retry';
       if (safety === 'guarded') return 'retry-guarded';
@@ -551,6 +619,27 @@ export const hasPendingConsent = (
   kind: ConsentFormKind
 ): boolean => hasQueuedConsent(items, leadId, kind, true);
 
+/**
+ * The results a rep can record at a door with no connection.
+ *
+ * ⚠️ This used to be `sale` and `demo` only, so **No Demo, Not Hit and Reset** were queued
+ * (they share the `submit` step and the same `submitJobBuilder` endpoint) but the leads list
+ * still showed the lead as unresulted until it synced. A rep resulting a lead and seeing nothing
+ * change assumes it failed and does it again.
+ *
+ * ⚠️ These three are ORDINARY lead results, not the destructive "Reset Job Docs"
+ * (`LeadService.resetLead`, `lead/v1/{id}/reset`), which wipes uploaded documents and is a
+ * different control entirely. Do not conflate them: queueing that one would let a replay destroy
+ * work the rep did after it.
+ */
+export const OFFLINE_RESULTABLE: ReadonlySet<string> = new Set([
+  'sale',
+  'demo',
+  'nodemo',
+  'nothit',
+  'reset',
+]);
+
 export const offlineResultOverlay = (
   work: OfflineLeadWork | null | undefined
 ): Record<string, any> | null => {
@@ -561,10 +650,16 @@ export const offlineResultOverlay = (
   if (!leadData) return null;
 
   const result = String(leadData.result || '').toLowerCase();
-  if (result !== 'sale' && result !== 'demo') return null;
+  if (!OFFLINE_RESULTABLE.has(result)) return null;
 
+  /**
+   * ⚠️ `status` is NOT always the result. A sale/demo names its own status, but the
+   * no-sale outcomes carry a distinct one (`leadData.status`), which is what the leads list and
+   * the lead card colour-code on. Reusing `result` for both showed a resulted lead as unresulted
+   * until it synced.
+   */
   return {
-    status: result,
+    status: String(leadData.status || result),
     result: leadData.result,
     originalContractPrice: leadData.originalContractPrice,
     lastPriceQuoted: leadData.lastPriceQuoted,
@@ -745,3 +840,17 @@ export const workLeadId = (work: OfflineLeadWork): string =>
 
 export const createdAtTheDoor = (work: OfflineLeadWork | null | undefined): boolean =>
   !!work && work.origin === 'created-offline' && isStepPending(work, 'lead');
+
+/**
+ * Which check-in log an offline "start appointment" writes ('' = none). Online, the geofence plan
+ * decides. A lead created offline carries no coordinates yet (they are resolved at sync), so the
+ * plan finds it "out of range" and logs nothing - the rep who just made the lead at the door still
+ * checked in, so that lead is a check-in whatever the plan says.
+ */
+export const offlineCheckInModule = (
+  plan: { shouldCallWork: boolean; logModule: string },
+  atTheDoor: boolean
+): string => {
+  if (!plan.shouldCallWork && !atTheDoor) return '';
+  return plan.logModule || (atTheDoor ? 'lead_check_in' : '');
+};

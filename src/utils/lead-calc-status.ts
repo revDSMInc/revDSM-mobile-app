@@ -99,11 +99,80 @@ export type CalcGateState = 'unknown' | 'locked' | 'unlocked';
  */
 export const calcGateState = (
   status: LeadCalculatorStatus | null | undefined,
-  { isSold = false }: { isSold?: boolean } = {}
+  {
+    isSold = false,
+    isDeviceOnlyLead = false,
+    isOffline = false,
+    hasAnswered = false,
+  }: {
+    isSold?: boolean;
+    /**
+     * The lead exists ONLY on this device (a client id - created offline, never synced).
+     * There is no server record to be uncertain about.
+     */
+    isDeviceOnlyLead?: boolean;
+    /**
+     * No usable connection. `unknown` means "we could not ask"; offline we also cannot ask
+     * LATER, so the benefit of the doubt has nothing to resolve into.
+     */
+    isOffline?: boolean;
+    /**
+     * A status read has answered at least once for this lead (TanStack `isSuccess`), even if
+     * the answer was "no calculators". Distinguishes "we asked and lost the reply" from
+     * "we have never asked".
+     */
+    hasAnswered?: boolean;
+  } = {}
 ): CalcGateState => {
   if (isSold) return 'unlocked';
   if (status?.allConfirmed) return 'unlocked';
-  // No status at all: we have never had an answer for this lead, cached or live.
-  if (!status) return 'unknown';
+
+  /**
+   * ⚠️ A lead that exists only on this device is a DEFINITE "not built", never "unknown".
+   *
+   * A lead created offline has no server record, so the status read is guaranteed to fail and
+   * `unknown` would unlock the Investment Center on a lead with no rollouts at all - the rep
+   * reaches a presentation screen seconds after creating the lead. "We could not ask" only
+   * deserves the benefit of the doubt when there is something to ask ABOUT; here the device
+   * holds the whole truth, and the whole truth is that nothing has been confirmed.
+   */
+  if (isDeviceOnlyLead) return 'locked';
+
+  /**
+   * No status at all: we have never had an answer for this lead, cached or live.
+   *
+   * ONLINE this stays `unknown` and unlocks - a read can fail transiently on a lead whose
+   * rollouts the rep really did confirm, and a wrong lock in front of a customer costs a sale
+   * (see the re-lock ticket in `lead-center.md`). The refetch behind the tap resolves it.
+   *
+   * ⚠️ OFFLINE it is a definite `locked`. Nothing is cached, so the device has never seen a
+   * confirmed rollout for this lead, and no later read can arrive to correct the guess. The
+   * benefit of the doubt is only worth giving when the doubt can still be settled.
+   */
+  if (!status) {
+    /**
+     * ⚠️ `unknown` is for a read that ASKED and lost the reply - the rep may well have
+     * confirmed, and a wrong lock in front of a customer costs a sale (the re-lock ticket).
+     *
+     * It is NOT for a lead nobody has successfully read yet. A brand-new lead on a slow line
+     * renders before its first read lands; treating that as "don't know" let the rep open the
+     * Investment Center seconds after creating the lead, with no rollout confirmed at all.
+     * No answer has ever arrived => there is no evidence of a confirmed rollout => locked.
+     */
+    if (!hasAnswered) return 'locked';
+    return isOffline ? 'locked' : 'unknown';
+  }
   return 'locked';
 };
+
+/**
+ * What to return when the appointment lookup SUCCEEDED but found no appointment for this lead.
+ *
+ * ⚠️ That is a real answer - "no appointment, so no calculators yet" (a lead created a moment ago) - not a
+ * lost request. Returning `null` here left a brand-new lead on "Checking job status..." with a spinner
+ * forever, because `null` means "never got an answer". A cached row still wins (a confirmed lead must not be
+ * downgraded by a lookup that merely missed it).
+ */
+export const statusWhenNoAppointment = (
+  cached?: LeadCalculatorStatus | null
+): LeadCalculatorStatus => cached ?? EMPTY_CALC_STATUS;

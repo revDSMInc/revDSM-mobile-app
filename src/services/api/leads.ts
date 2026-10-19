@@ -1,6 +1,14 @@
 import api, { hasSession } from './index';
 import { AxiosResponse } from 'axios';
 import { ENV } from '../../config/env';
+import { IDEMPOTENCY_FIELD, IDEMPOTENCY_HEADER } from '../../utils/upload-idempotency';
+
+/**
+ * Photo uploads get their own timeout. The global 15s suits JSON; a 2-5 MB image on a weak
+ * cell routinely needs longer, and timing out mid-store is exactly what created duplicates.
+ * Matches the installer queue, which already used 120s.
+ */
+const PHOTO_UPLOAD_TIMEOUT_MS = 120_000;
 
 export const resolveLeadCalculatorId = (lead: any): string | null =>
   lead?.selectedCalculatorId ||
@@ -29,6 +37,8 @@ export const LeadEndpoints = {
   saveFilters: (leadId: string) => `lead/v1/${leadId}/saved-filters`,
   images: (leadId: string) => `demo/v1/leads/${leadId}/images`,
   updateImagePosition: (leadId: string) => `demo/v1/leads/${leadId}/images/position`,
+  annotations: (leadId: string) => `demo/v1/leads/${leadId}/annotations`,
+  upsertAnnotation: (leadId: string, imageId: string) => `demo/v1/leads/${leadId}/images/${imageId}/annotation`,
   reset: (leadId: string) => `lead/v1/${leadId}/reset`,
   additionalSlots: (leadId: string) => `leads/${leadId}/additional-slots`,
   digitalConsent: 'consent/digital',
@@ -120,7 +130,18 @@ export const sanitizeCalculatorPayload = (payload: any): any => {
 };
 
 export const LeadService = {
-  createLead: (data: any): Promise<AxiosResponse<any>> => api.post(LeadEndpoints.create, data),
+  /**
+   * IMPORTANT: `idempotencyKey` is what stops a timed-out retry creating a SECOND lead. It is
+   * the queued lead's device clientId, identical on every retry. Sent as both the standard
+   * header and a body field, because some mobile proxies strip unexpected headers. Omitted on
+   * an online create, which the queue never retries. See utils/upload-idempotency.ts.
+   */
+  createLead: (data: any, idempotencyKey?: string | null): Promise<AxiosResponse<any>> =>
+    api.post(
+      LeadEndpoints.create,
+      idempotencyKey ? { ...data, [IDEMPOTENCY_FIELD]: idempotencyKey } : data,
+      idempotencyKey ? { headers: { [IDEMPOTENCY_HEADER]: idempotencyKey } } : undefined
+    ),
   getSalesLeads: (repId: string, params?: any): Promise<AxiosResponse<any>> => {
     const query = new URLSearchParams({ repId, ...params }).toString();
     return api.get(`${LeadEndpoints.salesPortal}?${query}`);
@@ -169,9 +190,29 @@ export const LeadService = {
   updateLeadOutcomeByCalculator: (leadId: string, calculatorId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.outcomeByCalculator(leadId, calculatorId), payload),
 
-  uploadImages: (leadId: string, formData: FormData): Promise<AxiosResponse<any>> =>
+  /**
+   * IMPORTANT: `idempotencyKey` is what stops a timed-out retry becoming a duplicate photo. See
+   * `utils/upload-idempotency.ts`. The long timeout matters too: the global 15 s is a JSON
+   * timeout, and a 2-5 MB photo on a weak cell exceeds it while the server stores it fine.
+   */
+  uploadImages: (
+    leadId: string,
+    formData: FormData,
+    idempotencyKey?: string | null
+  ): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.images(leadId), formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+        ...(idempotencyKey ? { [IDEMPOTENCY_HEADER]: idempotencyKey } : {}),
+      },
+      timeout: PHOTO_UPLOAD_TIMEOUT_MS,
+    }),
+  getAnnotations: (leadId: string): Promise<AxiosResponse<any>> => api.get(LeadEndpoints.annotations(leadId)),
+  /** Re-edit: overwrites an existing annotated image IN PLACE (same subdocument, same s3url). */
+  upsertAnnotation: (leadId: string, imageId: string, formData: FormData): Promise<AxiosResponse<any>> =>
+    api.patch(LeadEndpoints.upsertAnnotation(leadId, imageId), formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: PHOTO_UPLOAD_TIMEOUT_MS,
     }),
   deleteImage: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.delete(LeadEndpoints.images(leadId), { data: payload }),

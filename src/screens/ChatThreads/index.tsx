@@ -36,6 +36,7 @@ import { sanitizeForLog } from '../../utils/sanitize-for-log';
 const STATUS_OPTIONS = [
   'All',
   'Unresulted Leads',
+  'Pending Rehash',
   'Pending Install',
   'Installing Today',
   'Already Installed',

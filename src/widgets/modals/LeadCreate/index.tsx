@@ -85,6 +85,15 @@ export default function LeadCreateModal({
   const insets = useSafeAreaInsets();
   const createLeadMutation = useCreateLeadMutation();
   const online = useIsOnline();
+  /**
+   * Offline the address box is READ-ONLY and shows the GPS fix.
+   *
+   * Google Places cannot run without a connection, so anything typed offline is an unvalidated
+   * free-text string that nothing can check — and `handleAddressSearch` clears `location` on
+   * every keystroke, so typing also threw away the one thing the device did know for certain.
+   * The coordinates are resolved to a real address on reconnect.
+   */
+  const addressLockedOffline = !online;
   const initialFormState: {
     firstName: string;
     lastName: string;
@@ -704,7 +713,7 @@ export default function LeadCreateModal({
                   <TextInput
                     value={form.address}
                     onChangeText={handleAddressSearch}
-                    editable={!fromZone}
+                    editable={!fromZone && !addressLockedOffline}
                     onFocus={() => {
                       if (!fromZone && suggestions.length > 0) setShowSuggestions(true);
                       scrollViewRef.current?.scrollTo({ y: addressFieldY, animated: true });
@@ -714,7 +723,9 @@ export default function LeadCreateModal({
                         ? online
                           ? 'Detecting your location...'
                           : 'Locating by GPS — this can take a minute...'
-                        : '123 Main St, City, State'
+                        : addressLockedOffline
+                          ? 'Tap the pin to capture your GPS position'
+                          : '123 Main St, City, State'
                     }
                     multiline
                     scrollEnabled={false}
@@ -723,7 +734,7 @@ export default function LeadCreateModal({
                       minHeight: 50,
                       backgroundColor: isDark
                         ? 'rgba(255,255,255,0.05)'
-                        : fromZone
+                        : fromZone || addressLockedOffline
                           ? '#EDEDED'
                           : '#F5F5F5',
                       borderWidth: 1,
@@ -885,8 +896,8 @@ export default function LeadCreateModal({
                       }}
                     >
                       {isValidCoords(location)
-                        ? "Offline - GPS position saved. Type the address if you can read it; otherwise we'll fill it in when you're back online."
-                        : 'Offline - address suggestions are unavailable. Type the full address, or tap the pin to locate by GPS.'}
+                        ? "Offline - GPS position saved. We'll fill in the street address when you're back online."
+                        : 'Offline - tap the pin to capture this position by GPS. The address is filled in when you reconnect.'}
                     </Text>
                   </View>
                 )}

@@ -8,13 +8,46 @@ import { AppState } from 'react-native';
 import { isOnline, onReconnect } from '../services/connectivity';
 import { getSessionOwner, registerSessionResetHook } from '../services/sessionScope';
 import { isOwnedBy } from './session-scope';
-import { adoptLocalFileAsCached } from './imageFileCache';
+import { adoptLocalFileAsCached, forgetWarmedUri } from './imageFileCache';
 import { resolveS3Url } from './s3-utils';
 import { isCacheFile } from './image-cache-policy';
 import {
   MAX_PHOTO_ATTEMPTS,
   isUnauthorizedError,
 } from './upload-retry-policy';
+import {
+  IDEMPOTENCY_FIELD,
+  isDuplicateUploadResponse,
+  isIdempotentReplay,
+  photoIdempotencyKey,
+} from './upload-idempotency';
+import { pruneRecentlyCompleted } from './photo-upload-progress';
+
+export interface RecentlyCompletedUpload {
+  leadId: string;
+  categoryName: string;
+  subcategory: string;
+  userId?: string;
+  completedAt: number;
+}
+
+/**
+ * An annotated photo riding the queue (services/annotationSaveService.ts). `new` = PUT a fresh "(Annotated)" photo and
+ * link its marks to the original; `reedit` = PATCH the existing annotated copy in place (one annotated photo per base).
+ */
+export interface UploadQueueAnnotation {
+  mode: 'new' | 'reedit';
+  /** The mobile annotation JSON (utils/annotation-restore.ts) stored on the server beside the image. */
+  annotationData: any;
+  /** `_id` of the clean ORIGINAL photo. */
+  salesPhotoId?: string | null;
+  /** reedit: `_id` / s3url / bucket of the annotated copy being overwritten. */
+  existingAnnotationId?: string | null;
+  existingS3url?: string | null;
+  existingBucket?: string | null;
+  /** reedit: remote urls whose cached bytes are stale once the image is overwritten. */
+  staleUris?: string[];
+}
 
 export interface UploadQueueItem {
   id: string;
@@ -35,10 +68,12 @@ export interface UploadQueueItem {
    */
   parkedAt?: string;
   lastError?: string;
+  annotation?: UploadQueueAnnotation;
 }
 
 class UploadQueueManager {
   private queue: UploadQueueItem[] = [];
+  private recentlyCompleted: RecentlyCompletedUpload[] = [];
   private isProcessing = false;
   private activeUploadId: string | null = null;
   private onQueueChangeListeners: (() => void)[] = [];
@@ -74,6 +109,20 @@ class UploadQueueManager {
 
   public getQueue() {
     return this.queue.filter((i) => this.ownedByCurrentSession(i));
+  }
+
+  /**
+   * ⚠️ Slots whose upload finished but whose server row has not appeared yet.
+   *
+   * `refetchQueries` is awaited before the item is dropped, but it can still resolve with a
+   * list that does not include the new photo (read-after-write lag on a slow cell). For that
+   * window the photo is in neither the queue nor `salesPhotos`, and any count built from
+   * those two alone dips. Counting these keeps it monotonic. Bounded by
+   * RECENTLY_COMPLETED_TTL_MS so a row that never arrives stops being claimed.
+   */
+  public getRecentlyCompleted(): RecentlyCompletedUpload[] {
+    this.recentlyCompleted = pruneRecentlyCompleted(this.recentlyCompleted);
+    return this.recentlyCompleted.filter((r) => isOwnedBy(r.userId, getSessionOwner()));
   }
 
   public getActiveUploadId(): string | null {
@@ -274,6 +323,20 @@ class UploadQueueManager {
         console.log(`[UploadQueue] Uploading item: ${activeItem.id} for slot: ${activeItem.subcategory}`);
         await this.uploadItem(activeItem);
 
+        // ⚠️ Recorded BEFORE the item leaves the queue: `removeItem` notifies listeners, and a
+        // listener that ran between the removal and this record would see the dip we are
+        // fixing.
+        this.recentlyCompleted = [
+          ...pruneRecentlyCompleted(this.recentlyCompleted),
+          {
+            leadId: activeItem.leadId,
+            categoryName: activeItem.categoryName,
+            subcategory: activeItem.subcategory,
+            userId: activeItem.userId,
+            completedAt: Date.now(),
+          },
+        ];
+
         this.removeItem(activeItem.id);
         this.saveQueue();
         this.cleanupPersistedFile(activeItem); // fire-and-forget: delete the durable copy
@@ -289,6 +352,22 @@ class UploadQueueManager {
         if (!this.checkOnline()) {
           console.log('[UploadQueue] Connection lost during upload. Will resume on reconnect.');
           break;
+        }
+        /**
+         * ⚠️ A duplicate-key rejection means the photo IS stored. Treat it as a success and
+         * drop the item - parking it would tell the rep a safely-stored photo had failed, and
+         * leave them retaking a door they already shot.
+         */
+        if (isDuplicateUploadResponse(error)) {
+          console.log(`[UploadQueue] ${activeItem.id} already stored server-side; completing.`);
+          this.removeItem(activeItem.id);
+          this.saveQueue();
+          this.cleanupPersistedFile(activeItem);
+          try {
+            queryClient.invalidateQueries({ queryKey: ['leads'] });
+            await queryClient.refetchQueries({ queryKey: ['lead', activeItem.leadId] });
+          } catch {}
+          continue;
         }
         if (isUnauthorizedError(error)) {
           // The session is gone, not the photo. Keep it, spend no attempt, and stop: the next
@@ -341,6 +420,11 @@ class UploadQueueManager {
       throw err;
     }
 
+    if (item.annotation?.mode === 'reedit' && item.annotation.existingAnnotationId) {
+      await this.uploadAnnotationEdit(item, isLocalFile);
+      return;
+    }
+
     const formData = new FormData();
     formData.append('files', {
       uri: isLocalFile ? this.toFileUri(item.uri) : item.uri,
@@ -357,7 +441,26 @@ class UploadQueueManager {
       },
     ];
     formData.append('images', JSON.stringify(imageInfo));
+    if (item.annotation) {
+      // Links the marks to the clean original so the copy can be re-edited later (the field web sends too).
+      formData.append(
+        'annotations',
+        JSON.stringify([
+          item.annotation.salesPhotoId
+            ? { salesPhotoId: item.annotation.salesPhotoId, annotationData: item.annotation.annotationData }
+            : null,
+        ]),
+      );
+    }
     formData.append('category', 'salesPhotos');
+
+    /**
+     * ⚠️ Derived from `item.id`, which is minted once at enqueue and persisted to MMKV - so
+     * every retry of this photo, including one after an app restart days later, sends the SAME
+     * key. A key regenerated per attempt would not deduplicate anything.
+     */
+    const idempotencyKey = photoIdempotencyKey(item);
+    if (idempotencyKey) formData.append(IDEMPOTENCY_FIELD, idempotencyKey);
 
     const existingUrls = new Set<string>();
     const userId = item.userId;
@@ -375,7 +478,13 @@ class UploadQueueManager {
       }
     }
 
-    const response = await LeadService.uploadImages(item.leadId, formData);
+    const response = await LeadService.uploadImages(item.leadId, formData, idempotencyKey);
+
+    if (isIdempotentReplay(response)) {
+      // The server recognised an earlier delivery of this exact photo. The timeout that made us
+      // retry was a lie; nothing new was stored. Treated as success - that is the whole point.
+      console.log(`[UploadQueue] ${item.id} was already stored (idempotent replay).`);
+    }
 
     this.logUploadSuccessAsync(item, response, coords, existingUrls);
 
@@ -383,10 +492,26 @@ class UploadQueueManager {
       const uploaded = this.matchUploadedPhoto(response, item, existingUrls);
       const uploadedUrl = uploaded?.secureUrl || resolveS3Url(uploaded?.s3url);
       if (uploadedUrl) await adoptLocalFileAsCached(item.uri, uploadedUrl);
+      if (item.annotation && uploaded?.s3url) await this.adoptUnderEveryUrlForm(item.uri, uploaded.s3url, uploaded.bucketName);
     } catch (adoptErr) {
       console.warn('[UploadQueue] Could not adopt local file into image cache:', adoptErr);
     }
 
+    /**
+     * ⚠️ The refetch is AWAITED before `processQueue` removes the item, so the photo is never
+     * in neither set. Reported as "I uploaded 4 images, during uploading it becomes 3, then a
+     * second later 4 again": the count is `server photos + queued items`, and the moment the
+     * queue item is dropped while the server list is still stale, the photo belongs to
+     * neither and the number falls.
+     *
+     * ⚠️ Do not make this fire-and-forget to "speed up the drain". The await IS the fix, and
+     * on a slow cell the window it closes is seconds long, not milliseconds.
+     *
+     * ⚠️ `refetchQueries` can still resolve with a server list that does not yet include this
+     * photo (read-after-write lag). That residual flicker is covered on the UI side by
+     * `utils/photo-upload-progress.ts`, which counts a just-drained slot until the server row
+     * appears - the two fixes are complementary, not alternatives.
+     */
     try {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       await queryClient.refetchQueries({ queryKey: ['lead', item.leadId] });
@@ -409,17 +534,113 @@ class UploadQueueManager {
     }
   }
 
+  /**
+   * Re-edit of an annotated photo: PATCH overwrites the existing annotated image in place - no new row, so no
+   * idempotency key is needed (a replay writes the same bytes again).
+   *
+   * ⚠️ Same s3url + same file name = same local cache path, so the old bytes would keep showing: the stale urls are
+   * forgotten and the signed-url / lead queries refreshed.
+   */
+  private async uploadAnnotationEdit(item: UploadQueueItem, isLocalFile: boolean): Promise<void> {
+    const ann = item.annotation!;
+    const formData = new FormData();
+    formData.append('file', {
+      uri: isLocalFile ? this.toFileUri(item.uri) : item.uri,
+      type: item.type,
+      name: item.name,
+    } as any);
+    formData.append('annotationData', JSON.stringify(ann.annotationData));
+
+    await LeadService.upsertAnnotation(item.leadId, ann.existingAnnotationId as string, formData);
+
+    try {
+      await Promise.all((ann.staleUris || []).map((u) => forgetWarmedUri(u)));
+      // The cache path ignores the signature, so the NEW bytes go straight in under the same key: the card then paints
+      // the edited photo from disk the instant the lead refreshes, with no download and no loader.
+      const sameKeyUrl = (ann.staleUris || [])[0];
+      if (sameKeyUrl) await adoptLocalFileAsCached(item.uri, sameKeyUrl);
+      if (ann.existingS3url) {
+        await this.adoptUnderEveryUrlForm(item.uri, ann.existingS3url, ann.existingBucket || undefined);
+      }
+    } catch {}
+    try {
+      queryClient.invalidateQueries({ queryKey: ['secureUrls'] });
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['leadAnnotations', item.leadId] });
+      await queryClient.refetchQueries({ queryKey: ['lead', item.leadId] });
+    } catch (qcErr) {
+      console.warn('[UploadQueue] Failed to refresh queries after an annotation edit:', qcErr);
+    }
+
+    if (item.userId) {
+      logEvent('update', {
+        user_id: item.userId,
+        module_type: 'annotated_photos',
+        created_by: item.userId,
+        meta: {
+          leadId: item.leadId,
+          category: item.categoryName,
+          subcategory: item.subcategory,
+          occurredAt: item.timestamp,
+          action: 'annotated_photo_updated',
+          image_url: ann.existingS3url || '',
+          imageData: {
+            s3url: ann.existingS3url || '',
+            bucketName: ann.existingBucket || '',
+            category: item.categoryName,
+            subcategory: item.subcategory,
+            timestampTaken: item.timestamp,
+          },
+        },
+      });
+    }
+  }
+
+  /**
+   * ⚠️ The card that takes over from a just-uploaded annotation first paints from the RAW s3 url
+   * (`useDynamicInspectionCapture` uses `resolveS3Url` "so the tile never sits empty") and then from the SIGNED one. The
+   * image cache is keyed by url (query dropped), and those two forms can differ, so the local JPEG is stored under BOTH
+   * before the queue item - and with it the local file - is dropped. Any form left out is a download, i.e. a flicker.
+   */
+  private async adoptUnderEveryUrlForm(localUri: string, s3url: string, bucketName?: string): Promise<void> {
+    try {
+      await adoptLocalFileAsCached(localUri, resolveS3Url(s3url));
+      const res = await LeadService.getSecureUrls([{ bucketName: bucketName || '', filePath: s3url }]);
+      const data = res?.data?.data || res?.data || [];
+      const entry = Array.isArray(data) ? data.find((d: any) => d?.filePath === s3url) || data[0] : null;
+      const signed = entry?.secureUrl || entry?.url;
+      if (signed) await adoptLocalFileAsCached(localUri, signed);
+    } catch (e) {
+      console.warn('[UploadQueue] Could not warm the cache under every url form:', e);
+    }
+  }
+
   private matchUploadedPhoto(response: any, item: UploadQueueItem, existingUrls: Set<string>): any | null {
     const rows = response?.data?.salesPhotos || response?.data?.data?.salesPhotos || [];
-    if (!Array.isArray(rows)) return null;
+    return Array.isArray(rows) ? this.pickUploadedPhoto(rows, item, existingUrls) : null;
+  }
+
+  /**
+   * ⚠️ Matched on the `timestampTaken` the upload SENT first. A photo that was queued offline keeps
+   * its own capture time, and the server stores it verbatim, so it names this exact photo whatever
+   * else is on the lead. The category/subcategory + "not there before" rule alone picked the wrong
+   * row (or none) when the pre-upload fetch failed - `existingUrls` was then empty - or when several
+   * photos share a slot, and the log went out with an empty image.
+   */
+  private pickUploadedPhoto(rows: any[], item: UploadQueueItem, existingUrls: Set<string>): any | null {
+    const sameSlot = (p: any) =>
+      p?.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
+      p?.subcategory?.toLowerCase() === item.subcategory?.toLowerCase();
+    const sentAt = Date.parse(String(item.timestamp || ''));
+    const sameMoment = (p: any) => {
+      const at = Date.parse(String(p?.timestampTaken || ''));
+      return !Number.isNaN(sentAt) && !Number.isNaN(at) && at === sentAt;
+    };
+    const withUrl = [...rows].reverse().filter((p: any) => p?.s3url);
     return (
-      [...rows].reverse().find(
-        (p: any) =>
-          p?.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
-          p?.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
-          p?.s3url &&
-          !existingUrls.has(p.s3url)
-      ) || null
+      withUrl.find((p: any) => sameSlot(p) && sameMoment(p)) ||
+      withUrl.find((p: any) => sameSlot(p) && !existingUrls.has(p.s3url)) ||
+      null
     );
   }
 
@@ -443,36 +664,28 @@ class UploadQueueManager {
         s3url = immediateMatch.s3url;
         bucketName = immediateMatch.bucketName || '';
       } else {
-        let refreshAttempt = 0;
-        const maxRefreshAttempts = 5;
-        let waitTime = 1000;
-        let foundPhoto = false;
-
-        while (!foundPhoto && refreshAttempt < maxRefreshAttempts) {
-          await new Promise<void>((resolve) => setTimeout(resolve, waitTime));
+        // The server list can lag the upload, and after an offline sync many photos land at once. Wait
+        // for THIS photo's row (about two minutes at most) rather than send the log with no image:
+        // the portal draws the picture from `imageData.s3url`, so an empty one is an empty log.
+        const waits = [1000, 2000, 3000, 5000, 5000, 10000, 15000, 30000, 60000];
+        for (const wait of waits) {
+          await new Promise<void>((resolve) => setTimeout(resolve, wait));
           try {
             const leadRes = await LeadService.workLead(item.leadId, userId);
             const refreshedLead = leadRes.data?.data || leadRes.data;
-            if (refreshedLead?.salesPhotos && Array.isArray(refreshedLead.salesPhotos)) {
-              const matched = [...refreshedLead.salesPhotos].reverse().find(
-                (p: any) =>
-                  p.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
-                  p.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
-                  p.s3url &&
-                  !existingUrls.has(p.s3url)
-              );
-              if (matched && matched.s3url) {
-                s3url = matched.s3url;
-                bucketName = matched.bucketName || '';
-                foundPhoto = true;
-                break;
-              }
+            const rows = Array.isArray(refreshedLead?.salesPhotos) ? refreshedLead.salesPhotos : [];
+            const matched = this.pickUploadedPhoto(rows, item, existingUrls);
+            if (matched?.s3url) {
+              s3url = matched.s3url;
+              bucketName = matched.bucketName || '';
+              break;
             }
           } catch (err) {
-            console.warn(`[UploadQueue] Refresh attempt ${refreshAttempt + 1} failed:`, err);
+            console.warn('[UploadQueue] Photo lookup for the activity log failed:', err);
           }
-          refreshAttempt++;
-          waitTime = Math.min(waitTime + 1000, 5000);
+        }
+        if (!s3url) {
+          console.warn(`[UploadQueue] Could not find the uploaded photo for ${item.id}; logging it without an image url`);
         }
       }
 

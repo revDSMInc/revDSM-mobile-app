@@ -45,6 +45,7 @@ import {
   getJobDistanceMiles,
 } from '../../utils/sales-pins';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { DEFAULT_MAP_FILTERS, filterMapJobs, isJobOwner } from '../../utils/map-job-filters';
 import { FlashMessage } from '../../config/message';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { readMapLeadsCache, writeMapLeadsCache } from '../../utils/offline-map-leads-cache';
@@ -60,34 +61,6 @@ import { useIsOnline } from '../../hooks/useIsOnline';
 
 const { width, height } = Dimensions.get('window');
 
-const isJobOwner = (item: any, user: any): boolean => {
-  if (!user || !item) return false;
-  const uid = typeof user === 'string' ? user : (user._id || user.id);
-  if (!uid) return false;
-
-  const matchesId = !!(
-    item.salesRepId === uid ||
-    item.salesRep === uid ||
-    (item.salesRep && typeof item.salesRep === 'object' && (item.salesRep._id === uid || item.salesRep.id === uid)) ||
-    item.assignedRepId === uid ||
-    (item.assignedRep && typeof item.assignedRep === 'object' && (item.assignedRep._id === uid || item.assignedRep.id === uid))
-  );
-  if (matchesId) return true;
-
-  if (typeof user === 'object') {
-    const repName = (item.salesRepName || item.userName || (typeof item.salesRep === 'string' ? item.salesRep : ''))?.toLowerCase().trim();
-    if (repName) {
-      const userFullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase().trim();
-      const userFirstName = (user.firstName || '').toLowerCase().trim();
-      if (userFullName && (repName === userFullName || repName === userFirstName)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-};
-
 const EMPTY_LEADS: any[] = [];
 
 const getRegionDeltaForRadiusMiles = (latitude: number, radiusMiles: number) => {
@@ -99,26 +72,6 @@ const getRegionDeltaForRadiusMiles = (latitude: number, radiusMiles: number) => 
     latitudeDelta: Math.max(latDelta * 1.2, 0.01),
     longitudeDelta: Math.max(lonDelta * 1.2, 0.01),
   };
-};
-
-const DEFAULT_MAP_FILTERS: FilterState = {
-  jobNumber: '',
-  sortOrder: 'date-desc',
-  radius: 0,
-  minPrice: '',
-  maxPrice: '',
-  startDate: null,
-  endDate: null,
-  myJobsOnly: false,
-  isFavoriteOnly: false,
-  isReferralOnly: false,
-  isHeatMap: false,
-  showRoute: false,
-  showProduct: true,
-  statusFilter: 'all',
-  isMapInstalledOnly: false,
-  isMapPendingInstallOnly: false,
-  centerCoords: undefined,
 };
 
 export default function MapDetailScreen() {
@@ -356,83 +309,13 @@ export default function MapDetailScreen() {
   }, [queryClient, refetchQuery]);
 
   const baseFilteredLeads = useMemo(() => {
-    console.log('[MapDetail DEBUG] Recalculating filteredLeads. leads.length:', leads.length, 'myJobsOnly:', filters.myJobsOnly, 'user ID:', user?._id || user?.id);
-    let result = [...leads];
-    result = result.filter((item) => {
-      const jobNumber = item?.jobNumber;
-      if (typeof jobNumber === 'string' && jobNumber.startsWith('TAM')) {
-        const number = parseInt(jobNumber.replace('TAM', ''), 10);
-        if (!isNaN(number) && number >= 30000 && number <= 30032) {
-          return false;
-        }
-      }
-      return true;
-    });
-
-    result = result.filter((item) => {
-      if (filters.jobNumber && !filters.centerCoords) {
-        const search = String(filters.jobNumber).toLowerCase();
-        const matchesJob = jobNumberMatches(item, search);
-        const matchesAddress = String(item.fullAddress ?? '').toLowerCase().includes(search);
-        if (!matchesJob && !matchesAddress) return false;
-      }
-
-      if (filters.isReferralOnly) {
-        const isMine = isJobOwner(item, user);
-        const hasReferrals = item.jobReferrals && item.jobReferrals.length > 0;
-        if (!hasReferrals) return false;
-
-        if (!isMine) {
-          const activeToggle = item.jobReferrals[0]?.referralToggle === true || item.jobReferrals[0]?.referralToggle === 'true';
-          if (!activeToggle) return false;
-        }
-      }
-
-      if (filters.myJobsOnly) {
-        const isMine = isJobOwner(item, user);
-        console.log('[MapDetail DEBUG] MyJobsOnly check for job:', item.jobNumber, 'user uid:', user?._id || user?.id, 'isMine:', isMine);
-        if (!isMine) return false;
-      }
-
-      if (filters.isFavoriteOnly) {
-        const isFav = item.isFavorite === true || item.isFavourite === true;
-        if (!isFav) return false;
-      }
-
-      if (!matchesPinStatusFilter(item, filters.statusFilter)) return false;
-
-      if (filters.isMapInstalledOnly && getPinCategory(item) !== 'installed') return false;
-      if (filters.isMapPendingInstallOnly && getPinCategory(item) !== 'pendingInstall') return false;
-
-      if (filters.minPrice && (item.price || 0) < parseFloat(filters.minPrice)) return false;
-      if (filters.maxPrice && (item.price || 0) > parseFloat(filters.maxPrice)) return false;
-
-      if (filters.radius > 0) {
-        const origin = filters.centerCoords || userLocation;
-        if (origin) {
-          const miles = getJobDistanceMiles(item, origin);
-          if (miles === null || miles > filters.radius) return false;
-        }
-      }
-
-      if (filters.startDate) {
-        const itemDate = new Date(getPinSortDate(item));
-        if (itemDate < new Date(filters.startDate)) return false;
-      }
-      if (filters.endDate) {
-        const itemDate = new Date(getPinSortDate(item));
-        if (itemDate > new Date(filters.endDate)) return false;
-      }
-
-      return true;
-    });
+    const result = filterMapJobs(leads, filters, { user, userLocation });
 
     const processed = result.map((item) => ({
       ...item,
       _timestamp: new Date(getPinSortDate(item)).getTime(),
     }));
 
-    console.log('[MapDetail DEBUG] Recalculated filteredLeads. final count:', processed.length);
     return processed;
   }, [
     leads,

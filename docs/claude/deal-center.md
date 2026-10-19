@@ -1136,6 +1136,61 @@ none on opening the sheet**, with a body of `{"dropPrice":[…]}`.
 ⚠️ **All three files are CRLF** (`drop-prices.ts`, `useDynamicCalculators.ts`, `RolloutView.tsx`).
 Use `newline=''` on both ends — same trap as `dynamic-deal-diff.ts` and `EditCustomerModal.tsx`.
 
+### …and a drop on a FLAKY connection was lost silently, not just offline
+
+Client ticket: *"Deal center - drop did not save… this has got to do with offline/online stuff…
+there shouldn't be this fragmented difference between online, offline, and online with little
+bars."* The developer could not reproduce on their own (stable) connection.
+
+**True airplane mode already worked.** `saveDropsNow`'s pre-flight `!isOnline()` check routes
+straight to `persistOffline` (MMKV-backed, drained on reconnect/`AppState`/a 60 s sweep — see
+`offlineLeadStore.ts`). The bug is the **middle case the ticket is actually describing**: "little
+bars", where `isOnline()`'s cached/debounced flag reads `true` but the PUT itself fails. The old
+code's failure handling was **one immediate retry, then silent loss**: `catch { if (attempt === 0)
+dropSavePending.current[tabId] = drops; }` — on a flaky connection the retry fires instantly with
+no backoff and no re-check of connectivity, so it fails again for the same reason the first one
+did; at `attempt === 1` the `if` is false, nothing is queued, nothing is written to disk, and the
+row that only ever existed in `handleSetDrops`'s in-memory `setTabs` update is gone. The rep sees
+the modal close and the row on screen (the optimistic update), with **no error, no "pending sync"
+indicator — nothing** to say it never reached the server or the device.
+
+⚠️ **`queueCalculatorSetting`/`flushCalculatorSettings` (`services/offlineSettings.ts`) are NOT
+involved in drops** — that queue only covers `defaultPaymentMethod`/`defaultPercentage` (the "Set
+as Default" toggles), via `saveDefault` in `RolloutView.tsx`. Its imports sitting near the top of
+the file are a red herring for this ticket.
+
+**Fix:** the second failed attempt now mirrors what `scheduleSave` already does for every OTHER
+calculator field the moment a save fails while `isOnline()` still (wrongly) reads `true` — it
+flips `offlineModeRef.current = true` and calls `persistOffline` directly, bypassing
+`saveDropsNow`'s own pre-flight `isOnline()` check (which is exactly the flag that lied the first
+time). `persistOffline` already special-cases `dropPrice` back into its payload for this reason
+(see the comment at its definition — "offline there is no second writer"), and once
+`offlineModeRef` is `true` its own online-guard (`if (!offlineModeRef.current && isOnline())
+return;`) passes, so the record is written to MMKV unconditionally. From there the existing
+reconnect/`AppState`/60 s-sweep drain picks it up like any other offline edit — no new sync
+mechanism was needed, only routing a second network failure into the one that already exists.
+
+⚠️ **`offlineWorkIdRef` is always populated** (`ensureOfflineWorkForLead` runs on every bootstrap
+path, not just the offline one — see the hydrate effect), so `persistOffline`'s own `if (!workId)
+return;` guard is not a concern here; the record to write into always exists by the time a rep can
+tap Secure/Decline.
+
+⚠️ **Only the SECOND failure trips this.** The first failure still gets its immediate retry
+unchanged — a single transient blip (the case the original comment described) still resolves
+online, with no visible change in behavior and no calculator prematurely flipped into
+offline-mode for the rest of the session.
+
+**Not done (deliberately out of scope for this pass):** no rep-facing "saved on your device"
+message was added for this path. `saveDefault` has one because it can `await` its own result
+synchronously; `saveDropsNow` runs deep inside the hook with no promise threaded back through
+`handleSetDrops` → `onDropChange`, and wiring that up is a larger, separate change. The rep
+currently sees the drop persist correctly (it will sync), just without an explicit "pending sync"
+indicator on this specific action — flag if that indicator turns out to matter in practice.
+
+⚠️ **Needs a device confirmation on a genuinely flaky connection** (not just airplane mode) — kill
+wifi mid-request, or throttle to induce a real timeout, and confirm the drop survives an app kill
+and reappears after the sweep/reconnect drain.
+
 ## Ticket 409 — a resulted lead locks every rollout tab, and the resulted one offers Reset Job Builder
 
 Ticket: *"when a lead is resulted from one tab, the other tabs of the same lead remain active, allowing
@@ -1308,6 +1363,67 @@ exceed it, and the ticket specifies different copy.
 - `openDrop` is the ONLY entry point — the input's `onSubmitEditing`, its iOS `onBlur` commit and the
   add button all funnel through it, and the **Display** re-negotiation path reuses an existing row's
   stored price rather than a typed one, so it cannot reach this.
+
+## The "Jobs Built — Back to Tools" footer covered a focused field (End Price, Down Payment, drop price)
+
+Ticket: *"the button is looking up and hiding the drop price field."* Tapping "+ Nth Drop" opens the
+inline `showDropInput` price field and the keyboard comes up for its `autoFocus` — the fixed footer
+below the scroll area (either "Confirm Rollouts" or, once every rollout is confirmed, "Jobs Built —
+Back to Tools") visually lands on top of it.
+
+**Not a z-index/overlap bug** — the footer is a correctly-structured sibling AFTER the scrollable
+content closes, not an absolutely-positioned overlay.
+
+### First attempt was too narrow — caught by the reporter, not by testing
+
+The first fix only handled the ONE trigger the screenshot showed (tapping "+ Nth Drop"): a
+`mainScrollViewRef.current?.scrollToEnd(...)` fired from that button's `onPress`. The reporter came
+back with a SECOND screenshot showing the identical symptom on the plain **Rollout End Price** field
+— a completely different `TextInput`, nowhere near `showDropInput`, which the first fix could not
+possibly have reached. That disproved the "it's specifically the drop flow" framing and pointed at
+the real scope: EVERY text input in `PremiumQuoteCard` (Rollout End Price, Add Down Payment, the
+inline drop-price field) has this problem, because the screen has no keyboard-aware scrolling
+anywhere, full stop — not because of anything particular to drops.
+
+### Root cause and actual fix
+
+This screen wrapped its content in a `KeyboardAvoidingView` with `behavior="padding"`, which shrinks
+the whole column when the keyboard opens, but nothing inside ever scrolled the FOCUSED field back
+into the shrunken space — so whichever input the rep just tapped (top-of-card End Price, or
+bottom-of-card Down Payment / drop price) could end up under the footer or the keyboard depending on
+where it happened to sit.
+
+**Fixed by matching `DynamicDealEditScreen`'s own documented pattern** ("Deliberately NOT a padding
+`KeyboardAvoidingView`" — see that screen's comment beside its own `KeyboardAwareScrollView`s):
+- The outer `KeyboardAvoidingView` became a plain `View` — stacking it around a
+  `KeyboardAwareScrollView` double-compensates for the keyboard instead of helping; the library
+  already keeps whichever field is focused visible on its own.
+- The main content `ScrollView` (`PeekAwareScrollView`) became `KeyboardAwareScrollView`
+  (`bottomOffset={24}`, same as `DynamicDealEditScreen`'s usage) — done LOCALLY in this file, not by
+  editing the shared `widgets/common/PhotoPeekScrollLock.tsx` component itself, which five OTHER
+  screens (Pitchbook, RooflineDeck, RevRender, RevRenderSlots, Manage Photos) also depend on. Verified
+  first that `RolloutView` never actually renders a `PhotoPeekPressable` (grep for it: zero hits) —
+  the peek-lock scroll-freeze it exists for was never exercised here, so swapping this one usage is
+  inert everywhere else. `PhotoPeekScrollLockProvider` was left in place (harmless, unused) rather
+  than pulled out, to keep the diff to the actual bug.
+- This automatically covers ALL THREE inputs — End Price, Down Payment, and the drop price field —
+  with no per-field wiring, which is why the earlier `onDropInputOpened`/`scrollToEnd` approach was
+  abandoned rather than extended: a hand-rolled scroll target for each field would have to know each
+  one's position and re-derive it if the card's layout ever changes, where `KeyboardAwareScrollView`
+  tracks whichever input is ACTUALLY focused automatically.
+- Nothing else about `showDropInput`/`openDrop`/the equality-rejection rule above, or the OTHER
+  `KeyboardAvoidingView` in this file (inside `DropOutcomeModal`, its own separate `Modal` — untouched
+  and correctly still using `behavior`, since that one has no `KeyboardAwareScrollView` inside it),
+  changed.
+
+⚠️ **If a future report says a field STILL hides under the keyboard/footer here, do not re-add a
+padding `KeyboardAvoidingView`** — that is the exact regression this fix removed. Check instead
+whether the new field is actually inside this `KeyboardAwareScrollView`, or whether it needs its own
+`bottomOffset` tuning.
+
+Not verified on a device. Smoke test: open a rollout, focus Rollout End Price, Add Down Payment, and
+the "+ Nth Drop" field one at a time — each should stay fully visible above the keyboard with no
+footer button overlapping it.
 
 ## Signing an agreement says the customer got a copy
 
@@ -2639,6 +2755,36 @@ The native `Alert.alert` read as OS chrome. It is now `ConfirmDialog` (`tone="wa
 information-only card with one OK button) rendered beside both `ResultJobModal`s in `DynamicDealCenterScreen`, driven by
 `fundingBlock` state. ⚠️ Both render branches (edit-mode early return and the main flow) carry the dialog — keep them in step.
 
+### REVUIUX-519: funding ownership is now the server's `calculatorId` (supersedes the device pin above)
+
+Source: backend guide `FUNDING-CALCULATOR-OWNERSHIP-MOBILE.md`. `JobFunding` carries a nullable `calculatorId`; the server
+claims it on `PUT /lead/v1/:leadId/funding`, moves it if no row is *settled* (charged card / collected cheque — an approved or
+activated loan is NOT settled), and answers `409 data.code = FUNDING_SETTLED_ON_OTHER_CALCULATOR` otherwise.
+- **Deleted `utils/funding-owner.ts` and every `Storage` `funding-owner:<leadId>` read/write.** Replaced by the pure
+  `fundingBelongsToCalculator(record.calculatorId, calculatorId)` in `DynamicDealCenter/utils/funding.ts` (null = unclaimed = ours).
+- **Send `calculatorId` on every write**: `useFunding.savePayments` adds `logCtx.calculatorId` (Result Lead sheet and My Deals edit);
+  the offline queue (`saveOfflineFunding` body → `offlineLeadStore` `'funding'` step) carries it too.
+- `FundingRecord.calculatorId` is typed; `FundingError.code` is read from `data.code`; the 409 is its own kind
+  `settledOnOtherCalculator` (warning flash, **no refetch / no retry**). ⚠️ Match on the code, never the message; a bare 409 is still `stale`.
+- ⚠️ **The hard block is gone.** `handleResultJob` no longer refuses a Sale when another calculator's funding is submitted (and the
+  `fundingBlock` `ConfirmDialog`s were removed from both render branches). A same-owner / unclaimed submitted record opens on the
+  Funding screen (collected money locked, financing swappable); a different owner opens the normal sheet unhydrated — the save then
+  re-scopes, or the server's 409 text is shown in the sheet's save error.
+- ⚠️ A re-scoping sheet starts from fresh rows (per the backend guide); it does not copy the other calculator's financing rows across.
+- ⚠️ **Do NOT build the "money already collected" carry-over/refund flow** — product decision still open; the 409 is the placeholder.
+Tests: `__tests__/utils/funding-owner.test.ts` (gitignored dir).
+
+### Follow-up: collected money pins the lead to its calculator (fully-financed funding pins nothing)
+
+Ticket: *all calculators fully financed → each may be resulted; once a down payment is received, only the calculator that took it may be resulted.*
+`handleResultJob` (CRLF) now checks `fundingPinnedToOtherCalculator(record, calculatorId)` (`utils/funding.ts`: `record.calculatorId` is a
+different calculator AND `hasCollectedMoney` = any row `charged || collected`, mirroring the server's `isSettled`) and shows the
+`fundingBlock` `ConfirmDialog` ("Down payment already collected") instead of opening the sheet. Sale only; a lookup failure falls through.
+⚠️ A lender decision / approved loan is NOT money, so financing never pins. ⚠️ The server still enforces it (409
+`FUNDING_SETTLED_ON_OTHER_CALCULATOR`); this is the early, friendly gate. ⚠️ Funding is ONE record per lead (`JobFunding` unique on `leadId`):
+financing resulted on calculator B *moves* the record from A rather than keeping two — true parallel funding per calculator needs a backend change.
+Both render branches carry the dialog — keep them in step.
+
 ## Result Lead payment rows: one card per payment, amount and method in separate boxes
 
 Ticket: *two separate boxes — one for the amount, one for the payment method; several payments must not share a line; Down Payment,
@@ -3205,6 +3351,1508 @@ question (rep- vs lead-scoped) was settled by the ticket text: *"the plan a rep 
   from Match): the **MY DEFAULT PLAN** card now shows in EVERY mode (or a dashed "No default set" hint) and each plan row has a **star** that sets / clears the rep default
   independent of mode. Picking a row is always a one-off `custom` pick; the star never switches the calculator's mode.
 - ⚠️ Not done: the web Deal Center (own ticket per the handoff). The endpoint was not exercised over HTTP by the backend dev — check once on staging. Not verified on device.
+
+## Scenario Simulator is back on the Funding screen (reverses its removal in `ea337a9`)
+
+Ticket: *"un-comment the finance flow for the funding payment methods and the scenario simulator UI"* (client
+message had hidden it). It was never commented out — `ea337a9` **deleted** `ScenarioSimulator.tsx`,
+`FundingService.mockProvider` / `FundingEndpoints.mockProvider`, `useFunding.mockProvider` + `mockDisabled`,
+and the `onSimulate` / `mockDisabled` props. All restored from that commit's parent, in the current style.
+
+- `funding/ScenarioSimulator.tsx` renders under the attempt history in `FundingView` (Approve full / Approve
+  partial / Decline for loans, "Homeowner saved their card" for cards; checks never appear). Copy now says
+  **Refresh at the top** (the button was "Sync" when it was written).
+- Wired through both Funding hosts: `ResultJobModal` and `DynamicDealEditScreen` pass
+  `funding.mockProvider` as `onSimulate` and `funding.mockDisabled`.
+- ⚠️ **`POST …/{pid}/mock-provider` only works when the server runs `FUNDING_PROVIDER=mock`**; otherwise it
+  404s and the panel switches to "Unavailable". A tap RECORDS an outcome only — the rep must Refresh for it
+  to land.
+- ⚠️ The reason it was removed still stands: a tap writes an invented approval/decline onto a real funding
+  record. `SCENARIO_SIMULATOR_ENABLED` in `utils/funding.ts` is the one switch — set it `false` (or tie it to
+  `__DEV__`) before a build real reps get.
+- Not verified on device; typecheck only.
+
+### Follow-up: financing rows show the full stepper again; only the Submit gate stays bypassed
+
+Ticket: the client wants the Link Sent → Approved → Activated → Funded stepper, **Send application link**
+and the Scenario Simulator for financing rows, while Submit Funding must still not wait on the lender.
+`FINANCING_BYPASS_ENABLED` is untouched (so `fundingBlockers` still ignores an unresolved `bank` row); a
+second flag, `FINANCING_BYPASS_NOTICE_ENABLED` (`utils/funding.ts`, default `false`), now controls whether
+`PaymentFundingCard` swaps the stepper/actions for `FinancingBypassNotice`. Set it `true` to get the
+"Financed through …" notice back. ⚠️ A rep can now Submit with a financing link never sent — intended.
+
+### REVUIUX-546 — the bypass is OFF; the mock lender rail replaced it (supersedes the "revert this" line above)
+
+`FINANCING_BYPASS_ENABLED` is **`false`** as of REVUIUX-546. The backend (`feat/revuiux-546-mock-lender-page`,
+`FUNDING_LENDER_PROVIDER=mock`, `MOCK_PAYMENT_PAGE_URL`) now lets a `bank` row send an application link and
+resolve via `sync`, so the rail is no longer a dead end. With the flag off the stepper, rep actions, real
+blocker sentences ("waiting on lender decision" / "loan not activated yet") and the Submit Funding gate all
+return — nothing was rewritten, only un-skipped. `FINANCING_BYPASS_NOTICE_ENABLED` is now moot (notice is
+never shown while the bypass is off). ⚠️ Delete the flags, `isFinancingBypassed`, `FinancingBypassNotice` and
+the blocker arm once QA signs off. Full reload after flipping — the flag is read at module scope.
+- The Scenario Simulator (restored earlier, `SCENARIO_SIMULATOR_ENABLED`) stays on at the client's request,
+  although the backend note says decisions can come from the link's web page instead. If the server has
+  no `mock-provider` route the panel just shows "Unavailable".
+- Companion REVUIUX-304 (`REVUIUX-304-mobile-bank-decline.md`: Complete Job sends `result: 'Sale'` for a
+  bank-declined job, `DynamicJobBuilderScreen.tsx` ~946) was NOT applied — that file isn't in the repo.
+
+### REVUIUX-546 addendum — what was verified, and the pairing rule
+
+- Mobile `fundingBlockers` is **deliberately stricter than the server's submit rule** (the server exempts
+  lender STEPS since REVDSM-1156/1159; mobile blocks on each with its own sentence). Do NOT "align" it.
+- ⚠️ **Pair:** mobile `fundedAmount` still counts an unapproved `bank` row at its requested amount; that is
+  safe only because the step sentences fire first. If the step blockers are ever deleted, port the server's
+  `if (p.type === 'bank') return p.approvedAmt ?? 0` in the same change. A legacy row with a `decision` but null
+  `approvedAmt` is the one gap (mobile full, server zero -> 409); old data only.
+- An unrun loan must block on "— link not sent yet", never on the server's "$X … still unassigned" 409.
+- Tests: `__tests__/screens/DynamicDealCenter/financing-rail.test.ts` (flag off, step blockers, decline /
+  partial / full + activate). Gitignored like every suite.
+
+### Archive shelf: only plans with a recorded status, no duplicates (`swapRowMethod` / `restoreRowPlan`)
+
+Ticket: a financing plan that only had a link generated landed in ARCHIVED METHODS; switching A -> C -> A -> C
+listed the same plan again.
+- `isArchivableRow(row)` = `decision || activated || charged || collected` (status came back on the Funding
+  screen). **`linkSent` alone no longer archives** — swapping a link-only row just resets `linkSent`/`activated`/
+  `decision` and drops the link. ⚠️ Supersedes the `hasLenderState` gate in the earlier "archive only plans that
+  have actually started" ticket; do not widen back.
+- The shelf holds ONE entry per plan key (`withoutPlan`): archiving replaces an older copy, selecting a plan
+  (dropdown or restore) removes it from the shelf, and `PaymentRowsGroup` renders `visibleArchived(row)` deduped
+  by key/label so the active plan never appears on its own shelf (also covers server-sent `archived` entries).
+- Tests: `financing-rail.test.ts` ("archive shelf"). Not verified on device; server-side archiving is untouched.
+
+### Funding screen: no "Attempt history"; Archived Methods only lists plans with a status
+
+Ticket: the Funding screen listed every attempt (LINKSENT rows, partials) under ATTEMPT HISTORY; the client wants only
+ARCHIVED METHODS, and only for plans that got a status back. `FundingView` no longer renders the attempt-history
+block (`log` is now an optional, unused prop; `attemptLog()` is untouched). `visibleArchived` (`utils/funding.ts`)
+also drops server-sent `archived` entries that carry no decision / approvedAmt / charged / collected / activated,
+so a link-only plan never shows on the shelf. ⚠️ Do not re-add the history block without asking. Not verified on device.
+
+### Archive shelf follow-up: keep every approved plan, hide any plan active on another row
+
+Ticket: two approved plans but the shelf showed one; a plan re-selected on another row stayed listed.
+- ⚠️ `swapRowMethod` bailed out on `!r.method`, so a row hydrated from the server (plan key unresolved, only
+  `methodLabel`) never archived its approved plan. Now `!(r.method || r.methodLabel)`; `snapshotPlan` stores a
+  label fallback as `planKey`.
+- Dedupe is by **label as well as key** (`withoutPlan(shelf, key, plans)`): server entries only carry `method`
+  (label), local ones a `planKey`.
+- `visibleArchived(row, activeLabels, plans)`: `PaymentRowsGroup` passes the labels of every OTHER row's current
+  method, so an approved plan already in use on a sibling row is not offered as archived. Not verified on device.
+
+### Archive shelf follow-up: picking an archived plan hides it, never deletes it
+
+Ticket: three approved plans on the shelf; picking GS2511 hid it (right) but moving on to another plan did not bring
+it back. Cause: `swapRowMethod` / `restoreRowPlan` stripped the picked plan from `archived`, and a plan re-picked
+without a new status is not archivable, so nothing re-added it. Now the shelf is only ever ADDED to (one entry per
+plan, newest wins); `visibleArchived` hides whichever plan is active on the row (and on sibling rows). ⚠️ Do not
+strip the picked plan from `row.archived` again. Not verified on device.
+
+### REVUIUX-546 — rep decision buttons replace the Scenario Simulator
+
+Ticket: the rep records what the lender told them — Approve full / Approve partial / Decline — and the card's
+rail (Link Sent -> Approved -> Activated) moves. Spec: `REVUIUX-546-mobile-rep-decision-buttons.md`.
+- `PaymentFundingCard` `DecisionButtons` ("Record the lender's decision") renders when `canRecordDecision(p)`:
+  `type === 'bank' && linkSent && !decision` (`utils/funding.ts`). Each button calls `funding.recordDecision`
+  (`POST /lead/v1/:leadId/funding/:pid/decision`, existing `FundingService.recordDecision`); `FundingView` passes
+  `onRecordDecision(pid, decision, approvedAmt)`; both hosts (`ResultJobModal`, `DynamicDealEditScreen`) wire it.
+- Partial: inline whole-dollar input, `parsePartialApproval(text, requested)` -> `short` only for `1 … requested-1`;
+  an amount `>= requested` routes to **full** (never a 422). `approvedAmt` is sent only for `short`.
+- The rail is NOT patched locally: `useFunding.run` applies the server's returned record, and `stateOf` derives
+  step 2 (done / warn on open short / bad on decline) and step 3 from it. Server 409/422 wording reaches the rep
+  through `run`'s existing error banner — do not replace it with a generic toast.
+- ⚠️ **Removed** (do not bring back): `ScenarioSimulator.tsx`, `FundingService.mockProvider` + `mock-provider`
+  endpoint, `useFunding.mockProvider`/`mockDisabled`, `SCENARIO_SIMULATOR_ENABLED`, `MOCK_PARTIAL_RATE`, the
+  `onSimulate`/`mockDisabled` props. Supersedes "Scenario Simulator is back on the Funding screen".
+- ⚠️ Mock lender page + rep buttons on the SAME row: the mock answer re-applies on every Sync (backend, mock rail
+  only). QA: drive a loan one way, not both. A decision can be re-recorded (last entry wins). Open client
+  questions: evidence for rep-entered approvals; recording without a sent link (needs a backend change).
+- Needs `FINANCING_BYPASS_ENABLED = false` (done). Tests: `financing-rail.test.ts`. Not verified on device.
+
+### Approved financing no longer locks; re-picking an approved archived plan restores it
+
+Ticket: "This financing has already been activated, so its method is locked" blocked a rep from changing an
+approved loan; and re-selecting an already-approved plan from the archive would have meant a new link + approval.
+- `isMethodLockedRow` = `charged || collected` only — **`activated` no longer locks** (a loan can be swapped; its
+  approval goes to Archived Methods). `lockedMethodNote`'s activated branch is now dead.
+- `snapshotPlan` keeps `linkSent`/`activated`/`approvedAmt` for decided rows. `findApprovedArchive(row, key, plans)`
+  finds a full/short entry for a plan; `swapRowMethod` (dropdown) and `restoreRowPlan` (Restore) then restore
+  `decision`, `linkSent`, `activated`, amount instead of resetting — no new link, no re-approval, no re-activation;
+  an activated plan stays activated, so `fundingBlockers` is empty and Submit Funding enables.
+- `DynamicDealEditScreen.selectRowMethod`: a SERVER-sent approved entry goes through `funding.restoreArchivedPlan`.
+- ⚠️ Local restore is UI state: `toUpsertRows` sends only pid/kind/method/type/amount and the server resets a row's
+  steps when its method changes, so a restore of a not-yet-saved row can be undone by the next save. Whether the
+  server lets an activated loan change method, and honours the restore, is a backend question. Not verified on device.
+
+### Funding card layout polish (decision panel)
+
+`DecisionButtons` (`PaymentFundingCard.tsx`): Approve full / Approve partial / Decline are one equal-width row
+(`flex: 1`, `numberOfLines={1}` + `adjustsFontSizeToFit`, radius 12) instead of wrapping; the busy spinner moved
+under the row so it can't push a button. The send-note panel and decision panel now share padding 14 / radius 14 /
+marginTop 14, and the Sync row sits at marginTop 16. Layout only; not verified on device.
+- Follow-up: the per-label `adjustsFontSizeToFit` made "Approve partial" render smaller than its neighbours, so it is
+  removed — all three labels share one size, and the middle one reads "Approve part" to fit the row. Not verified on device.
+
+
+### Merged with the offline Default toggles (`dev-qs-offline` ← `dev-v1-multi-tenat`)
+
+The only conflict was the `toggleDefault` / `isLocked` / `toggleDefaultDiscount` block in
+`PremiumQuoteCard`. `dev-qs-offline` had moved both Default switches onto `saveDefault`, which queues the
+setting on the device first (`queueCalculatorSetting` → `flushCalculatorSettings`) so the switch holds
+offline. This ticket's side still called `SettingsService.updateCalculatorsSetting` directly and had no
+`toggleDefault`. Resolved as: this ticket's rule and comment (no `isLocked` gate on the discount Default),
+with both toggles kept on `saveDefault`.
+
+- ⚠️ **Don't take the direct `SettingsService` call back in a later merge.** The offline branch dropped
+  that import, so it won't compile, and it would also restore the offline toggle that springs back.
+- ⚠️ **`toggleDefault` (payment method) must survive.** The ticket side had no definition for it, but
+  the Default payment method switch still calls it.
+
+## Offline Deal Center: a SECOND offline session after a sync never uploaded
+
+QA, on the Deal Center with the offline banner up: *"when i turn on the wifi by staying in this screen,
+it syncs the previous lead data, and when again turn off the internet and fill the things offline and
+again on the internet it will not sync the deal center data which i added."* Correct — reproduced by
+driving the real `src/services/offlineLeadStore.ts` under jest with the network mocked.
+
+### Cause: `uploaded` was a dead end
+
+`uploadableWork` (`src/utils/offline-lead-work.ts`) drains only `status === 'draft'` records.
+`saveOfflineDealCenter` re-arms `calculator` / `calculatorState` (`rearmStep`), but `rearmStep` only
+edits `done` — so a record that had drained once stayed `uploaded` with pending steps. The drain
+skipped it, and the pending banner (`activeWork`, which also skips `uploaded`) never mentioned it.
+
+**Fix — `reopenIfPending`, applied inside `putOfflineWork`**, the store's only write: an `uploaded`
+record whose `nextUploadStep` is non-null goes back to `draft`. Doing it at the write rather than in
+`rearmStep` also covers a step that was never applicable before (a first Job Builder draft after a
+Deal-Center-only sync), which `rearmStep` cannot see. ⚠️ `queueLeadWorkStart` and `queueLeadArchive`
+already reset the status by hand; every other writer relied on nothing.
+
+### Two more holes on the same path
+
+- ⚠️ **An edit made while a PUT was in flight was marked sent.** `uploadOne` marked the step done
+  against `latest(work)`; an edit during the `calculatorState` request re-armed nothing (the step was
+  not in `done` yet), so it was recorded as uploaded while the request carried the old state. New
+  **`stepPayloadChanged(sent, now, step)`** compares what the step sends (`calculators` / `outcome` /
+  `customer` / `archive`); when it changed, the step is marked done (keeping ids it produced, so no
+  duplicate calculator) and re-armed.
+- ⚠️ **Re-opening the screen started a SECOND record.** `ensureOfflineWorkForLead` skipped `uploaded`
+  records and called `adoptExistingWork`, losing the appointment and calculator server ids — the next
+  drain filed a second appointment and a second calculator, and a door-created lead was re-adopted
+  under its CLIENT id. It now reuses the live record, else the most recent drained one; safe because
+  `reopenIfPending` reopens it on the next write.
+
+### Follow-ons in `src/screens/DynamicDealCenter/hooks/useDynamicCalculators.ts`
+
+- **`persistOffline` calls `runUpload()` when online.** The session stays on the device once it went
+  offline (one writer), so an edit made after signal returned waited for the 60 s sweep — the
+  reconnect edge had already fired.
+- **`resolveOfflineDealCenterSource` gained `storedDrained`** (`src/utils/offline-deal-center.ts`).
+  Reusing a drained record means its calculators are no longer proof of newer work: the rep may have
+  kept quoting online since, which the snapshot records. A drained device copy now yields to a
+  snapshot with rows (and is still used when there is none). ⚠️ Without this, reuse would paint a
+  stale quote and PUT it back over the newer one.
+
+### "Deal Center isn't configured yet" while offline
+
+The screenshot's own screen. The four company configs (`useCalculatorSchema`,
+`useDynamicCalculatorSchemas`, `useDealPricing`) are cached by `cachedFetch` only once read ONLINE, and
+a sign-out clears them — so a device that had not opened the Deal Center online had no schema, and the
+screen blamed the admin.
+
+- **New `src/screens/DynamicDealCenter/hooks/useWarmDealCenterConfig.ts`**, mounted on the Leads list
+  (`src/screens/Leads/index.tsx`) beside `warmLeadCalculators`. Same query keys as the Deal Center, so
+  it costs nothing extra once warm.
+- **`DynamicDealCenterScreen` shows an offline-specific empty state** ("isn't saved on this device
+  yet") when the config is missing and `isOnline()` is false. ⚠️ Offline, "missing" means "never
+  downloaded", never "not configured".
+
+Tests: `__tests__/services/offline-deal-center-resync.test.ts` — offline → sync → offline → sync
+sending both states to the same server calculator with one lead / appointment / calculator create;
+re-open reusing the record; an in-flight edit sent afterwards; plus the pure rules. The three store
+cases **fail against the pre-fix store**. `__tests__/utils/offline-deal-center.test.ts` covers
+`storedDrained`.
+
+⚠️ Needs a device check: on the Deal Center, offline → edit → Wi-Fi on (syncs) → Wi-Fi off → edit →
+Wi-Fi on, and confirm a second `PUT /lfcalculators/{id}` with the new values and no new
+`POST /appointments` or `POST …/lfcalculators`. Then sign out/in, open the Leads list on Wi-Fi, go
+offline, and confirm the Deal Center opens instead of "isn't configured".
+
+See also `lead-center.md` ▸ *Roof Waiver signed offline*: `queueOfflineConsent` / `addOfflineJobDocument`
+now re-arm their per-item steps (`consent`, `documents`), and `stepPayloadOf` covers both by item
+client ids — the same "marked done, never re-run" bug for forms and scanned documents.
+
+See also `lead-center.md` ▸ *the queued form printed the lead's lat/long*: the `consent` step now swaps a
+coordinates-only `address` for the lead's resolved one (or a geocode) before posting — `resolveFormAddress`
+in `utils/offline-lead-location.ts`.
+
+## Offline agreement: pinch-zoom did nothing on Android
+
+Reported on an Android emulator: in **Generate Agreement** offline (the device-rendered
+`DynamicAgreementGenerator`), pinching the document did nothing. iOS zoomed.
+
+**Cause.** The generator's zoom and pan are a `react-native-gesture-handler` `GestureDetector`
+(`Gesture.Simultaneous(pinch, pan)`), and `DynamicAgreementDialog` hosts it in a `Modal`. A `Modal` is its
+own native view tree, so the app-root `GestureHandlerRootView` does not reach it, and on Android no gesture
+inside it is ever delivered. This is the same trap as root-guide §6 and `pitch-book.md` (Pitch Book /
+Roofline Deck). Online never showed it, because the server-rendered path uses `AgreementSignatureModal`
+instead.
+
+**Fix.** `DynamicAgreementDialog`'s modal content is now a `GestureHandlerRootView` (it took the
+`styles.page` root `View`'s place; nothing else moved).
+
+- ⚠️ **Keep the root on the DIALOG, not inside the generator.** The generator has no `Modal` of its own.
+  If it were ever hosted outside a modal, a nested root would be harmless, but the dialog is the tree
+  that needs one.
+- The signature / initials pad (`AgreementSignatureCapture`, a separate transparent `Modal`) uses
+  `PanResponder`, not gesture-handler, so it needs no root of its own. ⚠️ Add one if it is ever moved
+  onto `GestureDetector`.
+- `DynamicAgreementDialog.tsx` is **CRLF**.
+
+No unit test: this is native gesture delivery inside a React Native `Modal`, which jest can't load (§6).
+
+⚠️ Needs a device check on Android: offline → Generate Agreement → pinch in and out, then pan around the
+zoomed document. Signing, Clear and Save Agreement should still work, and the saved PDF should be
+unaffected by the zoom level.
+
+## Offline agreement: a giant top-left crop on Android, fine on iOS
+
+Reported with two screenshots of the SAME offline-created lead: on iOS the Agreement preview showed the
+whole contract; on the Android emulator it showed a handful of enormous words — the document's top-left
+corner blown up to fill the page ("Street #1 1, Texas, 123456", then "The customer(s) (individually or
+collectively," — the first 35% of the first paragraph line).
+
+**Cause — the generated PDF lied about the image's size.** The offline agreement is not a server PDF: the
+device screenshots the rendered document (`DynamicAgreementGenerator`, `captureRef` at
+`CAPTURE_WIDTH * CAPTURE_SCALE` = **1700 px** wide) and `convertJpegToPdfAsync` wraps that JPEG in a
+one-page PDF. `buildPdfParts` wrote the PAGE size into the image XObject:
+
+```
+/Type /XObject /Subtype /Image /Width 595 /Height 842 ... /Filter /DCTDecode
+```
+
+595x842 is A4 in points — the page, not the image. An image XObject's `/Width` and `/Height` are the
+image's own **pixel** dimensions; the page placement is the `cm` matrix in the content stream, which was
+already correct. Declaring 595x842 for a 1700 px JPEG is invalid PDF, and the two renderers disagree
+about it:
+
+| Renderer | Behaviour |
+|---|---|
+| Quartz / PDFKit (iOS, macOS Preview) | re-reads the size from the JPEG's own frame header and draws all of it — looked perfect, which is why this survived |
+| PDFium (Android, `react-native-pdf`) | believes the dictionary and cuts the decoded samples into 595-wide rows, using the first 842 — the top-left crop, stretched over the page |
+
+⚠️ **This was never Android-only "bad rendering" to be worked around in the viewer.** `PdfPreviewModal`
+passes no `scale`/`fitPolicy`, and nothing platform-specific belongs there — the file itself was wrong.
+
+**Fix.** `readJpegSize` (`utils/jpeg-to-pdf.ts`) walks the JPEG's segments to the frame header (SOF0..SOF15,
+skipping DHT/JPG/DAC, which share that marker range) and returns its real pixel size; `buildPdfParts` takes
+it as a 4th argument and declares it. The page size, the `cm` matrix and the xref offsets are untouched, so
+**the rendered output on iOS is byte-identical** (verified by rendering a 1700 px JPEG both ways through
+Quartz — same PNG md5).
+
+- The file-backed builder (`jpeg-to-pdf-native.ts`) must not decode the image, so it uses
+  `readJpegSizeFromBase64`, which decodes only the first 64 KB of base64 — far more than any frame header
+  needs. Both builders still produce byte-identical documents; do not let that drift.
+- ⚠️ An unreadable / non-JPEG input falls back to the page size, i.e. exactly the old output. That keeps
+  the change safe, but it also means a silently-wrong size is still possible — check `/Width` in the
+  document if an Android crop ever comes back.
+- **Three verbatim copies of this builder** (`screens/JobBuilder/index.tsx`,
+  `widgets/components/LeadCenter/JobDocsSection.tsx`, `widgets/components/job-builder/SummarySection.tsx`)
+  carried the same bug for every SCANNED document, not just the agreement. They now delegate to the shared
+  util and their `base-64` imports are gone. ⚠️ Do not re-inline one.
+
+Covered by `__tests__/utils/jpeg-to-pdf.test.ts` (8 cases: the frame reader past an APP0 segment, non-JPEG
+and truncated input, the base64 head reader, the XObject's declared size vs the MediaBox, the page-size
+fallback, and the xref offsets still pointing at their objects). The XObject case fails on the old builder.
+
+⚠️ Needs a device check on Android: create a lead offline, complete the job, open **Agreement** from the
+summary card — the whole contract should be there, fitted to the page, as on iOS. Then scan a document
+through Lead Center and open it, for the three de-duplicated copies.
+
+
+## "Generate" played two full-screen open animations
+
+The rep taps **Generate** on the agreement card and watches a page slide up showing
+"Generating agreement…", then a *second* page slide up over it carrying the contract. Two
+presentations for one tap, which reads as the app opening two separate screens.
+
+It is not a double-render. `DynamicAgreementDialog` is itself a full-screen `Modal`, and once the
+server preview lands it renders `AgreementSignatureModal` — **another** full-screen `Modal`, as its
+child — and that one also defaulted to `animationType="slide"`. Both animations were real and both
+were correct in isolation.
+
+**The fix** is not to remove a modal (the outer one has to open immediately, or the rep taps
+Generate and watches an unchanged screen for the length of a network round trip). Instead
+`AgreementSignatureModal` took an optional `animationType` prop, defaulting to `slide`, and the
+dialog passes **`fade`** — so the contract cross-fades in over the spinner, in place, and the pair
+reads as the one screen it logically is.
+
+⚠️ **The default must stay `slide`.** The legacy Job Builder (`SummarySection.tsx:1897`) opens the
+same modal straight from the screen, with a separate `<Modal transparent animationType="fade">`
+for its spinner. It is NOT nested, so it must keep sliding. The rule: **`fade` when the modal is a
+child of an already-open full-screen modal, `slide` when it is opened from a screen.**
+
+⚠️ The staged teardown in `handleSignClose` is unaffected and must stay. It still drops the
+signature modal a frame before the dialog (`setSignVisible(false)` → `onClose()` 350ms later),
+because collapsing two native modals in one frame orphans a backdrop and leaves a blank black
+screen. Nothing shows through the cross-fade either way: the dialog's loading shell already
+renders `null` once `agreementData` exists, deliberately.
+
+The OFFLINE path never had this problem and is untouched — `renderLocally` mounts
+`DynamicAgreementGenerator` inline inside the dialog, with its own signature pads, so there is no
+second modal at all.
+
+⚠️ Not verified on a device — it needs a real online agreement generation. Both files are **CRLF**.
+
+## Down payment typed in the Result Lead modal was thrown away on Build Job
+
+QA: enter a Down Payment in the Result Lead modal, press **Build Job**, go back, reopen the modal —
+it reads `$0.00`. The Balance reverts to the full contract price with it.
+
+Two separate gaps, both needed fixing:
+
+1. **Nothing persisted it.** `handleResultConfirm` (`DynamicDealCenterScreen`) put the whole outcome
+   into `calculatorResultData`, which is screen state, and moved to the job builder. Leaving the
+   screen dropped it. Meanwhile `initialDownPayment` is read back from the **saved calculator**, so
+   the modal could only ever show a figure someone had written there — and nothing had.
+   Fix: on a **sale**, `handleResultConfirm` now calls `handleSetDownPayment(currentCalculatorId, …)`.
+   That marks the tab dirty, so it rides the same debounced `PUT /lfcalculators/{id}` as the rollout
+   card's own down-payment input; `downPayment` was already in `buildPayload`
+   (`useDynamicCalculators.ts:615`), the hydrate (`:223`) and `tabSignature` (`:270`), so the round
+   trip needed no new plumbing. A demo has no down payment, so only a sale writes.
+2. **The prefill read the wrong field even when a value existed.** `openResultChooser` seeded
+   `chooseDown` from `activeDownPayment`, which is `acceptedDrop?.downPayment`. ⚠️ On the plain
+   **Result Lead** path there are no drops — the common case, and exactly the QA repro — so that is
+   always 0, and a down payment already saved on the calculator was ignored. New `resultDownPayment`
+   falls back to `calculator.downPayment` when no drop is accepted. ⚠️ The accepted drop still wins
+   when there is one: the deal is being resulted **at the drop**, and the drop carries its own down
+   payment (`dropEntryToPayload`). Do not "simplify" the two into one.
+
+⚠️ Do not move this write into `ResultJobModal` itself. It is mounted twice (calculator step and
+rollout step) and is deliberately presentational — everything it captures leaves through `onConfirm`.
+The persist belongs in the single `handleResultConfirm` both mounts share.
+
+⚠️ The per-drop **Result** action (`setChooserDown(Number(d.downPayment) || 0)`) is untouched and must
+stay drop-scoped — it is resulting that specific dropped price, not the rollout.
+
+Not verified on a device. `tsc` 45 errors (unchanged baseline, none in either file), `eslint`
+identical to HEAD for both (327 problems / 27 errors, all pre-existing), `jest` 542 pass. On device:
+type a down payment in Result Lead, Build Job, back out, reopen — the figure and the Balance should
+both be as left. Worth also checking the rollout card's own down-payment input still round-trips,
+since both now write the same field.
+
+## Confirming a rollout must arm the Investment Center unlock — see `investment-center-job-tracker.md`
+
+`DynamicDealCenterScreen`'s `onConfirmRollouts` calls `markLeadRolloutsConfirmed` when the confirm
+completes the whole set, and `RolloutView`'s `visibleCalculators` / `allConfirmed` now come from the
+shared `utils/rollout-status.ts`. Both exist to keep the Lead Center's Investment Center tile in step
+with this screen; the full reasoning, and the two ⚠️ traps, are in
+[`investment-center-job-tracker.md`](investment-center-job-tracker.md) under *"Confirmed rollouts but
+Investment Center not ready"*. Read that before touching either.
+
+## Job Builder: the step timeline glides away on scroll (Instagram-style)
+
+Ticket: *"have header of steps timeline glide away when scrolling down but re appear when scrolling
+up… Keep allocation tracker always there."*
+
+Scope, agreed with the requester: the **whole white header block** collapses — title, X button,
+`VerticalTabBar` and `ProgressTracker` — in **both** the Job Builder and the Edit Deal flow.
+
+The pieces:
+
+- `utils/collapsing-header.ts` — the pure maths (`nextCollapseState`, `settleTarget`,
+  `settleDuration`), tested in `__tests__/utils/collapsing-header.test.ts` (23 cases).
+- `hooks/useCollapsingHeader.ts` — the animated value, the measurement, the gesture bookkeeping.
+- `DynamicJobBuilderScreen` wraps its header in an `Animated.View` and threads `scrollProps` down.
+- `DynamicTabRenderer` takes `collapsingScrollProps` for its field `ScrollView`, and forwards it to
+  `VerticalSummaryTab` for the summary tab's own.
+
+### ⚠️ Finger-tracked, NOT threshold-triggered
+
+The first version tripped a threshold and then played a fixed animation open→closed. It was
+reported back as *"hiding instantly… it should come softly and smooth"* — and correctly so: once
+the animation starts, the rep's finger has no influence, so any duration reads as a snap. **Do not
+reintroduce a threshold or an `Animated.timing` for the tracking phase.**
+
+What it does instead is a running total of scroll delta, clamped to the header height:
+
+```
+collapsed = clamp(collapsed + (y - lastY), 0, headerHeight)
+```
+
+written straight to an `Animated.Value` with `setValue` on every scroll frame. Drag 30px, the header
+is 30px shorter. Reverse and it comes back immediately, with nothing to overcome first. On release
+`settleTarget` snaps the remainder to whichever end is nearer (⚠️ at 0.4, not 0.5 — once a rep has
+pushed most of it away they meant to), over `settleDuration`, which is proportional to the distance
+left so a nearly-shut header does not take as long as one that has barely moved.
+
+`scrollEventThrottle` must stay at 16: the header is redrawn per event, so anything coarser is
+visible as stepping rather than sliding.
+
+### ⚠️ Only rep-driven scroll may move the header
+
+Two device-found bugs, both from treating every `onScroll` as the rep scrolling:
+
+1. **A feedback loop.** Collapsing the header shrinks the layout ABOVE the ScrollView, so the
+   ScrollView grows and its `contentOffset.y` moves ON ITS OWN. Consumed as scroll it gives the
+   header back, which shifts the offset again — the header BLINKS. This is inherent to animating the
+   height; it cannot be tuned away.
+2. **The iOS bottom bounce.** Over-scrolling past the end and settling back is a downward offset
+   change with no finger involved, so it ate the header on release and gave it back as the bounce
+   finished. `TOP_ZONE_PX` already covered the same effect at the top; `BOUNCE_SLOP_PX` is its
+   mirror.
+
+So `CollapseInput.userDriven` gates the whole thing, fed by the hook's
+`onScrollBeginDrag`/`onScrollEndDrag`/`onMomentumScrollBegin`/`onMomentumScrollEnd`.
+
+⚠️ A drag ending does **not** end the gesture — a fling hands over to momentum and the header must
+keep tracking through it. Only `onMomentumScrollEnd` truly ends it, but a drag that stops without a
+fling emits no momentum events, so `onScrollEndDrag` settles too and `onMomentumScrollBegin` reopens
+the gesture (RN fires it after `onScrollEndDrag`).
+
+⚠️ `settlingRef` additionally freezes input while the settle plays, because the layout shift lands
+mid-animation and the finger may still be down.
+
+⚠️ Non-driven samples still update `lastY`, so the next real sample takes its delta from the right
+place rather than jumping.
+
+### ⚠️ Other traps
+
+**It animates HEIGHT, not `translateY`.** A translated header slides out over the content and leaves
+a gap, because the content's layout does not move — the allocation tracker would stay put with a
+white band above it. Height cannot be driven on the UI thread, so `useNativeDriver: false` is
+correct; it is one small view.
+
+**The header height is measured ONCE.** Its `onLayout` fires with ~0 as it collapses, and adopting
+that leaves it unable to reopen.
+
+**All tabs must be wired, and there are TWO scroll owners.** Every product tab (Gutter, LeafFilter,
+Soffit, Fascia, Lighting, …) is the same `DynamicTabRenderer` re-keyed on `currentTab.id`, so one
+wiring covers them all — but `tab.isSummary` returns `VerticalSummaryTab` **before** that ScrollView
+is reached, and it owns its own. A new tab type with its own scroll container needs wiring too, or
+the header freezes on that tab.
+
+**`scrollProps` must be spread WHOLE.** Cherry-picking `onScroll` drops the touch/momentum handlers
+and brings the blinking straight back — which is why the prop is `collapsingScrollProps` rather than
+a bare handler.
+
+**The header resets to open on a tab change** (`useCollapsingHeader(true, currentTab?.id)`). Without
+it, advancing to the next step with the header collapsed lands the rep on a fresh tab scrolled to
+the top with no timeline, recoverable only by scrolling down and back up.
+
+**Only the field ScrollView and the summary ScrollView get it.** The pinned allocation grid and
+accordion tracker sit ABOVE the field ScrollView and must never move — that is the second half of
+the ticket.
+
+Not verified on a device. If the feel needs tuning, the dials are `SETTLE_CLOSED_FRACTION`,
+`SETTLE_MIN_MS` / `SETTLE_MAX_MS` and the opacity interpolation in the hook. `tsc` 45 errors
+(unchanged baseline, none in the changed files), `eslint` identical to HEAD across all three existing
+files (82 problems / 14 errors, all pre-existing) with zero findings from the two new ones, `jest`
+574 pass / 38 suites (23 on the maths).
+
+## Keyboard dismissed after the FIRST digit in a measurement grid
+
+Client + QA: in Lighting ▸ Measurements, typing the first number closes the keyboard; every keystroke
+after that is fine. Reproduces anywhere a `locationGrid` sits in a stack that carries a warning.
+
+Not a keyboard bug — a **remount**. The cause is in the `stack` branch of `renderField`
+(`DynamicTabRenderer`), which returned **two different JSX trees**:
+
+```
+no warning → <View>{labelNode}{stackContent}</View>            // stackContent at index 1
+warning    → <View style={…}>{labelNode}{warningNode}{stackContent}</View>  // index 2
+```
+
+⚠️ **React reconciles unkeyed children BY INDEX.** Both branches render a `View` with the same
+`key={field.id}`, so the container survives — but `stackContent` moves from slot 1 to slot 2, and
+React tears that subtree down and builds a new one. The `TextInput` being edited is destroyed, so
+the keyboard drops.
+
+Why exactly once: typing the first digit takes the grid total from 0 to non-zero, which satisfies
+"Allocate remaining footage", so the warning clears and the children shift. Every keystroke after
+that is warning-off → warning-off; nothing moves.
+
+Fix: ONE container, styled conditionally, with `labelNode` and `warningNode` rendered
+**unconditionally**. A `null` child still occupies its slot, so `stackContent` is always at index 2.
+
+⚠️ Do not collapse these back into `&&` short-circuits *placed in different trees*, and do not
+reintroduce the early `return` for the unbordered case. (`{cond && <X/>}` inside a SINGLE tree is
+fine — `false` holds the slot — which is why the `IncompleteWarning` branch above never had this
+bug, and why `AccordionSection`'s `{contents}{warningBanner}` is safe: the conditional child is
+LAST.)
+
+⚠️ The rule to carry: in this renderer, **a conditional wrapper must never change a child's index.**
+Anything that can toggle while a field has focus — a warning, a badge, a banner — goes after the
+fields, or is rendered as a null-able node in a fixed slot.
+
+Not verified on a device. `tsc` 45 errors (unchanged baseline, none in the file), `eslint` identical
+to HEAD (24 problems / 12 errors, all pre-existing), `jest` 574 pass. On device: Lighting ▸
+Measurements, tap a cell, type one digit — the keyboard should stay up and the amber warning should
+clear underneath it.
+
+## The gap above the pinned tracker now closes with the header
+
+Follow-up on the collapsing header: with the header gone, the allocation tracker was left sitting
+below a band of white, because its `paddingTop: 8` was static while everything above it had
+collapsed. (`paddingBottom` was already 2 — the asymmetry existed, it just never animated.)
+
+`useCollapsingHeader` gains `underHeaderStyle`, an animated `paddingTop` interpolated over the SAME
+travel as the header (`UNDER_HEADER_PAD_OPEN` 8 → `UNDER_HEADER_PAD_COLLAPSED` 2), threaded down as
+`collapsingUnderHeaderStyle` and applied to the tracker's container, which became an
+`Animated.View`.
+
+⚠️ The animated style must come LAST in the `style={[…]}` array. Spreading it before the static
+object lets `paddingTop: 8` win and pins the gap open again.
+
+⚠️ Interpolated over the collapse travel, NOT toggled on `hidden`. A toggle would snap the padding
+at the moment the header passes the settle point, which is visible as a jump under a smoothly
+sliding header.
+
+⚠️ **Known limit:** only the allocation GRID gets this. When a tab has no allocation grid, the
+accordion tracker is the block directly under the header — its padding is a symmetric 4, so the
+stranded gap is barely there, and reusing the 8→2 interpolation would *increase* its resting gap
+from 4 to 8. If it ever needs animating, give the hook a parameterised helper rather than reusing
+this one.
+
+Not verified on a device. `tsc` 45 errors (unchanged baseline), `eslint` identical to HEAD for both
+existing files (73 problems / 14 errors, all pre-existing), `jest` 574 pass.
+
+⚠️ Note for anyone checking line endings here: `file` reports `DynamicTabRenderer.tsx` as "CRLF, CR"
+even on a byte-identical copy, while a byte scan confirms every CR is part of a CRLF. It is a `file`
+heuristic false positive on this file, not a stray carriage return — verify with a byte count
+(`d.count(b'\r') - d.count(b'\r\n')`) before "fixing" anything.
+
+## Tab name stayed on the cleared products instead of returning to the customer
+
+Ticket: *"deal center > tab naming not removed when the data is cleared ... when we remove all fields
+with first tab, the lead name should be show default one"*. Screenshots showed the first tab still
+reading `Labor` (iOS) / `LF Misc` (Android) on a calculator whose fields had all been emptied.
+
+### Cause: the empty-calculator fallback read the LAST SAVED name
+
+`computeDerivedTitles` (`utils/tab-naming.ts`) fell back to `storedTitle` when no values were entered —
+the fallback added by the section above, which exists so a customer-named first calculator is not
+renamed to `"1"` by the first `retitle` pass.
+
+That fallback is right for a calculator that has *never* been filled, and wrong the moment one has:
+`storedTitle` is `t.title`, which after any entry is a **derived** name (`Labor`, `G+S`) that was
+written back to the calculator. So clearing every field fell back to the name of the products that had
+just been deleted, and there was no way to get the customer's name back.
+
+### Fix — a separate `originalTitle`
+
+`TabNameInput` gained **`originalTitle`**: the name the calculator was CREATED with. The empty branch
+now reads it instead of `storedTitle`, so clearing is symmetrical with entering — the tab returns to
+exactly what it showed before anything was typed.
+
+- New **`titleInputs(list)`** in `useDynamicCalculators.ts` builds the input for all three call sites
+  (`resolveSafeTitle`, `retitle`, `saveDisplacedSiblings`). ⚠️ One place on purpose: two of those decide
+  what gets PUT, so a list built differently in one would persist a name the tab does not show.
+- `originalTitle` is `customerTitleOf(leadRef.current)` for **index 0 only**. New `leadRef` follows the
+  existing `schemasRef` pattern so the callbacks stay stable.
+
+⚠️ **Only the first calculator.** Every other one is created under a numeric placeholder and still
+renders blank when emptied — deliberate: three empty tabs all reading the customer's name would be
+worse than three blanks, because the rep could not tell them apart.
+
+⚠️ **A manual rename is untouched** — `manualTitle` returns at the top of `computeDerivedTitles`,
+before the fallback is reached.
+
+⚠️ **`storedTitle` is still passed and still used** by the duplicate-title guard
+(`getUniquePersistableTitles` / `lastSavedTitle`). It was not removed, only stopped being the fallback.
+
+Tests: `__tests__/screens/DynamicDealCenter/tab-name-cleared.test.ts` (6) — **4 of them fail against
+the pre-fix code**. `full-package-title.test.ts`'s "an empty calculator keeps its placeholder" case was
+updated to carry the customer name on `originalTitle`; its intent is unchanged.
+
+## A filled field scrolled out of view the instant "Done" closed the keyboard (Android)
+
+Ticket: *"when i type in the field and press done, that field goes hide, it should be slide up a bit
+so i can see what i filled."* Screenshots: a `locationGrid` stack (`# of Miters`, `# of End Caps`)
+where the just-typed value (`# of End Caps (Lefts) = 2`) is the last thing visible above the
+keyboard, and disappears above the fold the instant Done is tapped.
+
+**Not a focus/remount bug** (that's the section above) — this is a scroll-position bug. The tab's
+field `ScrollView` (`DynamicTabRenderer`, ~line 2065) relied on `automaticallyAdjustKeyboardInsets`
+(iOS-only) plus the Android manifest's `adjustResize` and nothing else — there was no JS-level
+"keep the focused input visible" logic at all. `adjustResize` only resizes the WINDOW when the
+keyboard opens/closes; it does not touch the ScrollView's own offset. So when Done closes the
+keyboard the window grows back to full height, the scroll offset is unchanged, and whatever content
+used to sit just above the (now-gone) keyboard rides up out of view under the header — exactly the
+"goes hide" the ticket describes. This is also the CLAUDE.md-level gotcha ("Scrolling forms use
+`KeyboardAwareScrollView`… `automaticallyAdjustKeyboardInsets` is iOS-only") that this screen had
+never actually picked up.
+
+**Fix: swapped the plain `ScrollView` for `KeyboardAwareScrollView`** (`react-native-keyboard-controller`,
+already used the same way in `DynamicDealEditScreen`'s Job Price / Addendum steps —
+`keyboardShouldPersistTaps="handled"`, `keyboardDismissMode="interactive"`, `bottomOffset={24}`). It
+tracks the focused input and keeps it clear of the keyboard continuously, including through the
+close transition, instead of only reacting to the window resize. `KeyboardProvider` is already
+mounted at `App.tsx` root, so no other wiring was needed.
+
+⚠️ **`collapsingScrollProps` (`useCollapsingHeader`) is spread onto it unchanged.** Those are plain
+`onScroll`/`onScrollBeginDrag`/`onScrollEndDrag`/`onMomentumScrollBegin`/`onMomentumScrollEnd`/
+`scrollEventThrottle` props — `KeyboardAwareScrollView` forwards arbitrary `ScrollView` props to its
+underlying `Animated.ScrollView` the same way, so the collapsing step-header keeps working exactly
+as before. Spread it WHOLE, same warning as everywhere else this prop is handed down — see the prop's
+own doc comment above `DynamicTabRendererProps`.
+
+⚠️ `automaticallyAdjustKeyboardInsets` was removed along with the old `ScrollView` (it doesn't exist
+on `KeyboardAwareScrollView` — the library's own keyboard-avoidance replaces it), and the now-unused
+`Platform` import was dropped with it. Nothing else in this file used `Platform`.
+
+Not verified on a device (this repo cannot render-test). On device: open a `locationGrid`/stack tab
+(Lighting or the Gutter grid in the ticket's screenshot), type into the last visible field, tap Done,
+and confirm the field stays in view instead of scrolling away.
+
+## Job Builder step tracker: a LOCKED step read as red (an error), not neutral
+
+Ticket: *"The Red lighting and additional services should be different color. Red means wrong. Maybe
+gray would be best."* `ProgressTracker` (`widgets/components/dynamic-job-builder/ProgressTracker.tsx`)
+painted a `locked` step (one this deal's config doesn't use — e.g. Lighting / Additional Services on a
+build that has neither) in `#FE6644` (border, label, lock icon) over a `#FAD9D3` fill — the same
+red/orange family used everywhere else in the app for an actual error state, which is exactly why a
+step the rep never needed to touch read as something gone wrong.
+
+**Locked is not an error — it's the same "not reached" neutral as an un-complete numbered step.**
+Retinted to the palette that state already uses elsewhere in this component (`#94a3b8` label /
+`#e2e8f0`-family border): fill `#F1F5F9`, border `#CBD5E1`, label + lock icon `#94a3b8`. Only the three
+`locked` branches of `bgColor`/`borderColor`/`labelColor` and the lock `Icon`'s `color` prop changed —
+`active` (blue `#0EA5E9`) and `complete` (green `#10b981`) are untouched, and the locked step's
+press-through-disabled behavior (`handlePress`: `if (step.locked) return;`) is unchanged, since this
+was a colour-only ticket.
+
+## Job Builder Summary + Grand Total: font too small to read on device, can't zoom
+
+Ticket: *"Sales Rep Job Builder Summary | Font too Small… The font is hard to read on mobile and
+cannot zoom."* Screenshots: the Job Builder Summary screen's per-field label/value rows, and the
+LeafFilter/Gutter "Grand Total - All Combinations" card, both reading at 8–10px.
+
+**`widgets/components/dynamic-job-builder/VerticalSummaryTab.tsx`** — every size bumped one NativeWind
+step (values roughly `text-[10px]` → `text-base`/16px, labels `text-[9-10px]` → `text-xs`/12px), same
+relative label/value hierarchy kept:
+- `SummaryFieldRow` value `text-sm` → `text-base`; its label `text-[10px]` → `text-xs`.
+- `LocationRowsDisplay` story label + value `text-[10px]` → `text-xs`.
+- `ExtrasList` label `text-[10px]` → `text-xs`.
+- `CombinationSummaryItem`'s "Combination #N" chip `text-[9px]` → `text-xs`; its `summaryLine`
+  `text-sm` → `text-base`.
+- The card header bar (`section.tabLabel`, e.g. "GUTTER"), "No data entered", and every
+  `group.sectionLabel` (combination-group / simple-section headings) `text-xs` → `text-sm`.
+- The screen subtitle ("Review all configured…") `text-xs` → `text-sm`; the empty-state message
+  `text-sm` → `text-base`.
+- Title ("Job Builder Summary") was already `text-xl` and untouched.
+
+**`widgets/components/dynamic-job-builder/GrandTotalCard.tsx`** — same treatment, both the
+section-scoped card (`GrandTotalCard`) and the tab-level aggregate (`TabGrandTotalCard`) share this
+styling so neither drifts from the other:
+- Card title ("Grand Total - All Combinations" / the schema's `summaryField.label`) `text-[12px]` →
+  `text-[15px]`.
+- Footer total row: label `text-[14px]` → `text-base`, the total figure itself `text-[20px]` →
+  `text-2xl` (the single most-important number on the card, so it got the largest bump).
+- `ComboSummaryRow`'s `#N` chip and optional section sub-label `text-[10px]` → `text-xs`.
+- Its per-field grid: label `text-[8px]` (the smallest text on either screen) → `text-[11px]`, value
+  `text-[10px]` → `text-sm`.
+
+⚠️ **The allocation tracker above the Grand Total card (`AllocatorBar`/`DynamicTabRenderer`'s "Avail /
+Used / Left" + "Perfectly allocated!") was NOT touched** — it wasn't flagged in the ticket and already
+renders at a readable size (its numbers are large/bold by design); only the combination rows below it
+were reported as unreadable.
+
+Purely visual — no layout, column widths, `%` grid math, or divider (`DIVIDER_STRONG`/
+`DIVIDER_HAIRLINE`) logic changed in either file. Not verified on a device.
+
+## Job Builder Summary: a combination rendered as a sentence, not rows
+
+Ticket: *"Sales Rep Job Builder | Job Builder Summary — the right side for this whole summary should
+be rows. Not a bounding text box"*, with the portal's own table as the reference
+(`Gutter type | 6" K-Style`, `Partial | Yes`, …).
+
+The Gutters combination rendered as `Gutter Type: 6" K-Style · Gutter Partial?: Yes · 49 Longest
+Gutter Run · 6 # of Miters (Outside) · …` — one wrapped paragraph — while the Downspout section
+directly beneath it, which is not combination-scoped, showed tidy label/value rows.
+
+### Cause: combination fields were flattened into `parts`
+
+`processSummaryFields` (`utils/dynamic-job-builder/engine/vertical-summary-utils.ts`) has two outputs:
+`detailRows` (label/value pairs) and `parts` (strings). Under `summaryMode: 'combination'` **every**
+field went to `parts`, which `buildCombinationEntry` joins with `" · "` into `summaryLine`.
+
+The label was already known at that point — each branch was building it *into* the string
+(`${field.label}: ${text}` for selections, `${text} ${field.label}` for numbers).
+
+### Fix — emit `{ label, text }` instead
+
+The `inCombination` branch now pushes to `detailRows`. No renderer change was needed:
+`VerticalSummaryTab` already maps `comboFieldRows` through **`SummaryFieldRow`**, which lays out the
+40%/60% label/value columns the ticket asks for.
+
+- ⚠️ A **`number`** field's label becomes the ROW LABEL, dropping the `${value} ${label}` word order
+  (`6 # of Miters (Outside)` → `# of Miters (Outside) | 6`). The label already reads as a noun.
+- ⚠️ `LABELED_SELECTION_TYPES` was removed — it existed only to decide that inline word order.
+- ⚠️ `summaryLine` and `parts` are **kept**, not deleted: container fields still merge into `parts`
+  (`mergeSummaryContent`), and the renderer guards with `entry.summaryLine &&`, so a combination that
+  produces none renders nothing. Do not "clean up" either as dead.
+- ⚠️ `comboHasMeaningfulData` already tested `parts.length || detailRows.length || locationRows.length`.
+  Had it tested `parts` alone, this change would have made every combination vanish from the summary.
+
+⚠️ **`buildStackRowSummary` is a different mechanism and was left alone** — it deliberately merges a
+bordered stack's paired children into ONE row (`Ground Spout | 4 · Black`), which is web parity
+(commit 5a54070). That `" · "` join is intentional; this ticket was only about the combination line.
+
+Tests: `__tests__/utils/vertical-summary-combination-rows.test.ts` (5) — **3 fail against the pre-fix
+code**; the other two pin that a combination still renders and an empty one is still dropped.
+
+### Follow-up — the measurement grid is a row too, and goes last
+
+With the fields fixed, the story line became the odd one out: *"3rd Story  Left Side: 22ft is not
+looking well, put it in the end of the row, like the client show it in the table"*.
+
+`LocationRowsDisplay` (`VerticalSummaryTab.tsx`) had its **own** layout — a fixed `w-16` label in
+smaller, lighter type — and was rendered inside the right-hand column BESIDE the "Combination #"
+chip, above the field rows. So it floated on a grid of its own while everything under it lined up.
+
+Renamed to **`LocationSummaryRows`** and now returns a fragment of plain `SummaryFieldRow`s, rendered
+**after** `comboFieldRows` inside the same list — the stories land at the end, after Color, as the
+portal's table has them.
+
+- The run **total** is appended (`Left Side 63ft, Right Side 7ft, Front 50ft (120ft total)`), matching
+  the portal. ⚠️ Only when there is more than one side — `Left Side 22ft (22ft total)` is noise, which
+  is exactly the single-side case in the screenshot.
+- ⚠️ Data arrives keyed by LOCATION (`Left Side` → per-story values) and the table is keyed by STORY,
+  so it is inverted in the component. That inversion predates this change.
+- ⚠️ Full location names are kept (`Left Side`, not `Left`). The client's mock abbreviates, but the
+  name is what the rep picked and `Left` reads ambiguously beside `Rear`/`Garage`/`Other`.
+- ⚠️ Do NOT give this component its own label width again — sharing `SummaryFieldRow` is the whole
+  point, and is what keeps the label column aligned with the fields above it.
+
+The guard is now `comboFieldRows?.length > 0 || locationRows?.length > 0`, so a combination that has
+only a grid still renders its list.
+
+### Follow-up (REVUIUX-391) — the delivery prompt offline
+
+`widgets/modals/job-builder/AgreementDeliveryPrompt.tsx`, rule in
+`utils/offline-agreement-delivery.ts`, queue in `services/offlineAgreementDelivery.ts`.
+Endpoint: `PUT pdf-reports/v1/agreement/{leadId}/delivery-preference`.
+
+⚠️ **This prompt BLOCKED THE SALE offline.** It gates Generate Agreement and only called
+`onConfirmed()` after the PUT resolved, so with no signal the rep could not reach the agreement at
+all — the worst place in the app to put a required network call, since the whole signing flow is
+otherwise device-side.
+
+Offline (or on a transport failure) the choice is queued and `onConfirmed()` fires immediately; the
+drain replays it on reconnect, registered in `useAppInitialization`. The prompt also reopens on the
+**queued** choice, so a rep who reopens it offline sees what they picked, not the lead's default.
+
+⚠️ **Full-state PUT ⇒ one row per lead, replaced wholesale, no attempt counter.** Only the last
+choice matters; replaying an older one would overwrite it.
+
+⚠️ `e?.response?.data?.message` was read for the error text — `normalizeApiError` strips
+`.response`, so that was always `undefined`. Now `e?.message`, and a transport failure never
+reaches it (it queues instead). See [`notifications-chat.md`](notifications-chat.md) for the same
+trap in chat.
+
+### Follow-up — the prompt was SUPPRESSED offline, not just blocked
+
+Queueing the PUT was not enough: offline the prompt never rendered, so the queue was unreachable.
+Two independent gates excluded it, and both had to go.
+
+| Call site | Was | Now |
+|---|---|---|
+| `DynamicAgreementDialog.tsx` | `visible={... && !renderLocally && ...}`, where `renderLocally = !isOnline() \|\| isClientId(leadId)` | `visible={visible && needsDelivery && !deliveryReady}` |
+| `SummarySection.tsx:638` | `if (!isOnline() \|\| isClientId(leadId)) return runGenerateAgreement(...)` | `if (isClientId(leadId) \|\| !leadId) return ...` |
+
+⚠️ **`renderLocally` conflates two things.** It is the right flag for "the DEVICE renders and signs
+the agreement" (a genuinely separate code path), and the wrong flag for "skip the delivery
+question" — the ticket's point is that the signed copy always has a destination, which is just as
+true offline. Don't reuse it as an offline opt-out for anything else.
+
+⚠️ **A client-id lead still skips the prompt**, and must: the server has no record to attach a
+preference to, so queueing against that id would create a row that can never be replayed — the
+counterfeit-record trap in [`offline.md`](offline.md).
+
+⚠️ **The offline generator has to WAIT for the answer** —
+`agreementConfig && (deliveryReady || !needsDelivery)`. Without that it renders behind the prompt,
+and the rep sees the agreement through a sheet they have not answered yet.
+
+### Follow-up — offline agreement parity: the Send prompt and the e-sign tick
+
+Two gaps between the online and offline agreement paths, reported from a device.
+
+**1. "Send Signed Agreement" never appeared offline.** `needsDelivery` was
+`!!leadId && !isClientId(leadId)`, so a lead created at a door — the common offline case — skipped
+the prompt entirely. My own earlier guard, and wrong: I reasoned there was no server record to
+save a preference against, but the rep still has to choose, and the choice can ride with the
+queued lead.
+
+⚠️ **A client-id row must be RE-KEYED, not sent.** Replaying the preference against a client id
+would file it on a lead the server has never heard of — the counterfeit-id trap. The delivery
+queue now has `rekeyDeliveryPreference`, called beside `rekeyActivityLogs` in the `lead` sync step,
+so the row follows the lead to its real id. Both call sites (`DynamicAgreementDialog` and
+`SummarySection`) now gate on `!!leadId` alone.
+
+**2. The e-sign consent tick was online-only.** `AgreementSignatureModal` (online) requires
+"I agree to electronic signature" before Save Mark; `AgreementSignatureCapture` — the offline pad
+hosted by `DynamicAgreementGenerator` — had no such gate, so an offline signature was captured
+without the consent the online one records.
+
+⚠️ **The tick resets every time a pad opens**, matching online: the initials and the signature are
+each their own explicit agreement, and one tick must not carry to the next mark.
+
+⚠️ **Save needs ink AND the tick** (`hasDrawing && agreedToESign`), and the guard is inside `save()`
+as well as on the button — ticking alone must not save a blank pad.
+
+### Follow-up — offline funding parity: Confirm now reaches the Funding step
+
+Reported with three screenshots of the ONLINE flow: Result Lead ▸ "How is this being paid?" ▸ the
+No Down Payment warning ▸ the **Funding** screen with its payment card and Submit Funding. Offline
+the rep saw none of the third screen.
+
+**The gap.** `goFunding` offline saved the split, flashed "Saved on this device" and called
+`handleBuildRef.current?.()` — straight to Build Job. Online the same function ends at
+`setScreen('funding')`. So offline the rep never saw the split read back to them, never pressed
+Submit Funding, and the deal reached the office saved but unsubmitted.
+
+**The cause of the cause.** The Funding screen renders from `funding.payments`, i.e. the SERVER
+record returned by `savePayments`. With no server there is nothing to render, so skipping the
+screen was the only thing that worked. `offlineFundingRecord(leadId, price, rows, payMode)` now
+builds that same shape from the rows already on the device, and `payments` reads
+`offlineRecord?.payments ?? funding.payments`.
+
+⚠️ **Every step flag starts at rest** (`collected`/`charged`/`activated`/`linkSent` false,
+`decision`/`approvedAmt`/`syncedAt` null). The cards gate each rep action on the server's own flag,
+so a `true` invented here shows a job as collected that nobody has touched.
+
+⚠️ **`status: 'pending'`, never submitted** — Submit Funding is still ahead of the rep. (The union
+is `'pending' | 'submitted'`; there is no `'draft'`.)
+
+⚠️ **Offline is a CHECK-ONLY board**, and that is what makes this safe to render locally.
+`confirmBlockers` already refuses to confirm while any row needs a card or loan, because those
+links are minted server-side. So no row here can be waiting on a third party.
+
+**Two more writes behind Confirm.** Pressing Submit Funding offline used only to log, so the deal
+arrived unsubmitted; and "Mark collected" on a down-payment cheque hit a dead button. Both are now
+queued — see `offline.md` for the steps and their ordering.
+
+⚠️ **`setOfflineRecord(null)` on Edit payments.** Going back to the rows makes the device-held
+record stale; leaving it would render the previous split over the edited one.
+
+⚠️ **`handleBuildRef` is gone.** It existed only so the offline path could jump to Build Job. Now
+that offline ends on the Funding screen like online, writing it and never reading it was dead code.
+
+### Follow-up — `useRefundApprovers` is warmed on an online open
+
+`hooks/useRefundApprovers.ts` gained an optional third argument, `cachedFeed`, and its caller in
+the deal-edit wizard now enables it on `needsRefund || online`.
+
+⚠️ **It used to be gated on `needsRefund` alone, and that could never work offline.**
+`needsRefund` is `refundDue > 0`, which only becomes true **after** the rep lowers the price — so
+the approver list was fetched mid-session, on demand, with a connection assumed. A snapshot taken
+when the screen opened would always have held `approvers: null`, and `refundBlockers` fails on
+`!approverId`, so every offline refund would have been blocked however much of the rest worked.
+
+⚠️ **Warming it is cheap, and the numbers are why it is acceptable:** `staleTime` is 5 minutes and
+the query key is the **company**, not the lead — so it is one request per 5 minutes per session,
+shared across every deal the rep opens, not one per open.
+
+⚠️ **`cachedFeed` is served from inside the `queryFn`, not with `enabled: false`.** `isConfigured`
+reads `query.isSuccess`; a disabled query never succeeds, so it would report "no approvers
+configured" forever and block the refund it was meant to enable.
+
+⚠️ **The cached/live distinction is in the query key.** Without it, a feed served from the
+snapshot and one fetched live share a cache entry, and the first offline open would poison the
+online result for the rest of the session.
+
+Context, phases and the device checks still outstanding:
+[`docs/MY-DEALS-OFFLINE-PLAN.md`](../MY-DEALS-OFFLINE-PLAN.md).
+
+### Follow-up — the leads list now applies the offline RESULT overlay
+
+`screens/Leads/index.tsx › sourceLeads › withWorkflow` gained
+`.map((l) => applyOfflineResult(l, offlineWork))` ahead of the existing `applyOfflineWorkflow`.
+
+A lead resulted at a door kept its server `status` (`selfGenerated`) until the submit uploaded,
+so the card went on offering **"Resume Appointment"** for a sale the rep had already finished —
+while Lead Center, which applies the overlay through `useLeadCenterData`, showed
+**"Resulted — Sale"** on the same lead at the same moment.
+
+⚠️ **Add overlays inside `withWorkflow`, never at the call sites.** It is the single funnel every
+branch of `sourceLeads` passes through — rehash, archived, today, and the pending-offline path. A
+call-site overlay is skipped by whichever branch someone adds next.
+
+⚠️ **Order is load-bearing: result first, then workflow.** The workflow overlay carries the
+check-in / resume marks; the result overlay has to supersede them once the lead is sold, or a
+sold card can still read as in-progress.
+
+Full ticket — why the overlay existed but was not being called, and the rule about two screens
+disagreeing about one lead: [`offline.md`](offline.md).
+
+### Follow-up — `addendumDraft` / `addendumRelease` steps (My Deals offline, Phase 2)
+
+Two steps added to `utils/offline-lead-work.ts` (`UPLOAD_STEPS`, between `funding` and
+`fundingCollect`) with their sync arms in `services/offlineLeadStore.ts`, plus
+`saveOfflineAddendum(workClientId, { payload, contact, hasRefund })`.
+
+| Step | Endpoint | Applicable when |
+|---|---|---|
+| `addendumDraft` | `POST lead/v1/{leadId}/job-builder-draft` | an addendum is queued and has no `addendumDraftId` yet |
+| `addendumRelease` | `PATCH lead/v1/job-builder-draft/{draftId}/submit` | the draft landed **and `!hasRefund`** |
+
+⚠️ **`addendumRelease` must never be applicable for a refund addendum.** The full consequence —
+a signature silently dropped and the money never moving — is recorded in
+[`offline.md`](offline.md). It has a test named for exactly that, so a future "simplification"
+into one step fails loudly.
+
+⚠️ **`addendumDraftId` is written by the draft step, not by the screen.** It is how the release
+step addresses the right draft, and how a replay knows the create already landed.
+
+⚠️ **Both default to `'guarded'` safety** via the fallthrough in `stepReplaySafety` — do not add
+them to the `idempotent` list to quieten a retry. A repeat create files a second addendum.
+
+⚠️ **The queued payload carries NO documents**, so `send()` never walks base64 in MMKV. The
+offline gate refuses an addendum with attachments; Phase 4 lifts that.
+
+⚠️ **The full-walk test excludes both steps deliberately** — an addendum belongs to a later visit
+to an already-sold lead, not to the fixture that walks a lead from creation to submit.
+
+### Follow-up — `addendumRefund` step (My Deals offline, Phase 3)
+
+Third step added to the addendum chain in `utils/offline-lead-work.ts`, with its sync arm and
+`saveOfflineAddendumRefund(...)` in `services/offlineLeadStore.ts`.
+
+| Step | Endpoint | Applicable when |
+|---|---|---|
+| `addendumRefund` | `POST lead/v1/{leadId}/funding/{pid}/refund` | the draft landed **and** a cheque refund is queued |
+
+Order is now `addendumDraft → addendumRefund → addendumRelease`.
+
+⚠️ **It needs the draft's REAL id**, so it cannot run until `addendumDraft` has landed —
+`isStepApplicable` requires `addendumDraftId`. The server's own check is only "valid ObjectId and
+belongs to this lead", with no recency limit, so a refund raised minutes or days later still
+links correctly.
+
+⚠️ **`guarded`, and the retry READS first.** `isRefundAlreadyRaised(leadId, pid, draftId)` matches
+on `draftId` before re-posting — a blind replay raises a **second** refund against the same
+payment, which is real money.
+
+⚠️ **`method: 'check'` is hard-coded in the step, not taken from the row.** The gate
+(`addendumOfflineBlock`) already refuses to save a card refund offline, so anything that reaches
+this step is a cheque by construction; writing the method through would invite a card refund in
+by a route the gate never saw.
+
+⚠️ **The release step stays skipped.** A lead with `addendumRefund` queued also has
+`addendum.hasRefund === true`, so `addendumRelease` is still not applicable — the approver
+releases it server-side. Do not "complete" the chain.
+
+---
+
+## Ticket — the consent sync step must leave a local trace behind it
+
+Client: *"I submit the form and it's submitted successfully in online mode => I become offline =>
+came back => and it's again allow me to submit the form."* A blank consent form on a lead that
+already had one filed — a second signed customer record. Full diagnosis and the UI side:
+[`lead-center.md`](lead-center.md).
+
+The half that lives in this file is the **consent arm of the offline drain** (`runStep` →
+`'consent'` in `services/offlineLeadStore.ts`). After `finalizeConsentUpload` succeeds it now also
+calls `markConsentFiled(consentLeadId, form.kind)` from `services/consentFiledStore.ts`, beside the
+existing `patchOfflineConsent(..., { uploadedAt })`.
+
+⚠️ **The queue row is not a durable record of "already filed".** While a consent is queued,
+`hasQueuedConsent` is the only offline proof it exists — but the row is cleaned up once the drain
+succeeds, and `lead.generatedReports` (the other source) is server data that a cached lead taken
+before the submission does not carry. Without the local log the form becomes offerable again on
+the very next cached read, which is exactly the duplicate-signature bug. The drain must write the
+fact down *before* it discards the evidence.
+
+⚠️ Endpoints are unchanged — `user/consent/v1/mobile/create` (consent) and
+`/lead/v1/{leadId}/mobile/waiver-form` (waiver), with `finalizeConsentUpload` skipped for a waiver
+because that endpoint files its own `generatedReport` (REVDSM-1293). This change adds no request.
+
+### Offline financing on the Result Lead sheet
+
+Financing (`type: 'financing'`) is selectable offline; cards stay blocked (`methodAvailableOffline`). On the offline
+Funding screen a loan row shows a "No signal" banner, the rep records Approve full / part / Decline and activates
+(`handleRecordDecision` / `handleActivate` in `ResultJobModal` -> device record + queue). Sync / Send link are hidden
+offline. Queue details and the link-stamping caveat: `offline.md` "Queues 9 and 10". Not verified on device.
+
+### REVUIUX-519 (scope switch): collected money is reused or refunded, not blocked
+
+Spec: `REVUIUX-519-mobile-scope-switch-addendum.md` (+ backend `e918bdd3`/`1deee65d`/`c166efcf`). Funding is lead-level; a
+calculator switch on a lead with money held now asks the rep instead of refusing. Jira was NOT readable from this session
+(no Jira tool) — built from the markdown only; the client's comments 30464 / 29849 / 30088 were not re-checked.
+- **Contract:** `PUT /lead/v1/:leadId/funding` takes `settledAction: 'reuse' | 'refund' | 'reuseWithRefund'`
+  (`FundingService.savePayments`, `useFunding.savePayments(price, rows, payMode, settledAction)`). `calculatorId` was already sent.
+  Three 409s keyed on **`data.code`** (never the URL/message) become kinds `scopeNeedsDecision` / `scopeNeedsRefundApproval` /
+  `scopeRefundFirst` with `settledAmount` / `overage` (`classifyFundingError`); `useFunding.report` shows no banner for them.
+  `FUNDING_SCOPE_SWITCH_OVER_ALLOCATED` never shipped — do not add it.
+- **UI:** `funding/ScopeSwitchPrompt.tsx`, an in-card overlay (never a nested Modal) rendered by `ResultJobModal` after Confirm:
+  decision (re-use $X / refund $X, the re-use option warns when `overage` is present) -> `goFunding('reuse'|'refund')`;
+  approval (server `message` verbatim, Yes -> `reuseWithRefund`, No -> nothing written); refund-first (message + OK).
+  `refundDue` from the 200 shows as an amber "refund due" card on the Funding screen — it is NOT stored or re-read.
+- ⚠️ **Settled rows are re-sent** (`withSettledRows` in `utils/funding.ts`): a row with `charged || collected` missing from the
+  payload makes the server refuse the whole save ("Cannot remove $1,000 AMEX"). Keep their original pids.
+- ⚠️ **`DynamicDealCenterScreen.handleResultJob` no longer pre-blocks** a Sale when another calculator holds collected money
+  (`fundingPinnedToOtherCalculator` gate removed; the helper stays exported, the `fundingBlock` dialogs are now unreachable).
+  Supersedes "collected money pins the lead to its calculator" and "Do NOT build the carry-over/refund flow".
+- ⚠️ Blockers match the server (15 Oct wording): settled total above the price reads "$X more has been collected than the contract
+  price — refund it to submit" (`scopeOverCollectedBlocker`); the old "more than the contract price is allocated" stays for
+  un-collected over-allocation. Coverage is net of live refunds server-side; mobile `fundedAmount` is still gross — known gap.
+- Not done: routing straight into the addendum/refund flow from `refundDue`; the My Deals edit wizard's own re-scope; offline
+  (the queued `funding` step sends no `settledAction`, so a scope switch with money held still needs signal). Open with the
+  client: whether the refund rule applies to a scope switch, and whether Submit may wait on approvals. Not verified on device.
+
+
+## 1 Year plan sheet - `Change` opens a choose-default mode (star removed)
+
+`OneYearMonthlyPlan.tsx`: the per-row star is gone. Tapping a row in the normal sheet only picks the plan for THIS deal (`commit('custom', key)`). The **Change** button on the MY DEFAULT PLAN card (and **Choose** on the no-default card) sets `chooseDefault`: a green "Choose your default plan / Done" banner replaces the card, rows show radios + a `CURRENT DEFAULT` badge, and tapping a non-default row opens a confirm sheet ("Set X as your default? / Replaces Y / Set as default / Cancel"). Confirm => `onSetRepDefault(key)` + `commit('custom', key)` + close. ⚠️ The confirm sheet is an absolute in-card overlay, NOT a second `Modal` (never stack native Modals). The default cannot be cleared from the sheet any more (`onSetRepDefault(null)` is still supported by the prop). Not verified on device.
+
+`OneYearMonthlyPlan.tsx` `activeSeg`: the Match / Default toggle highlights what is DISPLAYED, not the stored `mode` - a `custom` pick equal to the rep default (checked first) or the In-Home plan lights that segment instead of leaving both blank; a plan matching neither still lights neither. The helper line still follows the stored mode. Not verified on device.
+
+### 1 Year plan - activity logs + offline (follow-up to the choose-default sheet)
+
+`RolloutView.logOneYearPlan` writes a `oneYearPlan` rollout log (`logRolloutChange` -> `logEvent`, so offline it joins the activity-log queue with its action-time key) for `1 year default plan set` / `cleared` (`setOneYearDefault`, only when the key really changes) and `1 year plan changed` (new `OneYearMonthlyPlan` prop `onPlanPicked`, fired from `commit` only). ⚠️ `onPlanPicked` must NOT fire from the Default re-stamp effect - that is not a rep action and would flood the log. Meta `offline` = connectivity at tap time. The default itself already queues via `saveDefault` -> `offline-settings.ts`; details in `offline.md` § "1 Year default plan - offline + activity logs". Not verified on device.
+
+## Ticket 1308 — Forever Record tracks WHICH In-Home Pre Order discount was used
+
+Client: *"Pls add in which in home pre order they're using. 15%, 20% or 25%. Use our same rules
+with inheriting. Changed. etc."* The Forever Record showed the rollout price, payment method and
+confirmation but never which pre-order discount produced the In-Home grand total, so a $333 total
+on a $444 MSRP could not be explained from the log.
+
+**Two moments, mirroring the payment-method rules** (`utils/activity-log/rollout-log-meta.ts`,
+`logPreOrderDiscount`):
+
+- **Seeded** — fired from `logEndPriceEntered` (`RolloutView.tsx`), i.e. when the rep commits the
+  Rollout End Price, alongside the debounced `PUT /lfcalculators/:id`. The discount only means
+  something once there is a price to apply it to, and the rep sees the entry while still on the
+  screen. `oldValue` is empty; `action: 'in home pre order discount applied'`.
+  ⚠️ **Not at Confirm Rollouts** — it was there in the first cut and was moved by request; do not
+  move it back. Guarded by `seededDiscountRef` so editing the price again does not re-log an
+  unchanged discount.
+- **Changed** — fired from the chip's `onPress`, carrying old → new.
+  `action: 'in home pre order discount changed'`.
+
+Both go through `logRolloutChange`, so they inherit its `module_type: 'rollout_and_drop'` envelope,
+tier prices and `percentageOfRollout` — the portal renders them with the existing rollout rows and
+needs no new client.
+
+- The value resolves the same way the UI does: `calculator.discountPercentage || pricing.defaultPreOrder`
+  (`pricing.defaultPreOrder` comes from `useDealPricing`; the fallback is 25).
+- `meta.isDefaultDiscount` records whether the figure came from the **rep's saved default** (the
+  Default toggle writes `user.defaultPercentage`) rather than the company default — "15%" alone
+  does not say which of the two it was.
+- ⚠️ **`fieldCategory` is ALWAYS `'rollout'`**, before and after Confirm Rollouts. The first cut
+  copied the payment-method logger's `isConfirmed ? 'drop' : 'rollout'` flip and was corrected by
+  request: the discount is a property of the rollout itself, not of a drop, so a log written after
+  confirming must read the same as one written before. The payment-method logger keeps its own
+  flip — that one is deliberate. Do not re-add it here.
+- ⚠️ **The chip logs BEFORE `onDiscountChange`.** `logDiscountChanged` reads `discountPct` for its
+  `oldValue`, and the setter replaces it; calling them the other way round records old === new.
+- ⚠️ **Early-returns on `next === discountPct`**, so re-tapping the active chip writes nothing.
+- ⚠️ **A chip tap spends the seed** (`seededDiscountRef.current = true` in `logDiscountChanged`).
+  A rep who picks a discount before typing a price has stated their choice; without this the later
+  price entry would log the default *underneath* the change and the record would read 20% → 15%.
+- **Offline is covered, and verified**: `rollout_and_drop` is not in `NON_QUEUEABLE_LOG_MODULES`
+  (only `'system'` is), so `logEvent` holds these in the activity-log queue and replays them with
+  the `occurredAt` taken when the rep acted, not when the request finally goes out. Nothing in
+  `logEndPriceEntered` or `logDiscountChanged` awaits the network, so both run the same offline.
+  `__tests__/utils/pre-order-discount-offline.test.ts` covers queueability, the action-time stamp,
+  field survival through `stampOfflineLog`, and queue ordering behind the end-price log.
+- ⚠️ `discountPct` can never be falsy (which would hit the `!opts.discountPercentage` early return):
+  `calculator.discountPercentage || pricing.defaultPreOrder`, and `DISCOUNT_FALLBACK` in
+  `useDealPricing.ts` guarantees `defaultPreOrder: 25` even when the discount config is missing —
+  which is exactly the offline case.
+- ⚠️ Both files are CRLF.
+- Not verified on device, and not yet rendered in the portal: the backend/portal must display the
+  two new actions.
+
+---
+
+## Ticket — `offlineResultOverlay` only knew about Sale and Demo
+
+The three no-sale buttons in Job Docs (**No Demo**, **Not Hit**, **Reset**) now queue offline.
+The UI side is in [`lead-center.md`](lead-center.md); the part that lives here is the queue model.
+
+⚠️ **No new upload step was needed.** All three post the same shape to `submitJobBuilder` —
+`leadData: { result, status, reason, timestamp }` — which is exactly what the existing `submit`
+arm in `services/offlineLeadStore.ts` sends. `completeOfflineJobBuilder(workClientId, payload)`
+is the writer, the same one `DynamicJobBuilderScreen` already uses for an offline Sale.
+
+The gap was in `utils/offline-lead-work.ts`:
+
+```
+const result = String(leadData.result || '').toLowerCase();
+if (result !== 'sale' && result !== 'demo') return null;   // ← Not Hit / No Demo / Reset dropped
+```
+
+So the work queued and would have uploaded correctly, but `applyOfflineResult` put **no overlay**
+on the lead — the leads list showed it unresulted until the drain finished. ⚠️ **A rep who
+results a lead and sees nothing change does it again**, which is how one door becomes two queued
+results. The list is the only feedback they get.
+
+`OFFLINE_RESULTABLE` now holds `sale`, `demo`, `nodemo`, `nothit`, `reset` (compared
+lower-cased, since the payload uses camelCase).
+
+⚠️ **`status` is a separate field from `result`.** The overlay used to return `status: result`.
+A sale names its own status, but the no-sale outcomes carry a distinct `leadData.status`, and the
+leads list and `LeadCard` colour-code on **status** — so reusing `result` mislabels the card. It
+now returns `leadData.status || result`.
+
+⚠️ **Keep the whitelist a whitelist.** An unrecognised result still returns `null` rather than
+being passed through: an overlay built from a payload shape nobody has checked would show the rep
+a status the server will never agree with.
+
+⚠️ The overlay still stops at `status === 'uploaded'`, so once the row drains the server is the
+truth again. Do not relax that — a stale overlay outranking real server data is the harder bug.
+
+⚠️ **This `reset` is a lead RESULT, not `LeadService.resetLead`** (`lead/v1/{id}/reset`), which
+deletes uploaded documents and stays online-only. Adding that one to this set would let a replay
+destroy work the rep did after it.
+
+### Follow-up — the Deal Center spinner on a weak line
+
+The screen in the "one bar" client video (see `offline.md` for the connectivity side).
+
+⚠️ **A bare spinner is a promise the screen cannot keep.** `isLoading` ORs three query flags and
+gated the whole screen, so on a stalled line the rep got "Loading calculator…" with no message,
+no progress and no way out — indistinguishable from a broken app.
+
+`useSlowLoadHint(isLoading)` flips true after 4 s, and the spinner then names the problem and
+offers **Work offline**.
+
+⚠️ **`workFromDevice` exists because `isOnline()` is not enough.** `deviceIsAuthoritative` in
+`useDynamicCalculators` was `!isOnline() || isClientId(...) || hasUnsyncedDealCenter(...)`. On one
+bar `isOnline()` is **true**, so the cached quote already on the device was unreachable precisely
+when it was needed. `preferDevice` forces that branch; the bootstrap key includes it
+(`${leadId}:${device|net}`) so opting in re-runs the bootstrap rather than being swallowed by the
+"already bootstrapped" guard.
+
+⚠️ **Known, pre-existing: every hook in `DynamicDealCenterScreen` sits below an early return**
+(`route?.params?.mode === 'edit'`, line ~63) — 28 `rules-of-hooks` errors, one of which is now
+`useSlowLoadHint`. It is latent (the param does not change within a mount) but it is real, and
+fixing it means splitting the edit mode into its own component. Worth a ticket; deliberately not
+attempted inside a connectivity fix.
+
+## Ticket — crash: "Rendered fewer hooks than expected" on View all
+
+Reported from a client device with a red-box screenshot: pressing the **blue grid button**
+(View all) in the Deal Center crashed the screen outright.
+
+**The exact cause.** `DynamicDealCenterScreen` had an early return at the top —
+`if (route?.params?.mode === 'edit') return <DynamicDealEditScreen/>` — placed after three
+hooks and before the other ~40. React tolerated that only because `mode` never changes within
+a mount. But it meant **every remaining hook in the file was formally conditional**, which the
+linter had been reporting as 27 `rules-of-hooks` errors for a long time.
+
+Two further early returns sit mid-body: `flowStep === 'jobBuilder'` and `flowStep === 'rollout'`.
+`useSlowLoadHint` (added for the weak-connection ticket) landed *below* them. `flowStep` DOES
+change at runtime — View all calls `setFlowStep('rollout')` — so:
+
+| render | flowStep | hooks run |
+|---|---|---|
+| 1 | `calculator` | …N, including `useSlowLoadHint` |
+| 2 | `rollout` | …N−1 — returns at the `rollout` branch first |
+
+Fewer hooks on render 2 than render 1 is exactly what React refuses. Crash.
+
+⚠️ **The 27 pre-existing errors were not noise — they were the loaded gun.** Any hook added
+below those returns would have done this. A previous pass recorded them as "latent, worth a
+ticket" and added a hook anyway; that was wrong, and this crash was the result.
+
+**The fix, both halves:**
+1. `useSlowLoadHint` hoisted above every early return.
+2. Edit mode split into its own component. `DynamicDealCenterScreen` is now a two-line router
+   (`mode === 'edit'` → `DynamicDealEditScreen`, else → `DynamicDealCenterCreate`), and all the
+   create-flow hooks live in `DynamicDealCenterCreate` with nothing conditional above them.
+   `rules-of-hooks` on this file: **28 → 0**.
+
+⚠️ **Do not re-add an early return above the hooks in `DynamicDealCenterCreate`.** Route on a
+prop in the wrapper and render a different component instead — that is what the wrapper is for.
+
+**Swept the rest of the app.** The only other `rules-of-hooks` findings are
+`DynamicTabRenderer.tsx` (10, behind `if (tab.isSummary)`) — safe in practice because it is
+mounted with `key={currentTab.id}`, so a tab change remounts rather than re-rendering — and one
+in `CalculatorSummary.tsx`, which is the naming rule on a Reanimated render prop, not
+conditional ordering. Neither can produce this crash today; the TabRenderer one is the same
+trap waiting for someone to add a hook below line 1297.
+
+---
+
+## Ticket — "Jobs Built — Back to Tools" stacked a second Lead Center
+
+Pressing **Jobs Built — Back to Tools** landed on Lead Center, but pressing back from there went
+to Lead Center *again* instead of the leads list — identically from the header arrow, the Android
+hardware back and the iOS swipe, since all three simply pop.
+
+`onRolloutsConfirmedDone` called:
+
+```
+navigation?.navigate('LeadCenter', { lead, tab: 'tools' });
+```
+
+⚠️ **`navigate` only REUSES an existing route when the params match.** With different params
+React Navigation pushes a new copy, so the stack became
+`Leads → LeadCenter → DynamicDealCenter → LeadCenter`.
+
+⚠️ **A blind `goBack()` is NOT the fix.** `DynamicDealCenter` is opened from Lead Center,
+Investment Center, Deal Detail, notifications and push routing. `goBack` would return to whichever
+of those pushed it, and from a push there may be no Lead Center in the stack at all.
+
+`utils/back-to-lead-center.ts` (pure, tested) plans it from `navigation.getState().routes`, and
+`utils/navigate-back-to-lead-center.ts` applies it: **pop** when a Lead Center is already below,
+**navigate** only when there is none.
+
+⚠️ **The NEAREST Lead Center below the top, not the first.** A rep can legitimately be in
+`LeadCenter(A) → DealCenter → LeadCenter(B) → DealCenter`; popping to A would throw away a screen
+they still expect behind them.
+
+⚠️ **A Lead Center on TOP of the stack is not a pop target** — popping zero screens would leave
+the rep where they are with the button doing nothing.
+
+⚠️ **The Tools tab is selected by a `SET_PARAMS` dispatch targeting the Lead Center route's
+`key`.** A bare `navigation.setParams` writes to the route owning the navigation object — the Deal
+Center being left — and would silently do nothing. It runs AFTER the pop and its failure is
+swallowed: being on the right screen matters more than the right tab. (Popping restores Lead
+Center as the rep left it, so without this a rep who had switched to Job Docs would return there.)
+
+⚠️ Popping preserves the existing Lead Center's own params (`fromMyDeals`, appointment state);
+re-navigating with fresh params would quietly reset them.
+
+⚠️ Every step is defensive and falls back to the original `navigate`. This is a button pressed in
+front of a customer — a navigation throw here would crash the app mid-deal.
+
+Other screens that return to Lead Center (Investment Center, Deal Detail, Job Builder, RevRender)
+already use `goBack()` and were correct; they are untouched.
+
+---
+
+## Ticket — Deal Center showed the calculator over a confirmed rollout on mobile data
+
+> "I rolled out this lead, then opened Deal Center and it showed the calculator even though I
+> rolled it out. After a few minutes when I got some internet it showed the rollout. Mostly
+> these issues are coming in mobile data."
+
+The rollout data was on the device the whole time. The bug was that the **online** loader in
+`useDynamicCalculators.ts` never read the cache, and treated reads that never answered as
+answers.
+
+⚠️ **`isOnline()` is true on one bar of LTE, right up to the 15 s timeout.** So the branch that
+runs for a rep with a weak cell signal is the *online* one — the branch with no snapshot
+fallback. The offline branch below it was always correct (`resolveOfflineDealCenterSource`); it
+simply never got the chance to run. **Do not "fix" a cache bug by only looking at the offline
+path.**
+
+Two separate failures, both of the same shape:
+
+**1. A timed-out appointment lookup looked like "this lead has no appointment."**
+`resolveAppointmentId` returned a bare `string | null`. It returns `null` when `getAppointments`
+times out, `createAppointment` times out, *and* when the lead genuinely has none — three very
+different facts collapsed into one value. The caller then did:
+
+```
+if (!apptId) { setLoading(false); return; }   // local-only mode → the blank `local-1` tab
+```
+
+It now returns `{ id, failed }`, and `failed` is set **only by a transport-level failure** —
+⚠️ a 409 or any other 4xx is an *answer about this lead* and must not count as a failure, or a
+lead that truly has no appointment would start borrowing a cached id.
+
+**2. An empty read MINTED a calculator.** The `else` arm of `if (list.length)` called
+`createRemoteTab` — a POST. A slow or partial empty response therefore created a real, empty
+calculator on the server beside the rep's real one. This is the write-side version of the same
+trap the Investment Center hit twice, and a likely contributor to **ticket 1310** (Forever
+Record showing a confirmed rollout with no price): an extra empty calculator in the list.
+
+### The rules, in `utils/deal-center-load.ts`
+
+Pure module (CLAUDE.md §6 — `useDynamicCalculators.ts` imports React Native and cannot load
+under jest). 19 tests in `__tests__/utils/deal-center-load.test.ts`.
+
+- `readOutcome` — `answered-rows` / `answered-empty` / `unanswered`. ⚠️ A throw is `unanswered`
+  **even when an empty array came with it**.
+- `resolveOnlineLoadSource` — `server` / `cache` / `mint` / `hold`. ⚠️ **`mint` is the only
+  outcome that writes**, and it is reachable from exactly one of the six input combinations:
+  `answered-empty` **and** no cached rows. A test asserts that count directly, so widening it
+  fails loudly.
+- `hold` is deliberate: nothing proved and nothing cached means **leave the screen alone**
+  rather than write a calculator we may be about to discover already exists.
+- `resolveAppointmentFallback` — a *failed* lookup may fall back to the cached appointment id; a
+  *successful* lookup that found nothing may not.
+- `canUseLocalOnlyMode` — the blank-calculator path is now reachable only when the lookup
+  answered **and** there is no snapshot.
+
+⚠️ When the appointment id itself came from the cache (`source === 'cache'`), the loader does
+**not** then call `getCalculators` — the lookup just proved the network is unreachable, so it
+renders the snapshot and lets a later mount refresh. Adding that call back costs another 15 s
+timeout for a result already known.
+
+⚠️ `flowStep` still always starts at `'calculator'`; the rollout is reached through View-all.
+That is unchanged and correct — the reported symptom was the *tabs* being blank, not the step.
+
+### Follow-up - the Investment Center's calculator hook no longer overwrites the device record (2026-10-16)
+
+`useDynamicCalculators` is mounted twice when a deal is completed from the Investment Center (its own copy plus the Deal Center it navigates to with
+`resultOptIn`). The unmount cleanup always called `persistOffline()`, so the Investment Center's stale tabs replaced what the Deal Center had saved. It now flushes
+only when `offlineDirty` (a change the debounce has not written). Details and the log side: `docs/claude/offline.md` (Investment Center follow-up).
+
+- ⚠️ Any new write to the device record from this hook must go through `persistOffline` or set `offlineDirty`, or the unmount flush will skip it.
+
+### Follow-up - Leads list offline check-in uses the shared rule (2026-10-16)
+
+`screens/Leads/index.tsx` (`handleActionPress`, offline branch) decided the check-in log inline (`plan.logModule || (atTheDoor ? 'lead_check_in' : '')`). It now calls
+`offlineCheckInModule(plan, atTheDoor)` from `utils/offline-lead-work.ts`, the same function the Zone Canvasser map uses, so the two entry points cannot drift.
+Behaviour is unchanged. Details: `docs/claude/offline.md` (offline lead check-in follow-up).
+
+- ⚠️ Keep the `lead_review` guard: it must not mark the lead checked in or queue a work-start.
+
+
+## Duplicate calculator tab is optimistic online (no wait for the POST)
+
+`useDynamicCalculators.handleDuplicateTab` used to `await createRemoteTab(...)` (a `POST /appointments/{id}/lfcalculators` carrying the full ~100+ entry array) BEFORE showing the copy, so Duplicate sat dead for the round trip. Now the online branch adds a `local-<ts>` copy (entries/totals/payment/discount cloned from the source) and selects it on the tap, then POSTs behind it and swaps the real id in (`tabsRef`, `setTabs`, `activeTabId` only if still on the temp, `cacheTabsSnapshotRef`).
+- ⚠️ **The merge keeps the on-screen tab** (`{ ...created, ...latest, id, persisted: true }`), not the server's copy - the rep may already be typing into it. A `local-` tab is never saved (`flushSave` requires `persisted && isBackendId`), so if `entries`/`totals` changed while the POST was in flight the swap calls `markDirty(created.id)` to PUT them.
+- ⚠️ **Deleted before the POST answered** => `deleteCalculator(created.id)` so no orphan server row. **POST failed** => the copy stays as the local-only tab the old fallback made. The `duplicate` log still rides the POST (`duplicateLog`); the payment-method-inherited log fires after the swap.
+- Offline / device-authoritative duplicate (`deviceTabFrom`) was already instant and is untouched. Add (+) is still awaited - same pattern would apply. Not verified on device.
+
+
+### Follow-up: the tab's three-dot menu opens instantly (`TabContextMenu`)
+
+The Duplicate / Delete / Cancel menu's open state lived in `CalculatorView` (`menuIdx`), so tapping the dots re-rendered that whole screen - every tab, the field list, the footer - before the `Modal` could paint, and `animationType="fade"` added its duration on top. It is now `DynamicDealCenter/components/TabContextMenu.tsx`: a `memo`'d component that owns its own open state and is opened through a ref (`tabMenuRef.current?.open(idx)` from `HorizontalDraggableTabs.setMenuVisible`), with `animationType="none"`. ⚠️ Do NOT lift the open state back into `CalculatorView`. Delete still goes through the parent's confirmation (`onDeleteRequest` -> `setDeleteModal`); the classic `screens/DealCenter/index.tsx` menu is a separate copy and was not changed. Not verified on device.
+
+## REVUIUX-557 - package tabs carry the SM / MD / LG rank (Deal Center + Investment Center)
+
+Ticket: *"Add in our SM MD LG logic etc for packages"* (subtask of REVUIUX-518). `computeDerivedTitles` already ranks same-base calculators by price into `(SM)` / `(LG)` (`(SM)/(MD)/(LG)/(XL)...` from three levels up), but a FULL-PACKAGE tab renders only the box + `+extras` + ⓘ and never printed the title, so three packages quoted at different prices looked identical (the screenshot: three bare cube tabs).
+- `tab-naming.ts` `getPackageSizeLabel(title)` returns the bare `SM`/`MD`/`LG`/`XL`/`XXL[-n]` from the title's trailing `(..)` (⚠️ markers stripped), else `''`. It reads the TITLE on purpose - the rank, tie handling and inherited-suffix logic are already decided there, so the badge cannot disagree with the name the portal sees. No ranking logic was duplicated or changed.
+- Rendered as `(SM)` after the extras on: the calculator footer tabs (`CalculatorView.tabCalcs.packageSize` -> `HorizontalDraggableTabs`), and every `FullPackageTitle` that is handed a `title` (new optional `sizeLabel` prop, default `getPackageSizeLabel(title)`): the quote-card header, Result Job chooser/sheet, the rollout strip tabs (now pass `title={calc.title}`), the Investment Center tab row, and the Investment panel package heading (now passes `title`).
+- ⚠️ Only shown when `isFullPackage` - non-package tabs already print their full name incl. the suffix. ⚠️ A package whose price TIES another keeps the portal title `⚠️ ... (SM) ⚠️`; the tab shows only the `(SM)` (the dynamic flow opts out of the classic duplicate-warning icon via `getIsDuplicate={() => false}`) - not changed here. A lone package (one price level) has no rank, so no suffix. Not verified on device.
+
+---
+
+## Ticket — the plus button must not create a second empty calculator
+
+> "When we create a new calculator by pressing plus, disable the plus button until he adds
+> something in that empty tab. If in the first tab he didn't add anything, the rep should be
+> unable to create a new calculator. Show a splash message so the rep understands why."
+
+Rules and 20 tests in `utils/calculator-tab-gate.ts` (pure — `CalculatorView` imports React
+Native, CLAUDE.md §6).
+
+### ⚠️ An "empty" tab is NOT a tab with no entries
+
+This is the whole trap. `mergeFullEntries` seeds **every field in the schema** with
+`inputValue: 0`, so a brand-new tab already carries a complete entries map.
+`Object.keys(entries).length === 0` is therefore **never** true, and a gate written that way
+silently never fires — it looks correct and does nothing. `hasAnyFieldValue` tests the
+*values*, not the keys.
+
+### ⚠️ What counts as "touched" is deliberately generous
+
+`isTabEmpty` returns false for a typed quantity, non-zero totals, a price, a confirmed
+rollout, a selected render **or** a drop. A tab can carry real work with no quantity typed on
+it, and blocking the plus button in front of a customer because the app disagreed about what
+work looks like is far worse than letting one extra tab through. When in doubt, allow.
+
+⚠️ A **negative** value counts — a credit is an entry.
+
+### ⚠️ The message never quotes the tab's title
+
+First wording was `"2" is still empty`. A calculator is **named from what it contains**
+(`G (LG)`, `G (SM)`), so a tab with nothing in it is *always* still on its placeholder: a bare
+position number. Quoting that reads like a name the rep chose, points at a tab that exists
+under no such name, and the number shifts as tabs are added, deleted or reordered.
+`utils/rollout-status.ts` already encodes the same fact in `isPlaceholderCalculatorTitle` (an
+all-digits title is a placeholder).
+
+Two fixed strings instead, chosen by whether the empty tab is the one in view:
+
+- `ADD_TAB_BLOCKED_MESSAGE` — "Add at least one item to this calculator before starting
+  another one."
+- `ADD_TAB_BLOCKED_MESSAGE_OTHER` — "One of your calculators is still empty. Add at least one
+  item to it before starting another one."
+
+`canAddCalculatorTab` takes `activeTabId` to pick between them. ⚠️ Tests assert the message
+contains neither the placeholder number **nor** a real title — the rule is about the wording,
+not about which titles happen to be safe.
+
+### ⚠️ Gated on ANY empty tab, not the active one
+
+The rep can add a tab, switch away and press plus again from elsewhere. Gating on
+`activeTabId` alone would still leave blanks behind, which is the thing being prevented. The
+message names the offending tab when there is more than one, so the rep knows where to go.
+
+### ⚠️ No tabs at all is NOT blocked
+
+`canAddCalculatorTab([])` allows. The first calculator is created by the screen itself; a gate
+that refused here would leave a lead with no way to start. A test pins this.
+
+### The button stays pressable
+
+⚠️ It is dimmed (`opacity 0.4`) and carries `accessibilityState.disabled`, but it is **not** a
+`disabled` TouchableOpacity. A disabled button swallows the tap and the rep learns nothing —
+they press it again and then ask why the app is broken. It stays tappable and explains itself
+with `FlashMessage.warning`.
+
+### ⚠️ The regression this shipped with — a stale closure, not a stale rule
+
+First version blocked the button **permanently** and showed **no message**, even after the rep
+filled the tab. The gate logic was correct; its INPUT was stale.
+
+`handleAddTab` is a `useCallback` whose dep array is **`tabs.length`, not `tabs`** — a
+pre-existing optimisation, since adding a tab is the only thing that changes the length.
+Typing a quantity does not, so the captured `tabs` stayed frozen at the empty state. The guard
+read it, refused, and returned **before any UI ran**, which is why no flash appeared either.
+
+Both halves are now read live:
+
+- the hook reads **`tabsRef.current`**, the pattern that hook already uses elsewhere for
+  exactly this reason — ⚠️ never the captured `tabs` prop;
+- `CalculatorView` overlays the **active tab's live `entries` prop** over its copy in `tabs`,
+  so the gate cannot lag one keystroke behind the field the rep is typing into.
+
+⚠️ **The general lesson, which is not about this gate:** a predicate is only as fresh as what
+you hand it, and adding a read to an existing callback silently inherits that callback's
+staleness. Check the dep array before putting a new condition inside an old `useCallback`.
+
+### ⚠️ The button is a `Pressable` with `hitSlop`, not a `TouchableOpacity`
+
+Second report after the stale-closure fix: the button dimmed correctly, but tapping it showed
+**no message**. Everything else checked out — the decision object carries both `title` and
+`message` (printed for the real three-tab state), `FlashMessage.warning` works elsewhere in
+this same file, and there is exactly one global flash host, mounted in `App.tsx`. The only
+unproven link was the tap reaching the handler.
+
+⚠️ **That add button sits in a 44pt row immediately beside `HorizontalDraggableTabs`**, and
+this repo already records the trap: *a sibling `GestureDetector` swallows touches whatever its
+`zIndex`* (CLAUDE.md §6). It is now a `Pressable` with `hitSlop={8}` and a pressed-state
+opacity, which hit-tests more predictably next to a gesture handler and gives the rep visible
+feedback that the press registered.
+
+⚠️ **Its style is a plain OBJECT, never `Pressable`'s `({ pressed }) => ({...})` form.** The
+first attempt used the callback form and the button rendered as a bare `+` icon with no grey
+card behind it — the chrome was silently dropped. Same family as the `FlashMessage` trap in
+CLAUDE.md §6: a style a library merges or re-evaluates loses keys. The style object is
+byte-identical to the original `TouchableOpacity`, plus `opacity` for the blocked state, and
+should stay that way.
+
+⚠️ **Never give this button `disabled`.** A disabled button swallows the tap, so the
+explanation — the entire point of the gate — can never fire. It stays pressable and refuses
+out loud.
+
+⚠️ The handler falls back to `ADD_TAB_BLOCKED_TITLE` / `ADD_TAB_BLOCKED_MESSAGE` rather than
+passing `''`, so a decision missing its text can never produce a silent empty flash.
+
+⚠️ **Not confirmed on device.** The gesture conflict is the most likely cause, not a proven
+one. If the button visibly dims on press and there is still no message, the tap IS landing and
+the flash is being swallowed instead — that is a different fix (a local `ModalFlashHost` on
+this screen), not more work on the touch target.
+
+### Both layers
+
+`handleAddTab` (`useDynamicCalculators.ts`) re-checks and returns **quietly** — the UI owns the
+message, and two flashes for one tap is worse than none. The hook is the only writer, so a
+future caller that forgets the check still cannot create the blank tab.
+
+⚠️ The gate reads only local tab state and never consults connectivity, so it behaves
+identically offline and online. A test pins that too.
 
 ### Install calendar dims days no crew can take (REVDSM-1300)
 `InstallDateCalendar` (this screen) and the calendar in `AppointmentSchedulerModal` call

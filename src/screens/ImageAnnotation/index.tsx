@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   Image,
   Alert,
-  ActivityIndicator,
   TextInput,
   StyleSheet,
   Dimensions,
@@ -15,25 +14,40 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { WebView } from 'react-native-webview';
-import ReactNativeBlobUtil from 'react-native-blob-util';
 
-const WebViewComponent = WebView as any;
 import Geolocation from 'react-native-geolocation-service';
-import { useUploadImagesMutation } from '../../hooks/useLeadMutation';
+import { enqueueAnnotationJobs } from '../../services/annotationSaveService';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { IMAGE_CATEGORIES } from '../../constants/lead-center';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { useWarmedImageUris } from '../../hooks/useWarmedImageUris';
-import { warmToLocalCache } from '../../utils/imageFileCache';
+import { FlashMessage } from '../../config/message';
+import { buildMobileAnnotationData, countMarks } from '../../utils/annotation-restore';
 
-import { AnnotationCanvas } from '../../widgets/components/LeadCenter/AnnotationCanvas';
+import { AnnotationCanvas, type TwoFingerZoomApi } from '../../widgets/components/LeadCenter/AnnotationCanvas';
 import { AnnotationTextToolbar } from '../../widgets/components/LeadCenter/AnnotationTextToolbar';
+import {
+  MIN_SHAPE_DRAG_PX,
+  SHAPE_KINDS,
+  applyShapeChange,
+  hitShapeBody,
+  hitShapeHandle,
+  makeShape,
+  moveShape,
+  moveShapeHandle,
+  pickShapeAt,
+  shapeLengthPx,
+  type AnnotationShape,
+  type ShapeHandle,
+  type ShapeKind,
+} from '../../utils/annotation-shapes';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const MIN_POINT_DISTANCE_SQ = 2.25; // 1.5px
+const SHAPE_COLORS = ['#FF7043', '#4CBB17', '#42A5F5', '#FFB74D', '#FFFFFF', '#000000'];
+const SHAPE_SIZES = [3, 5, 8, 12];
 
 interface SectionImage {
   uri: string;
@@ -43,6 +57,14 @@ interface SectionImage {
   subcategory?: string;
   categoryName?: string;
   isOptimistic?: boolean;
+  /** Re-edit: `_id` of the annotated copy being edited. Its upload is a PATCH that overwrites it in place. */
+  existingAnnotationId?: string | null;
+  /** `_id` of the clean ORIGINAL photo - stored with the annotation so a later re-edit can find its base. */
+  salesPhotoId?: string | null;
+  /** Re-edit: saved marks to put back on the canvas (only when `uri` is the clean original). */
+  initialMarks?: { strokes: any[]; texts: any[]; shapes: any[] } | null;
+  /** Re-edit: remote urls of the annotated copy whose cached bytes are stale once it is overwritten. */
+  staleUris?: string[];
 }
 
 export default function ImageAnnotationScreen() {
@@ -51,8 +73,6 @@ export default function ImageAnnotationScreen() {
   const { user } = useAuth();
   const { selectedPhotos = [], lead, onSaveSuccess, onCancel } = route.params || {};
   const openedLoggedRef = useRef(false);
-
-  const uploadImagesMutation = useUploadImagesMutation();
 
   const [activeImageIndex, setActiveImageIndex] = useState<number>(0);
   const currentPhoto = selectedPhotos[activeImageIndex];
@@ -69,15 +89,39 @@ export default function ImageAnnotationScreen() {
     () => (currentPhoto ? { ...currentPhoto, uri: displayUri } : currentPhoto),
     [currentPhoto, displayUri],
   );
-  const [activeTool, setActiveTool] = useState<'none' | 'zoom' | 'draw' | 'text'>('none');
+  const [activeTool, setActiveTool] = useState<'none' | 'zoom' | 'draw' | 'text' | 'shape'>('none');
   
   const [activeDrawTool, setActiveDrawTool] = useState<'pen' | 'eraser'>('pen');
   const [activeColor, setActiveColor] = useState<string>('#4CBB17'); // Green
   const [activeSize, setActiveSize] = useState<number>(5);
   const [showColorPanel, setShowColorPanel] = useState<boolean>(false);
 
-  const [strokesMap, setStrokesMap] = useState<Record<string, any[]>>({});
-  const [textsMap, setTextsMap] = useState<Record<string, any[]>>({});
+  // Re-edit seeds the canvas with the marks saved on the annotated copy; `initialCount` is the "nothing changed yet"
+  // baseline so opening a photo does not read as unsaved work.
+  const seededMarks = useRef(
+    (() => {
+      const strokes: Record<string, any[]> = {};
+      const texts: Record<string, any[]> = {};
+      const shapes: Record<string, AnnotationShape[]> = {};
+      const count: Record<string, number> = {};
+      (selectedPhotos as SectionImage[]).forEach((p) => {
+        const m = p?.initialMarks;
+        if (!m) return;
+        const pid = p.id || p.uri;
+        strokes[pid] = m.strokes || [];
+        texts[pid] = m.texts || [];
+        shapes[pid] = (m.shapes || []) as AnnotationShape[];
+        count[pid] = countMarks(m);
+      });
+      return { strokes, texts, shapes, count };
+    })(),
+  ).current;
+
+  const [strokesMap, setStrokesMap] = useState<Record<string, any[]>>(seededMarks.strokes);
+  const [textsMap, setTextsMap] = useState<Record<string, any[]>>(seededMarks.texts);
+  const [shapesMap, setShapesMap] = useState<Record<string, AnnotationShape[]>>(seededMarks.shapes);
+  const [activeShapeKind, setActiveShapeKind] = useState<ShapeKind>('arrow');
+  const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
   const [historyMap, setHistoryMap] = useState<Record<string, any[]>>({});
   const [redoMap, setRedoMap] = useState<Record<string, any[]>>({});
 
@@ -97,7 +141,7 @@ export default function ImageAnnotationScreen() {
         meta: {
           action: 'opened_annotation_dialog',
           total_images: selectedPhotos.length,
-          timestamp: new Date().toISOString(),
+          occurredAt: new Date().toISOString(),
         },
       });
     }
@@ -126,7 +170,7 @@ export default function ImageAnnotationScreen() {
     );
 
     return () => backHandler.remove();
-  }, [strokesMap, textsMap, onCancel]);
+  }, [strokesMap, textsMap, shapesMap, historyMap, onCancel]);
 
   const canvasLayout = useMemo(() => {
     if (!containerLayout || !imageSize) {
@@ -182,8 +226,50 @@ export default function ImageAnnotationScreen() {
 
   useEffect(() => cancelScheduledStroke, [cancelScheduledStroke]);
 
+  // Shape being drawn / moved / resized. It lives in a ref and is pushed to the canvas once per frame, exactly like
+  // the pen stroke, so a drag never re-renders this whole screen.
+  const liveShapeListenerRef = useRef<((shape: AnnotationShape | null) => void) | null>(null);
+  const liveShapeFrameRef = useRef<number | null>(null);
+  const liveShapeRef = useRef<AnnotationShape | null>(null);
+  const shapeGestureRef = useRef<{
+    mode: 'new' | 'move' | 'resize';
+    startX: number;
+    startY: number;
+    original: AnnotationShape | null;
+    handle: ShapeHandle | null;
+    moved: boolean;
+  } | null>(null);
+
+  const subscribeLiveShape = useCallback((cb: (shape: AnnotationShape | null) => void) => {
+    liveShapeListenerRef.current = cb;
+    return () => {
+      if (liveShapeListenerRef.current === cb) liveShapeListenerRef.current = null;
+    };
+  }, []);
+
+  const emitLiveShape = useCallback(() => {
+    liveShapeFrameRef.current = null;
+    liveShapeListenerRef.current?.(liveShapeRef.current ? { ...liveShapeRef.current } : null);
+  }, []);
+
+  const scheduleLiveShape = useCallback(() => {
+    if (liveShapeFrameRef.current !== null) return;
+    liveShapeFrameRef.current = requestAnimationFrame(emitLiveShape);
+  }, [emitLiveShape]);
+
+  const cancelScheduledShape = useCallback(() => {
+    if (liveShapeFrameRef.current !== null) {
+      cancelAnimationFrame(liveShapeFrameRef.current);
+      liveShapeFrameRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => cancelScheduledShape, [cancelScheduledShape]);
+
   const backupStrokesRef = useRef<any[]>([]);
   const backupTextsRef = useRef<any[]>([]);
+  const backupShapesRef = useRef<AnnotationShape[]>([]);
+  const backupShapeHistoryRef = useRef<{ history: any[]; redo: any[] }>({ history: [], redo: [] });
 
   const [showTextDialog, setShowTextDialog] = useState<boolean>(false);
   const [textInputValue, setTextInputValue] = useState<string>('');
@@ -194,12 +280,14 @@ export default function ImageAnnotationScreen() {
 
   useEffect(() => {
     setSelectedTextId(null);
+    setSelectedShapeId(null);
     setShowStylePanel(false);
     setShowFontDropdown(false);
   }, [activeImageIndex]);
 
   const currentStrokes = strokesMap[photoId] || [];
   const currentTexts = textsMap[photoId] || [];
+  const currentShapes = shapesMap[photoId] || [];
 
   const getSubcategoryLabel = (catNameOrId: string, subIdOrName: string) => {
     if (!subIdOrName) return '';
@@ -239,6 +327,9 @@ export default function ImageAnnotationScreen() {
     photoId,
     canvasLayout,
     zoomScale,
+    activeShapeKind,
+    currentShapes,
+    selectedShapeId,
   });
 
   useEffect(() => {
@@ -250,20 +341,82 @@ export default function ImageAnnotationScreen() {
       photoId,
       canvasLayout,
       zoomScale,
+      activeShapeKind,
+      currentShapes,
+      selectedShapeId,
     };
   });
 
+  // One entry in the undo history for a shape being added (before null), changed, or removed (after null).
+  const commitShapeChange = useCallback(
+    (pid: string, before: AnnotationShape | null, after: AnnotationShape | null) => {
+      const id = (after || before)!.id;
+      setShapesMap((sm) => ({ ...sm, [pid]: applyShapeChange(sm[pid], id, after) }));
+      setHistoryMap((hm) => ({
+        ...hm,
+        [pid]: [...(hm[pid] || []), { id, type: 'shape', before, after }],
+      }));
+      setRedoMap((rm) => ({ ...rm, [pid]: [] }));
+    },
+    []
+  );
+
+  // Set once a second finger lands: that is a pinch-zoom / two-finger pan (handled by the canvas's gesture handler),
+  // so whatever the first finger had started - a stroke, a shape, a text tap - is thrown away, and nothing is
+  // committed when the fingers lift.
+  const multiTouchRef = useRef(false);
+  const twoFingerZoomRef = useRef<TwoFingerZoomApi | null>(null);
+  const abortForMultiTouch = () => {
+    multiTouchRef.current = true;
+    activeStrokeRef.current = null;
+    lastPointRef.current = null;
+    cancelScheduledStroke();
+    emitLiveStroke();
+    shapeGestureRef.current = null;
+    liveShapeRef.current = null;
+    cancelScheduledShape();
+    emitLiveShape();
+  };
+
+  // Wraps the whole photo area (the photo AND the dark margin around it). It never claims a one-finger touch, but takes
+  // over as soon as a second finger moves - from the drawing overlay or a text note if they already hold the touch -
+  // so two-finger pinch / pan zooms wherever the fingers are and in every tool, including none.
+  const zoomResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponderCapture: (evt) => evt.nativeEvent.touches.length > 1,
+      onPanResponderGrant: (evt) => twoFingerZoomRef.current?.touches(evt.nativeEvent.touches),
+      onPanResponderMove: (evt) => twoFingerZoomRef.current?.touches(evt.nativeEvent.touches),
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderRelease: () => twoFingerZoomRef.current?.release(),
+      onPanResponderTerminate: () => twoFingerZoomRef.current?.release(),
+    })
+  ).current;
+
   const panResponder = useRef(
     PanResponder.create({
+      onPanResponderStart: (evt) => {
+        if (evt.nativeEvent.touches.length > 1) {
+          abortForMultiTouch();
+          twoFingerZoomRef.current?.touches(evt.nativeEvent.touches);
+        }
+      },
+      // The system took the touch: same as a second finger, and any pinch in flight ends.
+      onPanResponderTerminate: () => {
+        abortForMultiTouch();
+        twoFingerZoomRef.current?.release();
+      },
       onStartShouldSetPanResponder: () => {
         const { activeTool } = stateRef.current;
-        return activeTool === 'draw' || activeTool === 'text';
+        return activeTool === 'draw' || activeTool === 'text' || activeTool === 'shape';
       },
       onMoveShouldSetPanResponder: () => {
         const { activeTool } = stateRef.current;
-        return activeTool === 'draw';
+        return activeTool === 'draw' || activeTool === 'shape';
       },
       onPanResponderGrant: (evt, gestureState) => {
+        multiTouchRef.current = evt.nativeEvent.touches.length > 1;
+        if (multiTouchRef.current) return;
         const { activeTool, activeDrawTool, activeColor, activeSize, photoId, canvasLayout } = stateRef.current;
         if (activeTool === 'draw') {
           if (!photoId) return;
@@ -283,9 +436,45 @@ export default function ImageAnnotationScreen() {
           lastPointRef.current = { x: locationX, y: locationY };
           cancelScheduledStroke();
           emitLiveStroke();
+        } else if (activeTool === 'shape') {
+          if (!photoId) return;
+          const { locationX, locationY } = evt.nativeEvent;
+          const { currentShapes, selectedShapeId, activeShapeKind, zoomScale } = stateRef.current;
+          const scale = zoomScale > 0 ? zoomScale : 1;
+          const px = locationX / canvasLayout.width;
+          const py = locationY / canvasLayout.height;
+          // A touch on the SELECTED shape's handle resizes it, on its outline moves it; anywhere else draws a new one.
+          // Tolerances are in screen px, so they are divided by the zoom to stay a finger-sized target.
+          const selected = currentShapes.find((sh) => sh.id === selectedShapeId) || null;
+          let gesture: NonNullable<typeof shapeGestureRef.current> = {
+            mode: 'new', startX: locationX, startY: locationY, original: null, handle: null, moved: false,
+          };
+          if (selected) {
+            const handle = hitShapeHandle(selected, locationX, locationY, canvasLayout.width, canvasLayout.height, 24 / scale);
+            if (handle) {
+              gesture = { ...gesture, mode: 'resize', original: selected, handle };
+            } else if (hitShapeBody(selected, locationX, locationY, canvasLayout.width, canvasLayout.height, 20 / scale)) {
+              gesture = { ...gesture, mode: 'move', original: selected };
+            }
+          }
+          shapeGestureRef.current = gesture;
+          liveShapeRef.current =
+            gesture.mode === 'new'
+              ? makeShape(activeShapeKind, `shape-${Date.now()}`, { px, py }, { px, py }, activeColor, activeSize)
+              : selected;
+          lastPointRef.current = { x: locationX, y: locationY };
         }
       },
       onPanResponderMove: (evt, gestureState) => {
+        const touches = evt.nativeEvent.touches;
+        if (touches.length > 1) {
+          if (!multiTouchRef.current) abortForMultiTouch();
+          twoFingerZoomRef.current?.touches(touches); // two fingers = pinch-zoom + pan, in every tool
+          return;
+        }
+        // Back to one finger after a pinch: end the pinch, but draw nothing until every finger has lifted.
+        twoFingerZoomRef.current?.touches(touches);
+        if (multiTouchRef.current) return;
         const { activeTool, canvasLayout, zoomScale } = stateRef.current;
         if (activeTool === 'draw' && activeStrokeRef.current) {
           const scale = zoomScale > 0 ? zoomScale : 1;
@@ -303,9 +492,32 @@ export default function ImageAnnotationScreen() {
           const py = Math.max(0, Math.min(1, curY / canvasLayout.height));
           activeStrokeRef.current.points.push({ px, py });
           scheduleLiveStroke();
+        } else if (activeTool === 'shape' && shapeGestureRef.current && liveShapeRef.current) {
+          const gesture = shapeGestureRef.current;
+          const scale = zoomScale > 0 ? zoomScale : 1;
+          const dx = gestureState.dx / scale;
+          const dy = gestureState.dy / scale;
+          if (!gesture.moved && Math.hypot(dx, dy) < 3) return; // finger jitter on a tap
+          gesture.moved = true;
+          const curPx = (gesture.startX + dx) / canvasLayout.width;
+          const curPy = (gesture.startY + dy) / canvasLayout.height;
+          const base = gesture.original;
+          if (gesture.mode === 'new') {
+            liveShapeRef.current = { ...liveShapeRef.current, p2: { px: Math.max(0, Math.min(1, curPx)), py: Math.max(0, Math.min(1, curPy)) } };
+          } else if (gesture.mode === 'move' && base) {
+            liveShapeRef.current = moveShape(base, dx / canvasLayout.width, dy / canvasLayout.height);
+          } else if (gesture.mode === 'resize' && base && gesture.handle) {
+            liveShapeRef.current = moveShapeHandle(base, gesture.handle, { px: curPx, py: curPy });
+          }
+          scheduleLiveShape();
         }
       },
       onPanResponderRelease: (evt, gestureState) => {
+        twoFingerZoomRef.current?.release();
+        if (multiTouchRef.current) {
+          multiTouchRef.current = false;
+          return;
+        }
         const { activeTool, photoId, canvasLayout } = stateRef.current;
         if (activeTool === 'draw') {
           cancelScheduledStroke();
@@ -326,6 +538,31 @@ export default function ImageAnnotationScreen() {
           activeStrokeRef.current = null;
           lastPointRef.current = null;
           emitLiveStroke();
+        } else if (activeTool === 'shape') {
+          cancelScheduledShape();
+          const gesture = shapeGestureRef.current;
+          const live = liveShapeRef.current;
+          shapeGestureRef.current = null;
+          liveShapeRef.current = null;
+          lastPointRef.current = null;
+          if (gesture && live && photoId) {
+            const { currentShapes } = stateRef.current;
+            const length = gesture.mode === 'new' ? shapeLengthPx(live, canvasLayout.width, canvasLayout.height) : 0;
+            const isTap = !gesture.moved || (gesture.mode === 'new' && length < MIN_SHAPE_DRAG_PX);
+            if (isTap) {
+              // A tap selects the shape under the finger (or clears the selection) - it never leaves a zero-size shape.
+              const { zoomScale } = stateRef.current;
+              const hit = pickShapeAt(currentShapes, gesture.startX, gesture.startY, canvasLayout.width, canvasLayout.height, 20 / (zoomScale > 0 ? zoomScale : 1));
+              setSelectedShapeId(hit ? hit.id : gesture.mode === 'new' ? null : live.id);
+            } else if (gesture.mode === 'new') {
+              commitShapeChange(photoId, null, live);
+              setSelectedShapeId(live.id);
+            } else {
+              commitShapeChange(photoId, gesture.original, live);
+              setSelectedShapeId(live.id);
+            }
+          }
+          emitLiveShape();
         } else if (activeTool === 'text') {
           const { locationX, locationY } = evt.nativeEvent;
           const px = locationX / canvasLayout.width;
@@ -361,6 +598,9 @@ export default function ImageAnnotationScreen() {
         const existing = tm[photoId] || [];
         return { ...tm, [photoId]: existing.filter((t) => t.id !== action.id) };
       });
+    } else if (action.type === 'shape') {
+      setShapesMap((sm) => ({ ...sm, [photoId]: applyShapeChange(sm[photoId], action.id, action.before) }));
+      if (!action.before) setSelectedShapeId((cur) => (cur === action.id ? null : cur));
     }
   };
 
@@ -386,12 +626,17 @@ export default function ImageAnnotationScreen() {
         const existing = tm[photoId] || [];
         return { ...tm, [photoId]: [...existing, action.data] };
       });
+    } else if (action.type === 'shape') {
+      setShapesMap((sm) => ({ ...sm, [photoId]: applyShapeChange(sm[photoId], action.id, action.after) }));
+      if (!action.after) setSelectedShapeId((cur) => (cur === action.id ? null : cur));
     }
   };
 
   const handleResetCanvas = () => {
     setStrokesMap((sm) => ({ ...sm, [photoId]: [] }));
     setTextsMap((tm) => ({ ...tm, [photoId]: [] }));
+    setShapesMap((sm) => ({ ...sm, [photoId]: [] }));
+    setSelectedShapeId(null);
     setHistoryMap((hm) => ({ ...hm, [photoId]: [] }));
     setRedoMap((rm) => ({ ...rm, [photoId]: [] }));
   };
@@ -493,6 +738,55 @@ export default function ImageAnnotationScreen() {
     setActiveTool('none');
   };
 
+  const enterShapeMode = () => {
+    backupShapesRef.current = [...currentShapes];
+    backupShapeHistoryRef.current = { history: [...(historyMap[photoId] || [])], redo: [...(redoMap[photoId] || [])] };
+    setSelectedShapeId(null);
+    setActiveTool('shape');
+  };
+
+  const commitShapeMode = () => {
+    setSelectedShapeId(null);
+    setActiveTool('none');
+  };
+
+  // Cancel throws away every shape change made since the mode was entered - including its undo history, so Undo
+  // afterwards never points at a shape that is no longer there.
+  const cancelShapeMode = () => {
+    const { history, redo } = backupShapeHistoryRef.current;
+    setShapesMap((sm) => ({ ...sm, [photoId]: backupShapesRef.current }));
+    setHistoryMap((hm) => ({ ...hm, [photoId]: history }));
+    setRedoMap((rm) => ({ ...rm, [photoId]: redo }));
+    setSelectedShapeId(null);
+    setActiveTool('none');
+  };
+
+  const selectedShape = currentShapes.find((sh) => sh.id === selectedShapeId) || null;
+
+  // Colour / size / kind buttons always set the defaults for the NEXT shape, and also restyle the selected one.
+  const restyleSelectedShape = (patch: Partial<Pick<AnnotationShape, 'color' | 'width'>>) => {
+    if (!selectedShape) return;
+    const next = { ...selectedShape, ...patch };
+    if (next.color === selectedShape.color && next.width === selectedShape.width) return;
+    commitShapeChange(photoId, selectedShape, next);
+  };
+
+  const pickShapeColor = (color: string) => {
+    setActiveColor(color);
+    restyleSelectedShape({ color });
+  };
+
+  const pickShapeSize = (size: number) => {
+    setActiveSize(size);
+    restyleSelectedShape({ width: size });
+  };
+
+  const deleteSelectedShape = () => {
+    if (!selectedShape) return;
+    commitShapeChange(photoId, selectedShape, null);
+    setSelectedShapeId(null);
+  };
+
   const enterTextMode = () => {
     backupTextsRef.current = [...currentTexts];
     setActiveTool('text');
@@ -507,21 +801,12 @@ export default function ImageAnnotationScreen() {
     setActiveTool('none');
   };
 
+  // Brief guard against a double tap while the job is written (milliseconds). There is deliberately NO loader: Save
+  // writes a job to disk and closes; flattening and uploading happen in the background (annotationSaveService).
   const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [saveProgressText, setSaveProgressText] = useState<string>('');
-  const webViewRef = useRef<any>(null);
-  
-  const [mountWebView, setMountWebView] = useState<boolean>(false);
+  const savingRef = useRef(false);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setMountWebView(true);
-    }, 600);
-    return () => clearTimeout(timer);
-  }, []);
-
-  const saveQueueRef = useRef<any[]>([]);
-  const saveResultsRef = useRef<any[]>([]);
+  // Fetched while the rep edits, so Save never waits on a GPS fix.
   const locationRef = useRef<Promise<{ latitude: number; longitude: number }> | null>(null);
 
   const requestCoords = (): Promise<{ latitude: number; longitude: number }> =>
@@ -539,224 +824,103 @@ export default function ImageAnnotationScreen() {
       );
     });
 
-  const getBase64FromUri = async (uri: string): Promise<string> => {
-    if (uri.startsWith('file://')) {
-      const cleanPath = uri.replace('file://', '');
-      const data = await ReactNativeBlobUtil.fs.readFile(cleanPath, 'base64');
-      return `data:image/jpeg;base64,${data}`;
-    }
+  useEffect(() => {
+    locationRef.current = requestCoords();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    try {
-      const cached = await warmToLocalCache(uri);
-      if (cached) {
-        const data = await ReactNativeBlobUtil.fs.readFile(cached.replace('file://', ''), 'base64');
-        return `data:image/jpeg;base64,${data}`;
-      }
-    } catch {
-    }
+  const marksFor = (pId: string) => ({
+    strokes: strokesMap[pId] || [],
+    texts: textsMap[pId] || [],
+    shapes: shapesMap[pId] || [],
+  });
 
-    const res = await ReactNativeBlobUtil.config({ fileCache: true }).fetch('GET', uri, {
-      'Accept-Encoding': 'identity',
-    });
-    const path = res.path();
-    const base64Data = await ReactNativeBlobUtil.fs.readFile(path, 'base64');
-    await ReactNativeBlobUtil.fs.unlink(path);
-    return `data:image/jpeg;base64,${base64Data}`;
-  };
+  // True when the rep changed this photo since it opened (a re-edit's restored marks do not count).
+  const isEditedPhoto = (pId: string) =>
+    countMarks(marksFor(pId)) !== (seededMarks.count[pId] || 0) || (historyMap[pId] || []).length > 0;
 
   const handleSaveAll = async () => {
-    setIsSaving(true);
-    saveResultsRef.current = [];
-    
+    if (savingRef.current) return;
+
     const photosToProcess = selectedPhotos.filter((photo: any) => {
       const pId = photo.id || photo.uri;
-      const strokes = strokesMap[pId] || [];
-      const texts = textsMap[pId] || [];
-      return strokes.length > 0 || texts.length > 0;
+      // A re-edit is saved whenever it was touched, even if every mark was removed (that restores the clean photo).
+      if (photo.existingAnnotationId) return isEditedPhoto(pId);
+      return countMarks(marksFor(pId)) > 0;
     });
 
     if (photosToProcess.length === 0) {
-      setIsSaving(false);
       onCancel?.();
       navigation.goBack();
       return;
     }
 
-    locationRef.current = requestCoords();
+    savingRef.current = true;
+    setIsSaving(true);
 
-    setSaveProgressText('Downloading original images...');
-
-    const base64Promises = photosToProcess.map(async (photo: any) => {
-      try {
-        const base64 = await getBase64FromUri(photo.uri);
-        return { pId: photo.id || photo.uri, base64 };
-      } catch (e) {
-        console.error('Failed to get base64 for photo:', photo.uri, e);
-        return { pId: photo.id || photo.uri, base64: null };
-      }
-    });
-
-    const base64Results = await Promise.all(base64Promises);
-    const base64Map: Record<string, string> = {};
-    base64Results.forEach(res => {
-      if (res.base64) {
-        base64Map[res.pId] = res.base64;
-      }
-    });
-
-    if (!mountWebView) {
-      setMountWebView(true);
-      await new Promise<void>(resolve => setTimeout(resolve, 300));
-    }
-
-    saveQueueRef.current = photosToProcess.map((photo: any) => ({
-      ...photo,
-      base64Data: base64Map[photo.id || photo.uri] || null
-    }));
-
-    setSaveProgressText(`Preparing image 1 of ${photosToProcess.length}...`);
-    processNextInQueue(0);
-  };
-
-  const processNextInQueue = async (idx: number) => {
-    if (idx >= saveQueueRef.current.length) {
-      uploadProcessedImages(saveResultsRef.current);
-      return;
-    }
-    
-    const photo = saveQueueRef.current[idx];
-    setSaveProgressText(`Drawing annotations for image ${idx + 1} of ${saveQueueRef.current.length}...`);
-    
     try {
-      const base64Data = photo.base64Data || await getBase64FromUri(photo.uri);
-      const pId = photo.id || photo.uri;
+      // A cached fix is near-instant; never hold the rep for a slow one.
+      const coords = await Promise.race([
+        locationRef.current || requestCoords(),
+        new Promise<{ latitude: number; longitude: number }>((resolve) =>
+          setTimeout(() => resolve({ latitude: 0, longitude: 0 }), 400),
+        ),
+      ]);
 
-      const strokes = strokesMap[pId] || [];
-      const texts = textsMap[pId] || [];
-
-      const normalizedStrokes = strokes.map(s => ({
-        isEraser: s.isEraser,
-        color: s.color,
-        width: s.width,
-        points: s.points
-      }));
-
-      const normalizedTexts = texts.map(t => ({
-        text: t.text,
-        color: t.color,
-        fontSize: t.fontSize,
-        px: t.px,
-        py: t.py
-      }));
-
-      const message = {
-        backgroundImageBase64: base64Data,
-        layoutWidth: canvasLayout.width,
-        layoutHeight: canvasLayout.height,
-        strokes: normalizedStrokes,
-        texts: normalizedTexts,
-        imageIndex: idx
-      };
-      
-      webViewRef.current?.postMessage(JSON.stringify(message));
-    } catch (e) {
-      console.error('Rasterization failed for index:', idx, e);
-      processNextInQueue(idx + 1);
-    }
-  };
-
-  const handleWebViewMessage = async (event: any) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data);
-      if (data.status === 'success') {
-        const cleanBase64 = data.base64.replace(/^data:image\/\w+;base64,/, '');
-        const tempPath = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/annotated_${Date.now()}_${data.imageIndex}.jpg`;
-        
-        await ReactNativeBlobUtil.fs.writeFile(tempPath, cleanBase64, 'base64');
-        
-        const originalPhoto = saveQueueRef.current[data.imageIndex];
-        saveResultsRef.current.push({
-          uri: `file://${tempPath}`,
-          originalPhoto
-        });
-        
-        processNextInQueue(data.imageIndex + 1);
-      } else {
-        console.warn('WebView canvas drawing failed:', data.message);
-        processNextInQueue(data.imageIndex + 1);
-      }
-    } catch (e) {
-      console.error('WebView message handling error:', e);
-      if (saveQueueRef.current) {
-        const activeIdx = saveResultsRef.current.length;
-        processNextInQueue(activeIdx + 1);
-      }
-    }
-  };
-
-  const uploadProcessedImages = async (results: any[]) => {
-    if (results.length === 0) {
-      setIsSaving(false);
-      onCancel?.();
-      navigation.goBack();
-      return;
-    }
-
-    setSaveProgressText('Uploading annotated images...');
-
-    const coords = await (locationRef.current || requestCoords());
-    
-    for (let i = 0; i < results.length; i++) {
-      const res = results[i];
-      setSaveProgressText(`Uploading annotated image ${i + 1} of ${results.length}...`);
-      
-      const orig = res.originalPhoto;
-      const annotatedSubcategory = `${orig.subcategory} (Annotated)`;
-      
-      const formData = new FormData();
-      formData.append('files', {
-        uri: res.uri,
-        type: 'image/jpeg',
-        name: `annotated_${Date.now()}.jpg`,
-      } as any);
-
-      const imageInfo = [
-        {
-          category: orig.categoryName || orig.category || '',
-          subcategory: annotatedSubcategory,
-          timestampTaken: new Date().toISOString(),
+      const jobs = photosToProcess.map((photo: SectionImage) => {
+        const pId = photo.id || photo.uri;
+        const marks = marksFor(pId);
+        const category = photo.categoryName || (photo as any).category || '';
+        const baseSub = String(photo.subcategory || '').replace(/\s*\(Annotated\)\s*$/i, '').trim();
+        const annotationData = buildMobileAnnotationData(marks, photo.salesPhotoId);
+        return {
+          leadId: lead._id,
+          // The local copy the screen already warmed, so the job needs no download.
+          originalUri: warmedUris[photo.uri] || photo.uri,
+          layoutWidth: canvasLayout.width,
+          layoutHeight: canvasLayout.height,
+          strokes: marks.strokes,
+          texts: marks.texts,
+          shapes: marks.shapes,
+          categoryName: category,
+          subcategory: `${baseSub} (Annotated)`,
           coordinates: coords,
-        },
-      ];
+          annotation: photo.existingAnnotationId
+            ? {
+                mode: 'reedit' as const,
+                annotationData,
+                salesPhotoId: photo.salesPhotoId,
+                existingAnnotationId: photo.existingAnnotationId,
+                existingS3url: photo.s3url,
+                staleUris: photo.staleUris || [],
+              }
+            : {
+                mode: 'new' as const,
+                annotationData,
+                salesPhotoId: photo.salesPhotoId,
+              },
+        };
+      });
 
-      formData.append('images', JSON.stringify(imageInfo));
-      formData.append('category', 'salesPhotos');
-
-      try {
-        await uploadImagesMutation.mutateAsync({ leadId: lead._id, formData });
-      } catch (uploadError: any) {
-        console.error('Failed to upload annotated image:', uploadError?.response?.data || uploadError?.message || uploadError);
-      }
-      
-      try {
-        const cleanPath = res.uri.replace('file://', '');
-        await ReactNativeBlobUtil.fs.unlink(cleanPath);
-      } catch (cleanupError) {
-        console.warn('Failed to delete temp file:', cleanupError);
-      }
+      await enqueueAnnotationJobs(jobs);
+    } catch (e) {
+      console.error('Could not save the annotations:', e);
+      savingRef.current = false;
+      setIsSaving(false);
+      FlashMessage.error('Not saved', 'Could not save your annotations. Please try again.');
+      return;
     }
 
-    setIsSaving(false);
     const userId = user?._id || user?.id;
-    if (userId && results.length > 0) {
+    if (userId) {
       logEvent('save', {
         user_id: userId,
         created_by: userId,
         module_type: 'annotated_photos',
         meta: {
           action: 'saved_annotated_images',
-          image_count: results.length,
-          timestamp: new Date().toISOString(),
+          image_count: photosToProcess.length,
+          occurredAt: new Date().toISOString(),
         },
       });
     }
@@ -765,7 +929,10 @@ export default function ImageAnnotationScreen() {
   };
 
   const handleBackPress = () => {
-    const hasUnsavedChanges = Object.values(strokesMap).some(s => s.length > 0) || Object.values(textsMap).some(t => t.length > 0);
+    const hasUnsavedChanges = (selectedPhotos as SectionImage[]).some((p) => {
+      const pid = p.id || p.uri;
+      return countMarks(marksFor(pid)) !== (seededMarks.count[pid] || 0) || (historyMap[pid] || []).length > 0;
+    });
     if (hasUnsavedChanges) {
       Alert.alert(
         'Discard Changes',
@@ -815,18 +982,8 @@ export default function ImageAnnotationScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Loading Overlay */}
-        {isSaving && (
-          <View className="absolute inset-0 bg-black/85 z-50 items-center justify-center p-6">
-            <ActivityIndicator size="large" color="#72BD00" />
-            <Text className="text-white font-bold text-base mt-4 text-center">
-              {saveProgressText}
-            </Text>
-          </View>
-        )}
-
         {selectedPhotos.length > 0 && currentPhoto && (
-          <View className="flex-1 flex-col justify-between">
+          <View className="flex-1 flex-col justify-between" {...zoomResponder.panHandlers}>
             {/* Space Given to it Container */}
             <View
               onLayout={(e) => {
@@ -845,6 +1002,9 @@ export default function ImageAnnotationScreen() {
                 currentStrokes={currentStrokes}
                 subscribeActiveStroke={subscribeLiveStroke}
                 currentTexts={currentTexts}
+                currentShapes={currentShapes}
+                subscribeActiveShape={subscribeLiveShape}
+                selectedShapeId={selectedShapeId}
                 getPathData={getPathData}
                 selectedTextId={selectedTextId}
                 setSelectedTextId={setSelectedTextId}
@@ -854,6 +1014,7 @@ export default function ImageAnnotationScreen() {
                 handleDeleteTextNote={handleDeleteTextNote}
                 handleMoveText={handleMoveText}
                 onZoomChange={setZoomScale}
+                twoFingerZoomRef={twoFingerZoomRef}
               />
             </View>
 
@@ -869,10 +1030,10 @@ export default function ImageAnnotationScreen() {
             {/* Tool Toolbar */}
             {(activeTool === 'none' || activeTool === 'zoom') && !showStylePanel ? (
               <View className="bg-[#0b0e0c] border-t border-white/10 px-4 py-4 pb-8 flex-row items-center justify-between">
-                <View className="flex-row gap-2">
+                <View className="flex-row gap-1.5">
                   <TouchableOpacity
                     onPress={() => setActiveTool('zoom')}
-                    className={`w-14 h-14 rounded-xl items-center justify-center ${
+                    className={`w-12 h-14 rounded-xl items-center justify-center ${
                       activeTool === 'zoom' ? 'bg-[#72BD00]' : 'bg-white/10'
                     }`}
                   >
@@ -882,7 +1043,7 @@ export default function ImageAnnotationScreen() {
 
                   <TouchableOpacity
                     onPress={enterDrawMode}
-                    className="w-14 h-14 rounded-xl items-center justify-center bg-white/10"
+                    className="w-12 h-14 rounded-xl items-center justify-center bg-white/10"
                   >
                     <Icon name="pencil" size={20} color="white" />
                     <Text className="text-white text-[10px] font-bold mt-1">Draw</Text>
@@ -890,19 +1051,27 @@ export default function ImageAnnotationScreen() {
 
                   <TouchableOpacity
                     onPress={enterTextMode}
-                    className="w-14 h-14 rounded-xl items-center justify-center bg-white/10"
+                    className="w-12 h-14 rounded-xl items-center justify-center bg-white/10"
                   >
                     <Icon name="format-text" size={20} color="white" />
                     <Text className="text-white text-[10px] font-bold mt-1">Text</Text>
                   </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={enterShapeMode}
+                    className="w-12 h-14 rounded-xl items-center justify-center bg-white/10"
+                  >
+                    <Icon name="shape-outline" size={20} color="white" />
+                    <Text className="text-white text-[10px] font-bold mt-1">Shapes</Text>
+                  </TouchableOpacity>
                 </View>
 
                 {/* Undo, Redo, Reset */}
-                <View className="flex-row gap-2">
+                <View className="flex-row gap-1.5">
                   <TouchableOpacity
                     onPress={handleUndo}
                     disabled={!(historyMap[photoId]?.length > 0)}
-                    className="w-11 h-11 rounded-xl items-center justify-center bg-white/10"
+                    className="w-10 h-10 rounded-xl items-center justify-center bg-white/10"
                     style={{ opacity: (historyMap[photoId]?.length > 0) ? 1 : 0.35 }}
                   >
                     <Icon name="undo" size={20} color="white" />
@@ -911,7 +1080,7 @@ export default function ImageAnnotationScreen() {
                   <TouchableOpacity
                     onPress={handleRedo}
                     disabled={!(redoMap[photoId]?.length > 0)}
-                    className="w-11 h-11 rounded-xl items-center justify-center bg-white/10"
+                    className="w-10 h-10 rounded-xl items-center justify-center bg-white/10"
                     style={{ opacity: (redoMap[photoId]?.length > 0) ? 1 : 0.35 }}
                   >
                     <Icon name="redo" size={20} color="white" />
@@ -919,7 +1088,7 @@ export default function ImageAnnotationScreen() {
 
                   <TouchableOpacity
                     onPress={handleResetCanvas}
-                    className="w-11 h-11 rounded-xl items-center justify-center bg-white/10"
+                    className="w-10 h-10 rounded-xl items-center justify-center bg-white/10"
                   >
                     <Icon name="refresh" size={20} color="white" />
                   </TouchableOpacity>
@@ -1015,6 +1184,91 @@ export default function ImageAnnotationScreen() {
                   </TouchableOpacity>
                   <Text className="text-white font-extrabold text-sm uppercase tracking-widest">Brush</Text>
                   <TouchableOpacity onPress={commitDrawMode} className="w-12 h-12 rounded-full bg-white/5 items-center justify-center">
+                    <Icon name="check" size={24} color="#72BD00" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
+
+            {/* SHAPE MODE TOOLBAR */}
+            {activeTool === 'shape' ? (
+              <View className="bg-[#0b0e0c] border-t border-white/10 px-4 py-4 pb-8">
+                <View className="flex-row justify-center gap-2 mb-4">
+                  {SHAPE_KINDS.map(({ kind, label, icon }) => {
+                    const on = activeShapeKind === kind;
+                    return (
+                      <TouchableOpacity
+                        key={kind}
+                        onPress={() => setActiveShapeKind(kind)}
+                        className={`flex-1 items-center py-2 rounded-xl ${
+                          on ? 'bg-[#72BD00]/25 border border-[#72BD00]' : 'bg-white/5 border border-white/10'
+                        }`}
+                      >
+                        <Icon name={icon} size={20} color={on ? '#72BD00' : 'white'} />
+                        <Text className="text-white text-[10px] font-bold mt-0.5">{label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <View className="bg-[#121614] border border-white/5 p-3 rounded-2xl mb-3">
+                  <View className="flex-row justify-between mb-3">
+                    {SHAPE_COLORS.map((color) => {
+                      const on = (selectedShape ? selectedShape.color : activeColor) === color;
+                      return (
+                        <TouchableOpacity
+                          key={color}
+                          onPress={() => pickShapeColor(color)}
+                          style={{ backgroundColor: color, borderWidth: on ? 2.5 : 0, borderColor: '#FFFFFF' }}
+                          className="w-8 h-8 rounded-full border border-white/10"
+                        />
+                      );
+                    })}
+                  </View>
+                  <View className="flex-row items-center justify-between px-1">
+                    <Text className="text-white/60 text-xs font-bold">Size</Text>
+                    <View className="flex-1 flex-row items-center justify-end gap-3 mx-4">
+                      {SHAPE_SIZES.map((size) => {
+                        const on = (selectedShape ? selectedShape.width : activeSize) === size;
+                        return (
+                          <TouchableOpacity
+                            key={size}
+                            onPress={() => pickShapeSize(size)}
+                            className={`w-7 h-7 rounded-full items-center justify-center ${on ? 'bg-[#72BD00]' : 'bg-white/5'}`}
+                          >
+                            <Text className="text-white text-[10px] font-bold">{size}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <Text className="text-white text-xs font-bold">{selectedShape ? selectedShape.width : activeSize}</Text>
+                  </View>
+                </View>
+
+                <View className="items-center mb-3">
+                  <Text className="text-white/60 text-xs font-bold text-center">
+                    {selectedShape
+                      ? 'Drag a handle to resize, drag the outline to move, or change colour / size above'
+                      : 'Drag on the image to draw. Tap a shape to select it.'}
+                  </Text>
+                </View>
+
+                <View className="flex-row items-center justify-between">
+                  <TouchableOpacity onPress={cancelShapeMode} className="w-12 h-12 rounded-full bg-white/5 items-center justify-center">
+                    <Icon name="close" size={24} color="white" />
+                  </TouchableOpacity>
+                  {selectedShape ? (
+                    <TouchableOpacity
+                      onPress={deleteSelectedShape}
+                      className="flex-row items-center bg-[#FF5630]/15 border border-[#FF5630]/40 px-6 py-2.5 rounded-full"
+                    >
+                      <Icon name="trash-can-outline" size={16} color="#FF5630" />
+                      <Text className="text-white text-xs font-bold ml-1.5">Delete shape</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text className="text-white font-extrabold text-sm uppercase tracking-widest">Shapes</Text>
+                  )}
+                  <TouchableOpacity onPress={commitShapeMode} className="w-12 h-12 rounded-full bg-white/5 items-center justify-center">
                     <Icon name="check" size={24} color="#72BD00" />
                   </TouchableOpacity>
                 </View>
@@ -1140,130 +1394,6 @@ export default function ImageAnnotationScreen() {
         )}
       </SafeAreaView>
 
-      {/* Hidden WebView for high-res rasterization */}
-      {mountWebView && (
-        <View style={{ width: 0, height: 0, opacity: 0, position: 'absolute' }}>
-          <WebViewComponent
-            ref={webViewRef}
-            onMessage={handleWebViewMessage}
-            originWhitelist={['*']}
-            source={{
-              html: `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                  <style>
-                    body, html { margin: 0; padding: 0; overflow: hidden; background: transparent; }
-                    canvas { display: none; }
-                  </style>
-                </head>
-                <body>
-                  <canvas id="canvas"></canvas>
-                  <script>
-                    document.addEventListener("message", function(event) {
-                      handleMessage(JSON.parse(event.data));
-                    });
-                    window.addEventListener("message", function(event) {
-                      handleMessage(JSON.parse(event.data));
-                    });
-
-                    async function handleMessage(data) {
-                      try {
-                        const canvas = document.getElementById("canvas");
-                        const ctx = canvas.getContext("2d");
-
-                        const img = new Image();
-                        img.onload = function() {
-                          const w = img.naturalWidth || img.width;
-                          const h = img.naturalHeight || img.height;
-                          canvas.width = w;
-                          canvas.height = h;
-
-                          ctx.drawImage(img, 0, 0);
-
-                          if (data.strokes) {
-                            data.strokes.forEach(stroke => {
-                              if (stroke.points.length === 0) return;
-                              
-                              ctx.beginPath();
-                              ctx.lineCap = 'round';
-                              ctx.lineJoin = 'round';
-                              
-                              if (stroke.isEraser) {
-                                ctx.globalCompositeOperation = 'destination-out';
-                                ctx.lineWidth = stroke.width * (w / data.layoutWidth);
-                              } else {
-                                ctx.globalCompositeOperation = 'source-over';
-                                ctx.strokeStyle = stroke.color;
-                                ctx.lineWidth = stroke.width * (w / data.layoutWidth);
-                              }
-
-                              const firstPoint = stroke.points[0];
-                              ctx.moveTo(firstPoint.px * w, firstPoint.py * h);
-                              
-                              stroke.points.forEach(pt => {
-                                ctx.lineTo(pt.px * w, pt.py * h);
-                              });
-                              
-                              ctx.stroke();
-                            });
-                          }
-
-                          ctx.globalCompositeOperation = 'source-over';
-
-                          if (data.texts) {
-                            data.texts.forEach(textObj => {
-                              const textScale = w / data.layoutWidth;
-                              const fontSize = textObj.fontSize * textScale;
-                              
-                              let fontStylePrefix = "";
-                              if (textObj.fontStyle === 'bold') {
-                                fontStylePrefix = "bold ";
-                              } else if (textObj.fontStyle === 'italic') {
-                                fontStylePrefix = "italic ";
-                              } else if (textObj.fontStyle === 'bold-italic') {
-                                fontStylePrefix = "italic bold ";
-                              }
-                              ctx.font = fontStylePrefix + fontSize + "px sans-serif";
-                              
-                              ctx.globalAlpha = textObj.opacity !== undefined ? textObj.opacity : 1.0;
-                              ctx.fillStyle = textObj.color || '#FFFFFF';
-                              ctx.fillText(textObj.text, textObj.px * w, textObj.py * h + fontSize * 0.8);
-                              ctx.globalAlpha = 1.0;
-                            });
-                          }
-
-                          const base64 = canvas.toDataURL("image/jpeg", 0.85);
-                          window.ReactNativeWebView.postMessage(JSON.stringify({
-                            status: 'success',
-                            imageIndex: data.imageIndex,
-                            base64: base64
-                          }));
-                        };
-                        img.onerror = function() {
-                          window.ReactNativeWebView.postMessage(JSON.stringify({
-                            status: 'error',
-                            imageIndex: data.imageIndex,
-                            message: 'Image load failed'
-                          }));
-                        };
-                        img.src = data.backgroundImageBase64;
-                      } catch (e) {
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          status: 'error',
-                          imageIndex: data.imageIndex,
-                          message: e.message
-                        }));
-                      }
-                    }
-                  </script>
-                </body>
-                </html>
-              `
-            }}
-          />
-        </View>
-      )}
     </GestureHandlerRootView>
   );
 }

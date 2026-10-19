@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { TabContextMenu, type TabContextMenuHandle } from './TabContextMenu';
 import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Feather from 'react-native-vector-icons/Feather';
@@ -16,12 +17,17 @@ import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-uti
 import { computeCalculatorTiers } from '../utils/dynamic-rollout-pricing';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 import { withPlanFee, type DealPlan } from '../hooks/useDealPricing';
-import { describeFullPackage } from '../utils/tab-naming';
+import { describeFullPackage, getPackageSizeLabel } from '../utils/tab-naming';
 import { FullPackageTitle, FullPackageInfoModal, type PackageAnchorRect } from './FullPackageBadge';
 import { useAuth } from '../../../hooks/useAuth';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 import { useNumPadActive } from '../../../widgets/common/keyboard/NumPad';
 import { useNumPadScrollIntoView } from '../../../hooks/useNumPadScrollIntoView';
+import {
+  ADD_TAB_BLOCKED_MESSAGE,
+  ADD_TAB_BLOCKED_TITLE,
+  canAddCalculatorTab,
+} from '../../../utils/calculator-tab-gate';
 import { FlashMessage } from '../../../config/message';
 import {
   changeKind,
@@ -517,6 +523,23 @@ export function CalculatorView({
   customerTabName = '',
 }: CalculatorViewProps) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+  /**
+   * ⚠️ Looks at EVERY tab, not just the active one. The rep can add a tab, switch away
+   * and press plus again from elsewhere - gating on the active tab alone would still
+   * leave blanks behind, which is the thing being prevented.
+   */
+  const addTabGate = useMemo(() => {
+    /**
+     * ⚠️ The ACTIVE tab is judged on the live `entries` prop, not on its copy inside `tabs`.
+     * `entries` is what the rep is typing into right now; the `tabs` entry for it is written
+     * by the same render, but reading the prop makes the gate independent of that ordering.
+     * A gate that lags one keystroke behind is a gate that blocks a tab the rep just filled.
+     */
+    const live = (tabs || []).map((t) =>
+      t && t.id === activeTabId ? { ...t, entries: entries || t.entries } : t
+    );
+    return canAddCalculatorTab(live as any, activeTabId);
+  }, [tabs, activeTabId, entries]);
   const { user } = useAuth();
   const numPadActive = useNumPadActive();
   const bodyScrollRef = useRef<ScrollView>(null);
@@ -524,7 +547,7 @@ export function CalculatorView({
   useNumPadScrollIntoView(bodyScrollRef, bodyContentRef, 16);
   const lockedMethod = activeTab?.paymentMethod || user?.defaultPaymentMethod || defaultMethod || 'check';
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
-  const [menuIdx, setMenuIdx] = useState<number | null>(null);
+  const tabMenuRef = useRef<TabContextMenuHandle>(null);
   const [packageInfoVisible, setPackageInfoVisible] = useState(false);
   const [packageAnchor, setPackageAnchor] = useState<PackageAnchorRect | null>(null);
   const openPackageInfo = useCallback((rect: PackageAnchorRect | null) => {
@@ -676,10 +699,10 @@ export function CalculatorView({
     isRolloutConfirmed: t.isRolloutConfirmed,
     isFullPackage: pkg.isFullPackage,
     packageExtras: pkg.extras,
+    packageSize: pkg.isFullPackage ? getPackageSizeLabel(t.title) : '',
     };
   }), [tabs, verticals, customerTabName]);
   const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === activeTabId));
-  const menuTab = menuIdx !== null ? tabs[menuIdx] : null;
 
   return (
     <KeyboardAvoidingView
@@ -778,7 +801,7 @@ export function CalculatorView({
                 activeIdx={activeIdx}
                 setActiveIdx={(idx) => tabs[idx] && onTabSelect?.(tabs[idx].id)}
                 onReorder={(newOrder, newActiveIdx) => onReorderTabs?.(newOrder.map((c: any) => c._id), newOrder[newActiveIdx]?._id)}
-                setMenuVisible={(idx) => setMenuIdx(idx)}
+                setMenuVisible={(idx) => tabMenuRef.current?.open(idx)}
                 onDragStateChange={setIsDragging}
                 tabsScrollViewRef={tabsScrollRef}
                 scrollXRef={scrollXRef}
@@ -790,9 +813,40 @@ export function CalculatorView({
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
             {onAddTab && (
-              <TouchableOpacity onPress={onAddTab} style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#F4F6F8', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
+              /**
+               * ⚠️ `Pressable`, not `TouchableOpacity`, and never `disabled`.
+               *
+               * A disabled button swallows the tap and the rep learns nothing - they press it
+               * again, then ask why the app is broken. The whole point of the gate is the
+               * explanation, which can only fire if the press lands. `hitSlop` matters too:
+               * this sits in a 44pt row beside a draggable tab strip, where a few stray pixels
+               * are the difference between a tap and nothing at all.
+               *
+               * ⚠️ The style is a plain OBJECT, never Pressable's `({ pressed }) => ({...})`
+               * form. The chrome here (grey fill, border, radius) is the same as the original
+               * TouchableOpacity and must stay byte-identical - a style callback rendered the
+               * button as a bare icon with no card behind it.
+               */
+              <Pressable
+                onPress={() => {
+                  const gate = addTabGate;
+                  if (!gate.allowed) {
+                    FlashMessage.warning(
+                      gate.title || ADD_TAB_BLOCKED_TITLE,
+                      gate.message || ADD_TAB_BLOCKED_MESSAGE
+                    );
+                    return;
+                  }
+                  onAddTab();
+                }}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Add calculator"
+                accessibilityState={{ disabled: !addTabGate.allowed }}
+                style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#F4F6F8', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', opacity: addTabGate.allowed ? 1 : 0.4 }}
+              >
                 <Ionicons name="add" size={24} color="#1C252E" />
-              </TouchableOpacity>
+              </Pressable>
             )}
             <TouchableOpacity onPress={onViewAll} style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#2169f3', alignItems: 'center', justifyContent: 'center' }}>
               <Ionicons name="grid" size={20} color="#fff" />
@@ -809,30 +863,13 @@ export function CalculatorView({
         anchorRect={packageAnchor}
       />
 
-      {/* Tab context menu (duplicate / rename / delete) */}
-      <Modal transparent visible={menuIdx !== null} animationType="fade" onRequestClose={() => setMenuIdx(null)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.2)' }} onPress={() => setMenuIdx(null)}>
-          <View style={{ position: 'absolute', bottom: 90, left: 20, right: 20, backgroundColor: '#fff', borderRadius: 16, padding: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 10 }}>
-            {onDuplicateTab && menuTab && (
-              <TouchableOpacity onPress={() => { onDuplicateTab(menuTab.id); setMenuIdx(null); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12 }}>
-                <Feather name="copy" size={18} color="#637381" />
-                <Text style={{ marginLeft: 12, fontSize: 14, fontWeight: '600', color: '#1C252E' }}>Duplicate</Text>
-              </TouchableOpacity>
-            )}
-            {onDeleteTab && menuTab && tabs.length > 1 && (
-              <TouchableOpacity onPress={() => { setDeleteModal({ visible: true, tabId: menuTab.id, name: menuTab.title }); setMenuIdx(null); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12 }}>
-                <Feather name="trash-2" size={18} color="#FF5630" />
-                <Text style={{ marginLeft: 12, fontSize: 14, fontWeight: '600', color: '#FF5630' }}>Delete</Text>
-              </TouchableOpacity>
-            )}
-            <View style={{ height: 1, backgroundColor: '#F1F5F9', marginVertical: 4 }} />
-            <TouchableOpacity onPress={() => setMenuIdx(null)} style={{ flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12 }}>
-              <Feather name="x" size={18} color="#919EAB" />
-              <Text style={{ marginLeft: 12, fontSize: 14, fontWeight: '600', color: '#919EAB' }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </Pressable>
-      </Modal>
+      {/* Tab context menu (duplicate / delete) - self-contained so opening it does not re-render this screen. */}
+      <TabContextMenu
+        ref={tabMenuRef}
+        tabs={tabs}
+        onDuplicateTab={onDuplicateTab}
+        onDeleteRequest={onDeleteTab ? (id, name) => setDeleteModal({ visible: true, tabId: id, name }) : undefined}
+      />
 
       {/* Delete confirmation */}
       <Modal transparent visible={deleteModal.visible} animationType="fade" onRequestClose={() => setDeleteModal({ visible: false, tabId: '', name: '' })}>

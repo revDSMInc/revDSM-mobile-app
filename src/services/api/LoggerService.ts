@@ -4,7 +4,13 @@ import { Storage } from '../../utils/storage';
 import Geolocation from 'react-native-geolocation-service';
 import { isOnline } from '../connectivity';
 import { hasQueuedActivityLogs, queueActivityLog, setActivityLogSender } from '../offlineActivityLog';
-import { isQueueableLog, stampActionTime, stampOfflineLog } from '../../utils/offline-activity-log';
+import {
+  isQueueableLog,
+  newActivityLogId,
+  shouldQueueFailedLog,
+  stampActionTime,
+  stampOfflineLog,
+} from '../../utils/offline-activity-log';
 
 const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
 
@@ -68,16 +74,49 @@ const sendLog = (
       if (token) {
         headers.Authorization = `Bearer ${token}`;
       }
-      await axios.post(`${baseUrl}/user-activity-log/v1/create`, payload, {
+      const res = await axios.post(`${baseUrl}/user-activity-log/v1/create`, payload, {
         headers,
         timeout: 15000,
       });
       if (isDev) console.log(`[Logger] ✓ ${eventType}`);
+      // Handed back so the offline replay can print what the server answered.
+      return { status: res.status, data: res.data };
     } catch (err: any) {
+      const status = err?.response?.status;
       console.warn(
-        `[Logger] ✗ ${eventType} — ${err?.response?.status ?? 'no response'}:`,
+        `[Logger] ✗ ${eventType} — ${status ?? 'no response'}:`,
         err?.response?.data ?? err?.message ?? err
       );
+
+      /**
+       * ⚠️ A FAILED LOG USED TO BE GONE FOR GOOD (ticket 1310). The catch printed a warning
+       * and stopped there. `logEvent` only queues when `isOnline()` is false - but on mobile data
+       * the app IS online, so the log went out over a flaky radio and a single timeout erased it.
+       * That is how the Forever Record showed "CONFIRMED ROLLOUTS" with no price above it: two
+       * separate requests, one delivered and one lost, making a rep look as though they confirmed
+       * a rollout without ever entering a price.
+       *
+       * Queue it with the ORIGINAL `occurredAt` the payload already carries, so the replayed
+       * entry lands in the right place in the timeline rather than at the time it got through.
+       */
+      if (!rethrow && isQueueableLog(payload?.module_type) && shouldQueueFailedLog(status)) {
+        try {
+          const heldMeta = stampOfflineLog(meta, meta?.occurredAt);
+          queueActivityLog({
+            eventType,
+            payload: { ...payload, meta: heldMeta },
+            meta: heldMeta,
+            // Location was already resolved above if it was wanted. Re-resolving on replay would
+            // attach where the rep is at RETRY time, which is somewhere else entirely.
+            attachLocation: false,
+            occurredAt: heldMeta.occurredAt,
+          });
+          if (isDev) console.log(`[Logger] ⤓ ${eventType} queued after send failure`);
+        } catch (queueErr) {
+          console.warn('[Logger] could not queue a failed log:', queueErr);
+        }
+      }
+
       if (rethrow) throw err;
     }
   });
@@ -164,6 +203,9 @@ export const logEvent = async (eventType: string, details: any = {}) => {
   const attachLocation = timeInMinutes >= 540 && timeInMinutes <= 1260;
 
   const payload: any = {
+    // Stable for this log's whole life: held, retried and re-queued copies all carry it, so the
+    // server can tell a repeat from a new action.
+    user_activity_log_id: newActivityLogId(),
     user_id: userId,
     action_type: eventType,
     module_type: details.module_type,

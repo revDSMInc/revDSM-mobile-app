@@ -3,6 +3,10 @@ import { View, Text, TouchableOpacity, TextInput, Pressable, Image } from 'react
 import Icon from 'react-native-vector-icons/Ionicons';
 import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
+import { useQuery } from '@tanstack/react-query';
+import { LeadService } from '../../../services/api/leads';
+import { canOpenDeal } from '../../../screens/ChatThreads/utils/deal-link';
+import { useIsOnline } from '../../../hooks/useIsOnline';
 import Pin from '../../../assets/svgs/icons/pin';
 import { useLeadPreviewUrl } from '../../../hooks/useLeadPreviewUrl';
 import { useUserRole } from '../../../hooks/useUserRole';
@@ -20,7 +24,7 @@ const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
 };
 
 function LeadHeaderThumbnail({ leadPreview, title }: { leadPreview: any; title?: string }) {
-  const thumbnailUrl = useLeadPreviewUrl(leadPreview);
+  const thumbnailUrl = useLeadPreviewUrl(leadPreview, { warmGoogle: true });
   const [preview, setPreview] = useState<string | null>(null);
 
   if (thumbnailUrl) {
@@ -59,6 +63,7 @@ function LeadHeaderThumbnail({ leadPreview, title }: { leadPreview: any; title?:
 }
 
 export const ChatHeader = ({
+  leadId,
   customerName,
   description,
   leadPreview,
@@ -81,6 +86,22 @@ export const ChatHeader = ({
 }: any) => {
   const navigation = useNavigation<any>();
   const { isInstaller } = useUserRole();
+  const online = useIsOnline();
+
+  // REVUIUX-552: the job number in the header opens the deal. ChatDetail is navigated with scalars only (push and
+  // notification entries pass no lead data at all), so the lead is fetched here and the link is gated on LEAD STATE
+  // via the same `canOpenDeal` the Messages list uses - not on the filter the rep happened to arrive from.
+  const { data: dealLead } = useQuery({
+    queryKey: ['chatDealLead', leadId],
+    queryFn: async () => {
+      const res = await LeadService.getLeadDetailsById(leadId);
+      return res?.data?.data || res?.data || null;
+    },
+    enabled: !!leadId && !isChannel && !isInstaller && online,
+    staleTime: 60_000,
+  });
+  const dealLinkEnabled = !isChannel && !isInstaller && !!dealLead && canOpenDeal(dealLead);
+  const openDeal = () => navigation.navigate('LeadCenter', { lead: dealLead, fromMyDeals: true });
 
   const handleBack = () => {
     if (navigation.canGoBack()) {
@@ -131,13 +152,30 @@ export const ChatHeader = ({
             <LeadHeaderThumbnail leadPreview={leadPreview} title={customerName} />
           )}
           <View className="flex-1">
-            <Text
-              className="text-base font-bold"
-              style={{ color: '#1C252E' }}
-              numberOfLines={1}
-            >
-              {customerName || (isChannel ? 'Announcements' : 'Lead Conversation')}
-            </Text>
+            {dealLinkEnabled ? (
+              // hitSlop stays tighter than the Back button's 20px one, which reaches down into this row.
+              <Pressable
+                onPress={openDeal}
+                accessibilityRole="link"
+                hitSlop={{ top: 4, bottom: 8, left: 4, right: 8 }}
+              >
+                <Text
+                  className="text-base font-bold"
+                  style={{ color: '#1C252E', textDecorationLine: 'underline' }}
+                  numberOfLines={1}
+                >
+                  {customerName || 'Lead Conversation'}
+                </Text>
+              </Pressable>
+            ) : (
+              <Text
+                className="text-base font-bold"
+                style={{ color: '#1C252E' }}
+                numberOfLines={1}
+              >
+                {customerName || (isChannel ? 'Announcements' : 'Lead Conversation')}
+              </Text>
+            )}
             {isChannel && (
               <Text className="text-[11px] font-medium" style={{ color: '#637381' }}>
                 {customerName?.toLowerCase().includes('announcement')

@@ -63,12 +63,15 @@ describe('401 pauses work instead of failing it', () => {
 });
 
 describe('existing step rules are unchanged', () => {
-  it('a network failure retries; an ambiguous idempotent step retries; an unguarded create needs review', () => {
+  it('a network failure retries; an ambiguous idempotent step retries; a guarded step re-reads first', () => {
     const w = work();
     expect(resolveStepDecision('never-sent', w, 'lead')).toBe('retry');
     expect(resolveStepDecision('ambiguous', w, 'outcome')).toBe('retry');
     expect(resolveStepDecision('ambiguous', w, 'documents')).toBe('retry-guarded');
-    expect(resolveStepDecision('ambiguous', w, 'lead')).toBe('needs-review');
+    // ⚠️ Was 'needs-review'. The backend honours our idempotency key on POST lead/v1/create
+    // (2026-10-16), so replaying a Self Gen returns the ORIGINAL lead instead of making a
+    // second one — the create is now safe to retry rather than parking the rep's work.
+    expect(resolveStepDecision('ambiguous', w, 'lead')).toBe('retry');
   });
   it('retry attempts still stop at 5', () => {
     const w = work({ attempts: 4 });
@@ -76,6 +79,7 @@ describe('existing step rules are unchanged', () => {
   });
   it('steps still run in order', () => {
     expect(nextUploadStep(work())).toBe('lead');
-    expect(stepReplaySafety('lead')).toBe('unique-key');
+    // ⚠️ Was 'unique-key' until the server began honouring the idempotency key.
+    expect(stepReplaySafety('lead')).toBe('idempotent');
   });
 });

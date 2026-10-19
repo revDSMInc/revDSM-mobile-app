@@ -33,6 +33,7 @@ import { convertJpegToPdf as sharedConvertJpegToPdf } from '../../../utils/jpeg-
 import { useAuth } from '../../../hooks/useAuth';
 import SocketManager from '../../../services/SocketManager';
 import { logEvent } from '../../../services/api/LoggerService';
+import { ConfirmDialog } from '../../../screens/DynamicDealCenter/components/ConfirmDialog';
 import { getLocalCachePath, getWarmedLocalUri } from '../../../utils/imageFileCache';
 import {
   downloadResultMessage,
@@ -79,6 +80,7 @@ import { DynamicManagePhotosView } from '../lead-center/DynamicManagePhotosView'
 import { DynamicInspectionView } from '../lead-center/DynamicInspectionView';
 import { useInspectionSchema } from '../../../hooks/useInspectionSchema';
 import { useIsOnline } from '../../../hooks/useIsOnline';
+import { completeOfflineJobBuilder, ensureOfflineWorkForLead } from '../../../services/offlineLeadStore';
 import { FlashMessage } from '../../../config/message';
 import {
   indexSchema,
@@ -220,6 +222,8 @@ export const JobDocsSection = ({
 
   const [taggingAsset, setTaggingAsset] = useState<any>(null);
   const [showTagModal, setShowTagModal] = useState(false);
+  // The app's own dialog, not a native Alert: the system one ignores the app theme.
+  const [showSchemaSyncNotice, setShowSchemaSyncNotice] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
   const [showDynamicCapture, setShowDynamicCapture] = useState(false);
   const { configuredProducts, productsLoading, schemaResolved } = useInspectionSchema({ enabled: true });
@@ -238,11 +242,15 @@ export const JobDocsSection = ({
   const [conflict, setConflict] = useState<any | null>(null);
 
   const pendingUploadRef = useRef<Promise<any> | null>(null);
+  const [recentlyCompleted, setRecentlyCompleted] = useState<any[]>(() =>
+    uploadQueueManager.getRecentlyCompleted()
+  );
 
   useEffect(() => {
     const unsubscribe = uploadQueueManager.addListener(() => {
       const currentQueue = uploadQueueManager.getQueue();
       setQueueItems([...currentQueue]);
+      setRecentlyCompleted(uploadQueueManager.getRecentlyCompleted());
       refetch();
     });
 
@@ -710,12 +718,17 @@ export const JobDocsSection = ({
         ...resultData,
         status: result === 'noDemo' ? 'noDemo' : result === 'notHit' ? 'notHit' : result,
       };
+      const payload = { leadData, jobState: {} };
 
-      await submitJobMutation.mutateAsync({
-        leadId: lead?._id,
-        payload: { leadData, jobState: {} },
-      });
-
+      /**
+       * ⚠️ Logged BEFORE the online/offline branch so both paths record the same thing.
+       * It sat after the `mutateAsync` instead, so the offline branch returned past it and a
+       * result taken at a door left no Forever Record entry at all - the same shape as ticket
+       * 1310, where a missing log made a rep look as though they had skipped a step.
+       *
+       * `logEvent` holds it itself when offline (`lead_result_field_entry` is queueable) and
+       * stamps `occurredAt` now, so the replay lands at the moment the rep acted.
+       */
       const userId = user?._id || user?.id;
       if (userId) {
         logEvent('submit', {
@@ -730,6 +743,42 @@ export const JobDocsSection = ({
           },
         });
       }
+
+      /**
+       * ⚠️ No Demo / Not Hit / Reset must work at a door with no signal. They are ordinary
+       * lead results on the SAME endpoint the queue's `submit` step already calls
+       * (`submitJobBuilder`), so queueing them needs no new arm - only this branch.
+       *
+       * Without it `mutateAsync` threw, the catch below closed the modal and logged to the
+       * console, and the rep saw nothing happen at all: no error, no change, no record.
+       *
+       * ⚠️ This is NOT the destructive "Reset Job Docs" (`resetLeadMutation`), which deletes
+       * uploaded documents server-side. That one stays online-only on purpose - a queued replay
+       * could land after work the rep did later and destroy it.
+       */
+      if (!isOnline) {
+        const work = ensureOfflineWorkForLead(lead);
+        if (!work) {
+          FlashMessage.error(
+            'Could not save',
+            "This lead has no offline record yet, so the result can't be held. Try again once you have a connection."
+          );
+          setShowResultModal(false);
+          return;
+        }
+        completeOfflineJobBuilder(work.clientId, payload as any);
+        FlashMessage.success(
+          'Result saved',
+          'It uploads on its own as soon as you have a connection.'
+        );
+        setShowResultModal(false);
+        return;
+      }
+
+      await submitJobMutation.mutateAsync({
+        leadId: lead?._id,
+        payload,
+      });
 
       setShowResultModal(false);
       await refetch();
@@ -940,10 +989,7 @@ export const JobDocsSection = ({
 
   const handleStartTakingPhotos = () => {
     if (inspectionSchemaUnavailable) {
-      Alert.alert(
-        'Photo tagging needs to sync first',
-        'Your photo categories have not been downloaded to this device yet. Connect once and reopen this lead — after that, taking photos works offline.'
-      );
+      setShowSchemaSyncNotice(true);
       return;
     }
     if (isDynamicInspection) {
@@ -962,10 +1008,7 @@ export const JobDocsSection = ({
   const openLegacyTagModal = useCallback(
     (next: boolean) => {
       if (next && inspectionSchemaUnavailable) {
-        Alert.alert(
-          'Photo tagging needs to sync first',
-          'Your photo categories have not been downloaded to this device yet. Connect once and reopen this lead — after that, taking photos works offline.'
-        );
+        setShowSchemaSyncNotice(true);
         return;
       }
       setShowTagModal(next);
@@ -1418,6 +1461,32 @@ export const JobDocsSection = ({
         subcategory: it.subcategory,
       }));
 
+    /**
+     * ⚠️ A photo that has drained from the queue but whose server row has not arrived yet is
+     * in NEITHER list, and the count dips ("4 becomes 3, then 4 again"). Counting it here
+     * keeps the number monotonic through the handover.
+     *
+     * ⚠️ Only counted while the slot is genuinely absent from `photos` - once the server row
+     * lands this must contribute nothing, or the count flickers UPWARD instead.
+     */
+    const serverSlotKeys = new Set(
+      photos.map((p: any) => `${norm(p?.category)}||${norm(p?.subcategory)}`)
+    );
+    const settling = (recentlyCompleted || [])
+      .filter((r: any) => r.leadId === lead?._id)
+      .filter((r: any) => !serverSlotKeys.has(`${norm(r.categoryName)}||${norm(r.subcategory)}`))
+      .filter(
+        (r: any) =>
+          !pending.some(
+            (p: any) => norm(p.category) === norm(r.categoryName) && norm(p.subcategory) === norm(r.subcategory)
+          )
+      )
+      .map((r: any) => ({
+        uri: `settling://${r.categoryName}/${r.subcategory}`,
+        category: r.categoryName,
+        subcategory: r.subcategory,
+      }));
+
     let totalSlots = 0;
     const configuredKeys = new Set<string>();
     configuredProducts.forEach((prod: any) => {
@@ -1432,8 +1501,8 @@ export const JobDocsSection = ({
 
     // One rule for every surface - see `utils/lead-photo-counts`. Extras and annotated photos
     // count, and each brings its own slot, so the denominator grows as the rep adds them.
-    return countLeadPhotos([...photos, ...pending], configuredKeys, totalSlots);
-  }, [isDynamicInspection, configuredProducts, lead?.salesPhotos, queueItems, lead?._id, deletedUrls]);
+    return countLeadPhotos([...photos, ...pending, ...settling], configuredKeys, totalSlots);
+  }, [isDynamicInspection, configuredProducts, lead?.salesPhotos, queueItems, lead?._id, deletedUrls, recentlyCompleted]);
 
   const displayTotal = useMemo(() => {
     if (dynamicCounts) return dynamicCounts.slots;
@@ -1469,6 +1538,16 @@ export const JobDocsSection = ({
 
   return (
     <View className="px-4 py-2" style={{ flex: 1 }}>
+      <ConfirmDialog
+        visible={showSchemaSyncNotice}
+        tone="warn"
+        hideCancel
+        title="Photo tagging needs to sync first"
+        message="Your photo categories have not been downloaded to this device yet. Connect once and reopen this lead — after that, taking photos works offline."
+        confirmLabel="OK"
+        onConfirm={() => setShowSchemaSyncNotice(false)}
+        onCancel={() => setShowSchemaSyncNotice(false)}
+      />
       {/* Pending addendum — its OWN section, ABOVE the contract card, so the two
           statuses read as separate blocks (web `deal-banners.js` places its bar in the
           same slot). Renders null when nothing is pending, so the normal deal is

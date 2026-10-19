@@ -93,20 +93,37 @@ export type RetryDecision =
   | 'failed'
   | 'needs-review';
 
+/**
+ * ⚠️ `serverHonoursIdempotencyKey` is true now that `POST lead/v1/create` deduplicates on our
+ * key (deployed 2026-10-16). It is a parameter rather than a constant so the behaviour can be
+ * turned off in one place if the server ever stops honouring it.
+ *
+ * It only changes the AMBIGUOUS case, and only in one direction: toward keeping the rep's
+ * work. The form itself sends no key - an online create is not queued, so there is nothing to
+ * replay - but the RETRY it hands to the queue does, and that is what makes retrying safe.
+ */
 export const resolveRetryDecision = (
   outcome: CreateOutcome,
   payload: Record<string, any> | null | undefined,
+  serverHonoursIdempotencyKey: boolean = true,
 ): RetryDecision => {
-  const guarded = hasServerUniqueKey(payload);
+  const guarded = hasServerUniqueKey(payload) || serverHonoursIdempotencyKey;
 
   switch (outcome) {
     case 'never-sent':
       return 'retry';
     case 'duplicate':
-      return guarded ? 'done' : 'needs-review';
+      // ⚠️ Still `hasServerUniqueKey`, NOT `guarded`. A duplicate rejection only proves the
+      // first create landed when the thing it collided on is unique to this lead. The
+      // idempotency key says nothing here: the server would have REPLAYED a key it had seen,
+      // not rejected it, so a duplicate error on a keyed create is a genuine conflict.
+      return hasServerUniqueKey(payload) ? 'done' : 'needs-review';
     case 'rejected':
       return 'failed';
     case 'ambiguous':
+      // ⚠️ THE FIX for "I typed a Self Gen lead and it vanished". There is no unique field on
+      // a Self Gen, so this used to be `needs-review`, which discarded the rep's typing. The
+      // queued retry carries a key, so a replay cannot duplicate - retry and keep the work.
       return guarded ? 'retry' : 'needs-review';
     case 'unauthorized':
       // Online create from the form: the 401 interceptor is already signing the rep out. Do not

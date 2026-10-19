@@ -3,6 +3,7 @@ import { Storage } from '../utils/storage';
 import { isOnline, onReconnect } from './connectivity';
 import { isUnauthorizedError } from '../utils/upload-retry-policy';
 import { findUnresolvedClientIds } from '../utils/offline-lead-work';
+import { sanitizeForLog } from '../utils/sanitize-for-log';
 import { getSessionOwner, registerSessionResetHook } from './sessionScope';
 import {
   appendQueuedLog,
@@ -38,8 +39,51 @@ export const setActivityLogIdResolver = (fn: IdResolver): void => {
 const resolvedPayload = (entry: QueuedActivityLog): Record<string, any> =>
   resolveIds(entry.payload);
 
+// Holding only helps while something can still create the missing server id. Once no offline work is
+// waiting to upload, a device id left in a log will never resolve, and holding it would also block
+// every later log of that lead for good - so it is sent as it is. Registered by `offlineLeadStore`.
+let holdIsUseful: () => boolean = () => true;
+
+export const setActivityLogHoldPolicy = (fn: () => boolean): void => {
+  holdIsUseful = fn;
+};
+
 const hasUnresolvedIds = (entry: QueuedActivityLog): boolean =>
-  findUnresolvedClientIds(resolvedPayload(entry)).length > 0;
+  holdIsUseful() && findUnresolvedClientIds(resolvedPayload(entry)).length > 0;
+
+// Runtime trace of the activity-log queue (dev builds only). Payloads go through `sanitizeForLog` so a
+// document or base64 string can never flood the CDP socket.
+const TRACE = typeof __DEV__ !== 'undefined' && __DEV__;
+const TAG = '[ActivityLogQueue]';
+
+const leadOf = (l: QueuedActivityLog): string =>
+  String(l.payload?.meta?.leadId ?? l.meta?.leadId ?? '') || '(no lead)';
+
+const describe = (l: QueuedActivityLog): string =>
+  `${l.payload?.module_type ?? '?'} / ${l.payload?.meta?.action ?? l.eventType} ` +
+  `occurredAt=${l.payload?.meta?.occurredAt ?? l.occurredAt} attempts=${l.attempts}`;
+
+const traceSnapshot = (title: string, logs: QueuedActivityLog[]): void => {
+  if (!TRACE) return;
+  const perLead: Record<string, number> = {};
+  logs.forEach((l) => {
+    perLead[leadOf(l)] = (perLead[leadOf(l)] || 0) + 1;
+  });
+  console.log(`${TAG} ${title}: ${logs.length} log(s)`, perLead);
+  logs.forEach((l, i) => {
+    console.log(`${TAG}   #${i + 1} lead=${leadOf(l)} ${describe(l)}`);
+  });
+};
+
+// Print everything waiting right now: `dumpActivityLogQueue()` from the debugger console.
+export const dumpActivityLogQueue = (): QueuedActivityLog[] => {
+  load();
+  const mine = replayableLogs(store, getSessionOwner());
+  console.log(`${TAG} queue snapshot`, sanitizeForLog(mine));
+  return mine;
+};
+
+if (TRACE) (globalThis as any).dumpActivityLogQueue = dumpActivityLogQueue;
 
 const load = (): void => {
   if (loaded) return;
@@ -115,16 +159,49 @@ export const drainActivityLogs = async (): Promise<void> => {
   }
   draining = true;
   try {
+    const waiting = replayableLogs(store, getSessionOwner());
+    if (TRACE && waiting.length) {
+      traceSnapshot('online - draining', waiting);
+      const held = waiting.filter(hasUnresolvedIds);
+      if (held.length) traceSnapshot('held back (lead/appointment/calculator not on the server yet)', held);
+    }
+    let sentCount = 0;
     for (;;) {
       const next = nextSendableLog(store, getSessionOwner(), hasUnresolvedIds);
-      if (!next || !isOnline()) return;
+      if (!next || !isOnline()) {
+        if (TRACE && sentCount) console.log(`${TAG} drain stopped, sent ${sentCount}, ${replayableLogs(store, getSessionOwner()).length} still queued`);
+        return;
+      }
       let outcome: 'sent' | 'failed' = 'sent';
+      const body = { ...next, payload: resolvedPayload(next) };
+      if (TRACE) {
+        console.log(
+          `${TAG} -> uploading lead=${leadOf(body)} ${describe(body)}\n` +
+            JSON.stringify(sanitizeForLog(body.payload), null, 2)
+        );
+      }
       try {
-        await sender({ ...next, payload: resolvedPayload(next) });
+        const res: any = await sender(body);
+        sentCount += 1;
+        if (TRACE) {
+          console.log(
+            `${TAG} OK ${describe(body)}\nresponse ${res?.status ?? ''}: ` +
+              JSON.stringify(sanitizeForLog(res?.data ?? null), null, 2)
+          );
+        }
       } catch (e: any) {
         // A 401 is the session, not the log: keep it, spend no attempt, and stop.
-        if (isUnauthorizedError(e)) return;
+        if (isUnauthorizedError(e)) {
+          if (TRACE) console.log(`${TAG} 401 - paused, nothing spent`);
+          return;
+        }
         outcome = 'failed';
+        if (TRACE) {
+          console.log(
+            `${TAG} FAILED ${describe(body)} - ${e?.response?.status ?? 'no response'}: ${e?.message ?? e}\n` +
+              `response body: ${JSON.stringify(sanitizeForLog(e?.response?.data ?? null), null, 2)}`
+          );
+        }
       }
       const before = store.length;
       store = settleQueuedLog(store, next.id, outcome);

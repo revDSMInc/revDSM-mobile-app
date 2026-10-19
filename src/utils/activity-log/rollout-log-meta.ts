@@ -200,3 +200,59 @@ export const logRolloutChange = async (opts: {
     },
   });
 };
+
+/**
+ * Ticket 1308 - Forever Record must say WHICH In-Home Pre Order discount was used (15/20/25%).
+ *
+ * Two moments, mirroring the payment-method rules:
+ *  - `seeded`  : the value in force when the rollout is confirmed (the rep never touched the
+ *                chips, so the default applies). Fired once, from the Confirm Rollouts handler.
+ *  - `changed` : the rep picked a different chip. Carries old -> new.
+ *
+ * `isDefault` records whether the value came from the rep's saved default (the toggle) rather
+ * than the company default, because "15%" alone does not say which of the two it was.
+ *
+ * WARNING `fieldCategory` is ALWAYS 'rollout', before and after the rollout is confirmed. The
+ * payment-method logger next door flips to 'drop' once confirmed, and that switch was copied
+ * here by mistake - the discount is a property of the rollout itself, not of a drop, and the
+ * portal groups it under Rollout & Drop either way. Do not re-add the flip.
+ */
+export const logPreOrderDiscount = async (opts: {
+  userId: string;
+  leadId?: string;
+  calculator: { id?: string; _id?: string; title?: string; appointmentId?: string };
+  tiers: { cost: number; par: number; retail: number };
+  endPrice: number;
+  discountPercentage: number;
+  oldDiscountPercentage?: number | null;
+  isDefault?: boolean;
+}) => {
+  if (!opts.userId || !opts.discountPercentage) return;
+  const seeded = opts.oldDiscountPercentage == null;
+  await logRolloutChange({
+    userId: opts.userId,
+    leadId: opts.leadId,
+    calculator: opts.calculator,
+    tiers: opts.tiers,
+    percentageOfRollout: calculateMarkupLabel(
+      opts.endPrice,
+      opts.tiers.cost,
+      opts.tiers.par,
+      opts.tiers.retail
+    ),
+    change: {
+      fieldName: 'preOrderDiscount',
+      fieldLabel: 'In Home Pre Order Discount',
+      fieldValue: opts.discountPercentage,
+      fieldCategory: 'rollout',
+      oldValue: seeded ? '' : `${opts.oldDiscountPercentage}%`,
+      newValue: `${opts.discountPercentage}%`,
+      preOrderDiscount: opts.discountPercentage,
+      ...(seeded ? {} : { oldPreOrderDiscount: opts.oldDiscountPercentage }),
+      ...(opts.isDefault !== undefined ? { isDefaultDiscount: opts.isDefault } : {}),
+      action: seeded
+        ? 'in home pre order discount applied'
+        : 'in home pre order discount changed',
+    },
+  });
+};

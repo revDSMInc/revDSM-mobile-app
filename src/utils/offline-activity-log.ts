@@ -28,6 +28,24 @@ export const MAX_LOG_ATTEMPTS = 5;
 // already knows the true moment (a photo's capture time) passes it in and it is kept.
 export const ACTION_TIME_KEY = 'occurredAt';
 
+// ONE id per log, made when the action happens and sent again on every attempt (`user_activity_log_id`).
+// The server stores a log under that id once, so a send the app gave up on (15 s timeout) but the server
+// finished no longer becomes a second row when the log is retried or re-queued. A v4 UUID, because that
+// is the only shape the backend accepts from a client.
+export const newActivityLogId = (): string => {
+  const bytes = new Uint8Array(16);
+  const c = (globalThis as any).crypto;
+  if (c && typeof c.getRandomValues === 'function') {
+    c.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 16; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
+
 export const stampActionTime = <T extends Record<string, any>>(
   meta: T,
   at: string
@@ -125,4 +143,29 @@ export const nextSendableLog = (
     return l;
   }
   return undefined;
+};
+
+/**
+ * Should a log that FAILED to send be queued and retried, rather than dropped?
+ *
+ * ⚠️ THE BUG THIS EXISTS TO PREVENT (ticket 1310). The Forever Record showed "CONFIRMED ROLLOUTS"
+ * with no price above it, so it looked as though the rep had confirmed a rollout without ever
+ * entering a dollar amount - which is impossible, and reads as a process failure by the rep. The
+ * two are SEPARATE log requests ("end price entered", then "rollout confirmed"), and on mobile
+ * data one of them was simply lost.
+ *
+ * Why only on cellular: `logEvent` queues when `isOnline()` is false, but on 4G the app IS
+ * online, so the log went straight out over a flaky radio - and `sendLog`'s catch merely printed
+ * a warning. A timed-out log was gone for good. On office Wi-Fi the POST essentially never fails,
+ * which is why the record always looked complete in testing.
+ *
+ * ⚠️ A 4xx must NOT be retried: the server understood us and refused, so replaying it forever
+ * just fills the queue. Only "we could not deliver it" earns a retry - the same distinction the
+ * connectivity layer draws between a transport error and a real response.
+ */
+export const shouldQueueFailedLog = (httpStatus?: number | null): boolean => {
+  if (typeof httpStatus !== 'number') return true; // no response at all: timeout, DNS, TLS, reset
+  if (httpStatus === 401) return true;             // session gone; it can go out after re-login
+  if (httpStatus >= 500) return true;              // server fault, not ours
+  return false;                                    // 4xx: the payload is the problem
 };

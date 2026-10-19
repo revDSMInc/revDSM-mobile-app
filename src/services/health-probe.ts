@@ -1,20 +1,43 @@
 import { ENV } from '../config/env';
 
-const HEALTH_URL = `${ENV.API_URL.replace(/\/+$/, '')}/health`;
+/**
+ * The one definition of "is our backend up". Exported so NetInfo's own reachability check uses
+ * the SAME url - two different health targets would disagree about being online.
+ */
+export const HEALTH_URL = `${ENV.API_URL.replace(/\/+$/, '')}/health`;
 
 /**
- * ⚠️ Was 2 s, which is INSIDE the noise on a weak radio. Measured cold TLS to the live API is
- * 1.0-2.4 s on a good wired line, and the handshake is most of it; on one bar it routinely
- * exceeds 2 s. A probe that aborts reports `false`, and `applyProbeResult(false)` force-settles
- * straight to OFFLINE - so the old value told a rep with a working line that they had none.
+ * ⚠️ Was 2 s, then 6 s. Measured cold TLS to the live API is ~1.0 s on a good WIRED line and
+ * the handshake is ~0.75 s of it; on one bar, or on congested Wi-Fi, it routinely multiplies.
+ * A probe that aborts reports `false`, and two of those force-settle straight to OFFLINE past
+ * the dwell - which is how a rep on a working line was told they had none.
+ *
+ * ⚠️ This is a FALSE-OFFLINE budget, not a latency target. Being slow to notice a real outage
+ * costs a few seconds of queued work that drains anyway; being wrong about it strands the rep.
+ * Spend the time.
  */
-export const PROBE_TIMEOUT_MS = 6_000;
+export const PROBE_TIMEOUT_MS = 10_000;
 
 /**
  * Past this, the server answered but the line is too slow to work on normally.
  * Distinguishes "slow" from "dead", which the old boolean could not.
+ *
+ * ⚠️ MEASURE BEFORE CHANGING THIS. It was 1,500 ms, which reported "Weak connection" on a
+ * wired line and on strong Wi-Fi. Measured against the live API from a good connection:
+ *
+ *   cold request (new TLS handshake) ... ~1.00 s   <- what a probe almost always costs
+ *     of which TLS alone ............... ~0.75 s
+ *   warm request (connection reused) ... ~0.25 s
+ *   server processing .................. ~0.23 s
+ *
+ * The probe uses `fetch`, which does not share axios's connection pool, so nearly every probe
+ * pays the full handshake. At 1,500 ms a perfectly healthy app sat ~500 ms from the warning,
+ * and ordinary jitter crossed it. **The probe was measuring TLS setup, not link health.**
+ *
+ * 4,000 ms is ~4x the measured cold cost - comfortably clear of a healthy handshake, still
+ * well inside PROBE_TIMEOUT_MS, and still catching a line that is genuinely crawling.
  */
-export const PROBE_SLOW_MS = 1_500;
+export const PROBE_SLOW_MS = 4_000;
 
 /**
  * Idle throttle: with nothing stuck, one probe per 20 s is plenty.
@@ -32,6 +55,18 @@ export const PROBE_STALL_INTERVAL_MS = 4_000;
 
 let lastProbeAt = 0;
 let inFlight: Promise<ProbeResult> | null = null;
+
+/**
+ * Diagnostics only - never used to decide anything.
+ *
+ * A rep saying "it showed offline" is unanswerable without these: we cannot tell a dead API from
+ * one lost packet on a weak cell. Reading them out turns the report into a fact.
+ */
+let lastSuccessAt: number | null = null;
+let lastDurationMs: number | null = null;
+
+export const getLastHealthSuccessAt = (): number | null => lastSuccessAt;
+export const getLastHealthDurationMs = (): number | null => lastDurationMs;
 
 let clockSkewMs: number | null = null;
 
@@ -74,8 +109,11 @@ const attemptProbe = async (): Promise<ProbeResult> => {
     if (body?.ok !== true) return false; // captive portal, or something else answering
 
     if (typeof body.ts === 'number') clockSkewMs = body.ts - Date.now();
+    const elapsed = Date.now() - startedAt;
+    lastSuccessAt = Date.now();
+    lastDurationMs = elapsed;
     // Reachable - but say HOW reachable, so a crawling line is not called offline.
-    return Date.now() - startedAt >= PROBE_SLOW_MS ? 'slow' : true;
+    return elapsed >= PROBE_SLOW_MS ? 'slow' : true;
   } catch {
     return false;
   } finally {
@@ -124,4 +162,6 @@ export const __resetHealthProbe = (): void => {
   lastProbeAt = 0;
   inFlight = null;
   clockSkewMs = null;
+  lastSuccessAt = null;
+  lastDurationMs = null;
 };

@@ -35,6 +35,13 @@ import {
   resolveOfflineDealCenterSource,
   type CachedDealCenter,
 } from '../../../utils/offline-deal-center';
+import {
+  canUseLocalOnlyMode,
+  readOutcome,
+  resolveAppointmentFallback,
+  resolveOnlineLoadSource,
+} from '../../../utils/deal-center-load';
+import { canAddCalculatorTab } from '../../../utils/calculator-tab-gate';
 
 export interface CalcTab {
   id: string;
@@ -170,15 +177,25 @@ function customerTitleOf(lead: any): string {
   return customerNameOf(lead) || lead?.customerName || lead?.name || lead?.title || 'Lead';
 }
 
-async function resolveAppointmentId(lead: any): Promise<string | null> {
+/**
+ * ⚠️ Returns WHY it has no id, not just that it has none.
+ *
+ * `null` used to mean both "this lead has no appointment" and "every call timed out". The
+ * caller dropped into local-only mode on either, so on one bar of LTE a lead with a confirmed
+ * rollout showed a blank calculator. `failed` separates the two.
+ */
+async function resolveAppointmentId(
+  lead: any
+): Promise<{ id: string | null; failed: boolean }> {
   const direct = lead?.appointmentId;
-  if (direct) return String(direct);
+  if (direct) return { id: String(direct), failed: false };
 
   const leadIdHuman = lead?.leadId; // human-readable id (e.g. "504")
   const selfGenLeadId = lead?._id || lead?.selfGenLeadId || lead?.id;
   const leadDate = lead?.leadDate || lead?.lead_date;
-  if (!leadIdHuman && !selfGenLeadId) return null;
+  if (!leadIdHuman && !selfGenLeadId) return { id: null, failed: false };
 
+  let lookupFailed = false;
   try {
     const res = await LeadService.getAppointments(leadDate ? { lead_date: leadDate } : undefined);
     const appts = res.data?.data || res.data || [];
@@ -187,8 +204,9 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
         (a.leadId && a.leadId !== 'N/A' && String(a.leadId) === String(leadIdHuman)) ||
         (a.selfGenLeadId && a.selfGenLeadId !== 'N/A' && String(a.selfGenLeadId) === String(selfGenLeadId))
     );
-    if (found) return String(found._id || found.id);
+    if (found) return { id: String(found._id || found.id), failed: false };
   } catch {
+    lookupFailed = true;
   }
 
   try {
@@ -199,7 +217,8 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
       selfGenLeadId,
     });
     const created = createRes.data?.data || createRes.data;
-    return created ? String(created._id || created.id) : null;
+    const createdId = created ? String(created._id || created.id) : '';
+    return createdId ? { id: createdId, failed: false } : { id: null, failed: lookupFailed };
   } catch (createErr: any) {
     const body = createErr?.response?.data ?? createErr;
     const existingId =
@@ -212,8 +231,12 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
       createErr?.response?.status === 409 ||
       createErr?.status === 409 ||
       /already has an appointment/i.test(String(body?.message || createErr?.message || ''));
-    if (is409 && existingId) return String(existingId);
-    return null;
+    if (is409 && existingId) return { id: String(existingId), failed: false };
+    // ⚠️ A 4xx/409 is an ANSWER about this lead; a timeout or network error is not. Only the
+    // latter may make the caller fall back to the cached appointment id.
+    const answered =
+      is409 || (typeof createErr?.response?.status === 'number' && createErr.response.status < 500);
+    return { id: null, failed: lookupFailed || !answered };
   }
 }
 
@@ -471,10 +494,14 @@ export function useDynamicCalculators(
   const offlineLogCtx = useRef({ enteredBy: '', leadId: '' as string | undefined, appointmentId: '' as string | undefined });
   offlineLogCtx.current = { enteredBy, leadId: leadId || undefined, appointmentId: appointmentId || undefined };
 
+  // True while this instance holds a change the debounced device save has not written yet.
+  const offlineDirty = useRef(false);
+
   const persistOffline = useCallback((explicit?: CalcTab[]) => {
     const workId = offlineWorkIdRef.current;
     if (!workId) return;
     if (!offlineModeRef.current && isOnline()) return;
+    offlineDirty.current = false;
     // Online logs `auto_rename` when a save changes a tab's title (flushSave); a device save never
     // reaches flushSave, so the same comparison is made here.
     (explicit || tabsRef.current).forEach((t) => {
@@ -519,6 +546,7 @@ export function useDynamicCalculators(
   const scheduleSave = useCallback((tabId: string) => {
     if (offlineModeRef.current || !isBackendId(tabId) || !isOnline()) {
       offlineModeRef.current = true;
+      offlineDirty.current = true;
       if (offlineWorkIdRef.current) {
         if (offlineTimer.current) clearTimeout(offlineTimer.current);
         offlineTimer.current = setTimeout(() => persistOfflineRef.current?.(), SAVE_DEBOUNCE_MS);
@@ -809,22 +837,82 @@ export function useDynamicCalculators(
         offlineModeRef.current = false;
       }
 
-      const apptId = await resolveAppointmentId(lead);
+      /**
+       * ⚠️ The snapshot is read on the ONLINE path too, before anything is concluded from a
+       * read that may never answer. `isOnline()` is true on one bar of LTE right up to the
+       * 15 s timeout, so this branch runs for exactly the reps who most need the cache.
+       */
+      const onlineCacheName = dealCenterCacheName(leadId);
+      const onlineCached = onlineCacheName
+        ? readOfflineCache<CachedDealCenter>(onlineCacheName, { userId: enteredBy || undefined })?.data
+          || null
+        : null;
+      const cachedRows = cachedCalculatorsOf(onlineCached).length;
+
+      const showCached = (apptForCache: string | null) => {
+        const hydrated: CalcTab[] = cachedCalculatorsOf(onlineCached).map((c: any) =>
+          tabFromServerCalculator(c, schemasRef.current)
+        );
+        if (!hydrated.length) return false;
+        hydrated.forEach((t) => { lastSavedTitle.current[t.id] = t.title; });
+        setTabs(retitle(hydrated));
+        setActiveTabId(hydrated[0].id);
+        if (apptForCache) {
+          setAppointmentId(apptForCache);
+          apptServerIdRef.current = apptForCache;
+        }
+        return true;
+      };
+
+      const appt = await resolveAppointmentId(lead);
       if (cancelled) return;
+      const resolved = resolveAppointmentFallback({
+        resolvedId: appt.id,
+        lookupFailed: appt.failed,
+        cachedAppointmentId: onlineCached?.appointmentId ?? null,
+      });
+      const apptId = resolved.appointmentId;
       setAppointmentId(apptId);
       apptServerIdRef.current = apptId;
 
       if (!apptId) {
-        setLoading(false); // local-only mode
+        // ⚠️ Only a lookup that ANSWERED "no appointment" may fall through to the blank
+        // local-only calculator. A timed-out lookup shows the cached quote instead.
+        if (!canUseLocalOnlyMode({ lookupFailed: appt.failed, cachedRows })) {
+          showCached(null);
+        }
+        setLoading(false);
         return;
       }
 
+      // The lookup failed and we are running on a cached appointment id: do not ask the server
+      // for calculators we cannot reach - show the snapshot and let a later mount refresh it.
+      if (resolved.source === 'cache') {
+        if (!cancelled) {
+          showCached(apptId);
+          setLoading(false);
+        }
+        return;
+      }
+
+      let threw = false;
+      let list: any[] = [];
       try {
         const res = await LeadService.getCalculators(apptId);
-        const list = res.data?.data || res.data || [];
-        if (cancelled) return;
+        const body = res.data?.data || res.data || [];
+        list = Array.isArray(body) ? body : [];
+      } catch {
+        threw = true;
+      }
+      if (cancelled) return;
 
-        if (Array.isArray(list) && list.length) {
+      try {
+        const source = resolveOnlineLoadSource({
+          outcome: readOutcome({ threw, rows: list }),
+          cachedRows,
+        });
+
+        if (source === 'server') {
           cacheDealCenterSnapshotRef.current?.(list, apptId);
           const hydrated: CalcTab[] = list.map((c: any) =>
             tabFromServerCalculator(c, schemasRef.current)
@@ -832,6 +920,11 @@ export function useDynamicCalculators(
           hydrated.forEach((t) => { lastSavedTitle.current[t.id] = t.title; });
           setTabs(retitle(hydrated));
           setActiveTabId(hydrated[0].id);
+        } else if (source === 'cache') {
+          showCached(apptId);
+        } else if (source === 'hold') {
+          // Nothing proved and nothing cached. Keep the screen as it is rather than writing a
+          // calculator we may be about to discover already exists.
         } else {
           const created = await createRemoteTab(
             apptId, customerNameOf(lead) || '1', {}, leadId, enteredBy, schemasRef.current, 1
@@ -887,7 +980,10 @@ export function useDynamicCalculators(
     return () => {
       Object.values(timers).forEach((t) => clearTimeout(t));
       if (offlineTimer.current) clearTimeout(offlineTimer.current);
-      persistOfflineRef.current?.();
+      // ⚠️ Only a pending change is flushed. The Investment Center mounts its own copy of this hook and
+      // stays mounted under the Deal Center it opens, so an unconditional save here replaced the device
+      // record with that copy's stale tabs when the rep finished the deal.
+      if (offlineDirty.current) persistOfflineRef.current?.();
       tabsRef.current.forEach((tab) => {
         if (tab.persisted && isBackendId(tab.id) && dirtyMap[tab.id]) {
           LeadService.updateCalculator(tab.id, buildPayloadRef.current(tab)).catch(() => {});
@@ -966,6 +1062,19 @@ export function useDynamicCalculators(
   );
 
   const handleAddTab = useCallback(async () => {
+    /**
+     * ⚠️ Second line of defence. `CalculatorView` already refuses and explains, but the gate
+     * belongs here too: this is the only writer, and a future caller that forgets the check
+     * would silently create the blank tab the rule exists to prevent. Returns quietly - the
+     * UI owns the message, and two flashes for one tap is worse than none.
+     *
+     * ⚠️ READS `tabsRef.current`, NOT `tabs`. This callback's dep array is `tabs.length`, so
+     * the captured `tabs` is frozen at the last length change - typing a quantity does not
+     * change the length, so the closure still holds the EMPTY tabs. Reading the prop here
+     * blocked the button forever once the gate was added, with no message, because the hook
+     * returned before any UI ran.
+     */
+    if (!canAddCalculatorTab(tabsRef.current as any, activeTabId).allowed) return;
     const placeholder = String(tabs.length + 1);
     if (onDevice() && offlineWorkIdRef.current) {
       const defaults = inheritedDefaults();
@@ -1102,16 +1211,53 @@ export function useDynamicCalculators(
             }
           : undefined;
       if (appointmentId) {
+        // OPTIMISTIC: the copy appears and is selected on the tap; the POST runs behind it and the real id is
+        // swapped in when it lands. Awaiting the POST first made the rep stare at nothing for the round trip.
+        const defaults = inheritedDefaults();
+        const tempId = `local-${Date.now()}`;
+        const temp: CalcTab = {
+          id: tempId,
+          title: placeholder,
+          entries,
+          totals: source.totals ? JSON.parse(JSON.stringify(source.totals)) : computeTotals(entries),
+          paymentMethod: (source as any).paymentMethod ?? defaults.paymentMethod,
+          discountPercentage: (source as any).discountPercentage ?? defaults.discountPercentage,
+        };
+        const withTemp = retitle([...tabsRef.current, temp]);
+        tabsRef.current = withTemp;
+        setTabs(withTemp);
+        setActiveTabId(tempId);
+
         const created = await createRemoteTab(appointmentId, placeholder, entries, leadId, enteredBy, schemasRef.current, position, {
-          ...inheritedDefaults(),
+          ...defaults,
           ...(source.totals ? { totals: JSON.parse(JSON.stringify(source.totals)) } : {}),
           ...(sourceBackendId ? { originalCalculatorId: sourceBackendId } : {}),
           ...(duplicateLog ? { duplicateLog } : {}),
         });
         if (created) {
+          const latest = tabsRef.current.find((t) => t.id === tempId);
+          if (!latest) {
+            // The rep deleted the copy before the server answered: do not leave an orphan row behind.
+            LeadService.deleteCalculator(created.id).catch(() => {});
+            return;
+          }
           lastSavedTitle.current[created.id] = created.title; // baseline for auto_rename
-          setTabs((p) => retitle([...p, created]));
-          setActiveTabId(created.id);
+          // Keep what is on screen (the rep may already have typed into the copy); take the server's identity.
+          const merged: CalcTab = {
+            ...created,
+            ...latest,
+            id: created.id,
+            persisted: true,
+            paymentMethod: latest.paymentMethod ?? created.paymentMethod,
+            discountPercentage: latest.discountPercentage ?? created.discountPercentage,
+          };
+          const swapped = retitle(tabsRef.current.map((t) => (t.id === tempId ? merged : t)));
+          tabsRef.current = swapped;
+          setTabs(swapped);
+          setActiveTabId((cur) => (cur === tempId ? created.id : cur));
+          cacheTabsSnapshotRef.current?.(swapped);
+          // Edits made while the POST was in flight were never sent (a `local-` tab is not saved): send them now.
+          if (latest.entries !== temp.entries || latest.totals !== temp.totals) markDirty(created.id);
           const inheritedPaymentMethod = (source as any).paymentMethod || '';
           if (enteredBy && inheritedPaymentMethod) {
             logPaymentMethodInherited({
@@ -1128,14 +1274,15 @@ export function useDynamicCalculators(
               ...(leadId ? { leadId } : {}),
             }).catch(() => {});
           }
-          return;
         }
+        // On failure the copy simply stays as the local-only tab the old fallback produced.
+        return;
       }
       const local: CalcTab = { id: `local-${Date.now()}`, title: placeholder, entries, totals: source.totals ? JSON.parse(JSON.stringify(source.totals)) : computeTotals(entries) };
       setTabs((p) => retitle([...p, local]));
       setActiveTabId(local.id);
     },
-    [tabs, appointmentId, leadId, enteredBy, retitle, inheritedDefaults, onDevice, deviceTabFrom]
+    [tabs, appointmentId, leadId, enteredBy, retitle, inheritedDefaults, onDevice, deviceTabFrom, markDirty]
   );
 
   const handleDeleteTab = useCallback(

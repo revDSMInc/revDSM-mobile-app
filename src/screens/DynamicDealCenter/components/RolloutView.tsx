@@ -45,13 +45,14 @@ import {
   WF_HIGH_MIN_PRICE,
 } from '../utils/dynamic-rollout-pricing';
 import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-util';
-import { logRolloutChange } from '../../../utils/activity-log/rollout-log-meta';
+import { logRolloutChange, logPreOrderDiscount } from '../../../utils/activity-log/rollout-log-meta';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 import { RevRenderSlots, type RenderPair } from './RevRenderSlots';
 import { PhotoPeekScrollLockProvider } from '../../../widgets/common/PhotoPeekScrollLock';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { OneYearMonthlyPlan, type OneYearMonthlyValue } from './OneYearMonthlyPlan';
 import { resolveRepOneYearKey, resolveOneYearDefaultKey } from '../../../utils/one-year-default';
+import { isOnline } from '../../../services/connectivity';
 import { scopeSignature } from '../utils/scope-signature';
 import type { CalculatorLockState } from '../utils/job-builder-submission';
 import { NUMERIC_KEYBOARD, NUMERIC_KEYBOARD_HAS_RETURN_KEY } from '../../../utils/keyboard-type';
@@ -733,6 +734,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const logCalculator = { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId };
 
   const loggedPriceRef = useRef<number | null>(calculator.price ? Number(calculator.price) : null);
+  const seededDiscountRef = useRef(false);
   const logEndPriceEntered = () => {
     const p = parseFloat(endPrice) || 0;
     if (loggedPriceRef.current === p) return;
@@ -753,6 +755,40 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         oldValue: prev ?? (calculator.price || ''), newValue: p,
         action: 'end price entered',
       },
+    }).catch(() => {});
+    // Ticket 1308: the In-Home Pre Order discount becomes meaningful the moment there is a
+    // price to apply it to, so it is seeded here rather than at Confirm Rollouts. Once per
+    // calculator - editing the price again must not re-log a discount that did not change.
+    if (!seededDiscountRef.current) {
+      seededDiscountRef.current = true;
+      logPreOrderDiscount({
+        userId: uid,
+        leadId,
+        calculator: logCalculator,
+        tiers: logTiers,
+        endPrice: p,
+        discountPercentage: discountPct,
+        isDefault: !!user?.defaultPercentage && user.defaultPercentage === discountPct,
+      }).catch(() => {});
+    }
+  };
+
+  const logDiscountChanged = (next: number) => {
+    const uid = user?._id || user?.id;
+    if (!uid || next === discountPct) return;
+    // A rep who taps a chip BEFORE entering a price has stated their choice explicitly, so the
+    // seed is spent: otherwise the later price entry would log the default underneath this
+    // change and the Forever Record would read 20% -> 15%.
+    seededDiscountRef.current = true;
+    logPreOrderDiscount({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: logTiers,
+      endPrice: parseFloat(endPrice) || Number(calculator.price) || 0,
+      discountPercentage: next,
+      oldDiscountPercentage: discountPct,
+      isDefault: !!user?.defaultPercentage && user.defaultPercentage === next,
     }).catch(() => {});
   };
 
@@ -920,11 +956,40 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     FlashMessage.success(label, "Saved on your device — it'll sync when you're back online.");
   };
 
-  const setOneYearDefault = (key: string | null) =>
-    saveDefault(
+  // Activity log for the 1 Year plan. `logEvent` queues the log itself when offline (action-time key, per-lead order), so
+  // nothing here needs a connectivity branch - the state is only recorded as meta for the portal.
+  const logOneYearPlan = (action: string, oldKey: string | null, newKey: string | null, extra: Record<string, any> = {}) => {
+    const uid = user?._id || user?.id;
+    if (!uid) return;
+    const currentPrice = parseFloat(endPrice) || Number(calculator.price) || 0;
+    logRolloutChange({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: logTiers,
+      percentageOfRollout: markupLabel(currentPrice, logTiers),
+      change: {
+        fieldName: 'oneYearPlan', fieldLabel: '1 Year Monthly Plan', fieldValue: currentPrice, fieldCategory: 'rollout',
+        oldValue: oldKey || '', newValue: newKey || '',
+        oldPaymentMethod: oldKey || '', newPaymentMethod: newKey || '',
+        oldPaymentMethodLabel: oldKey ? planLabelOf(plans, oldKey) : '',
+        newPaymentMethodLabel: newKey ? planLabelOf(plans, newKey) : '',
+        offline: !isOnline(),
+        action,
+        ...extra,
+      },
+    }).catch(() => {});
+  };
+
+  const setOneYearDefault = (key: string | null) => {
+    if (key !== repOneYearKey) {
+      logOneYearPlan(key ? '1 year default plan set' : '1 year default plan cleared', repOneYearKey, key, { isRepDefault: true });
+    }
+    return saveDefault(
       { defaultOneYearPaymentMethod: key },
       key ? '1 Year default plan set' : '1 Year default plan cleared'
     );
+  };
 
   const toggleDefault = (next: boolean) =>
     saveDefault(
@@ -1379,7 +1444,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                     return (
                       <TouchableOpacity
                         key={d}
-                        onPress={() => onDiscountChange(calculator.id, d)}
+                        onPress={() => { logDiscountChanged(d); onDiscountChange(calculator.id, d); }}
                         style={{ flex: 1, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: active ? '#4CBB17' : '#E2E8F0', backgroundColor: active ? '#4CBB170D' : '#fff' }}
                       >
                         <Text style={{ fontSize: 12, fontWeight: '900', color: active ? '#15803D' : '#94A3B8' }}>{d}%</Text>
@@ -1423,6 +1488,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   locked={false}
                   repDefaultKey={repOneYearKey}
                   onSetRepDefault={setOneYearDefault}
+                  onPlanPicked={({ oldKey, newKey, mode }) => logOneYearPlan('1 year plan changed', oldKey, newKey, { oneYearMode: mode })}
                 />
               </View>
 
@@ -1883,6 +1949,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                         <FullPackageTitle
                           isFullPackage
                           extras={packageByCalcId[calc.id]?.extras}
+                          title={calc.title}
                           size={14}
                           color={isActive ? '#212B36' : '#637381'}
                           iconColor={isActive ? '#16A34A' : '#94A3B8'}

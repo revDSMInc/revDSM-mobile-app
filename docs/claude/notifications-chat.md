@@ -580,3 +580,138 @@ email at `opacity-40` (unreadable grey) and a hash-coloured square avatar. It no
 from `getAvatarProps` (honours the user's `colorCode`, same colour as everywhere else in chat), name `15px font-bold`,
 email `12px` in `colors.textSecondary`. ⚠️ Keep the three sheets visually in step; don't reintroduce `font-black`
 (Public Sans has no 900 face — Android synthesises it) or opacity-dimmed text.
+
+## Chat activity log: `meta.files[]` to match web
+
+Ticket: *"currently while we are sending the appointment photo, we are generating the log with the
+below payload … we have to change the payload same like the web, you can see filepath and some other
+keys are include, do the same thing in my log as well"* — and the same for a plain image send.
+
+Mobile logged a flattened `fileName` string only, so the portal knew a photo had been sent but not
+WHICH object: no `filePath`, no `bucketName`, no `category`/`subcategory`.
+
+### The shared mapper
+
+New **`src/utils/activity-log/chat-log-files.ts`** → `buildChatLogFiles(files)`, emitting the six keys
+web sends per row: `fileName`, `bucketName`, `filePath`, `fileType`, `category`, `subcategory`.
+
+Pure and RN-free for the usual reason — `hooks/useChatLogic.ts` imports React Native and cannot load
+under jest. Used by all three file-bearing sends so they cannot drift.
+
+Also aligned with web on all three: `message: ' '` (was `''`) and `resetCycle: 0`.
+
+### ⚠️ Two of the three logs had to MOVE, and this is the point of the ticket
+
+| Send | Files are | Log fires |
+|---|---|---|
+| `sendAppointmentPhotos` | already in S3 (posts references) | **after** it (see `fileSize` below) |
+| `sendGalleryAssets` | uploaded by this request | **after** it |
+| `sendImageAsMessage` | uploaded by this request | **after** it |
+| `handleDocumentAttach` | uploaded by this request | **after** it |
+| `handleSendVoiceNote` | uploaded by this request | **after** it |
+
+All five file-bearing sends now carry `files[]`. The only `logEvent('send')` calls without it are the
+two `messageType: 'text'` ones, which have no files.
+
+⚠️ **`filePath` is an S3 object path that does not exist until the server has stored the file.**
+Logging an upload before the request could only ever have recorded a local `file://` uri, which is
+useless to the portal. So `ChatService.sendFileMessage` / `sendFilesMessage` now **return** the stored
+message (they were `Promise<void>`, discarding it) and the log reads `stored.files`.
+
+⚠️ **Never log a signed URL as `filePath`.** It expires within the hour, so the record would carry a
+dead link — the same trap as the image cache (`app-wide.md`).
+
+⚠️ A failed upload now logs NOTHING, which is correct: nothing was sent. Previously it logged a send
+that never happened.
+
+⚠️ `fileSize` on the single-image log was a hard-coded **12000**. Web sends the file COUNT here, not a
+byte size, so it is now `1` — a fabricated 12000 read as a real measurement.
+
+⚠️ In `buildChatLogFiles`, `type` is checked LAST for `fileType`: an optimistic bubble carries
+`type: 'image'` (the GiftedChat kind, not a mime type), so a real `fileType`/`mimeType` must win.
+
+Tests: `__tests__/utils/chat-log-files.test.ts` (8), including the ticket's exact web row.
+
+### Follow-up — the document and voice sends
+
+`handleDocumentAttach` was the case in the second report (`messageType: 'pdf'`, no `files[]`).
+
+- ⚠️ It logged only **`docs[0]`**, so a rep attaching three files logged one. Each document is its own
+  request, so the stored rows are now gathered from every response (`storedDocs.flatMap`), and
+  `fileName` joins all of them.
+- ⚠️ `fileSize` was the picker's **BYTE size** (142786 in the report). Web sends the file COUNT in that
+  field, so it is now `docs.length` — consistent with the other sends.
+
+`handleSendVoiceNote` keeps two things the others do not, deliberately:
+
+- **`duration`** (`recordingTime`), which the portal shows.
+- **A real `fileSize`**, because a voice note's size is actually measured (`RNFS.stat`) rather than
+  guessed. ⚠️ The `12000` still in that function is only the fallback when the `stat` throws.
+
+Its `fileName`/`fileSize` are computed inside the `user?._id` guard before the send (the `stat` is
+worth doing once) and carried to the post-send log in `voiceLogMeta`.
+
+### Follow-up — `fileSize` per file row, as a real byte count
+
+*"put the fileSize inside files array, and it should be the actual size of the file like 142786 …
+you have to do it for all the other logs as well"*.
+
+`meta.fileSize` (the file COUNT) stays where it is; each row in `meta.files[]` now also carries its
+own **byte** size. New `normalizeLogFileSize` reads it from whichever key the source used.
+
+⚠️ **Three spellings, because three sources disagree.** The server sends `size` / `fileSize` /
+`file_size` — the same spread `ChatService.normalizeFileSize` already handles for display — the image
+picker sends `fileSize`, and the document picker sends `size`. Reading only one silently logs 0.
+
+Where each send's real size comes from:
+
+| Send | Size source |
+|---|---|
+| `handleDocumentAttach` | document picker's `size` |
+| `sendGalleryAssets` | image picker's `fileSize` — ⚠️ it was being DROPPED in `handleAttach`'s `asset` map and is now carried through |
+| `handleSendVoiceNote` | the `RNFS.stat` it already performed |
+| `sendImageAsMessage` | a new best-effort `RNFS.stat` of the local upload path |
+| `sendAppointmentPhotos` | **the server only** |
+
+⚠️ **`sendAppointmentPhotos` had to move to a post-send log too**, which is not obvious: its S3 PATH
+was known up front (it posts references), but the per-file BYTE SIZE is not — the device never
+downloads these photos. So `ChatService.sendAppointmentPhotos` now returns the stored message like the
+upload methods, and the log reads its rows. It falls back to the sent payload (path and category
+intact, size 0) when the response carries none.
+
+⚠️ `normalizeLogFileSize` returns **0, never undefined**, so the key is always present — and a genuine
+0-byte file is preserved rather than being treated as missing.
+
+## Chat header / thread-list lead photo: slow to appear (street view or uploaded)
+
+`useLeadPreviewUrl` showed the home placeholder until `LeadService.getSecureUrls` answered (module-memory cache only, so EVERY cold start), then the `<Image>` downloaded the pre-signed S3 file (which defeats the native image cache). Now, for stored (bucket) photos only: the last resolved URL is persisted in MMKV (`leadPreviewUrl:<bucket/path>`), and `warmToLocalCache` maps it to the on-disk file (`getLocalCachePath` drops the signature, so an expired URL still finds the file). A reopened chat paints from disk with no API call and no network; first open resolves the URL, shows it, and warms it to disk. The thread list uses the same hook, so its thumbnails pre-warm the header's. ⚠️ Never warm a `googleUrl` (street view) through this cache: its signature-less path has no per-lead part, so every lead would share one file. Google URLs still load directly. A changed photo changes `bucket/filePath`, hence the key. Not verified on device.
+
+
+## REVUIUX-552 - job number in Messages opens the deal (My Deals flow)
+
+Ticket (Lance): from Messages, for jobs **Pending Rehash / Pending Install / Installing Today**, the job number goes straight to the My Deals flow. The element the ticket circles (IMG_8370) is the **title in the open chat's header**, not only the list row. Backend is done (`Pending Rehash` socket filter, payload already carries `leadDetails._id / leadId / installationDate / isRehashed`). Mobile handoff: `REVUIUX-552-mobile-handoff.md`.
+- **Rule:** `screens/ChatThreads/utils/deal-link.ts` (`canOpenDeal` = `isPendingRehash || isPendingInstall || isInstallingToday`), tests `tests/chat/deal-link.test.ts` (`tests/` is tracked, `__tests__/` is not). Already Installed is deliberately excluded. The filter list AND every tap target read the same predicates so they cannot drift.
+- **Filter:** `Pending Rehash` under `Unresulted Leads` in `STATUS_OPTIONS` (installers keep their own list). ⚠️ The slug (`pendingrehash`) must be mapped in BOTH switches in `hooks/useChatThreads.ts` - the server mapping and the client re-filter; only the first leaves the list silently empty.
+- **Destination:** `navigation.navigate('LeadCenter', { lead, fromMyDeals: true })` (same as `MyDeals.openDeal`). It takes a WHOLE lead object, so the header refetches with `LeadService.getLeadDetailsById`.
+- **List row is deliberately NOT a link.** The handoff's list-row tap target (heading / `Lead ID:` -> deal) was built and then removed at the product owner's request: the deal opens ONLY from the chat header. Do not re-add `onOpenDeal` to `LeadChatThreadItem`.
+- **Chat header:** `ChatHeader` gets `leadId` and fetches the lead itself (`['chatDealLead', leadId]`, online only), because `ChatDetail` is navigated with scalars and push / notification entries pass no lead data at all. ⚠️ Gate on LEAD STATE (`canOpenDeal`), not on the filter the rep arrived from - inside a chat the filter is invisible. The title `Pressable`'s `hitSlop` is deliberately tighter than the Back button's 20px one, which reaches into the title row.
+- Known, preserved quirks (not fixed on purpose): `isInstallingToday` compares a UTC date string and does not require `status === 'sale'` (the backend bucket does). Offline, the header link is absent (no lead to evaluate).
+- Not verified on device: header tap -> `Deal`; back returns to the chat; Already Installed header not tappable; push-opened chat gets the link; a real Pending Rehash lead (`isRehashed: true`, unresulted).
+
+
+### Follow-up - the appointment-photo picker's "Send N photo(s)" bar sat under the Android nav bar
+
+`LeadImagePickerModal` (the "Appointment Photos" sheet opened from chat) is a `Modal`, so its safe-area insets read 0 / stale and the Android 3-button / gesture bar covered the Send bar. The sheet now carries `paddingBottom = max(useBottomInset(), 48 on Android)` - the same floor `CategorySheet` uses (see `app-wide.md`). ⚠️ The padding is on the SHEET, not the Send bar, so the photo grid's last row also clears the bar when nothing is selected. Don't swap it back to a fixed padding. Not verified on device: 3-button and gesture navigation on Android, and iOS home indicator.
+
+- **Originals only.** `LeadImagePickerModal.leadPhotos` now drops any photo whose `subcategory` contains `(Annotated)` - annotated copies are derived images and must not be offered in the appointment-photo picker. ⚠️ One filter on purpose: the tabs, the per-tab counts, the "N photos for this lead" line and the selection all derive from `leadPhotos`, so don't filter at the render site instead.
+
+
+### Follow-up - tapping the chat header's street-view picture spun for a long time on iOS
+
+Report: opening the header thumbnail (a Google street view) showed a black screen with a spinner for a long time on iPhone; Android was fine.
+- **Cause:** the gallery (`ImageGalleryModal`) ran the street-view url through `useWarmedImageUris` -> `warmToLocalCache`, i.e. a SECOND download of a picture the header had already fetched, started from the tap, with a spinner until it landed and another when the source swapped to the local copy. Worse, `getLocalCachePath` dropped the query, and a Google Maps url has no per-lead path - so every lead's street view mapped to ONE cache file.
+- **Fix:** (1) `utils/imageFileCache.getLocalCachePath` keeps the QUERY in the hash for `maps.googleapis.com` / `maps.google.com` (the query IS the identity there), so those urls can be cached safely. (2) `useLeadPreviewUrl(leadDetails, { warmGoogle: true })` - ONLY the chat header passes it - warms the street view to disk and returns the local file, so the gallery opens on a `file://` with no network. ⚠️ Don't turn it on in the thread list: it would download one picture per row. (3) `ImageGalleryModal.ZoomablePage` only shows its spinner for a remote uri.
+- ⚠️ The iOS 18.4 SIMULATOR fails every `maps.googleapis.com` request over HTTP/3 (CLAUDE.md §6): if the street view never loads there, test on an 18.5+ simulator or a device before blaming this code.
+- Not verified on device: open a lead whose preview is a street view, tap the header picture - it should open at once; two different leads must show their own street views.
+
+- **Second follow-up - still a black screen after that (iOS 26 simulator), no spinner.** With the picture already local the gallery drew nothing: `ZoomablePage` parked the image at `opacity 0` until `onLoadEnd`, and its `onError` just set opacity 1 over a failed image - i.e. a silent black screen. Now (`widgets/modals/ImageGalleryModal.tsx`): a LOCAL file starts at full opacity (only a remote image fades in); if a local copy errors, `onError` drops it (`forgetWarmedUri`) and draws the REMOTE original (`fallbackUri`); if that fails too it shows "Could not load this photo" instead of black. Google Maps urls are loaded plainly - no `cache: 'force-cache'`, no `progressiveRenderingEnabled` - exactly like the header thumbnail that already worked. ⚠️ Don't reintroduce "opacity 0 until an event" for local files, and don't let `onError` end in a blank view. The root cause on iOS was not reproduced from code alone; if a street view still fails, log the `onError` nativeEvent here first.

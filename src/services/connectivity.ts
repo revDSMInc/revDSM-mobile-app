@@ -18,7 +18,7 @@ import {
   type NetworkStatus,
   type RequestSignal,
 } from '../utils/network-status';
-import { PROBE_STALL_INTERVAL_MS, probeHealthThrottled } from './health-probe';
+import { HEALTH_URL, PROBE_STALL_INTERVAL_MS, probeHealthThrottled } from './health-probe';
 import { InFlightTracker, SLOW_REQUEST_MS, isProbeUrl } from '../utils/slow-request';
 
 type ConnectivityListener = (online: boolean) => void;
@@ -120,9 +120,70 @@ const applySnapshot = (snapshot: ConnectivitySnapshot | null | undefined) => {
   }, delay);
 };
 
+/**
+ * How long NetInfo waits on its own reachability request before calling it a failure.
+ *
+ * ⚠️ Must clear a cold TLS handshake on a weak cell (measured 1.0-2.4 s on a GOOD line, and
+ * the handshake is most of it). NetInfo's default is 15 s, which is far longer than anything the
+ * rep will wait, and its failure force-settles the app to OFFLINE.
+ */
+const REACHABILITY_TIMEOUT_MS = 8_000;
+
+/** Re-check interval once reachability has FAILED - a rep walking back into signal. */
+const REACHABILITY_RETRY_MS = 10_000;
+
+/** Re-check interval while everything is fine. Rare: our own requests are the real signal. */
+const REACHABILITY_OK_MS = 60_000;
+
+/**
+ * Point NetInfo's reachability check at OUR backend.
+ *
+ * ⚠️ THIS WAS NEVER CONFIGURED, and the default is
+ * `https://clients3.google.com/generate_204`. So the app's offline banner was driven by whether
+ * GOOGLE answers, not whether our API does. On a rep's cellular connection that is wrong in both
+ * directions:
+ *
+ *  - a carrier that blocks, throttles or intercepts that Google endpoint (it is a well-known
+ *    captive-portal probe) marks the app OFFLINE while our API is perfectly reachable;
+ *  - Google answering says nothing about our backend, so the app can insist it is online while
+ *    every real request fails.
+ *
+ * `isInternetReachable === false` flows through `resolveOnline` into `applyOsDisconnected`, which
+ * force-settles to offline past the dwell - so a wrong answer here is not a hint, it is a verdict.
+ *
+ * ⚠️ Keep this in step with `health-probe.ts`: both must ask the SAME url, or the two halves
+ * of connectivity can disagree about whether the rep is online.
+ */
+const configureReachability = (): void => {
+  try {
+    NetInfo.configure({
+      reachabilityUrl: HEALTH_URL,
+      reachabilityMethod: 'GET',
+      reachabilityHeaders: { Accept: 'application/json', 'Cache-Control': 'no-store' },
+      // A 200 from our own /health is the only thing that counts as "the internet works".
+      reachabilityTest: async (response) => response.status === 200,
+      reachabilityRequestTimeout: REACHABILITY_TIMEOUT_MS,
+      reachabilityShortTimeout: REACHABILITY_RETRY_MS,
+      reachabilityLongTimeout: REACHABILITY_OK_MS,
+      // ⚠️ Android's native reachability reports the OS's own captive-portal verdict, which
+      // is about the INTERNET, not about us. Our url is the only authority we want.
+      useNativeReachability: false,
+    });
+  } catch (e) {
+    // A failure here leaves NetInfo on its defaults - degraded, but still working.
+    console.warn('[connectivity] NetInfo.configure failed:', e);
+  }
+};
+
 export const startConnectivityMonitor = (): void => {
   if (monitorStarted) return;
   monitorStarted = true;
+
+  // Arm the poll for whatever state we are already in at startup.
+  syncRecoveryPoll();
+
+  // Before the listener, so the first state NetInfo reports already used our url.
+  configureReachability();
 
   unsubscribeNetInfo = NetInfo.addEventListener((state: NetInfoState) => {
     applySnapshot(state);
@@ -153,6 +214,11 @@ const statusListeners = new Set<(status: NetworkStatus) => void>();
 const setNetState = (next: NetworkState) => {
   if (next === netState || next.status === netState.status) {
     netState = next;
+    // ⚠️ The poll must be kept in step even when the STATUS did not change. It used to be
+    // armed only on a transition, so an app that settled into `degraded` and then stopped
+    // changing never started polling - nothing asked whether the line had recovered, and
+    // "Weak connection" stayed on screen indefinitely on a perfectly good connection.
+    syncRecoveryPoll();
     return;
   }
   const previous = netState.status;

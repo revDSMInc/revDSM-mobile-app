@@ -22,11 +22,9 @@ import { FlashMessage } from '../../../config/message';
 import { buildSectionLabelMap } from '../utils/item-format';
 import { resolveFundingSource } from '../../../utils/activity-log/funding-log';
 import { LeadService, resolveLeadCalculatorId } from '../../../services/api/leads';
-import { FundingService } from '../../../services/api/FundingService';
 import { ConfirmDialog } from './ConfirmDialog';
-import { canResumeJobBuild } from '../utils/funding';
-import { Storage } from '../../../utils/storage';
-import { fundingOwnerKey, shouldAdoptSavedFunding } from '../../../utils/funding-owner';
+import { FundingService } from '../../../services/api/FundingService';
+import { canResumeJobBuild, fundingBelongsToCalculator } from '../utils/funding';
 import { useAuth } from '../../../hooks/useAuth';
 import { useSlowLoadHint } from '../../../hooks/useSlowLoadHint';
 import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
@@ -79,8 +77,8 @@ function DynamicDealCenterCreate({ navigation, route }: DynamicDealCenterScreenP
   const numPadActive = useNumPadActive();
 
   const lead = route?.params?.lead;
-  const [flowStep, setFlowStep] = useState<FlowStep>('calculator');
   const [fundingBlock, setFundingBlock] = useState<{ ownerTitle: string } | null>(null);
+  const [flowStep, setFlowStep] = useState<FlowStep>('calculator');
   const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number; paymentMethod?: string; downPayment?: number; startOnFunding?: boolean }>({ visible: false });
   const [calculatorResultData, setCalculatorResultData] = useState<any>(null);
   const [currentCalculatorId, setCurrentCalculatorId] = useState<string | undefined>();
@@ -187,13 +185,7 @@ function DynamicDealCenterCreate({ navigation, route }: DynamicDealCenterScreenP
           user?._id || user?.id
         );
         const record = res.data?.data?.funding ?? null;
-        const owner = Storage.getItem(fundingOwnerKey(resumeLeadId));
-        if (record?.status === 'submitted' && owner && String(owner) !== String(calculatorId)) {
-          const ownerTitle = tabs.find((t) => String(t.id) === String(owner))?.title || 'another calculator';
-          setFundingBlock({ ownerTitle });
-          return;
-        }
-        if (canResumeJobBuild(record) && shouldAdoptSavedFunding(owner, calculatorId)) {
+        if (canResumeJobBuild(record) && fundingBelongsToCalculator(record?.calculatorId, calculatorId)) {
           resumeRef.current.checking = false;
           openSheet(true);
           return;
@@ -205,7 +197,7 @@ function DynamicDealCenterCreate({ navigation, route }: DynamicDealCenterScreenP
       }
       openSheet();
     },
-    [lead, user, pricing.plans, tabs]
+    [lead, user]
   );
 
   const submittedCalculatorId = jobResetLocally ? null : resolveSubmittedCalculatorId(lead);
@@ -501,9 +493,9 @@ function DynamicDealCenterCreate({ navigation, route }: DynamicDealCenterScreenP
           visible={!!fundingBlock}
           tone="warn"
           hideCancel
-          title="Funding already submitted"
-          message={`You already submitted a funding against the calculator "${fundingBlock?.ownerTitle || ''}".`}
-          note="To submit another calculator against this lead, first run the refund process against that submitted job."
+          title="Down payment already collected"
+          message={`A payment was already collected against the calculator "${fundingBlock?.ownerTitle || ''}". This lead can only be resulted against that calculator.`}
+          note="To result a different calculator, first run the refund process against the collected payment."
           confirmLabel="OK"
           onConfirm={() => setFundingBlock(null)}
           onCancel={() => setFundingBlock(null)}
@@ -675,9 +667,9 @@ function DynamicDealCenterCreate({ navigation, route }: DynamicDealCenterScreenP
           visible={!!fundingBlock}
           tone="warn"
           hideCancel
-          title="Funding already submitted"
-          message={`You already submitted a funding against the calculator "${fundingBlock?.ownerTitle || ''}".`}
-          note="To submit another calculator against this lead, first run the refund process against that submitted job."
+          title="Down payment already collected"
+          message={`A payment was already collected against the calculator "${fundingBlock?.ownerTitle || ''}". This lead can only be resulted against that calculator.`}
+          note="To result a different calculator, first run the refund process against the collected payment."
           confirmLabel="OK"
           onConfirm={() => setFundingBlock(null)}
           onCancel={() => setFundingBlock(null)}

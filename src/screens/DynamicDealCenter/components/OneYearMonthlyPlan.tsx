@@ -32,6 +32,8 @@ interface Props {
   repDefaultKey?: string | null;
   /** Star in the plan sheet: set (key) or clear (null) the rep's default. Independent of `mode`. */
   onSetRepDefault?: (key: string | null) => void;
+  /** A rep-driven pick (Match / Default / sheet row) - NOT the Default re-stamp effect. For the activity log. */
+  onPlanPicked?: (change: { oldKey: string; newKey: string; mode: 'match' | 'default' | 'custom' }) => void;
 }
 
 // "2521 (12 Months 0% ...)" -> "2521"; falls back to the whole label when there is no code.
@@ -45,8 +47,12 @@ const aprPercent = (apr: any): number => {
   return n < 1 ? n * 100 : n;
 };
 
-export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey, base, value, onChange, locked = false, repDefaultKey = null, onSetRepDefault }: Props) {
+export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey, base, value, onChange, locked = false, repDefaultKey = null, onSetRepDefault, onPlanPicked }: Props) {
   const [showPicker, setShowPicker] = useState(false);
+  // Choose-default mode (opened by `Change`): rows become radios and a tap asks to confirm before saving the rep default.
+  const [chooseDefault, setChooseDefault] = useState(false);
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const closePicker = () => { setShowPicker(false); setChooseDefault(false); setPendingKey(null); };
   const pickerScrollRef = useRef<ScrollView>(null);
   // `defaultKey` already puts the rep's default first (see `resolveOneYearDefaultKey`), so `Default` mode is always LIVE:
   // changing the rep default moves every deal still on `Default`; Match / custom picks are the rep's decision and stay.
@@ -58,6 +64,15 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
     return value?.planKey || defaultKey;
   }, [mode, inHomeMethod, defaultKey, value?.planKey]);
 
+  // Highlight what is DISPLAYED: a `custom` pick that is the same plan as the rep default (or the In-Home plan) shows that
+  // segment lit, so a plan chosen in the sheet never leaves the toggle blank. A genuinely different plan lights neither.
+  const activeSeg: 'match' | 'default' | null = mode !== 'custom'
+    ? mode
+    : repDefaultKey && resolvedKey === repDefaultKey ? 'default'
+    : resolvedKey === inHomeMethod ? 'match'
+    : resolvedKey === defaultKey ? 'default'
+    : null;
+
   const monthly = useMemo(() => calcMonthly(plans, base, resolvedKey), [plans, base, resolvedKey]);
   const financing = isFinancing(plans, resolvedKey);
 
@@ -66,6 +81,7 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
   const commit = (nextMode: 'match' | 'default' | 'custom', nextKey?: string) => {
     if (locked) return;
     const key = nextMode === 'match' ? inHomeMethod : nextMode === 'default' ? defaultKey : (nextKey || defaultKey);
+    if (key !== resolvedKey || nextMode !== mode) onPlanPicked?.({ oldKey: resolvedKey, newKey: key, mode: nextMode });
     onChange({
       mode: nextMode,
       planKey: key,
@@ -125,8 +141,8 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
 
       {/* Match / Default segmented control */}
       <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', borderRadius: 10, padding: 3, marginBottom: 8 }}>
-        {segBtn('Match', mode === 'match', () => commit('match'))}
-        {segBtn('Default', mode === 'default', () => commit('default'))}
+        {segBtn('Match', activeSeg === 'match', () => commit('match'))}
+        {segBtn('Default', activeSeg === 'default', () => commit('default'))}
       </View>
 
       {/* Monthly + APR + edit — mockup: "$200 /mo  9.99% / APR  [pencil]".
@@ -170,8 +186,8 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
       </Text>
 
       {/* Plan picker (custom) — bottom sheet matching the rollout PaymentPlanModal. */}
-      <Modal visible={showPicker} transparent animationType="slide" onRequestClose={() => setShowPicker(false)}>
-        <Pressable onPress={() => setShowPicker(false)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+      <Modal visible={showPicker} transparent animationType="slide" onRequestClose={() => (pendingKey ? setPendingKey(null) : closePicker())}>
+        <Pressable onPress={closePicker} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
           <Pressable onPress={() => {}} style={{ backgroundColor: '#F2F4F7', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '82%', paddingBottom: 24 }}>
             {/* Drag handle */}
             <View style={{ alignItems: 'center', paddingTop: 8 }}>
@@ -182,7 +198,7 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                 <Text style={{ fontSize: 16, fontWeight: '900', color: '#1C252E' }}>Pick 1 Year Monthly Plan</Text>
                 <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 3 }}>This monthly flows through to the Investment Center.</Text>
               </View>
-              <TouchableOpacity onPress={() => setShowPicker(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <TouchableOpacity onPress={closePicker} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <Ionicons name="close" size={22} color="#637381" />
               </TouchableOpacity>
             </View>
@@ -191,8 +207,18 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                 matching the rollout's payment picker. */}
             <ScrollView ref={pickerScrollRef} contentContainerStyle={{ padding: 16 }}>
               {/* The REP's default plan (REVUIUX-444) - shown in EVERY mode so it can be seen and changed from Match too.
-                  The star on a row sets it; it is independent of the Match / Default toggle. */}
-              {repDefaultKey && !!plans[repDefaultKey] ? (
+                  Tapping a row sets it; it is independent of the Match / Default toggle. */}
+              {chooseDefault ? (
+                <View style={{ marginBottom: 14, backgroundColor: '#33582A', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ fontSize: 15, fontWeight: '900', color: '#fff' }}>Choose your default plan</Text>
+                    <Text style={{ fontSize: 11, color: '#E2EBDF', marginTop: 3 }}>Tap any plan to make it your default.</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => { setChooseDefault(false); setPendingKey(null); }} style={{ borderWidth: 1.5, borderColor: '#CFE3C8', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 9 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '900', color: '#fff' }}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : repDefaultKey && !!plans[repDefaultKey] ? (
                 <View style={{ marginBottom: 14 }}>
                   <Text style={{ fontSize: 9, fontWeight: '900', color: '#4CBB17', letterSpacing: 0.5, marginBottom: 6 }}>MY DEFAULT PLAN</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: '#4CBB17', borderRadius: 12, backgroundColor: '#4CBB170D', paddingHorizontal: 14, paddingVertical: 12 }}>
@@ -208,18 +234,21 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                       )}
                     </View>
                     <TouchableOpacity
-                      onPress={() => pickerScrollRef.current?.scrollTo({ y: 150, animated: true })}
+                      onPress={() => { setChooseDefault(true); pickerScrollRef.current?.scrollTo({ y: 0, animated: true }); }}
                       style={{ backgroundColor: '#4CBB1726', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 }}
                     >
                       <Text style={{ fontSize: 11, fontWeight: '900', color: '#4CBB17' }}>Change</Text>
                     </TouchableOpacity>
                   </View>
-                  <Text style={{ fontSize: 9, color: '#94A3B8', marginTop: 6 }}>Pre-selected on every new deal, on every lead. Tap the star again to clear it.</Text>
+                  <Text style={{ fontSize: 9, color: '#94A3B8', marginTop: 6 }}>Pre-selected on every new deal, on every lead. Tap Change to pick another.</Text>
                 </View>
               ) : (
                 <View style={{ marginBottom: 14, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E1', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12 }}>
                   <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', letterSpacing: 0.5, marginBottom: 4 }}>MY DEFAULT PLAN</Text>
-                  <Text style={{ fontSize: 11, color: '#637381', lineHeight: 15 }}>No default set. Tap the star on a plan to make it your 1 Year default for every deal.</Text>
+                  <Text style={{ fontSize: 11, color: '#637381', lineHeight: 15 }}>No default set. Tap Choose to pick the 1 Year plan every new deal starts with.</Text>
+                  <TouchableOpacity onPress={() => setChooseDefault(true)} style={{ alignSelf: 'flex-start', marginTop: 8, backgroundColor: '#4CBB1726', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '900', color: '#4CBB17' }}>Choose</Text>
+                  </TouchableOpacity>
                 </View>
               )}
               {financingCategories.length === 0 ? (
@@ -234,19 +263,24 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                     )}
                     {cat.plans.map((key) => {
                       const m = calcMonthly(plans, base, key);
-                      const isSel = resolvedKey === key;
                       const isMyDefault = key === repDefaultKey;
+                      const isSel = chooseDefault ? isMyDefault : resolvedKey === key;
                       return (
                         <TouchableOpacity
                           key={key}
                           activeOpacity={0.85}
-                          onPress={() => { commit('custom', key); setShowPicker(false); }}
+                          onPress={() => { if (chooseDefault) { if (!isMyDefault) setPendingKey(key); return; } commit('custom', key); closePicker(); }}
                           style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: isSel ? 2 : 1, borderColor: isSel ? '#4CBB17' : '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 9, backgroundColor: isSel ? '#4CBB170D' : '#fff' }}
                         >
+                          {chooseDefault && (
+                            <View style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: isMyDefault ? '#4A7C2F' : '#94A3B8', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                              {isMyDefault && <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#4A7C2F' }} />}
+                            </View>
+                          )}
                           <View style={{ flex: 1, paddingRight: 12 }}>
                             {isMyDefault && (
                               <View style={{ alignSelf: 'flex-start', backgroundColor: '#4CBB17', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginBottom: 6 }}>
-                                <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5 }}>MY DEFAULT</Text>
+                                <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5 }}>{chooseDefault ? 'CURRENT DEFAULT' : 'MY DEFAULT'}</Text>
                               </View>
                             )}
                             {/* The plan label already spells out the real APR (e.g.
@@ -255,15 +289,6 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                             <Text style={{ fontSize: 11.5, fontWeight: '900', color: '#1C252E', lineHeight: 15 }}>{planLabelOf(plans, key)}</Text>
                           </View>
                           <Text style={{ fontSize: 13, fontWeight: '900', color: '#60A5FA' }}>{m > 0 ? `${fmt(m)}/mo` : '—'}</Text>
-                          {!!onSetRepDefault && (
-                            <TouchableOpacity
-                              onPress={() => onSetRepDefault(isMyDefault ? null : key)}
-                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                              style={{ marginLeft: 10 }}
-                            >
-                              <Ionicons name={isMyDefault ? 'star' : 'star-outline'} size={20} color={isMyDefault ? '#4CBB17' : '#94A3B8'} />
-                            </TouchableOpacity>
-                          )}
                         </TouchableOpacity>
                       );
                     })}
@@ -272,6 +297,37 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
               )}
             </ScrollView>
           </Pressable>
+          {!!pendingKey && !!plans[pendingKey] && (
+            <Pressable onPress={() => setPendingKey(null)} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+              <Pressable onPress={() => {}} style={{ backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 28 }}>
+                <View style={{ alignItems: 'center', marginBottom: 14 }}>
+                  <View style={{ width: 44, height: 5, borderRadius: 3, backgroundColor: '#CBD5E1' }} />
+                </View>
+                <Text style={{ fontSize: 20, fontWeight: '900', color: '#1C252E' }}>{`Set ${planCodeOf(planLabelOf(plans, pendingKey))} as your default?`}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: '#4A7C2F', borderRadius: 14, backgroundColor: '#F1F6EE', paddingHorizontal: 16, paddingVertical: 14, marginTop: 16 }}>
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <Text style={{ fontSize: 15, fontWeight: '900', color: '#1C252E' }}>{`${plans[pendingKey]?.provider ? plans[pendingKey].provider + ' ' : ''}${planCodeOf(planLabelOf(plans, pendingKey))}`}</Text>
+                    {!!(plans[pendingKey]?.shortlabel || plans[pendingKey]?.displayMonths) && (
+                      <Text style={{ fontSize: 12, color: '#637381', marginTop: 2 }}>{plans[pendingKey]?.shortlabel || plans[pendingKey]?.displayMonths}</Text>
+                    )}
+                  </View>
+                  <Text style={{ fontSize: 18, fontWeight: '900', color: '#4F7BE0' }}>{calcMonthly(plans, base, pendingKey) > 0 ? `${fmt(calcMonthly(plans, base, pendingKey))}/mo` : '\u2014'}</Text>
+                </View>
+                <Text style={{ fontSize: 13, color: '#637381', lineHeight: 19, marginTop: 14 }}>
+                  {repDefaultKey && !!plans[repDefaultKey] ? `Replaces ${planCodeOf(planLabelOf(plans, repDefaultKey))}. ` : ''}It will be preselected on every new deal for 1 year program.
+                </Text>
+                <TouchableOpacity
+                  onPress={() => { onSetRepDefault?.(pendingKey); commit('custom', pendingKey); closePicker(); }}
+                  style={{ backgroundColor: '#436B2C', borderRadius: 14, paddingVertical: 17, alignItems: 'center', marginTop: 18 }}
+                >
+                  <Text style={{ fontSize: 16, fontWeight: '900', color: '#fff' }}>Set as default</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setPendingKey(null)} style={{ borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 10 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '900', color: '#1C252E' }}>Cancel</Text>
+                </TouchableOpacity>
+              </Pressable>
+            </Pressable>
+          )}
         </Pressable>
       </Modal>
     </View>

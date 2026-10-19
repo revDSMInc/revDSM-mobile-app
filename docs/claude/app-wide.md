@@ -711,3 +711,809 @@ mode was silent. Now every interaction logs through the **same envelope as the c
   limit) counts as chosen — `withPending` in `CustomLookSheet.tsx`. Save enables and saves it without pressing
   "Add color" first, and the dusk preview shows it live. ⚠️ Save must keep reading `usable` (derived from
   `withPending`), not `colors`, or the pending colour is dropped on save.
+
+## iOS 27 kills the app at launch: the UIScene lifecycle is now mandatory
+
+Two TestFlight crashes came back from the client on build 1.1.0 (28). They were unrelated; this
+note covers the launch one. The other (a `SIGABRT` on a background queue from an uncaught
+`NSException` in an async void TurboModule method) is not diagnosable from the TestFlight log —
+see the ⚠️ at the bottom.
+
+**Symptom.** On an iPhone 17 Pro Max running iOS 27.0 the app died 87 ms after launch, every
+time, before a line of JS ran. On iOS 26 devices it was fine, which made it look device-specific.
+It is not — it is purely an OS-version trap:
+
+```
+Exception Type: EXC_BREAKPOINT (SIGTRAP)   esr: 0xf2000000 (Breakpoint) brk 0
+0  UIKitCore  ___UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption_block_invoke
+3  UIKitCore  -[UIApplication workspace:didCreateScene:withTransitionContext:completion:]
+```
+
+**Root cause.** The app was built with the iOS 27 SDK (`AppStoreTools: 27A261`) and had not
+adopted the UIScene lifecycle: no `UIApplicationSceneManifest`, no `SceneDelegate`, and
+`AppDelegate` created its own `UIWindow(frame:)`. Apple escalated that from a warning to a fatal
+trap. Confirmed by diffing the symbol across two OS versions — on the iOS 26.4 runtime
+(`nm` over its `UIKitCore`) the same check is called:
+
+| OS | symbol | behaviour |
+|---|---|---|
+| iOS 26.x | `__UIApplication`**`LogRuntimeIssueIfNeeded`**`ForNoSceneLifecycleAdoption` | logs a warning |
+| iOS 27.0 | `__UIApplication`**`EvaluateRuntimeIssue`**`ForNoSceneLifecycleAdoption` | `brk #0`, process dies |
+
+⚠️ **This is not a "some testers" bug.** Every user crashes on launch the moment they update to
+iOS 27. Treat any future "app won't open at all" report on a new iOS major as this class of thing
+first.
+
+**The fix.** `ios/revDSM_Sales/SceneDelegate.swift` (new) owns the window and calls
+`startReactNative(withModuleName:in:launchOptions:)`; `AppDelegate` keeps only the Firebase /
+Google Maps / factory setup and stashes `launchOptions` for the scene; `Info.plist` gained a
+`UIApplicationSceneManifest` naming `$(PRODUCT_MODULE_NAME).SceneDelegate`.
+
+⚠️ **React Native 0.84 ships NO UIScene support** — there is not a single `UISceneDelegate`,
+`willConnectToSession` or `UIApplicationSceneManifest` anywhere in the `react-native` package.
+None of this came from the RN template and an RN upgrade will not bring it; it is ours to keep
+working. What RN *does* get right is `RCTKeyWindow()` (`React/Base/RCTUtils.mm`), which already
+walks `connectedScenes`, so RN internals needed no changes. `react-native-keyboard-controller` is
+scene-aware too.
+
+⚠️ **`AppDelegate` must KEEP a `window` property, even though the scene owns the window.** Removing
+it as redundant swaps the launch crash for a different launch crash — found by actually running the
+fixed build on an iOS 27 simulator:
+
+```
+-[RNFBMessagingNSNotificationCenter application_onDidFinishLaunchingNotification:]
+-[UIResponder doesNotRecognizeSelector:]   →  SIGABRT
+```
+
+`window` is an **@optional** member of `UIApplicationDelegate`, and
+react-native-firebase/messaging reads `[UIApplication sharedApplication].delegate.window`
+unguarded (`RNFBMessaging+NSNotificationCenter.m:90`). No property, no selector, dead app. It only
+has to **exist** — `SceneDelegate` assigns the scene's window to it, and it is still nil when that
+RNFB observer runs, because the notification fires before any scene connects. Nil is safe: RNFB
+uses the value only behind nil checks, and only to flip an `isHeadless` prop on an `RCTRootView`,
+which this app never has — the new architecture mounts an `RCTSurfaceHostingProxyRootView`
+(`RCTRootViewFactory.mm:190`), so that branch was already dead before the migration.
+
+**Reproduced and verified on an iOS 27.0 simulator** (`xcrun simctl`, runtime 24A434 vs the
+client's 24A435). Building HEAD's pre-fix `AppDelegate` gave back the client's crash frame for
+frame — `EXC_BREAKPOINT`, `Trace/BPT trap: 5`, the same six frames from
+`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption` down to `FBSScene`. With the fix
+the app launches and runs its JS init. Keep this route in mind: there IS an iOS 27 runtime
+installed, so "only crashes on the new iOS" is reproducible locally rather than guesswork.
+
+⚠️ **The manifest and the delegate method fail differently — you need both.** Stripping only
+`UIApplicationSceneManifest` from a built `.app` does NOT bring the crash back, because
+implementing `application(_:configurationForConnecting:options:)` is itself enough to satisfy
+UIKit's adoption check. What you get instead is a **black screen**: the named configuration is not
+in Info.plist, so the scene is created with no delegate and no window is ever made. So a blank app
+after touching any of this means the manifest, and a launch crash means the delegate method.
+
+⚠️ Do not let `AppDelegate` *create* a window, though. The window must come from the scene
+(`UIWindow(windowScene:)`); a `UIWindow(frame:)` belongs to no scene and renders nothing. And
+`UISceneConfiguration(name: "Default Configuration")` in `AppDelegate` has to match
+`UISceneConfigurationName` in `Info.plist`, or the scene gets no delegate and the app is a blank
+white screen.
+
+Nothing needed migrating to the scene callbacks: the app registers no URL schemes
+(`CFBundleURLTypes` is absent), never calls `Linking.getInitialURL`, and push arrives through
+Firebase/notifee on the app-level `UNUserNotificationCenter` delegate, which scenes do not change.
+If deep links are ever added they belong in `scene(_:openURLContexts:)`, **not**
+`application(_:open:options:)`.
+
+⚠️ `react-native-screens` still calls the deprecated `[UIApplication sharedApplication].keyWindow`
+(`RNSScreenWindowTraits.mm:157`). It resolves fine for a single-scene app, but it is the first
+place to look if status-bar or home-indicator traits misbehave after this change.
+
+⚠️ **The second crash needs Crashlytics before it can be named.** It aborts in
+`performVoidMethodInvocation` (`RCTTurboModule.mm:467`): a native module's *void* method threw an
+`NSException` on a background queue, RN converted it to a `jsi::JSError` and rethrew, and because
+`invokeAsync` runs it outside any JS call nothing catches it — `std::terminate`. **Any** uncaught
+exception in an async void native method is an instant kill that never reaches the JS error
+handler. TestFlight's `.crash` strips both the thread names and the `Application Specific
+Information` section that would carry the exception message, so the module is not identifiable
+from it. Xcode Organizer's copy keeps that section; failing that, `@react-native-firebase/crashlytics`
+(Firebase is already wired) captures the name and reason.
+
+## revRender re-loaded every thumbnail each time the rep came back to the screen
+
+Symptom: open a lead's revRender picker, go back, open it again — every card in the grid shows a
+spinner again, worst on the Inspection tab. The photos were already on disk; the screen just
+couldn't say so in time.
+
+Two causes, both in `screens/RevRender/index.tsx`:
+
+1. `HouseImage` started with `loading = true` and could only name its file **asynchronously**.
+   `warmToLocalCache` is `async` even for a straight cache hit — it awaits
+   `ReactNativeBlobUtil.fs.exists`. A native-stack pop unmounts the screen, so coming back
+   remounts every card, and every card paid that round trip before it could render anything. With
+   4–22 cards that is a visible pass of spinners over a fully cached grid.
+2. A mount-time `Image.prefetch` sweep over every photo. ⚠️ `Image.prefetch` **cannot** cache these
+   urls — they are pre-signed S3 links with no cache headers, which is the entire reason
+   `utils/imageFileCache.ts` exists (the note above). So it re-downloaded every photo on every
+   mount, hit nothing, and competed with the thumbnails actually on screen for bandwidth.
+
+Fix — `utils/imageFileCache.ts` now remembers what it has warmed:
+
+- `warmedPaths`, a module map filled only by `warmToLocalCache`, plus `getWarmedLocalUri(url)`
+  which answers **synchronously** or null.
+- `HouseImage` seeds `resolvedUri` from it and starts `loading` at `!seeded`, so a warm photo
+  paints on the first frame with no spinner at all. Its effect returns early on a hit rather than
+  re-arming `loading` — ⚠️ re-arming it there puts the whole flicker straight back.
+- The prefetch sweep now calls `warmToLocalCache`, which writes a real file, so it actually makes
+  the second visit free. ⚠️ Do not put `Image.prefetch` back.
+- `PhotoPeekPressable`'s `usePeekCachedUri` seeds from the same map, so a remount no longer drops
+  every peek back to cold.
+
+⚠️ The memo is keyed by the **cache path, not the url**. Photo links are re-signed on every read of
+the lead, so the same photo arrives under a different url each visit; `getLocalCachePath` dropping
+the query is what makes the second visit a hit. Keying on the url would miss every time and look
+exactly like no cache at all.
+
+⚠️ Anything that unlinks a cached file must call `forgetWarmedPath` — `enforceImageCacheBudget` and
+`clearImageCache` now do, before the unlink and whether or not it lands. A memo entry outliving its
+file hands callers a `file://` that resolves to nothing, which is worse than a miss. The same need
+is why "tap to retry" uses the new `forgetWarmedUri(url)`: it deletes the **file** as well as the
+entry, because a retry that kept an unreadable file would fail identically forever.
+
+The one case the memo can be wrong about is iOS reclaiming `CacheDir` under disk pressure behind
+the app's back. Then `getWarmedLocalUri` hands back a `file://` that resolves to nothing, the
+`<Image>` fires `onError`, and the rep gets the retry affordance — which clears the entry. That is
+the intended recovery; it is not worth an `fs.exists` on every render to pre-empt, since that check
+is exactly the cost this change removes.
+
+Not verified on a device — checked by reading, `tsc` (45 errors, the unchanged baseline), `eslint`
+(warning count byte-identical to HEAD for all three files) and `jest` (542 pass). The thing to look
+at on device is the second visit to a lead's revRender: the grid should come up already painted.
+
+## Android was rendering the SYSTEM font, not Public Sans — the faces were never linked
+
+Client, comparing screenshots side by side: Android type is smaller, thinner, and the heading /
+body weight difference that iOS shows is absent.
+
+Not a sizing bug. **`android/app/src/main/assets/fonts/` did not exist**, so not one Public Sans
+face was on the device. Every `fontFamily: 'PublicSans-Bold'` resolved to nothing and Android fell
+back to the system font — which is also why Android followed the device "font style" setting while
+iOS did not. iOS was fine throughout: all 11 faces are in `UIAppFonts` and the Xcode Resources phase.
+
+⚠️ **`link-assets-manifest.json` lied.** It listed 9 of the faces as linked, so `react-native-asset`
+was a no-op. The manifest records what a previous run *claimed*, not what is on disk — it had gone
+stale (most likely an `android/` regeneration that was not accompanied by a re-link). Emptying the
+manifest and re-running copied all 11.
+
+**If Android type ever looks like the device font again, check that directory FIRST**, before
+touching `default-font.ts` or any sizing. `ls android/app/src/main/assets/fonts/` is the whole
+diagnosis; the JS side has been correct all along.
+
+⚠️ The re-link also rewrites `ios/…/project.pbxproj`, reassigning UUIDs to the two italic faces for
+no benefit (same paths, same build phase). That churn was reverted — iOS needed nothing.
+
+⚠️ A `git checkout` of `project.pbxproj` to undo that churn **discards any uncommitted Xcode changes
+in it**, which is how the `SceneDelegate.swift` entries from the iOS 27 work were lost and had to be
+rebuilt by hand (build file `761780EE…`, file reference `761780EF…`, mirroring the four
+`AppDelegate.swift` lines). Copy the file aside before reverting it, not after.
+
+### OS text-size scaling is now capped
+
+Nothing in the app constrained `allowFontScaling`, so the OS text-size setting scaled everything
+without limit — the cause of a previously-fixed Job Builder tab-strip clipping, patched there with a
+local `maxFontSizeMultiplier={1.3}`.
+
+`index.js` now applies `MAX_FONT_SCALE = 1.25` to the same `ScaledText` / `ScaledTextInput` wrappers
+that force the family, so it reaches third-party text too.
+
+⚠️ Deliberately a CAP, not `allowFontScaling={false}`. A rep who raised their phone's text size needs
+it, and this app is used outdoors on a doorstep; refusing the setting outright is an accessibility
+regression. A call site that passes its own `maxFontSizeMultiplier` keeps it — the two existing
+`1.3` sites are unaffected.
+
+### Still open: the optical size difference
+
+⚠️ Linking the fonts is expected to close most of the gap, but **it has not been checked side by
+side**. Do NOT reach for `androidTextStyle` / `ANDROID_TEXT_SCALE` before re-comparing on a real
+build: that helper exists for a genuine optical difference at the same `fontSize`, and applying it
+app-wide was already tried and REJECTED on the Leads screen ("these tabs in android look a bit big").
+With the real faces finally loading, the remaining difference may be nil.
+
+## revRender photo-guidance popups: real example photos, and a BLACK primary button
+
+Ticket REVUIUX-483 (comment, Lance): first-time popups when the rep switches mode — Core Products
+shows *"Get in close for best results"*, Roofline Lighting *"Zoom out for best results"*, each with
+**Got it** and **Got it, don't show me this again**.
+
+The first build shipped copy only, with a green icon circle standing in for the examples. QA against
+the design (side-by-side screenshot, 1 Oct) showed two differences, both deliberate in the design:
+
+**The examples ARE the message.** `src/assets/images/revrender-guidance/` now holds three bundled
+PNGs, `require`d statically like `green-rooflines-pitchbook`:
+
+| File | Used by | Shown as |
+|---|---|---|
+| `core-corner-downspout.png` | Core | left tile, caption "Corner + downspout" |
+| `core-gutter-fascia-soffit.png` | Core | right tile, caption "Gutter, fascia, soffit" |
+| `lighting-full-home.png` | Lighting | one wide tile, viewfinder corners + badge "Full home in frame" |
+
+The Lighting example is framed by **four green viewfinder corners** — brackets say "frame it like
+this" in the language of a camera, which is the action being asked for, while the badge names the
+rule in words. Each corner is one `View` showing only its two adjacent edges, with the other two
+widths spelled out as `0` so a corner never depends on sibling render order.
+
+⚠️ **The corners carry a drop shadow for LEGIBILITY, not depth.** `#2EDE56` measures ~1.7:1
+against both the illustration's sky and its road, and all four corners land on one or the other —
+sampled from the bundled PNG, not guessed. Unshadowed they wash out exactly where they carry the
+message. Do not remove the shadow as decoration; if the illustration is ever replaced, re-check the
+four corner regions before doing so.
+
+⚠️ **The overlay is `pointerEvents="none"`.** Corners and badge are drawn on top of the image;
+without it they would silently eat taps, which matters on a card whose whole job is to be dismissed.
+
+⚠️ **The badge is a dark pill with white text** (`rgba(22,28,36,0.88)`, 14.6:1 composited over
+sky), not the light chip it started as — it sits over sky, which is too light for dark text.
+
+⚠️ **`BADGE_INSET` is derived from the bracket, not typed as its own number.** Badge and
+top-left corner both started at inset 10 and overlapped, hiding that corner behind the pill — the
+four brackets have to read as four matching marks, and three plus a fragment reads as a rendering
+bug. `CORNER_INSET + CORNER_SIZE + 6` keeps the badge clear automatically if the corners move.
+
+A rep skims a tip and taps through it — "get in close" means nothing until you have seen how close.
+The two Core shots are ordinary field photos, not studio ones, so they read as "a photo like yours".
+Images sit ABOVE the title, which is the design's order: picture first, then the sentence naming it.
+
+⚠️ **The primary button is green `#2EDE56` with BLACK `#161C24` text** — the black label is the
+part that looks wrong and has already been "corrected" once. Every other green CTA in revRender
+(`+ Add Render Combo`, the mode switch) uses white, but at this green's lightness white sits at
+roughly 1.9:1 contrast while black clears 9:1. Do not re-sync it to the other buttons. The green is
+the same token as the screen's own CTA, and it needs no dark-mode branch because it reads
+identically in both themes — only the card behind it changes.
+
+⚠️ **Radius is `rounded-[14px]`, a soft rect — not the `rounded-full` pill** used elsewhere on
+this screen. Inside a 20px-radius card a full pill fights the card's own corners.
+
+⚠️ **The Core tiles use `resizeMode="cover"` on a fixed 150pt box, not `contain`.** They are
+portrait field photos; letterboxing them inside the card shrinks the roofline until the detail the
+popup is teaching cannot be seen.
+
+⚠️ **`require()` for these is correct** — the IDE hint "may be converted to an import" does not
+apply: Metro needs the literal static path to bundle an asset, so a dynamic import breaks the image
+at runtime while still typechecking.
+
+### Follow-up — the Core popup never appeared at all
+
+Reported: *"by default guidance modal not appear when i landed in configure Render screen"*.
+
+The trigger hung off `handleModeChange` alone, so it fired only on a **switch**. Configure opens in
+Core, which is not a switch — so **the Core tip, the one every rep meets first, never showed**. The
+Lighting tip looked fine because Lighting is only reachable BY switching, which is exactly why the
+bug read as working software.
+
+It is now a `useEffect` keyed on `[status, mode, guidanceSeen]`, so landing on configure and
+switching mode are answered in one place. Keyed on `status` because the tip belongs to the configure
+screen — raising it from the photo grid would put it over the wrong screen. `handleModeChange` no
+longer raises it; two raisers would fire twice on a switch.
+
+⚠️ **There are now TWO "seen" flags and they are not interchangeable.** `guidanceSeen` (state)
+is the persistent *don't show me again*; `guidanceShown` (a **ref**) is this-visit-only. Plain
+**Got it** clears `guidanceFor` but deliberately leaves `guidanceSeen` false — the rep did not opt
+out — so without the ref the next change to that object (opting out of the OTHER mode) re-runs the
+effect and re-raises a tip they already closed. It is a ref precisely so that setting it does not
+re-run the effect.
+
+The ref resets on leaving configure, so a NEW photo gets the guidance again: the advice is about the
+photo, so it is worth repeating per photo until the rep opts out for good.
+
+⚠️ **Dismissal is still device-local.** Lance specified "per rep account"; there is no endpoint
+(see `revrender-lighting-plan.md` §7). A reinstall or a second device re-shows both popups. Not a
+bug — an accepted TestFlight gap that must not stay.
+
+## revRender Lighting look tiles rendered as two rows of dots in a near-square box
+
+Reported against the mock: the look grid showed a tall tile with **two stacked rows** of pucks,
+where the design is one wide landscape strip with a **single** row.
+
+Two independent causes, both in the defaults:
+
+- **`LookTile` was `width: '23%'` — four per row, not three.** At 23% of the card the tile is about
+  78pt wide against a 62pt strip, so it is nearly square and cannot read as a length of roofline.
+- **`LightStrip` defaults to `rows = 2`** and `LookTile` never overrode it. The queue-row swatch
+  passes `rows={1}` explicitly, which is why the small strip looked right while the grid did not.
+
+Now `TILE_COLUMNS = 3` / `TILE_WIDTH = '31%'` exported from `LookTile`, and the tile passes
+`rows={1} pucks={7} height={54}`. On a 390pt phone that is a 101pt × 54pt tile — a 1.87 landscape
+ratio — and 7 pucks occupy 93pt, so the row fits without wrapping.
+
+⚠️ **The grid padding in `LightingPanel` imports `TILE_COLUMNS`/`TILE_WIDTH`; it does not retype
+them.** `justify-between` spreads a partial row across the full width, so the invisible spacers that
+pad a group to a whole row must use the same column count as the tiles. When these were two separate
+literals (`% 4` and `'23%'`), changing one silently broke the alignment of every short section —
+Everyday has 3 looks, Holidays has 18.
+
+⚠️ **One row of pucks is also the correct DESCRIPTION.** A look is a single run of lights along
+a roofline; two stacked rows misrepresent the product being sold, not just the layout.
+
+⚠️ The dashed "New custom look" tile carries its own height — keep it equal to the strip
+height in `LookTile` (54) or it sits proud of the real looks beside it.
+
+### Follow-up — tile badges and the Lighting card frame
+
+Three more differences against the mock, all in the same grid:
+
+**The Lighting panel had no card.** Core renders inside `rounded-[24px] border p-5 mb-6` with a
+`#2EDE56` outline; Lighting was bare. The two modes swap INSIDE one frame, so a missing frame reads
+as a different screen rather than a different mode. `LightingPanel`'s root is a bare `View` with no
+padding of its own, so the card's `p-5` does not double up.
+
+**NOW / NEXT moved to bottom-left, on the strip, as a light pill.** They were small green chips
+top-right. They label the strip, so they belong on it, and bottom-left is the one corner that never
+collides with the select tick or the favourite star. NOW is solid white, NEXT a translucent wash —
+the pair is a hierarchy (one is live, one is coming), not two equal labels.
+
+**The select tick moved inside the corner** (`top:5 right:5`, was `top:-6 right:-6`).
+
+⚠️ **All three badges are anchored to the STRIP box, not the outer `TouchableOpacity`** — which
+also contains the name label underneath. Anchored to the outer element, `bottom` lands on the text
+instead of the strip. This is also why the tick had to come inside: the strip box is
+`overflow-hidden`, so a negative offset is now clipped entirely rather than merely overlapping the
+neighbouring tile.
+
+### Follow-up — the selected list and Add button belong OUTSIDE the green card
+
+In the mock the green bordered card ends after the look grid; **"N renders selected" and
+"+ Add N Render Combos" sit below it on the page background**. They were rendering inside the
+border.
+
+Split out as **`LightingFooter`**, exported from `LightingPanel.tsx` and rendered by
+`RevRender/index.tsx` as a sibling of the card rather than a child.
+
+⚠️ **Do not fold `LightingFooter` back into `LightingPanel`.** It is the obvious
+simplification — same file, same props, used in exactly one place — and it is precisely what puts
+the basket back inside the border. The card frames *what the rep can pick*; the basket and its
+action are the step after. The separation is the layout.
+
+Consequences of the split, all already applied:
+
+- `LightingPanel` no longer takes `onAdd`, and its `selectedLooks` memo is gone — the panel only
+  selects. Both became unused and were caught by eslint, not by tsc.
+- The selected rows were restyled to the mock: a tinted group box with white rows inside, a green
+  heading, and 20pt star / close icons (up from 18).
+- Tile strips went 54 → **64pt** so the grid matches the mock's proportions — about 99 × 64 on a
+  390pt phone, a 1.54 ratio. ⚠️ The dashed "New custom look" tile in `LightingPanel` carries its
+  own height and must be changed with it, or it sits proud of the real looks.
+
+### Follow-up — the empty state
+
+With nothing selected the footer showed only a greyed button reading
+**"+ Add 0 Render Combos"**. The mock has a **"Nothing selected yet / Pick one or more looks
+above."** box, and the button reads "+ Add Render Combo".
+
+**`addButtonLabel` now returns the singular for `n <= 1`, not just `n === 1`.** The old
+`n === 1 ? singular : plural` sent 0 down the plural branch — correct English, wrong here: the
+button is disabled at zero, so the label names the action rather than counting it, and a literal 0
+in a greyed-out control reads as a bug rather than as "nothing picked yet". Covered by
+`__tests__/utils/revrender-lighting-selection.test.ts`, including that the label carries no count
+exactly when `canAdd` is false — the singular at zero is only honest while the control is inert.
+
+**The empty state is a BOX in the slot the selected list occupies**, not an absence. A disabled
+button floating under the grid with nothing explaining it reads as broken; the box gives the
+greying a stated reason.
+
+### Follow-up — "Browse all" sheet rebuilt to the handoff
+
+`CategorySheet` was a filtered list of filled pill cards. The mock is a titled sheet of grouped
+divider rows with a pinned Close.
+
+- **Header** — "Browse teams" + "Pick a league or conference" (themes get the category wording).
+- **Grouped under headings.** `TEAM_GROUPS` adds Pro / College · Power 4 / College · More alongside
+  the existing `THEME_GROUPS`. ⚠️ Rows are ordered **by the group**, not by the catalogue —
+  `categoriesForTab` returns whatever order it holds, so NFL/MLB/NHL only reads as the handoff has
+  it because the group lists them. Anything unlisted falls through to "More", so a new league needs
+  no edit here.
+- **Rows are a list, not cards**: hairline divider, no fill, count right-aligned. Selection is
+  named by colour + tick, which does not change row height and so cannot shift the list under a
+  tapping finger.
+- **"16 schools" vs "32 teams"** — `SCHOOL_GROUPS` carries that distinction; the handoff is
+  explicit about it.
+- **Close is pinned outside the `ScrollView`** (the list is `shrink`), so it is reachable without
+  scrolling past twelve leagues. Sheet raised 70% → **85%**: with chrome plus a pinned footer, 70%
+  left only a few rows visible.
+
+⚠️ **The filter field was removed, and its state and the `normalize` import with it.** Teams
+has 12 categories and themes 4 — a search box over a list that short is a control the rep must
+dismiss to reach what they can already see. The important part: `q` also gated the grouped-vs-flat
+branch, so leaving the state behind would have left a branch that could never run. If a filter is
+ever wanted back, restore that branch too, or filtered results will be scattered under headings.
+
+## Reanimated 4: the babel plugin is `react-native-worklets/plugin`, and it was missing
+
+`babel.config.js` had presets only. With **reanimated 4.4.1 + react-native-worklets 0.9.1**
+installed and no worklet plugin, the app **builds fine and then SIGABRTs at launch** with
+`getValueUnpacker: assertion failed` — so it presents as a native crash, not a config problem.
+That is the whole difficulty: nothing in the build output points at babel.
+
+⚠️ **It is `react-native-worklets/plugin`, NOT `react-native-reanimated/plugin`.** Reanimated 4
+moved worklet transformation out into its own package. The old path is what every pre-4 tutorial
+says, and it does not exist here.
+
+⚠️ **It must stay LAST in `plugins`.** It rewrites worklet-marked functions; a plugin after it
+runs on transformed output and can undo the rewrite.
+
+Verify a change to this file by transforming a real file rather than trusting the build —
+`babel.transformFileSync` on a `'worklet'` function, checking the output contains `__workletHash`.
+(A nonexistent filename makes the plugin throw ENOENT, which looks like a plugin failure and is not.)
+
+## revRender light-strip glow: three halos, because `shadowColor` is iOS-only
+
+The look tiles' LED glow used `shadowColor` / `shadowOpacity` / `shadowRadius` plus `elevation: 4`.
+On Android that is **a grey drop shadow** — `elevation` cannot express a coloured glow — so the
+strips rendered flat and muddy while looking correct on iOS.
+
+Now three absolutely-positioned translucent halos per puck behind the lens (3.2× @ 0.10, 2.2× @ 0.16,
+1.5× @ 0.30), which renders identically on both platforms.
+
+⚠️ **The halos must never affect layout.** They are `position: 'absolute'` and
+`pointerEvents="none"` inside a fixed-size cell. **The dark gaps between pucks ARE the product** — if
+the halos push the pucks apart or merge into a continuous line, the strip stops describing what is
+being sold.
+
+⚠️ **The channel band is part of the design, not decoration.** A faint track with a lit top edge
+behind the pucks, standing in for the aluminium channel. Without it the lights float in the dark
+rather than reading as a fitted product. Also absolutely positioned, and it deliberately bleeds past
+the puck row so the channel runs off both edges like a real run.
+
+
+## revRender custom look builder: six colours, a dusk preview, and a picker that opens
+
+Reported against Lance's mockup: the custom look sheet did not match it, and the colour limit was
+wrong. Four separate gaps, all in `lighting/CustomLookSheet.tsx`:
+
+**`MAX_CUSTOM_COLORS` was 4; the mock says "Colors · up to 6".** The catalogue's own ceiling is 6
+too, so a rep building a six-colour school look hit a dead "Add" button two colours early. The
+section label is now generated from the constant (`Colors · up to {MAX_CUSTOM_COLORS}`) so the
+number on screen cannot drift from the number enforced.
+
+⚠️ **At the limit the plus button is DISABLED, not hidden.** A control that vanishes reads as a
+glitch; a greyed one that stays put, with "That's all 6 colors. Remove one to swap it out."
+underneath, says the limit is deliberate.
+
+**There was no dusk preview.** Swatches say which colours were picked; only the preview says what
+the homeowner will see, which is the thing being sold. Added as `DuskPreview` — dusk sky, the
+channel, 18 pucks with halos, and a wash of light down the wall below. It is also the one place the
+*pattern* becomes visible, since the sheet has no pattern control.
+
+The puck sequence comes from **`puckColors()` in `utils/revrender-lighting/colors.ts`** — pure, so
+it is tested (`__tests__/utils/revrender-lighting-colors.test.ts`). ⚠️ One colour renders `single`
+whatever pattern is passed: mid-build (first colour added, pattern already computed as
+`alternating`) the preview would otherwise show something the product cannot do.
+
+**The wheel was always on screen; it is now a picker card that opens per swatch.** Permanently
+mounted, it pushed the preview and Save off the bottom of a small phone. Tapping a swatch opens the
+card on that colour ("Update color"), the dashed plus opens it empty ("Add color").
+
+⚠️ **The footer is pinned outside the `ScrollView`** (which is `shrink`). With the picker open the
+content is tall enough that Save would otherwise be unreachable.
+
+**Brightness was five fixed chips; the mock has a continuous Darker → Brighter track.** The wheel
+covers hue and saturation only, so value needs its own control or dark and muted shades are
+unreachable. Implemented as a `PanResponder` over a 24-step ramp of the current hue, with the knob
+positioned from `hsv.v`. The wheel knob is likewise driven from `hsv.h`/`hsv.s` — without it the
+wheel gives no feedback once you lift your finger.
+
+## revRender Custom tab: the "New custom look" tile goes FIRST
+
+⚠️ It was appended **after** the saved looks. Making a new look is the reason the tab exists, and
+appended last the button drifts further away with every look a rep saves. The mock puts it first.
+
+The grid pads around it: the new tile occupies one column, so the padding count is
+`(TILE_COLUMNS - ((customs.length + 1) % TILE_COLUMNS)) % TILE_COLUMNS`. Forgetting the `+ 1`
+spreads a single saved look across the whole row.
+
+"Hold one to edit" renders only when there is something to hold — a hint about editing looks the rep
+has not made yet is noise.
+
+## revRender colour picker: a crash on the brightness bar, and a wheel that scrolled the sheet
+
+Two device reports against the custom look builder, one root cause each.
+
+### The crash: `Math.max(0, NaN)` is NaN
+
+Dragging the brightness bar crashed the app. The chain:
+
+1. A touch that leaves the view can report an **undefined coordinate**. The handlers used
+   `nativeEvent.locationX`, which is only meaningful inside the view — and dragging off the end is
+   exactly what you do when you grab the knob and keep going.
+2. `undefined / width` is `NaN`.
+3. ⚠️ **`Math.max(0, NaN)` returns `NaN`** — a min/max clamp does **not** filter NaN out. This is
+   the whole bug; the code looked clamped and was not.
+4. The NaN reached `hsvToHex`, where a NaN hue makes the sector index NaN, the sector lookup returns
+   `undefined`, and destructuring it **throws** (`t is not iterable`) — during *render*, so it takes
+   the screen down rather than just producing a wrong colour. It also reached styles directly as
+   `backgroundColor: "#NANNANNAN"` and `left: "NaN%"`, and **Android throws on an unparseable colour
+   string**.
+
+Fixes, defence in depth:
+
+- **`clamp01()` in `utils/revrender-lighting/colors.ts`** — every gesture-derived number goes
+  through it. ⚠️ Only **NaN** falls back; **±Infinity clamps to the end of the range it points at**,
+  because it means a real overshoot (a divide by zero width). An earlier version used
+  `!Number.isFinite()` and snapped the bar to black on a hard drag right — the test caught it.
+- **`hsvToHex` sanitises its own inputs** and wraps hue, so it can no longer throw from any caller.
+- **`hexToHsv` returns a usable colour for a malformed hex** instead of NaN channels.
+- Gestures now track **page coordinates** against a frame measured with `measureInWindow`, which
+  stays valid outside the view, so the NaN is not produced in the first place.
+
+⚠️ The frame is re-measured on **every grant**, not only on layout: the sheet scrolls, and a stale
+origin offsets every hue by the scroll distance.
+
+### The wheel scrolled the sheet instead of picking a colour
+
+Dragging the knob vertically scrolled the enclosing `ScrollView`. Two changes, both needed:
+
+- **`onStartShouldSetPanResponderCapture` / `onMoveShouldSetPanResponderCapture`** (the `Capture`
+  variants) plus `onPanResponderTerminationRequest: () => false`, so the responder claims the touch
+  before the ScrollView is offered it and does not hand it back mid-drag.
+- ⚠️ **Capture alone was not enough on Android** — the ScrollView could still take a drag that
+  started mostly vertical. The sheet also sets `scrollEnabled={!dragging}` while a knob is held.
+
+⚠️ `dragging` is cleared on **both** `onPanResponderRelease` and `onPanResponderTerminate`. Release
+alone leaves the ScrollView permanently frozen when a gesture is interrupted — an incoming call, the
+sheet dismissing mid-drag.
+
+## revRender favourites: a confirm popover on hold, and per-rep-account persistence
+
+Two changes that arrived together — the mock's long-press behaviour, and the backend's new
+preferences endpoints (`docs/claude/revrender-preferences-api.md`).
+
+### Holding a tile raises a bubble; it does not toggle
+
+⚠️ **A hold no longer favourites directly.** It raises a dark "Favorite" / "Unfavorite" pill above
+the tile and the rep taps that to confirm, as the mock has it. A gesture that silently changed state
+was both undiscoverable — nothing on screen said it existed — and unforgiving, since an accidental
+hold altered the rep's list with no visible way back.
+
+`LookTile`'s `onLongPress` now reports the tile's **window frame** (`measureInWindow`) rather than
+firing an action, so the caller can anchor the bubble to the tile that was held.
+
+⚠️ **`FavouritePopover` renders in a `Modal`.** Inline it is clipped by the lighting card's
+`overflow-hidden` and it scrolls away from the tile it belongs to. It prefers to sit above the tile
+and flips below when that would run under the header, and it is clamped to the screen edges.
+
+`Vibration.vibrate(18)` on the hold confirms the gesture registered before the bubble animates in —
+the same pattern as `useChatSession`; there is no haptics package in this repo.
+
+### Favourites and recents now live on the rep's account
+
+`LeadService.getRevRenderPreferences()` on mount, `toggleRevRenderFavourite(lookId)` on each tap.
+
+⚠️ **Toggle, never a whole-list write.** `setRevRenderFavourites` exists for offline reconciliation
+only. If two devices each sent their full list, the later one would silently wipe the other's
+change.
+
+⚠️ **The toggle is optimistic and MUST revert on failure.** A favourite is one tap and has to feel
+instant. But without the revert the star stays filled against a list the server never took, so the
+rep believes the look was saved and loses it on reload.
+
+⚠️ **`applyServerPreferences()` deliberately merges only `fav` and `recent`.** The GET also returns
+`customLooks` and `guidanceDismissed` and they are **always empty today** — the fields exist,
+nothing writes to them. Spreading the response into state would delete the rep's custom looks on
+every single mount. It also leaves `sel` alone, which is this screen's working state.
+
+### `recordRendered()` is deleted — do not add it back
+
+"Recently Rendered" is now derived server-side from completed run rows (`renderType: 'look'`,
+newest first, distinct ids). A run row only exists once a render **completed**, which settles 483
+§13's open question ("record at Add or at Generate?") by construction. Writing recents from the
+client as well would be a second source of truth, and the two would disagree the first time a
+generate failed after the queue was built. A tombstone comment sits where it was.
+
+⚠️ **Keep filtering favourites out of recents CLIENT-SIDE** in `recentsToShow()`. The server
+deliberately does not filter: filtering at display time is what makes unfavouriting a look bring it
+straight back into Recents. Doing it server-side would make that irreversible.
+
+### Still device-local
+
+Custom looks and photo-guidance dismissal. The backend stopped short deliberately — custom looks
+hold real content rather than ids, so they need decisions nobody has made (what happens when a rep
+edits one already used by a render, whether names are unique per rep, whether they sync at all).
+⚠️ They currently live in **component state**, so they are still lost when the screen unmounts; the
+interim fix the backend doc asks for is device storage, which is **not done yet**.
+
+## revRender queue rows: the LIGHTING / CORE badge is right-aligned
+
+Reported against the mock: the mode badge sat immediately after the photo label instead of at the
+right edge beside the delete button.
+
+It was a **child of the title group** (`[number] [label] [badge]`), so the row's `justify-between`
+pushed that whole group left and the badge landed wherever the label happened to end — a different
+x-position on every row, and visually a suffix on the photo's name.
+
+It is now a **sibling**, grouped with the delete button on the right:
+
+```
+[1] Front  ……………………  [• LIGHTING] [🗑]
+```
+
+Two sizing rules make it hold:
+
+- ⚠️ The title group takes `shrink min-w-0` and the label `numberOfLines={1}`. Without `min-w-0` a
+  flex child will not shrink below its content width, so a long photo label would push the badge
+  and the delete button off the right edge instead of ellipsizing.
+- ⚠️ The badge group takes `shrink-0` so the badge is never compressed to fit a long label — the
+  text is the tag, and a clipped "LIGHTIN" is worse than a truncated photo name.
+
+Nothing about the badge's own styling changed (`#1F2937` / `#FFC94D` with the amber dot for
+Lighting, neutral for Core); only where it sits in the row.
+
+## revRender Results: image loaders, and renders appearing without a pull-to-refresh
+
+Two reports against `Your Renders` (`screens/RevRender/lighting/ResultsPanel.tsx`), with one shared
+cause: **the screen navigates to Results the moment generation is requested**, while the server
+takes ~30 s per render.
+
+### Renders only appeared after pull-to-refresh
+
+`load()` ran once on mount, so the panel fetched the runs list before any of the new renders
+existed, reported **"0 ready"**, and then sat there. The rep had to pull-to-refresh to discover
+their work had succeeded.
+
+`RevRender/index.tsx` now records `setPendingRenderCount(payloads.length)` when it submits, and
+passes it as `expectedNewRenders`. The panel polls every **5 s** until they land.
+
+⚠️ **The target is `baseline + expected`, not "the list is non-empty".** A rep usually already has
+renders from an earlier batch, so stopping at the first non-empty response would stop immediately
+and show only the old ones.
+
+⚠️ **A failed request returns `-1`, not `0`.** Returning 0 would read as "no renders yet" and, on a
+baseline of zero, satisfy nothing while silently looking like progress — the poll must not treat a
+network error as a measurement.
+
+⚠️ **`POLL_TIMEOUT_MS` (5 min) is a hard ceiling** so a render that never completes cannot poll
+forever in the rep's pocket, and ⚠️ **the timer is cleared on unmount** — the panel is dismounted by
+Back, and a live timer would keep hitting the API against a dead screen.
+
+### The image area was blank white while loading
+
+Full-size renders come from S3 over a rep's cellular connection, so each card showed an empty
+200 pt panel for several seconds. Each card now tracks its own load state, keyed by `runId`.
+
+⚠️ **The spinner sits BEHIND the `<Image>` in a fixed-height box; the image is never swapped out
+for it.** Conditionally rendering the `<Image>` restarts the download each time the flag flips, and
+the card jumps when a differently-sized placeholder is replaced.
+
+⚠️ `imageLoading[runId] !== false` — the spinner shows until `onLoadEnd` explicitly sets `false`.
+Testing truthiness would hide it on the first frame, before `onLoadStart` has run, which is exactly
+the moment it is needed.
+
+### Two empty states, not one
+
+"No renders yet · Generate from the queue" is **wrong** while a generate is in flight: it tells the
+rep nothing is coming, seconds after they asked for it. While `awaitingRenders` the panel shows a
+spinner and "Generating your renders… about 30 seconds each", and the header reads
+`N ready · generating…` rather than a count the rep can see is stale.
+
+## iOS build & launch traps (Xcode target membership, build DB)
+
+### Blank app on launch: `SceneDelegate.swift` was never added to the Xcode target
+
+Ticket: *app launched to a black screen with a working status bar — in the simulator, in a local
+Release build, and on TestFlight.* Native came up fine (status bar, scene, window); no JS ever ran.
+
+**Root cause.** `ios/revDSM_Sales/SceneDelegate.swift` existed on disk but was absent from
+`project.pbxproj` entirely — no `PBXFileReference`, no `PBXBuildFile`, not in Compile Sources. So the
+class was never compiled into the binary, and the console said so on every launch:
+
+```
+UIWindowSceneSessionRoleApplication contained UISceneDelegateClassName key,
+but could not load class with name "revDSM_Sales.SceneDelegate".
+```
+
+`Info.plist` names `$(PRODUCT_MODULE_NAME).SceneDelegate` as the scene delegate; UIKit could not
+resolve it, so the scene got **no delegate**, nothing ever called
+`factory.startReactNative(withModuleName:in:launchOptions:)`, and the window stayed empty.
+
+- ⚠️ **A Swift file on disk is not in the build.** It must appear in the target's Compile Sources.
+  Add it in Xcode (right-click the group › Add Files, **Reference files in place**, tick the target) —
+  hand-editing `project.pbxproj` needs four separate entries and is easy to corrupt.
+- ⚠️ **`could not load class with name "<Module>.<Class>"` means the class is not in the binary.**
+  Check Compile Sources first; `$(PRODUCT_MODULE_NAME)` resolution is the rarer second cause.
+- The symptom is identical in Debug and Release, which is what makes it confusing: Metro being up or
+  down changes nothing, so the usual "is Metro running / --reset-cache" path is a dead end. **If the
+  status bar renders but the app is black in BOTH Debug and TestFlight, read the device console for a
+  scene-delegate line before suspecting Metro or the JS.**
+- Ruled out on the way, all three innocent: `config/env.ts` throwing on a missing key (the `.env`
+  values *are* correctly inlined into a production bundle — verified by extracting `API_URL`'s value
+  from a `--dev false` Hermes bundle with `strings`), the `UIApplicationSceneManifest` entry itself
+  (present and correct), and the `SceneDelegate` implementation (correct — it binds the window to the
+  scene via `UIWindow(windowScene:)` and borrows the factory from `AppDelegate`).
+
+### `bundleURL()` and the `#if DEBUG` implicit-return scare (NOT the blank-screen cause)
+
+While chasing the blank screen above, `ReactNativeDelegate.bundleURL()` in `AppDelegate.swift` looked
+like a second bug: neither `#if DEBUG` branch had an explicit `return`. Explicit `return`s were added
+and are worth keeping for clarity.
+
+- ⚠️ **This was never the cause.** Swift's implicit return reaches inside `#if`/`#else`, so the
+  original compiled and returned correctly. Do not cite it as the fix, and do not "restore parity"
+  by removing the `return`s either — they are harmless and clearer.
+
+### Xcode "database is locked" is not a project error
+
+`unable to attach DB: ... build.db: database is locked. Possibly there are two concurrent builds
+running in the same filesystem location.` means exactly what it says: Xcode and a second builder
+(a terminal `xcodebuild`, or an interrupted earlier build that left a `build.db-journal`) hit the
+same DerivedData.
+
+- Fix: make sure no `xcodebuild`/`XCBBuildService` is running, then delete
+  `DerivedData/<project>-<hash>/Build/Intermediates.noindex/XCBuildData`. Xcode regenerates it; it
+  costs one full rebuild and leaves `Pods.build` and the rest of DerivedData alone. Nuking all of
+  DerivedData is not necessary.
+- ⚠️ Don't run `xcodebuild` from a terminal while Xcode is building the same workspace — that is how
+  the lock gets created in the first place.
+
+## `MainHeader.onNavigate` ends the rep's lead session
+
+`widgets/common/MainHeader.tsx`. Every header route funnels through one `onNavigate`, which calls
+`endActiveLeadWorkSession()` **only when the destination is `homeRoute`** (`Leads`, or
+`InstallerDashboard` for an installer).
+
+⚠️ **Only home ends the lead.** Account Settings, Job Tracker, My Learning, the notification bell
+and chat are side trips a rep takes from INSIDE a lead and returns from — they are part of working
+it. An earlier version fired on every header navigation and ended the session on all of them, which
+is wrong. Lead Center's own `HeaderContext` handler gates on the same destination.
+
+⚠️ **Do not remove that call as "the header shouldn't know about leads".** It is there because the
+header is the only component that sees *every* way a rep leaves a lead. Lead Center used to bind
+its own handler through `HeaderContext`, but inside a `useFocusEffect` — which tears down the
+moment a child screen (Deal Center, Job Builder, Pitch Book) opens, so leaving from there released
+nothing and the rep stayed live on the ops board.
+
+⚠️ **Fire-and-forget, and it must stay that way.** Navigation must never wait on two network
+calls, and a rep leaving a door often has no signal. It is also safe to call unconditionally: it
+reads the active session from MMKV and no-ops when none is open, so it costs nothing on screens
+that have no lead.
+
+Full ticket, including why both paths clear the stored session before awaiting (the double-send
+guard): [`lead-center.md`](lead-center.md).
+
+## Ticket — the axios timeout, and noticing a stall from the interceptors
+
+Changed in `services/api/index.ts`. Full ticket, including why `/health` was never being called:
+[`offline.md`](offline.md).
+
+**`timeout: 120000` → `REQUEST_TIMEOUT_MS = 15_000`.** Two minutes is what a rep on 1 bar of 5G
+actually waited in a client video — and twice over, because the TanStack default is `retry: 1`
+(`services/api/queryClient.ts`), so the real ceiling was **four minutes** of dead screen. A
+request that has not answered in 15 s on a field device is not going to; the cached copy is the
+better answer.
+
+⚠️ **The timeout is the ceiling on every offline fallback in the app.** Nothing downstream — no
+banner, no cache, no queue — can engage until the request gives up, because all of it is reached
+through the error interceptor. Raising this number again silently lengthens every one of them.
+
+**Both interceptors now bracket the request**: the request interceptor calls `beginRequest(config
+.url)` and stashes the id on `config.__inFlightId`; both response handlers call `endRequest(...)`.
+That lets `services/connectivity.ts` fire the `/health` probe **while a request is still open**,
+which is the only way to detect a connection that stalls instead of failing.
+
+⚠️ **The id must be released on BOTH paths.** A miss on the error branch leaks an entry that never
+clears, and the tracker then reports a permanent stall — the app would sit in "Weak connection"
+for the rest of the session. Both `endRequest` calls read through `?? null`, so a request that
+never reached the request interceptor (an axios config error) is a no-op rather than a throw.
+
+⚠️ **`beginRequest` returns `null` for the probe's own URL**, so the probe is never measured as
+traffic by the thing it feeds. The probe uses bare `fetch`, not this instance, so it is only
+reachable here if someone routes it through axios later — the guard is cheap insurance.
+
+
+## `AnnotationRenderHost` - an app-root hidden WebView
+
+`widgets/common/AnnotationRenderHost.tsx`, mounted once in `App.tsx` beside `FlashMessage`. Zero-size and invisible, it is the canvas `services/annotationRenderer.ts` draws on, so an annotated photo can be flattened after the annotation screen has closed (Save no longer blocks). ⚠️ Keep it mounted at the ROOT - a WebView inside the screen dies with the screen and takes in-flight renders with it. Its page is `utils/annotation-render-html.ts`. Details: `lead-center.md` § "Annotation Save".
+
+
+## Photos already on the device must not show a spinner when a screen is reopened
+
+Report (Manage Photos): *"every time I come on this screen all the images show loading, even ones I already viewed - only a NEW or newly annotated image should show it."* Two causes, both fixed:
+- `widgets/common/LoadingImage.tsx` started with `loading = true` for EVERY image and waited for `onLoadEnd`, so a photo that was already a `file://` on the device flashed a spinner on each mount. It now only spins for a REMOTE uri that has not loaded yet this session (`needsSpinner`: not a local file and not in `loadedKeys`, keyed by the url WITHOUT its query so a re-signed url does not look new). ⚠️ Do not put the spinner back for local files - it is meant for bytes that are really still arriving.
+- `utils/imageFileCache.ts`: `warmedPaths` is in memory only, so on a cold start every saved photo had no known local file and drew from its remote url (spinner + re-download) until an async `exists` came back. Cache files are now ALSO recorded in MMKV (`imgcache:<path>`, via `rememberWarmed`), and `getWarmedLocalUri` answers from that index synchronously, so the first render already points at the file. The index is only a hint: `verifyIndexedUri` confirms it on disk once per session, and `hooks/useWarmedImageUris.ts` falls back to the url (and re-warms) for any entry the OS purged. ⚠️ Anything that deletes a cache file must go through `forgetWarmedPath` (it also clears the index) or a stale index would point at a missing file. The `imgcache:` keys are session-scoped, so a logout only loses the cold seed, never a photo.
+- Not verified on device: kill + relaunch, open Manage Photos - saved photos paint with no spinner; a genuinely new photo still spins until it arrives.
+
+- **Follow-up - `LoadingImage` holds the previous image across a uri change.** When `uri` changes after a first paint (a pending photo handing over to its server copy, a re-edit's new bytes), the old image stays under the new one until the new one has painted, and `onLoaded` fires when it has. ⚠️ Do not replace that with a plain `<Image source={{uri}}>` swap - the tile blanks while the new file decodes. The spinner is suppressed while a previous image is being held.
+
+- **Follow-up - `getLocalCachePath` keeps the query for Google Maps urls** (`utils/imageFileCache.ts`, `isQueryKeyedUrl`). The rule "drop the signature so a re-signed url still hits the cache" is right for S3 but wrong for `maps.googleapis.com` / `maps.google.com`, where location / size / heading live in the query: all leads' street views shared one file. ⚠️ Any other host whose query is the identity needs adding there. See `notifications-chat.md` (street-view header picture).

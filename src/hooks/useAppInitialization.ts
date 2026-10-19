@@ -18,6 +18,7 @@ import { startMapFilterSync } from '../services/offlineMapFilters';
 import { startDeliveryPreferenceSync } from '../services/offlineAgreementDelivery';
 import { adoptSessionOwner } from '../services/sessionScope';
 import { startPhotoQueueSync } from '../utils/uploadQueue';
+import { startAnnotationJobSync } from '../services/annotationSaveService';
 import { startActivityLogSync } from '../services/offlineActivityLog';
 import { startBackgroundUploadService } from '../services/background/backgroundUploadService';
 import { startCalculatorSettingsSync } from '../services/offlineSettings';
@@ -176,6 +177,7 @@ export function useAppInitialization() {
     startOfflineWorkSync();
 
     startPhotoQueueSync();
+    startAnnotationJobSync();
 
     startActivityLogSync();
 

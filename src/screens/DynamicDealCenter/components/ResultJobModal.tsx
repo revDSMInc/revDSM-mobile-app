@@ -21,7 +21,9 @@ import { isOnline } from '../../../services/connectivity';
 import {
   ensureOfflineWorkForLead,
   saveOfflineFunding,
+  saveOfflineFundingActivate,
   saveOfflineFundingCollected,
+  saveOfflineFundingDecision,
   saveOfflineFundingSubmit,
 } from '../../../services/offlineLeadStore';
 import {
@@ -47,12 +49,12 @@ import { FS, FUND, PS } from './funding/funding-theme';
 import { ModalFlashHost } from '../../../widgets/common/ModalFlashHost';
 import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
 import { FundingView } from './funding/FundingView';
-import { Storage } from '../../../utils/storage';
-import { fundingOwnerKey, shouldAdoptSavedFunding } from '../../../utils/funding-owner';
 import { SendLinkModal } from './funding/SendLinkModal';
 import { DropdownChoice } from './funding/DropdownChoice';
 import { CoverageBar } from './funding/CoverageBar';
 import { BlockerList } from './funding/BlockerList';
+import type { SettledAction } from '../../../services/api/FundingService';
+import { ScopeSwitchPrompt, type ScopePrompt } from './funding/ScopeSwitchPrompt';
 import { useFunding } from '../hooks/useFunding';
 import { LeadService } from '../../../services/api/leads';
 import type {
@@ -78,6 +80,9 @@ import {
   MULTI_METHOD_ENABLED,
   needsAttentionRowId,
   newPaymentId,
+  applyOfflineActivation,
+  withSettledRows,
+  applyOfflineDecision,
   offlineFundingRecord,
   paymentAllocations,
   structureHint,
@@ -89,6 +94,7 @@ import {
   type PaymentRow,
   type PayMode,
   type PayStructure,
+  fundingBelongsToCalculator,
 } from '../utils/funding';
 
 const ONE_LEG_OPTIONS = ['No', 'MR', 'MRS'];
@@ -299,6 +305,8 @@ export function ResultJobModal({
   const [linkUrl, setLinkUrl] = useState('');
   const [isLoadingLink, setIsLoadingLink] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [scopePrompt, setScopePrompt] = useState<ScopePrompt | null>(null);
+  const [refundDue, setRefundDue] = useState<number | null>(null);
   // Offline there is no server record, so the Funding screen is fed from the rows the rep
   // just entered. Cleared whenever the modal reopens, with the rest of the state.
   const [offlineRecord, setOfflineRecord] = useState<FundingRecord | null>(null);
@@ -330,6 +338,8 @@ export function ResultJobModal({
     setLinkTarget(null);
     setLinkUrl('');
     setSaveError(null);
+    setScopePrompt(null);
+    setRefundDue(null);
     setOfflineRecord(null);
     setOfflineWorkId(null);
     funding.clearServerBlockers();
@@ -351,12 +361,9 @@ export function ResultJobModal({
 
     funding.load().then((record) => {
       if (cancelled || !record) return;
-      // ⚠️ The record is lead-wide; another calculator's unstarted rows are not ours.
-      const owner = leadLogId ? Storage.getItem(fundingOwnerKey(leadLogId)) : null;
-      if (!shouldAdoptSavedFunding(owner, calculatorId)) return;
-      if (!owner && leadLogId && calculatorId && (record.payments || []).length) {
-        Storage.setItem(fundingOwnerKey(leadLogId), String(calculatorId));
-      }
+      // ⚠️ The record is lead-wide; ownership is the SERVER's `record.calculatorId`. Another
+      // calculator's rows are not ours — we are re-scoping, and the next save moves (or 409s).
+      if (!fundingBelongsToCalculator(record.calculatorId, calculatorId)) return;
       const saved = hydrateRowsFromRecord(record, pricing.plans);
       if (saved.length) {
         setRows(saved);
@@ -630,7 +637,7 @@ export function ResultJobModal({
   );
   const saleReady = resultBlockers.length === 0;
 
-  const goFunding = useCallback(async () => {
+  const goFunding = useCallback(async (settledAction?: SettledAction) => {
     if (resultBlockers.length) {
       FlashMessage.error('Not ready to confirm', resultBlockers[0]);
       return;
@@ -647,6 +654,7 @@ export function ResultJobModal({
         contractPrice: Math.round(contractNum),
         payments: upsert,
         payMode,
+        ...(calculatorId ? { calculatorId: String(calculatorId) } : {}),
       });
       logResultLeadConfirmed({
         ...logCtx,
@@ -666,7 +674,8 @@ export function ResultJobModal({
       setSaveError(null);
       // The rep gets the SAME Funding step as online. It used to jump straight to Build Job,
       // so the split they had just entered was never shown back and Submit Funding never ran.
-      // Every row here is a check - `confirmBlockers` refuses a card or loan with no signal.
+      // A card is refused with no signal by `confirmBlockers`; a loan is allowed and finished by
+      // the rep recording the lender's answer on the Funding screen.
       setOfflineWorkId(work.clientId);
       setOfflineRecord(
         offlineFundingRecord(String(leadLogId || work.clientId), contractNum, upsert, payMode)
@@ -688,13 +697,34 @@ export function ResultJobModal({
       paymentCount: upsert.length,
       payments: upsert.map((r) => ({ kind: r.kind, method: r.method, amount: r.amount })),
     });
-    const res = await funding.savePayments(Math.round(contractNum), upsert, payMode);
+    // ⚠️ The server refuses a save that drops a row with money on it ("Cannot remove $1,000 AMEX"),
+    // so a re-scoping save keeps sending the settled rows, with their original pids.
+    const res = await funding.savePayments(
+      Math.round(contractNum),
+      withSettledRows(upsert, funding.record),
+      payMode,
+      settledAction
+    );
     if (!res.ok) {
-      setSaveError(res.error?.message || 'The payments could not be saved.');
+      const err = res.error;
+      if (err?.kind === 'scopeNeedsDecision') {
+        setScopePrompt({ kind: 'decision', settledAmount: err.settledAmount ?? 0, overage: err.overage });
+        return;
+      }
+      if (err?.kind === 'scopeNeedsRefundApproval') {
+        setScopePrompt({ kind: 'approval', message: err.message });
+        return;
+      }
+      if (err?.kind === 'scopeRefundFirst') {
+        setScopePrompt({ kind: 'refundFirst', message: err.message, settledAmount: err.settledAmount });
+        return;
+      }
+      setSaveError(err?.message || 'The payments could not be saved.');
       return;
     }
+    setScopePrompt(null);
+    if (res.data?.refundDue && res.data.refundDue > 0) setRefundDue(Math.round(res.data.refundDue));
     setSaveError(null);
-    if (leadLogId && calculatorId) Storage.setItem(fundingOwnerKey(leadLogId), String(calculatorId));
     logFundingOpened({
       ...logCtx,
       contractPrice: Math.round(contractNum),
@@ -714,6 +744,8 @@ export function ResultJobModal({
     setScreen('funding');
   }, [resultBlockers, contractNum, activeRows, pricing.plans, payMode, noDown, funding, logCtx, leadLogId, lead, calculatorId]);
 
+  const scopeBusy = funding.isSaving;
+
   const goResult = useCallback(() => {
     const applied = applyDecisionsToRows(activeRows, payments, contractNum, payMode);
     logFundingEditPayments({ ...logCtx, reassigning: applied.banners.length > 0 });
@@ -729,8 +761,8 @@ export function ResultJobModal({
 
   const covered = useMemo(() => coverageOK(payments, contractNum), [payments, contractNum]);
   const localBlockers = useMemo(
-    () => fundingBlockers(payments, contractNum, { setupBlocked: !!funding.paymentsSetupError }),
-    [payments, contractNum, funding.paymentsSetupError]
+    () => fundingBlockers(payments, contractNum, { setupBlocked: !!funding.paymentsSetupError, offline: !!offlineRecord }),
+    [payments, contractNum, funding.paymentsSetupError, offlineRecord]
   );
   const blockers = funding.serverBlockers ?? localBlockers;
   const declineHappened = useMemo(() => hasDecline(funding.record), [funding.record]);
@@ -794,6 +826,31 @@ export function ResultJobModal({
       return undefined;
     },
     [funding, offlineWorkId, offlineRecord, logCtx]
+  );
+
+  // Offline the rep still records what the lender told them and activates the loan: both are
+  // ticked on the device record (so the rail and blockers move) and queued against the same
+  // pid the save carries. The drain sends the link first if the server has none.
+  const handleRecordDecision = useCallback(
+    (pid: string, decision: 'full' | 'short' | 'declined', approvedAmt?: number) => {
+      if (isOnline() && !offlineRecord) return funding.recordDecision(pid, decision, approvedAmt);
+      if (!offlineWorkId) return undefined;
+      saveOfflineFundingDecision(offlineWorkId, { pid, decision, ...(decision === 'short' ? { approvedAmt } : {}) });
+      setOfflineRecord((prev) => (prev ? applyOfflineDecision(prev, pid, decision, approvedAmt) : prev));
+      return undefined;
+    },
+    [funding, offlineWorkId, offlineRecord]
+  );
+
+  const handleActivate = useCallback(
+    (pid: string) => {
+      if (isOnline() && !offlineRecord) return funding.activateLoan(pid);
+      if (!offlineWorkId) return undefined;
+      saveOfflineFundingActivate(offlineWorkId, pid);
+      setOfflineRecord((prev) => (prev ? applyOfflineActivation(prev, pid) : prev));
+      return undefined;
+    },
+    [funding, offlineWorkId, offlineRecord]
   );
 
   const handleSetResult = useCallback(
@@ -919,6 +976,17 @@ export function ResultJobModal({
             </View>
 
             <NumPadScrollView style={{ paddingHorizontal: 20, paddingTop: 24 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
+              {onFunding && !!refundDue && (
+                <View style={{ backgroundColor: FUND.AMBER_BG, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                  <Text style={{ fontSize: FS.BODY, fontFamily: PS.extrabold, color: FUND.AMBER_TEXT }}>
+                    ${refundDue.toLocaleString()} refund due
+                  </Text>
+                  <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, lineHeight: 17, color: FUND.AMBER_TEXT, marginTop: 4 }}>
+                    The new contract is smaller than what was collected. Raise this refund (it needs an approver and the
+                    customer’s signature) — Submit Funding stays blocked until it exists.
+                  </Text>
+                </View>
+              )}
               {onFunding ? (
                 <FundingView
                   payments={payments}
@@ -936,7 +1004,9 @@ export function ResultJobModal({
                   onSendLink={openSendSheet}
                   onMarkCollected={handleMarkCollected}
                   onChargeCard={funding.chargeCard}
-                  onActivate={funding.activateLoan}
+                  onActivate={handleActivate}
+                  onRecordDecision={handleRecordDecision}
+                  offline={!!offlineRecord}
                   onReactivate={funding.reactivateLoan}
                   onEditPayments={goResult}
                   onResultAsBankDecline={() => handleSetResult('bank_decline')}
@@ -1317,6 +1387,17 @@ export function ResultJobModal({
             <FullPackageInfoOverlay anchorRect={packageAnchor} onClose={() => setShowPackageInfo(false)} />
           )}
         </PadAwareCenter>
+
+        {!!scopePrompt && (
+          <ScopeSwitchPrompt
+            prompt={scopePrompt}
+            busy={scopeBusy}
+            onReuse={() => goFunding('reuse')}
+            onRefund={() => goFunding('refund')}
+            onConfirmRefund={() => goFunding('reuseWithRefund')}
+            onClose={() => setScopePrompt(null)}
+          />
+        )}
 
         {/* Every banner this sheet raises — its own, and the ones `useFunding` raises
             from inside an endpoint call — lands here rather than on the app-root

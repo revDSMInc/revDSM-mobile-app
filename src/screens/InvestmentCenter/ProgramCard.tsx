@@ -88,7 +88,7 @@ export function ProgramCard({
         <View style={{ position: 'absolute', top: -12, left: 0, right: 0, alignItems: 'center', zIndex: 5 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#16324F', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4 }}>
             <Ionicons name="lock-closed" size={10} color="#fff" />
-            <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5 }}>PRICE LOCK</Text>
+            <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5, paddingLeft: 0.5 }}>PRICE LOCK</Text>
           </View>
         </View>
       )}
@@ -102,7 +102,7 @@ export function ProgramCard({
             so anything that merely fits in place reads as edge-to-edge enlarged —
             which is what it did at 13pt with no horizontal padding. */}
         <View style={{ backgroundColor: highlighted ? '#4CBB17' : '#EEF1F4', paddingVertical: 13, paddingHorizontal: 14, alignItems: 'center' }}>
-          <Text style={{ fontSize: 11, fontWeight: '900', color: highlighted ? '#fff' : '#1C252E', letterSpacing: 0.5, textAlign: 'center', textTransform: 'uppercase' }} numberOfLines={2}>{title}</Text>
+          <Text style={{ fontSize: 11, fontWeight: '900', color: highlighted ? '#fff' : '#1C252E', letterSpacing: 0.5, paddingLeft: 0.5, textAlign: 'center', textTransform: 'uppercase' }} numberOfLines={2}>{title}</Text>
         </View>
 
         <View style={{ padding: 12 }}>

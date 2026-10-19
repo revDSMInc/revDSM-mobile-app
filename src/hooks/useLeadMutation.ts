@@ -251,8 +251,20 @@ export const useGenerateRevRenderMutation = () => {
 export const useUploadImagesMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ leadId, formData }: { leadId: string; formData: FormData }) =>
-      LeadService.uploadImages(leadId, formData),
+    mutationFn: ({
+      leadId,
+      formData,
+      idempotencyKey,
+    }: {
+      leadId: string;
+      formData: FormData;
+      /**
+       * ⚠️ Optional, but pass it wherever there is a stable per-image id. Without it an upload
+       * that times out after the server stored the photo is re-sent as a duplicate - the bug
+       * that turned 4 photos into 9. See `utils/upload-idempotency.ts`.
+       */
+      idempotencyKey?: string | null;
+    }) => LeadService.uploadImages(leadId, formData, idempotencyKey),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['lead', variables.leadId] });

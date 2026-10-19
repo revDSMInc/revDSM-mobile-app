@@ -1,16 +1,20 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, TouchableOpacity, ActivityIndicator, TextInput } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FS, FUND, PS } from './funding-theme';
 import { FundingStepper } from './FundingStepper';
+import { NUMBER_PAD_KEYBOARD } from '../../../../utils/keyboard-type';
 import {
   FLOW,
+  canRecordDecision,
+  parsePartialApproval,
   applicationClosedNote,
   canResendLink,
   canSync,
   doneFor,
   formatStamp,
   isApplicationClosed,
+  FINANCING_BYPASS_NOTICE_ENABLED,
   isFinancingBypassed,
   lastSendNote,
   openShort,
@@ -34,6 +38,8 @@ interface Props {
   onEditPayments: () => void;
   onResultAsBankDecline: () => void;
   onReactivate?: () => void;
+  onRecordDecision?: (decision: 'full' | 'short' | 'declined', approvedAmt?: number) => void;
+  offline?: boolean;
 }
 
 function ActionButton({ label, onPress, alt, tone, busy, disabled }: {
@@ -64,6 +70,77 @@ function ActionButton({ label, onPress, alt, tone, busy, disabled }: {
         <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: alt ? (danger ? FUND.RED_TEXT : '#3A4048') : '#fff' }}>{label}</Text>
       )}
     </TouchableOpacity>
+  );
+}
+
+function DecisionButtons({ payment: p, busy, onRecord }: {
+  payment: FundingPayment;
+  busy: boolean;
+  onRecord: (decision: 'full' | 'short' | 'declined', approvedAmt?: number) => void;
+}) {
+  const requested = p.requested || p.amount;
+  const [partial, setPartial] = useState(false);
+  const [text, setText] = useState('');
+  const [error, setError] = useState('');
+
+  const submitPartial = () => {
+    const out = parsePartialApproval(text, requested);
+    if (out.kind === 'invalid') return setError(out.message);
+    setError('');
+    if (out.kind === 'full') onRecord('full');
+    else onRecord('short', out.approvedAmt);
+  };
+
+  const chip = (label: string, onPress: () => void, tone: 'ok' | 'warn' | 'bad', on = false, grow = true) => {
+    const c = tone === 'ok' ? { b: FUND.GREEN, bg: '#F0FBEC', t: FUND.GREEN_TEXT } : tone === 'warn' ? { b: FUND.AMBER, bg: FUND.AMBER_BG, t: FUND.AMBER_TEXT } : { b: FUND.RED, bg: FUND.RED_BG, t: FUND.RED_TEXT };
+    return (
+      <TouchableOpacity
+        key={label}
+        activeOpacity={0.8}
+        disabled={busy}
+        onPress={onPress}
+        style={{ flex: grow ? 1 : undefined, minWidth: 0, alignItems: 'center', justifyContent: 'center', borderWidth: 1.4, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 11, opacity: busy ? 0.55 : 1, borderColor: on ? c.b : FUND.BORDER, backgroundColor: on ? c.bg : '#fff' }}
+      >
+        <Text numberOfLines={1} style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: on ? c.t : FUND.SUBTEXT }}>{label}</Text>
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <View style={{ marginTop: 14, paddingHorizontal: 14, paddingVertical: 14, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 14 }}>
+      <Text style={{ fontSize: FS.BODY, fontFamily: PS.extrabold, color: FUND.TEXT }}>Record the lender’s decision</Text>
+      <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, lineHeight: 17, color: FUND.MUTED, marginTop: 4, marginBottom: 12 }}>
+        Once the lender has told you their answer, enter it here.
+      </Text>
+      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+        {chip('Approve full', () => onRecord('full'), 'ok')}
+        {chip('Approve part', () => setPartial((v) => !v), 'warn', partial)}
+        {chip('Decline', () => onRecord('declined'), 'bad')}
+      </View>
+      {busy && <ActivityIndicator size="small" color={FUND.MUTED} style={{ marginTop: 10 }} />}
+      {partial && (
+        <View style={{ marginTop: 12 }}>
+          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, lineHeight: 17, color: FUND.SUBTEXT, marginBottom: 8 }}>
+            Approved amount (1 – ${(requested - 1).toLocaleString()}) of ${requested.toLocaleString()} requested
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+            <TextInput
+              value={text}
+              onChangeText={(t) => {
+                setText(t.replace(/[^0-9]/g, ''));
+                setError('');
+              }}
+              keyboardType={NUMBER_PAD_KEYBOARD}
+              placeholder="$ amount"
+              placeholderTextColor={FUND.MUTED}
+              style={{ flex: 1, borderWidth: 1.4, borderColor: error ? FUND.RED : FUND.BORDER, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 10, fontSize: FS.BODY_LG, fontFamily: PS.bold, color: FUND.TEXT, backgroundColor: '#fff' }}
+            />
+            {chip('Record', submitPartial, 'warn', true, false)}
+          </View>
+          {!!error && <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, color: FUND.RED_TEXT, marginTop: 6 }}>{error}</Text>}
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -105,9 +182,11 @@ export function PaymentFundingCard({
   onEditPayments,
   onResultAsBankDecline,
   onReactivate,
+  onRecordDecision,
+  offline,
 }: Props) {
   const steps = FLOW[p.type] || [];
-  const bypassed = isFinancingBypassed(p);
+  const bypassed = FINANCING_BYPASS_NOTICE_ENABLED && isFinancingBypassed(p);
   const sendNote = lastSendNote(p);
   const finished = doneFor(p, covered);
   const isOpenShort = openShort(p, covered);
@@ -185,7 +264,7 @@ export function PaymentFundingCard({
             without this the card is indistinguishable from one never sent. */}
         {!!closedNote && !bankDeclined && <Banner tone="warn">{closedNote}</Banner>}
 
-        {(p.type === 'cc' || p.type === 'bank') && !p.linkSent && !bankDeclined && (
+        {(p.type === 'cc' || p.type === 'bank') && !p.linkSent && !bankDeclined && !(offline && p.type === 'bank') && (
           <ActionButton
             label={
               linkBlocked
@@ -213,7 +292,7 @@ export function PaymentFundingCard({
             intends to refuse it; the route for a different card is to remove the row
             in the pricing panel and add a new one. */}
         {canResendLink(p) && !bankDeclined && (
-          <View style={{ marginTop: 12, paddingHorizontal: 13, paddingVertical: 12, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 12 }}>
+          <View style={{ marginTop: 14, paddingHorizontal: 14, paddingVertical: 14, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 14 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Ionicons
                 name={p.sentChannel === 'email' ? 'mail-outline' : p.sentChannel === 'qr' ? 'qr-code-outline' : 'chatbubble-ellipses-outline'}
@@ -224,7 +303,7 @@ export function PaymentFundingCard({
                 {sendNote}
               </Text>
             </View>
-            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, lineHeight: 16, color: FUND.MUTED, marginTop: 6 }}>
+            <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, lineHeight: 17, color: FUND.MUTED, marginTop: 6 }}>
               {p.sentChannel === 'qr'
                 ? 'Didn’t go through? Send it to their phone or email instead.'
                 : 'Wrong number or address? Fix it and send the same link again.'}
@@ -292,6 +371,17 @@ export function PaymentFundingCard({
           </View>
         )}
 
+        {offline && p.type === 'bank' && !p.linkSent && !p.decision && (
+          <Banner tone="warn">
+            No signal — the application link can’t be created yet. Record the lender’s answer below once you have it; it is
+            saved on this device and sent when you reconnect.
+          </Banner>
+        )}
+
+        {!!onRecordDecision && canRecordDecision(p, { offline }) && !bankDeclined && (
+          <DecisionButtons payment={p} busy={isBusy} onRecord={onRecordDecision} />
+        )}
+
         {p.type === 'bank' && !p.activated && (p.decision === 'full' || (p.decision === 'short' && !isOpenShort)) && (
           <ActionButton
             label={`Authorize & activate loan for $${(p.approvedAmt != null ? p.approvedAmt : p.amount).toLocaleString()}`}
@@ -323,8 +413,8 @@ export function PaymentFundingCard({
 
         {/* Status check — only while a third party still owes an answer. A check has
             no external system to poll and `sync` refuses it (spec §5.8). */}
-        {canSync(p) && !finished && (
-          <View style={{ marginTop: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        {canSync(p) && !finished && !offline && (
+          <View style={{ marginTop: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: FUND.MUTED }}>
               {p.syncedAt ? `Synced ${formatStamp(p.syncedAt)}` : 'Awaiting response'}
             </Text>

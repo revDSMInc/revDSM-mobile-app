@@ -212,6 +212,30 @@ static `+1` beside the input.
 lines to LF and buries the change in a whole-file diff — that happened once here and had to be undone.
 Use `newline=''` on both the read and the write (or an editor that preserves endings).
 
+### First / Last Name auto-capitalize, same rule as Add New Lead
+
+Ticket: *"can you do the same thing while we try to edit the first and last name?"* — following
+`LeadCreate`'s auto-capitalize fix. Same `capitalizeFirst` shape (uppercase index 0 only, rest
+untouched — a `.toLowerCase()` on the remainder would fight `McDonald`/`O'Brien`), applied at BOTH
+places a name can be typed here:
+
+- **Primary buyer** — inside the shared `renderField`'s `onChangeText`, gated the same way the
+  existing phone-formatting branch already is: `label.toLowerCase().includes('name')`. ⚠️ This is
+  `renderField`, not a per-field callback, so the check has to stay label-based to keep matching
+  First Name / Last Name (co-buyers' too, since they call the same helper) without also matching
+  Email or Phone Number — "phone" is checked first, and "name" does not appear in either of those
+  labels.
+- **Co-buyers** — inside `handleCoBuyerChange`, alongside the existing `field === 'phone'` branch,
+  scoped to `field === 'firstName' || field === 'lastName'` (co-buyer address/email untouched).
+
+Both feed the debounced field-change tracker (`trackFieldChange`/`trackedSetter`) the ALREADY
+capitalized value, same as the phone formatter does today — the log and the saved payload can never
+disagree about what was typed.
+
+`autoCapitalize` on `renderField`'s `TextInput` is now `"words"` for Name fields, `"sentences"`
+otherwise (previously unset app-wide) — a keyboard-level hint only; `capitalizeFirst` is what
+guarantees the stored value regardless of IME behavior.
+
 ## Lead Center scanner: a filed document can't be deleted, and no longer renders blank
 
 Ticket: *"don't allow user to delete the previously uploaded (once he will select the multiple doc then
@@ -1252,3 +1276,1140 @@ produces the title/message, `FlashMessage` delivers it, still inside the `setTim
   `successCount === attempts.length && skippedOffline === 0` → `.success`, otherwise `.warning`.
 - ⚠️ The file is CRLF. Not verified on device: the case to check is airplane mode with a mix of
   on-device and remote photos — expect an amber "Partial Download … N need a connection."
+
+### Follow-up — Tools tab: Investment Center tile no longer spins on a brand-new lead
+
+`widgets/components/LeadCenter/OperationalSections.tsx` (`ToolsSection`). A lead with no appointment/calculators sat on "Checking job status…" + a spinner
+forever (root cause is in `useLeadCalculatorStatus`; full write-up in `investment-center-job-tracker.md`).
+- `investmentStatusPending` is now `gate === 'unknown' || (isCalcStatusFetching && !allConfirmed && hasCalc)`: the background-refetch spinner only shows when
+  jobs EXIST but are not confirmed (the post-confirm window). A lead with no calculators is a plain `locked` tile ("Please Fully Build ALL jobs first").
+- ⚠️ Do not drop the `hasCalc` guard to "show activity" — it re-introduces the spinner on every visit to an empty lead. `unknown` (a lookup that THREW with nothing cached) still spins.
+
+## The Tools ▸ revRender strip re-downloaded every render on each tab switch
+
+Client report: "once the renders have been loaded they should be saved — it's still having them load
+each time when I go in even though I already saw they were loaded the first time around." Reproduced
+exactly as described: open Tools, let the two thumbnails paint, switch to Job docs, switch back —
+both spin again.
+
+⚠️ This is **not** the revRender picker fix in `app-wide.md`. That one is the photo grid inside the
+revRender screen; this is the generated-render strip on the Lead Center Tools card, a different
+component (`ImageWithLoader` in `widgets/components/LeadCenter/OperationalSections.tsx`) that had the
+same shape of bug. Both reports read identically from outside; check which surface is meant.
+
+Three things were wrong, and the tab switch made all of them visible — `screens/LeadCenter/index.tsx`
+renders the section as `{activeTab === 'tools' && <ToolsSection … />}`, so leaving Tools unmounts it
+and coming back is a **fresh mount**, not a re-show:
+
+1. `ImageWithLoader` rendered the pre-signed S3 url directly. Those carry no cache headers, so the OS
+   image cache won't store them — every mount is a fresh download. The card *was* warming a local
+   file beside it (`prefetchToLocalCache`), but nothing ever read it back.
+2. Worse than a plain cache miss: `useRevRenderRunsQuery` hands back **re-signed** urls, so even RN's
+   in-memory cache misses on the way back. Only the file cache survives that, because
+   `getLocalCachePath` strips the query.
+3. `onLoadStart={() => setLoading(true)}` re-armed the spinner on every mount, over an image that was
+   about to paint anyway.
+
+Fix: `ImageWithLoader` seeds from `getWarmedLocalUri(uri)` synchronously, starts `loading` at
+`!seeded`, and falls back to `warmToLocalCache`. The warm sweep over `orderedRuns` now calls
+`warmToLocalCache` instead of `prefetchToLocalCache` — ⚠️ both write the same file, but **only
+`warmToLocalCache` records it in the warmed-uri memo**, which is what lets the strip name the local
+copy without an async hop. A bare `prefetchToLocalCache` leaves the reader to rediscover the file
+every time, which looks exactly like no cache at all.
+
+`CachedImage` in `widgets/modals/lead-center/RevRenderHistoryModal.tsx` got the same seeding. It
+renders `null` until it knows its uri, so the async `fs.exists` meant the before/after gallery went
+blank for a beat on every open and on every swipe back to a render already seen.
+
+⚠️ `CachedImage`'s `onError` must call `forgetWarmedUri(uri)`, not unlink the path itself. Unlinking
+alone leaves the memo pointing at a file that no longer exists and every later reader is handed a
+dead `file://`. Anything else in the app that deletes a cached image needs the same treatment.
+
+⚠️ Keep `CachedImage` painting the network url and warming underneath **without** swapping `sourceUri`
+when the download lands — the original comment says changing the source mid-load trips native
+image-loader hangs, and that still holds. The next mount picks the file up from the memo.
+
+Not verified on a device. `tsc` 45 errors (unchanged baseline, none in either file), `eslint`
+identical to HEAD for both files (55 problems / 8 errors, all pre-existing), `jest` 542 pass. On
+device the check is: open Tools, wait for the thumbnails, go to Job docs and back — they should be
+there immediately, with no spinner.
+
+## The header buttons paused the session but never released it
+
+DevTools showed `PUT lead/v1/{id}/work` with `{ workStartedBy: null }` going out when the rep left
+via the screen's own back arrow, and **not** when they left via the green `MainHeader`. The pause LOG
+fired on both.
+
+Cause: the two halves of "the rep left" lived in different places.
+
+- `LeadCenter.pauseLeadSession` filed the `lead_session` / `session_pause` log.
+- `useLeadCenterData`'s **unmount cleanup** made the `endWorkLead` release.
+
+⚠️ An unmount is not the only way the rep leaves a lead, and tying the release to one meant **no
+route through the green `MainHeader` released at all** — the logo included, even though it lands back
+on `Leads`. Confirmed on device: back arrow → pause log **and** `{ workStartedBy: null }`; logo →
+pause log **only**. Do not reason about this from the navigator's pop/push behaviour, as a first pass
+at this ticket did and got wrong; the network tab is the authority.
+
+The bell, the chat icon and the account menu's Profile / Job Tracker / My Learning additionally PUSH
+their screen on top, so Lead Center is not even unmounted on those. Either way the rep is left
+`workStartedBy: <them>` on the server while ops has already read the pause — a rep who looks like
+they are still standing in a customer's house they walked out of.
+
+Fix — one exit path owns both halves:
+
+- `pauseLeadSession` now calls `LeadService.endWorkLead` beside the log. Every route already goes
+  through it (back arrow, hardware back, header, unmount backstop), so no route can pause without
+  releasing.
+- ⚠️ The release runs for a **deal** too (`fromMyDeals`). The Lead Center opens a work session on
+  mount either way and it has to be given back; only the LOG stays suppressed, which is the web
+  parity rule. The early `if (fromMyDeals) return` therefore moved to sit *after* the release.
+- ⚠️ `useLeadCenterData`'s cleanup no longer releases. Do not add it back — two owners is exactly how
+  these drifted apart. It still calls `clearLeadWorkSession` as the backstop.
+
+### The resume half is not optional
+
+⚠️ Releasing on pause **without** this would have been a worse bug than the one it fixed. On the push
+routes the screen is only blurred, and the `workLead` call lives in a mount effect keyed on
+`lead._id`/`user._id` — it does not re-run on the way back, so the rep would return from Notifications
+to a lead the server thinks nobody is working.
+
+`LeadCenter` gains a `useFocusEffect` that re-calls `workLead` and re-arms `beginLeadWorkSession`.
+
+- Keyed on `hasLoggedPauseRef`, so it is a **no-op on the first focus** — the mount effect has already
+  opened the session, and re-sending `workLead` there would stamp a second check-in for one arrival.
+- It re-arms the killed-app record because the pause cleared it; without that a kill after a resume
+  would leave the session dangling with nothing to sweep it.
+- It runs for a deal too, mirroring the release.
+
+⚠️ Both halves stay behind `AppState.currentState !== 'active'`, unchanged — the camera hand-off must
+still not pause a rep mid-inspection (see the long comment on `pauseLeadSession`).
+
+⚠️ **Unverified, and worth watching:** whether the backend treats a repeat `workLead` as a *new*
+check-in (fresh timestamp, new session row, or a duplicate `lead_check_in`). If it does, a bell
+round-trip will read as a second arrival on the portal timeline and the resume needs to send
+something weaker. Check the Forever Record after tapping the bell and coming back before calling this
+done. There is also a brief offline blip on the ops board across a push-navigation; debounce the
+release on those routes if ops object.
+
+Not verified on a device. `tsc` 45 errors (unchanged baseline, none in either file), `eslint`
+identical to HEAD for both (43 problems / 18 errors, all pre-existing), `jest` 551 pass.
+
+## Manage Photos: Move / Trash action buttons scaled down
+
+Ticket: *"Scale down Trash and move icon."* `DynamicManagePhotosView`'s per-card action row
+(`renderCard`, the `!selectMode && !isPending` block) shrunk uniformly: row height 32→26,
+border radius 8→7, icon size 14→11 (Move) / 18→14 (Trash), Move label 11→10, row `gap`/`padding`
+8→6. Purely cosmetic — no change to `canMove`/`moveTargetCount` gating, the move/delete handlers,
+or the `busy`/pending states above them. `widgets/components/lead-center/` (lowercase, distinct
+from `widgets/components/LeadCenter/`) added to this file's CLAUDE.md §8 row — it held the dynamic
+inspection photo capture/manage/move components with nothing in §8 naming it until now.
+
+## Cancelled banner missing from the Sold Leads route, and the pencil opening the wrong editor
+
+Two reports against the same screen. Lead Center is reached from **Sold Leads** and from **My
+Deals**, and both bugs were the same mistake: a deal-level fact gated on which route the rep came
+in through.
+
+### 1 · `JOB CANCELLED` only rendered from My Deals
+
+`DealBanners` was rendered as `{fromMyDeals && <DealBanners lead={lead} />}`. A job cancelled from
+the Sold Leads tab then showed **no cancelled state anywhere** on the screen — same deal, same
+record, banner on one route only. The Sold card itself reads `Resulted — Cancelled`, so the rep saw
+it in the list and then lost it on open.
+
+⚠️ **The gate is removed, not widened.** Whether a job is cancelled is a fact about the DEAL, not
+about the door the rep came through. `DealBanners` already returns `null` unless the status is
+`cancelled`, so the normal lead path is still untouched — the `fromMyDeals` check was never what
+protected it.
+
+Status reaches the banner as `lead.result || lead.status`; the Sold list maps `status: 'cancelled'`
+through `RESULTED_LABELS` (`widgets/components/LeadCard.tsx:124`), and the banner lowercases before
+comparing, so both spellings land.
+
+### 2 · The Contract Details pencil opened the inline modal on a dynamic deal
+
+The pencil should launch the 4-step deal-edit wizard. It opened the old "Edit Contract Details —
+select what to edit" modal instead, which reads as the wizard never having been wired up. **The
+wiring was fine** (`JobDocsSection`'s `onEditContract` override is intact); the *detection* was
+wrong.
+
+### Correction, after the fix above did NOT work on device
+
+The first fix swapped the hand-rolled `isDynamicDeal` for the canonical
+`isDynamicJobBuilderData`. It helped some deals and the modal still appeared on others, which
+exposed the real cause:
+
+⚠️ **THE JOB BUILD IS NOT ON THE LEAD.** It is fetched from its own endpoint —
+`getPortalJobBuilder`, with a calculator-outcome fallback — by `enrichJobBuilderProductData`,
+which the wizard runs on the way in. **Lead Center never calls it.** Its `lead` payload carries
+calculator ids and no build, so *no synchronous inspection of `lead` can answer "is this dynamic"*.
+Every version of that guess returned false for real dynamic deals. Widening the predicate only
+moved which deals guessed wrong.
+
+**The pencil is now UNCONDITIONAL** — `onEditContract={handleEditDeal}`, no branch, and
+`isDynamicDeal` is gone from this screen along with the `isDynamicJobBuilderData` import.
+
+⚠️ **Do not reintroduce a dynamic-vs-legacy branch here**, however the predicate is
+written. The data it would need is not on this screen.
+
+Routing a legacy deal to the wizard is safe and is the better answer: `DynamicDealEditScreen`
+resolves the build itself and renders *"This deal can't be edited here — this deal has no dynamic
+job-builder data to edit"* with a Go Back (`DynamicDealEditScreen.tsx:2357`). That is an honest
+answer **after** looking, where the old branch was a wrong guess **before** looking.
+
+⚠️ Why this was worth chasing: **only the wizard raises an ADDENDUM**. The inline modal
+edits the record directly, so every edit made through it changed a signed contract with **no
+signing link sent to the customer**.
+
+#### What the first attempt got right, and keep
+
+The canonical detector is still the right one wherever this question IS answerable (inside the
+wizard, which has the fetched build). The hand-rolled three-way check missed two real shapes:
+
+- **ROOT-SERIALIZED state.** `utils/dynamic-job-builder/engine/dynamic-job-state-storage.ts:895`
+  saves a build with the verticals **at the root** beside `_storageVersion` — there is no
+  `dynamicJobState` key to find.
+- `calculatorType: 'dynamic'` with no `isDynamic` flag.
+
+⚠️ `_storageVersion` beside **only** `LEGACY_STATIC_PRODUCT_ROOT_KEYS` (`soffit`, `fascia`,
+`gutter`, `lighting`…) is still **legacy**: those keys are excluded from the root-serialized scan,
+so nothing remains to extract. A test fixture using `soffit` looks dynamic and is not — this cost
+real debugging time and is pinned by a test.
+
+Tests: `__tests__/utils/lead-center-dynamic-deal.test.ts` (8). It pins **why the branch cannot
+exist** (a lead carrying only `calculatorId` reads as legacy) rather than asserting a predicate that
+should no longer be called from this screen. ⚠️ It must `jest.mock` `services/api/leads` —
+`enrich-job-builder-data.ts` imports `LeadService` for its fetchers, which drags in
+axios → queryClient → connectivity → netinfo, and netinfo cannot load under jest here. The
+detectors themselves are pure; splitting them into `src/utils/` would remove the need for the mock.
+
+## My Deals showed "No leads found" offline
+
+Reported with a screenshot: the offline banner across the top, and underneath it **"No leads
+found"** on a list of deals the rep had already sold.
+
+`screens/MyDeals/index.tsx` fetched `LeadService.getSalesDeals(...)` directly — no TanStack, no
+cache — and its `catch` ran `if (isNewFilter) setLeads([])`. With no signal the request threw and
+the list was emptied.
+
+⚠️ **An empty list is indistinguishable from "you have no deals."** That is the worst available
+reading of a connection problem, and the same anonymous-failure pattern recorded in
+`offline-mode-client-qa.md` §Q10: the request threw, the catch swallowed it, and the rep was left
+with a screen that quietly lied.
+
+**Fix:** page 1 of each tab now goes through the established `cachedFetch` helper
+(`utils/offline-query-cache.ts`), keyed `leads-list:my-deals:<all|scheduled|TBD>` and
+owner-scoped. Shape handling moved to a pure `utils/my-deals-page.ts › toDealsPage` so it is
+testable.
+
+⚠️ **PAGE 1 ONLY.** Endless scroll is a convenience that can need a connection; the first
+screenful is what decides whether the rep sees their deals or an empty state. Caching every page
+would grow unbounded in MMKV, which rewrites its whole store per write.
+
+⚠️ **`isEmpty: (p) => !p.leads.length`** — never let a transient empty response overwrite a good
+offline copy.
+
+⚠️ **`hasMore` must be ANDed with `isOnline()`.** Served from the cache there is nothing more to
+fetch; without this the list pages forever against a network that is not there.
+
+⚠️ **`toDealsPage` never throws.** It runs inside the offline fallback, so a shape surprise there
+would produce exactly the empty list this change removes. Both envelope spellings
+(`data.leads` / `leads`, `pagination` / `data.pagination`) are live on this endpoint.
+
+With nothing cached at all, `cachedFetch` rethrows and the existing empty state shows — honest,
+because there genuinely is nothing saved for that tab yet.
+
+### Follow-up — the pencil no longer refuses to open a sold deal offline
+
+`screens/LeadCenter/index.tsx › handleEditDeal` dropped its
+`offlineBlockFor('addendum', isOnline())` guard.
+
+Reported from a device: tapping the pencil on Contract Details with no signal flashed
+*"Needs a connection — an addendum is raised on the server and texts the customer a signing
+link"* and never navigated. The whole edit wizard was unreachable at a door.
+
+⚠️ **The refusal MOVED, it did not disappear.** It now lives on **Submit**, in
+`DynamicDealEditScreen`, which is the only place that can tell a plain build change (queueable)
+from a refund or a new attachment (not). Blocking at the entry point meant refusing the 90% of
+edits that queue perfectly well in order to stop the 10% that cannot.
+
+⚠️ **Opening and editing are LOCAL work and must stay unblocked.** Nothing leaves the device
+until Submit, so an entry-point gate can only ever be too blunt.
+
+⚠️ **`offlineBlockFor` is still imported and still used for `chat`** — do not remove the import.
+
+Queue mechanics and the refund-ordering rule: [`offline.md`](offline.md). Phases:
+[`docs/MY-DEALS-OFFLINE-PLAN.md`](../MY-DEALS-OFFLINE-PLAN.md).
+
+---
+
+## Ticket — "Download all photos" works offline
+
+Asked whether the gallery download could work offline from cache. It can, and it already had
+everything it needed — it just never looked.
+
+`usePrecacheLeadPhotos` (called at `LeadCenter/index.tsx:165`, the **same screen** that renders
+`JobDocsSection`) warms every non-deleted `salesPhotos` entry into `imageFileCache` while the rep
+is online. So by the time anyone taps Download, the bytes are on disk.
+
+⚠️ **The cache key ignores the S3 signature.** `getLocalCachePath` does `url.split('?')[0]`, so a
+re-signed pre-signed URL still resolves to the file fetched yesterday. Without this the feature
+would be worthless — every re-sign would look like a cache miss. Do not "tidy" the full URL back
+into the key.
+
+The old `handleDownloadAllImages` sent any `http(s)` URI straight to
+`ReactNativeBlobUtil.config(...).fetch('GET', mediaUri)`. Offline that throws for every photo and
+the rep gets *"Failed to download photos. Please try again."* — standing on top of the exact
+files it wanted.
+
+### What changed
+
+`resolveOnDevice` now runs before anything else, and it checks **two** places:
+
+⚠️ `getWarmedLocalUri` alone is NOT enough. It is an in-memory map, so it only knows what the
+current app session warmed — after a relaunch it is empty while the files are still on disk. The
+authoritative check is `getLocalCachePath` + `fs.exists`, and it is what makes this survive the
+rep closing the app. Dropping the second lookup would make the feature work only in the session
+that happened to view the photos.
+
+Offline, the split drives the message up front (`offlineDownloadNotice`) rather than letting each
+photo fail individually into a misleading error.
+
+⚠️ **Partial is offered, never refused.** A rep who can save six of eight photos wants those six.
+Only a completely cold cache blocks. The closing count includes what was skipped
+(`downloadResultMessage`), or the rep is told "3 of 3" when two never ran.
+
+Rules live in `utils/photo-download-plan.ts` because `JobDocsSection` imports RN and blob-util and
+cannot load under jest (CLAUDE.md §6).
+
+⚠️ `JobDocsSection` already has `const isOnline = useIsOnline()` at ~line 227 — a **boolean**.
+Importing the `isOnline` *function* from `services/connectivity` shadows into a confusing
+`TS2349: This expression is not callable`. Use the component's reactive flag.
+
+---
+
+## Ticket — Investment Center re-locked itself after the rep had built the jobs
+
+Client: confirmed all rollouts → Investment Center → filled the form → back to Deal Center on a
+weak signal → the calculator would not show, and the Investment Center was **locked** again with
+*"Please Fully Build ALL jobs first"*. Screenshots showed the same lead reading
+*"Deal Center — All jobs built / Investment Center — Ready to present"* online and
+*"Please Fully Build ALL jobs first"* offline.
+
+**Nothing was ever lost. The app forgot how to ask, and read its own silence as a "no".**
+
+### Root cause
+
+`useLeadCalculatorStatus` had `catch { return resolve(EMPTY); }` on BOTH read paths, and `EMPTY`
+is `{ hasCalculator: false, allConfirmed: false, count: 0 }`. A failed request therefore returned
+a definite *"the jobs are not built"*, which `OperationalSections` turned into `locked`.
+
+Two things made it bite exactly when it did:
+- `OperationalSections` refetches in a `useFocusEffect`, so the read fires the instant the rep
+  returns from the Investment Center — the precise moment described.
+- The only defence was `LOCAL_CONFIRM_GRACE_MS = 60_000`: an **in-memory** `Map` that expired
+  after sixty seconds and died on relaunch. Filling the form took longer than that.
+
+### The rule
+
+⚠️ **An unanswered question is not a negative answer.** A failed read must return the last thing
+the server actually said, never a manufactured empty. Rules are in `utils/lead-calc-status.ts`
+(pure — the hook imports TanStack and cannot load under jest, CLAUDE.md §6).
+
+- `statusAfterFailedRead` returns the cached status, or `null` meaning **unknown** — never EMPTY.
+- `markLeadRolloutsConfirmed` now **persists to MMKV before** touching the query cache. The rep's
+  tap is the fact; the server response only acknowledges a fact that already happened. Caching
+  only on success is what makes a weak signal look like lost work.
+- `mergeStatus` lets a local confirmation **outrank** a server read that disagrees — a read racing
+  the confirmation write returns `allConfirmed: false` and would re-lock under the rep's hand.
+- `shouldPersistStatus` refuses to overwrite a confirmed row with an unconfirmed one, so the bug
+  cannot come back from the write side.
+- `initialData` seeds from disk, so the first render already knows; without it the card renders
+  locked for a frame, which is the flash a rep reads as "my work is gone".
+
+⚠️ **`unknown` must not lock, and must not silently swallow the tap either.** The first attempt
+left the card unlocked but `onPress` still returned early on `investmentStatusPending` — the rep
+taps and nothing happens, an invisible lock instead of a visible one. Only `gate === 'locked'`
+refuses now; `unknown` lets the rep through and retries the status behind them. A wrong lock
+costs a sale; a wrong unlock costs one tap.
+
+⚠️ Only a deliberate reset may clear a confirmed row — `clearLeadCalcStatus`, never a failed read.
+
+### Where else this shape lives
+
+The pattern to grep for is any `catch` returning an empty/false/zero default that the UI then
+**gates a feature on**. The Deal Center status line in the same screenshot went blank for the same
+reason. Cache-first is right for display and gating state like this; it is deliberately NOT right
+where the server is the only authority (card refunds, see `offline.md`).
+
+---
+
+## Ticket — a filed consent form was offered again offline (duplicate signature)
+
+Client: *"I submit the form and it's submitted successfully in online mode => I become offline =>
+came back => and it's again allow me to submit the form."* A blank Customer Consent Form for a
+lead that already had one on file — i.e. a **second signed customer record**.
+
+### Root cause
+
+"Already filed" had only two sources, and BOTH miss this case:
+
+1. `findReport('consent_form')` reads `lead.generatedReports` — **server data**. Offline the lead
+   comes from cache, and a cached copy taken before the submission has no such report.
+2. `queuedForms.consent` (`useQueuedConsentForms`) only ever knows about a form submitted
+   **offline** and still queued. A form submitted **online** never enters that queue.
+
+So an online submission left **no local trace whatsoever**: the only proof lived on the server the
+app could no longer reach. `submitConsentForm` / `finalizeConsentUpload` wrote nothing to the
+device on success.
+
+### The fix — write the fact down the moment it becomes true
+
+Same rule as the Investment Center lock above: do not rely on being able to ask the server later.
+
+- `markConsentFiled(leadId, kind)` is called on **every** successful submission — the online
+  mutations in `useLeadMutation.ts` AND the offline drain in `offlineLeadStore.ts`.
+- ⚠️ The offline drain needs it too. The queue row is the only offline proof while it exists, but
+  it is **removed after a successful drain** — without the log the form becomes offerable again on
+  the next cached read.
+- `consentAlreadyFiled({ serverFiled, queued, filedLocally })` ORs all three. ⚠️ **Never narrow
+  this to one source** — each was, at some point, the only one that knew.
+
+⚠️ **A reset must clear the log** (`useResetLeadMutation`). I missed this on the first pass and it
+would have been a new bug: a rep who deliberately reset a lead could never re-collect consent,
+because the log would outlive the thing it describes. A reset is the ONLY thing allowed to clear
+it — never a failed read.
+
+⚠️ `offline-cache:consent-filed` is in `SESSION_KEEP_PREFIXES`. Unlike the calculator status
+(re-derivable from the server) this is **not** reconstructible offline, so clearing it on sign-out
+would let the duplicate-signature bug straight back in. The envelope is owner-stamped, so another
+rep on the same handset still cannot read it.
+
+Rules in `utils/consent-filed-log.ts`, storage in `services/consentFiledStore.ts`, hook in
+`hooks/useFiledConsents.ts` — pure/split because the callers import blob-util (CLAUDE.md §6).
+
+### Follow-up — the SAME bug, reported again: the Investment Center screen had its own gate
+
+Client, after the fix above shipped: *"submitted the form => become offline => went back => press
+the investment center again => and it's allow me to submit the form again instead of showing
+investment center."* The Lead Center card was by then correct — the screenshot showed **"Consent on
+file — present quote"** and the **"Already Generated"** badge — while the screen behind it still
+auto-opened a blank consent form.
+
+⚠️ **The decision lived in two places and only one was fixed.** `screens/InvestmentCenter/index.tsx`
+kept its own copy:
+
+```
+const consentSigned = localConsentSigned || consentQueued || hasSignedConsent(lead) || isLeadSold;
+```
+
+Every term fails the client's sequence: `localConsentSigned` is `useState(false)` and resets on
+remount; `consentQueued` only knows forms submitted OFFLINE; `hasSignedConsent(lead)` reads
+`lead.generatedReports`, absent on a lead re-read from a cache older than the submission. With all
+three false the auto-open effect (`consentAutoOpenedRef`, ~line 257) raised the form again.
+
+Both screens now call **`consentAlreadyFiled`** (`utils/consent-filed-log.ts`), which gained
+`signedThisSession` and `leadSold` so the whole decision is one predicate with one set of tests.
+
+⚠️ **Fixing a gate means fixing every copy of it.** `OperationalSections` (the card badge) and
+`InvestmentCenter` (the screen) must agree, or the app contradicts itself in the worst possible
+way: the badge says the consent is on file while the screen demands a second signature. When
+changing this, grep `hasFiledConsentReport|hasQueuedConsent` and check each hit — anything using
+them as a GATE belongs on `consentAlreadyFiled`.
+
+⚠️ **`knownFiledBefore` is NOT one of these and must stay as it is.** In `offlineLeadStore.ts` it
+feeds `isConsentAlreadyFiled`, a duplicate-replay guard that does a FRESH `getSalesDealById` read
+before re-posting a queued form. It is deliberately server-truth, not device-truth; routing it
+through the cached predicate would let a replay through.
+
+### Follow-up 2 — the third entry point: the Job Docs form ROW
+
+Reported again: the **Customer Consent Form** row in Job Docs showed the **"Already Generated"**
+pill and still opened a blank form on tap.
+
+⚠️ **Detection was never the problem in ANY of the three reports.** Each time the row rendered the
+pill from the correct value while the tap path ignored it.
+
+**Where the decision belongs.** `useLeadCenterModals`'s `onToolAction` ALREADY did the right
+thing — open the filed PDF, or say *"Signed and filed. Viewing the PDF needs a connection."* when
+offline. Its gap was only that `findReport` reads `lead.generatedReports` (server data, missing
+from a lead re-read from an older cache) and `queuedForms` only knows forms submitted offline, so a
+consent filed ONLINE and reopened OFFLINE matched neither and fell through to `toggleModal` — the
+blank form. It now also consults `useFiledConsents` (the persisted local log).
+
+⚠️ **A filed form NEVER re-opens the blank form.** The customer has already signed. The three
+outcomes are `view-pdf`, `explain-offline`, `open-form`, decided by `consentPressAction` in
+`utils/consent-filed-log.ts`; both the consent and waiver branches call it.
+
+⚠️ **Do not add a second gate to `handleConsentPress` / `handleWaiverPress`.** An earlier attempt
+put an "already signed — Sign again?" `Alert.alert` there. It was wrong twice over: it duplicated a
+decision that already lives in `onToolAction`, and offering "Sign again" at all invites the second
+signature this whole ticket exists to prevent. Those handlers dispatch and nothing more.
+
+⚠️ `filedLocally.consent` / `.waiver` must stay in the `useCallback` dependency array, or the
+callback captures a stale "nothing filed" and re-opens the form.
+
+**The three entry points, for the record:**
+1. Lead Center card badge (`OperationalSections`) — detection only.
+2. Investment Center screen (`screens/InvestmentCenter/index.tsx`) — its own `consentSigned`.
+3. This Job Docs row → `onToolAction` in `hooks/useLeadCenterModals.ts`.
+
+The Investment Center's other two openers (the auto-open effect and the "Sign Consent Form"
+button) sit inside the `!consentSigned` branch, so (2) covered them. Grep
+`setShowConsent|onAction\('consent|onAction\('waiver` when touching this.
+
+### Follow-up — `unknown` must not unlock a lead created OFFLINE
+
+Reported from the field: *create a lead offline → open Lead Center → tap Investment Center* — and
+it opened, on a lead with no rollouts built at all. The card showed **"Checking job status…"** and
+let the rep straight through.
+
+This was **over-application of the fix above**. That ticket's rule — *an unanswered question is
+not a negative answer*, so `unknown` does not lock — is right for a lead that **might** have
+confirmed rollouts on a server we cannot reach. It is wrong for a lead created offline: a
+client-id lead has **no server record**, so the status read is guaranteed to fail, and "we could
+not ask" silently became "come on in".
+
+⚠️ **"We could not ask" only earns the benefit of the doubt when there is something to ask
+ABOUT.** For a device-only lead the device holds the whole truth, and the whole truth is that
+nothing has been confirmed. `calcGateState` now takes `isDeviceOnlyLead` (from `isClientId`) and
+returns a definite `locked`.
+
+⚠️ **Ordering matters — the `allConfirmed` check stays ABOVE the device-only check.** Rollouts can
+legitimately be built offline: `markLeadRolloutsConfirmed` persists to MMKV keyed by the client
+id, so a cached confirmation must still unlock. Reversing these two lines locks a rep out of the
+presentation they just built at a door. A test pins both directions.
+
+⚠️ The Investment Center screen itself has its own `visible.length === 0` fallback, so there is no
+second gate to fix here — unlike the consent form, which needed all three.
+
+---
+
+## Ticket — "revRender generated in another lead"
+
+Client screenshot: a gutter lead in Bradenton showing **50 Runs** of Christmas-light renders that
+belonged to a different property. Online, full signal — nothing to do with offline mode.
+
+### Root cause: a closure passed as a navigation param
+
+`useLeadReports(lead, refetch)` is bound to ONE Lead Center, and its `handleStartRevRenders` is
+handed to the RevRender screen as **navigation params**:
+
+```
+navigation.navigate('RevRender', { lead, onGenerate, onGenerateAll })
+```
+
+⚠️ **A function passed as a nav param is a closure over the screen that created it.** With two
+Lead Centers in the stack — a push notification, the Notifications screen or chat opening lead B
+while lead A is still below — RevRender called **lead A's** closure, and every render was filed
+under lead A: the `rev_render_jobs_<id>` storage key (written in three places), the pre-gen run
+fetch, and the final `['revrender-runs', id]` invalidation.
+
+⚠️ **RevRender was already sending the right id and the caller dropped it.** It builds
+`{ payloads, leadId, jobId }` (`screens/RevRender/index.tsx` ~line 719); `onGenerateAll` took only
+`body.payloads`. The fix is to honour `body.leadId` — the information was never missing.
+
+### The fix
+
+`handleStartRevRenders(payloads, targetLeadId?)` resolves `renderLeadId` **once** at the top via
+`renderTargetLeadId` (`utils/revrender-attribution.ts`, pure/tested) and every site uses it.
+
+⚠️ **Resolve it once; do not leave a stray `lead?._id` among the five uses.** The job-list key is
+written in three separate places, and one missed site re-creates the bug for half the flow —
+jobs stored under one lead, invalidated under another.
+
+⚠️ **`refetch` must NOT run for another lead's renders** (`shouldRefetchAfterRenders`). It is
+bound to this hook's lead, so firing it refreshes a screen the results have nothing to do with
+*and* leaves the lead that owns them stale.
+
+⚠️ `targetLeadId` is optional and falls back to the hook's lead, so the ordinary single-lead flow
+is byte-for-byte unchanged. Both call sites in `screens/LeadCenter/index.tsx` now pass it
+(`body.leadId`, and `payload?.leadId` for the single-render path — every payload carries it).
+
+⚠️ **This class of bug is not limited to revRender.** Any callback handed through
+`navigation.navigate(...)` captures its creator's state. When adding one, pass the identifying id
+in the call and honour it, rather than trusting the closure.
+
+The back-stack fix in [`deal-center.md`](deal-center.md) removed one route into this (the
+"Back to Tools" double-push) but not the others — push notifications, Notifications and chat can
+all still stack a second Lead Center legitimately.
+
+### Follow-up 2 — a brand-new ONLINE lead also slipped through
+
+Third report of the Investment Center opening when it should not: create a lead, go straight to
+Lead Center, tap Investment Center — on **WiFi**, with no rollouts built.
+
+The previous follow-up only covered *offline-created* leads (`isDeviceOnlyLead`). This one is a
+synced online lead, and it failed for a different reason — in a line from the fix above:
+
+```
+if (!apptId) return cached ?? null;   // ← returns "unknown", which does not lock
+```
+
+⚠️ **There are TWO "no appointment" cases and they are not the same fact:**
+
+| what happened | what it means | what to return |
+|---|---|---|
+| `getAppointments` **threw** | we never got an answer | `onFailure()` — cached, else unknown |
+| `getAppointments` **succeeded**, lead not in it | no appointment ⇒ no calculators ⇒ nothing confirmed | `land(EMPTY_CALC_STATUS)` — a definite **locked** |
+
+A brand-new lead has no appointment yet, so the second case is its *normal* state. Returning
+`null` there reported "don't know", and `unknown` deliberately does not lock. An `answered` flag
+now records that the server actually replied.
+
+⚠️ **This is the shape of all three reports: a successful-but-empty read being treated as an
+absent one.** `unknown` must mean *"we could not ask"* and nothing else. Whenever a new exit is
+added to this `queryFn`, decide which column it is in — there are exactly four exits now, two
+`onFailure()` and two `land()`, and that split is the invariant worth preserving.
+
+⚠️ `shouldPersistStatus` / `mergeStatus` still protect the other direction: an answered-empty read
+can never clear a lead that is already confirmed. A test pins this, because the obvious
+"simplification" — writing EMPTY straight through — re-creates the original bug.
+
+Verified matrix: new online lead → locked; new offline lead → locked; confirmed online → unlocked;
+confirmed offline from MMKV → unlocked; sold → unlocked; synced lead on a weak signal with nothing
+cached → **unknown/open**, which is the original ticket above and must stay that way.
+
+---
+
+## Ticket — No Demo / Not Hit / Reset offline
+
+The three no-sale buttons in Job Docs did nothing offline: `handleResultSubmit` called
+`submitJobMutation.mutateAsync`, which threw, and the catch closed the modal and logged to the
+console. The rep got **no error, no change, no record**.
+
+⚠️ **All three are ORDINARY lead results, not separate endpoints.** A DevTools capture settled
+this — tapping Reset posts
+
+```
+leadData: { result: "reset", reason: "Not Home", status: "reset", timestamp: … }
+```
+
+to `submitJobBuilder`, exactly like No Demo and Not Hit. That is the **same endpoint the queue's
+`submit` step already calls**, so queueing them needed no new arm: just an offline branch calling
+`completeOfflineJobBuilder(work.clientId, payload)`, the same writer the Job Builder's own offline
+submit uses.
+
+⚠️ **This Reset is NOT "Reset Job Docs."** `resetLeadMutation` → `LeadService.resetLead`
+(`lead/v1/{id}/reset`) permanently deletes uploaded images and documents, and stays **online-only
+on purpose**: a queued replay could land after work the rep did later and destroy it. The two
+controls sit feet apart in the same component — do not merge their handling.
+
+### The half that was easy to miss
+
+Queueing alone was not enough. `offlineResultOverlay` accepted only `sale` and `demo`, so the
+lead still showed as **unresulted** in the leads list until it synced — and a rep who results a
+lead and sees nothing change assumes it failed and does it again. `OFFLINE_RESULTABLE` now
+carries `sale`, `demo`, `nodemo`, `nothit`, `reset`.
+
+⚠️ **`status` is not the same field as `result`.** The leads list and the lead card colour-code on
+`status`, which the no-sale payloads set separately; the overlay previously reused `result` for
+both. A test pins this.
+
+⚠️ An unrecognised result still returns `null` rather than being guessed at, and the overlay stops
+once `status === 'uploaded'` so the server becomes the truth again.
+
+⚠️ When there is no offline work record for the lead (`ensureOfflineWorkForLead` returns null —
+a server lead never opened offline) the rep is told plainly instead of the result vanishing.
+
+### Follow-up — the result log has to fire on BOTH paths
+
+The first cut of the offline branch above `return`ed before `handleResultSubmit`'s `logEvent`,
+which sat after `mutateAsync`. So a No Demo / Not Hit / Reset taken at a door reached the server
+on sync but left **no Forever Record entry** — the rep looked as though they had skipped a step.
+That is ticket 1310 in a new place: not a lost log this time, but one that was never emitted.
+
+The `logEvent('submit', …)` now sits **above** the online/offline branch, so both paths record
+the same thing once.
+
+⚠️ **Put shared telemetry before the branch, not in each arm.** Duplicating it is how the two
+copies drift; returning past it is how one disappears. There is exactly one call now.
+
+⚠️ `logEvent` does the offline handling itself — `lead_result_field_entry` is queueable, it is
+held when `isOnline()` is false and stamped with `occurredAt` at the moment of the tap, so the
+replay lands where the rep actually acted rather than at sync time. The caller must not
+pre-empt that with its own queueing.
+
+The other two logs in this flow (`click_build_job` and `change_lead_result_reason`, both in
+`widgets/modals/lead-center/ResultLeadModal.tsx`) already fire unconditionally before
+`onSubmit`, so the full trail — reason chosen → confirm → result submitted — survives offline.
+
+
+### Lead preview photo loads from disk (`useLeadPreviewUrl`)
+
+`hooks/useLeadPreviewUrl.ts` is shared by the chat header, the thread list and other lead thumbnails. For stored (bucket) photos it now persists the last resolved URL in MMKV (`leadPreviewUrl:<bucket/path>`) and returns the `warmToLocalCache` file, so a reopened lead shows the photo with no `getSecureUrls` call and offline. Full write-up and traps: `notifications-chat.md` § "Chat header / thread-list lead photo: slow to appear". ⚠️ Never route a `googleUrl` (street view) through that cache - its signature-less path is identical for every lead. Not verified on device.
+
+### `useUploadImagesMutation` takes an idempotency key
+
+Part of the photo-duplication fix (4 uploads became 9 on mobile data). Root cause, the key
+format and the backend contract are in [`offline.md`](offline.md); what belongs here is that
+this hook is the **second** path to `PUT demo/v1/leads/:leadId/images`.
+
+⚠️ `utils/uploadQueue.ts` is not the only caller. `useUploadImagesMutation`
+(`hooks/useLeadMutation.ts`) is used by `screens/ImageAnnotation/index.tsx` and was sending no
+key, so it sat in the backend's "absent key = old behaviour" branch and was unprotected. It now
+accepts an optional `idempotencyKey` and forwards it to `LeadService.uploadImages`.
+
+⚠️ **Optional on purpose, but pass it wherever a stable per-image id exists.** Without one, an
+upload that times out *after* the server stored the photo is re-sent and stored again — a
+timeout tells you nothing about whether the write landed.
+
+⚠️ The key for this path must come from the **rendered output**, not the source photo. See
+`offline.md` for why: re-annotating the same photo is a deliberate new upload, and a
+source-derived key would silently swallow it. `annotatedPhotoIdempotencyKey` handles this.
+
+⚠️ `JobDocsSection.tsx` also holds a `useUploadImagesMutation()` instance (line ~189) but does
+its photo uploads through `uploadQueueManager`. If anything ever starts uploading through that
+mutation handle, it needs a key too.
+
+### Follow-up — the SAME gate, the opposite bug: `unknown` unlocked a lead with nothing built
+
+Client, on Android over mobile data: *"even I didn't confirm the rollout price it's allow me to open
+the Investment Center."* The screenshot shows the offline banner and the tile reading
+*"Checking job status…"* with a spinner, i.e. `gate === 'unknown'` — which deliberately does **not**
+lock (see the rule above: *a wrong lock costs a sale; a wrong unlock costs one tap*).
+
+**Why the existing guards missed it.** `isDeviceOnlyLead` already turns an offline-CREATED lead into
+a definite `locked`. This lead was different: a real server lead (`SelfGen`, a mongo `_id`) that the
+rep had **never opened online**, so nothing was ever cached. `statusAfterFailedRead(null)` → `null`
+→ `unknown` → unlocked.
+
+**The rule, narrowed by one axis.** `calcGateState` now takes `isOffline`, and `!status` resolves:
+
+| | nothing cached | cached unconfirmed | cached confirmed |
+|---|---|---|---|
+| online | `unknown` (unlocks, refetches) | `locked` | `unlocked` |
+| offline | **`locked`** | `locked` | `unlocked` |
+
+- ⚠️ **The online half must stay `unknown`.** That is the re-lock fix: a transient read failure on a
+  lead whose rollouts the rep really did confirm must not lock the screen in front of a customer,
+  and the refetch behind the tap resolves it. Do not "simplify" both halves to `locked`.
+- ⚠️ **Offline is different in kind, not degree**: the benefit of the doubt is only worth giving when
+  the doubt can still be settled. Offline no later read can arrive, and an uncached lead has never
+  shown this device a confirmed rollout.
+- `isOffline` comes from `useIsOnline()` in `OperationalSections`, which counts `degraded` as offline
+  (deliberate, see `offline.md`) — a one-bar line that cannot complete the read gates the same as no
+  line at all.
+- Covered by `__tests__/utils/investment-gate-edges.test.ts` (19 cases), which pins **both**
+  directions: the three re-lock cases (cached-confirmed, failed-read-with-cache, local confirmation
+  outranking a stale read) and the definite negatives, each run online and offline.
+
+## Leaving a lead from a CHILD screen released nothing
+
+`utils/lead-work-session.ts` (`endActiveLeadWorkSession`), `widgets/common/MainHeader.tsx`.
+The two calls that end a lead session: the `lead_session` / `session_pause` activity log, and
+`PUT lead/v1/{leadId}/work` with `{ workStartedBy: null }` (`LeadService.endWorkLead`).
+
+Reported: both fire when the rep leaves from **Lead Center**, but not when they leave from a child
+screen — Deal Center, Job Builder, the Pitch Book — using the header. The lead stayed open on the
+server and the rep stayed live on the ops board.
+
+⚠️ **`useFocusEffect` is the wrong lifecycle for "the rep left the lead".** Lead Center registers
+its header handler inside one:
+
+```ts
+useFocusEffect(useCallback(() => {
+  setHeaderActions({ onNavigate: (t) => { pauseLeadSessionRef.current(); navigation.navigate(t); } });
+  return () => setHeaderActions({ onNavigate: null });   // <- runs on BLUR, not unmount
+}, ...));
+```
+
+Opening any child screen blurs Lead Center, so the cleanup nulls `onNavigate` and the header falls
+back to a plain `navigation.navigate`. The session is only released if the rep happens to leave
+from Lead Center itself.
+
+The fix is in `MainHeader`'s single `onNavigate`, which every header route goes through (home
+logo, notification bell, chat). It calls `endActiveLeadWorkSession()`, which reads the session
+from **MMKV rather than props**, so it needs no lead object and works from any screen.
+
+⚠️ **Both paths clear the stored session SYNCHRONOUSLY before any await**, which is what stops a
+double-send: Lead Center's `pauseLeadSession` (guarded by `hasLoggedPauseRef`) and
+`endActiveLeadWorkSession` can both run on the same tap, and whichever is second finds no session
+and no-ops. Keep the `clearLeadWorkSession()` call before the `await` if either is refactored.
+
+⚠️ **Fire-and-forget on purpose** — navigation must not wait on two network calls, and a rep
+leaving a door often has no signal. The pause log queues offline (`QUEUEABLE_LOG_MODULES` includes
+`lead_session`); `endWorkLead` is skipped for a client-id lead, whose queued work carries it.
+
+The back button was already covered: popping Lead Center runs its unmount effect
+(`return () => pauseLeadSessionRef.current()`), which fires even when the pop comes from a child
+screen further up the stack.
+
+### Follow-up — logout, and the account-popover routes
+
+Two further exits were reported after the header fix.
+
+**Account Settings / Job Tracker / My Learning must NOT end the session.** They are side trips a
+rep takes from inside a lead and returns from — part of working it. `AccountPopover` is handed
+`MainHeader`'s own `onNavigate`, so an earlier version of this fix ended the session on all three;
+corrected to fire only on the home route. The session ends when the rep reaches the lead LIST,
+whether they get there from Lead Center, a child screen, or one of these side trips.
+
+**Logout was a real gap.** `useAuth.logout` already called `endInstallerWorkSession('logout')` for
+an installer's job but had no equivalent for a rep's lead, so logging out mid-appointment left the
+lead open on the server and the rep live on the ops board. `endActiveLeadWorkSession()` now runs
+there too.
+
+⚠️ **Ordered BEFORE `setSessionHeader(null)`.** Both the pause log and `endWorkLead` need the
+bearer token; moving this call below the header reset makes them 401 silently.
+
+⚠️ **It must never throw** — a failed release cannot be allowed to abort a logout, and a rep often
+logs out with no signal. `endActiveLeadWorkSession` catches both calls internally and clears the
+stored session first, so an offline logout still ends it locally and
+`endStaleLeadWorkSession` tidies the server side on next launch.
+
+⚠️ **The 401 auto-logout path (`services/api/index.ts`) is deliberately NOT wired up.** The token
+is already invalid there, so `endWorkLead` would simply 401 again; the stale-session sweep on next
+launch is the correct cleanup for that case.
+
+## Three surfaces, three different photo counts
+
+`utils/lead-photo-counts.ts` (the rule), `widgets/components/LeadCenter/JobDocsSection.tsx`.
+
+Reported with a screenshot: the download modal said *"Successfully downloaded all 3 photos"* while
+Manage Photos and Download Images both read **(1)** and the progress row read **1/46 slots** — for
+the same lead, on the same screen.
+
+Each surface counted a different thing:
+
+| Surface | Counted |
+|---|---|
+| Manage Photos / Download Images buttons | `filledSlots` — configured slots holding ≥1 photo |
+| Progress row "N photos" | slot photos only, with annotated dropped by an explicit `return` |
+| Download modal | every image in `sectionImages` — extras and annotated included |
+
+⚠️ **An EXTRA can never raise `filledSlots`** — it has no configured slot to fill. An **ANNOTATED**
+photo was skipped outright. Both are real photos the rep took and can see in Manage Photos, so a
+rep who added one watched the number stay still and reasonably assumed the app had lost it.
+
+`countLeadPhotos` is now the single rule: every distinct photo counts once, wherever it sits, and
+each extra and annotation brings its own slot so the denominator grows with them. One slot photo +
+one extra + one annotation on a 46-slot schema reads **3/48 slots · 3 photos**, with **(3)** on
+both buttons — matching what Download Images actually saves.
+
+⚠️ **Dedupe by photo identity (`s3url || uri || _id`), never by slot.** A shot lives in both the
+server list and the upload queue for one refetch after it lands, and would otherwise count twice —
+the same per-slot surplus trap recorded in [`offline.md`](offline.md).
+
+⚠️ **The static (non-dynamic) path had the same annotated exclusion** and was fixed with it. Both
+paths now agree.
+
+The info icon left of the row explains why the total moves. It is an **in-card popover, not a
+Modal** — this screen already stacks several, and iOS silently drops a presentation requested while
+another is dismissing (CLAUDE.md §6).
+
+---
+
+## Ticket — the rep returns to an open lead, but the board shows them paused
+
+Context from the field: a lead stayed **ON SITE** on the ops board after the rep had gone, because
+backgrounding or killing the app drops the socket and nothing released the lead. The backend fixed
+that half by **pausing the work when the socket disconnects**.
+
+That pause fires on a *plain background* too. A rep who glances at a text and returns five seconds
+later is standing at the same door, looking at the same open lead — and the server has them paused.
+Nothing re-asserted it: `useLeadCenterData`'s `LeadService.workLead` call is keyed on
+`lead._id` / `user._id`, which do not change when the app comes back to the foreground.
+
+`hooks/useResumeLeadOnForeground.ts` (mounted in `screens/LeadCenter/index.tsx` beside
+`usePrecacheLeadPhotos`) re-claims it: `PUT` via `LeadService.workLead(leadId, userId)`, then
+`SocketManager.joinLeadOnsiteWatch(leadId)` — the pause explicitly left that watch
+(`logLeadSessionPause`), so it has to be rejoined. Decision rules are pure in
+`utils/lead-session-resume.ts`.
+
+⚠️ **It logs `lead_resume`, never `lead_check_in`.** The rep never left; a second check-in would
+double-count the visit.
+
+⚠️ **`inactive → active` is NOT a return.** iOS sends `inactive` for the app switcher, the
+notification shade, permission sheets and incoming-call banners. Only `background → active`
+counts, or the app fires a resume every time a banner appears.
+
+⚠️ **Only re-claim the lead that is still on screen** (`skip-left-lead`). If the rep backgrounded
+on lead A and came back having navigated away, re-asserting A puts them ON SITE at a door they are
+not standing at — the exact bug this ticket is about, pointing the other way. The check runs
+*before* the duration check so a wrong lead is never re-claimed on a technicality.
+
+⚠️ **The resume is deliberately NOT queued on failure.** Being ON SITE is a statement about *right
+now*; replaying it later would put the rep at a door they left hours ago. This is the opposite of
+the rule for `endWorkLead`, which **is** queued (`setWorkReleaseQueue`) — releasing a lead late is
+harmless, claiming one late is not.
+
+⚠️ This does not conflict with `endStaleLeadWorkSession`: that runs only on **cold launch**
+(`useAppInitialization`), so kill-and-relaunch releases the lead while background-and-return
+re-claims it.
+
+⚠️ Skipped for an offline lead (`isClientId`) and when offline — there is no server record to
+re-claim, and the queued work carries the check-in.
+
+## Ticket — crash on Lead Center while revRender was generating (`next[index]` undefined)
+
+TestFlight crash, 3 devices across 1.1.0 and 1.1.1, reproduced locally: open Lead Center, start a
+revRender, watch the strip. The app dies with no JS error in the debugger.
+
+**The stack says JS, not native.** Frames 0-18 are all `hermesvm`, and frame 11 is
+`Interpreter::caseIteratorBegin` — the `IteratorBegin` bytecode, i.e. a spread / `for...of` /
+destructure. Above the JS boundary sit `RuntimeScheduler_Modern::runEventLoopTick` →
+`Task::execute` → `jsi::Function::call`: a **scheduled callback**, not a component render. That
+pair (Hermes iterator + no render frames) points at a `setTimeout` continuation, which is what the
+revRender batch poll in `hooks/useLeadReports.ts` is.
+
+**Root cause.** `runRender(job, index)` captures `index` in its closure and polls for minutes. Each
+state write does `const next = [...prev]` and then `next[index].status = …`. Four of the fourteen
+`next[index]` writes had **no `if (next[index])` guard** while the other ten did — guards had been
+added only where a crash had previously been seen. When `prev` is shorter than the captured
+`index`, the write throws.
+
+`prev` gets shorter three ways, all normal rep behaviour:
+- `setRevRenderJobs([])` in `finalizeQueue` — clears the array while other polls are still looping.
+- The restore effect (`Storage.getItem('rev_render_jobs_<leadId>')`) replaces the array with a
+  persisted one of a different length.
+- That effect re-runs on `leadId` change — switching leads swaps the array under in-flight polls.
+
+Fixed by guarding the four writes (`'running'` start, the no-`batchId` completion, the batch-done
+completion, and the `catch` failure) exactly like their neighbours.
+
+- ⚠️ **Why nothing appears in the debugger.** The throw is inside a React state updater passed to
+  `setRevRenderJobs`, which runs outside the poll loop's own `try/catch (pollErr)`. It is not a
+  catchable JS error at that point — it aborts the VM, so the console stays empty and only the
+  native crash log survives. Do not conclude "no error in Metro" means "not a JS bug".
+- ⚠️ **Never dereference `next[index]` unguarded in this file.** Any new state write in `runRender`
+  needs the same guard; the array can always be shorter than the closure's `index`.
+- ⚠️ The file is CRLF.
+- Fix verified statically; the crash path itself was not re-run on device from this session.
+
+### Follow-up — why the guard is safe (asked before merging)
+
+Checked explicitly, because a skipped state write looks like it could strand a batch or disturb the
+offline queues. It cannot:
+
+- **The in-range path is unchanged.** Running the old and new updater side by side on an in-range
+  `index` gives byte-identical output. The guard only engages where the old code threw, so there is
+  no working behaviour to regress.
+- ⚠️ **Completion does NOT depend on these writes.** `completedCount` is a closure variable
+  incremented *before* each `updateJobStateAndPersistence` call, and `finalizeQueue()` fires on
+  `completedCount === total`, never on array contents. A skipped UI write cannot leave a batch
+  hanging — do not "simplify" this by deriving completion from `revRenderJobs`, which would couple
+  it to exactly the array that can be cleared mid-poll.
+- **No offline coupling.** `useLeadReports.ts` imports nothing from the offline system (no
+  `offline*`, `uploadQueue`, `connectivity` or `session-scope`). It owns `risk_job_<leadId>` and
+  `rev_render_jobs_<leadId>` in MMKV, and neither key appears in `utils/session-scope.ts`, so
+  neither is in a queue, a drain order, or the logout-survival list.
+- **Consumers are index-safe.** `OperationalSections` reads the array only through `.some()`,
+  `.reduce()`, `.length` and `.map()`, with a `revRenderJobs = []` prop default. Nothing indexes
+  into it, so a shorter array renders correctly.
+
+### Follow-up 2 — the real hole: "never asked" was being read as "don't know"
+
+The `isOffline` narrowing above was not enough. Client, on **mobile data, iOS TestFlight**: *"even
+though I created the new lead, opened the lead center, somehow I am able to open the Investment
+Center even I didn't confirm the rollout price"* — repeatedly.
+
+**Why the offline rule missed it.** Mobile data is **online**, so `isOffline` was false. The lead is
+a real server lead, so `isDeviceOnlyLead` was false. `useLeadCalculatorStatus` seeds `initialData`
+from the MMKV cache, and a brand-new lead has nothing cached — so the first render has
+`data === undefined` while the read is still in flight. That fell through to `unknown`, which does
+not lock, and the rep could tap through **before the first answer ever arrived**.
+
+**The distinction that was missing.** `unknown` conflated two different situations:
+
+| | meaning | deserves benefit of the doubt? |
+|---|---|---|
+| asked, reply lost | the rep may well have confirmed | **yes** — a wrong lock costs a sale |
+| never asked | no answer has ever arrived for this lead | **no** — there is no evidence of anything |
+
+`calcGateState` now takes `hasAnswered` (TanStack `isSuccess` from the hook). With no status:
+`!hasAnswered` → `locked`; otherwise the `isOffline` rule above applies.
+
+- ⚠️ **`hasAnswered` is about the READ, not the data.** A successful read that says "no calculators"
+  sets it true and produces a definite `locked` through the normal path. It must come from
+  `isSuccess`, not from `!!data`.
+- ⚠️ **The default is now SAFE**: `calcGateState(undefined)` with no options returns `locked`, not
+  `unknown`. A new call site that forgets to pass `hasAnswered` fails closed.
+- ⚠️ The re-lock ticket still holds and is pinned by tests: asked-before-and-lost stays `unknown`
+  online, a confirmed cache unlocks offline, and a local confirmation still outranks a stale read.
+- ⚠️ **TestFlight builds lag the branch.** The first `isOffline` fix was not in the build this was
+  reported against; check the build's commit before concluding a gate fix did not work.
+- `__tests__/utils/investment-gate-edges.test.ts` — 26 cases across `{status} x {offline} x
+  {answered}`, pinning both directions.
+
+### revRender runs appearing on a lead that never had any (the READ side)
+
+> Screenshots: Job Docs showing **"0/46 slots · 0 photos"**, and revRender on the same lead
+> showing **"13 Runs"** with other leads' images.
+
+⚠️ **This is NOT the same bug as the attribution fix** recorded under `useLeadReports`
+(`renderTargetLeadId`). That one fixes which lead a render is filed against when it is
+GENERATED. This one is which runs a lead DISPLAYS when read back — the earlier fix could not
+have addressed it, so "already fixed" was wrong.
+
+Two independent causes, both now closed, in `utils/revrender-attribution.ts`:
+
+**1. ⚠️ A device-only lead asked the server about itself.** An offline-created lead's `_id` is
+a client id (`lead-1760...`). `useRevRenderRunsQuery` was `enabled: !!leadId`, so it still sent
+`GET /rev-render/v1/runs?leadId=lead-1760...`. A server that ignores or fails to match an
+unknown `leadId` answers with *something*, and whatever came back was rendered as this lead's
+history. **The lead cannot have server-side runs, so the request must not be made at all** —
+`canFetchRenderRuns(leadId)` now gates both `enabled` and the `queryFn`.
+
+**2. ⚠️ Nothing verified that a returned run belonged to this lead.** `buildRevRenderPairs`
+(`OperationalSections.tsx`) **drops each run's `leadId`** while mapping, so a bad response could
+not be detected downstream — and `cachedFetch` then wrote it into
+`offline-cache:revrender-runs:<leadId>`, where it survived restarts. `runsBelongingToLead` now
+filters **inside the `queryFn`, before the write**, so the cache cannot be poisoned.
+
+⚠️ **A run with NO lead id is KEPT.** Older runs predate the field and dropping them would
+silently erase real render history — the opposite failure and the harder one to notice. Only a
+run that positively names a *different* lead is rejected.
+
+⚠️ **`orderedRuns` filters a second time on purpose.** A cache written before this fix still
+holds another lead's runs on real devices, and a device-only lead must show none whatever is on
+disk. Since `buildRevRenderPairs` discards `leadId`, that memo is the last point where
+ownership can still be checked. Do not "simplify" it away as redundant.
+
+The other two consumers (`DynamicDealCenter/components/RevRenderSlots.tsx`,
+`InvestmentCenter/InvestmentPanel.tsx`) go through the same hook and are covered by the
+query-level guard; they need no filter of their own.
+
+### Inspection photos: a stuck spinner, and a count that goes backwards
+
+> "Back was uploaded before and the loader is still showing... sometimes the loader keeps
+> showing even though it will be done."
+> "During uploading the number changes - I uploaded 4 images, during uploading it becomes 3,
+> and then after a second it becomes 4 again."
+
+⚠️ **One shape of bug behind both: the count and the spinner are each derived from two sources
+that briefly disagree** — the server's `salesPhotos` and the device upload queue. On Wi-Fi the
+disagreement lasts milliseconds; on 4G it is long enough for the rep to watch. Rules and 20
+tests in `utils/photo-upload-progress.ts`.
+
+**The stuck spinner.** `uploadingKeys[key]` (`useDynamicInspectionCapture.ts`) is an optimistic
+flag set at capture, and it was cleared in exactly **one** place: the effect keyed on
+`salesPhotosSignature`. If that refetch returned stale data, failed, or the photo came back
+under a slightly different subcategory, the signature never changed and **nothing else ever
+cleared the flag** — the slot span for the rest of the session.
+
+⚠️ **A spinner must never depend on a single success path.** The queue listener now clears the
+flag too: an item that has left the queue is not uploading, whatever the server says. Both
+paths clear it and neither is required. ⚠️ That effect must stay **below** the
+`uploadingKeys` / `pendingUploadKeyRef` declarations — it calls `sync()` synchronously on
+mount, so placed above them it throws on the TDZ, and tsc does **not** catch it.
+
+**The count dip.** `dynamicCounts` (`JobDocsSection.tsx`) is `server photos + queued items`.
+The queue item is dropped the instant its PUT resolves; the server list only changes when a
+refetch lands. In between the photo is in **neither** set and the number falls.
+
+Two complementary fixes — ⚠️ they are not alternatives:
+
+1. `uploadQueue.ts` **awaits** `refetchQueries` before `removeItem`. ⚠️ Do not make this
+   fire-and-forget to "speed up the drain" — the await *is* the fix.
+2. A refetch can still resolve without the new row (read-after-write lag), so the manager
+   records `recentlyCompleted` slots and `dynamicCounts` counts them as `settling`.
+   ⚠️ Recorded **before** `removeItem`, because `removeItem` notifies listeners and one
+   running in between would see the very dip being fixed. ⚠️ A settling slot stops counting as
+   soon as the server row appears, or the count flickers *upward* instead, and it is bounded
+   by `RECENTLY_COMPLETED_TTL_MS` so a row that never arrives is not claimed forever.
+
+⚠️ `countInFlightPhotos` dedupes by **slot**, so a queued item and its server row during the
+overlap are one photo. A monotonic-sequence test asserts the count stays 4 through all six
+stages of the handover — that is the regression to protect.
+
+### Follow-up - "Photo tagging needs to sync first" uses the app's dialog (2026-10-16)
+
+The offline notice for a lead whose photo categories were never downloaded (`inspectionSchemaUnavailable`) was a native `Alert.alert`, which
+ignores the app theme. `widgets/components/LeadCenter/JobDocsSection.tsx` now shows `DynamicDealCenter/components/ConfirmDialog`
+(`tone="warn"`, `hideCancel`, `confirmLabel="OK"`) from `showSchemaSyncNotice`, raised by both `handleStartTakingPhotos` and `openLegacyTagModal`.
+
+- ⚠️ `ConfirmDialog` is its own native `Modal`: raise it only when no other modal is presenting (CLAUDE.md §6, never stack native Modals).
+  Both call sites run before the tag / capture modal opens and return straight after.
+- Other `Alert.alert` calls in this file (delete failed, permission denied, no photos...) are still native.
+
+### Follow-up - photo-delete log uses `meta.occurredAt` (2026-10-16)
+
+`widgets/components/lead-center/useDynamicInspectionCapture.ts` (the `deleted_image` log, module `inspection_photo` / `annotated_photos`) wrote the
+photo's capture time as `meta.timestamp`. Every activity log now carries ONE action-time key, `meta.occurredAt` (see `docs/claude/offline.md`), and a
+delete's action time is when the rep deleted it, so it is now `new Date().toISOString()` under `occurredAt`. `imageData.timestampTaken` still
+holds the photo's own capture time.
+
+- ⚠️ Do not put the capture time back into the log's time key: the portal reads `occurredAt` as "when this happened".
+
+
+## REVUIUX-559 - Image Annotation: shapes (arrow / line / circle / box) + two export bugs
+
+Ticket: *"Add in shape functionality - where I can adjust size and color: arrows, straight lines, circles, squares/rectangles."* New **Shapes** tool beside Zoom / Draw / Text (`screens/ImageAnnotation/index.tsx`, `widgets/components/LeadCenter/AnnotationCanvas.tsx`, pure maths in `utils/annotation-shapes.ts`, tests `__tests__/utils/annotation-shapes.test.ts`).
+- **Model:** `AnnotationShape { id, kind, p1, p2, color, width }`, points NORMALISED like strokes/texts. Circle = centre `p1` + an edge point `p2` (a true circle; radius in px from the canvas aspect). `shapesMap[photoId]` sits beside `strokesMap` / `textsMap`.
+- **Drawing / editing** (all in the existing PanResponder, so zoom correction `dx / zoomScale` and Zoom-mode gesture isolation are unchanged): drag on empty canvas draws; a NEW shape is auto-selected; touching a selected shape's end HANDLE resizes it, its OUTLINE moves it (interiors are deliberately not hit, so a box can be drawn inside another); a tap selects the shape under the finger or clears the selection (a drag shorter than `MIN_SHAPE_DRAG_PX` never leaves a zero-size shape). Colour / size buttons set the next shape's defaults AND restyle the selected one; **Delete shape** removes it. The toolbar width was re-budgeted (tool buttons `w-12`, undo group `w-10`) so four tools + undo/redo/reset fit a 402pt phone.
+- **Undo/redo:** history entries `{ type: 'shape', id, before, after }` (add = before null, delete = after null, restyle/move/resize = both) via `commitShapeChange`; `applyShapeChange` keeps draw order. ⚠️ **Cancel (X) restores shapes AND the pre-mode history/redo stacks** - Draw's cancel does not do this for its history; do not "align" Shapes down to it.
+- **Live preview** goes through a ref + one rAF push (`subscribeLiveShape`), like the pen, so a drag never re-renders the screen. Handles are drawn at constant on-screen size (`8 / zoom`). The text-note layer is `pointerEvents="none"` in Shapes mode so a drag starting over a note still draws.
+- **Export** (hidden WebView): shapes are drawn after the ink and before text. ⚠️ **The arrow-head maths is duplicated in the WebView script string** (a function can't be shipped - Hermes has no source text); `arrowGeometry` in the util is the reference, change BOTH. The script is inside a template literal: no backticks or `${` in it.
+- **Two pre-existing export bugs fixed while verifying "everything works":** (1) the **eraser** used `destination-out` on the PHOTO canvas, punching transparent holes in the picture (JPEG = black) instead of rubbing out only the pen marks as the preview does - ink is now drawn on its own offscreen layer and composited; (2) **text `fontStyle` and `opacity` were never sent** to the WebView, so Bold / Italic / Opacity set in the style panel were flattened to regular, opaque text in the saved photo. Both now sent / honoured.
+- Save All, the unsaved-changes prompt and Reset all count / clear shapes. Not done: filled shapes, rotating a shape, shapes on the classic (non-dynamic) photo flow beyond what shares this screen. Not verified on device - needs a check that the saved JPEG matches the preview for each kind, with and without zoom.
+
+
+## REVUIUX-558 - Re-edit an already-annotated photo (in place)
+
+Ticket (Lance): *"Not letting me annotate an existing annotated photo. I know on web we had this worked out."* One annotated photo per base photo, but it must be re-editable. **No backend change** - these endpoints already exist and the web app uses them. Files: `utils/annotation-restore.ts` (pure, tests `__tests__/utils/annotation-restore.test.ts`), `services/api/leads.ts`, `screens/ImageAnnotation/index.tsx`, `widgets/components/lead-center/DynamicManagePhotosView.tsx`.
+- **Endpoints:** `GET demo/v1/leads/:id/annotations` (`{ data: [{ salesPhotoId: <annotated copy _id>, annotationData }] }`) and `PATCH demo/v1/leads/:id/images/:annotatedId/annotation` (multipart `file` + `annotationData` JSON) which OVERWRITES the annotated image in place. New annotations still `PUT images`, now with the web's `annotations` field (`[{ salesPhotoId: <original _id>, annotationData }]`, aligned with `images`).
+- **Mobile's own JSON.** The backend stores `annotationData` opaquely; web writes Konva JSON. Mobile writes `{ format: 'revdsm-mobile-annotation', version, originalId, strokes, texts, shapes }` (normalised points, as on screen). ⚠️ The `format` marker is how the two are told apart - do not drop it. A mobile doc restores editable marks over the CLEAN ORIGINAL; a web doc / no doc / missing original falls back to drawing on top of the flattened annotated copy (old marks cannot be edited there). Web cannot restore a mobile-written doc either - unverified whether it errors; check on the web app.
+- **Flow:** in Manage Photos select mode the "+ ANNOTATED" cards are now selectable; the BASE photo stays locked (`alreadyAnnotated`), which keeps one annotated photo per base. `openAnnotationForSelection` hands the screen `existingAnnotationId`, `salesPhotoId`, `initialMarks`, `staleUris`. Original is found by the doc's recorded id, else the single non-annotated photo with the same category + base subcategory (`findOriginalPhoto`).
+- **Screen:** seeds `strokesMap/textsMap/shapesMap` from `initialMarks`; `seededMarks.count` is the "unchanged" baseline so opening a photo is not "unsaved work". A re-edit is saved only if touched (counts differ or undo history non-empty) - and still saved if every mark was removed (that restores the clean photo). Re-edits PATCH (no idempotency key: a replay writes the same bytes), new ones PUT.
+- ⚠️ **Stale cache after an overwrite:** the s3url and file name do not change, and `getLocalCachePath` ignores the query string, so the old bytes would keep showing. The screen calls `forgetWarmedUri` on the annotated copy's url and invalidates `['secureUrls']` + the lead.
+- Not done / not verified: the classic (non-dynamic) `ManagePhotosModal` flow is untouched; restored text / stroke sizes are in px so a different screen size draws them proportionally off; offline re-edit fails with a flash (annotation saves were never queued). Needs a device check: annotate -> re-open -> marks restored -> move/delete one -> save -> same single photo updated, no duplicate.
+
+- **Follow-up - only the latest annotated copy shows.** Device test: after a re-edit "+ ANNOTATED" listed TWO Front-Right cards, the older one failing to load ("Tap to retry"). `getAnnotatedFor` (`useDynamicInspectionCapture.ts`) now passes through `latestAnnotatedPerBase`: one annotated copy per category + base subcategory, newest `timestampTaken` (later row on a tie / unknown time). ⚠️ This HIDES the stale row, it does not delete it, and the cause is unconfirmed - if the PATCH really leaves a second row on the server (or moves the s3url and orphans the old one) that is backend behaviour to check; the web app would show the same duplicate. Do not "fix" it by deleting rows client-side without that answer.
+
+
+### Annotation text notes and their menu stay inside the photo
+
+Report: a note dragged to the right edge went past the photo and its Edit Text / Adjust Style / Delete menu was cut off by the canvas frame (`overflow: hidden`). `widgets/components/LeadCenter/DraggableText.tsx`:
+- **The note's whole box (text + padding) is clamped to the photo**, not just its top-left corner (`handleMoveText` only clamped `0..1`, so the right/bottom could overflow). The limit is `(canvas - measuredBox) / canvas`, applied while dragging AND by an effect that pulls a note back once its size is known - covers a tap placed near an edge, a longer edit, and a bigger font from Adjust Style.
+- **The menu is clamped horizontally** to `[0, canvasWidth - 140]` (the connector line still points at the note's centre) and flips above/below by real space (`MENU_CLEARANCE` 148px, else whichever side has more room) instead of the old fixed `py >= 0.2` rule.
+- ⚠️ Positions are stored normalised and the export places text at `px * w`, so a note kept inside here stays inside the saved photo; the export font (`sans-serif`) can be a few px wider than the on-screen one. Not verified on device.
+
+
+## Annotation: two-finger pinch / pan in EVERY tool (Draw / Text / Shapes)
+
+Ask: *"if I use double fingers can we pinch in/out zoom even if I'm on text / shapes / draw?"*, then, after a first attempt: *"it should also work here"* (Shapes screen). Ticket 420's rule "gestures are live ONLY in Zoom mode" is superseded for TWO fingers.
+- ⚠️ **First attempt FAILED on device and was replaced:** leaving the RNGH pinch enabled in Draw / Text / Shapes did nothing - the JS `PanResponder` overlay holds the touch and starves the gesture handler. Do NOT go back to "just enable the RNGH pinch in every tool".
+- **How it works now (final):** the pinch is JS-driven in EVERY state - Zoom, Draw, Text, Shapes AND no tool selected - and works on the photo AND the dark margin around it. A `zoomResponder` PanResponder wraps the whole photo area in `screens/ImageAnnotation` (never claims a one-finger touch; `onMoveShouldSetPanResponderCapture` takes over once a second finger moves, even from the drawing overlay or a note) and forwards `nativeEvent.touches` (page coords) to `AnnotationCanvas` via `twoFingerZoomRef` (`touches(list)` / `release()`); the canvas does pinch + pan about the CURRENT centroid with `utils/zoom-transform.ts` (`beginPinch` / `updatePinch` / `finishPinch`). The RNGH pinch was DELETED (not just disabled); RNGH now only does the ONE-finger pan, in Zoom mode and with no tool selected (`maxPointers(1)`).
+- **A second finger discards the first finger's gesture** (`abortForMultiTouch`): live stroke / shape dropped, nothing committed on release, no text dialog; `multiTouchRef` suppresses drawing until EVERY finger lifts, so lifting one finger of a pinch does not start a stroke. `onPanResponderTerminate` does the same.
+- `DraggableText` forwards its own touches too (`onTwoFingerTouches` / `onTwoFingerEnd`), so a pinch that starts on a note still zooms and does not fling the note.
+- The frame (`frameRef`, non-transformed) is measured once for its page rect, so the pinch anchors correctly. `zoomScale` fed to the `dx / scale` correction updates when the pinch ends, not during it.
+- Not verified on device: pinch in each of the three tools on Android and iOS, a pinch starting on a text note, and no stray dot after a fast pinch.
+
+
+## Annotation Save: background + offline-safe, NO loader ("takes too long to save")
+
+Ask: Save took far too long; save locally first and push to the server later; no single blocking loader; offline must work properly.
+- **Before:** Save downloaded every original, rasterised each in the screen's WebView and uploaded them one by one behind a full-screen overlay.
+- **Now:** Save writes a small JOB and closes at once (`handleSaveAll` in `screens/ImageAnnotation`): marks + a durable copy of the original, via `services/annotationSaveService.ts` (`enqueueAnnotationJobs`). The overlay and `saveProgressText` are gone; `isSaving` only guards a double tap for milliseconds. In the background the service (1) flattens photo + marks to a JPEG with `services/annotationRenderer.ts`, then (2) hands it to `uploadQueueManager` with an `annotation` descriptor. The queue already owns retry / backoff / parking / waiting for signal / idempotency, so an annotation made offline is rendered locally, queued and pushed on reconnect.
+- **The WebView moved to the app root** (`widgets/common/AnnotationRenderHost.tsx`, mounted in `App.tsx`) so a render outlives the screen; its HTML is `utils/annotation-render-html.ts` (verbatim move; the arrow-head maths is still duplicated from `annotation-shapes.ts` - change both). Renders are serialised, matched by request id echoed through `imageIndex`.
+- **Queue:** `UploadQueueItem.annotation` = `{ mode: 'new' | 'reedit', annotationData, salesPhotoId, existingAnnotationId, existingS3url, staleUris }`. `new` = the normal PUT plus the web's `annotations` field; `reedit` = `uploadAnnotationEdit` -> `PATCH .../images/:id/annotation` (no idempotency key: a replay rewrites the same bytes), then forgets the stale cached urls and refreshes `secureUrls` / `leads` / `leadAnnotations` / the lead. The re-edit log is `annotated_photo_updated` (it does NOT poll for the new row like an add does - there is none).
+- ⚠️ **`annotation_save_jobs` (MMKV) is in `SESSION_KEEP_KEYS`** (`utils/session-scope.ts`, asserted in `tests/offline/session-scope-keys.test.ts`) - without it a sign-out wipes annotations made at a door. Jobs are owner-stamped and only that rep's session replays them. `startAnnotationJobSync()` (from `useAppInitialization`) resumes jobs left by a killed app and re-runs on reconnect / foreground.
+- ⚠️ **A job needs the ORIGINAL's bytes.** The screen passes the local copy it already warmed, and the job copies it into `DocumentDir/annotation_jobs`. A photo that exists only as a never-cached signed url cannot be flattened offline: `DynamicManagePhotosView.openAnnotationForSelection` leaves such a photo out with "Photo not on this device" instead of opening a blank editor; if one still slips through, the job waits for a connection and is dropped with a message after 3 failed renders.
+- **Coordinates** are fetched when the screen opens (`locationRef`), and Save waits at most 400 ms for them (falls back to 0,0 as before).
+- The rep sees the OLD annotated image until the upload lands (no optimistic local preview for a re-edit yet); queued items show in the global pending-uploads indicator. Annotated items stay out of the per-slot pending cards (`indexPendingBySlot` skips them) so no duplicate card appears.
+- Not verified on device: Save returns instantly with 1 and with many photos; airplane-mode annotate -> reconnect uploads; kill the app between Save and upload and it still completes; re-edit offline; a photo whose WebView render happens while the app is backgrounded.
+
+- **Follow-up - the annotated photo shows the INSTANT you return (no waiting, no loader).** After Save the Manage Photos "+ ANNOTATED" section now shows the photo at once, straight from the device, and quietly becomes the server copy when the upload lands.
+  - **Two stages** (`utils/pending-annotations.ts`, hook `hooks/usePendingAnnotations.ts`): (1) a JOB the renderer has not flattened yet -> `widgets/components/lead-center/AnnotationOverlayPreview.tsx` draws the rep's marks over the ORIGINAL, cropped exactly like the card's `cover` thumbnail (`coverBox`; drawn through an SVG `viewBox` in the editor's layout space so widths / font sizes scale like the final render); (2) a queued upload -> the flattened local JPEG (`UploadQueueItem.uri`). Tests: `tests/annotation/pending-annotations.test.ts`.
+  - **Cards** (`DynamicManagePhotosView`): a NEW annotation gets its own card (`annotated-pending-*`), unless the server copy has already landed (the queue refetches the lead BEFORE dropping the item, so for a moment both exist - the pending one is hidden then). A RE-EDIT swaps the image of the EXISTING card. Pending cards are not selectable and a pending base photo stays locked; stage 1 reads "Saving...", stage 2 the usual upload status.
+  - ⚠️ **Trash:** a queued NEW annotation can be cancelled (`resolveDeleteTarget` -> queued-upload); a stage-1 card and ANY re-edit card have NO trash - a re-edit's card is the existing server photo, and cancelling there would silently drop the edit.
+  - **No loader when the server copy takes over:** `uploadQueue.uploadItem` already adopts the local file into the image cache for a new photo; a re-edit now does the same (`adoptLocalFileAsCached(item.uri, staleUris[0])` right after `forgetWarmedUri`) - the cache path ignores the signature, so the new bytes sit under the same key and the card paints from disk the moment the lead refreshes. ⚠️ Order matters: forget first, THEN adopt (adopt is a no-op when a cached file already exists).
+  - The pending card matches its category by `norm("<product> \u2014 <label>")` (the same scoping as `useDynamicInspectionCapture.scopeCat`); a pending annotation for another product tab shows when that tab is opened.
+  - Not verified on device: card appears with no gap on returning from Save; offline re-edit shows the new image; the swap to the server copy has no spinner or flicker.
+
+- **Follow-up - no flicker when the upload finishes (the handover).** Reported: *"when the uploading is done the image is hidden for a second and then displays"*. Three causes, three fixes:
+  1. **The card was REPLACED, not updated.** Pending, queued and server cards had different React keys (the server one used the s3url), so the card remounted and its image blanked while the new file decoded. ⚠️ Annotated card keys are now `annotated-<cat.id>-<base photo lowercased>` for EVERY stage - one annotated photo per base photo makes that the identity. Never put an s3url / `_id` / queue id back into that key.
+  2. **A gap between "pending gone" and "server card there".** The queue refetches the lead before dropping the item, but the capture hook rebuilds a moment later. `usePendingAnnotations` therefore keeps a GHOST of a finished NEW annotation for up to 12 s (`annotationIdentity`); the view hides it the instant the server card exists, and the ghost reads "Uploaded". Re-edits need no ghost - their card already persists.
+  3. **The image itself swapped cold.** `LoadingImage` now keeps the PREVIOUS image underneath until the new uri has painted (`prevUri`, `onLoaded`), and `DynamicManagePhotosView` keeps the marks-over-original overlay (`lastJobRef` / `holdJob`) on top of the flattened image until it has painted (`annotLoaded`). ⚠️ For that, `annotationSaveService` no longer deletes a job's original at once - after `ORIGINAL_GRACE_MS` (30 s), plus a startup sweep (`sweepOrphanOriginals`, files unreferenced and > 1 day old).
+  - And the server card's FIRST paint uses the RAW s3 url, then the SIGNED one (see `useDynamicInspectionCapture`), which the cache keys differently - so `uploadQueue.adoptUnderEveryUrlForm` stores the local JPEG under BOTH forms (one extra `getSecureUrls` call per annotated upload) before the queue item and its file are dropped.
+  - Not verified on device: Save -> upload completes while watching the card: no blank frame, no spinner, no jump (the "Uploaded" row becomes the Move / trash row, a small height change).
+
+
+### Follow-up - `useLeadPreviewUrl` can now keep a street-view picture on disk (chat header only)
+
+`hooks/useLeadPreviewUrl.ts` takes an optional `{ warmGoogle }`. With it, a `googleUrl` preview (street view / static map) is downloaded to the local image cache and the hook returns that `file://` once ready (seeded synchronously when it is already cached); without it the hook behaves as before and returns the Google url untouched. Only `ChatHeader`'s thumbnail passes it, so the chat gallery opens on a local file instead of fetching the same picture again.
+- ⚠️ **Do NOT pass it from `ThreadItems` / any list**: one download per row. The thread list keeps showing the Google url directly.
+- ⚠️ The old rule "never route a `googleUrl` through the cache" was about the signature-less KEY colliding across leads. That is fixed at the source (`imageFileCache.getLocalCachePath` keeps the query for Google Maps hosts), which is what makes this safe - if that is ever reverted, this option must go with it.
+- Full story and the iOS-18.4-simulator caveat: `notifications-chat.md` (street-view header picture) and `app-wide.md`.

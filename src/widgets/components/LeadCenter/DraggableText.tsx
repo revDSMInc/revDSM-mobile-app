@@ -7,6 +7,10 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
+const MENU_WIDTH = 140;
+// Menu (~118) + connector (20) + a little air.
+const MENU_CLEARANCE = 148;
+
 interface DraggableTextProps {
   text: any;
   canvasLayout: { width: number; height: number };
@@ -18,6 +22,9 @@ interface DraggableTextProps {
   handleMoveText: (id: string, newPx: number, newPy: number) => void;
   zoomScale?: number;
   dragEnabled?: boolean;
+  /** A second finger landed on the note: hand the live touches to the canvas's pinch-zoom. */
+  onTwoFingerTouches?: (touches: any[]) => void;
+  onTwoFingerEnd?: () => void;
 }
 
 export const DraggableText = ({
@@ -31,17 +38,38 @@ export const DraggableText = ({
   handleMoveText,
   zoomScale = 1,
   dragEnabled = true,
+  onTwoFingerTouches,
+  onTwoFingerEnd,
 }: DraggableTextProps) => {
   const startPx = useRef(text.px);
   const startPy = useRef(text.py);
-  const textStateRef = useRef({ text, canvasLayout, zoomScale, dragEnabled });
   const [layout, setLayout] = useState<{ width: number; height: number } | null>(null);
+  const textStateRef = useRef({ text, canvasLayout, zoomScale, dragEnabled, layout });
 
   useEffect(() => {
-    textStateRef.current = { text, canvasLayout, zoomScale, dragEnabled };
+    textStateRef.current = { text, canvasLayout, zoomScale, dragEnabled, layout };
   });
 
+  // The note's whole box (text + padding) must stay inside the photo, so the limit depends on its measured size.
+  const maxFraction = (canvas: number, box: number | undefined) =>
+    box && canvas > 0 ? Math.max(0, (canvas - box) / canvas) : 1;
+
+  // A tap placed near the right/bottom edge, a longer edit, or a bigger font can push the box past the photo:
+  // pull it back as soon as its size is known.
+  useEffect(() => {
+    if (!layout) return;
+    const nx = Math.min(text.px, maxFraction(canvasLayout.width, layout.width));
+    const ny = Math.min(text.py, maxFraction(canvasLayout.height, layout.height));
+    if (nx !== text.px || ny !== text.py) handleMoveText(text.id, nx, ny);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout?.width, layout?.height, text.px, text.py, canvasLayout.width, canvasLayout.height]);
+
   const isSelected = text.id === selectedTextId;
+
+  const onTwoFingerTouchesRef = useRef(onTwoFingerTouches);
+  const onTwoFingerEndRef = useRef(onTwoFingerEnd);
+  onTwoFingerTouchesRef.current = onTwoFingerTouches;
+  onTwoFingerEndRef.current = onTwoFingerEnd;
 
   const textPanResponder = useRef(
     PanResponder.create({
@@ -52,14 +80,24 @@ export const DraggableText = ({
         startPy.current = textStateRef.current.text.py;
       },
       onPanResponderMove: (evt, gestureState) => {
-        const { text: currentText, canvasLayout: currentLayout, zoomScale: currentScale } =
+        // A second finger means a pinch-zoom / two-finger pan, not a drag: hold the note where it is.
+        if (evt.nativeEvent.touches.length > 1) {
+          onTwoFingerTouchesRef.current?.(evt.nativeEvent.touches);
+          return;
+        }
+        onTwoFingerEndRef.current?.();
+        const { text: currentText, canvasLayout: currentLayout, zoomScale: currentScale, layout: box } =
           textStateRef.current;
         const scale = currentScale > 0 ? currentScale : 1;
         const deltaPx = gestureState.dx / scale / currentLayout.width;
         const deltaPy = gestureState.dy / scale / currentLayout.height;
-        handleMoveText(currentText.id, startPx.current + deltaPx, startPy.current + deltaPy);
+        const nextPx = Math.min(startPx.current + deltaPx, maxFraction(currentLayout.width, box?.width));
+        const nextPy = Math.min(startPy.current + deltaPy, maxFraction(currentLayout.height, box?.height));
+        handleMoveText(currentText.id, nextPx, nextPy);
       },
+      onPanResponderTerminate: () => onTwoFingerEndRef.current?.(),
       onPanResponderRelease: (evt, gestureState) => {
+        onTwoFingerEndRef.current?.();
         const distance = Math.sqrt(gestureState.dx * gestureState.dx + gestureState.dy * gestureState.dy);
         if (distance < 8) {
           setSelectedTextId(textStateRef.current.text.id);
@@ -90,7 +128,7 @@ export const DraggableText = ({
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.15)',
         paddingVertical: 4,
-        width: 140,
+        width: MENU_WIDTH,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
@@ -207,60 +245,45 @@ export const DraggableText = ({
             }}
           />
 
-          {/* Connecting vertical line & Menu */}
-          {text.py >= 0.2 ? (
-            <>
-              <View
-                style={{
-                  position: 'absolute',
-                  bottom: '100%',
-                  left: layout.width / 2,
-                  width: 1,
-                  height: 20,
-                  backgroundColor: '#72BD00',
-                }}
-              />
-              <View
-                style={{
-                  position: 'absolute',
-                  bottom: '100%',
-                  marginBottom: 20,
-                  left: layout.width / 2,
-                  transform: [{ translateX: -70 }],
-                  width: 140,
-                  zIndex: 9999,
-                }}
-              >
-                {renderContextMenu()}
-              </View>
-            </>
-          ) : (
-            <>
-              <View
-                style={{
-                  position: 'absolute',
-                  top: '100%',
-                  left: layout.width / 2,
-                  width: 1,
-                  height: 20,
-                  backgroundColor: '#72BD00',
-                }}
-              />
-              <View
-                style={{
-                  position: 'absolute',
-                  top: '100%',
-                  marginTop: 20,
-                  left: layout.width / 2,
-                  transform: [{ translateX: -70 }],
-                  width: 140,
-                  zIndex: 9999,
-                }}
-              >
-                {renderContextMenu()}
-              </View>
-            </>
-          )}
+          {/* Connecting vertical line & Menu. The menu is kept inside the photo: the canvas frame clips
+              (overflow: hidden), so a menu centred on a note near an edge was cut off. */}
+          {(() => {
+            const textLeft = text.px * canvasLayout.width;
+            const textTop = text.py * canvasLayout.height;
+            const spaceAbove = textTop;
+            const spaceBelow = canvasLayout.height - (textTop + layout.height);
+            const placeAbove = spaceAbove >= MENU_CLEARANCE || spaceAbove >= spaceBelow;
+            const centred = textLeft + layout.width / 2 - MENU_WIDTH / 2;
+            const menuLeft = Math.max(0, Math.min(canvasLayout.width - MENU_WIDTH, centred)) - textLeft;
+            const edge = placeAbove ? { bottom: '100%' as const } : { top: '100%' as const };
+            const gap = placeAbove ? { marginBottom: 20 } : { marginTop: 20 };
+            return (
+              <>
+                <View
+                  style={{
+                    position: 'absolute',
+                    ...edge,
+                    left: layout.width / 2,
+                    width: 1,
+                    height: 20,
+                    backgroundColor: '#72BD00',
+                  }}
+                />
+                <View
+                  style={{
+                    position: 'absolute',
+                    ...edge,
+                    ...gap,
+                    left: menuLeft,
+                    width: MENU_WIDTH,
+                    zIndex: 9999,
+                  }}
+                >
+                  {renderContextMenu()}
+                </View>
+              </>
+            );
+          })()}
         </>
       )}
     </View>

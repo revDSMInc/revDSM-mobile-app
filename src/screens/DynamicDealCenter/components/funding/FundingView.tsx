@@ -4,7 +4,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FS, FUND, PS } from './funding-theme';
 import { PaymentFundingCard } from './PaymentFundingCard';
 import { RefundApprovalCard } from './RefundApprovalStatus';
-import { canSync, describePayment, groupTotal, type AttemptLogEntry, type FundingPayment, type PayMode } from '../../utils/funding';
+import { canSync, describePayment, groupTotal, type AttemptLogEntry, type Decision, type FundingPayment, type PayMode } from '../../utils/funding';
 import type { FundingApprovalReminder, FundingRefund } from '../../../../services/api/FundingService';
 
 interface Props {
@@ -13,7 +13,7 @@ interface Props {
   contractTotal: number;
   covered: boolean;
   bankDeclined: boolean;
-  log: AttemptLogEntry[];
+  log?: AttemptLogEntry[];
   lastSyncedAt: string | null;
   syncingAll: boolean;
   busyPid: string | null;
@@ -32,6 +32,8 @@ interface Props {
   onChargeCard: (pid: string) => void;
   onActivate: (pid: string) => void;
   onReactivate?: (pid: string) => void;
+  onRecordDecision?: (pid: string, decision: Decision, approvedAmt?: number) => void;
+  offline?: boolean;
   onEditPayments: () => void;
   onResultAsBankDecline: () => void;
   onUndoBankDecline: () => void;
@@ -77,7 +79,6 @@ export function FundingView({
   contractTotal,
   covered,
   bankDeclined,
-  log,
   lastSyncedAt,
   syncingAll,
   busyPid,
@@ -91,6 +92,8 @@ export function FundingView({
   onChargeCard,
   onActivate,
   onReactivate,
+  onRecordDecision,
+  offline,
   onEditPayments,
   onResultAsBankDecline,
   onUndoBankDecline,
@@ -98,7 +101,7 @@ export function FundingView({
   const upfront = payMode === 'upfront';
   // Nothing to poll when every row is a check - that is the whole board offline, where
   // the button would also have no server to ask.
-  const anySyncable = payments.some((p) => canSync(p));
+  const anySyncable = !offline && payments.some((p) => canSync(p));
   const down = payments.filter((p) => p.kind === 'down');
   const balance = payments.filter((p) => p.kind === 'bal');
 
@@ -116,6 +119,8 @@ export function FundingView({
       onChargeCard={() => onChargeCard(p.pid)}
       onActivate={() => onActivate(p.pid)}
       onReactivate={onReactivate ? () => onReactivate(p.pid) : undefined}
+      offline={offline}
+      onRecordDecision={onRecordDecision ? (d, amt) => onRecordDecision(p.pid, d, amt) : undefined}
       onSync={() => onSyncOne(p.pid)}
       onEditPayments={onEditPayments}
       onResultAsBankDecline={onResultAsBankDecline}
@@ -211,51 +216,6 @@ export function FundingView({
         </>
       )}
 
-      {log.length > 0 && (
-        <View style={{ marginTop: 22, paddingTop: 16, borderTopWidth: 1, borderTopColor: FUND.BORDER }}>
-          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.extrabold, letterSpacing: 1.2, textTransform: 'uppercase', color: '#8A9490', marginBottom: 4 }}>
-            Attempt history
-          </Text>
-          <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, lineHeight: 17, marginBottom: 11 }}>
-            Kept on the job whether or not the amount was reassigned.
-          </Text>
-          {log.map((l, i) => {
-            const partial = l.outcome === 'Partial';
-            const declined = l.outcome === 'Declined';
-            const rail = declined ? FUND.RED : partial ? FUND.AMBER : FUND.GREEN;
-            const badge = declined
-              ? { bg: FUND.RED_BG, fg: FUND.RED_TEXT }
-              : partial
-                ? { bg: FUND.AMBER_BG, fg: FUND.AMBER_TEXT }
-                : { bg: FUND.GREEN_BG, fg: FUND.GREEN_TEXT };
-            return (
-              <View
-                key={`${l.method}-${l.at}-${i}`}
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, backgroundColor: '#fff', borderWidth: 1.4, borderColor: FUND.BORDER, borderLeftWidth: 4, borderLeftColor: rail, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 8 }}
-              >
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={{ fontSize: FS.BODY, fontFamily: PS.bold, color: '#3A4048' }} numberOfLines={1}>{l.method}</Text>
-                  <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: FUND.MUTED, marginTop: 3 }}>
-                    ${l.amt.toLocaleString()} requested
-                    {partial ? ` · $${l.approved.toLocaleString()} approved` : ''}
-                    {l.at ? ` · ${l.at}` : ''}
-                  </Text>
-                </View>
-                <View style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 7, backgroundColor: badge.bg }}>
-                  <Text style={{ fontSize: FS.MICRO, fontFamily: PS.extrabold, letterSpacing: 0.4, textTransform: 'uppercase', color: badge.fg }}>
-                    {l.outcome}
-                  </Text>
-                </View>
-              </View>
-            );
-          })}
-        </View>
-      )}
-
-      {/* The Scenario Simulator used to sit here. It stood in for a lender that does
-          not exist in development, so a tap wrote an invented approval or decline
-          onto a real funding record — removed along with its `mock-provider`
-          endpoint. Attempt history above is now only ever what a real lender said. */}
     </View>
   );
 }

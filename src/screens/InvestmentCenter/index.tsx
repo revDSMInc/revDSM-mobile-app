@@ -298,6 +298,8 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
       <Text style={{ flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '900', color: '#1C252E' }}>
         Investment Center
       </Text>
+      {/* Same width as the back button, so the title centres on the SCREEN rather than in the space left of the button. */}
+      <View style={{ width: 34, height: 34 }} />
     </View>
   );
 
