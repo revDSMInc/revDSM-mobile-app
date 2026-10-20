@@ -1227,3 +1227,8 @@ Report: tapping the funnel on the Zone Canvasser map "did nothing" - `ZoneCanvas
 ### Follow-up - `ImageAnnotation` route params (REVUIUX-569 final shape)
 
 `navigation/index.tsx`: the `orderSheet` callback param is gone again. An order sheet reaches the editor as an ordinary `selectedPhotos` entry with a `docKind: 'orderSheet'` discriminator (see `lead-center.md`); the route keeps `onSaveSuccess` / `onCancel`.
+
+
+### Follow-up - LeadCreate: a duplicate Lead ID keeps the form open (see `lead-center.md`)
+
+`widgets/modals/LeadCreate/index.tsx`: on the first online create, a `duplicate` outcome (another lead already holds that Lead ID) now shows the server's message and does NOT close the form or report "Already created". The queue's replay path is untouched. Details and the `useCreateLeadMutation` body-code guard: `lead-center.md`.
