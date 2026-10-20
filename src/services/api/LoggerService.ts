@@ -6,6 +6,7 @@ import { isOnline } from '../connectivity';
 import { hasQueuedActivityLogs, queueActivityLog, setActivityLogSender } from '../offlineActivityLog';
 import {
   isQueueableLog,
+  hasUnsendableClientId,
   newActivityLogId,
   shouldQueueFailedLog,
   stampActionTime,
@@ -230,7 +231,19 @@ export const logEvent = async (eventType: string, details: any = {}) => {
 
   // Held when offline, and ALSO while older held logs are still waiting: sending this one straight
   // away would put it ahead of actions the rep took earlier.
-  if ((!isOnline() || hasQueuedActivityLogs()) && isQueueableLog(details.module_type)) {
+  /*
+   * ⚠️ ALSO held when the payload still names a lead / appointment / calculator the server
+   * has never seen. That is a separate question from connectivity, and missing it is what lost
+   * the check-in log: a lead created offline keeps a CLIENT id (`lead-1792...`) until its
+   * create drains, so opening it once the phone had signal sent the check-in immediately,
+   * addressed to a lead the backend cannot resolve. Being online does not mean the ids in the
+   * payload exist yet.
+   */
+  const unresolvedIds = hasUnsendableClientId(payload);
+  if (
+    (!isOnline() || hasQueuedActivityLogs() || unresolvedIds) &&
+    isQueueableLog(details.module_type)
+  ) {
     if (attachLocation && cachedLocation && Date.now() - cachedLocation.at < LOCATION_TTL_MS) {
       meta.lat = cachedLocation.lat;
       meta.long = cachedLocation.long;
@@ -243,7 +256,10 @@ export const logEvent = async (eventType: string, details: any = {}) => {
       attachLocation: false,
       occurredAt: heldMeta.occurredAt,
     });
-    if (isDev) console.log(`[Logger] ⤓ ${eventType} held offline (${details.module_type})`);
+    if (isDev) {
+      const why = unresolvedIds ? 'ids not on the server yet' : !isOnline() ? 'offline' : 'queue ahead';
+      console.log(`[Logger] ⤓ ${eventType} held - ${why} (${details.module_type})`);
+    }
     return;
   }
 

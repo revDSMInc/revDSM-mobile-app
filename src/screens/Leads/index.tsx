@@ -477,8 +477,22 @@ export default function LeadsPage() {
         await persistActiveLeadId(item._id);
         const plan = planStartAppointment(item, userLocation);
         const atTheDoor = createdAtTheDoor(findOfflineWorkForLead(item));
+        const logModule = offlineCheckInModule(plan, atTheDoor);
+        /*
+         * ⚠️ This decision used to be silent, and three separate reports of "the check-in log
+         * is never called" were all it returning '' - a plan that said out of range, a rescue
+         * that had expired. There is no error to see because nothing failed; the app simply
+         * chose not to record the visit. Always say which way it went.
+         */
+        console.log(
+          '[CheckIn] offline start lead=%s module=%s shouldCallWork=%s atTheDoor=%s inRange=%s',
+          item._id,
+          logModule || '(none - NOT recording a check-in)',
+          plan.shouldCallWork,
+          atTheDoor,
+          plan.isInRange
+        );
         if (plan.shouldCallWork || atTheDoor) {
-          const logModule = offlineCheckInModule(plan, atTheDoor);
           if (logModule) {
             void logLeadActionClick(user, logModule as any, item);
           }

@@ -500,8 +500,17 @@ export const queueLeadWorkStart = (lead: any, userId: string): boolean => {
 export const queueLeadWorkEnd = (leadId: string): boolean => {
   load();
   const id = String(leadId || '').trim();
-  if (!id || isClientId(id)) return false;
-  const base = beginOfflineWorkOnLead(id, '');
+  if (!id) return false;
+  /**
+   * ⚠️ A CLIENT id is not a reason to drop the release - it is the normal case for a lead
+   * created at the door. This used to `return false`, so a rep who created a lead offline,
+   * worked it and left stayed "ON SITE" on the portal forever: the pause LOG queued, the
+   * release did not. The work item already exists under that client id, and `workEnd` runs
+   * after `work` in UPLOAD_STEPS, so both replay against the real lead once it lands.
+   */
+  const base = isClientId(id)
+    ? mine().find((w) => w.clientId === id)
+    : beginOfflineWorkOnLead(id, '');
   if (!base) return false;
   putOfflineWork({
     ...base,

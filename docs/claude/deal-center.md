@@ -5030,3 +5030,18 @@ ticket: `docs/claude/investment-center-job-tracker.md`). `CalcTab` carries the f
 The Investment Center takes its calculator from this hook, so a new API field that is not added to
 that mapper never arrives: the consuming screen looks correct in code and renders nothing on
 device, with no error anywhere. Add the field here when the API grows one.
+
+### Follow-up — `queueLeadWorkEnd` accepts a client id
+
+Full ticket: `docs/claude/lead-center.md` ("Leaving a lead: the pause LOG queued, the RELEASE did
+not"). The queue-side change is here.
+
+`queueLeadWorkEnd` (`services/offlineLeadStore.ts`) began `if (!id || isClientId(id)) return false`,
+so the work-release for a lead created at the door was discarded — the normal case, not an edge
+one. The rep stayed "ON SITE" on the portal after leaving the lead, while the pause log (which
+does queue) arrived. It now attaches to the existing work item under that client id;
+`beginOfflineWorkOnLead` cannot be used for this because it matches on `serverIds.leadId` only.
+
+⚠️ **A client id is not a reason to drop queued work.** It means the lead has not been created
+yet, which is precisely when the queue is needed — `workEnd` runs after `work` and after `lead`
+in `UPLOAD_STEPS`, so the release replays against the real lead once the create lands.

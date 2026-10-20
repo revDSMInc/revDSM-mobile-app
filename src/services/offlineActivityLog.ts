@@ -121,7 +121,16 @@ export const queueActivityLog = (
 ): void => {
   load();
   const ownerId = getSessionOwner();
-  if (!ownerId) return;
+  if (!ownerId) {
+    // IMPORTANT: this is a silent DROP, not a hold - the log is gone. It should only happen
+    // before login; if it fires during normal work, the session owner was lost and every
+    // queued log of that moment went with it.
+    console.warn(
+      '[ActivityLogQueue] DROPPED %s - no session owner',
+      entry.payload?.module_type ?? entry.eventType
+    );
+    return;
+  }
   store = appendQueuedLog(store, { ...entry, id: nextId(), ownerId, attempts: 0 });
   persist();
   // Drain on enqueue, as the other queues do: a log held during a brief dropout would otherwise

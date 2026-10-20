@@ -1,3 +1,5 @@
+import { findUnresolvedClientIds } from './offline-lead-work';
+
 export interface QueuedActivityLog {
   id: string;
   eventType: string;
@@ -13,6 +15,24 @@ export interface QueuedActivityLog {
 // the funding / result-lead / roofline-deck / investment-center logs went missing. Only a log that
 // can never be replayed under a rep's session belongs here.
 export const NON_QUEUEABLE_LOG_MODULES: readonly string[] = ['system'];
+
+/**
+ * ⚠️ A log that names a lead the SERVER HAS NEVER SEEN must be queued, not sent.
+ *
+ * Reported: "I created the lead offline, started working, synced on WiFi — the check-in log
+ * never arrived, and the lead is not checked in on the other device."
+ *
+ * A lead created offline is addressed by a CLIENT id (`lead-1792...`) until its create drains.
+ * `logEvent` only held a log when `isOnline()` was false, so an offline-created lead opened
+ * while the phone had signal sent its check-in STRAIGHT OUT carrying that client id - a lead
+ * reference the backend cannot resolve. The log was accepted-and-orphaned or refused, and
+ * either way it never appeared against the real lead.
+ *
+ * Being online says nothing about whether the IDS in the payload exist yet. These are separate
+ * questions and the gate has to ask both.
+ */
+export const hasUnsendableClientId = (payload: unknown): boolean =>
+  findUnresolvedClientIds(payload).length > 0;
 
 export const isQueueableLog = (moduleType: unknown): boolean =>
   typeof moduleType === 'string' &&

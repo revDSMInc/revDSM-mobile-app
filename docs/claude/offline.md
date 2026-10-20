@@ -1533,3 +1533,61 @@ module (`__tests__/utils/offline-checkin-reaches-server.test.ts`).
 ⚠️ **This was NOT the attempt-budget bug above.** That one lost logs that had been queued; this
 one never queued anything. A queue fix can only replay what reached it — when a log is missing,
 check whether it was ever enqueued before looking at the drain.
+
+### Follow-up — a log sent ONLINE naming an id the server has never seen
+
+> "Offline or online, the same APIs should be called — offline they go in the queue with the
+> same payload. The check-in log api is not being called at all."
+
+The right framing, and it exposed a case neither side of the gate covered. `logEvent` held a log
+only when `isOnline()` was false. But the reported sequence is **create the lead offline, press
+Start once the phone has signal** — online is true, so the check-in went straight out carrying
+
+```
+meta.leadId = "lead-1792411303110-ab12"   // a CLIENT id, known only to this device
+```
+
+The backend cannot resolve that, so the log was orphaned or refused, and nothing ever appeared
+against the real lead. The `work` call had the same shape and was fixed separately; this is the
+log half.
+
+⚠️ **Being online and having sendable IDS are two different questions.** The hold gate in
+`services/api/LoggerService.ts` now asks both: `!isOnline() || hasQueuedActivityLogs() ||
+hasUnsendableClientId(payload)`. The rule is pure in `utils/offline-activity-log.ts` (7 tests)
+and reuses `findUnresolvedClientIds`, so it catches appointment and calculator ids too, at any
+depth.
+
+⚠️ **Held, not dropped.** The `lead` step calls `rekeyActivityLogs(work.clientId, id)` the moment
+the create lands (`services/offlineLeadStore.ts`), which swaps the client id for the real one and
+makes the queued log sendable. The drain's own `hasUnresolvedIds` already held such logs back —
+the bug was that this one never reached the queue to be held.
+
+⚠️ **The match must not over-fire.** `isClientId` is anchored (`^(lead|appt|calc|work)-\d{10,}-`),
+so ordinary text like `leadCode: 'SelfGen'` or `action: 'lead_check_in'` is not mistaken for an
+id. A looser test would hold every log forever and nothing would send — there is a test for this.
+
+**The general rule for this whole class of bug:** anything that travels offline must ask *both*
+"can I reach the server?" and "does the server know the things I am naming?" Most of the lost-log
+and duplicate reports this week were one or the other half of that question going unasked.
+
+### Follow-up — tracing the check-in log (still reported missing)
+
+Three fixes have landed for "the check-in log never arrives" (the `createdAtTheDoor` TTL, the
+unknown-GPS geofence, and the online-with-a-client-id hold gate) and it is **still reported**.
+Rather than guess at a fourth cause, the decision points now say what they chose:
+
+- `screens/Leads/index.tsx` logs `[CheckIn] offline start lead=… module=… shouldCallWork=…
+  atTheDoor=… inRange=…` on every offline start. ⚠️ `module=(none)` means the app **decided not
+  to record a check-in** — there is no failed request to find in the network tab, which is why
+  this presented three times as "the API is not called".
+- `services/offlineActivityLog.ts` warns `DROPPED … - no session owner`. That branch is a silent
+  **drop**, not a hold: the log is gone. It should only ever fire before login.
+
+⚠️ **"No request in the network tab" has two very different causes** — the app never asked, or
+the queue swallowed it. They need different fixes and the traces above separate them. Check
+`[CheckIn]` first: if `module=(none)`, nothing downstream is at fault.
+
+Verified sound while tracing (do not re-investigate without new evidence): `rekeyQueuedLogs`
+rewrites `meta.leadId` on both `meta` and `payload.meta`; `resolveIds` resolves client ids at
+SEND time from the live work map; a finished work item stays `uploaded` with its id map intact,
+so resolution still works after the drain; `nextSendableLog` blocks only the affected lead.

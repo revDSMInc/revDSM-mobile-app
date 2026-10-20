@@ -87,6 +87,8 @@ import {
   ensureOfflineWorkForLead,
   queueCustomerUpdate,
   queueOfflineConsent,
+  queueLeadWorkEnd,
+  queueLeadWorkStart,
   runUpload,
 } from '../../services/offlineLeadStore';
 import { isClientId } from '../../utils/offline-lead-work';
@@ -221,10 +223,27 @@ export default function LeadCenterPage() {
     hasLoggedPauseRef.current = true;
     clearLeadWorkSession();
 
-    if (!isClientId(leadId) && isOnline()) {
-      LeadService.endWorkLead(leadId).catch((e) =>
-        console.warn('[LeadCenter] Work end failed:', e)
-      );
+    /**
+     * ⚠️ LEAVING a lead is TWO facts, and only one of them used to survive a bad connection:
+     * the pause LOG below always queues, while this release was fire-and-forget. Offline it was
+     * not even attempted (`isOnline()`), and online a failure was only `console.warn`ed - so the
+     * rep stayed "ON SITE" on the portal for good while their timeline showed "Session paused".
+     *
+     * ⚠️ An offline-created lead still has no server id; its release rides with the queued
+     * work (`workEnd` runs after `work` in UPLOAD_STEPS), so `queueLeadWorkEnd` is given the
+     * CLIENT id and the rekey attaches it once the lead lands.
+     */
+    if (!isOnline()) {
+      queueLeadWorkEnd(leadId);
+    } else if (!isClientId(leadId)) {
+      LeadService.endWorkLead(leadId).catch((e) => {
+        console.warn('[LeadCenter] Work end failed, queued instead:', e);
+        queueLeadWorkEnd(leadId);
+      });
+    } else {
+      // A client id online: the lead itself has not been created yet, so the release can only
+      // travel with the queue.
+      queueLeadWorkEnd(leadId);
     }
 
     if (fromMyDeals) return Promise.resolve();
@@ -265,10 +284,17 @@ export default function LeadCenterPage() {
 
       hasLoggedPauseRef.current = false;
       beginLeadWorkSession(currentLead, userRef.current, fromMyDeals);
-      if (isClientId(leadId) || !isOnline()) return;
-      LeadService.workLead(leadId, userId).catch((e) =>
-        console.warn('[LeadCenter] Work resume failed:', e)
-      );
+      // ⚠️ Same pairing as the pause above: coming BACK to the lead re-opens it on the ops
+      // board, so a failed or offline resume must queue rather than vanish - otherwise the rep
+      // reads as away while they are standing at the door.
+      if (!isOnline() || isClientId(leadId)) {
+        queueLeadWorkStart(currentLead, String(userId));
+        return;
+      }
+      LeadService.workLead(leadId, userId).catch((e) => {
+        console.warn('[LeadCenter] Work resume failed, queued instead:', e);
+        queueLeadWorkStart(currentLead, String(userId));
+      });
     }, [fromMyDeals])
   );
 
