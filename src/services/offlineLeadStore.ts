@@ -30,6 +30,7 @@ import {
 } from '../utils/offline-lead-location';
 import { reverseGeocode } from '../utils/places';
 import { leadCreateIdempotencyKey } from '../utils/upload-idempotency';
+import { isNetworkError } from '../utils/network-error';
 import { queryClient } from './api/queryClient';
 import {
   clearLeadCheckedInOffline,
@@ -1372,7 +1373,18 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
         work = putOfflineWork({ ...latest(work), status: 'uploading', lastError: messageOfError(err) });
         continue;
       }
-      putOfflineWork(applyStepDecision(latest(work), decision, messageOfError(err)));
+      // ⚠️ A transport failure (timeout / DNS / reset) is the step UNDELIVERED, not refused,
+      // so it spends no attempt. Burning the budget on a weak radio pushed work to
+      // `needs-review`, and a rep retrying from there is how the duplicate lead was created.
+      putOfflineWork(
+        applyStepDecision(
+          latest(work),
+          decision,
+          messageOfError(err),
+          Date.now(),
+          isNetworkError(err) ? 'transport' : 'rejected'
+        )
+      );
       return;
     }
   }

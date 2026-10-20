@@ -81,15 +81,33 @@ export const replayableLogs = (
   return (queue || []).filter((l) => String(l?.ownerId || '').trim() === me);
 };
 
+/**
+ * ⚠️ A failure the NETWORK caused must not spend an attempt.
+ *
+ * Reported from the field: on slow mobile data, check-in / rollout / pause-work logs went
+ * missing after a sync. `MAX_LOG_ATTEMPTS` is 5, and every failure used to count - so five
+ * timeouts on a weak radio DELETED the log, even though the server had never seen it and
+ * nothing was wrong with the payload. On office Wi-Fi five consecutive failures essentially
+ * never happen, which is why it only showed up on cellular.
+ *
+ * The attempt counter exists to stop a POISON log (one the server keeps refusing) cycling
+ * forever. A timeout is not that: it is the same log, undelivered. So a transport failure keeps
+ * the log and spends nothing, and only a real answer from the server counts toward the cap.
+ */
+export type LogFailureKind = 'transport' | 'rejected';
+
 export const settleQueuedLog = (
   queue: QueuedActivityLog[] | null | undefined,
   id: string,
   outcome: 'sent' | 'failed',
-  maxAttempts: number = MAX_LOG_ATTEMPTS
+  maxAttempts: number = MAX_LOG_ATTEMPTS,
+  failure: LogFailureKind = 'rejected'
 ): QueuedActivityLog[] =>
   (queue || []).flatMap((l) => {
     if (l.id !== id) return [l];
     if (outcome === 'sent') return [];
+    // ⚠️ Undelivered, not refused: keep it, unchanged, for the next drain.
+    if (failure === 'transport') return [l];
     const attempts = (l.attempts || 0) + 1;
     return attempts >= maxAttempts ? [] : [{ ...l, attempts }];
   });

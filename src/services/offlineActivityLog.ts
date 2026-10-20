@@ -2,6 +2,7 @@ import { AppState } from 'react-native';
 import { Storage } from '../utils/storage';
 import { isOnline, onReconnect } from './connectivity';
 import { isUnauthorizedError } from '../utils/upload-retry-policy';
+import { isNetworkError } from '../utils/network-error';
 import { findUnresolvedClientIds } from '../utils/offline-lead-work';
 import { sanitizeForLog } from '../utils/sanitize-for-log';
 import { getSessionOwner, registerSessionResetHook } from './sessionScope';
@@ -11,6 +12,7 @@ import {
   replayableLogs,
   rekeyQueuedLogs,
   settleQueuedLog,
+  MAX_LOG_ATTEMPTS,
   type QueuedActivityLog,
 } from '../utils/offline-activity-log';
 
@@ -173,6 +175,7 @@ export const drainActivityLogs = async (): Promise<void> => {
         return;
       }
       let outcome: 'sent' | 'failed' = 'sent';
+      let failure: 'transport' | 'rejected' = 'rejected';
       const body = { ...next, payload: resolvedPayload(next) };
       if (TRACE) {
         console.log(
@@ -196,6 +199,9 @@ export const drainActivityLogs = async (): Promise<void> => {
           return;
         }
         outcome = 'failed';
+        // IMPORTANT: a timeout / DNS / reset is the log UNDELIVERED, not refused. Spending an
+        // attempt on it deleted check-in and rollout logs after five bad moments on mobile data.
+        failure = isNetworkError(e) ? 'transport' : 'rejected';
         if (TRACE) {
           console.log(
             `${TAG} FAILED ${describe(body)} - ${e?.response?.status ?? 'no response'}: ${e?.message ?? e}\n` +
@@ -204,7 +210,7 @@ export const drainActivityLogs = async (): Promise<void> => {
         }
       }
       const before = store.length;
-      store = settleQueuedLog(store, next.id, outcome);
+      store = settleQueuedLog(store, next.id, outcome, MAX_LOG_ATTEMPTS, failure);
       persist();
       if (store.length === before && outcome === 'failed') return;
     }

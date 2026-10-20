@@ -1452,3 +1452,84 @@ all windows are offered, with no spinner and no wait on a request that cannot su
 
 ⚠️ Do not make offline booking depend on the scheduler. The server does not enforce windows today, so a booking
 made offline is accepted whatever the crews' load is; the manager sees it afterwards on the dispatch board.
+
+## Ticket — slow mobile data: lost logs and duplicate leads (the attempt budget)
+
+Field report: working offline then reconnecting on **low-speed mobile data** lost the check-in,
+rollout and pause/work logs, and QA saw **duplicate leads** after the sync. Both on cellular
+only; Wi-Fi looked fine.
+
+⚠️ **One cause: every failure spent an attempt, including a failure the network caused.** Each
+queue caps retries at 5 (`MAX_LOG_ATTEMPTS`, `MAX_CREATE_ATTEMPTS`). On a weak radio five
+consecutive timeouts are routine, so:
+
+- `settleQueuedLog` (`utils/offline-activity-log.ts`) hit the cap and **deleted the log** —
+  though the server never saw it and nothing was wrong with the payload. That is the missing
+  check-in / rollout / pause entries.
+- `applyStepDecision` (`utils/offline-lead-work.ts`) hit the cap and moved the work to
+  **`needs-review`** — the state that asks the rep "is this on the server? retry if it is not".
+  A rep who knows they created the lead taps retry, and **that** is the duplicate lead. The
+  create itself is idempotent (`leadCreateIdempotencyKey(work.clientId)`), so the duplicate did
+  not come from the replay; it came from the queue giving up and handing the decision to a human.
+
+On office Wi-Fi five consecutive failures essentially never happen, which is why neither showed
+up in testing — the same reason ticket 1310's lost log only appeared on 4G.
+
+**The rule:** the attempt counter exists to stop something the server keeps **REFUSING** from
+cycling forever. A timeout is not that — it is the same work, undelivered. Both settle functions
+now take a `'transport' | 'rejected'` failure kind; a transport failure keeps the item unchanged
+and spends nothing. Callers classify with `isNetworkError` (`utils/network-error.ts`), which
+returns false whenever an HTTP status is present, so a real refusal can never be misread as
+transport. Rules are pure, 14 tests in `__tests__/utils/slow-network-attempts.test.ts`.
+
+⚠️ **Both default to `'rejected'`.** A caller that does not classify keeps the old counting
+behaviour, so a new call site cannot silently make something un-droppable.
+
+⚠️ **A transport failure does NOT rescue a definite decision.** `failed` and `needs-review` mean
+the server answered; only `retry` / `retry-guarded` are exempted. Otherwise a poison item on a
+bad radio would become immortal.
+
+⚠️ **`needs-review` must mean "the server answered something we could not interpret", never
+"the radio was weak".** It is the only state that asks the rep to judge whether their work
+landed, and every wrong entry into it is a chance for a duplicate.
+
+*Not changed:* `MAX_*_ATTEMPTS` stay at 5 — the cap is correct, it was being charged for the
+wrong thing. Retries are still bounded by the drain's own stall tracking and the 60 s sweep.
+
+### Follow-up — the check-in was never QUEUED (not a sync failure at all)
+
+> "I created the lead offline and started working on it, I synced on mobile data and it synced
+> successfully. I open the user on another phone and the lead was not even checked in. Why?"
+
+The sync was fine. **Device B was right** — there was nothing to sync, because
+`handleActionPress` (`screens/Leads/index.tsx`) had decided not to record the check-in. Two
+independent ways it reached that decision, both silent:
+
+**1. `createdAtTheDoor` expired the moment the lead uploaded.** It was
+`origin === 'created-offline' && isStepPending(work, 'lead')`. The reported sequence is create
+offline → the `lead` step drains on reconnect → *then* press Start Appointment. By then the
+rescue no longer applied, so nothing overrode a geofence plan that had already said "out of
+range". Now bounded by `AT_THE_DOOR_TTL_MS` (12 h) instead: uploading the row says nothing about
+where the rep is standing, but re-opening the lead days later must still go back through the
+geofence. ⚠️ That second half is load-bearing and has its own test — do not simplify this to a
+bare `origin` check.
+
+**2. An unknown location read as out of range.** `isLeadInGeofence` returns false both for "far
+away" and for "no GPS fix yet", and `userLocation` starts `null` on the Leads screen and fills in
+asynchronously. A rep tapping Start before the fix landed got `logModule = ''` →
+`shouldCallWork = false` → no log, no `work` call, **nothing queued**. `countsAsAtTheDoor`
+(`utils/location-util.ts`) now treats an unknown location as in range; both
+`planStartAppointment` and `planZoneCanvasserStartAppointment` use it.
+
+⚠️ **Not knowing where the rep is is not evidence that they are elsewhere.** The two mistakes do
+not cost the same: a check-in wrongly recorded is a tidy-up, a check-in silently dropped loses the
+visit with nothing left to show it happened. ⚠️ A REAL fix that puts the rep out of range still
+says so — the geofence is not disabled, and that has its own test.
+
+⚠️ **The rule lives in `location-util.ts` because `lead-activity-log.ts` cannot load under jest**
+(it imports `LoggerService` → netinfo). `lead-activity-log` delegates; the tests drive the pure
+module (`__tests__/utils/offline-checkin-reaches-server.test.ts`).
+
+⚠️ **This was NOT the attempt-budget bug above.** That one lost logs that had been queued; this
+one never queued anything. A queue fix can only replay what reached it — when a log is missing,
+check whether it was ever enqueued before looking at the drain.

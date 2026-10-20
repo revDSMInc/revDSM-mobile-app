@@ -6,6 +6,7 @@ import {
   isResumeAppointment,
   isBeforeTimeWindow,
   isGpsBypassActive,
+  countsAsAtTheDoor,
   isEarlyStartBypassActive,
   GEOFENCE_RADIUS_MILES,
 } from './location-util';
@@ -65,8 +66,14 @@ export function isLeadInGeofence(lead: any, userLocation: UserLocation): boolean
 }
 
 export function planStartAppointment(lead: any, userLocation: UserLocation): AppointmentLogPlan {
-  const rawInRange = isLeadInGeofence(lead, userLocation);
-  const isInRange = rawInRange || isGpsBypassActive(lead);
+  /*
+   * IMPORTANT: `countsAsAtTheDoor` treats an UNKNOWN location as in range. `userLocation`
+   * starts null here and fills in asynchronously, and an early tap used to look "out of range"
+   * - which made `shouldCallWork` false and dropped the check-in silently. The rule lives in
+   * `location-util` because this module cannot be loaded under jest (it imports LoggerService
+   * -> netinfo); the tests drive it there.
+   */
+  const isInRange = countsAsAtTheDoor(lead, userLocation, isGpsBypassActive(lead));
 
   const isSelfGen = isSelfGeneratedLead(lead);
   const isResumeLead = isResumeAppointment(lead);
@@ -101,7 +108,9 @@ export function planZoneCanvasserStartAppointment(
   userLocation: UserLocation
 ): AppointmentLogPlan {
   const workflowState = lead?.workflowState || 'preview';
-  const isInRange = isLeadInGeofence(lead, userLocation);
+  // Same rule as `planStartAppointment`: an unknown location must not silently drop the
+  // check-in for a canvassed door either.
+  const isInRange = countsAsAtTheDoor(lead, userLocation);
   let logModule: LeadLogModule = '';
   let shouldCallWork = false;
 

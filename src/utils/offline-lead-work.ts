@@ -524,13 +524,31 @@ export const decideAfterStepError = (
   step: UploadStep
 ): StepDecision => resolveStepDecision(classifyCreateOutcome(err), work, step);
 
+/**
+ * ⚠️ A failure the NETWORK caused must not spend an attempt.
+ *
+ * Reported from the field: offline work synced over slow mobile data produced DUPLICATE leads.
+ * `MAX_CREATE_ATTEMPTS` is 5 and every failure counted, so five timeouts on a weak radio pushed
+ * the work to `needs-review` - the state that asks the rep "is this on the server? retry if
+ * not" - even though the server had never answered and nothing was wrong with the payload.
+ * A rep looking at a lead they know they created taps retry, and that is the second lead.
+ *
+ * The counter exists to stop work the server keeps REFUSING from cycling forever. A timeout is
+ * not that: it is the same work, undelivered. The create is idempotent (the work's `clientId`
+ * is the key), so retrying it indefinitely is safe; giving up on it is what is not.
+ */
 export const applyStepDecision = (
   work: OfflineLeadWork,
   decision: StepDecision,
   error?: string,
-  now: number = Date.now()
+  now: number = Date.now(),
+  failure: 'transport' | 'rejected' = 'rejected'
 ): OfflineLeadWork => {
   if (decision === 'pause') {
+    return { ...work, status: 'draft', lastError: error, updatedAt: new Date(now).toISOString() };
+  }
+  // ⚠️ Undelivered, not refused: stay `draft` and spend nothing, so the next sweep retries it.
+  if (failure === 'transport' && (decision === 'retry' || decision === 'retry-guarded')) {
     return { ...work, status: 'draft', lastError: error, updatedAt: new Date(now).toISOString() };
   }
   const attempts = work.attempts + 1;
@@ -838,8 +856,35 @@ export const activeWork = (items: OfflineLeadWork[] | null | undefined): Offline
 export const workLeadId = (work: OfflineLeadWork): string =>
   work.serverIds.leadId || work.clientId;
 
-export const createdAtTheDoor = (work: OfflineLeadWork | null | undefined): boolean =>
-  !!work && work.origin === 'created-offline' && isStepPending(work, 'lead');
+/**
+ * A lead the rep created themselves, at the door, with no signal.
+ *
+ * Its own creation is the arrival evidence: a lead created offline carries no resolved
+ * coordinates, so the geofence plan calls it "out of range" and would log nothing.
+ *
+ * ⚠️ Bounded by the WORK SESSION, not by whether the create has uploaded. It used to be
+ * `isStepPending(work, 'lead')`, which lost the reported check-in: the rep created the lead
+ * offline, the `lead` step drained on reconnect, and only THEN did they press Start - by which
+ * point this was false and nothing rescued the plan, so the check-in was never queued at all
+ * and the second device correctly showed "Start Appointment".
+ *
+ * ⚠️ It must still STOP applying eventually. Re-opening the same lead days later is an
+ * ordinary server lead and has to go back through the geofence rather than re-checking-in on
+ * the strength of its origin - so this expires with the work item's own day.
+ */
+export const AT_THE_DOOR_TTL_MS = 12 * 60 * 60 * 1000;
+
+export const createdAtTheDoor = (
+  work: OfflineLeadWork | null | undefined,
+  now: number = Date.now()
+): boolean => {
+  if (!work || work.origin !== 'created-offline') return false;
+  // Still queued: unambiguously the same visit.
+  if (isStepPending(work, 'lead')) return true;
+  const created = Date.parse(work.createdAt || '');
+  if (Number.isNaN(created)) return false;
+  return now - created <= AT_THE_DOOR_TTL_MS;
+};
 
 /**
  * Which check-in log an offline "start appointment" writes ('' = none). Online, the geofence plan
