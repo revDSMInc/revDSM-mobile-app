@@ -46,7 +46,7 @@ interface JobLike extends PendingAnnotationJobView {
   categoryName: string;
   subcategory: string;
   createdAt?: string;
-  annotation: { mode: 'new' | 'reedit'; existingAnnotationId?: string | null };
+  annotation: { mode: 'new' | 'reedit' | 'orderSheet'; existingAnnotationId?: string | null };
 }
 
 interface QueueLike {
@@ -81,6 +81,8 @@ export const buildPendingAnnotations = (
   });
   (jobs || []).forEach((j) => {
     if (!j || j.leadId !== leadId) return;
+    // An ORDER SHEET job is a document replace, not a photo: it never becomes a photo card.
+    if (j.annotation.mode === 'orderSheet') return;
     out.push({
       key: `j-${j.id}`,
       mode: j.annotation.mode,

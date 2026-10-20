@@ -34,12 +34,19 @@ export const ANNOTATION_RENDER_HTML = `
 
         const img = new Image();
         img.onload = function() {
-          const w = img.naturalWidth || img.width;
-          const h = img.naturalHeight || img.height;
+          // A very large scan overflows the WebView's canvas budget and toDataURL then returns an EMPTY "data:," - which
+          // used to be uploaded as the photo / order sheet. The long side is capped (plenty for a page or a photo), and
+          // every mark below is drawn in the scaled canvas's own units, so nothing else changes.
+          const naturalW = img.naturalWidth || img.width;
+          const naturalH = img.naturalHeight || img.height;
+          const MAX_SIDE = 3600;
+          const fit = Math.min(1, MAX_SIDE / Math.max(naturalW, naturalH));
+          const w = Math.max(1, Math.round(naturalW * fit));
+          const h = Math.max(1, Math.round(naturalH * fit));
           canvas.width = w;
           canvas.height = h;
 
-          ctx.drawImage(img, 0, 0);
+          ctx.drawImage(img, 0, 0, w, h);
 
           // Ink is drawn on its OWN transparent layer and then laid over the photo: an eraser stroke
           // ('destination-out') on the photo canvas itself punched transparent holes in the PICTURE,
@@ -149,6 +156,14 @@ export const ANNOTATION_RENDER_HTML = `
           }
 
           const base64 = canvas.toDataURL("image/jpeg", 0.85);
+          if (!base64 || base64.length < 2000 || base64.indexOf('data:image/jpeg;base64,') !== 0) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              status: 'error',
+              imageIndex: data.imageIndex,
+              message: 'Canvas export came back empty'
+            }));
+            return;
+          }
           window.ReactNativeWebView.postMessage(JSON.stringify({
             status: 'success',
             imageIndex: data.imageIndex,

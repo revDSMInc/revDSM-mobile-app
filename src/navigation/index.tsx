@@ -104,6 +104,7 @@ export type RootStackParamList = {
     selectedPhotos: any[];
     lead: any;
     onSaveSuccess?: () => void;
+    onCancel?: () => void;
   };
   DynamicDealCenter: {
     lead?: any;

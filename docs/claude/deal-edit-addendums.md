@@ -1585,3 +1585,23 @@ re-checks availability and competencies, and holds the crew as a `draft`, which 
 - ⚠️ Nothing here promotes the draft to `scheduled` yet: when it should be scheduled is still to be decided.
   `InstallerHandler.activateDraftAssignment` is the backend call that does it.
 - Not verified on device; no jest test (the screen imports RN).
+
+
+## REVUIUX-569 - pencil on the summary's order-sheet tiles (annotate = REPLACE)
+
+`SummaryFinalizeCards` (the Edit Job Build summary / My Deals edit wizard) now shows a small pencil at the top-left of every ORDER-SHEET tile (not agreements). It opens the annotation editor (`orderSheet` mode) and replaces that sheet through the scanner's own `handleScannerSave('orderSheet', images)`: the other sheets go in marked `isNew: false`, the annotated PDF goes in as the one new file. ⚠️ Without `isNew: false` the existing sheets would be treated as new and filed AGAIN - `handleScannerSave` files everything whose `isNew !== false`. The pencil is withheld mid-upload like the other actions. Full write-up: `lead-center.md` § "REVUIUX-569".
+
+### Follow-up - the pencil replace must DELETE the old sheet (it left two)
+
+On device the Deal screen ended with TWO order sheets after an annotate. `SummaryFinalizeCards.handleAnnotateOrderSheet` had the same hole: dropping the old sheet from the list handed to `handleScannerSave` only HIDES it on screen - the server row survives until `DELETE lead/v1/outcome/document/:id` (`LeadService.deleteOutcomeDocument`), which the scanner modal issues itself on its own Save. Now: `handleScannerSave` returns a boolean (`false` when `uploadNewFiles` failed); only on `true` is the old row deleted (`file.serverId ?? file._id`), then `onRefreshDocs('orderSheet')` -> `commitUploaded` re-reads what the server holds so the card shows exactly one. ⚠️ Keep the order: file the new PDF FIRST, delete SECOND - the reverse loses the sheet when an upload fails. A failed delete tells the rep the old sheet is still on file (the annotated copy IS saved). Full write-up: `lead-center.md` § "REVUIUX-569".
+
+- **Follow-up:** the summary's replace now calls `deleteReplacedOrderSheet` (two attempts, 404 = already gone) instead of a bare `deleteOutcomeDocument`; behaviour and ordering are otherwise as above. A lead that already holds two sheets from the earlier add-only version keeps two (each annotate still swaps one for one) - see `lead-center.md`.
+
+
+### Follow-up - the summary pencil no longer replaces anything itself (REVUIUX-569 backend contract)
+
+`SummaryFinalizeCards.handleAnnotateOrderSheet` now only opens the editor (`openOrderSheetEditor`, doc fields from the tile). The replace is a durable background job that PATCHes the sheet in place, so the add-new-then-delete-old code in `handleScannerSave` is no longer involved. When a job finishes (`usePendingOrderSheetJobs` shrinks) the tiles re-read the order sheets via `onRefreshDocs('orderSheet')` -> `commitUploaded`. Only a sheet the server already holds (`serverId`) can be annotated; the pencil is dimmed while its job is in flight. Details: `lead-center.md`.
+
+- **Follow-up:** the summary's "Cannot annotate yet" notice (a tile with no `serverId`) is a themed `FlashMessage.warning`, not a native `Alert` (`SummaryFinalizeCards`). Behaviour is otherwise as above: the pencil only opens the editor and the tiles re-read when the in-place job lands.
+
+- **Follow-up - "Reset all changes" on the summary tiles.** The Job Builder summary had a pencil but no way back. An order-sheet tile whose server row says `annotation.revision > 0` now also shows a small amber restore button (top-right; the pencil stays top-left). It asks with the app's `ConfirmDialog` ("restored for everyone, including the installers"), calls `resetAnnotatedOrderSheet` (`POST /lead/v1/outcome/document/:id/annotation/reset`, same service as the Job-docs row) and then re-reads the order sheets (`onRefreshDocs('orderSheet')` -> `commitUploaded`). Dimmed while an annotation job for that sheet is in flight. ⚠️ It only appears if the document READ carries `annotation` - `utils/outcome-documents.ts` `resolveOutcomeDocRows` now keeps `annotation` and `size` on the tile file (it dropped both before). ⚠️ `ConfirmDialog` is its own native Modal - raised from a tile with nothing else presenting. Not verified on device.

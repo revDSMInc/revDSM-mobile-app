@@ -5030,3 +5030,10 @@ ticket: `docs/claude/investment-center-job-tracker.md`). `CalcTab` carries the f
 The Investment Center takes its calculator from this hook, so a new API field that is not added to
 that mapper never arrives: the consuming screen looks correct in code and renders nothing on
 device, with no error anywhere. Add the field here when the API grows one.
+
+
+### REVUIUX-569 - `utils/pdf-extract-jpeg.ts` and the summary tile pencil
+
+`utils/pdf-extract-jpeg.ts` (`extractEmbeddedJpeg`, `countPdfPages`) is the inverse of `utils/jpeg-to-pdf.ts`: every order-sheet PDF this app writes is ONE page with the original JPEG embedded verbatim in one `/DCTDecode` XObject, so the scan is lifted straight out - no rasteriser. Non-conforming PDFs return `null`, never throw. ⚠️ **`convertJpegToPdf` must stay DETERMINISTIC** (same input -> identical base64; `tests/orderSheet/order-sheet-annotation.test.ts`): the backend correlates the office copy of an order sheet by hashing these bytes. `SummaryFinalizeCards` tiles get a pencil that opens the editor and re-reads the order sheets when the in-place job lands; see `lead-center.md` § "REVUIUX-569 - the backend contract".
+
+- **Follow-up (REVUIUX-569):** `screens/DynamicDealCenter/utils/outcome-documents.ts` `LocalDocFile` / `resolveOutcomeDocRows` now carry `size` (`fileData.size`) and `annotation` for each order-sheet row, so the summary tiles can offer "Reset all changes" (see `deal-edit-addendums.md`). Additive: nothing that read the old fields changes.

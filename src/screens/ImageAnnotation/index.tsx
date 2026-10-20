@@ -23,7 +23,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { useWarmedImageUris } from '../../hooks/useWarmedImageUris';
 import { FlashMessage } from '../../config/message';
-import { buildMobileAnnotationData, countMarks } from '../../utils/annotation-restore';
+import { buildMobileAnnotationData, countMarks, resetToBaseline } from '../../utils/annotation-restore';
 
 import { AnnotationCanvas, type TwoFingerZoomApi } from '../../widgets/components/LeadCenter/AnnotationCanvas';
 import { AnnotationTextToolbar } from '../../widgets/components/LeadCenter/AnnotationTextToolbar';
@@ -65,6 +65,21 @@ interface SectionImage {
   initialMarks?: { strokes: any[]; texts: any[]; shapes: any[] } | null;
   /** Re-edit: remote urls of the annotated copy whose cached bytes are stale once it is overwritten. */
   staleUris?: string[];
+  /**
+   * REVUIUX-569 discriminator. `undefined` means a sales PHOTO, so both existing callers are untouched. An order-sheet DOCUMENT
+   * id is a different id space from `lead.salesPhotos` ids: it must never ride in `existingAnnotationId` / `salesPhotoId`
+   * (that would PATCH the photo route and 404 - or hit an unrelated photo).
+   */
+  docKind?: 'salesPhoto' | 'orderSheet';
+  /** Whatever `serverId` the row had - either backend collection's id is accepted. */
+  orderSheetDocumentId?: string;
+  orderSheetBaseName?: string;
+  orderSheetMeta?: {
+    contentKind: 'pdf' | 'image';
+    mediaBox?: { width: number; height: number } | null;
+    originalPath?: string | null;
+    knownSizes?: number[];
+  };
 }
 
 export default function ImageAnnotationScreen() {
@@ -72,6 +87,7 @@ export default function ImageAnnotationScreen() {
   const navigation = useNavigation<any>();
   const { user } = useAuth();
   const { selectedPhotos = [], lead, onSaveSuccess, onCancel } = route.params || {};
+  const isOrderSheetEdit = (selectedPhotos as SectionImage[])[0]?.docKind === 'orderSheet';
   const openedLoggedRef = useRef(false);
 
   const [activeImageIndex, setActiveImageIndex] = useState<number>(0);
@@ -637,10 +653,13 @@ export default function ImageAnnotationScreen() {
     }
   };
 
+  // "Undo my changes": back to what the screen OPENED with (a re-edit's restored marks), NOT an empty canvas - emptying it threw
+  // away marks saved last week, and the save that followed stored an EMPTY annotation. See `resetToBaseline`.
   const handleResetCanvas = () => {
-    setStrokesMap((sm) => ({ ...sm, [photoId]: [] }));
-    setTextsMap((tm) => ({ ...tm, [photoId]: [] }));
-    setShapesMap((sm) => ({ ...sm, [photoId]: [] }));
+    const baseline = resetToBaseline(seededMarks, photoId);
+    setStrokesMap((sm) => ({ ...sm, [photoId]: baseline.strokes }));
+    setTextsMap((tm) => ({ ...tm, [photoId]: baseline.texts }));
+    setShapesMap((sm) => ({ ...sm, [photoId]: baseline.shapes as AnnotationShape[] }));
     setSelectedShapeId(null);
     setHistoryMap((hm) => ({ ...hm, [photoId]: [] }));
     setRedoMap((rm) => ({ ...rm, [photoId]: [] }));
@@ -844,7 +863,62 @@ export default function ImageAnnotationScreen() {
   const isEditedPhoto = (pId: string) =>
     countMarks(marksFor(pId)) !== (seededMarks.count[pId] || 0) || (historyMap[pId] || []).length > 0;
 
+  // REVUIUX-569: an ORDER SHEET is replaced in place, never added. Same durable job queue as the photos (mode `orderSheet`): Save
+  // writes the job and closes; flattening, the PDF wrap and the PATCH happen in the background - offline included.
+  const saveOrderSheetJob = async (photo: SectionImage) => {
+    if (savingRef.current) return;
+    const pId = photo.id || photo.uri;
+    if (!isEditedPhoto(pId) || !photo.orderSheetDocumentId) {
+      onCancel?.();
+      navigation.goBack();
+      return;
+    }
+    savingRef.current = true;
+    setIsSaving(true);
+    try {
+      const marks = marksFor(pId);
+      const meta = photo.orderSheetMeta;
+      await enqueueAnnotationJobs([
+        {
+          leadId: lead._id,
+          originalUri: warmedUris[photo.uri] || photo.uri,
+          layoutWidth: canvasLayout.width,
+          layoutHeight: canvasLayout.height,
+          strokes: marks.strokes,
+          texts: marks.texts,
+          shapes: marks.shapes,
+          categoryName: 'Order Sheet',
+          subcategory: 'Order Sheet (Annotated)',
+          annotation: {
+            mode: 'orderSheet' as const,
+            annotationData: buildMobileAnnotationData(marks, null),
+            orderSheetDocumentId: photo.orderSheetDocumentId,
+            baseName: photo.orderSheetBaseName,
+            contentKind: meta?.contentKind || 'pdf',
+            mediaBox: meta?.mediaBox || null,
+            staleUris: photo.staleUris || [],
+            originalPath: meta?.originalPath || null,
+            knownSizes: meta?.knownSizes || [],
+          },
+        },
+      ]);
+    } catch (e) {
+      console.error('Could not save the order-sheet annotation:', e);
+      savingRef.current = false;
+      setIsSaving(false);
+      FlashMessage.error('Not saved', 'Could not save your annotations. Please try again.');
+      return;
+    }
+    onSaveSuccess?.();
+    navigation.goBack();
+  };
+
   const handleSaveAll = async () => {
+    const orderSheetPhoto = (selectedPhotos as SectionImage[]).find((p) => p.docKind === 'orderSheet');
+    if (orderSheetPhoto) {
+      await saveOrderSheetJob(orderSheetPhoto);
+      return;
+    }
     if (savingRef.current) return;
 
     const photosToProcess = selectedPhotos.filter((photo: any) => {
@@ -965,26 +1039,38 @@ export default function ImageAnnotationScreen() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView className="flex-1" style={{ backgroundColor: '#090e0c' }}>
-        {/* Header */}
-        <View className="flex-row items-center justify-between px-5 pt-2 pb-4 bg-[#090e0c]">
-          <TouchableOpacity
-            onPress={handleBackPress}
-            className="w-10 h-10 rounded-full bg-white/10 items-center justify-center"
-          >
-            <Icon name="chevron-left" size={24} color="white" />
-          </TouchableOpacity>
+        {/* Header: a true three-slot row. The two side slots have EQUAL flex, so the title is centred on the screen whatever the
+            width of the back button on the left or of the Save / Save All / Saving... button on the right. (With
+            `justify-between` the title sat wherever the leftover space put it.) */}
+        <View className="flex-row items-center px-4 pt-2 pb-4 bg-[#090e0c]">
+          <View style={{ flex: 1, alignItems: 'flex-start', justifyContent: 'center' }}>
+            <TouchableOpacity
+              onPress={handleBackPress}
+              accessibilityLabel="Back"
+              className="w-10 h-10 rounded-full bg-white/10 items-center justify-center"
+            >
+              <Icon name="chevron-left" size={24} color="white" />
+            </TouchableOpacity>
+          </View>
 
-          <Text className="text-white/40 font-bold text-xs">
-            Annotate ({activeImageIndex + 1}/{selectedPhotos.length})
-          </Text>
+          <View style={{ flex: 2, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}>
+            <Text numberOfLines={1} className="text-white/60 font-bold text-sm" style={{ textAlign: 'center' }}>
+              {isOrderSheetEdit ? 'Annotate Order Sheet' : `Annotate (${activeImageIndex + 1}/${selectedPhotos.length})`}
+            </Text>
+          </View>
 
-          <TouchableOpacity
-            onPress={handleSaveAll}
-            disabled={isSaving}
-            className="px-6 py-2.5 rounded-full bg-[#72BD00]"
-          >
-            <Text className="text-white font-extrabold text-sm">Save All</Text>
-          </TouchableOpacity>
+          <View style={{ flex: 1, alignItems: 'flex-end', justifyContent: 'center' }}>
+            <TouchableOpacity
+              onPress={handleSaveAll}
+              disabled={isSaving}
+              className="px-6 h-10 rounded-full bg-[#72BD00] items-center justify-center"
+              style={{ opacity: isSaving ? 0.7 : 1 }}
+            >
+              <Text className="text-white font-extrabold text-sm">
+                {isSaving ? 'Saving\u2026' : isOrderSheetEdit ? 'Save' : 'Save All'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {selectedPhotos.length > 0 && currentPhoto && (
@@ -1093,6 +1179,7 @@ export default function ImageAnnotationScreen() {
 
                   <TouchableOpacity
                     onPress={handleResetCanvas}
+                    accessibilityLabel="Undo my changes"
                     className="w-10 h-10 rounded-xl items-center justify-center bg-white/10"
                   >
                     <Icon name="refresh" size={20} color="white" />

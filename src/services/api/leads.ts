@@ -44,6 +44,8 @@ export const LeadEndpoints = {
   digitalConsent: 'consent/digital',
   secureUrls: 'url/v1/secure/multiple',
   outcomeDocument: (documentId: string) => `lead/v1/outcome/document/${documentId}`,
+  annotateOrderSheet: (documentId: string) => `lead/v1/outcome/document/${documentId}/annotation`,
+  resetOrderSheetAnnotation: (documentId: string) => `lead/v1/outcome/document/${documentId}/annotation/reset`,
   productBuilder: 'product-builder/v1/products',
   getJobs: {
     list: '/job/v1/find',
@@ -220,6 +222,19 @@ export const LeadService = {
     api.put(LeadEndpoints.updateImagePosition(leadId), payload),
   deleteOutcomeDocument: (documentId: string): Promise<AxiosResponse<any>> =>
     api.delete(LeadEndpoints.outcomeDocument(documentId)),
+  /**
+   * REVUIUX-569: replaces an order sheet IN PLACE (its `_id` does not change). Accepts a `JobBuilderDocument` OR a
+   * `LeadOutcomeDocument` id - send whatever `serverId` you hold. Multipart `file` + `annotationData`, the same contract as the
+   * photo route. ⚠️ The server mints a NEW `filePath` every time, so re-resolve the secure url afterwards.
+   */
+  annotateOrderSheet: (documentId: string, formData: FormData): Promise<AxiosResponse<any>> =>
+    api.patch(LeadEndpoints.annotateOrderSheet(documentId), formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: PHOTO_UPLOAD_TIMEOUT_MS,
+    }),
+  /** REVUIUX-569: restores the pristine original for everyone (idempotent; 400 if it was never annotated). */
+  resetOrderSheetAnnotation: (documentId: string): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.resetOrderSheetAnnotation(documentId)),
   resetLead: (leadId: string): Promise<AxiosResponse<any>> => api.put(LeadEndpoints.reset(leadId)),
   getAdditionalSlots: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.additionalSlots(leadId)),

@@ -24,12 +24,32 @@ import { warmToLocalCache } from '../utils/imageFileCache';
 import { uploadQueueManager, type UploadQueueAnnotation } from '../utils/uploadQueue';
 import { renderAnnotatedImage } from './annotationRenderer';
 import { FlashMessage } from '../config/message';
+import { saveAnnotatedOrderSheet } from './orderSheetSync';
+import { serverErrorText } from '../utils/order-sheet-annotation';
 
 const JOBS_KEY = 'annotation_save_jobs';
 const MAX_ATTEMPTS = 3;
 const JOB_DIR = 'annotation_jobs';
 const ORIGINAL_GRACE_MS = 30_000;
 const ORPHAN_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * REVUIUX-569: an ORDER SHEET annotation. Same queue, different ending: instead of a photo upload the flattened result is
+ * wrapped as a PDF and PATCHed over the existing document (`services/orderSheetSync.ts`). ⚠️ Not the photo upload queue and
+ * not the offline DOCUMENT queue - that one is append-only and would file a second order sheet.
+ */
+export interface OrderSheetJobAnnotation {
+  mode: 'orderSheet';
+  annotationData: any;
+  /** The row's `serverId`, from EITHER backend collection - sent as it is. */
+  orderSheetDocumentId: string;
+  baseName?: string;
+  contentKind: 'pdf' | 'image';
+  mediaBox?: { width: number; height: number } | null;
+  staleUris?: string[];
+  originalPath?: string | null;
+  knownSizes?: number[];
+}
 
 export interface AnnotationJob {
   id: string;
@@ -47,7 +67,7 @@ export interface AnnotationJob {
   subcategory: string;
   coordinates?: { latitude: number; longitude: number };
   createdAt: string;
-  annotation: UploadQueueAnnotation;
+  annotation: UploadQueueAnnotation | OrderSheetJobAnnotation;
   attempts?: number;
 }
 
@@ -164,14 +184,21 @@ const readBase64 = async (uri: string): Promise<string> => {
   return `data:image/jpeg;base64,${data}`;
 };
 
-const processOne = async (job: AnnotationJob): Promise<void> => {
-  const background = await readBase64(job.originalUri);
-  const flattened = await renderAnnotatedImage({
-    backgroundImageBase64: background,
-    layoutWidth: job.layoutWidth,
-    layoutHeight: job.layoutHeight,
-    strokes: job.strokes.map((s) => ({ isEraser: s.isEraser, color: s.color, width: s.width, points: s.points })),
-    texts: job.texts.map((t) => ({
+/** Draws the marks over the background and returns a `data:image/jpeg;base64,...` string (shared with the order-sheet editor). */
+export const flattenMarks = (input: {
+  backgroundBase64: string;
+  layoutWidth: number;
+  layoutHeight: number;
+  strokes: any[];
+  texts: any[];
+  shapes: any[];
+}): Promise<string> =>
+  renderAnnotatedImage({
+    backgroundImageBase64: input.backgroundBase64,
+    layoutWidth: input.layoutWidth,
+    layoutHeight: input.layoutHeight,
+    strokes: input.strokes.map((s) => ({ isEraser: s.isEraser, color: s.color, width: s.width, points: s.points })),
+    texts: input.texts.map((t) => ({
       text: t.text,
       color: t.color,
       fontSize: t.fontSize,
@@ -180,11 +207,41 @@ const processOne = async (job: AnnotationJob): Promise<void> => {
       px: t.px,
       py: t.py,
     })),
-    shapes: job.shapes.map((sh) => ({ kind: sh.kind, color: sh.color, width: sh.width, p1: sh.p1, p2: sh.p2 })),
+    shapes: input.shapes.map((sh) => ({ kind: sh.kind, color: sh.color, width: sh.width, p1: sh.p1, p2: sh.p2 })),
   });
 
+const processOne = async (job: AnnotationJob): Promise<void> => {
+  const background = await readBase64(job.originalUri);
+  const flattened = await flattenMarks({
+    backgroundBase64: background,
+    layoutWidth: job.layoutWidth,
+    layoutHeight: job.layoutHeight,
+    strokes: job.strokes,
+    texts: job.texts,
+    shapes: job.shapes,
+  });
+
+  const flattenedBase64 = flattened.replace(/^data:image\/\w+;base64,/, '');
+
+  if (job.annotation.mode === 'orderSheet') {
+    const os = job.annotation;
+    await saveAnnotatedOrderSheet({
+      leadId: job.leadId,
+      documentId: os.orderSheetDocumentId,
+      flattenedJpegBase64: flattenedBase64,
+      contentKind: os.contentKind,
+      mediaBox: os.mediaBox,
+      baseName: os.baseName,
+      annotationData: os.annotationData,
+      staleUris: os.staleUris,
+      originalPath: os.originalPath,
+      knownSizes: os.knownSizes,
+    });
+    return;
+  }
+
   const tempPath = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/annotated_${Date.now()}_${job.id}.jpg`;
-  await ReactNativeBlobUtil.fs.writeFile(tempPath, flattened.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+  await ReactNativeBlobUtil.fs.writeFile(tempPath, flattenedBase64, 'base64');
 
   // addToQueue copies the file into durable queue storage and starts draining (it waits for a connection itself).
   await uploadQueueManager.addToQueue({
@@ -196,7 +253,7 @@ const processOne = async (job: AnnotationJob): Promise<void> => {
     name: `annotated_${Date.now()}.jpg`,
     coordinates: job.coordinates,
     userId: job.userId,
-    annotation: job.annotation,
+    annotation: job.annotation as UploadQueueAnnotation,
   });
   await unlinkQuiet(`file://${tempPath}`);
 };
@@ -228,7 +285,13 @@ export const processAnnotationJobs = async (): Promise<void> => {
           jobs = jobs.filter((j) => j.id !== job.id);
           persist();
           void unlinkQuiet(job.originalUri);
-          FlashMessage.error('Annotation not saved', 'One annotated photo could not be prepared. Please annotate it again.');
+          // An order-sheet failure shows what the SERVER said (`{ message }`), not a generic line.
+          FlashMessage.error(
+            job.annotation.mode === 'orderSheet' ? 'Order sheet not saved' : 'Annotation not saved',
+            job.annotation.mode === 'orderSheet'
+              ? serverErrorText(e, 'The annotated order sheet could not be saved.')
+              : 'One annotated photo could not be prepared. Please annotate it again.',
+          );
         } else {
           jobs = jobs.map((j) => (j.id === job.id ? { ...j, attempts } : j));
           persist();

@@ -27,6 +27,10 @@ interface ContractDetailsCardProps {
   hasContract: boolean;
   isResulted: boolean;
   onAddDocument: (type: 'agreement' | 'orderSheet' | 'downPaymentReceipt') => void;
+  /** REVUIUX-569: pencil on every order sheet row. */
+  onAnnotateOrderSheet?: (doc: any) => Promise<void> | void;
+  /** REVUIUX-569: "Reset all changes" on an annotated order sheet row. */
+  onResetOrderSheet?: (doc: any) => Promise<void> | void;
 }
 
 const cleanNumber = (val: any): number => {
@@ -53,6 +57,8 @@ export const ContractDetailsCard = ({
   hasContract,
   isResulted,
   onAddDocument,
+  onAnnotateOrderSheet,
+  onResetOrderSheet,
 }: ContractDetailsCardProps) => {
   const navigation = useNavigation<any>();
 
@@ -312,6 +318,8 @@ export const ContractDetailsCard = ({
                   colors={colors}
                   onOpen={onOpenPdf}
                   onImagePreview={(uri: string) => onImagePreview(uri)}
+                  onAnnotate={onAnnotateOrderSheet}
+                  onReset={onResetOrderSheet}
                 />
               ))}
               <TouchableOpacity

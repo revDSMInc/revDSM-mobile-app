@@ -66,3 +66,14 @@ describe('coverBox', () => {
     expect(b.y).toBeLessThan(0);
   });
 });
+
+describe('order-sheet jobs (REVUIUX-569)', () => {
+  it('never become photo cards', () => {
+    const out = buildPendingAnnotations(
+      [job({ id: 'os1', annotation: { mode: 'orderSheet' as any, orderSheetDocumentId: 'd1' } })],
+      [],
+      'L1',
+    );
+    expect(out).toEqual([]);
+  });
+});
