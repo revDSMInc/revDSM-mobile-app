@@ -846,6 +846,27 @@ export const uploadProgress = (work: OfflineLeadWork): { done: number; total: nu
 export const uploadableWork = (items: OfflineLeadWork[] | null | undefined): OfflineLeadWork[] =>
   (items || []).filter((w) => w.status === 'draft' && nextUploadStep(w) !== null);
 
+/**
+ * Could any queued work still MINT a server id?
+ *
+ * ⚠️ NOT `uploadableWork`. That one answers "what should the drain pick up next", so it
+ * requires `status === 'draft'` - and during a drain the item is `'uploading'`. The activity-log
+ * hold policy asked `uploadableWork(...).length > 0` and therefore went FALSE for the whole
+ * drain, exactly when ids are being minted. `hasUnresolvedIds` collapsed to false with it, so a
+ * lead-scoped log queued or drained in that window was sent carrying its raw client id
+ * (`lead-1792...`) and the backend discarded it.
+ *
+ * That is why `leads_list` logs arrived and `lead_check_in` never did: `leads_list` is in
+ * `ExcludedModuleTypes`, so it carries no `leadId` at all and had nothing to resolve.
+ *
+ * `'uploading'` counts here. `'uploaded'` does not - that work is finished and will mint nothing
+ * further, which is what stops a log being held for an id that is never coming.
+ */
+export const workCanStillMintIds = (items: OfflineLeadWork[] | null | undefined): boolean =>
+  (items || []).some(
+    (w) => (w.status === 'draft' || w.status === 'uploading') && nextUploadStep(w) !== null
+  );
+
 export const activeWork = (items: OfflineLeadWork[] | null | undefined): OfflineLeadWork[] =>
   (items || []).filter(
     (w) =>

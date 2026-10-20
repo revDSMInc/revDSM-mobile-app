@@ -1648,3 +1648,43 @@ without the rep doing anything wrong.)
 
 ⚠️ **`drain: 0 queued` means the log was never enqueued** - look at `logEvent`'s hold gate and
 the `[CheckIn]` trace, not at the queue.
+
+## Ticket — THE check-in log bug: the hold policy went false during the drain
+
+The one that survived four previous fixes. Found from a network capture, not from reading code:
+after syncing an offline lead, **`leads_list` logs POST happily while `lead_check_in` never
+appears at all.**
+
+⚠️ **That asymmetry is the whole diagnosis.** `leads_list` is in `ExcludedModuleTypes`
+(`services/api/LoggerService.ts`), so `logEvent` never attaches a `leadId` to it — nothing to
+resolve, so it sends. Every LEAD-SCOPED log carries `meta.leadId`, which offline is a client id
+(`lead-1792...`).
+
+Such a log is held until the `lead` step mints the real id. The hold is gated on
+`holdIsUseful()`, which `offlineLeadStore` wired to:
+
+```ts
+setActivityLogHoldPolicy(() => uploadableWork(mine()).length > 0);
+```
+
+⚠️ **`uploadableWork` requires `status === 'draft'`** — it answers "what should the drain pick up
+next", and `uploadOne` sets `'uploading'` for the whole drain. So the gate went **false for
+exactly the window in which ids are minted**. `hasUnresolvedIds` collapsed with it
+(`holdIsUseful() && ...`), the log was released carrying the raw client id, and the backend
+discarded it. Silently, with a 2xx.
+
+Fixed with `workCanStillMintIds` (`utils/offline-lead-work.ts`, 7 tests), which counts `'draft'`
+**and** `'uploading'`. `uploadableWork` is unchanged — it is right for choosing work to drain.
+
+⚠️ **Do not re-wire the hold policy to `uploadableWork`.** The two questions look identical and
+are not: "what to drain next" excludes the item being drained; "can an id still appear" must
+include it.
+
+⚠️ **It must still go false at `'uploaded'`.** Holding forever blocks every later log of that
+lead — the opposite failure, equally bad. There is a test for both directions.
+
+⚠️ **Why four earlier fixes missed it:** each was real (the `createdAtTheDoor` TTL, the
+unknown-GPS geofence, the online-with-client-id gate, the queued work release) and each was
+upstream of this. The log reached the queue correctly every time; the queue then released it
+early. Reading the code could not show this because every component was individually correct —
+only the network capture, showing which module_types *did* arrive, located it.

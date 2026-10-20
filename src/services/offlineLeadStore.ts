@@ -67,6 +67,7 @@ import {
   documentRootKey,
   offlineDocumentName,
   uploadableWork,
+  workCanStillMintIds,
   UPLOAD_STEPS as uploadSteps,
   type OfflineCalculatorWork,
   type OfflineDocumentCategory,
@@ -1426,7 +1427,10 @@ setActivityLogIdResolver((value) => {
 
 setActivityLogHoldPolicy(() => {
   load();
-  return uploadableWork(mine()).length > 0;
+  // ⚠️ `workCanStillMintIds`, NOT `uploadableWork`: the latter requires status 'draft', so it
+  // went false for the whole drain - precisely when ids are being minted - and lead-scoped
+  // logs were released carrying unresolved client ids.
+  return workCanStillMintIds(mine());
 });
 
 export const drainOfflineWork = async (): Promise<void> => {
