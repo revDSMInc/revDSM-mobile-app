@@ -161,3 +161,17 @@ export const latestAnnotatedPerBase = <
   });
   return [...best.values()].sort((a, b) => a.index - b.index).map((b) => b.item);
 };
+
+/**
+ * "Undo my changes" in the editor: back to what the screen OPENED with - the marks a re-edit restored - not to an empty canvas.
+ * Resetting to empty on a re-edit threw away marks saved last week, and the save that followed stored an EMPTY annotation
+ * (REVUIUX-569 section 5; it also fixes the photo flow).
+ */
+export const resetToBaseline = (
+  seeded: { strokes?: Record<string, any[]>; texts?: Record<string, any[]>; shapes?: Record<string, any[]> } | null | undefined,
+  photoId: string,
+): AnnotationMarks => ({
+  strokes: [...(seeded?.strokes?.[photoId] ?? [])],
+  texts: [...(seeded?.texts?.[photoId] ?? [])],
+  shapes: [...(seeded?.shapes?.[photoId] ?? [])],
+});

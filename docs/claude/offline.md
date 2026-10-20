@@ -1490,6 +1490,22 @@ all windows are offered, with no spinner and no wait on a request that cannot su
 ⚠️ Do not make offline booking depend on the scheduler. The server does not enforce windows today, so a booking
 made offline is accepted whatever the crews' load is; the manager sees it afterwards on the dispatch board.
 
+- **Follow-up - `annotationSaveService` changes for the order-sheet editor and the card handover** (`services/annotationSaveService.ts`):
+  - `flattenMarks({ backgroundBase64, layoutWidth, layoutHeight, strokes, texts, shapes })` is now an exported helper (the render-input mapping that used to sit inside `processOne`). The photo job and the order-sheet editor (REVUIUX-569, `lead-center.md`) both call it, so the marks are drawn identically. ⚠️ An order sheet is NOT queued - it is flattened in the editor and handed to the caller's replace path; only photos ride `annotation_save_jobs` and the upload queue.
+  - `getAnnotationJobs()` / `addAnnotationJobListener()` expose the live jobs so Manage Photos can draw a just-saved annotation before it is flattened (`usePendingAnnotations`).
+  - ⚠️ A finished job's ORIGINAL file is no longer deleted at once: it is removed after `ORIGINAL_GRACE_MS` (30 s) and by `sweepOrphanOriginals()` at startup (unreferenced files older than a day), because the card keeps drawing the marks over it until the flattened image has painted. Do not move the unlink back to right after `processOne`.
+
+- **Follow-up - the renderer rejects an empty export** (`services/annotationRenderer.ts`, `utils/annotation-render-html.ts`): the page caps the canvas long side at 3600 px and reports an error instead of an empty `data:,`; the service resolves only a real JPEG data uri. This also protects the photo-annotation job (a failed render is retried / dropped with a message, never queued as a blank photo). See `lead-center.md` (order sheet "corrupted" report).
+
+
+### Follow-up - `annotationSaveService` gains `mode: 'orderSheet'` (REVUIUX-569)
+
+An annotated ORDER SHEET rides the same durable job queue (`OrderSheetJobAnnotation`): after the flatten, `processOne` calls `services/orderSheetSync.saveAnnotatedOrderSheet` (PATCH `/lead/v1/outcome/document/:id/annotation`, with a "route not deployed" fallback) instead of `uploadQueueManager`. Offline it waits like the photo jobs (`!isOnline()` -> resume on reconnect, no attempt spent). ⚠️ Never the offline DOCUMENT queue - it would file a second sheet. Full write-up: `lead-center.md` § "REVUIUX-569 - the backend contract".
+
+## Agreement configuration is warmed for offline (REVUIUX: Lighting description lines)
+
+An agreement drawn on the device needs the layout (`agreement-config`) and each product's description schema (`description-schema:<productId>`, plus the list `description-schema-list` the Investment Center reads). They are now fetched ahead by `useWarmDealCenterConfig` (Leads screen) through `cachedFetch`, so they are on disk before signal is lost; `OFFLINE_CACHE.DESCRIPTION_SCHEMA_LIST` is new in `utils/offline-query-cache.ts`. A local agreement whose schema was never saved refuses to draw (`descriptionSchemaMissingOffline`). Full write-up, and the `[IF]` / `col:` evaluator port: `deal-center.md` § "Description-of-Work templates".
+
 ## Ticket — slow mobile data: lost logs and duplicate leads (the attempt budget)
 
 Field report: working offline then reconnecting on **low-speed mobile data** lost the check-in,

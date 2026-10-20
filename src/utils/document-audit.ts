@@ -1,7 +1,7 @@
 import { DocumentRef, toDocumentRefs } from './uploaded-document-refs';
 
 export type DocumentAuditCategory = 'agreement' | 'orderSheet';
-export type DocumentAuditKind = 'uploaded' | 'removed' | 'generated';
+export type DocumentAuditKind = 'uploaded' | 'removed' | 'generated' | 'annotated' | 'reset';
 
 export type DocumentOpenSource = 'generate' | 'add_document' | 'edit_documents';
 
@@ -48,6 +48,20 @@ const DESCRIPTORS: Record<
       fieldName: 'orderSheet',
       fieldLabel: 'Order Sheet Removed',
       eventType: 'delete',
+    },
+    // REVUIUX-569. ⚠️ BOTH are `add` - never `delete`: the portal's label map reads `delete` as `order_sheet_removed`, so a
+    // reset logged as a delete would render as the sheet having been removed.
+    annotated: {
+      action: 'order_sheet_annotated',
+      fieldName: 'orderSheet',
+      fieldLabel: 'Order Sheet Annotated',
+      eventType: 'add',
+    },
+    reset: {
+      action: 'order_sheet_reset',
+      fieldName: 'orderSheet',
+      fieldLabel: 'Order Sheet Reset',
+      eventType: 'add',
     },
   },
 };

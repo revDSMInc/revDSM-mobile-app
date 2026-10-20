@@ -8,6 +8,7 @@ import { DynamicAgreementGenerator } from './DynamicAgreementGenerator';
 import { AgreementRemoteSignModal } from '../../../modals/job-builder/AgreementRemoteSignModal';
 import { useGetAgreementConfig } from '../../../../screens/DynamicDealCenter/hooks/useAgreementConfig';
 import { isOnline } from '../../../../services/connectivity';
+import { descriptionSchemaMissingOffline } from '../../../../utils/offline-agreement-config';
 import { isClientId } from '../../../../utils/offline-lead-work';
 import { formatInstallDate } from '../../../../utils/install-date';
 import { LeadService } from '../../../../services/api/leads';
@@ -86,7 +87,7 @@ export function DynamicAgreementDialog({
   calculatorResultData = {},
   jobScope: jobScopeProp,
 }: DynamicAgreementDialogProps) {
-  const { schema: descriptionSchema, schemaLoading: descSchemaLoading } = useGetDescriptionSchema(
+  const { schema: descriptionSchema, schemaLoading: descSchemaLoading, schemaError: descSchemaError } = useGetDescriptionSchema(
     visible ? productKey : undefined
   );
 
@@ -364,7 +365,22 @@ export function DynamicAgreementDialog({
             screen — there is no second modal, which also means no stacked-modal teardown to
             stage. `onSave` fires only once both marks are drawn (the generator's own gate). */}
         {renderLocally ? (
-          agreementConfig && (deliveryReady || !needsDelivery) ? (
+          descriptionSchemaMissingOffline({
+            renderLocally,
+            schemaLoading: descSchemaLoading,
+            schema: descriptionSchema,
+            schemaError: descSchemaError,
+            hasProvidedScope: !!(jobScopeProp && jobScopeProp.length > 0),
+          }) ? (
+            // ⚠️ Not drawn: without the saved schema the scope silently became "Project completion per summary details" on a
+            // document the customer signs.
+            <View style={styles.center}>
+              <Text style={styles.errorText}>
+                This product's Description of Work hasn't been downloaded yet. Open a lead once while you're
+                online, then try again.
+              </Text>
+            </View>
+          ) : agreementConfig && (deliveryReady || !needsDelivery) ? (
             <DynamicAgreementGenerator
               agreementConfig={agreementConfig}
               customerDetails={resolvedCustomerDetails}

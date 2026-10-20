@@ -1217,3 +1217,13 @@ Report: tapping the funnel on the Zone Canvasser map "did nothing" - `ZoneCanvas
 ### Follow-up - annotation job sync starts at app init; `annotation_save_jobs` survives logout
 
 `hooks/useAppInitialization.ts` now also calls `startAnnotationJobSync()` right after `startPhotoQueueSync()` (resumes annotation jobs left by a killed app, re-runs on reconnect / foreground), and `utils/session-scope.ts` lists `annotation_save_jobs` in `SESSION_KEEP_KEYS`. ⚠️ Anything new that holds rep work in MMKV must be added to that list (and to `tests/offline/session-scope-keys.test.ts`) or a sign-out destroys it. See `lead-center.md` § "Annotation Save" and `offline.md`.
+
+
+### Follow-up - `ImageAnnotation` route gained an `orderSheet` param; `order_sheet_originals` survives logout
+
+`navigation/index.tsx`: `ImageAnnotation` now also types `onCancel` and `orderSheet?: { title?, canReset, onSave, onReset }` (REVUIUX-569, annotating an order sheet). `utils/session-scope.ts`: `order_sheet_originals` joins `SESSION_KEEP_KEYS` (its files are in DocumentDir). See `lead-center.md`.
+
+
+### Follow-up - `ImageAnnotation` route params (REVUIUX-569 final shape)
+
+`navigation/index.tsx`: the `orderSheet` callback param is gone again. An order sheet reaches the editor as an ordinary `selectedPhotos` entry with a `docKind: 'orderSheet'` discriminator (see `lead-center.md`); the route keeps `onSaveSuccess` / `onCancel`.

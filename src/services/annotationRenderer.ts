@@ -64,8 +64,12 @@ export const handleRenderHostMessage = (raw: string): void => {
   if (!entry) return;
   pending.delete(key);
   clearTimeout(entry.timer);
-  if (data.status === 'success' && typeof data.base64 === 'string') entry.resolve(data.base64);
-  else entry.reject(new Error(data?.message || 'Render failed'));
+  // A usable export is a real JPEG data uri; an empty / truncated one must never reach an upload.
+  if (data.status === 'success' && typeof data.base64 === 'string' && data.base64.length > 2000 && data.base64.startsWith('data:image/jpeg;base64,')) {
+    entry.resolve(data.base64);
+  } else {
+    entry.reject(new Error(data?.message || 'Render failed'));
+  }
 };
 
 const waitUntilReady = (): Promise<void> =>

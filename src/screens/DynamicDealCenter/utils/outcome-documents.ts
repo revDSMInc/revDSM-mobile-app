@@ -16,6 +16,10 @@ export interface LocalDocFile {
   bucketName: string | null;
   documentType: 'agreement' | 'orderSheet';
   isNew: false;
+  /** Byte size the server reports (REVUIUX-569: matches a remembered original when the route is not deployed). */
+  size?: number | null;
+  /** REVUIUX-569: the annotation state the server attaches to an order sheet (`revision`, `data`, `twin`...). */
+  annotation?: any;
 }
 
 const isEmptyRows = (rows?: OutcomeDocRows | null) =>
@@ -102,6 +106,8 @@ export async function resolveOutcomeDocRows(
       bucketName: d.bucketName || null,
       documentType: type,
       isNew: false,
+      size: d.fileData?.size ?? null,
+      annotation: d.annotation ?? null,
     };
   });
 

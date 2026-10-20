@@ -29,6 +29,13 @@ import {
 } from '../../../../utils/document-audit';
 import { useAuth } from '../../../../hooks/useAuth';
 import { convertJpegToPdfAsync } from '../../../../utils/jpeg-to-pdf-native';
+import { useNavigation } from '@react-navigation/native';
+import { openOrderSheetEditor } from '../../../../services/orderSheetAnnotation';
+import { FlashMessage } from '../../../../config/message';
+import { usePendingOrderSheetJobs } from '../../../../hooks/usePendingOrderSheetJobs';
+import { resetAnnotatedOrderSheet } from '../../../../services/orderSheetSync';
+import { serverErrorText, showResetAction } from '../../../../utils/order-sheet-annotation';
+import { ConfirmDialog } from '../../../../screens/DynamicDealCenter/components/ConfirmDialog';
 import { PdfPreviewModal } from '../../../modals/PdfPreviewModal';
 import {
   fetchLeadOutcomeDocumentRows,
@@ -151,6 +158,9 @@ export function SummaryFinalizeCards({
   const [pdfPreview, setPdfPreview] = useState<{ uri: string; title?: string } | null>(null);
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const navigation = useNavigation<any>();
+  // REVUIUX-569: the order sheet whose pencil was tapped (spinner on its tile while the editor loads).
+  const [annotatingKey, setAnnotatingKey] = useState<string | null>(null);
 
   const isAppointmentSet = Boolean(scheduleTime?.date);
 
@@ -350,7 +360,7 @@ export function SummaryFinalizeCards({
     });
   };
 
-  const handleScannerSave = async (cat: DocCategory, images: any[]) => {
+  const handleScannerSave = async (cat: DocCategory, images: any[]): Promise<boolean> => {
     const key = cat === 'agreement' ? 'agreements' : 'orderSheets';
     const surviving = new Set((images || []).map(docIdentity).filter(Boolean));
     const keep = (d: any) => surviving.has(docIdentity(d));
@@ -371,7 +381,7 @@ export function SummaryFinalizeCards({
         queryClient.invalidateQueries({ queryKey: ['editOutcomeDocs', leadId] });
       }
       setScannerCategory(null);
-      return;
+      return true;
     }
     const displayDocs = await uploadNewFiles(cat, newFiles);
     if (displayDocs) {
@@ -385,7 +395,91 @@ export function SummaryFinalizeCards({
       );
     }
     setScannerCategory(null);
+    return !!displayDocs;
   };
+
+  /**
+   * REVUIUX-569 - the pencil on an order-sheet tile: opens the annotation editor. Saving is a durable background job that
+   * replaces the sheet IN PLACE (`services/orderSheetSync.ts`: PATCH, same `_id`), so the card is NOT edited here - it is
+   * re-read when the job lands (effect below). Only a sheet the server already holds can be annotated.
+   */
+  const handleAnnotateOrderSheet = async (file: any) => {
+    const src = fileSrc(file);
+    if (!leadId || !src) return;
+    const serverId = file?.serverId ?? file?._id;
+    if (!serverId) {
+      FlashMessage.warning('Cannot annotate yet', 'This order sheet has not finished uploading.');
+      return;
+    }
+    setAnnotatingKey(docIdentity(file));
+    try {
+      await openOrderSheetEditor({
+        navigation,
+        lead: { _id: leadId },
+        leadId,
+        doc: {
+          serverId,
+          uri: String(src),
+          name: file?.name,
+          size: file?.size ?? file?.fileData?.size,
+          filePath: file?.filePath,
+          bucketName: file?.bucketName,
+          contentType: file?.contentType || file?.fileData?.contentType,
+          annotation: file?.annotation,
+        },
+      });
+    } finally {
+      setAnnotatingKey(null);
+    }
+  };
+
+  // REVUIUX-569 - "Reset all changes" on an annotated order-sheet tile: restores the pristine original FOR EVERYONE (the server keeps
+  // it), asked with the app's own dialog. ⚠️ ConfirmDialog is its own native Modal: raised from a tile with nothing else presenting.
+  const [resetTarget, setResetTarget] = useState<any | null>(null);
+  const [resettingSheet, setResettingSheet] = useState(false);
+  const confirmResetOrderSheet = async () => {
+    const file = resetTarget;
+    const serverId = file?.serverId ?? file?._id;
+    if (!file || !leadId || !serverId || resettingSheet) return;
+    setResettingSheet(true);
+    try {
+      const outcome = await resetAnnotatedOrderSheet({
+        leadId,
+        documentId: String(serverId),
+        currentUri: String(fileSrc(file) || ''),
+        knownSizes: typeof (file?.size ?? file?.fileData?.size) === 'number' ? [file?.size ?? file?.fileData?.size] : [],
+        baseName: file?.name,
+      });
+      if (outcome === 'unavailable') {
+        FlashMessage.warning('Cannot reset', 'The original of this order sheet is not available on this phone.');
+      }
+      const fresh = onRefreshDocs ? await onRefreshDocs('orderSheet') : null;
+      if (fresh) commitUploaded('orderSheet', fresh);
+    } catch (e: any) {
+      console.warn('[SummaryFinalizeCards] order sheet reset failed', e);
+      FlashMessage.error('Order sheet not reset', serverErrorText(e, 'Check your connection and try again.'));
+    } finally {
+      setResettingSheet(false);
+      setResetTarget(null);
+    }
+  };
+
+  // The annotation job runs in the background (and survives offline): when one finishes, re-read the order sheets so the tile
+  // shows the new picture - the replace keeps the document's `_id` but the file behind it is new.
+  const syncingOrderSheetIds = usePendingOrderSheetJobs(leadId);
+  const prevSyncingRef = useRef(syncingOrderSheetIds.size);
+  useEffect(() => {
+    const before = prevSyncingRef.current;
+    prevSyncingRef.current = syncingOrderSheetIds.size;
+    if (before > syncingOrderSheetIds.size && onRefreshDocs) {
+      onRefreshDocs('orderSheet')
+        .then((fresh) => {
+          if (fresh) commitUploaded('orderSheet', fresh);
+        })
+        .catch((e) => console.warn('[SummaryFinalizeCards] could not re-read order sheets after an annotation', e));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncingOrderSheetIds]);
 
   const handleAgreementGenerated = async (file: any) => {
     if (file?.isSystemGenerated) {
@@ -660,6 +754,54 @@ export function SummaryFinalizeCards({
                         Page {i + 1}
                       </Text>
                     </View>
+                    {/* REVUIUX-569: annotate this order sheet (replaces it). Withheld mid-upload, like the other actions. */}
+                    {cat === 'orderSheet' && !isUploading && showResetAction({ documentType: 'orderSheet', serverId: file?.serverId ?? file?._id, annotation: file?.annotation }) && (
+                      <TouchableOpacity
+                        onPress={() => setResetTarget(file)}
+                        disabled={syncingOrderSheetIds.has(String(file?.serverId ?? file?._id ?? ''))}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        accessibilityLabel="Reset all changes"
+                        style={{
+                          position: 'absolute',
+                          top: 6,
+                          right: 6,
+                          width: 26,
+                          height: 26,
+                          borderRadius: 13,
+                          backgroundColor: 'rgba(183, 110, 0, 0.92)',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          opacity: syncingOrderSheetIds.has(String(file?.serverId ?? file?._id ?? '')) ? 0.35 : 1,
+                        }}
+                      >
+                        <Icon name="restore" size={14} color="#fff" />
+                      </TouchableOpacity>
+                    )}
+                    {cat === 'orderSheet' && !isUploading && !!src && (
+                      <TouchableOpacity
+                        onPress={() => handleAnnotateOrderSheet(file)}
+                        disabled={annotatingKey !== null || syncingOrderSheetIds.has(String(file?.serverId ?? file?._id ?? ''))}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        accessibilityLabel="Annotate order sheet"
+                        style={{
+                          position: 'absolute',
+                          top: 6,
+                          left: 6,
+                          width: 26,
+                          height: 26,
+                          borderRadius: 13,
+                          backgroundColor: 'rgba(15, 23, 42, 0.78)',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        {annotatingKey === docIdentity(file) || syncingOrderSheetIds.has(String(file?.serverId ?? file?._id ?? '')) ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Icon name="pencil" size={14} color="#fff" />
+                        )}
+                      </TouchableOpacity>
+                    )}
                   </TouchableOpacity>
                 );
               })}
@@ -776,6 +918,17 @@ export function SummaryFinalizeCards({
         initialTimeWindow={scheduleTime?.timeWindow}
       />
 
+      <ConfirmDialog
+        visible={!!resetTarget}
+        tone="warn"
+        title="Reset all changes?"
+        message="The original order sheet will be restored for everyone, including the installers."
+        confirmLabel="Reset all changes"
+        cancelLabel="Cancel"
+        busy={resettingSheet}
+        onConfirm={confirmResetOrderSheet}
+        onCancel={() => setResetTarget(null)}
+      />
       <DocumentScannerModal
         visible={scannerCategory !== null}
         onClose={() => setScannerCategory(null)}

@@ -30,6 +30,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DocumentScannerModal } from '../../modals/job-builder/DocumentScannerModal';
 import RNFS from 'react-native-fs';
 import { convertJpegToPdf as sharedConvertJpegToPdf } from '../../../utils/jpeg-to-pdf';
+import { openOrderSheetEditor } from '../../../services/orderSheetAnnotation';
+import { resetAnnotatedOrderSheet } from '../../../services/orderSheetSync';
+import { serverErrorText } from '../../../utils/order-sheet-annotation';
+import { usePendingOrderSheetJobs } from '../../../hooks/usePendingOrderSheetJobs';
 import { useAuth } from '../../../hooks/useAuth';
 import SocketManager from '../../../services/SocketManager';
 import { logEvent } from '../../../services/api/LoggerService';
@@ -607,8 +611,12 @@ export const JobDocsSection = ({
   const convertJpegToPdf = (jpegBase64: string, width = 595, height = 842): string =>
     sharedConvertJpegToPdf(jpegBase64, width, height);
 
-  const handleSaveScannedDocument = async (pages: any[]) => {
-    const scannerCategory = scannerType;
+  const handleSaveScannedDocument = async (
+    pages: any[],
+    categoryOverride?: 'agreement' | 'orderSheet' | 'downPaymentReceipt',
+  ): Promise<boolean> => {
+    // `categoryOverride`: the order-sheet pencil calls this straight after tapping, before `scannerType` state could update.
+    const scannerCategory = categoryOverride || scannerType;
     const stateField =
       scannerCategory === 'agreement' ? 'agreements'
       : scannerCategory === 'orderSheet' ? 'orderSheets'
@@ -617,21 +625,23 @@ export const JobDocsSection = ({
 
     if (!leadId) {
       Alert.alert('Error', 'No lead ID found. Cannot upload document.');
-      return;
+      return false;
     }
 
     const newPages = pages.filter((p) => p.isNew === true);
 
     if (newPages.length === 0) {
       setScannerOpen(false);
-      return;
+      return true;
     }
 
     try {
       setIsGenerating(true);
 
       let preFetchedAppendedDocs: any[] = [];
+      // Only needed to re-send EXISTING pages; a save of new pages alone (the order-sheet replace) skips this heavy download.
       try {
+        if (!pages.some((p) => !p.isNew)) throw new Error('no existing pages to re-send');
         const response = await LeadService.downloadOutcomeDocuments(leadId);
         const dataObj = response.data?.data || response.data || {};
         preFetchedAppendedDocs = [
@@ -652,7 +662,8 @@ export const JobDocsSection = ({
         const documentName = p.name ? p.name.replace(/\.[a-z]+$/i, '.pdf') : defaultName;
 
         if (p.isNew) {
-          const rawBase64 = await RNFS.readFile(p.uri, 'base64');
+          // ⚠️ iOS RNFS cannot open a `file://` url (Android can) - the order-sheet replace hands in one, so strip the scheme.
+          const rawBase64 = await RNFS.readFile(String(p.uri).replace(/^file:\/\//i, ''), 'base64');
           const pdfBase64 = p.uri.endsWith('.pdf') ? rawBase64 : convertJpegToPdf(rawBase64);
           filePayloads.push({
             name: documentName,
@@ -709,11 +720,73 @@ export const JobDocsSection = ({
       await refetch();
       setTimeout(() => refetch(), 1000);
       setTimeout(() => refetch(), 3000);
+      return true;
     } catch (error: any) {
       console.error('[JobDocsSection] Document upload failed:', error);
       Alert.alert('Error', error?.message || 'Could not upload documents.');
+      return false;
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  /**
+   * REVUIUX-569 - the pencil on an order sheet: opens the annotation editor. Saving is a durable background job that replaces
+   * the sheet IN PLACE (see `services/orderSheetSync.ts`), so there is nothing to await or refetch here - the job refreshes the
+   * lead itself, and the row shows "Syncing" until it lands.
+   */
+  const handleAnnotateOrderSheet = async (doc: any) => {
+    const leadId = lead?._id;
+    if (!leadId || !doc?.uri || !doc?.serverId) return;
+    await openOrderSheetEditor({ navigation, lead, leadId, doc });
+  };
+
+  /**
+   * REVUIUX-569 - "Reset all changes": restores the pristine original FOR EVERYONE, including the installers. Asked with the
+   * app's own `ConfirmDialog` (a native `Alert` ignores the theme). The returned promise settles when the rep has answered AND
+   * any reset has finished, so the row's spinner covers the whole action.
+   */
+  const [orderSheetResetTarget, setOrderSheetResetTarget] = useState<{ doc: any; resolve: () => void } | null>(null);
+  const [resettingOrderSheet, setResettingOrderSheet] = useState(false);
+
+  const handleResetOrderSheet = (doc: any) =>
+    new Promise<void>((resolve) => {
+      if (!lead?._id || !doc?.serverId) return resolve();
+      setOrderSheetResetTarget({ doc, resolve });
+    });
+
+  const cancelOrderSheetReset = () => {
+    orderSheetResetTarget?.resolve();
+    setOrderSheetResetTarget(null);
+  };
+
+  const confirmOrderSheetReset = async () => {
+    const target = orderSheetResetTarget;
+    const leadId = lead?._id;
+    if (!target || !leadId || resettingOrderSheet) return;
+    const { doc } = target;
+    setResettingOrderSheet(true);
+    try {
+      const outcome = await resetAnnotatedOrderSheet({
+        leadId,
+        documentId: String(doc.serverId),
+        currentUri: doc.uri,
+        knownSizes: typeof doc.size === 'number' ? [doc.size] : [],
+        baseName: doc.name,
+      });
+      if (outcome === 'unavailable') {
+        FlashMessage.warning('Cannot reset', 'The original of this order sheet is not available on this phone.');
+      } else {
+        await refetch();
+        setTimeout(() => refetch(), 1000);
+      }
+    } catch (e: any) {
+      console.warn('[JobDocsSection] order sheet reset failed', e);
+      FlashMessage.error('Order sheet not reset', serverErrorText(e, 'Check your connection and try again.'));
+    } finally {
+      setResettingOrderSheet(false);
+      setOrderSheetResetTarget(null);
+      target.resolve();
     }
   };
 
@@ -1347,6 +1420,12 @@ export const JobDocsSection = ({
           serverId: doc._id,
           size,
           documentType: finalType,
+          // REVUIUX-569: the pencil needs the pointer (to fetch the bytes), the content type (to route PDF vs image) and the
+          // annotation state (Reset / twin warning / restored marks). `name` stays the constant above - other code relies on it.
+          filePath: doc.filePath,
+          bucketName: doc.bucketName,
+          contentType: doc.fileData?.contentType,
+          annotation: doc.annotation ?? null,
         };
       });
 
@@ -1460,10 +1539,19 @@ export const JobDocsSection = ({
     return subscribeOfflineWork(read);
   }, [lead]);
 
-  const displayDocuments = useMemo(
-    () => mergeQueuedDocuments(resolvedDocuments, queuedDocuments),
-    [resolvedDocuments, queuedDocuments]
-  );
+  // Order sheets whose annotation is saved on the phone but not on the server yet (offline / still uploading).
+  const syncingOrderSheetIds = usePendingOrderSheetJobs(lead?._id);
+
+  const displayDocuments = useMemo(() => {
+    const merged = mergeQueuedDocuments(resolvedDocuments, queuedDocuments);
+    if (!syncingOrderSheetIds.size) return merged;
+    return {
+      ...merged,
+      orderSheets: merged.orderSheets.map((d: any) =>
+        d?.serverId && syncingOrderSheetIds.has(String(d.serverId)) ? { ...d, syncingAnnotation: true } : d
+      ),
+    };
+  }, [resolvedDocuments, queuedDocuments, syncingOrderSheetIds]);
 
 
 
@@ -1572,6 +1660,18 @@ export const JobDocsSection = ({
 
   return (
     <View className="px-4 py-2" style={{ flex: 1 }}>
+      {/* REVUIUX-569. ⚠️ ConfirmDialog is its own native Modal: this is raised from a row action, with no other modal presenting. */}
+      <ConfirmDialog
+        visible={!!orderSheetResetTarget}
+        tone="warn"
+        title="Reset all changes?"
+        message="The original order sheet will be restored for everyone, including the installers."
+        confirmLabel="Reset all changes"
+        cancelLabel="Cancel"
+        busy={resettingOrderSheet}
+        onConfirm={confirmOrderSheetReset}
+        onCancel={cancelOrderSheetReset}
+      />
       <ConfirmDialog
         visible={showSchemaSyncNotice}
         tone="warn"
@@ -1638,6 +1738,8 @@ export const JobDocsSection = ({
         hasContract={hasContract}
         isResulted={isResulted}
         onAddDocument={handleAddDocument}
+        onAnnotateOrderSheet={handleAnnotateOrderSheet}
+        onResetOrderSheet={handleResetOrderSheet}
       />
 
       {/* Addendums — web `job-docs-tab.js` renders `docsExtras` in exactly this
