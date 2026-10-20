@@ -67,6 +67,7 @@ import {
   documentRootKey,
   offlineDocumentName,
   uploadableWork,
+  UPLOAD_STEPS as uploadSteps,
   type OfflineCalculatorWork,
   type OfflineDocumentCategory,
   type OfflineConsentForm,
@@ -1339,6 +1340,14 @@ const adoptDropIdsIntoWork = (
 
 const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
   let work = putOfflineWork({ ...start, status: 'uploading' });
+  // The whole plan up front: if a step the rep expects is missing from THIS list, it was never
+  // queued, and nothing in the drain can be at fault.
+  console.log(
+    '[LeadSync] draining %s - steps pending: %s',
+    work.clientId,
+    uploadSteps.filter((st) => isStepPending(work, st)).join(', ') ||
+      '(none)'
+  );
   let guarded = false;
 
 
@@ -1356,6 +1365,15 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
 
     try {
       const sent = work;
+      // ⚠️ Only FAILURES used to be logged, so a step that never ran was invisible - and
+      // "the check-in never reached the server" looks identical to "the app is running an
+      // older bundle". Announce every step, with the ids it is using.
+      console.log(
+        '[LeadSync] %s step=%s leadId=%s',
+        work.clientId,
+        step,
+        work.serverIds.leadId || '(none yet)'
+      );
       const ids = await runStep(sent, step, guarded);
       const now = latest(work);
       let landed = markStepDone(now, step, ids);

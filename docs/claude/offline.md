@@ -1591,3 +1591,30 @@ Verified sound while tracing (do not re-investigate without new evidence): `reke
 rewrites `meta.leadId` on both `meta` and `payload.meta`; `resolveIds` resolves client ids at
 SEND time from the live work map; a finished work item stays `uploaded` with its id map intact,
 so resolution still works after the drain; `nextSendableLog` blocks only the affected lead.
+
+### Follow-up — the drain now announces every step
+
+"We fix this daily and it comes back" turned out, for two of the four fixes, to be that they were
+**never in the build under test** — committed late, after the rebuild. The drain made that
+impossible to tell apart from a real failure, because only FAILURES were logged: a step that
+never ran left no trace at all.
+
+`services/offlineLeadStore.ts` now logs, per lead:
+
+```
+[LeadSync] draining <clientId> - steps pending: lead, work, chat, workEnd
+[LeadSync] <clientId> step=work leadId=<serverId|(none yet)>
+```
+
+⚠️ **Read the "steps pending" line first.** If the step the rep expects is not in it, the action
+was never queued and nothing in the drain can be at fault — that is a `Leads`/`LeadCenter`
+problem, not a queue one. The two have been confused repeatedly.
+
+⚠️ **The absence of a `[LeadSync]` line at all means the bundle is stale.** Check that before
+diagnosing anything else.
+
+Ruled out while tracing, with evidence (do not re-investigate without new): `runStep` captures
+`leadId` per call and `uploadOne` re-reads the work item between steps, so `work` always sees the
+id the `lead` step minted; `ChatService.getChatByLeadId` swallows its own errors and cannot halt
+the chain before `workEnd`; `serverSaysCheckedIn` and `refreshLeadLists` are both try/caught;
+`workLead` / `endWorkLead` PUT the correct bodies.
