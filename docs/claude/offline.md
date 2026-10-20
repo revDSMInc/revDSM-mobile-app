@@ -1464,3 +1464,7 @@ made offline is accepted whatever the crews' load is; the manager sees it afterw
 ### Follow-up - `annotationSaveService` gains `mode: 'orderSheet'` (REVUIUX-569)
 
 An annotated ORDER SHEET rides the same durable job queue (`OrderSheetJobAnnotation`): after the flatten, `processOne` calls `services/orderSheetSync.saveAnnotatedOrderSheet` (PATCH `/lead/v1/outcome/document/:id/annotation`, with a "route not deployed" fallback) instead of `uploadQueueManager`. Offline it waits like the photo jobs (`!isOnline()` -> resume on reconnect, no attempt spent). ⚠️ Never the offline DOCUMENT queue - it would file a second sheet. Full write-up: `lead-center.md` § "REVUIUX-569 - the backend contract".
+
+## Agreement configuration is warmed for offline (REVUIUX: Lighting description lines)
+
+An agreement drawn on the device needs the layout (`agreement-config`) and each product's description schema (`description-schema:<productId>`, plus the list `description-schema-list` the Investment Center reads). They are now fetched ahead by `useWarmDealCenterConfig` (Leads screen) through `cachedFetch`, so they are on disk before signal is lost; `OFFLINE_CACHE.DESCRIPTION_SCHEMA_LIST` is new in `utils/offline-query-cache.ts`. A local agreement whose schema was never saved refuses to draw (`descriptionSchemaMissingOffline`). Full write-up, and the `[IF]` / `col:` evaluator port: `deal-center.md` § "Description-of-Work templates".

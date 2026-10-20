@@ -19,6 +19,7 @@ export const OFFLINE_CACHE = {
 
   AGREEMENT_CONFIG: 'agreement-config',
   DESCRIPTION_SCHEMA: 'description-schema',
+  DESCRIPTION_SCHEMA_LIST: 'description-schema-list',
   COMPANY_LOGO: 'company-logo',
 
   PITCH_BOOK_LIST: 'pitch-book-list',
