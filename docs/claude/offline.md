@@ -1618,3 +1618,33 @@ Ruled out while tracing, with evidence (do not re-investigate without new): `run
 id the `lead` step minted; `ChatService.getChatByLeadId` swallows its own errors and cannot halt
 the chain before `workEnd`; `serverSaysCheckedIn` and `refreshLeadLists` are both try/caught;
 `workLead` / `endWorkLead` PUT the correct bodies.
+
+### Follow-up — the chat 404 is NOT the blocker (and the log queue is now visible)
+
+Reported with a screenshot of `GET /chat/v1/lead/<id>` returning **404**, asking whether that
+failure stops the later logs. It does not, and the reasoning is worth keeping:
+
+⚠️ **`ChatService.getChatByLeadId` cannot throw.** A 404 falls through to `createChatForLead`,
+and any other error returns `null`. So the `chat` step - which sits between `work` and `workEnd`
+in `UPLOAD_STEPS` - cannot halt the chain. A 404 there is the NORMAL first-visit answer: the
+thread does not exist yet, so it is created.
+
+⚠️ **A red row in the network tab is not evidence of the bug being chased.** This one is expected
+traffic. Several rounds were spent on symptoms that turned out to be healthy.
+
+What the same screenshot DID show is that `PUT .../work` now fires - the earlier fix working.
+
+Since the drain's own guards all return silently, `services/offlineActivityLog.ts` now reports:
+
+```
+[ActivityLogQueue] drain: 3 queued (1 held for unresolved ids) - lead_check_in, lead_session, ...
+[ActivityLogQueue] NOT draining 3 queued - draining=false online=true sender=false owner=true token=true
+```
+
+⚠️ **`sender=false` means `LoggerService` has not been imported yet**, so nothing can send the
+queue however healthy it looks. (`hooks/useAppInitialization.ts` imports it at startup, so this
+should never be false in practice - but it was unobservable, and it is the only guard that fails
+without the rep doing anything wrong.)
+
+⚠️ **`drain: 0 queued` means the log was never enqueued** - look at `logEvent`'s hold gate and
+the `[CheckIn]` trace, not at the queue.

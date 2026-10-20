@@ -166,11 +166,32 @@ export const drainActivityLogs = async (): Promise<void> => {
   // rather than letting the sender throw is what stops a few launches burning all 5 attempts
   // and discarding a check-in the rep really did make.
   if (draining || !isOnline() || !sender || !getSessionOwner() || !Storage.getItem('accessToken')) {
+    // IMPORTANT: every one of these returns silently, and between them they account for most
+    // of the "the log API is never called" reports. `!sender` in particular means LoggerService
+    // has not been imported yet - the queue is fine, nothing can send it.
+    if (store.length) {
+      console.log(
+        '[ActivityLogQueue] NOT draining %d queued - draining=%s online=%s sender=%s owner=%s token=%s',
+        store.length,
+        draining,
+        isOnline(),
+        !!sender,
+        !!getSessionOwner(),
+        !!Storage.getItem('accessToken')
+      );
+    }
     return;
   }
   draining = true;
   try {
     const waiting = replayableLogs(store, getSessionOwner());
+    const blocked = waiting.filter(hasUnresolvedIds);
+    console.log(
+      '[ActivityLogQueue] drain: %d queued (%d held for unresolved ids) - %s',
+      waiting.length,
+      blocked.length,
+      waiting.map((l) => l.payload?.module_type ?? l.eventType).join(', ') || '(empty)'
+    );
     if (TRACE && waiting.length) {
       traceSnapshot('online - draining', waiting);
       const held = waiting.filter(hasUnresolvedIds);
