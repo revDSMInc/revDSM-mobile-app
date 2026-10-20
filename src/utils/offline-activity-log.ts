@@ -132,6 +132,51 @@ export const settleQueuedLog = (
     return attempts >= maxAttempts ? [] : [{ ...l, attempts }];
   });
 
+/**
+ * Swap one device id for its server id everywhere it appears in a queued log.
+ *
+ * ⚠️ IT USED TO REWRITE ONLY `meta.leadId`, and that is a second way a rollout log went missing on
+ * mobile data. A rollout log also carries `meta.calculatorId` and `meta.appointmentId`, and offline
+ * those are device ids (`calc-...`, `appt-...`) too. Leaving them behind has two consequences, both
+ * observed:
+ *
+ *  1. `hasUnsendableClientId` still finds a client id in the payload, so the log stays HELD - and
+ *     `nextSendableLog` blocks every later log of that lead behind it. One unrepaired calculator id
+ *     therefore strands the whole lead's timeline, not just its own row.
+ *  2. When the hold policy finally stops holding (no work left that could mint ids), the log is
+ *     RELEASED carrying the counterfeit id, and the backend drops it on the floor.
+ *
+ * The send-time resolver (`setActivityLogIdResolver`) does cover these ids, but it is not persisted:
+ * it repairs the copy being sent, never the stored row. So on Wi-Fi, where the first send succeeds,
+ * nothing is ever noticed; on cellular, where the send fails and the row is read again, the stored
+ * row is still broken. Rewriting the row here makes the repair durable.
+ *
+ * Matching is by VALUE, at any depth, so a new id-bearing field in a future log needs no change here.
+ */
+const swapIdDeep = <T,>(value: T, from: string, to: string): T => {
+  if (typeof value === 'string') return (value === from ? to : value) as unknown as T;
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((v) => {
+      const out = swapIdDeep(v, from, to);
+      if (out !== v) changed = true;
+      return out;
+    });
+    return (changed ? next : value) as unknown as T;
+  }
+  if (value && typeof value === 'object') {
+    let changed = false;
+    const out: Record<string, unknown> = {};
+    Object.entries(value as Record<string, unknown>).forEach(([k, v]) => {
+      const nv = swapIdDeep(v, from, to);
+      if (nv !== v) changed = true;
+      out[k] = nv;
+    });
+    return (changed ? out : value) as unknown as T;
+  }
+  return value;
+};
+
 export const rekeyQueuedLogs = (
   logs: readonly QueuedActivityLog[],
   fromId: string,
@@ -143,17 +188,11 @@ export const rekeyQueuedLogs = (
 
   let changed = false;
   const next = logs.map((row) => {
-    const metaMatches = String(row.meta?.leadId ?? '') === from;
-    const payloadMatches = String(row.payload?.meta?.leadId ?? '') === from;
-    if (!metaMatches && !payloadMatches) return row;
+    const meta = swapIdDeep(row.meta, from, to);
+    const payload = swapIdDeep(row.payload, from, to);
+    if (meta === row.meta && payload === row.payload) return row;
     changed = true;
-    return {
-      ...row,
-      meta: metaMatches ? { ...row.meta, leadId: to } : row.meta,
-      payload: payloadMatches
-        ? { ...row.payload, meta: { ...row.payload.meta, leadId: to } }
-        : row.payload,
-    };
+    return { ...row, meta, payload };
   });
   return changed ? next : (logs as QueuedActivityLog[]);
 };

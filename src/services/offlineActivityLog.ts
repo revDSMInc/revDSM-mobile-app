@@ -53,6 +53,19 @@ export const setActivityLogHoldPolicy = (fn: () => boolean): void => {
 const hasUnresolvedIds = (entry: QueuedActivityLog): boolean =>
   holdIsUseful() && findUnresolvedClientIds(resolvedPayload(entry)).length > 0;
 
+// Write a resolved payload back onto its stored row. A no-op when the resolver changed nothing, so an
+// already-resolved queue costs no MMKV write (this runs once per log per drain pass).
+// ⚠️ It mutates `store` and persists in one step: `persist()` serialises the module-level `store`,
+// so building a new array and writing it back out of order would save the pre-repair copy.
+const persistResolvedPayload = (id: string, payload: Record<string, any>): void => {
+  const i = store.findIndex((l) => l.id === id);
+  if (i < 0 || store[i].payload === payload) return;
+  const next = [...store];
+  next[i] = { ...next[i], payload, meta: payload?.meta ?? next[i].meta };
+  store = next;
+  persist();
+};
+
 // Runtime trace of the activity-log queue (dev builds only). Payloads go through `sanitizeForLog` so a
 // document or base64 string can never flood the CDP socket.
 const TRACE = typeof __DEV__ !== 'undefined' && __DEV__;
@@ -207,6 +220,16 @@ export const drainActivityLogs = async (): Promise<void> => {
       let outcome: 'sent' | 'failed' = 'sent';
       let failure: 'transport' | 'rejected' = 'rejected';
       const body = { ...next, payload: resolvedPayload(next) };
+      /**
+       * Keep the resolved ids ON THE STORED ROW, not just on the copy going out.
+       *
+       * The resolver repaired `body.payload`; `next` in MMKV still names the device ids. On Wi-Fi
+       * that is invisible because the first send succeeds and the row is deleted. On mobile data the
+       * send fails, the row is read again on the next pass, and it is unrepaired - so if the work
+       * that minted those ids has finished by then, the hold policy has gone false and the row is
+       * released carrying a counterfeit id. Writing the repair back makes it durable.
+       */
+      persistResolvedPayload(next.id, body.payload);
       if (TRACE) {
         console.log(
           `${TAG} -> uploading lead=${leadOf(body)} ${describe(body)}\n` +

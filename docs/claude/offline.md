@@ -216,6 +216,43 @@ Files: `utils/offline-activity-log.ts` (pure rules), `services/offlineActivityLo
 - ⚠️ The backend is not in this repo: whether it shows `meta.occurredAt` instead of its own receive time as the log's time is unverified. Backend analytics that read `meta.timestamp` on photo logs must read `meta.occurredAt`.
 - Not renamed (separate queues, not activity logs): `OfflineLeadWork.createdAt/updatedAt`, `workStarted.at`, `workEnded.at`, `fundingSubmitted.at`, the upload queue's own `timestamp`.
 
+### A rollout log survived a Wi-Fi sync and vanished on mobile data (2026-10-20)
+Files: `utils/network-error.ts` (`NETWORK_MESSAGE_RE`), `utils/offline-activity-log.ts` (`rekeyQueuedLogs`),
+`services/offlineActivityLog.ts` (`persistResolvedPayload`), `services/offlineLeadStore.ts` (re-key at the step funnel).
+Tests: `tests/offline/network-error-cellular.test.ts`, `tests/offline/activity-log-rekey-deep.test.ts`.
+
+Reported: *"create a lead offline and sync on Wi-Fi — logs generate correctly; create a lead offline and
+sync on mobile data — this log is missing."* The sample was a `rollout_and_drop` / `end price entered`
+log carrying `queuedOffline: true`. **Three independent defects, each on its own sufficient, and all three
+invisible on Wi-Fi.** The queue, the hold policy and the one-id-per-log work from the earlier tickets were
+all correct; these sit underneath them.
+
+| # | Was | Fix |
+|---|---|---|
+| 1 | `NETWORK_MESSAGE_RE` recognised `timeout` / `aborted` / `econn` / `socket`, but **not** the wordings a dying *cellular* socket actually produces — `connection reset`, `connection closed`, `connection refused`, `stream was reset`, `broken pipe`, `unexpected end of stream`, `software caused connection abort`, `no address associated with hostname`, `host is unreachable`, `network is unreachable`, `handshake`/`ssl`/`tls`. None carries an axios `code` on RN, so there was nothing else to recognise them by: they fell through to `'rejected'`, **spent one of `MAX_LOG_ATTEMPTS` (5), and the fifth one DELETED the log** | The regex covers them, so they classify `'transport'` → the log is kept, unchanged, attempts untouched |
+| 2 | `rekeyQueuedLogs` rewrote **only `meta.leadId`**. A rollout log also names `meta.calculatorId` and `meta.appointmentId`, which are device ids (`calc-...`, `appt-...`) offline. An unrepaired one keeps `hasUnsendableClientId` true, so the log stays held — and `nextSendableLog` holds back **every later log of that lead** with it | `swapIdDeep` matches **by value at any depth**, so a new id-bearing field needs no change here. `rekeyActivityLogs` is now also called for the appointment and every calculator id, at the **single step funnel** in `uploadOne` rather than per step |
+| 3 | The send-time resolver repaired only the **copy going out**; the stored MMKV row kept its device ids. On Wi-Fi invisible (first send succeeds, row deleted). On cellular the send fails, the row is read again, still stale — and once the minting work has finished, the hold policy has gone false and the row is **released carrying a counterfeit id**, which the backend drops | `persistResolvedPayload` writes the repair back onto the stored row before sending |
+
+- ⚠️ **Wi-Fi is not a weaker version of cellular, it is a different failure distribution.** Every one of
+  these needs a *failed send that is later retried* to show at all; on office Wi-Fi the first POST
+  essentially never fails, so the row is deleted before any of the three can bite. Testing the offline
+  queues on Wi-Fi proves almost nothing about them.
+- ⚠️ **An omission in `NETWORK_MESSAGE_RE` is a LOST LOG, not a cosmetic issue.** It is the only thing
+  separating "keep forever" from "spend an attempt, then delete". Add a wording when in doubt — a
+  real HTTP answer is recognised by its **status**, which is checked first and always wins.
+- ⚠️ **`isTimeoutError` must NOT inherit the widened wording.** It answers a narrower question (did this
+  specific request time out) and is used for retry/backoff decisions elsewhere; a `connection reset` is
+  not a timeout. Tested explicitly.
+- ⚠️ **Re-key by VALUE, never by field name.** The previous version named `leadId`, which is why the
+  calculator and appointment ids were missed for so long: each new id-bearing field would have needed
+  another line, and nothing fails loudly when one is forgotten.
+- ⚠️ **The resolver is not a substitute for a re-key.** It is not persisted, so it repairs exactly one
+  attempt. The two are complementary: the re-key fixes the row when the id is minted, the resolver covers
+  a row whose id was minted by work this device no longer holds.
+- This is the **fifth** queue-shaped bug caused by a client id outliving its row (see the "any queue that
+  can hold a row for an offline-created lead needs a re-key" note above). The deep swap is the version of
+  that rule that does not need remembering.
+
 ### Activity logs: one stable id per log, so a retry is not a second row (2026-10-16)
 Files: `utils/offline-activity-log.ts` (`newActivityLogId`), `services/api/LoggerService.ts` (`logEvent` stamps `payload.user_activity_log_id`). Test: `tests/offline/offline-activity-log.test.ts`.
 

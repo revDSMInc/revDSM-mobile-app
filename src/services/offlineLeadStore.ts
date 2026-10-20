@@ -1385,6 +1385,26 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
         work.serverIds.leadId || '(none yet)'
       );
       const ids = await runStep(sent, step, guarded);
+      /**
+       * Repair the queued activity logs for EVERY id this step just minted.
+       *
+       * ⚠️ Only the lead id was re-keyed (in the `lead` step), and that is one of the ways a
+       * rollout log went missing on mobile data. A `rollout_and_drop` log also names
+       * `meta.calculatorId` and `meta.appointmentId`, which are device ids (`calc-...`, `appt-...`)
+       * for work created offline. An unrepaired one keeps `hasUnsendableClientId` true, so the log
+       * stays held - and `nextSendableLog` holds back every LATER log of that lead with it. The
+       * send-time resolver papered over this on Wi-Fi, where the first send succeeds; on cellular
+       * the row is read again and the stale id is still there.
+       *
+       * Done here, at the single funnel, rather than per step: every `StepResult` id passes through
+       * this point, so a future id-minting step needs no new call.
+       */
+      if (ids.appointmentId && sent.appointmentClientId) {
+        rekeyActivityLogs(sent.appointmentClientId, ids.appointmentId);
+      }
+      Object.entries(ids.calculators || {}).forEach(([clientId, serverId]) => {
+        if (serverId) rekeyActivityLogs(clientId, serverId);
+      });
       const now = latest(work);
       let landed = markStepDone(now, step, ids);
       if (stepPayloadChanged(sent, now, step)) landed = rearmStep(landed, step);

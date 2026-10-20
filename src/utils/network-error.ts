@@ -1,4 +1,24 @@
-const NETWORK_MESSAGE_RE = /network error|network request failed|timeout|timed out|aborted|econn|enotfound|unable to resolve host|socket/i;
+/**
+ * Every way a request can die WITHOUT the server answering.
+ *
+ * ⚠️ This list is the difference between a queued log kept and a queued log DELETED, so an
+ * omission here is a lost log, not a cosmetic issue. The activity-log queue spends an attempt only
+ * on a `'rejected'` classification; five of those drop the log (`MAX_LOG_ATTEMPTS`). A cellular
+ * socket that dies mid-flight is the log UNDELIVERED and must come back `'transport'`.
+ *
+ * ⚠️ The cellular wordings below were the missing ones, and they are why rollout logs survived
+ * a Wi-Fi sync and vanished on mobile data: `aborted` / `econn` / `timeout` already matched the
+ * common cases, but okhttp and RN's cellular stack also report plain `connection reset`,
+ * `connection closed`, `connection refused`, `stream was reset`, `broken pipe`, `unexpected end of
+ * stream`, `software caused connection abort`, `no address associated with hostname`,
+ * `host is unreachable`, `network is unreachable` and `handshake`/`ssl`/`tls` failures. None of
+ * those carries an axios `code` on React Native, so without the wording there is nothing else to
+ * recognise them by - they fell through to `'rejected'` and burned the log's five attempts.
+ *
+ * Wi-Fi essentially never produces them, which is the whole reason this only ever showed on 4G.
+ */
+const NETWORK_MESSAGE_RE =
+  /network error|network request failed|timeout|timed out|aborted|abort|econn|enotfound|eai_again|ehostunreach|enetunreach|epipe|unable to resolve host|no address associated with hostname|host is unreachable|network is unreachable|socket|connection reset|connection closed|connection refused|connection failure|stream was reset|broken pipe|unexpected end of stream|software caused connection|handshake|ssl|tls|canceled|cancelled/i;
 
 const messageOf = (err: any): string =>
   (typeof err?.message === 'string' && err.message) || '';
