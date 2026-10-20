@@ -588,3 +588,33 @@ nothing under it.
 the original green (`#4CBB17`) for an uncategorised bullet. Driven off `group.heading`, not off a
 separate flag, so the fallback group (older API / pre-field offline cache) stays green on its own
 — do not hard-code one colour for the list.
+
+### Offline scope fell back to bare category names (2026-10-20)
+
+> "In offline the description is different, and when I synced the description changed."
+
+Offline the panel listed **"Gutters" / "Soffit"**; after the sync it showed the real scope lines.
+The rep had already shown the customer the short version at the door, and the text changed under
+them — on the thing a customer reads before signing.
+
+Cause: `useGetDescriptionSchemas` (`screens/DynamicDealCenter/hooks/useDescriptionSchema.ts`) did
+a bare `api.get` with **no cache**, while `useGetDescriptionSchema` (single, directly below it)
+already used `cachedFetch`. With no schemas, `buildInvestmentJobScope` produces nothing and
+`InvestmentPanel` falls back to `productNames` — the category labels.
+
+Two changes:
+- The list hook now uses `cachedFetch(OFFLINE_CACHE.DESCRIPTION_SCHEMA_LIST, …)`, and `.catch(() => [])`
+  so a cold cache degrades to category names instead of taking the screen down.
+- `DynamicDealCenterScreen` calls the hook purely to **warm** it. It was loaded by the Investment
+  Center alone, so a rep who went offline before opening that screen had nothing cached; the Deal
+  Center is always visited first.
+
+⚠️ **These schemas are company CONFIGURATION** — identical for every lead and rarely changed — so
+a cached copy is the same text the server would have sent. That is what makes caching them safe
+here, and it is not true of lead-scoped data.
+
+⚠️ **The grouped `"<Category> Installation:"` headings still need `descriptionsByCategory`**,
+which only the server sends on a saved calculator. Offline the panel shows the full description
+lines UNGROUPED (the documented `heading: null` fallback) — correct text, flatter layout. Do not
+try to synthesise the headings locally: the grouping is the server's, and guessing it would make
+the offline and online copies disagree again in a subtler way.
