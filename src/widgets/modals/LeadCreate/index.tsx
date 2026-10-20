@@ -517,6 +517,20 @@ export default function LeadCreateModal({
       handleClose();
     } catch (err: any) {
       const outcome = classifyCreateOutcome(err);
+
+      // ⚠️ A duplicate-Lead-ID rejection on this FIRST, online attempt is a real conflict: another lead already holds that Lead ID
+      // ("A lead with leadId "..." already exists in this company. LeadId must be unique."). `resolveRetryDecision` would call it
+      // `done` ("Already created") and close the form - the rep would believe the lead exists when it was refused. That "it was our
+      // own earlier attempt" reading is only valid for the QUEUE's replay, never for a fresh create from this form (it never retries
+      // inline). Show the server's own message and KEEP the form open so the Lead ID can be corrected.
+      if (outcome === 'duplicate') {
+        showError(
+          'Lead ID already in use',
+          messageOfError(err) || 'A lead with this Lead ID already exists. Check the Lead ID and try again.',
+        );
+        return;
+      }
+
       const decision = resolveRetryDecision(outcome, payload);
 
       if (payload && decision === 'retry') {
