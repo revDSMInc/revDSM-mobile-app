@@ -1452,3 +1452,8 @@ all windows are offered, with no spinner and no wait on a request that cannot su
 
 ⚠️ Do not make offline booking depend on the scheduler. The server does not enforce windows today, so a booking
 made offline is accepted whatever the crews' load is; the manager sees it afterwards on the dispatch board.
+
+
+## Agreement configuration is warmed for offline (REVUIUX: Lighting description lines)
+
+An agreement drawn on the device needs the layout (`agreement-config`) and each product's description schema (`description-schema:<productId>`, plus the list `description-schema-list` the Investment Center reads). They are now fetched ahead by `useWarmDealCenterConfig` (Leads screen) through `cachedFetch`, so they are on disk before signal is lost; `OFFLINE_CACHE.DESCRIPTION_SCHEMA_LIST` is new in `utils/offline-query-cache.ts`. A local agreement whose schema was never saved refuses to draw (`descriptionSchemaMissingOffline`). Full write-up, and the `[IF]` / `col:` evaluator port: `deal-center.md` § "Description-of-Work templates".
