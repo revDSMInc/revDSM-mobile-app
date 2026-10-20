@@ -482,12 +482,18 @@ export const queueLeadWorkStart = (lead: any, userId: string): boolean => {
   const base = work || adoptForLead(lead, id);
   if (!base) return false;
   if (base.workStarted) return true;
-  putOfflineWork({
-    ...base,
-    workStarted: { userId, at: new Date().toISOString() },
-    status: base.status === 'uploaded' ? 'draft' : base.status,
-    label: base.label || labelForLead(lead),
-  });
+  /**
+   * ⚠️ PATCH, never `putOfflineWork({ ...base })`. `base` was read before this call and a
+   * drain may be running right now (`runUpload` is fired by the check-in itself), so writing
+   * a whole snapshot back puts STALE `done` / `serverIds` / `status` over what the drain has
+   * just recorded - silently undoing completed steps.
+   */
+  patchOfflineWork(base.clientId, (w) => ({
+    ...w,
+    workStarted: w.workStarted || { userId, at: new Date().toISOString() },
+    status: w.status === 'uploaded' ? 'draft' : w.status,
+    label: w.label || labelForLead(lead),
+  }));
   runUpload();
   return true;
 };
@@ -514,11 +520,14 @@ export const queueLeadWorkEnd = (leadId: string): boolean => {
     ? mine().find((w) => w.clientId === id)
     : beginOfflineWorkOnLead(id, '');
   if (!base) return false;
-  putOfflineWork({
-    ...base,
-    workEnded: { at: new Date().toISOString() },
-    status: base.status === 'uploaded' ? 'draft' : base.status,
-  });
+  // ⚠️ PATCH, not a whole-snapshot write - see `queueLeadWorkStart`. The release is queued
+  // while a drain is typically IN FLIGHT (the check-in started one), so a stale snapshot here
+  // overwrote the drain's progress and the workEnd step was lost with it.
+  patchOfflineWork(base.clientId, (w) => ({
+    ...w,
+    workEnded: w.workEnded || { at: new Date().toISOString() },
+    status: w.status === 'uploaded' ? 'draft' : w.status,
+  }));
   runUpload();
   return true;
 };

@@ -1688,3 +1688,31 @@ unknown-GPS geofence, the online-with-client-id gate, the queued work release) a
 upstream of this. The log reached the queue correctly every time; the queue then released it
 early. Reading the code could not show this because every component was individually correct —
 only the network capture, showing which module_types *did* arrive, located it.
+
+### Follow-up — the release was clobbered by a stale snapshot
+
+With the hold fixed the check-in arrived, but the portal still read **ON SITE**: the `workEnd`
+step was being lost after it was queued.
+
+`queueLeadWorkStart` and `queueLeadWorkEnd` (`services/offlineLeadStore.ts`) each read the work
+item and then wrote a WHOLE SNAPSHOT back:
+
+```ts
+const base = /* read */;
+putOfflineWork({ ...base, workEnded: { at: ... } });
+```
+
+⚠️ **The check-in itself calls `runUpload()`**, so by the time the rep leaves the lead a drain is
+usually IN FLIGHT. `base` was captured before it. Writing the snapshot back put stale `done`,
+`serverIds` and `status` over everything the drain had just recorded — undoing completed steps
+and losing the `workEnd` with them. The check-in survived only because it happens before any
+drain has started.
+
+Both now use `patchOfflineWork`, which re-reads from the store inside the write.
+
+⚠️ **Never `putOfflineWork({ ...base })` from a value read earlier in the call.** The queue is
+mutated concurrently by the drain; any read-then-write must go through `patchOfflineWork`. This
+is a general rule for this file, not a one-off.
+
+⚠️ **A finished item is re-armed to `'draft'`** so a release queued after the drain completed is
+still picked up; an in-flight `'uploading'` is left alone rather than fighting the drain.
