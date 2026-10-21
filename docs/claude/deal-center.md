@@ -1271,6 +1271,54 @@ A change to one is not a change to the other.
 - The offline pad's PNG is still what the document renders; the strokes are kept **alongside** it purely
   so the pad can be reopened for editing. They are not sent anywhere.
 
+### The default Pre Order Discount now logs `inheritanceSource`, so the portal can call it inherited (2026-10-21)
+
+`utils/activity-log/rollout-log-meta.ts` (`logPreOrderDiscount`).
+
+The Forever Record showed **"Inherited Payment Method — CK"** but the discount line underneath read only
+*"In Home Pre Order Discount: 20%"*, with no indication it came from the rep's own default.
+
+The meta already carried `isDefaultDiscount: true` (confirmed in the device DevTools payload), so nothing
+was missing from the data — but the portal renders "inherited" off **`inheritanceSource`**, the key
+`logPaymentMethodInherited` sets. The discount log never set it. Added:
+
+```
+inheritanceSource: 'default pre order discount'
+```
+
+- ⚠️ **`isDefaultDiscount` and `inheritanceSource` answer different questions and BOTH are kept.** The
+  boolean says the value *equals* the rep's default; `inheritanceSource` says it *came from* there. A rep
+  can deliberately pick 20% when their default is also 20% — equal, but not inherited.
+- ⚠️ **Only on the SEEDED log** (`seeded && opts.isDefault`, where `seeded` is `oldDiscountPercentage == null`).
+  A rep who taps a chip has chosen explicitly, so a *changed* discount is never inherited even when the
+  number matches their default. Setting it on the changed log would relabel a deliberate choice as
+  inheritance on a record the customer's pricing is justified from.
+- ⚠️ **The value is a STRING naming the source**, matching `logPaymentMethodInherited`
+  (`'default payment method'`, `'calculator duplication'`). Keep the vocabulary consistent — the portal
+  switches on it.
+- ⚠️ `utils/calculator/calculator-field-map.ts` also lists `isDefaultDiscount`, but that filters CALCULATOR
+  payloads, not activity-log meta. It does not touch this key.
+- **Not testable under jest here**: `rollout-log-meta.ts` imports `LoggerService`, which pulls in React
+  Native and hangs the runner (the rule in the root guide). The four cases were verified by mirroring the
+  spread logic: seeded+default sets the key; seeded+non-default, changed+default and changed+non-default
+  all omit it.
+- **Offline works the same way, and it is tested** (`tests/offline/discount-inheritance-offline.test.ts`).
+  Two independent halves had to hold:
+  1. **The key survives the queue.** `inheritanceSource` reaches `meta` through `restChange`, so it is an
+     ordinary meta field - `stampOfflineLog` spreads the whole meta, the deep re-key swaps only id VALUES,
+     the send-time resolver rebuilds the object, and a transport failure keeps the row untouched. Verified
+     through queue → re-key → resolve → retry, including a lead/appointment/calculator created at a door.
+  2. **`isDefault` is computed correctly offline.** It reads `user.defaultPercentage` from the Redux user,
+     and `defaultPercentage` is itself a queued setting (`utils/offline-settings.ts`) applied optimistically
+     by `applyPendingSettingsToUser`. So a default the rep sets at a door is already on the user when the
+     discount is seeded. ⚠️ **Without that optimistic apply the key would silently vanish offline** - the
+     log would still send, just without its inheritance, which is the quiet failure worth guarding.
+  `rollout_and_drop` is queueable (only `system` is excluded) and is not in `ExcludedModuleTypes`, so the
+  log both queues and keeps its `leadId`.
+- ⚠️ **Portal side is NOT in this repo.** The key is now emitted; whether the portal renders
+  "Inherited Pre Order Discount — 20%" needs a change there too. Confirm with the portal team before
+  closing the ticket.
+
 ## Ticket 409 — a resulted lead locks every rollout tab, and the resulted one offers Reset Job Builder
 
 Ticket: *"when a lead is resulted from one tab, the other tabs of the same lead remain active, allowing

@@ -250,6 +250,18 @@ export const logPreOrderDiscount = async (opts: {
       preOrderDiscount: opts.discountPercentage,
       ...(seeded ? {} : { oldPreOrderDiscount: opts.oldDiscountPercentage }),
       ...(opts.isDefault !== undefined ? { isDefaultDiscount: opts.isDefault } : {}),
+      /**
+       * The portal renders 'inherited' off `inheritanceSource`, the same key
+       * `logPaymentMethodInherited` sets - which is why 'Inherited Payment Method - CK' shows and
+       * the discount line did not, even though `isDefaultDiscount: true` was already in the meta.
+       * A boolean says the value EQUALS the rep's default; this says WHERE it came from, which is
+       * what the Forever Record is reporting.
+       *
+       * ⚠️ Only on the SEEDED log. A rep who taps a chip has chosen explicitly, so a changed
+       * discount is never inherited - even when the number they picked happens to equal their
+       * default. `seeded` is exactly that distinction (`oldDiscountPercentage == null`).
+       */
+      ...(seeded && opts.isDefault ? { inheritanceSource: 'default pre order discount' } : {}),
       action: seeded
         ? 'in home pre order discount applied'
         : 'in home pre order discount changed',
