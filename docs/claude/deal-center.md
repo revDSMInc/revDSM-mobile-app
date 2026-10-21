@@ -1233,6 +1233,44 @@ all-confirmed "Jobs Built" CTA, which occupies the same space.
 Offline/queue notes from the first pass on this report (three real cellular defects, all still valid and
 fixed): [`offline.md`](offline.md) § *A rollout log survived a Wi-Fi sync and vanished on mobile data*.
 
+## Reopening a signature pad is an EDIT, online and offline (2026-10-21)
+
+`widgets/modals/job-builder/AgreementSignatureModal.tsx` (online),
+`widgets/components/dynamic-job-builder/agreement/AgreementSignatureCapture.tsx` +
+`DynamicAgreementGenerator.tsx` (offline).
+
+Reported: *"if one time I added the signature and open the modal again to edit it, the checkbox should
+be selected as the rep already made it selected"*, and *"offline the rep can't edit again until he
+presses Clear — please do the same flow for offline as well."*
+
+**There are TWO signature pads and they had drifted apart.** `DynamicAgreementDialog` picks between
+them: online the rep gets `AgreementSignatureModal`, offline they never reach it and the
+device-rendered `DynamicAgreementGenerator` IS the signing screen, hosting `AgreementSignatureCapture`.
+A change to one is not a change to the other.
+
+| Pad | Was | Now |
+|---|---|---|
+| Online | `useEffect(() => setAgreedToESign(false), [activePad])` reset the tick on **every** pad open. Ink WAS restored (`setLiveInitials([...initialsPaths])`), so the rep saw their signature on screen with the consent cleared and `Save Mark` dead | The tick is pre-set when that pad already holds a saved mark |
+| Offline | The caller kept only a rendered **PNG** (`signatureUri`), never the strokes, so the pad reopened **blank** — and the tick reset too. The rep had to redraw *and* re-agree, i.e. "can't edit until Clear" | The generator also keeps `signaturePaths` / `initialsPaths`, passes them as `initialPaths`, and the pad restores them and pre-ticks consent |
+
+- ⚠️ **Ink on a saved mark IS the evidence of consent.** Saving is gated on `agreedToESign && padHasInk`
+  in both pads, so a mark cannot exist without the tick having been given. Re-asking for it reads as the
+  app having forgotten something the rep demonstrably did.
+- ⚠️ **A FRESH pad still opens unticked, and consent stays PER MARK.** Initials and signature are agreed
+  to separately, so each pad keys off *its own* saved ink — never the other pad's state, and never one
+  document-level flag. That separation is deliberate; do not collapse it.
+- ⚠️ **`Clear` drops the tick again** in both pads. Clearing discards the mark that carried the consent,
+  so what follows is a new mark. Without this, Clear would leave a ticked box over an empty pad.
+- ⚠️ **The restore effect is keyed on the pad OPENING only** (`[visible]` / `[activePad]`). Re-running it
+  as the rep draws would re-tick a box they had just cleared and re-seed ink they had just discarded.
+- ⚠️ **Offline, the PNG and the strokes must be cleared TOGETHER.** The generator's "Clear" drops both;
+  dropping only the URI would leave a cleared pad reopening with the old ink.
+- ⚠️ **`save()` snapshots `paths` BEFORE `clear()`** — `toDataURL` is async, so reading them inside the
+  callback hands back an empty array. (`current` is always flushed into `paths` on stroke release, so the
+  snapshot is complete.)
+- The offline pad's PNG is still what the document renders; the strokes are kept **alongside** it purely
+  so the pad can be reopened for editing. They are not sent anywhere.
+
 ## Ticket 409 — a resulted lead locks every rollout tab, and the resulted one offers Reset Job Builder
 
 Ticket: *"when a lead is resulted from one tab, the other tabs of the same lead remain active, allowing
