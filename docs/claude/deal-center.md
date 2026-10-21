@@ -1191,6 +1191,48 @@ indicator on this specific action — flag if that indicator turns out to matter
 wifi mid-request, or throttle to induce a real timeout, and confirm the drop survives an app kill
 and reappears after the sweep/reconnect drain.
 
+## ✅ ROOT CAUSE: the `end price entered` log was MISSING ON ANDROID — the footer sat above the number pad (2026-10-21)
+
+`screens/DynamicDealCenter/components/RolloutView.tsx`. Reported as an offline/sync bug ("logs generate on
+Wi-Fi, this one is missing on mobile data"), then narrowed by the reporter to **Android only; iOS is fine**.
+That second report is what identified it: it is not a network bug at all, and nothing in the offline queue
+chain is platform-specific.
+
+**The end price is logged on COMMIT, not on keystroke.** `logEndPriceEntered` runs from the field's commit
+(the number pad's green ✓) and is also what calls `onPriceChange`. It is guarded by `loggedPriceRef`, so it
+fires exactly once per distinct price.
+
+| Platform | Pad | What the rep could do |
+|---|---|---|
+| iOS | system keyboard — a **native overlay** | It covers the footer. `Confirm Rollouts` is unreachable until Done is pressed, so the commit **always** happens first. The log is always written |
+| Android | in-app pad — an **in-flow sibling view** | `NumPadProvider` is a passthrough on iOS but `AndroidNumPadProvider` (`mode='inflow'`) on Android, so the pad **shrinks the column** rather than covering it. The footer is pushed up and `Confirm Rollouts` is fully tappable with the pad still open |
+
+So an Android rep could type `333`, skip the ✓, and tap `Confirm Rollouts` directly. The `rollout confirmed`
+log fired (it is on the button) but `end price entered` **was never created** — nothing was lost in transit,
+it never existed. The Forever Record then showed "CONFIRMED ROLLOUTS" with no price above it.
+
+**Fix:** the footer is hidden while an entry is open (`entryOpen = numPadActive || systemKeyboardUp`), which
+is deliberately the behaviour iOS gets for free. Both footers are gated — the un-confirmed bar *and* the
+all-confirmed "Jobs Built" CTA, which occupies the same space.
+
+- ⚠️ **This is the SAME SIGNATURE as ticket 1310 and a completely different cause.** 1310 lost a log that
+  was sent (a timeout on mobile data); this one never produced a log at all. Confirming "rollout confirmed
+  with no price above it" therefore does **not** on its own point at the network — check whether the log was
+  ever created before investigating the queue. The first pass on this ticket went down the offline path on
+  exactly that assumption.
+- ⚠️ **Do NOT "fix" this by logging the price at Confirm time instead.** The commit is also what writes the
+  price into the calculator via `onPriceChange`; moving the log would let the two diverge, and a Confirm-time
+  log would report a price the calculator may not hold.
+- ⚠️ **`numPadActive` alone is not enough.** A field can opt out with `numPad={false}`, and on iPad the
+  numeric layouts come from the system keyboard — so the system keyboard is checked too. Same rule either
+  way: if something is being typed, the commit has not happened yet.
+- ⚠️ **An in-flow pad does not hide anything.** Any screen whose footer performs a commit-dependent action
+  needs this gate; iOS will not reveal the bug, because there the overlay hides the footer by accident. The
+  established pattern is `keyboardUp` in `DynamicJobBuilderScreen`.
+
+Offline/queue notes from the first pass on this report (three real cellular defects, all still valid and
+fixed): [`offline.md`](offline.md) § *A rollout log survived a Wi-Fi sync and vanished on mobile data*.
+
 ## Ticket 409 — a resulted lead locks every rollout tab, and the resulted one offers Reset Job Builder
 
 Ticket: *"when a lead is resulted from one tab, the other tabs of the same lead remain active, allowing

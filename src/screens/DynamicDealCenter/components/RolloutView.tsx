@@ -19,6 +19,8 @@ import { allRolloutsConfirmed, rolloutCalculators } from '../../../utils/rollout
 import { useAuth } from '../../../hooks/useAuth';
 import { useBottomInset } from '../../../hooks/useBottomInset';
 import { useNumPadScrollIntoView } from '../../../hooks/useNumPadScrollIntoView';
+import { useNumPadActive } from '../../../widgets/common/keyboard/NumPad';
+import { useKeyboardState } from 'react-native-keyboard-controller';
 import {
   DealPricing,
   DealPlan,
@@ -1882,6 +1884,33 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   const quoteContentRef = useRef<View>(null);
   useNumPadScrollIntoView(quoteScrollRef, quoteContentRef, 16);
 
+  /**
+   * ⚠️ ANDROID ONLY BUG, and the platform difference IS the bug.
+   *
+   * The end price is only logged by `logEndPriceEntered`, which runs when the field COMMITS -
+   * the number pad's green check. On iOS the system keyboard is a native overlay, so it covers
+   * this footer and `Confirm Rollouts` simply cannot be reached until the rep presses Done. On
+   * Android the in-app pad is an IN-FLOW sibling view (`NumPadProvider` is a passthrough on iOS,
+   * `AndroidNumPadProvider` with `mode='inflow'` on Android), so it shrinks the column instead of
+   * covering it and pushes this footer up - leaving `Confirm Rollouts` fully tappable with the
+   * pad still open.
+   *
+   * A rep who typed 333 and tapped `Confirm Rollouts` directly therefore confirmed a rollout whose
+   * price was never committed, so the `end price entered` log was NEVER CREATED - and the Forever
+   * Record showed “rollout confirmed” with no price above it. That is the same signature as ticket
+   * 1310, but a completely different cause: 1310 lost a log that was sent, this one never made it.
+   *
+   * So the footer is hidden while the pad is up, which is exactly what iOS does by accident.
+   * ⚠️ Do NOT 'fix' this by logging at Confirm time instead: the commit is also what writes the
+   * price into the calculator, and the two must not diverge.
+   */
+  const numPadActive = useNumPadActive();
+  // Also the SYSTEM keyboard: a field can opt out of the pad (`numPad={false}`), and on iPad the
+  // numeric layouts come from the system. Same rule either way - if something is being typed, the
+  // commit has not happened yet. Matches `keyboardUp` in `DynamicJobBuilderScreen`.
+  const systemKeyboardUp = useKeyboardState((st) => st.isVisible);
+  const entryOpen = numPadActive || systemKeyboardUp;
+
   return (
     <PhotoPeekScrollLockProvider>
     {/* `View`, not `KeyboardAvoidingView` — its `behavior="padding"` shrank this whole
@@ -2046,7 +2075,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
         </View>
       </KeyboardAwareScrollView>
 
-      {visibleCalculators.length > 0 && !allConfirmed && (
+      {visibleCalculators.length > 0 && !allConfirmed && !entryOpen && (
         <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16 }}>
           <View style={{ maxWidth: 1200, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 24 }}>
             <View style={{ flex: 1 }}>
@@ -2107,7 +2136,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
 
       {/* All rollouts confirmed → the jobs are built; a single CTA takes the rep back
           to the Lead Center tools to present (map / pitch book / Investment Center). */}
-      {visibleCalculators.length > 0 && allConfirmed && (
+      {visibleCalculators.length > 0 && allConfirmed && !entryOpen && (
         <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16 }}>
           <TouchableOpacity
             onPress={() => onRolloutsConfirmedDone?.()}
