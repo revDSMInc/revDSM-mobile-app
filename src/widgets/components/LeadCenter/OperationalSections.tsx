@@ -20,6 +20,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { FlashMessage } from '../../../config/message';
 import { RevRenderHistoryModal } from '../../modals/lead-center/RevRenderHistoryModal';
 import { getWarmedLocalUri, warmToLocalCache } from '../../../utils/imageFileCache';
+import { queueCounts, queueProgress } from '../../../utils/revrender-jobs';
 
 const QUEUED_FORM = { reportType: 'queued-offline', __queuedOffline: true } as const;
 
@@ -35,6 +36,8 @@ export const ToolsSection = ({
   onShowPitchbook,
   onShowRooflineDeck,
   revRenderJobs = [],
+  onRetryRevRender,
+  onDismissRevRender,
   isConsentGenerating,
   isWaiverGenerating,
   isInspectionGenerating,
@@ -111,6 +114,15 @@ export const ToolsSection = ({
     );
   };
 
+  const renderCounts = queueCounts(revRenderJobs);
+  // Real-time bar: re-evaluate the estimate twice a second while anything is still rendering (nothing ticks otherwise).
+  const [renderNow, setRenderNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!revRenderJobs.some((j: any) => j.status === 'running' || j.status === 'pending')) return;
+    const t = setInterval(() => setRenderNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [revRenderJobs]);
+  const renderPercent = queueProgress(revRenderJobs, renderNow);
   const hasActiveJobs = revRenderJobs.some(
     (j: any) => j.status !== 'completed' && j.status !== 'failed'
   );
@@ -290,21 +302,24 @@ export const ToolsSection = ({
         {revRenderJobs.some((j: any) => j.status !== 'completed' && j.status !== 'failed') && (
           <View className="mb-4">
             <View className="flex-row justify-between items-center mb-1.5">
-              <Text className="text-[12px] font-black text-slate-400">
-                {Math.round(revRenderJobs.reduce((acc: number, j: any) => acc + (j.progress || 0), 0) / revRenderJobs.length)}%
-              </Text>
+              <View className="flex-row items-center">
+                <ActivityIndicator size="small" color={revRenderWaiting ? WAITING_AMBER : colors.primary.main} />
+                <Text className="text-[12px] font-black ml-2" style={{ color: revRenderWaiting ? WAITING_AMBER : '#637381' }}>
+                  {revRenderWaiting ? 'Paused' : 'Rendering'} · {renderCounts.label}
+                </Text>
+              </View>
+              <Text className="text-[12px] font-black text-slate-400">{renderPercent}%</Text>
             </View>
             <View className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
               <View
                 className={`h-full ${
                   revRenderWaiting ? 'bg-amber-500' : 'bg-[#2EDE56] shadow-sm shadow-[#2EDE56CC]'
                 }`}
-                style={{ width: `${Math.round(revRenderJobs.reduce((acc: number, j: any) => acc + (j.progress || 0), 0) / revRenderJobs.length)}%` }}
+                style={{ width: `${renderPercent}%` }}
               />
             </View>
-            {/* ⚠️ The bar above is driven by a TIMER, not a measurement (see
-                `startMockProgress`). Offline it used to keep climbing past a render that was never
-                submitted, so it now holds still and says why. */}
+            {/* The bar is a live ESTIMATE (`estimateJobProgress`): eased from the moment each render was sent, capped below 100 until
+                the server says done, raised by any real batch progress, and FROZEN while the status check cannot reach the server. */}
             {revRenderWaiting && (
               <View className="flex-row items-center gap-1.5 mt-1.5">
                 <Icon name="cloud-off-outline" size={14} color={WAITING_AMBER} />
@@ -315,6 +330,57 @@ export const ToolsSection = ({
             )}
           </View>
         )}
+
+        {/* Renders that did NOT start / finish stay here with the server's own reason (a timeout or lost connection included),
+            their payload kept, until the rep retries or dismisses them - a failed batch never wipes the queue. */}
+        {revRenderJobs
+          .filter((j: any) => j.status === 'failed')
+          .map((job: any, i: number) => (
+            <View
+              key={`rr-failed-${job.id}`}
+              className="mb-3 p-3 rounded-xl border"
+              style={{ borderColor: '#FECACA', backgroundColor: '#FEF2F2' }}
+            >
+              <View className="flex-row items-start">
+                <Icon
+                  name={job.errorKind === 'network' ? 'wifi-off' : 'alert-circle-outline'}
+                  size={18}
+                  color="#B91C1C"
+                  style={{ marginTop: 1 }}
+                />
+                <View className="flex-1 ml-2">
+                  <Text className="text-[13px] font-bold" style={{ color: '#991B1B' }} numberOfLines={1}>
+                    {job.payload?.viewLabel ? `${job.payload.viewLabel} - not rendered` : `Render ${i + 1} - not rendered`}
+                  </Text>
+                  <Text className="text-[12px] mt-0.5" style={{ color: '#7F1D1D' }}>
+                    {job.error || 'The render did not finish.'}
+                  </Text>
+                </View>
+              </View>
+              <View className="flex-row justify-end mt-2 gap-2">
+                <TouchableOpacity
+                  onPress={() => onDismissRevRender?.(job.id)}
+                  className="px-3 py-1.5 rounded-lg"
+                  style={{ backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#FECACA' }}
+                  accessibilityLabel="Dismiss failed render"
+                >
+                  <Text className="text-[12px] font-bold" style={{ color: '#991B1B' }}>
+                    Dismiss
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => onRetryRevRender?.(job.id)}
+                  className="px-3 py-1.5 rounded-lg"
+                  style={{ backgroundColor: '#B91C1C' }}
+                  accessibilityLabel="Retry render"
+                >
+                  <Text className="text-[12px] font-bold" style={{ color: '#FFFFFF' }}>
+                    Retry
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
 
         {isLoading ? (
           <View className="flex-row">

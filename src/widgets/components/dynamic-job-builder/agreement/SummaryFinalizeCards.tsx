@@ -33,8 +33,8 @@ import { useNavigation } from '@react-navigation/native';
 import { openOrderSheetEditor } from '../../../../services/orderSheetAnnotation';
 import { FlashMessage } from '../../../../config/message';
 import { usePendingOrderSheetJobs } from '../../../../hooks/usePendingOrderSheetJobs';
-import { resetAnnotatedOrderSheet } from '../../../../services/orderSheetSync';
-import { serverErrorText, showResetAction } from '../../../../utils/order-sheet-annotation';
+import { requestOrderSheetReset } from '../../../../services/annotationSaveService';
+import { canAnnotateOrderSheet, serverErrorText, showResetAction } from '../../../../utils/order-sheet-annotation';
 import { ConfirmDialog } from '../../../../screens/DynamicDealCenter/components/ConfirmDialog';
 import { PdfPreviewModal } from '../../../modals/PdfPreviewModal';
 import {
@@ -407,10 +407,7 @@ export function SummaryFinalizeCards({
     const src = fileSrc(file);
     if (!leadId || !src) return;
     const serverId = file?.serverId ?? file?._id;
-    if (!serverId) {
-      FlashMessage.warning('Cannot annotate yet', 'This order sheet has not finished uploading.');
-      return;
-    }
+    if (!serverId) return;
     setAnnotatingKey(docIdentity(file));
     try {
       await openOrderSheetEditor({
@@ -443,7 +440,7 @@ export function SummaryFinalizeCards({
     if (!file || !leadId || !serverId || resettingSheet) return;
     setResettingSheet(true);
     try {
-      const outcome = await resetAnnotatedOrderSheet({
+      const outcome = await requestOrderSheetReset({
         leadId,
         documentId: String(serverId),
         currentUri: String(fileSrc(file) || ''),
@@ -453,7 +450,7 @@ export function SummaryFinalizeCards({
       if (outcome === 'unavailable') {
         FlashMessage.warning('Cannot reset', 'The original of this order sheet is not available on this phone.');
       }
-      const fresh = onRefreshDocs ? await onRefreshDocs('orderSheet') : null;
+      const fresh = onRefreshDocs && outcome !== 'queued' ? await onRefreshDocs('orderSheet') : null;
       if (fresh) commitUploaded('orderSheet', fresh);
     } catch (e: any) {
       console.warn('[SummaryFinalizeCards] order sheet reset failed', e);
@@ -755,7 +752,7 @@ export function SummaryFinalizeCards({
                       </Text>
                     </View>
                     {/* REVUIUX-569: annotate this order sheet (replaces it). Withheld mid-upload, like the other actions. */}
-                    {editMode && cat === 'orderSheet' && !isUploading && showResetAction({ documentType: 'orderSheet', serverId: file?.serverId ?? file?._id, annotation: file?.annotation }) && (
+                    {cat === 'orderSheet' && !isUploading && showResetAction({ documentType: 'orderSheet', serverId: file?.serverId ?? file?._id, annotation: file?.annotation }) && (
                       <TouchableOpacity
                         onPress={() => setResetTarget(file)}
                         disabled={syncingOrderSheetIds.has(String(file?.serverId ?? file?._id ?? ''))}
@@ -777,8 +774,8 @@ export function SummaryFinalizeCards({
                         <Icon name="restore" size={14} color="#fff" />
                       </TouchableOpacity>
                     )}
-                    {/* Annotation is available on the My Deals edit flow (editMode), but not on the job submit screen. */}
-                    {editMode && cat === 'orderSheet' && !isUploading && !!src && (
+                    {/* The pencil shows on the job builder AND the My Deals edit flow, for any sheet the server already holds. */}
+                    {cat === 'orderSheet' && !isUploading && !!src && canAnnotateOrderSheet({ documentType: 'orderSheet', serverId: file?.serverId ?? file?._id }) && (
                       <TouchableOpacity
                         onPress={() => handleAnnotateOrderSheet(file)}
                         disabled={annotatingKey !== null || syncingOrderSheetIds.has(String(file?.serverId ?? file?._id ?? ''))}

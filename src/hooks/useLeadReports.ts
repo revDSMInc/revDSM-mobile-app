@@ -1,7 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Storage } from '../utils/storage';
-import { renderTargetLeadId, shouldRefetchAfterRenders } from '../utils/revrender-attribution';
+import { renderTargetLeadId } from '../utils/revrender-attribution';
+import { isNetworkError } from '../utils/network-error';
+import { onReconnect } from '../services/connectivity';
+import {
+  dismissRevRender,
+  getRevRenderJobs,
+  onRevRenderFinished,
+  resumeRevRenderJobs,
+  retryRevRender,
+  startRevRenders,
+  subscribeRevRenderJobs,
+} from '../services/revRenderJobs';
 import { LeadService } from '../services/api/leads';
 import { FlashMessage } from '../config/message';
 import ReactNativeBlobUtil from 'react-native-blob-util';
@@ -58,27 +69,8 @@ const triggerGlobalRefetch = (leadId: string) => {
   }
 };
 
-const extractBatchFailureMessage = (batch: any): string => {
-  const failedJob = Array.isArray(batch?.jobs)
-    ? batch.jobs.find((j: any) => j?.status === 'failed' && j?.error)
-    : null;
-  if (!failedJob) return batch?.message || 'Rendering failed or was cancelled';
-
-  let backendMessage: string | null = null;
-  try {
-    const parsed = typeof failedJob.error === 'string' ? JSON.parse(failedJob.error) : failedJob.error;
-    backendMessage = parsed?.error?.message || parsed?.message || null;
-  } catch {
-    backendMessage = typeof failedJob.error === 'string' ? failedJob.error : null;
-  }
-
-  if (!backendMessage) return batch?.message || 'Rendering failed or was cancelled';
-  return failedJob.viewLabel ? `${failedJob.viewLabel}: ${backendMessage}` : backendMessage;
-};
-
 export const useLeadReports = (lead: any, refetch: () => void) => {
   const { user } = useAuth();
-  const existingRunIdsRef = useRef<Set<string>>(new Set());
   const pastYearsRef = useRef<number>(3);
   const [secureUrls, setSecureUrls] = useState<Record<string, string>>({});
   const resolvedReportsRef = useRef<string>('');
@@ -170,7 +162,14 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
         setSecureUrls(urlMap);
       }
     } catch (err) {
-      console.error('[Reports] S3 Resolve Error:', err);
+      // ⚠️ `console.error` raises the red LogBox screen over the app - and losing signal (mid-revRender, in a tunnel) is not a
+      // crash. A transport failure keeps the links already resolved and quietly retries on reconnect (effect below); only a
+      // real server answer is worth a warning.
+      if (isNetworkError(err)) {
+        refreshOnReconnectRef.current = true;
+      } else {
+        console.warn('[Reports] S3 Resolve failed:', (err as any)?.message || err);
+      }
     }
   };
 
@@ -179,6 +178,20 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
       refreshSecureUrls();
     }
   }, [lead]);
+
+  // A refresh that died on transport runs again when the signal returns.
+  const refreshOnReconnectRef = useRef(false);
+  const refreshSecureUrlsRef = useRef(refreshSecureUrls);
+  refreshSecureUrlsRef.current = refreshSecureUrls;
+  useEffect(
+    () =>
+      onReconnect(() => {
+        if (!refreshOnReconnectRef.current) return;
+        refreshOnReconnectRef.current = false;
+        void refreshSecureUrlsRef.current();
+      }),
+    []
+  );
 
   const pollRiskStatus = useCallback(
     async (jobId: string) => {
@@ -314,14 +327,22 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     };
   }, [riskJob?.jobId, riskJob?.status, pollRiskStatus, leadId]);
 
+  // The revRender queue lives in `services/revRenderJobs.ts` (module level, persisted), so it outlives this screen: mounting only
+  // SUBSCRIBES, and resumes the poll of any render that already has a batchId (restart / leaving and coming back).
+  const refetchRef = useRef(refetch);
+  refetchRef.current = refetch;
   useEffect(() => {
-    const initJobs = () => {
-      const savedRev = Storage.getItem(`rev_render_jobs_${leadId}`);
-      if (savedRev) {
-        setRevRenderJobs(JSON.parse(savedRev));
-      }
+    if (!leadId) return;
+    const sync = () => setRevRenderJobs(getRevRenderJobs(leadId));
+    sync();
+    const offJobs = subscribeRevRenderJobs(leadId, sync);
+    // ⚠️ `refetch` belongs to THIS hook's lead; the manager only signals the lead the renders were filed under.
+    const offDone = onRevRenderFinished(leadId, () => refetchRef.current());
+    resumeRevRenderJobs(leadId);
+    return () => {
+      offJobs();
+      offDone();
     };
-    if (leadId) initJobs();
   }, [leadId]);
 
   const handleStartRiskReport = async (pastYears: number) => {
@@ -400,297 +421,17 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
   /**
    * `targetLeadId` is the lead the RENDERS belong to, which is not always this hook's lead.
    *
-   * ⚠️ REPORTED BY A CLIENT: "revRender generated in another lead." This hook is bound to one
-   * Lead Center via `useLeadReports(lead, refetch)`, and `onGenerateAll` is handed to the
-   * RevRender screen as a NAVIGATION PARAM - so it is a closure over the lead of whichever Lead
-   * Center pushed that screen. With two Lead Centers in the stack (a push notification, the
-   * Notifications screen or chat opening lead B while lead A is still below), RevRender called
-   * lead A's closure and every render was filed under lead A.
+   * ⚠️ REPORTED BY A CLIENT: "revRender generated in another lead." `onGenerate` / `onGenerateAll` travel to the RevRender screen as
+   * NAVIGATION PARAMS, i.e. closures over the lead of whichever Lead Center pushed it. RevRender already sends the right id
+   * (`{ payloads, leadId, jobId }`): resolve it ONCE here (`renderTargetLeadId`) and file everything under it.
    *
-   * RevRender already sends the right id - `{ payloads, leadId, jobId }` - and the caller used to
-   * drop it. Passing it through fixes the attribution at its source.
-   *
-   * ⚠️ Resolve it ONCE here. The five uses below (the job-list storage key written in three
-   * places, the pre-gen run fetch, and the final cache invalidation) must all agree; a stray
-   * `lead?._id` left among them re-creates the bug for whichever half still reads the closure.
+   * Resolves when every submit has been answered or has failed (NOT when the renders finish) - see `services/revRenderJobs.ts`.
    */
-  const handleStartRevRenders = async (payloads: any[], targetLeadId?: string) => {
-    const renderLeadId = renderTargetLeadId(targetLeadId, leadId);
-    const jobsKey = `rev_render_jobs_${renderLeadId}`;
+  const handleStartRevRenders = (payloads: any[], targetLeadId?: string) =>
+    startRevRenders(renderTargetLeadId(targetLeadId, leadId), payloads);
 
-    const total = payloads.length;
-    const initialJobs = payloads.map((p, i) => ({ id: i, status: 'pending', payload: p, progress: 0 }));
-    setRevRenderJobs(initialJobs);
-    Storage.setItem(jobsKey, JSON.stringify(initialJobs));
-
-    try {
-      existingRunIdsRef.current.clear();
-      if (renderLeadId) {
-        const res = await LeadService.getRevRenderRuns(renderLeadId);
-        const runs = res.data?.runs || res.data?.data?.runs || [];
-        runs.forEach((r: any) => {
-          const id = r.runId || r._id || r.id;
-          if (id) existingRunIdsRef.current.add(id);
-        });
-      }
-    } catch (e) {
-      console.warn('[Reports] Failed to fetch pre-gen runs:', e);
-    }
-
-    FlashMessage.info(`Starting ${total} render generation(s)...`, 'RevRender');
-
-
-    let completedCount = 0;
-
-    const updateJobStateAndPersistence = (updater: (prev: any[]) => any[]) => {
-      setRevRenderJobs(prev => {
-        const next = updater(prev);
-        Storage.setItem(jobsKey, JSON.stringify(next));
-        return next;
-      });
-    };
-
-    const runRender = async (job: any, index: number) => {
-      let mockTimer: any = null;
-      let isCompleted = false;
-      // Set by the poll loop below when a status check dies on transport.
-      let unreachable = false;
-
-      const startMockProgress = () => {
-        let elapsed = 0;
-        mockTimer = setInterval(() => {
-          if (isCompleted) {
-            clearInterval(mockTimer);
-            return;
-          }
-          // ⚠️ This progress is a TIMER, not a measurement — it advances 0→20→67→80% on elapsed
-          // seconds alone, with no server contact. Offline that made the bar climb while nothing
-          // was happening, which is the 67% in the reported screenshot. While unreachable it must
-          // hold its last number: a bar that keeps filling is a stronger (and falser) promise than
-          // any label can undo.
-          if (unreachable) return;
-          elapsed += 1;
-          let nextProgress = 0;
-          if (elapsed >= 15) {
-            nextProgress = 80;
-          } else if (elapsed >= 6) {
-            nextProgress = 67;
-          } else if (elapsed >= 2) {
-            nextProgress = 20;
-          }
-
-          if (nextProgress > 0) {
-            updateJobStateAndPersistence(prev => {
-              const next = [...prev];
-              if (next[index] && next[index].status === 'running' && (next[index].progress || 0) < nextProgress) {
-                next[index].progress = nextProgress;
-              }
-              return next;
-            });
-          }
-        }, 1000);
-      };
-
-      try {
-        updateJobStateAndPersistence(prev => {
-          const next = [...prev];
-          if (next[index]) {
-            next[index].status = 'running';
-            next[index].progress = 0;
-          }
-          return next;
-        });
-
-        startMockProgress();
-
-        const res = await LeadService.generateRevRender(job.payload);
-        const resData = res.data;
-        const batchId = resData?.batch?.batchId ||
-                        resData?.batchId ||
-                        resData?.id ||
-                        resData?.data?.batchId ||
-                        resData?.data?.batch?.batchId ||
-                        resData?.batch?.id;
-
-        const initialTotal = Number(
-          resData?.batch?.total ?? resData?.data?.batch?.total ?? resData?.total ?? 0
-        ) || 0;
-        if (initialTotal > 1) {
-          updateJobStateAndPersistence(prev => {
-            const next = [...prev];
-            if (next[index]) next[index].total = initialTotal;
-            return next;
-          });
-        }
-
-        if (!batchId) {
-          isCompleted = true;
-          if (mockTimer) clearInterval(mockTimer);
-          completedCount++;
-          updateJobStateAndPersistence(prev => {
-            const next = [...prev];
-            if (next[index]) {
-              next[index].status = 'completed';
-              next[index].progress = 100;
-            }
-            return next;
-          });
-          if (completedCount === total) {
-            finalizeQueue();
-          }
-          return;
-        }
-
-        let isDone = false;
-
-        while (!isDone) {
-          await new Promise<void>(resolve => setTimeout(() => resolve(), 3000));
-          try {
-            const statusRes = await LeadService.getRevRenderBatchStatus(batchId);
-            if (unreachable) {
-              unreachable = false;
-              updateJobStateAndPersistence(prev => {
-                const next = [...prev];
-                if (next[index]) next[index].waiting = false;
-                return next;
-              });
-            }
-            const batch = statusRes.data?.batch || statusRes.data;
-            const batchStatus = batch?.status;
-            const batchTotal = batch?.total || 1;
-
-            if (batchTotal > 1) {
-              updateJobStateAndPersistence(prev => {
-                const next = [...prev];
-                if (next[index] && (Number(next[index].total) || 1) !== batchTotal) {
-                  next[index].total = batchTotal;
-                }
-                return next;
-              });
-            }
-
-            const batchFinished = batchStatus === 'done' || batchStatus === 'completed' || batchStatus === 'succeeded';
-            const anySucceeded = batchStatus === 'completed' || batchStatus === 'succeeded' || (batch?.succeeded || 0) > 0;
-            const anyFailed = (batch?.failed || 0) > 0;
-
-            if (batchFinished && anySucceeded && !anyFailed) {
-              isDone = true;
-              isCompleted = true;
-              if (mockTimer) clearInterval(mockTimer);
-              completedCount++;
-              updateJobStateAndPersistence(prev => {
-                const next = [...prev];
-                if (next[index]) {
-                  next[index].status = 'completed';
-                  next[index].progress = 100;
-                }
-                return next;
-              });
-            } else if (batchStatus === 'failed' || batchStatus === 'cancelled' || (batchFinished && anyFailed)) {
-              isDone = true;
-              isCompleted = true;
-              if (mockTimer) clearInterval(mockTimer);
-              throw new Error(extractBatchFailureMessage(batch));
-            } else {
-              if (batchTotal > 1) {
-                const succeeded = batch?.succeeded || 0;
-                const failed = batch?.failed || 0;
-                const completedJobs = succeeded + failed;
-                const newProgress = Math.round((completedJobs / batchTotal) * 100);
-                
-                updateJobStateAndPersistence(prev => {
-                  const next = [...prev];
-                  if (next[index] && next[index].status === 'running') {
-                    next[index].progress = Math.max(next[index].progress || 0, newProgress >= 100 ? 99 : newProgress);
-                  }
-                  return next;
-                });
-              }
-            }
-          } catch (pollErr: any) {
-            if (isDone) throw pollErr;
-            // ⚠️ A render is generated on the SERVER; losing signal does not cancel it. Hold the
-            // bar, mark the card waiting, and keep looping — the first successful tick after
-            // reconnect clears the flag and the real progress takes over.
-            if (isWaitingForSignal(pollErr)) {
-              if (!unreachable) {
-                unreachable = true;
-                updateJobStateAndPersistence(prev => {
-                  const next = [...prev];
-                  if (next[index]) next[index].waiting = true;
-                  return next;
-                });
-              }
-            } else if (shouldAnnouncePollFailure(pollErr)) {
-              console.error('Polling error:', pollErr);
-            }
-          }
-        }
-
-        if (completedCount === total) {
-          finalizeQueue();
-        }
-      } catch (err: any) {
-        isCompleted = true;
-        if (mockTimer) clearInterval(mockTimer);
-        completedCount++;
-        console.error('RevRender Job Error:', err);
-        
-        // Ticket: the backend's own failure reason (e.g. "This model is currently
-        // experiencing high demand...") never reached the rep — a batch failure was
-        // thrown from the poll loop above as a plain `Error`, but this catch only ever
-        // looked at `err?.error` (a shape that message never has), so it silently fell
-        // through to a generic string every time. `err.message` now carries the REAL
-        // backend text when the failure came from `extractBatchFailureMessage` above;
-        // the `err?.error` parse stays as a fallback for a differently-shaped error
-        // (e.g. a raw axios error from `generateRevRender` itself failing to start).
-        // ⚠️ A render that never REACHED the server is a real failure — nothing was submitted and
-        // nothing is coming — but it must not be reported in axios' own words. "Network Error" over
-        // a render tells a rep mid-sale that the app is broken; this says what happened and that
-        // retrying later is the fix. (A render already accepted and merely unreachable never gets
-        // here — the poll loop holds it as `waiting` instead.)
-        let errorMsg = isWaitingForSignal(err)
-          ? 'No connection — this render was not started. Try again once you have signal.'
-          : err?.message || 'Generation failed';
-        try {
-          const errorBody = typeof err?.error === 'string' ? JSON.parse(err.error) : err?.error;
-          if (errorBody?.error?.code === 503 || errorBody?.code === 503) {
-            errorMsg = errorBody?.error?.message || errorBody?.message || 'AI Model is currently busy. Please try again in a few minutes.';
-          }
-        } catch {
-        }
-
-        updateJobStateAndPersistence(prev => {
-          const next = [...prev];
-          if (next[index]) {
-            next[index].status = 'failed';
-            next[index].error = errorMsg;
-          }
-          return next;
-        });
-
-        FlashMessage.error('Error', `${errorMsg} (Job ${index + 1})`);
-
-        if (completedCount === total) {
-          finalizeQueue();
-        }
-      }
-    };
-
-    const finalizeQueue = async () => {
-      FlashMessage.info('RevRender Batch finished', 'Check results in Tools tab');
-      setRevRenderJobs([]);
-      Storage.removeItem(jobsKey);
-
-      queryClient.invalidateQueries({ queryKey: ['revrender-runs', renderLeadId] });
-      // ⚠️ `refetch` belongs to THIS hook's lead. When the renders were for another lead it
-      // would refresh the wrong screen, so only refresh when the two are the same.
-      if (shouldRefetchAfterRenders(renderLeadId, leadId)) refetch();
-    };
-
-
-    payloads.forEach((_, i) => runRender(initialJobs[i], i));
-  };
+  const handleRetryRevRender = (jobId: string | number) => retryRevRender(leadId, jobId);
+  const handleDismissRevRender = (jobId: string | number) => dismissRevRender(leadId, jobId);
 
   return {
     secureUrls,
@@ -702,5 +443,7 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     handleResetRiskReport,
     revRenderJobs,
     handleStartRevRenders,
+    handleRetryRevRender,
+    handleDismissRevRender,
   };
 };

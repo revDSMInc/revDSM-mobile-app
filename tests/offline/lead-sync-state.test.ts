@@ -77,3 +77,17 @@ describe('urlHasClientId', () => {
     expect(urlHasClientId(undefined)).toBe(false);
   });
 });
+import { findClientIdInUrl } from '../../src/utils/lead-sync-state';
+
+describe('findClientIdInUrl (the app-wide api guard)', () => {
+  it('returns the client id segment, e.g. the agreement delivery-preference url', () => {
+    expect(findClientIdInUrl('pdf-reports/v1/agreement/lead-1760000000000-ab12cd34e/delivery-preference')).toBe(
+      'lead-1760000000000-ab12cd34e'
+    );
+    expect(findClientIdInUrl('/lead/v1/work-1760000000000-ab12cd34e/funding')).toBe('work-1760000000000-ab12cd34e');
+  });
+  it('is null for a real lead id', () => {
+    expect(findClientIdInUrl(`pdf-reports/v1/agreement/${'6a913ac58c1e5b031b58b317'}/delivery-preference`)).toBeNull();
+    expect(findClientIdInUrl('/company/login')).toBeNull();
+  });
+});

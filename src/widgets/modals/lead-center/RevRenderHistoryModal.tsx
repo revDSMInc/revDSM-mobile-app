@@ -10,6 +10,9 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  Keyboard,
+  Platform,
+  ScrollView,
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -95,6 +98,30 @@ export const RevRenderHistoryModal = ({
   const { user } = useAuth();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [deleteVisible, setDeleteVisible] = useState(false);
+  // How far the keyboard overlaps the delete dialog's overlay (0 when it is not up, or when the window already resized).
+  const deleteOverlayRef = React.useRef<View>(null);
+  const deleteScrollRef = React.useRef<ScrollView>(null);
+  const [keyboardOverlap, setKeyboardOverlap] = useState(0);
+  useEffect(() => {
+    if (!deleteVisible) {
+      setKeyboardOverlap(0);
+      return;
+    }
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEvt, (e) => {
+      const keyboardTop = e.endCoordinates.screenY;
+      deleteOverlayRef.current?.measureInWindow((_x, y, _w, h) => {
+        setKeyboardOverlap(Math.max(0, Math.round(y + h - keyboardTop)));
+        setTimeout(() => deleteScrollRef.current?.scrollToEnd({ animated: true }), 50);
+      });
+    });
+    const hide = Keyboard.addListener(hideEvt, () => setKeyboardOverlap(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [deleteVisible]);
   const [deleteReason, setDeleteReason] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -641,8 +668,16 @@ export const RevRenderHistoryModal = ({
           </View>
 
           {/* Delete Confirmation Modal */}
-          <Modal visible={deleteVisible} transparent animationType="fade">
-            <View style={styles.deleteOverlay}>
+          <Modal visible={deleteVisible} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setDeleteVisible(false)}>
+            {/* ⚠️ A Modal is its own native window: `KeyboardAwareScrollView` / adjustResize do not reach it (the keyboard covered the
+                buttons). So the keyboard's own rectangle is measured against this view and the overlap becomes bottom padding. */}
+            <View ref={deleteOverlayRef} style={styles.deleteScroll} collapsable={false}>
+            <ScrollView
+              ref={deleteScrollRef}
+              contentContainerStyle={[styles.deleteOverlay, { paddingBottom: 24 + keyboardOverlap }]}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
               <View style={[styles.deleteContainer, { backgroundColor: isDark ? '#1C252E' : 'white' }]}>
                 <View style={styles.alertIconBg}>
                   <Icon name="alert-outline" size={32} color="#FF5630" />
@@ -681,6 +716,7 @@ export const RevRenderHistoryModal = ({
                   </TouchableOpacity>
                 </View>
               </View>
+            </ScrollView>
             </View>
           </Modal>
         </View>
@@ -851,9 +887,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  deleteOverlay: {
+  deleteScroll: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  deleteOverlay: {
+    flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,

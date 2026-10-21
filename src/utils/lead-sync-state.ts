@@ -49,16 +49,19 @@ export const isLeadNotSyncedError = (err: unknown): boolean =>
  * Path only — a query string or body is out of scope. Reuses `isClientId`, so the detector
  * can never drift from the id minter. Used by the optional app-wide guard in §8.
  */
-export const urlHasClientId = (url?: string | null): boolean => {
-  if (!url) return false;
-  return String(url)
+export const findClientIdInUrl = (url?: string | null): string | null => {
+  if (!url) return null;
+  const hit = String(url)
     .split('?')[0]
     .split('/')
-    .some((segment) => {
+    .find((segment) => {
       try {
         return isClientId(decodeURIComponent(segment));
       } catch {
         return isClientId(segment);
       }
     });
+  return hit ? decodeURIComponent(hit) : null;
 };
+
+export const urlHasClientId = (url?: string | null): boolean => findClientIdInUrl(url) !== null;

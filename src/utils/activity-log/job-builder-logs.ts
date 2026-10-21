@@ -103,7 +103,15 @@ export const logOrderSheetAnnotated = async (
   userId: string,
   leadId: string,
   stage: 'opened' | 'stored',
-  extra: { documentId?: string | null; revision?: number | null; twinState?: string | null } = {},
+  extra: {
+    documentId?: string | null;
+    revision?: number | null;
+    twinState?: string | null;
+    /** The moment the REP acted (an annotation saved offline reaches the server much later). */
+    occurredAt?: string | null;
+    /** True when the rep did this with no connection (queued, replayed on reconnect). */
+    offline?: boolean;
+  } = {},
 ) => {
   await logEvent(stage === 'opened' ? 'click' : 'add', {
     user_id: userId,
@@ -118,6 +126,8 @@ export const logOrderSheetAnnotated = async (
       documentId: extra.documentId ?? null,
       revision: extra.revision ?? null,
       twinState: extra.twinState ?? null,
+      connection: extra.offline ? 'offline' : 'online',
+      ...(extra.occurredAt ? { occurredAt: extra.occurredAt } : {}),
       action: 'order_sheet_annotated',
     },
   });
@@ -127,7 +137,7 @@ export const logOrderSheetAnnotated = async (
 export const logOrderSheetReset = async (
   userId: string,
   leadId: string,
-  extra: { documentId?: string | null } = {},
+  extra: { documentId?: string | null; occurredAt?: string | null; offline?: boolean } = {},
 ) => {
   await logEvent('add', {
     user_id: userId,
@@ -139,6 +149,8 @@ export const logOrderSheetReset = async (
       fieldName: 'orderSheet',
       fieldLabel: 'Order Sheet Reset',
       documentId: extra.documentId ?? null,
+      connection: extra.offline ? 'offline' : 'online',
+      ...(extra.occurredAt ? { occurredAt: extra.occurredAt } : {}),
       action: 'order_sheet_reset',
     },
   });

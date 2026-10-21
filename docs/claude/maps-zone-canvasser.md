@@ -1232,3 +1232,9 @@ Report: tapping the funnel on the Zone Canvasser map "did nothing" - `ZoneCanvas
 ### Follow-up - LeadCreate: a duplicate Lead ID keeps the form open (see `lead-center.md`)
 
 `widgets/modals/LeadCreate/index.tsx`: on the first online create, a `duplicate` outcome (another lead already holds that Lead ID) now shows the server's message and does NOT close the form or report "Already created". The queue's replay path is untouched. Details and the `useCreateLeadMutation` body-code guard: `lead-center.md`.
+
+### Navigation param type - RevRender `onGenerateAll` returns a promise
+
+`navigation/index.tsx` `RevRender.onGenerateAll` is now typed `Promise<{ accepted; failed; firstError? } | void>` so the RevRender screen can await the submit before clearing its queue (see `docs/claude/offline.md`, "revRender queue resilience"). No map behaviour changed.
+
+- No map change: `navigation/index.tsx` only widened the `RevRender.onGenerateAll` param type (see the entry above).
