@@ -9,6 +9,7 @@ import { leadDetailForCache, mergeLeadRow } from '../utils/offline-lead-detail-c
 import { AppState } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
+import { onOrderSheetChanged } from '../utils/order-sheet-events';
 import { resolveS3Url } from '../utils/s3-utils';
 import { ENV } from '../config/env';
 import { IMAGE_CATEGORIES } from '../constants/lead-center';
@@ -146,6 +147,25 @@ export const useLeadCenterData = (
     refetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead?._id, user?._id]);
+
+  // An order sheet was replaced in place (annotate / reset): this screen's copy of the lead still holds the old `filePath`.
+  // `refetch` skips while another is in flight, so ask once more shortly after.
+  const refetchRef = useRef(refetch);
+  refetchRef.current = refetch;
+  useEffect(() => {
+    if (!lead?._id) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const off = onOrderSheetChanged((changedId) => {
+      if (String(changedId) !== String(lead._id)) return;
+      refetchRef.current();
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => refetchRef.current(), 1500);
+    });
+    return () => {
+      off();
+      if (timer) clearTimeout(timer);
+    };
+  }, [lead?._id]);
 
   useEffect(() => {
     setIsOutcomeLoading(false);

@@ -63,6 +63,10 @@ export function buildPdfParts(
 ): { head: string; tail: string } {
   const imgW = imageSize?.width || width;
   const imgH = imageSize?.height || height;
+  // The page follows the image's aspect (width kept) so the `cm` matrix below never stretches it.
+  if (imageSize?.width && imageSize?.height) {
+    height = Math.round((width * imageSize.height) / imageSize.width * 100) / 100;
+  }
   const obj1 = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n';
   const obj2 = '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n';
   const obj3 = `3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources 4 0 R /MediaBox [0 0 ${width} ${height}] /Contents 5 0 R >>\nendobj\n`;

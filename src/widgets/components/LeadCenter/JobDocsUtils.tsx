@@ -78,7 +78,9 @@ export const DocumentItem = ({ doc, isDark, colors, onOpen, onImagePreview, onAn
   // REVUIUX-569: the pencil / reset are order-sheet-only (the caller passes the handlers only for that list) and the rules for
   // WHEN they show live in `utils/order-sheet-annotation.ts`, where they are tested.
   const [annotating, setAnnotating] = useState(false);
-  const [resetting, setResetting] = useState(false);
+  const [askingReset, setAskingReset] = useState(false);
+  // The spinner belongs to the reset itself (`doc.resettingAnnotation`, set once the rep CONFIRMS), not to the dialog being open.
+  const resetting = !!doc.resettingAnnotation;
   const syncing = !!doc.syncingAnnotation;
   const showPencil = !!onAnnotate && canAnnotateOrderSheet(doc);
   const showReset = !!onReset && showResetAction(doc);
@@ -92,12 +94,12 @@ export const DocumentItem = ({ doc, isDark, colors, onOpen, onImagePreview, onAn
     }
   };
   const handleReset = async () => {
-    if (resetting || syncing) return;
-    setResetting(true);
+    if (resetting || askingReset || syncing) return;
+    setAskingReset(true);
     try {
       await onReset?.(doc);
     } finally {
-      setResetting(false);
+      setAskingReset(false);
     }
   };
   const isImage = doc.uri?.toLowerCase().match(/\.(jpg|jpeg|png|webp|heic)$/) || !doc.uri?.toLowerCase().includes('.pdf');

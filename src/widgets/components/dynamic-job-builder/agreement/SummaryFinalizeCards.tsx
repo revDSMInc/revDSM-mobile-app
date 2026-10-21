@@ -755,7 +755,7 @@ export function SummaryFinalizeCards({
                       </Text>
                     </View>
                     {/* REVUIUX-569: annotate this order sheet (replaces it). Withheld mid-upload, like the other actions. */}
-                    {cat === 'orderSheet' && !isUploading && showResetAction({ documentType: 'orderSheet', serverId: file?.serverId ?? file?._id, annotation: file?.annotation }) && (
+                    {editMode && cat === 'orderSheet' && !isUploading && showResetAction({ documentType: 'orderSheet', serverId: file?.serverId ?? file?._id, annotation: file?.annotation }) && (
                       <TouchableOpacity
                         onPress={() => setResetTarget(file)}
                         disabled={syncingOrderSheetIds.has(String(file?.serverId ?? file?._id ?? ''))}
@@ -777,7 +777,8 @@ export function SummaryFinalizeCards({
                         <Icon name="restore" size={14} color="#fff" />
                       </TouchableOpacity>
                     )}
-                    {cat === 'orderSheet' && !isUploading && !!src && (
+                    {/* Annotation is available on the My Deals edit flow (editMode), but not on the job submit screen. */}
+                    {editMode && cat === 'orderSheet' && !isUploading && !!src && (
                       <TouchableOpacity
                         onPress={() => handleAnnotateOrderSheet(file)}
                         disabled={annotatingKey !== null || syncingOrderSheetIds.has(String(file?.serverId ?? file?._id ?? ''))}

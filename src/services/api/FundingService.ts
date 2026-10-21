@@ -1,5 +1,12 @@
 import { AxiosResponse } from 'axios';
 import api from './index';
+import {
+  LEAD_NOT_SYNCED,
+  LEAD_NOT_SYNCED_MESSAGE,
+  isLeadNotSyncedError,
+  isSyncedLeadId,
+  leadNotSyncedError,
+} from '../../utils/lead-sync-state';
 
 export interface FundingEnvelope<T> {
   code: number;
@@ -262,6 +269,7 @@ export type FundingErrorKind =
   | 'scopeNeedsRefundApproval'
   | 'scopeRefundFirst'
   | 'offline'
+  | 'leadNotSynced'   // ← new: the lead has not uploaded yet; nothing was sent
   | 'unknown';
 
 export interface FundingError {
@@ -316,6 +324,16 @@ export function classifyFundingError(
   err: any,
   opts?: { linkEndpoint?: boolean; refundRequest?: boolean; remind?: boolean }
 ): FundingError {
+  // Raised by `leadPath` before any request. Must be first: there is no httpStatus to read,
+  // and 400 → 'bug' would print Mongo wording to a rep.
+  if (isLeadNotSyncedError(err)) {
+    return {
+      kind: 'leadNotSynced',
+      message: (err as any)?.message || LEAD_NOT_SYNCED_MESSAGE,
+      code: LEAD_NOT_SYNCED,
+    };
+  }
+
   const httpStatus: number | undefined = err?.httpStatus ?? err?.response?.status;
   const body = err?.response?.data ?? err;
   const blockers = body?.data?.blockers;
@@ -355,7 +373,22 @@ export function shouldRefetchAfter(error: FundingError): boolean {
   return error.kind === 'stale' || error.kind === 'notFound';
 }
 
-const base = (leadId: string) => `/lead/v1/${encodeURIComponent(leadId)}/funding`;
+/**
+ * ⚠️ The containment layer for the counterfeit-id trap (P4). Every funding URL is built from
+ * here, so one check covers all 20 endpoints: a client id can never leave the device as a
+ * lead-scoped request, however a call site is gated.
+ *
+ * Throws SYNCHRONOUSLY, inside the service method. Every current caller is inside a
+ * `try`/`await` (`useFunding`'s `run`/`load`/`refetch`/`refreshPayment`/`submit`), so it is
+ * caught exactly like a rejection. A future caller using a bare `.catch()` with no `try`
+ * must await it.
+ */
+const leadPath = (leadId: string): string => {
+  if (!isSyncedLeadId(leadId)) throw leadNotSyncedError(String(leadId));
+  return encodeURIComponent(leadId);
+};
+
+const base = (leadId: string) => `/lead/v1/${leadPath(leadId)}/funding`;
 const row = (leadId: string, pid: string) => `${base(leadId)}/${encodeURIComponent(pid)}`;
 
 export const FundingEndpoints = {

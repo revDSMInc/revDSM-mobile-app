@@ -5056,3 +5056,19 @@ The Lighting lines are config (`GET /sales-rep/v1/description-schema/:productId`
 - `hooks/useWarmDealCenterConfig` (mounted by the Leads screen) now also calls `useGetAgreementConfig`, `useGetDescriptionSchemas` (now through `cachedFetch`, new key `OFFLINE_CACHE.DESCRIPTION_SCHEMA_LIST`) and `useWarmDescriptionSchemas(agreementProductIds(verticals))` - one `useQueries` entry per product (`vertical.productId || vertical.id`, the id `VerticalSummaryTab` uses) sharing `descriptionSchemaQuery`, so warming and reading use the SAME key and cache entry.
 - `DynamicAgreementDialog`: when the agreement is drawn LOCALLY and the schema fetch FAILED with nothing cached (`descriptionSchemaMissingOffline`, `utils/offline-agreement-config.ts`) it shows "This product's Description of Work hasn't been downloaded yet" instead of drawing. ⚠️ Without that the scope silently became "Project completion per summary details" on a document the customer signs. A product with NO schema configured (query succeeded with `null`) is not blocked.
 - Not verified on device: sign in, open Leads online, go offline, generate a lighting agreement - the Lighting line shows only the storeys that were sold; a never-warmed product shows the message.
+
+## Scanned order sheet / document looked stretched in the viewer
+
+Opening a scanned Order Sheet (eye icon) showed the photo stretched to A4 proportions.
+
+**Cause - the PDF itself.** `buildPdfParts` fixed the page at 595x842 and drew the image with
+`595 0 0 842 0 0 cm`, i.e. forced to fill the page whatever its aspect. The viewer (`PdfPreviewModal`) was
+faithfully showing a stretched page - nothing belongs there.
+
+**Fix.** When the JPEG's real size is known, the page height is derived from it (`width * imgH / imgW`, width
+kept), so the `cm` matrix scales uniformly. Unknown size still falls back to the passed page size.
+Both builders (`convertJpegToPdf`, `convertJpegToPdfAsync`) share `buildPdfParts`.
+
+- Only NEWLY generated PDFs are fixed; documents already filed stretched stay stretched. Re-scan to fix.
+- Annotation re-wrap passes the original page size, but the page now follows the flattened image's aspect.
+- Pages are no longer always A4 - do not re-introduce a fixed height.

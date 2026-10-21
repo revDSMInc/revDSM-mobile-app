@@ -744,16 +744,16 @@ export const JobDocsSection = ({
   /**
    * REVUIUX-569 - "Reset all changes": restores the pristine original FOR EVERYONE, including the installers. Asked with the
    * app's own `ConfirmDialog` (a native `Alert` ignores the theme). The returned promise settles when the rep has answered AND
-   * any reset has finished, so the row's spinner covers the whole action.
+   * the dialog is up; the row's spinner is driven by `resettingOrderSheet` (via `displayDocuments`), so it spins only once the rep confirms.
    */
   const [orderSheetResetTarget, setOrderSheetResetTarget] = useState<{ doc: any; resolve: () => void } | null>(null);
   const [resettingOrderSheet, setResettingOrderSheet] = useState(false);
 
-  const handleResetOrderSheet = (doc: any) =>
-    new Promise<void>((resolve) => {
-      if (!lead?._id || !doc?.serverId) return resolve();
-      setOrderSheetResetTarget({ doc, resolve });
-    });
+  const handleResetOrderSheet = (doc: any) => {
+    if (!lead?._id || !doc?.serverId) return Promise.resolve();
+    setOrderSheetResetTarget({ doc, resolve: () => {} });
+    return Promise.resolve();
+  };
 
   const cancelOrderSheetReset = () => {
     orderSheetResetTarget?.resolve();
@@ -1542,16 +1542,21 @@ export const JobDocsSection = ({
   // Order sheets whose annotation is saved on the phone but not on the server yet (offline / still uploading).
   const syncingOrderSheetIds = usePendingOrderSheetJobs(lead?._id);
 
+  const resettingSheetId = resettingOrderSheet && orderSheetResetTarget ? String(orderSheetResetTarget.doc?.serverId) : null;
   const displayDocuments = useMemo(() => {
     const merged = mergeQueuedDocuments(resolvedDocuments, queuedDocuments);
-    if (!syncingOrderSheetIds.size) return merged;
+    if (!syncingOrderSheetIds.size && !resettingSheetId) return merged;
     return {
       ...merged,
-      orderSheets: merged.orderSheets.map((d: any) =>
-        d?.serverId && syncingOrderSheetIds.has(String(d.serverId)) ? { ...d, syncingAnnotation: true } : d
-      ),
+      orderSheets: merged.orderSheets.map((d: any) => {
+        if (!d?.serverId) return d;
+        const id = String(d.serverId);
+        return syncingOrderSheetIds.has(id) || id === resettingSheetId
+          ? { ...d, syncingAnnotation: syncingOrderSheetIds.has(id), resettingAnnotation: id === resettingSheetId }
+          : d;
+      }),
     };
-  }, [resolvedDocuments, queuedDocuments, syncingOrderSheetIds]);
+  }, [resolvedDocuments, queuedDocuments, syncingOrderSheetIds, resettingSheetId]);
 
 
 

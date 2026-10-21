@@ -41,23 +41,30 @@ export function extractSingleJpegFromPdf(pdfBase64: string): ExtractedOrderSheet
   const pages = binary.match(/\/Type\s*\/Page(?![s\w])/g);
   if (pages && pages.length > 1) return null;
 
-  const dct = binary.match(/\/DCTDecode/g);
-  if (!dct || dct.length !== 1) return null;
-
-  const marker = binary.indexOf('/DCTDecode');
-  const streamAt = binary.indexOf('stream', marker);
-  if (streamAt < 0) return null;
-  let start = streamAt + 'stream'.length;
-  if (binary.charAt(start) === '\r') start += 1;
-  if (binary.charAt(start) === '\n') start += 1;
-
-  // A JPEG ends with FFD9; searching from the END of the stream body avoids stopping at a stray "endstream" inside it.
-  const end = binary.indexOf('endstream', start);
-  if (end < 0) return null;
-  const body = binary.slice(start, end);
-  const last = body.lastIndexOf('\xff\xd9');
-  if (body.charCodeAt(0) !== 0xff || body.charCodeAt(1) !== 0xd8 || last < 0) return null;
-  const jpeg = body.slice(0, last + 2);
+  // Every DCT image stream on the (single) page. A PDF the SERVER re-saved may carry more than one (e.g. a preview next to
+  // the picture), so take the largest instead of refusing: refusing made a sheet annotated once impossible to open again.
+  let best: { jpeg: string; marker: number } | null = null;
+  let from = 0;
+  for (;;) {
+    const marker = binary.indexOf('/DCTDecode', from);
+    if (marker < 0) break;
+    from = marker + 1;
+    const streamAt = binary.indexOf('stream', marker);
+    if (streamAt < 0) continue;
+    let start = streamAt + 'stream'.length;
+    if (binary.charAt(start) === '\r') start += 1;
+    if (binary.charAt(start) === '\n') start += 1;
+    // A JPEG ends with FFD9; searching from the END of the stream body avoids stopping at a stray "endstream" inside it.
+    const end = binary.indexOf('endstream', start);
+    if (end < 0) continue;
+    const body = binary.slice(start, end);
+    const last = body.lastIndexOf('\xff\xd9');
+    if (body.charCodeAt(0) !== 0xff || body.charCodeAt(1) !== 0xd8 || last < 0) continue;
+    const jpeg = body.slice(0, last + 2);
+    if (!best || jpeg.length > best.jpeg.length) best = { jpeg, marker };
+  }
+  if (!best) return null;
+  const { jpeg, marker } = best;
 
   const dims = /\/Width\s+(\d+)[\s\S]{0,120}?\/Height\s+(\d+)|\/Height\s+(\d+)[\s\S]{0,120}?\/Width\s+(\d+)/.exec(
     binary.slice(Math.max(0, marker - 400), marker + 200),

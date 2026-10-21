@@ -26,6 +26,7 @@ import { base64ByteLength, convertJpegToPdf } from '../utils/jpeg-to-pdf';
 import { extractEmbeddedJpeg } from '../utils/pdf-extract-jpeg';
 import { annotatedPdfName, isRouteMissing, serverWarningText } from '../utils/order-sheet-annotation';
 import { FlashMessage } from '../config/message';
+import { emitOrderSheetChanged } from '../utils/order-sheet-events';
 import { logOrderSheetAnnotated, logOrderSheetReset } from '../utils/activity-log/job-builder-logs';
 
 const INDEX_KEY = 'order_sheet_originals';
@@ -123,6 +124,8 @@ export const bustOrderSheetCaches = async (leadId: string, staleUris: Array<stri
   } catch (e) {
     console.warn('[OrderSheet] could not refresh the lead after the replace', e);
   }
+  // The Lead Center holds its own copy of the lead - tell it to re-read (see utils/order-sheet-events.ts).
+  emitOrderSheetChanged(leadId);
 };
 
 const writeCacheFile = async (base64: string, ext: 'pdf' | 'jpg'): Promise<string> => {

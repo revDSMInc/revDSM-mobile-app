@@ -17,7 +17,8 @@ import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
 import { useAuth } from '../../../hooks/useAuth';
 import { useIsOnline } from '../../../hooks/useIsOnline';
-import { isOnline } from '../../../services/connectivity';
+import { isSyncedLeadId } from '../../../utils/lead-sync-state';
+import { leadReachableOnServer } from '../../../utils/lead-server-ready';
 import {
   ensureOfflineWorkForLead,
   saveOfflineFunding,
@@ -216,7 +217,7 @@ function SelectField({ label, value, placeholder, options, onSelect, disabled, c
   );
 }
 
-function MoneyField({ label, value, onChange, editable = true, labelBg, trailing }: {
+function MoneyField({ label, value, onChange, editable = true, labelBg: _labelBg, trailing }: {
   label: string; value: string; onChange?: (v: string) => void; editable?: boolean;
   labelBg?: string;
   trailing?: React.ReactNode;
@@ -263,7 +264,6 @@ export function ResultJobModal({
 }: ResultJobModalProps) {
   const { isDark } = useTheme();
   const { user } = useAuth();
-  const online = useIsOnline();
   const isRehashed = lead?.isRehashed === true;
   const [oneLeg, setOneLeg] = useState('No');
   const [resultType, setResultType] = useState<'sale' | 'demo'>(initialResultType || 'sale');
@@ -274,6 +274,10 @@ export function ResultJobModal({
   const [pineapple, setPineapple] = useState(false);
 
   const leadLogId = lead?._id || lead?.leadId || lead?.id;
+  // Feeds `confirmBlockers`. An unsynced lead is "offline" for payment-method purposes: a card
+  // link is minted server-side, so it cannot be created against a lead the server has never
+  // heard of. Cash and financing stay available and queue.
+  const online = useIsOnline() && isSyncedLeadId(leadLogId);
   const funding = useFunding(leadLogId, lead?.companyId || user?.companyId, {
     userId: user?._id || user?.id,
     calculatorId,
@@ -311,6 +315,17 @@ export function ResultJobModal({
   // just entered. Cleared whenever the modal reopens, with the rest of the state.
   const [offlineRecord, setOfflineRecord] = useState<FundingRecord | null>(null);
   const [offlineWorkId, setOfflineWorkId] = useState<string | null>(null);
+
+  // The work row is resolved on demand, never only by the branch that happened to run first.
+  // `ensureOfflineWorkForLead` finds the row queued at the door for a client id, and adopts one
+  // for a real server id, so this is correct on every route into the Funding screen.
+  const resolveOfflineWorkId = useCallback((): string | null => {
+    if (offlineWorkId) return offlineWorkId;
+    const work = ensureOfflineWorkForLead(lead || { _id: leadLogId });
+    if (!work?.clientId) return null;
+    setOfflineWorkId(work.clientId);
+    return work.clientId;
+  }, [offlineWorkId, lead, leadLogId]);
 
   const isSale = resultType === 'sale';
   const payments = offlineRecord?.payments ?? funding.payments;
@@ -644,7 +659,7 @@ export function ResultJobModal({
     }
     const upsert = toUpsertRows(activeRows, contractNum, pricing.plans);
 
-    if (!isOnline()) {
+    if (!leadReachableOnServer(leadLogId)) {
       const work = ensureOfflineWorkForLead(lead || { _id: leadLogId });
       if (!work?.clientId) {
         setSaveError('This sale could not be saved on the device. Reconnect and confirm again.');
@@ -742,7 +757,7 @@ export function ResultJobModal({
     }
     wentToFundingRef.current = true;
     setScreen('funding');
-  }, [resultBlockers, contractNum, activeRows, pricing.plans, payMode, noDown, funding, logCtx, leadLogId, lead, calculatorId]);
+  }, [resultBlockers, contractNum, activeRows, pricing.plans, payMode, funding, logCtx, leadLogId, lead, calculatorId]);
 
   const scopeBusy = funding.isSaving;
 
@@ -807,8 +822,9 @@ export function ResultJobModal({
   // same pid the save carries.
   const handleMarkCollected = useCallback(
     (pid: string) => {
-      if (isOnline()) return funding.markCheckCollected(pid);
-      if (offlineWorkId) saveOfflineFundingCollected(offlineWorkId, pid);
+      if (leadReachableOnServer(leadLogId)) return funding.markCheckCollected(pid);
+      const workId = resolveOfflineWorkId();
+      if (workId) saveOfflineFundingCollected(workId, pid);
       // Online this is logged by `funding.markCheckCollected`; the offline tick skips that hook.
       const row = offlineRecord?.payments.find((p) => p.pid === pid);
       logFundingCheckCollected({
@@ -825,7 +841,7 @@ export function ResultJobModal({
       );
       return undefined;
     },
-    [funding, offlineWorkId, offlineRecord, logCtx]
+    [funding, resolveOfflineWorkId, offlineRecord, logCtx, leadLogId]
   );
 
   // Offline the rep still records what the lender told them and activates the loan: both are
@@ -833,24 +849,26 @@ export function ResultJobModal({
   // pid the save carries. The drain sends the link first if the server has none.
   const handleRecordDecision = useCallback(
     (pid: string, decision: 'full' | 'short' | 'declined', approvedAmt?: number) => {
-      if (isOnline() && !offlineRecord) return funding.recordDecision(pid, decision, approvedAmt);
-      if (!offlineWorkId) return undefined;
-      saveOfflineFundingDecision(offlineWorkId, { pid, decision, ...(decision === 'short' ? { approvedAmt } : {}) });
+      if (leadReachableOnServer(leadLogId) && !offlineRecord) return funding.recordDecision(pid, decision, approvedAmt);
+      const workId = resolveOfflineWorkId();
+      if (!workId) return undefined;
+      saveOfflineFundingDecision(workId, { pid, decision, ...(decision === 'short' ? { approvedAmt } : {}) });
       setOfflineRecord((prev) => (prev ? applyOfflineDecision(prev, pid, decision, approvedAmt) : prev));
       return undefined;
     },
-    [funding, offlineWorkId, offlineRecord]
+    [funding, resolveOfflineWorkId, offlineRecord, leadLogId]
   );
 
   const handleActivate = useCallback(
     (pid: string) => {
-      if (isOnline() && !offlineRecord) return funding.activateLoan(pid);
-      if (!offlineWorkId) return undefined;
-      saveOfflineFundingActivate(offlineWorkId, pid);
+      if (leadReachableOnServer(leadLogId) && !offlineRecord) return funding.activateLoan(pid);
+      const workId = resolveOfflineWorkId();
+      if (!workId) return undefined;
+      saveOfflineFundingActivate(workId, pid);
       setOfflineRecord((prev) => (prev ? applyOfflineActivation(prev, pid) : prev));
       return undefined;
     },
-    [funding, offlineWorkId, offlineRecord]
+    [funding, resolveOfflineWorkId, offlineRecord, leadLogId]
   );
 
   const handleSetResult = useCallback(
@@ -871,13 +889,14 @@ export function ResultJobModal({
     const isDemo = resultType === 'demo';
 
     if (!isDemo) {
-      if (isOnline()) {
+      if (leadReachableOnServer(leadLogId)) {
         const res = await funding.submit();
         if (!res.ok) return;
       } else {
         // Queued, not dropped: the save already sits behind the `funding` step, and this
         // submits it once that lands. Without it the deal reached the office unsubmitted.
-        if (offlineWorkId) saveOfflineFundingSubmit(offlineWorkId);
+        const workId = resolveOfflineWorkId();
+        if (workId) saveOfflineFundingSubmit(workId);
         // Online this is logged by `funding.submit`; the queued submit skips that hook.
         logFundingSubmitted({
           ...logCtx,
@@ -931,7 +950,7 @@ export function ResultJobModal({
   }, [
     resultType, oneLeg, contractNum, downTotal, balanceTotal, primaryDownMethod, primaryBalanceMethod,
     allocations, demoReason, reasonExplanation, versatile, pineapple, bankDeclined, payments, funding, onConfirm,
-    logCtx, offlineWorkId, offlineRecord,
+    logCtx, resolveOfflineWorkId, offlineRecord, leadLogId,
   ]);
 
   const priceEditable = isRehashed || priceUnlocked;

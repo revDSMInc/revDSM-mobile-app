@@ -83,7 +83,7 @@ export function AnnotationOverlayPreview({ job, width, height }: Props) {
       <Image
         source={{ uri: job.originalUri }}
         style={{ position: 'absolute', left: box.x, top: box.y, width: box.w, height: box.h }}
-        resizeMode="stretch"
+        resizeMode="cover"
       />
       <Svg
         style={{ position: 'absolute', left: box.x, top: box.y }}
