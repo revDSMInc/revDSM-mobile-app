@@ -7,6 +7,7 @@ import { FlashMessage } from '../../config/message';
 import { store } from '../../redux/store';
 import { logout } from '../../redux/reducer/auth.reducer';
 import { queryClient } from './queryClient';
+import { findClientIdInUrl, leadNotSyncedError } from '../../utils/lead-sync-state';
 import SocketManager from '../SocketManager';
 import {
   beginRequest,
@@ -164,17 +165,30 @@ const clearSession = () => {
   delete axiosInstance.defaults.headers.common.Authorization;
 };
 
+/**
+ * ⚠️ The app-wide containment for the counterfeit-id trap (docs/claude/offline.md, "Unsynced lead"): a lead made at a door is
+ * keyed `lead-/appt-/calc-/work-<ts>-<rand>` until its `lead` saga step lands, and every lead-scoped endpoint 400s on a
+ * non-ObjectId ("Valid lead id is required"). So a request whose PATH carries a client id never leaves the device - it rejects
+ * (a plain object, no `httpStatus`, like every other rejection here) with `LEAD_NOT_SYNCED`, BEFORE axios, so the connectivity
+ * model never sees it as a failed request and the banner cannot flip. Callers that queue (funding, delivery preference) treat
+ * it as "keep it on the device"; the rest show its plain-English message instead of the server's Mongo wording.
+ */
+const blockedClientId = <T>(url: string): Promise<AxiosResponse<T>> | null => {
+  const id = findClientIdInUrl(url);
+  return id ? Promise.reject(leadNotSyncedError(id)) : null;
+};
+
 export const api = {
   get: <T>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
-    axiosInstance.get(url, config),
+    blockedClientId<T>(url) ?? axiosInstance.get(url, config),
   post: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
-    axiosInstance.post(url, data, config),
+    blockedClientId<T>(url) ?? axiosInstance.post(url, data, config),
   put: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
-    axiosInstance.put(url, data, config),
+    blockedClientId<T>(url) ?? axiosInstance.put(url, data, config),
   patch: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
-    axiosInstance.patch(url, data, config),
+    blockedClientId<T>(url) ?? axiosInstance.patch(url, data, config),
   delete: <T>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
-    axiosInstance.delete(url, config),
+    blockedClientId<T>(url) ?? axiosInstance.delete(url, config),
 };
 
 export const hasSession = (): boolean => !!Storage.getItem('accessToken');

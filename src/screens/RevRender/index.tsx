@@ -295,6 +295,7 @@ export default function RevRenderScreen() {
   const [selectedPhoto, setSelectedPhoto] = useState<any>(null);
   const [photoViewerOpen, setPhotoViewerOpen] = useState(false);
   const [renderQueue, setRenderQueue] = useState<any[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [config, setConfig] = useState<any>(INITIAL_CONFIG);
 
@@ -670,6 +671,7 @@ export default function RevRenderScreen() {
   };
 
   const handleGenerateAll = async () => {
+    if (isSubmitting) return;
     const blocked = offlineBlockFor('revrender', isOnline());
     if (blocked) {
       FlashMessage.info(blocked.title, blocked.message);
@@ -718,15 +720,20 @@ export default function RevRenderScreen() {
 
       const requestBody = { payloads, leadId, jobId: leadId };
 
+      // ⚠️ AWAIT the submit: the queue the rep built is only cleared once every POST was answered or has failed. A failed render
+      // keeps its payload on the Lead Center's Tools card (Retry / Dismiss) - never lost with this screen.
+      setIsSubmitting(true);
       if (onGenerateAll) {
-        onGenerateAll(requestBody);
+        await onGenerateAll(requestBody);
       } else {
-        payloads.forEach(p => onGenerate(p));
+        await Promise.all(payloads.map(p => onGenerate(p)));
       }
       setRenderQueue([]);
       navigation.goBack();
     } catch (err) {
       console.error('Generate All Error:', err);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1798,13 +1805,19 @@ export default function RevRenderScreen() {
         >
           <TouchableOpacity
             onPress={handleGenerateAll}
-            disabled={renderQueue.length === 0}
+            disabled={renderQueue.length === 0 || isSubmitting}
             className="w-full h-14 bg-[#2EDE56] rounded-[24px] items-center justify-center flex-row shadow-lg shadow-[#2EDE5633]"
-            style={{ opacity: renderQueue.length === 0 ? 0.6 : 1 }}
+            style={{ opacity: renderQueue.length === 0 || isSubmitting ? 0.6 : 1 }}
           >
-            <Icon name="send" size={20} color="white" style={{ marginRight: 10 }} />
+            {isSubmitting ? (
+              <ActivityIndicator size="small" color="white" style={{ marginRight: 10 }} />
+            ) : (
+              <Icon name="send" size={20} color="white" style={{ marginRight: 10 }} />
+            )}
             <Text className="text-white font-black text-base">
-              Generate {renderQueue.length} {renderQueue.length === 1 ? 'Render' : 'Renders'}
+              {isSubmitting
+                ? 'Sending...'
+                : `Generate ${renderQueue.length} ${renderQueue.length === 1 ? 'Render' : 'Renders'}`}
             </Text>
           </TouchableOpacity>
           <Text className="text-center mt-6 text-[13px] font-medium" style={{ color: '#919EAB' }}>

@@ -5072,3 +5072,7 @@ Both builders (`convertJpegToPdf`, `convertJpegToPdfAsync`) share `buildPdfParts
 - Only NEWLY generated PDFs are fixed; documents already filed stretched stay stretched. Re-scan to fix.
 - Annotation re-wrap passes the original page size, but the page now follows the flattened image's aspect.
 - Pages are no longer always A4 - do not re-introduce a fixed height.
+
+### Send Signed Agreement prompt - "Valid lead id is required" on a lead created offline, then reconnected
+
+`widgets/modals/job-builder/AgreementDeliveryPrompt.tsx` gated its open-time `GET` and its Send (`PUT pdf-reports/v1/agreement/:leadId/delivery-preference`) on `isOnline()`. With signal back but the lead still keyed `lead-<ts>-<rand>`, a client id reached the server. Both now use `leadReachableOnServer(leadId)` (real id AND signal); otherwise the choice is queued (`queueDeliveryPreference`) and the agreement opens - the prompt must never hold the sale. A `LEAD_NOT_SYNCED` rejection queues too. ⚠️ Never gate a lead-scoped call on `isOnline()` alone. Full write-up and the app-wide guard: `docs/claude/offline.md` ("Unsynced lead"). Not verified on device.

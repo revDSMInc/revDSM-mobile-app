@@ -287,6 +287,8 @@ export default function LeadCenterPage() {
     handleResetRiskReport,
     revRenderJobs,
     handleStartRevRenders,
+    handleRetryRevRender,
+    handleDismissRevRender,
   } = useLeadReports(lead, refetch);
 
   const {
@@ -1392,6 +1394,8 @@ export default function LeadCenterPage() {
                 secureUrls={secureUrls}
                 riskJob={riskJob}
                 revRenderJobs={revRenderJobs}
+                onRetryRevRender={handleRetryRevRender}
+                onDismissRevRender={handleDismissRevRender}
                 isConsentGenerating={isConsentGenerating}
                 isWaiverGenerating={isWaiverGenerating}
                 isInspectionGenerating={isInspectionGenerating}
@@ -1408,13 +1412,14 @@ export default function LeadCenterPage() {
                       // this closure and file every render under the wrong lead - the client's
                       // "revRender generated in another lead". Always honour the id RevRender
                       // sends; never fall back to the captured `lead`.
+                      // Both resolve once every submit was ANSWERED or failed, so the RevRender screen keeps the rep's queue
+                      // until then (a failed render stays on the Tools card with its payload and a Retry).
                       onGenerate: async (payload: any) => {
-                        handleStartRevRenders([payload], payload?.leadId);
-                        return null;
+                        const result = await handleStartRevRenders([payload], payload?.leadId);
+                        return result.failed ? null : 'submitted';
                       },
-                      onGenerateAll: (body: { payloads: any[]; leadId: string; jobId: string }) => {
-                        handleStartRevRenders(body.payloads, body.leadId);
-                      }
+                      onGenerateAll: (body: { payloads: any[]; leadId: string; jobId: string }) =>
+                        handleStartRevRenders(body.payloads, body.leadId)
                     });
                   } else if (toolId === 'inspection-download') {
                     onToolAction('inspection-download', extra);

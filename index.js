@@ -5,6 +5,10 @@ import { resolveFontPatch } from './src/utils/default-font';
 import { NumPadProvider } from './src/widgets/common/keyboard/NumPad';
 import { useNumPadField } from './src/widgets/common/keyboard/NumPad/useNumPadField';
 import { name as appName } from './app.json';
+import { installNetworkErrorDowngrade } from './src/utils/console-noise';
+
+// A dropped connection must not raise the red LogBox screen: transport failures passed to console.error are logged quietly.
+installNetworkErrorDowngrade();
 
 try {
   // eslint-disable-next-line global-require

@@ -1,6 +1,7 @@
 import { Storage } from '../utils/storage';
 import { LeadService } from './api/leads';
 import { isOnline, onReconnect } from './connectivity';
+import { isSyncedLeadId } from '../utils/lead-sync-state';
 import { getSessionOwner, registerSessionResetHook } from './sessionScope';
 import {
   pendingDeliveryFor,
@@ -92,6 +93,8 @@ export const drainDeliveryPreferences = async (): Promise<void> => {
   try {
     for (const row of replayableDeliveryWrites(queue, getSessionOwner())) {
       if (!isOnline()) return;
+      // ⚠️ A row still keyed by a CLIENT id waits for `rekeyDeliveryPreference` (the lead's sync step); sending it would 400.
+      if (!isSyncedLeadId(row.leadId)) continue;
       try {
         await LeadService.saveAgreementDeliveryPreference(row.leadId, row.payload);
         queue = settleDeliveryWrite(queue, row.leadId);

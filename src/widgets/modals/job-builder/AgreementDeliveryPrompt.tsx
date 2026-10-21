@@ -13,7 +13,8 @@ import {
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LeadService } from '../../../services/api/leads';
 import { isNetworkError } from '../../../utils/network-error';
-import { isOnline } from '../../../services/connectivity';
+import { leadReachableOnServer } from '../../../utils/lead-server-ready';
+import { isLeadNotSyncedError } from '../../../utils/lead-sync-state';
 import {
   queueDeliveryPreference,
   queuedDeliveryPreference,
@@ -85,8 +86,9 @@ export function AgreementDeliveryPrompt({
     if (!leadId) return;
     const queued = queuedDeliveryPreference(leadId);
     if (queued) setForm(initialDeliveryForm({ preference: queued }, fallback));
-    // Offline: no GET to make. The form already holds the queued choice or the lead's own details.
-    if (!isOnline()) return;
+    // No GET to make while offline OR while the lead still has a client id (the server has never heard of it): the form already
+    // holds the queued choice or the lead's own details.
+    if (!leadReachableOnServer(leadId)) return;
     setLoading(true);
     LeadService.getAgreementDeliveryPreference(leadId)
       .then((res) => {
@@ -120,8 +122,10 @@ export function AgreementDeliveryPrompt({
       return;
     }
     const payload = buildDeliveryPayload(form);
-    // This prompt gates Generate Agreement, so it must never hold the sale for a network call.
-    if (!isOnline()) {
+    // This prompt gates Generate Agreement, so it must never hold the sale for a network call. ⚠️ "Can I reach the server" is
+    // `leadReachableOnServer` (signal AND a real lead id), never `isOnline()` alone: reconnecting before an offline-created lead
+    // has uploaded sent a client id and the server answered "Valid lead id is required".
+    if (!leadReachableOnServer(leadId)) {
       queueDeliveryPreference(leadId, payload);
       onConfirmed();
       return;
@@ -132,7 +136,7 @@ export function AgreementDeliveryPrompt({
       await LeadService.saveAgreementDeliveryPreference(leadId, payload);
       onConfirmed();
     } catch (e: any) {
-      if (isNetworkError(e)) {
+      if (isNetworkError(e) || isLeadNotSyncedError(e)) {
         queueDeliveryPreference(leadId, payload);
         onConfirmed();
         return;

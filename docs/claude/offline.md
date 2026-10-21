@@ -1485,3 +1485,43 @@ Files: `services/annotationSaveService.ts` (queue), `services/orderSheetSync.ts`
 - ⚠️ A job that fails with a NETWORK error (weak signal mid-PATCH) now waits for the next reconnect / foreground instead of burning one of its 3 attempts; only a real server answer counts as an attempt.
 - ⚠️ `normalizeApiError` rejects with a plain body object (no `.response`): tell a server answer by `httpStatusOf(e) !== undefined`, never `e.response`.
 - Needs a device check: airplane mode -> annotate -> Save (row says Syncing) -> reconnect -> sheet replaced, ONE log with `connection: 'offline'` and the Save time; same for Reset. A sheet never opened online cannot be annotated offline (its bytes are not on the phone).
+
+## revRender queue resilience (TAYYAB-REVRENDER-QUEUE-RESILIENCE): submit errors, a persisted batchId, a queue that outlives the screen
+
+Files: `services/revRenderJobs.ts` (module-level manager), `utils/revrender-jobs.ts` (pure rules; tests `tests/offline/revrender-jobs.test.ts`),
+`hooks/useLeadReports.ts` (now only subscribes), `screens/RevRender/index.tsx`, `screens/LeadCenter/index.tsx`, `widgets/components/LeadCenter/OperationalSections.tsx`.
+
+| Situation | What the app does |
+|---|---|
+| `POST /rev-render/v1/batches` is ANSWERED with a `batchId` | `batchId` is written to `rev_render_jobs_<leadId>` BEFORE anything else; the render is the server's from here, whatever the phone does |
+| Connection lost AFTER the reply | the 3 s `GET /rev-render/v1/batches/:id` poll marks the card `waiting` (amber, unchanged); polling continues, resumes on reconnect / foreground / screen mount / app restart |
+| Connection lost BEFORE the reply | the card FAILS with "Network error - the app could not reach the server..." (`errorKind: 'network'`), payload kept, **Retry / Dismiss** |
+| Submit TIMEOUT (120 s) | failed, `ambiguous` - "We couldn't confirm this render started - check Tools before retrying so you aren't charged twice" (the server may have accepted it; NEVER auto-resubmitted) |
+| 503 / 429 | "busy" with the server's own text; 400-class = the server's own reason; 401 = "session expired" (never a render fault) |
+| App closed mid-submit | on the next open the job has no `batchId` -> failed, `interrupted`, ambiguous, Retry |
+| Batch FAILED on the server | failed with the backend's reason (`batchFailureMessage`), Retry |
+
+- **The queue is no longer wiped.** `maybeFinalize` clears only COMPLETED jobs; failed ones stay (key rewritten, deleted only when empty) and the toast uses the real counts ("4 of 6 renders finished. 2 need retrying.", never "finished - check results" when nothing succeeded).
+- **Persisted outside React.** The manager writes MMKV first, then notifies. ⚠️ Never put a `Storage.setItem` inside a `setState` updater: an unmounted fiber never calls it (the old queue vanished when the Lead Center was left).
+- **Job ids are unique** (`rr-<ts>-<rand>`); a second start APPENDS - the old array-index ids made a second batch overwrite the first one's running jobs.
+- **RevRender screen awaits the submit** (`onGenerateAll` / `onGenerate` return promises) and only then clears its queue and goes back; the button shows "Sending...". A failed render keeps its payload on the Tools card, so Retry never needs the rep to rebuild it. ⚠️ The queue SCREEN itself is not persisted (a force-quit while on it still loses it) - an explicit decision.
+- **Honest progress:** the timer-driven 0->80 % bar is gone. The Tools card shows "k of N done" (completed renders over the queue); a per-batch percent exists only when the server reports `batch.total > 1`.
+- **Poll failures:** transport and 401 -> wait; other server answers are tolerated 8 times in a row (`MAX_POLL_REJECTIONS`) then the job fails (ambiguous - it may still exist).
+- ⚠️ Backend still needed: an idempotency key on `POST /rev-render/v1/batches` (a repeat key returns the existing batch). Until then a timeout is genuinely ambiguous and the wording says so. Not verified on device - use `REVRENDER_FAULT=503|hang` from the page above.
+
+### Follow-up - the Tools bar moves in real time again (a live ESTIMATE, not "k of N")
+
+"k of N done" alone gave nothing to watch. `OperationalSections` now shows a spinner, "Rendering · 2 of 6 done" and a live percent, ticking every 500 ms while any render is running. The value is `estimateJobProgress` (`utils/revrender-jobs.ts`): eased from `job.startedAt` (stamped when the POST is sent), capped at 92 so it never says done before the server does, raised by any real `batch.total > 1` progress, and FROZEN from `job.waitingAt` while a status check cannot reach the server (amber "Paused"; on reconnect `startedAt` is shifted by the time spent waiting). ⚠️ It is an estimate by design - do not let it reach 100 or keep climbing while `waiting`. Not verified on device.
+
+## Unsynced lead: "Valid lead id is required" - the counterfeit-id trap, 5th instance (agreement delivery) and an APP-WIDE guard
+
+Reported on the **Send Signed Agreement** prompt (`AgreementDeliveryPrompt`): create a lead offline, reconnect before it uploads, tap Send -> the server answered "Valid lead id is required". Spec: `MOBILE-FIX-UNSYNCED-LEAD-FUNDING.md` (funding half already in: `utils/lead-sync-state.ts`, `utils/lead-server-ready.ts`, `FundingService.leadPath`).
+
+- **Cause:** the prompt asked `isOnline()` ("do I have signal?") when the question is "does this lead exist on the server yet?". With signal back but the lead still keyed `lead-<ts>-<rand>`, it sent `PUT pdf-reports/v1/agreement/<client id>/delivery-preference` (and the open-time `GET`).
+- **Fix 1 - the prompt:** both the open-time GET and the Send use `leadReachableOnServer(leadId)` (real id AND signal). Otherwise the choice is queued (`queueDeliveryPreference`, owner-scoped, re-keyed by `rekeyDeliveryPreference` when the `lead` step lands); a `LEAD_NOT_SYNCED` rejection queues too. The sale is never held.
+- **Fix 2 - the drain:** `drainDeliveryPreferences` skips a row whose `leadId` is still a client id (`continue`, row kept) - replaying it would 400.
+- **Fix 3 - APP-WIDE containment (spec 9.1):** `services/api/index.ts` `api.get/post/put/patch/delete` reject BEFORE axios when the URL PATH carries a client id (`findClientIdInUrl`), with the plain `LEAD_NOT_SYNCED` rejection (no `httpStatus`). So no lead-scoped endpoint can ever send a counterfeit id again, however its caller was gated, and the connectivity model never sees a failed request (no banner flip). Queueing callers (funding, delivery) treat it as "keep on device"; the rest show its plain message instead of Mongo wording.
+- ⚠️ A new lead-scoped feature must gate on `leadReachableOnServer` / `isSyncedLeadId`, never `isOnline()` alone - the guard is a net, not a design. ⚠️ Only the PATH is scanned (not query/body); a client id sent as a body field is still the caller's job. ⚠️ If some endpoint legitimately takes a client id in its path, exempt it HERE, do not remove the guard. Chat thread creation already guards with `isClientId`.
+- Tests: `tests/offline/lead-sync-state.test.ts` (`findClientIdInUrl`, `isNetworkError` regression). Needs a device check: airplane mode -> create lead -> reconnect at once -> Generate Agreement -> prompt -> Send: no red error, agreement opens, preference sent after the lead syncs.
+
+- **File map for the "Unsynced lead" section above:** `utils/lead-sync-state.ts` (`findClientIdInUrl` added; `urlHasClientId` now delegates to it), `services/api/index.ts` (the pre-axios client-id guard on every `api.*` call), `services/offlineAgreementDelivery.ts` (drain skips client-id rows).
