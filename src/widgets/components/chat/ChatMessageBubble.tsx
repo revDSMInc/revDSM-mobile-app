@@ -183,6 +183,9 @@ interface Props {
   onDelete: (msgId: string) => void;
   imageUrls: Record<string, string>;
   isViewOnly?: boolean;
+  canReply?: boolean;
+  canReact?: boolean;
+  canEditOwn?: boolean;
   onDisabledClick?: () => void;
   searchQuery?: string;
   activeMatchId?: string | null;
@@ -203,6 +206,9 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
   onLayout,
   imageUrls,
   isViewOnly = false,
+  canReply = true,
+  canReact = true,
+  canEditOwn = true,
   onDisabledClick,
   searchQuery,
   activeMatchId,
@@ -656,11 +662,11 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
   };
 
   const handleReplyInternal = useCallback(() => {
-    if (onReply && msg) {
+    if (onReply && msg && canReply) {
       Vibration.vibrate(10);
       onReply(msg);
     }
-  }, [onReply, msg]);
+  }, [onReply, msg, canReply]);
 
   const seenByOthers = useMemo(() => {
     return (msg.seenBy || []).filter((u: any) => {
@@ -1554,7 +1560,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
             {!showFullEmojiPicker ? (
               <View
                 className="rounded-2xl px-3 py-3 mb-3 shadow-2xl"
-                style={{ backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF' }}
+                style={{ display: canReact ? 'flex' : 'none', backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF' }}
               >
                 <ScrollView
                   horizontal
@@ -1681,7 +1687,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
               className="rounded-2xl overflow-hidden shadow-2xl"
               style={{ backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF' }}
             >
-              {!isViewOnly && (
+              {!isViewOnly && canReply && (
                 <TouchableOpacity
                   onPress={() => {
                     onReply(msg);
@@ -1769,7 +1775,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                   <Icon name="time-outline" size={20} color={isDark ? '#aaa' : '#555'} />
                 </TouchableOpacity>
               )}
-              {!isViewOnly && isMe && (
+              {!isViewOnly && canEditOwn && isMe && (
                 <>
                   {(() => {
                     const now = new Date();
