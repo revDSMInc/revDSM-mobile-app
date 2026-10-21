@@ -5166,3 +5166,58 @@ Both builders (`convertJpegToPdf`, `convertJpegToPdfAsync`) share `buildPdfParts
 - Only NEWLY generated PDFs are fixed; documents already filed stretched stay stretched. Re-scan to fix.
 - Annotation re-wrap passes the original page size, but the page now follows the flattened image's aspect.
 - Pages are no longer always A4 - do not re-introduce a fixed height.
+
+## Ticket — Investment Center descriptions evaluated on device (2026-10-21)
+
+Offline the "Includes the Following" panel showed bare category names ("Gutters"), and the scope
+CHANGED once the lead synced — on the text a customer reads before signing.
+
+The lines are rendered **server-side** inside `GET /appointments/:id/lfcalculators` and are **not
+stored on the calculator**; no other endpoint returns them. So a calculator built offline has none
+at all, and caching the calculator cannot help. They have to be evaluated on device.
+Backend spec: `docs/MOBILE-DEAL-CENTER-DESCRIPTIONS-OFFLINE.md` (backend `staging`, 2026-10-21).
+No backend change was needed.
+
+⚠️ **TWO description-schema collections, same authoring UI, near-identical shapes:**
+
+| endpoint | collection | input |
+|---|---|---|
+| `/sales-rep/v1/description-schema` | job builder | nested `verticalState` |
+| `/company/v1/deal-center-description-schema` | **deal center** | flat calculator |
+
+Caching the first does **not** give you the second. A first attempt cached the job-builder list
+(`useGetDescriptionSchemas`) and the panel was unchanged. `useGetDealCenterDescriptionSchemas`
+(`hooks/useDescriptionSchema.ts`) caches the right one; `DynamicDealCenterScreen` calls both purely
+to **warm** them — it renders neither, and the Investment Center was otherwise the only screen
+loading them, so a rep who never opened it had nothing cached.
+
+`utils/deal-center-descriptions.ts` (pure, 36 tests) ports the backend evaluator.
+
+⚠️ **`entries` has TWO shapes and both reach the evaluator.** The server sends an ARRAY; the app's
+in-memory `CalcTab.entries` is a RECORD keyed by field id. The port checked `Array.isArray` alone,
+so it flattened **nothing** for the on-device tab — every field looked absent, the presence gate
+rejected every schema, and the panel fell back to category names. It failed by rendering the wrong
+text rather than throwing, which is why it read as "the fix did not ship".
+
+⚠️ **The presence gate inverts the usual reading of an empty condition.** A deal-center schema is
+authored per product but an LFCalculator carries no product id, so every schema is evaluated
+against every calculator and field presence keeps a Gutter schema silent on a Flooring one. A
+mapping with **no condition at all is dropped** (it would print on every product), while inside the
+evaluator an empty condition **passes**. Both are required — spec §4.
+
+⚠️ **`mergeFullEntries` seeds every schema field with `inputValue: 0`, and `0` counts as PRESENT.**
+So on device the gate matches every schema and the `> 0` rules do the real filtering. Two tests pin
+the consequence: a fully seeded but empty calculator prints nothing, and a partly filled one prints
+only the lines whose fields the rep filled.
+
+⚠️ Other ported rules with tests: `entries[]` override same-named top-level keys (the backend's loop
+runs after the spread); an object value is ABSENT (no grid support here); a numeric field of `0`
+renders as `''`, not `"0"`; an unclosed `[IF]` closes at the end of the template while a stray
+`[/IF]` is dropped; the flat and grouped lists dedupe **independently**; order is never sorted.
+
+⚠️ **Server lines always win.** The local result only fills a gap and never overrides, so an online
+deal renders exactly as before.
+
+*Not done:* the panel does not re-evaluate when the rep edits a quantity on a calculator the server
+HAS described (spec §8 suggests preferring local evaluation whenever values are dirty). Today it
+keeps the server lines, which can be a snapshot from before the edit.

@@ -1769,3 +1769,16 @@ is a general rule for this file, not a one-off.
 
 ⚠️ **A finished item is re-armed to `'draft'`** so a release queued after the drain completed is
 still picked up; an in-flight `'uploading'` is left alone rather than fighting the drain.
+
+### Follow-up — `DEAL_CENTER_DESCRIPTION_SCHEMA` cache key
+
+`utils/offline-query-cache.ts` gains two keys for the Investment Center's scope text:
+`DESCRIPTION_SCHEMA_LIST` (job builder) and `DEAL_CENTER_DESCRIPTION_SCHEMA` (deal center).
+
+⚠️ **They are different collections, not a duplicate.** Full ticket in `docs/claude/deal-center.md`;
+the trap is that the two endpoints look interchangeable and are not, which cost one round of
+"fixed, still broken".
+
+Both are company CONFIGURATION — identical for every lead and rarely changed — so a cached copy is
+the same text the server would have sent. That is what makes caching them safe, and it is not true
+of lead-scoped data.

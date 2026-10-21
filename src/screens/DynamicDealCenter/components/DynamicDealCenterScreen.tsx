@@ -7,7 +7,10 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCalculatorSchema } from '../hooks/useCalculatorSchema';
 import { useDynamicCalculators } from '../hooks/useDynamicCalculators';
 import { useDynamicCalculatorSchemas } from '../hooks/useDynamicCalculatorSchemas';
-import { useGetDescriptionSchemas } from '../hooks/useDescriptionSchema';
+import {
+  useGetDescriptionSchemas,
+  useGetDealCenterDescriptionSchemas,
+} from '../hooks/useDescriptionSchema';
 import { useDealPricing } from '../hooks/useDealPricing';
 import { CalculatorView } from './CalculatorView';
 import { RolloutView } from './RolloutView';
@@ -112,6 +115,10 @@ function DynamicDealCenterCreate({ navigation, route }: DynamicDealCenterScreenP
    * The Deal Center is always visited first, which makes it the right place to warm them.
    */
   useGetDescriptionSchemas();
+  // ⚠️ And the DEAL CENTER schemas - a different collection, and the one the Investment
+  // Center's scope is actually built from. Caching only the job-builder list above is what
+  // left the offline panel showing bare category names.
+  useGetDealCenterDescriptionSchemas();
 
   const {
     configuredSchemas,

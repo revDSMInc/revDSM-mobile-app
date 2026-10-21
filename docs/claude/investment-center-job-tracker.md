@@ -618,3 +618,48 @@ which only the server sends on a saved calculator. Offline the panel shows the f
 lines UNGROUPED (the documented `heading: null` fallback) — correct text, flatter layout. Do not
 try to synthesise the headings locally: the grouping is the server's, and guessing it would make
 the offline and online copies disagree again in a subtler way.
+
+### Deal-center descriptions are evaluated on device when the server sent none (2026-10-21)
+
+Follows the backend spec `docs/MOBILE-DEAL-CENTER-DESCRIPTIONS-OFFLINE.md` (backend `staging`,
+2026-10-21). No backend change was needed — the config endpoint already exists.
+
+⚠️ **The previous attempt cached the WRONG COLLECTION.** There are two description schema sets
+with the same authoring UI and near-identical shapes:
+
+| endpoint | collection | input |
+|---|---|---|
+| `/sales-rep/v1/description-schema` | job builder | nested `verticalState` |
+| `/company/v1/deal-center-description-schema` | **deal center** | flat calculator |
+
+Caching the first does not give you the second, which is why the offline panel still showed bare
+category names after that fix. `useGetDealCenterDescriptionSchemas` now caches the right one
+(`OFFLINE_CACHE.DEAL_CENTER_DESCRIPTION_SCHEMA`), warmed from the Deal Center.
+
+The lines are rendered SERVER-SIDE inside `GET /appointments/:id/lfcalculators` and are not stored
+on the calculator, so an offline-built calculator has none at all.
+`utils/deal-center-descriptions.ts` (pure, 32 tests) ports the backend evaluator;
+`InvestmentPanel` uses it only when the server sent nothing.
+
+⚠️ **Server lines always win.** The local result fills a gap and never overrides, so an online
+deal renders exactly as before — that is what keeps this from touching anything else.
+
+⚠️ **The field-presence gate INVERTS the usual reading of an empty condition.** A deal-center
+schema is authored per product but an LFCalculator carries no product id, so every schema is
+evaluated against every calculator and presence keeps a Gutter schema silent on a Flooring one. A
+mapping with no condition at all is therefore DROPPED (it would print on every product), while
+inside the evaluator an empty condition passes. Both behaviours are required — see §4 of the spec.
+
+⚠️ **`entries[]` override same-named top-level keys** (the backend's loop runs after the spread),
+an object value counts as ABSENT (no grid support here), and a numeric field of `0` renders as
+`''`, not `"0"` — a bare zero in a line a customer reads. Each has a test.
+
+⚠️ **The two output lists dedupe independently**: a line in two categories appears once in
+`descriptions` and once in EACH group. Do not derive one from the other.
+
+⚠️ **Order is never sorted** — schema order, then mapping order. The portal decides which trade
+leads the quote.
+
+*Not done:* the panel does not yet re-evaluate when the rep changes a quantity on a calculator the
+server HAS described (spec §8 suggests preferring local evaluation whenever values are dirty).
+Today it keeps the server lines, which can be a snapshot from before the edit.
