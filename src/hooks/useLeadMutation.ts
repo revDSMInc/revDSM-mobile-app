@@ -4,6 +4,7 @@ import FileViewer from 'react-native-file-viewer';
 import { Storage } from '../utils/storage';
 import { FlashMessage } from '../config/message';
 import { LeadService } from '../services/api/leads';
+import { isSuccessfulCreate } from '../utils/offline-lead-queue';
 import { ENV } from '../config/env';
 import { Platform } from 'react-native';
 import { submitConsentForm, finalizeConsentUpload } from '../services/api/consent-forms';
@@ -15,7 +16,20 @@ export const useCreateLeadMutation = () => {
   return useMutation({
     mutationFn: async (data: any) => {
       const res = await LeadService.createLead(data);
-      return res.data;
+      const body = res.data;
+      // ⚠️ This backend can answer `{ code: 400, message: "..." }` as the BODY. If it ever arrives with an HTTP 2xx, axios does not
+      // reject it, and the form would say "Lead created successfully" for a lead the server REFUSED (the offline queue's drain
+      // already guards the same shape with `isSuccessfulCreate`). Reject it here, shaped like `normalizeApiError`'s rejection, so
+      // the form's classification and message handling see exactly what an HTTP 4xx would have given them.
+      if (!isSuccessfulCreate(body)) {
+        const bodyCode = typeof body?.code === 'number' && body.code >= 400 ? body.code : undefined;
+        throw {
+          ...(body && typeof body === 'object' ? body : {}),
+          message: (body && typeof body === 'object' && body.message) || 'Failed to create lead',
+          httpStatus: bodyCode ?? (res.status >= 400 ? res.status : 400),
+        };
+      }
+      return body;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
