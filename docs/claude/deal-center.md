@@ -5076,3 +5076,7 @@ Both builders (`convertJpegToPdf`, `convertJpegToPdfAsync`) share `buildPdfParts
 ### Send Signed Agreement prompt - "Valid lead id is required" on a lead created offline, then reconnected
 
 `widgets/modals/job-builder/AgreementDeliveryPrompt.tsx` gated its open-time `GET` and its Send (`PUT pdf-reports/v1/agreement/:leadId/delivery-preference`) on `isOnline()`. With signal back but the lead still keyed `lead-<ts>-<rand>`, a client id reached the server. Both now use `leadReachableOnServer(leadId)` (real id AND signal); otherwise the choice is queued (`queueDeliveryPreference`) and the agreement opens - the prompt must never hold the sale. A `LEAD_NOT_SYNCED` rejection queues too. ⚠️ Never gate a lead-scoped call on `isOnline()` alone. Full write-up and the app-wide guard: `docs/claude/offline.md` ("Unsynced lead"). Not verified on device.
+
+### Lead card / Job docs: "Resulted - bank decline" now reads "Bank Decline"
+
+`LeadCard.getLeadState` and `JobDocsSection.getStatusLabel` fell back to the raw `lead.status` ("bank decline") for any status without a hand-written label. The fallback now goes through `titleCaseStatus` (`utils/status-label.ts`, tested in `tests/offline/status-label.test.ts`): every word capitalised, `_`/`-` read as spaces. ⚠️ Known labels (`RESULTED_LABELS`, the Job-docs map) are untouched - add a label there rather than relying on the fallback. Not verified on device.

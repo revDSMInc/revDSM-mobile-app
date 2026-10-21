@@ -32,6 +32,7 @@ import { GlobalModal } from '../common/modal/GlobalModal';
 import { MapSelectionModal } from '../common/modal/MapSelectionModal';
 import { format } from 'date-fns';
 import { FlashMessage } from '../../config/message';
+import { titleCaseStatus } from '../../utils/status-label';
 import {
   calculateDistance,
   isSelfGeneratedLead,
@@ -147,7 +148,7 @@ function getLeadState(
 ): LeadState {
   const isResulted = !NON_RESULTED_STATUSES.includes(lead.status || '');
   if (isResulted) {
-    const label = RESULTED_LABELS[lead.status || ''] || lead.status || 'Resulted';
+    const label = RESULTED_LABELS[lead.status || ''] || titleCaseStatus(lead.status) || 'Resulted';
     return {
       status: 'RESULTED',
       color: '#94a3b8',

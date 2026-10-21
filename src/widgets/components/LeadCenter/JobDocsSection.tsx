@@ -30,6 +30,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DocumentScannerModal } from '../../modals/job-builder/DocumentScannerModal';
 import RNFS from 'react-native-fs';
 import { convertJpegToPdf as sharedConvertJpegToPdf } from '../../../utils/jpeg-to-pdf';
+import { titleCaseStatus } from '../../../utils/status-label';
 import { openOrderSheetEditor, warmOrderSheetForOffline } from '../../../services/orderSheetAnnotation';
 import { requestOrderSheetReset } from '../../../services/annotationSaveService';
 import { serverErrorText } from '../../../utils/order-sheet-annotation';
@@ -1360,7 +1361,7 @@ export const JobDocsSection = ({
       cancelled: 'Cancelled',
       rescheduled: 'Rescheduled',
     };
-    return labels[status] || lead?.status || 'Resulted';
+    return labels[status] || titleCaseStatus(lead?.status) || 'Resulted';
   };
 
   const fetchDraft = useCallback(async () => {
