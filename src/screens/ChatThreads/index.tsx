@@ -66,24 +66,19 @@ export default function ChatThreadsScreen({ navigation }: any) {
 
   const statusOptions = isInstaller ? INSTALLER_STATUS_OPTIONS : STATUS_OPTIONS;
 
-  useEffect(() => {
-    const unsub = SocketManager.on('team-channel-created', (data: any) => {
-      if (data?.success === false) {
-        FlashMessage.error('Failed to create channel', data?.message || '');
-        return;
-      }
-      FlashMessage.success('Channel created', data?.channel?.title || data?.channel?.name || '');
-      SocketManager.emit('get-team-channels');
-    });
-    return unsub;
-  }, []);
-
+  // The new channel itself lands in the list through the live `team-channel-created` event.
   const handleCreateChannel = (channelData: any) => {
     if (!SocketManager.isConnected()) {
       FlashMessage.warning('Socket not connected');
       return;
     }
-    ChatService.createChannel(channelData);
+    ChatService.createChannel(channelData)
+      .then((res: any) => {
+        FlashMessage.success('Channel created', res?.data?.channel?.name || channelData?.name || '');
+      })
+      .catch((err: any) => {
+        FlashMessage.error('Failed to create channel', err?.message || '');
+      });
   };
 
   const {
@@ -136,9 +131,9 @@ export default function ChatThreadsScreen({ navigation }: any) {
 
   const navigateToChannel = (item: any) => {
     navigation.navigate('ChatDetail', {
-      chatId: item._id || item.id,
-      customerName: item.title || item.name,
-      description: item.channelConfig?.description,
+      chatId: item.id,
+      customerName: item.name,
+      description: item.description,
       chatType: 'channel',
       initialParticipants: item.participants || [],
     });
@@ -351,7 +346,7 @@ export default function ChatThreadsScreen({ navigation }: any) {
       ) : (
         <FlatList
           data={filteredChannels || []}
-          keyExtractor={(item: any) => (item._id || item.id || Math.random().toString()).toString()}
+          keyExtractor={(item: any) => String(item.id)}
           contentContainerStyle={{ padding: 16, paddingBottom: 0, flexGrow: 1 }}
           showsVerticalScrollIndicator={false}
           renderItem={({ item }) => (

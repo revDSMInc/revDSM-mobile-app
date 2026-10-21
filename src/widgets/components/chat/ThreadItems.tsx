@@ -321,9 +321,10 @@ const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
 
 export function ChannelThreadItem({ channel, onPress }: any) {
   const { colors, isDark } = useTheme();
-  const { title, name, unreadCount, channelConfig } = channel;
-  const displayName = title || name || 'General';
+  const { name, unread_count: unreadCount, description, icon_emoji, icon_url } = channel;
+  const displayName = name || 'General';
   const scheme = CHANNEL_SCHEMES[displayName] || CHANNEL_SCHEMES.General;
+  const tint = colors.primary.main;
 
   return (
     <TouchableOpacity
@@ -336,17 +337,21 @@ export function ChannelThreadItem({ channel, onPress }: any) {
     >
       <View
         className="w-12 h-12 rounded-lg items-center justify-center mr-3"
-        style={{ backgroundColor: scheme.color + '20' }}
+        style={{ backgroundColor: tint + '20' }}
       >
-        <Text className="text-lg">{scheme.icon}</Text>
+        {icon_url ? (
+          <Image source={{ uri: icon_url }} style={{ width: 48, height: 48, borderRadius: 8 }} />
+        ) : (
+          <Text className="text-lg">{icon_emoji || scheme.icon}</Text>
+        )}
       </View>
 
       <View className="flex-1 pr-2">
         <Text className="font-semibold text-sm mb-0.5" style={{ color: '#1C252E' }}>
-          {title || name}
+          {name}
         </Text>
         <Text className="text-xs" style={{ color: '#637381' }} numberOfLines={1}>
-          {channelConfig?.description || 'Team Communication Channel'}
+          {description || 'Team Communication Channel'}
         </Text>
       </View>
 

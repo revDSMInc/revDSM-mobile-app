@@ -165,6 +165,7 @@ export default function ChatDetailScreen() {
     typingUsers,
     setLimit,
     channel,
+    loadOlder,
   } = useChatSession(initialChatId || null, leadId, isChannel, user, initialParticipants);
 
   const filteredParticipants = useMemo(() => {
@@ -219,7 +220,7 @@ export default function ChatDetailScreen() {
   );
 
   // Permissions come from the server per viewer; nothing here looks at the channel's type or name.
-  const channelObj = useMemo(() => channel || { _id: chatId, id: chatId }, [channel, chatId]);
+  const channelObj = useMemo(() => channel || { id: chatId }, [channel, chatId]);
 
   const {
     canPost,
@@ -276,13 +277,12 @@ export default function ChatDetailScreen() {
   );
 
   const handleSeeWho = useCallback((messageId: string) => {
-    const off = SocketManager.on('message-acks-response', (data: any) => {
-      if (String(data?.messageId) !== String(messageId)) return;
-      off();
-      const names = (list: any[]) => (list?.length ? list.map((p: any) => p.fullName || 'Unknown').join(', ') : 'No one');
-      Alert.alert('Read confirmations', `Confirmed:\n${names(data.confirmed)}\n\nHaven't confirmed:\n${names(data.pending)}`);
-    });
-    SocketManager.emit('get-message-acks', { messageId });
+    ChatService.getChannelAcks(messageId)
+      .then((data) => {
+        const names = (list: any[]) => (list?.length ? list.map((p: any) => p.fullName || 'Unknown').join(', ') : 'No one');
+        Alert.alert('Read confirmations', `Confirmed:\n${names(data.confirmed)}\n\nHaven't confirmed:\n${names(data.pending)}`);
+      })
+      .catch((e) => ChatService.alertChannelRefusal(e));
   }, []);
 
   useEffect(() => {
@@ -586,11 +586,11 @@ export default function ChatDetailScreen() {
           if (user?._id) {
             logEvent('pin', {
               user_id: user._id,
-              module_type: isChannel ? 'team_channel' : 'chat',
+              module_type: 'chat',
               created_by: user._id,
               meta: {
                 leadId,
-                type: isChannel ? 'team_channel' : 'chat',
+                type: 'chat',
                 action: action === 'pin' ? 'pinned message' : 'unpinned message',
                 messageId: msg._id,
               },
@@ -601,9 +601,9 @@ export default function ChatDetailScreen() {
           );
 
           if (action === 'pin') {
-            ChatService.pinMessage(chatId, msg._id, isChannel);
+            ChatService.pinMessage(chatId, msg._id);
           } else {
-            ChatService.unpinMessage(chatId, msg._id, isChannel);
+            ChatService.unpinMessage(chatId, msg._id);
           }
         } catch (err) {
           console.error('Pinning failed:', err);
@@ -672,10 +672,10 @@ export default function ChatDetailScreen() {
           );
 
           if (myPrevReaction) {
-            ChatService.removeReaction(chatId, m._id, myPrevReaction.emoji);
+            ChatService.removeReaction(chatId, m._id, myPrevReaction.emoji, isChannel);
           }
           if (!alreadyReactedSameEmoji) {
-            ChatService.addReaction(chatId, m._id, e);
+            ChatService.addReaction(chatId, m._id, e, isChannel);
           }
         } catch (err) {
           console.error('Reaction failed:', err);
@@ -691,13 +691,13 @@ export default function ChatDetailScreen() {
             onReply={setReplyingTo}
             onEdit={handleEdit}
             onReact={handleReact}
-            onPin={handlePin}
+            onPin={isChannel ? undefined : handlePin}
             onViewHistory={handleViewHistory}
             onNavigateToMessage={handleNavigateToMessage}
             onDelete={(id: string) => {
               setMessages((prev: any[]) => prev.filter((m: any) => m._id?.toString() !== id?.toString()));
               setPinnedMessages((prev: any[]) => prev.filter((m: any) => m._id?.toString() !== id?.toString()));
-              ChatService.deleteMessage(id);
+              ChatService.deleteMessage(id, isChannel);
             }}
             imageUrls={imageUrls}
             isViewOnly={isViewOnly}
@@ -1000,10 +1000,11 @@ export default function ChatDetailScreen() {
     >
       <ChatHeader
         leadId={isChannel ? undefined : leadId}
-        customerName={customerName}
-        description={description}
+        customerName={customerName || (isChannel ? channel?.name : undefined)}
+        description={description || (isChannel ? channel?.description : undefined)}
         leadPreview={{ previewImage: routePreviewImage, previewImages: routePreviewImages }}
         isChannel={isChannel}
+        channelIcon={isChannel ? { emoji: channel?.icon_emoji, url: channel?.icon_url } : undefined}
         isViewOnly={isViewOnly}
         colors={colors}
         isDark={isDark}
@@ -1050,6 +1051,8 @@ export default function ChatDetailScreen() {
                 keyboardShouldPersistTaps: 'never',
                 contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
                 keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
+                // Channels page their history: reaching the end of the inverted list loads older messages.
+                ...(isChannel ? { onEndReached: loadOlder, onEndReachedThreshold: 0.4 } : {}),
                 getItemLayout: (data: any, index: number) => ({
                   length: 160,
                   offset: 160 * index,
@@ -1130,6 +1133,8 @@ export default function ChatDetailScreen() {
                 keyboardShouldPersistTaps: 'handled',
                 contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
                 keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
+                // Channels page their history: reaching the end of the inverted list loads older messages.
+                ...(isChannel ? { onEndReached: loadOlder, onEndReachedThreshold: 0.4 } : {}),
                 getItemLayout: (data: any, index: number) => ({
                   length: 160,
                   offset: 160 * index,
@@ -1190,7 +1195,7 @@ export default function ChatDetailScreen() {
         isChannel={isChannel}
       />
       <Modal
-        visible={showPinned}
+        visible={showPinned && !isChannel}
         transparent
         animationType="fade"
         onRequestClose={() => setShowPinned(false)}
@@ -1229,7 +1234,7 @@ export default function ChatDetailScreen() {
             <PinnedMessagesArea
               pinnedMessages={pinnedMessages}
               imageUrls={imageUrls}
-              onUnpin={(msg: any) => ChatService.unpinMessage(chatId!, msg._id, isChannel)}
+              onUnpin={(msg: any) => ChatService.unpinMessage(chatId!, msg._id)}
               onNavigate={(msg: any) => {
                 handleNavigateToMessage(msg);
                 setShowPinned(false);

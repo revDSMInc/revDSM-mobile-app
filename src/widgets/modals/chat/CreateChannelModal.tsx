@@ -70,20 +70,12 @@ export default function CreateChannelModal({ visible, onClose, onCreate }: Creat
     }
     setCreating(true);
     try {
+      // REVDSM-1313: flat snake_case. The server fills company, creator and (by default) the office.
       const channelData = {
-        chatType: 'channel', // Important for backend mapping (web parity)
         name: title.trim(),
-        title: title.trim(),
-        channelType: selectedType.value,
+        icon_emoji: selectedType.icon,
         description: description.trim() || selectedType.description,
-        createdBy: user?.id || user?._id,
-        companyId: user?.companyId,
-        channelConfig: {
-          icon: selectedType.icon,
-          color: selectedType.color,
-          description: description.trim() || selectedType.description,
-          restrictedPosting,
-        },
+        post_permission: restrictedPosting ? 'managers' : 'everyone',
       };
 
       onCreate(channelData);

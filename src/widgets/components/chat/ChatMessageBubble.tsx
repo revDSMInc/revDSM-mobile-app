@@ -177,7 +177,7 @@ interface Props {
   onReply: (msg: any) => void;
   onEdit: (msg: any) => void;
   onReact: (msg: any, emoji: string) => void;
-  onPin: (msg: any) => void;
+  onPin?: (msg: any) => void;
   onViewHistory: (msg: any) => void;
   onNavigateToMessage?: (msg: any) => void;
   onDelete: (msgId: string) => void;
@@ -1191,7 +1191,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                       : (msg.replyToDetails || msg.replyTo) ? 200 : (hasTextOrFiles ? 50 : 50),
                   }}
                 >
-                  {isPinned && (
+                  {isPinned && onPin && (
                     <View className="flex-row items-center px-2 py-1 bg-black/5 border-b border-black/10">
                       <Icon name="pin" size={12} color="#FBC02D" />
                       <Text className="text-[10px] font-black ml-1 text-[#C39529]">PINNED</Text>
@@ -1735,7 +1735,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                   <Icon name="download-outline" size={20} color={isDark ? '#aaa' : '#555'} />
                 </TouchableOpacity>
               )}
-              {!isViewOnly && (
+              {!isViewOnly && onPin && (
                 <TouchableOpacity
                   onPress={() => {
                     onPin(msg);

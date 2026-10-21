@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import SocketManager from '../services/SocketManager';
+import ChatService from '../services/api/ChatService';
 import {
   isInstallingToday,
   isPendingInstall,
@@ -42,7 +43,6 @@ export const useChatThreads = (
       }
 
       SocketManager.emit('get-all-lead-chats', payload);
-      SocketManager.emit('get-team-channels');
     };
 
     if (SocketManager.isConnected()) refreshData();
@@ -69,12 +69,6 @@ export const useChatThreads = (
       setLoading(false);
     });
 
-    const unsubChannels = SocketManager.on('team-channels-response', (data: any) => {
-      console.log('[ChatSocket] team-channels-response:', JSON.stringify(data, null, 2));
-      setChannels(data.channels || []);
-      setChannelsLoading(false);
-    });
-
     const handleNewMsg = (data: any) => {
       const senderId =
         data?.senderId ||
@@ -86,9 +80,6 @@ export const useChatThreads = (
     };
 
     const unsubNewMsg = SocketManager.on('new-message', handleNewMsg);
-    const unsubNewChanMsg = SocketManager.on('new-channel-message', handleNewMsg);
-
-    const unsubChanRead = SocketManager.on('channel-read', refreshData);
     const unsubMsgSeen = SocketManager.on('message-seen', refreshData);
     const unsubLeadRead = SocketManager.on('lead-chat-read', refreshData);
     const unsubAllRead = SocketManager.on('mark-as-read-response', refreshData);
@@ -96,15 +87,105 @@ export const useChatThreads = (
     return () => {
       unsubConnect();
       unsubChats();
-      unsubChannels();
       unsubNewMsg();
-      unsubNewChanMsg();
-      unsubChanRead();
       unsubMsgSeen();
       unsubLeadRead();
       unsubAllRead();
     };
   }, [user, statusFilter]);
+
+  // Team channels (REVDSM-1313): the stored list is read over HTTP, then kept live from socket events.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const sortChannels = (list: any[]) =>
+      [...list].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const sameId = (a: any, b: any) => String(a) === String(b);
+
+    const loadList = () => {
+      setChannelsLoading(true);
+      ChatService.loadChannels()
+        .then((list) => {
+          if (!cancelled) setChannels(sortChannels(list));
+        })
+        .catch((e) => console.warn('[Threads] channel list failed:', e))
+        .finally(() => {
+          if (!cancelled) setChannelsLoading(false);
+        });
+    };
+    loadList();
+
+    // Created / updated arrive as the channel as THIS user sees it, without counters: keep ours.
+    const upsert = (data: any) => {
+      const c = data?.channel;
+      if (!c?.id) return;
+      setChannels((prev) => {
+        const old = prev.find((p) => sameId(p.id, c.id));
+        const merged = {
+          ...old,
+          ...c,
+          unread_count: old?.unread_count ?? 0,
+          pending_count: old?.pending_count ?? 0,
+        };
+        return sortChannels(old ? prev.map((p) => (p === old ? merged : p)) : [...prev, merged]);
+      });
+    };
+    const unsubCreated = SocketManager.on('team-channel-created', upsert);
+    const unsubUpdated = SocketManager.on('team-channel-updated', upsert);
+    const unsubArchived = SocketManager.on('team-channel-archived', (data: any) => {
+      setChannels((prev) => prev.filter((c) => !sameId(c.id, data?.channelId)));
+    });
+    const unsubReordered = SocketManager.on('team-channels-reordered', (data: any) => {
+      const ids: string[] = (data?.channelIds || []).map(String);
+      setChannels((prev) =>
+        sortChannels(
+          prev.map((c) => {
+            const idx = ids.indexOf(String(c.id));
+            return idx !== -1 && (!data?.officeId || sameId(c.office_id, data.officeId))
+              ? { ...c, sort_order: idx }
+              : c;
+          })
+        )
+      );
+    });
+    const unsubActivity = SocketManager.on('team-channel-activity', (data: any) => {
+      if (!data?.channelId || sameId(data.channelId, ChatService.openChannelId)) return;
+      setChannels((prev) =>
+        prev.map((c) =>
+          sameId(c.id, data.channelId) ? { ...c, unread_count: (c.unread_count || 0) + 1 } : c
+        )
+      );
+    });
+    const unsubPending = SocketManager.on('channel-pending-updated', (data: any) => {
+      setChannels((prev) =>
+        prev.map((c) =>
+          sameId(c.id, data?.channelId) ? { ...c, pending_count: data?.pendingCount ?? 0 } : c
+        )
+      );
+    });
+    // Anything missed while offline.
+    const unsubConnect = SocketManager.on('connect', loadList);
+    // Opening a channel reads it (the history call marks messages seen); closing it resyncs the counters.
+    const unsubOpen = ChatService.onOpenChannelChange((id) => {
+      if (id) {
+        setChannels((prev) => prev.map((c) => (sameId(c.id, id) ? { ...c, unread_count: 0 } : c)));
+      } else {
+        loadList();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubCreated();
+      unsubUpdated();
+      unsubArchived();
+      unsubReordered();
+      unsubActivity();
+      unsubPending();
+      unsubConnect();
+      unsubOpen();
+    };
+  }, [user]);
 
   const filteredChats = useMemo(() => {
     let result = [...chats];
@@ -165,7 +246,7 @@ export const useChatThreads = (
     const query = searchQuery.toLowerCase();
     
     if (query) {
-      result = result.filter((c) => (c.title || c.name || '').toLowerCase().includes(query));
+      result = result.filter((c) => (c.name || '').toLowerCase().includes(query));
     }
     
     return result;

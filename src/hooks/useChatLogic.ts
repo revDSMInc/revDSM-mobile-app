@@ -202,7 +202,7 @@ export const useChatLogic = (
               m._id === editingMessage._id ? { ...m, text: editedText, isEdited: true } : m
             )
           );
-          await ChatService.editMessage(editingMessage._id, editedText);
+          await ChatService.editMessage(editingMessage._id, editedText, isChannel);
           setEditingMessage(null);
         } else {
           if (user?._id) {
@@ -235,6 +235,7 @@ export const useChatLogic = (
             chatId,
             message: raw.text,
             replyTo: replyingTo?._id,
+            isChannel,
           });
         }
       } catch {
@@ -307,7 +308,8 @@ export const useChatLogic = (
           chatId,
           assets.map((f) => ({ uri: f.uri, name: f.fileName, type: f.type })),
           '',
-          reply?._id
+          reply?._id,
+          isChannel
         );
         if (user?._id) {
           const first = assets[0];
@@ -375,7 +377,9 @@ export const useChatLogic = (
         const stored = await ChatService.sendFileMessage(
           chatId,
           { uri: uploadUri, name: safeName, type: 'image/jpeg' },
-          ''
+          '',
+          undefined,
+          isChannel
         );
         if (user?._id) {
           let localSize = 0;
@@ -468,7 +472,7 @@ export const useChatLogic = (
       setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
 
       try {
-        const stored = await ChatService.sendAppointmentPhotos(chatId, filesPayload, ' ', reply?._id);
+        const stored = await ChatService.sendAppointmentPhotos(chatId, filesPayload, ' ', reply?._id, isChannel);
         if (user?._id) {
           const storedFiles = stored?.files?.length ? stored.files : filesPayload;
           logEvent('send', {
@@ -530,7 +534,7 @@ export const useChatLogic = (
       };
       setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
       try {
-        await ChatService.sendMessageREST({ chatId, message: text, replyTo: reply?._id });
+        await ChatService.sendMessageREST({ chatId, message: text, replyTo: reply?._id, isChannel });
       } catch {
         setMessages((prev: any[]) => prev.filter((m) => m._id !== tempId));
       }
@@ -563,7 +567,7 @@ export const useChatLogic = (
         prev.map((m) => (m._id === editingMessage._id ? { ...m, text: editedText, isEdited: true } : m))
       );
       try {
-        await ChatService.editMessage(editingMessage._id, editedText);
+        await ChatService.editMessage(editingMessage._id, editedText, isChannel);
       } catch (e) {
         console.warn('[Chat] edit failed:', e);
       }
@@ -636,7 +640,7 @@ export const useChatLogic = (
         }));
         setMessages((prev: any[]) => GiftedChat.append(prev, optimistics));
         const storedDocs = await Promise.all(docs.map((f) =>
-          ChatService.sendFileMessage(chatId, { uri: f.uri, name: f.name, type: f.type }, '')
+          ChatService.sendFileMessage(chatId, { uri: f.uri, name: f.name, type: f.type }, '', undefined, isChannel)
         ));
         if (user?._id) {
           const firstDoc = docs[0];
@@ -723,7 +727,9 @@ export const useChatLogic = (
       const stored = await ChatService.sendFileMessage(
         chatId,
         { uri, name: fileName, type: 'audio/m4a' },
-        ''
+        '',
+        undefined,
+        isChannel
       );
       if (user?._id && voiceLogMeta) {
         const storedFiles = stored?.files?.length
