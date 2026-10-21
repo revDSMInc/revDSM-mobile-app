@@ -173,6 +173,9 @@ export interface SaveAnnotatedOrderSheetArgs {
   /** Fallback only: the pristine original copy and the PDF sizes this sheet is known by. */
   originalPath?: string | null;
   knownSizes?: number[];
+  /** When the rep tapped Save, and whether that was with no connection - both go on the activity log. */
+  occurredAt?: string;
+  queuedOffline?: boolean;
 }
 
 export interface SaveAnnotatedOrderSheetResult {
@@ -243,6 +246,8 @@ export async function saveAnnotatedOrderSheet(args: SaveAnnotatedOrderSheetArgs)
         documentId,
         revision: result.annotation?.revision ?? null,
         twinState: result.annotation?.twin?.state ?? null,
+        occurredAt: args.occurredAt,
+        offline: !!args.queuedOffline,
       }).catch(() => {});
     }
     return result;
@@ -261,11 +266,16 @@ export async function resetAnnotatedOrderSheet(args: {
   currentUri?: string | null;
   knownSizes?: number[];
   baseName?: string | null;
+  /** When the rep asked for the reset, and whether that was with no connection (logged with the action time). */
+  occurredAt?: string;
+  queuedOffline?: boolean;
 }): Promise<ResetOutcome> {
   const { leadId, documentId, currentUri, knownSizes = [] } = args;
   const owner = getSessionOwner();
   const logIt = () => {
-    if (owner) logOrderSheetReset(owner, leadId, { documentId }).catch(() => {});
+    if (owner) {
+      logOrderSheetReset(owner, leadId, { documentId, occurredAt: args.occurredAt, offline: !!args.queuedOffline }).catch(() => {});
+    }
   };
 
   try {

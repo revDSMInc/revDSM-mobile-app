@@ -33,7 +33,7 @@ import { useNavigation } from '@react-navigation/native';
 import { openOrderSheetEditor } from '../../../../services/orderSheetAnnotation';
 import { FlashMessage } from '../../../../config/message';
 import { usePendingOrderSheetJobs } from '../../../../hooks/usePendingOrderSheetJobs';
-import { resetAnnotatedOrderSheet } from '../../../../services/orderSheetSync';
+import { requestOrderSheetReset } from '../../../../services/annotationSaveService';
 import { serverErrorText, showResetAction } from '../../../../utils/order-sheet-annotation';
 import { ConfirmDialog } from '../../../../screens/DynamicDealCenter/components/ConfirmDialog';
 import { PdfPreviewModal } from '../../../modals/PdfPreviewModal';
@@ -443,7 +443,7 @@ export function SummaryFinalizeCards({
     if (!file || !leadId || !serverId || resettingSheet) return;
     setResettingSheet(true);
     try {
-      const outcome = await resetAnnotatedOrderSheet({
+      const outcome = await requestOrderSheetReset({
         leadId,
         documentId: String(serverId),
         currentUri: String(fileSrc(file) || ''),
@@ -453,7 +453,7 @@ export function SummaryFinalizeCards({
       if (outcome === 'unavailable') {
         FlashMessage.warning('Cannot reset', 'The original of this order sheet is not available on this phone.');
       }
-      const fresh = onRefreshDocs ? await onRefreshDocs('orderSheet') : null;
+      const fresh = onRefreshDocs && outcome !== 'queued' ? await onRefreshDocs('orderSheet') : null;
       if (fresh) commitUploaded('orderSheet', fresh);
     } catch (e: any) {
       console.warn('[SummaryFinalizeCards] order sheet reset failed', e);

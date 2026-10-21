@@ -24,8 +24,9 @@ import { warmToLocalCache } from '../utils/imageFileCache';
 import { uploadQueueManager, type UploadQueueAnnotation } from '../utils/uploadQueue';
 import { renderAnnotatedImage } from './annotationRenderer';
 import { FlashMessage } from '../config/message';
-import { saveAnnotatedOrderSheet } from './orderSheetSync';
+import { resetAnnotatedOrderSheet, saveAnnotatedOrderSheet, type ResetOutcome } from './orderSheetSync';
 import { serverErrorText } from '../utils/order-sheet-annotation';
+import { isNetworkError } from '../utils/network-error';
 
 const JOBS_KEY = 'annotation_save_jobs';
 const MAX_ATTEMPTS = 3;
@@ -49,6 +50,20 @@ export interface OrderSheetJobAnnotation {
   staleUris?: string[];
   originalPath?: string | null;
   knownSizes?: number[];
+  /** Stamped when the job is written: the rep saved with no connection. */
+  queuedOffline?: boolean;
+}
+
+/**
+ * REVUIUX-569: "Reset all changes" asked with no connection. Rides the same durable queue as the annotation (FIFO, so a reset
+ * asked after an annotate runs after it) and is replayed on reconnect by `resetAnnotatedOrderSheet`.
+ */
+export interface OrderSheetResetJobAnnotation {
+  mode: 'orderSheetReset';
+  orderSheetDocumentId: string;
+  baseName?: string;
+  currentUri?: string | null;
+  knownSizes?: number[];
 }
 
 export interface AnnotationJob {
@@ -67,7 +82,7 @@ export interface AnnotationJob {
   subcategory: string;
   coordinates?: { latitude: number; longitude: number };
   createdAt: string;
-  annotation: UploadQueueAnnotation | OrderSheetJobAnnotation;
+  annotation: UploadQueueAnnotation | OrderSheetJobAnnotation | OrderSheetResetJobAnnotation;
   attempts?: number;
 }
 
@@ -154,6 +169,57 @@ const makeDurable = async (id: string, uri: string): Promise<string> => {
   }
 };
 
+/**
+ * "Reset all changes" for an order sheet. Online it runs straight away (the rep sees the server's own answer); with no
+ * connection - or when the request never reached the server - it is written to the durable queue and replayed on reconnect,
+ * with the moment the rep asked as the log's action time. Resolves 'queued' in that case.
+ */
+export const requestOrderSheetReset = async (args: {
+  leadId: string;
+  documentId: string;
+  currentUri?: string | null;
+  knownSizes?: number[];
+  baseName?: string | null;
+}): Promise<ResetOutcome | 'queued'> => {
+  const requestedAt = new Date().toISOString();
+  const queue = async (): Promise<'queued'> => {
+    load();
+    const id = `annot-job-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    jobs.push({
+      id,
+      userId: getSessionOwner() || undefined,
+      leadId: args.leadId,
+      originalUri: '',
+      layoutWidth: 0,
+      layoutHeight: 0,
+      strokes: [],
+      texts: [],
+      shapes: [],
+      categoryName: 'Order Sheet',
+      subcategory: 'Order Sheet (Reset)',
+      createdAt: requestedAt,
+      annotation: {
+        mode: 'orderSheetReset',
+        orderSheetDocumentId: args.documentId,
+        baseName: args.baseName || undefined,
+        currentUri: args.currentUri,
+        knownSizes: args.knownSizes,
+      },
+    });
+    persist();
+    void processAnnotationJobs();
+    return 'queued';
+  };
+  if (!isOnline()) return queue();
+  try {
+    return await resetAnnotatedOrderSheet({ ...args, occurredAt: requestedAt, queuedOffline: false });
+  } catch (e: any) {
+    // A real server answer is thrown to the caller; only "never reached the server" is queued.
+    if (!isNetworkError(e)) throw e;
+    return queue();
+  }
+};
+
 /** Writes the jobs and starts working through them. Resolves as soon as they are SAVED - not when they are uploaded. */
 export const enqueueAnnotationJobs = async (inputs: AnnotationJobInput[]): Promise<number> => {
   load();
@@ -161,7 +227,9 @@ export const enqueueAnnotationJobs = async (inputs: AnnotationJobInput[]): Promi
   for (const input of inputs) {
     const id = `annot-job-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const originalUri = await makeDurable(id, input.originalUri);
-    jobs.push({ ...input, originalUri, id, userId, createdAt: new Date().toISOString() });
+    const annotation =
+      input.annotation.mode === 'orderSheet' ? { ...input.annotation, queuedOffline: !isOnline() } : input.annotation;
+    jobs.push({ ...input, annotation, originalUri, id, userId, createdAt: new Date().toISOString() });
   }
   persist();
   void processAnnotationJobs();
@@ -211,6 +279,19 @@ export const flattenMarks = (input: {
   });
 
 const processOne = async (job: AnnotationJob): Promise<void> => {
+  if (job.annotation.mode === 'orderSheetReset') {
+    const rs = job.annotation;
+    await resetAnnotatedOrderSheet({
+      leadId: job.leadId,
+      documentId: rs.orderSheetDocumentId,
+      currentUri: rs.currentUri,
+      knownSizes: rs.knownSizes,
+      baseName: rs.baseName,
+      occurredAt: job.createdAt,
+      queuedOffline: true,
+    });
+    return;
+  }
   const background = await readBase64(job.originalUri);
   const flattened = await flattenMarks({
     backgroundBase64: background,
@@ -236,6 +317,8 @@ const processOne = async (job: AnnotationJob): Promise<void> => {
       staleUris: os.staleUris,
       originalPath: os.originalPath,
       knownSizes: os.knownSizes,
+      occurredAt: job.createdAt,
+      queuedOffline: os.queuedOffline,
     });
     return;
   }
@@ -274,7 +357,7 @@ export const processAnnotationJobs = async (): Promise<void> => {
         // image has painted, and a missing file would blank it. Removed after a grace period (and by the startup sweep).
         setTimeout(() => void unlinkQuiet(job.originalUri), ORIGINAL_GRACE_MS);
       } catch (e: any) {
-        if (e?.offline || !isOnline()) {
+        if (e?.offline || !isOnline() || isNetworkError(e)) {
           // Waiting for the original's bytes: resume on reconnect. Not an attempt.
           console.log('[AnnotationJobs] waiting for a connection to fetch the original');
           break;
@@ -287,8 +370,12 @@ export const processAnnotationJobs = async (): Promise<void> => {
           void unlinkQuiet(job.originalUri);
           // An order-sheet failure shows what the SERVER said (`{ message }`), not a generic line.
           FlashMessage.error(
-            job.annotation.mode === 'orderSheet' ? 'Order sheet not saved' : 'Annotation not saved',
-            job.annotation.mode === 'orderSheet'
+            job.annotation.mode === 'orderSheetReset'
+              ? 'Order sheet not reset'
+              : job.annotation.mode === 'orderSheet'
+                ? 'Order sheet not saved'
+                : 'Annotation not saved',
+            job.annotation.mode === 'orderSheet' || job.annotation.mode === 'orderSheetReset'
               ? serverErrorText(e, 'The annotated order sheet could not be saved.')
               : 'One annotated photo could not be prepared. Please annotate it again.',
           );

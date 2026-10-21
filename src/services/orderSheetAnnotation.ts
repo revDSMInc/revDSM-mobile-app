@@ -16,9 +16,12 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 import { LeadService } from './api/leads';
 import { FlashMessage } from '../config/message';
 import { getSessionOwner } from './sessionScope';
-import { warmToLocalCache } from '../utils/imageFileCache';
+import { isOnline } from './connectivity';
+import { adoptLocalFileAsCached, warmToLocalCache } from '../utils/imageFileCache';
+import { resolveS3Url } from '../utils/s3-utils';
 import { base64ByteLength, stripDataUriPrefix } from '../utils/jpeg-to-pdf';
 import { countPdfPages, extractEmbeddedJpeg } from '../utils/pdf-extract-jpeg';
+import { httpStatusOf } from '../utils/network-error';
 import { serverErrorText, shouldRasterize } from '../utils/order-sheet-annotation';
 import { MOBILE_ANNOTATION_FORMAT } from '../utils/annotation-restore';
 import { logOrderSheetAnnotated } from '../utils/activity-log/job-builder-logs';
@@ -95,6 +98,21 @@ const loadCleanOriginalJpeg = async (annotation: any, fallbackBucket?: string): 
   }
 };
 
+/**
+ * Keeps the bytes of an order sheet on the phone while there is signal, so the pencil still opens it with none. Offline the row's
+ * uri is the plain S3 url (the signed one cannot be fetched), a different cache key from the signed url that was downloaded, so
+ * the file is also adopted under that key. Best effort: never throws, never blocks the list.
+ */
+export const warmOrderSheetForOffline = async (doc: { uri?: string; filePath?: string; contentType?: string }): Promise<void> => {
+  try {
+    if (!doc?.uri || !/^https?:/i.test(doc.uri)) return;
+    const local = await warmToLocalCache(doc.uri);
+    if (local && doc.filePath) await adoptLocalFileAsCached(local, resolveS3Url(doc.filePath));
+  } catch {
+    /* offline or evicted: the editor will simply need a connection once */
+  }
+};
+
 export interface OpenOrderSheetEditorArgs {
   navigation: any;
   lead: any;
@@ -109,7 +127,7 @@ export async function openOrderSheetEditor({ navigation, lead, leadId, doc }: Op
     return;
   }
   const owner = getSessionOwner();
-  if (owner) logOrderSheetAnnotated(owner, leadId, 'opened', { documentId, revision: doc.annotation?.revision ?? 0 }).catch(() => {});
+  if (owner) logOrderSheetAnnotated(owner, leadId, 'opened', { documentId, revision: doc.annotation?.revision ?? 0, offline: !isOnline() }).catch(() => {});
 
   try {
     const rasterize = shouldRasterize(doc.contentType, doc.filePath || doc.uri);
@@ -179,7 +197,8 @@ export async function openOrderSheetEditor({ navigation, lead, leadId, doc }: Op
     });
   } catch (e: any) {
     console.warn('[OrderSheet] could not open the editor', e);
-    const serverText = serverErrorText(e?.response ? e : null);
+    // The API layer rejects with a plain body object (no `.response`): a server answer is told by its http status.
+    const serverText = httpStatusOf(e) !== undefined ? serverErrorText(e) : '';
     if (serverText) FlashMessage.error('Could not open the order sheet', serverText);
   }
 }

@@ -30,8 +30,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DocumentScannerModal } from '../../modals/job-builder/DocumentScannerModal';
 import RNFS from 'react-native-fs';
 import { convertJpegToPdf as sharedConvertJpegToPdf } from '../../../utils/jpeg-to-pdf';
-import { openOrderSheetEditor } from '../../../services/orderSheetAnnotation';
-import { resetAnnotatedOrderSheet } from '../../../services/orderSheetSync';
+import { openOrderSheetEditor, warmOrderSheetForOffline } from '../../../services/orderSheetAnnotation';
+import { requestOrderSheetReset } from '../../../services/annotationSaveService';
 import { serverErrorText } from '../../../utils/order-sheet-annotation';
 import { usePendingOrderSheetJobs } from '../../../hooks/usePendingOrderSheetJobs';
 import { useAuth } from '../../../hooks/useAuth';
@@ -767,7 +767,8 @@ export const JobDocsSection = ({
     const { doc } = target;
     setResettingOrderSheet(true);
     try {
-      const outcome = await resetAnnotatedOrderSheet({
+      // Offline (or never reached the server): queued on the durable job queue; the row shows "Syncing" until it lands.
+      const outcome = await requestOrderSheetReset({
         leadId,
         documentId: String(doc.serverId),
         currentUri: doc.uri,
@@ -776,7 +777,7 @@ export const JobDocsSection = ({
       });
       if (outcome === 'unavailable') {
         FlashMessage.warning('Cannot reset', 'The original of this order sheet is not available on this phone.');
-      } else {
+      } else if (outcome !== 'queued') {
         await refetch();
         setTimeout(() => refetch(), 1000);
       }
@@ -1505,7 +1506,12 @@ export const JobDocsSection = ({
         }));
         const res = await LeadService.getSecureUrls(allPaths);
         const urls = res.data?.data || res.data;
-        if (!cancelled && Array.isArray(urls)) setResolvedDocuments(split(mapWith(mergedAllDocs, urls)));
+        if (!cancelled && Array.isArray(urls)) {
+          const resolved = split(mapWith(mergedAllDocs, urls));
+          setResolvedDocuments(resolved);
+          // So the pencil still opens an order sheet with no signal (annotating offline is queued, see annotationSaveService).
+          resolved.orderSheets.forEach((d: any) => void warmOrderSheetForOffline(d));
+        }
       } catch (error) {
         console.error('Failed to resolve secure URLs', error);
       }

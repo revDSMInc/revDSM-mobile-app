@@ -1468,3 +1468,20 @@ An annotated ORDER SHEET rides the same durable job queue (`OrderSheetJobAnnotat
 ## Agreement configuration is warmed for offline (REVUIUX: Lighting description lines)
 
 An agreement drawn on the device needs the layout (`agreement-config`) and each product's description schema (`description-schema:<productId>`, plus the list `description-schema-list` the Investment Center reads). They are now fetched ahead by `useWarmDealCenterConfig` (Leads screen) through `cachedFetch`, so they are on disk before signal is lost; `OFFLINE_CACHE.DESCRIPTION_SCHEMA_LIST` is new in `utils/offline-query-cache.ts`. A local agreement whose schema was never saved refuses to draw (`descriptionSchemaMissingOffline`). Full write-up, and the `[IF]` / `col:` evaluator port: `deal-center.md` § "Description-of-Work templates".
+
+## Order-sheet annotation (REVUIUX-569) offline: annotate AND reset queue, every log carries online/offline + the action time
+
+Files: `services/annotationSaveService.ts` (queue), `services/orderSheetSync.ts` (the endpoints), `services/orderSheetAnnotation.ts`
+(`warmOrderSheetForOffline`), `utils/activity-log/job-builder-logs.ts`, `hooks/usePendingOrderSheetJobs.ts`.
+
+| Step | Online | Offline |
+|---|---|---|
+| Open the pencil | bytes from the warmed local copy / download | the warmed copy only: `JobDocsSection` warms every order sheet PDF while online (`warmOrderSheetForOffline`, also adopted under the plain-S3 key the row uses with no signal) |
+| Save an annotation | job on the durable queue (mode `orderSheet`) -> PATCH in place | same job, stamped `queuedOffline`; flattened locally (WebView), PATCHed on reconnect |
+| Reset all changes | `requestOrderSheetReset` runs `POST .../annotation/reset` at once (server answer shown) | queued as mode `orderSheetReset` on the SAME queue (FIFO: a reset asked after an annotate runs after it); also queued when a request never reached the server (`isNetworkError`) |
+| Row state | "Syncing" while ANY order-sheet job (annotate or reset) of the lead is queued | same |
+
+- **Logs:** `order_sheet_annotated` (`click` opened, `add` stored) and `order_sheet_reset` (`add`) now carry `meta.connection` (`online`|`offline` - what the rep's connection was when they acted) and `meta.occurredAt` = the moment the rep tapped Save / confirmed Reset (the job's `createdAt`), NOT the reconnect time. They go through `logEvent`, so offline they are held by the activity-log queue and replayed in order. ⚠️ Do not stamp the time at replay (same rule as every other log - see "Activity logs offline").
+- ⚠️ A job that fails with a NETWORK error (weak signal mid-PATCH) now waits for the next reconnect / foreground instead of burning one of its 3 attempts; only a real server answer counts as an attempt.
+- ⚠️ `normalizeApiError` rejects with a plain body object (no `.response`): tell a server answer by `httpStatusOf(e) !== undefined`, never `e.response`.
+- Needs a device check: airplane mode -> annotate -> Save (row says Syncing) -> reconnect -> sheet replaced, ONE log with `connection: 'offline'` and the Save time; same for Reset. A sheet never opened online cannot be annotated offline (its bytes are not on the phone).
