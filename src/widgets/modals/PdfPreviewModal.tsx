@@ -38,6 +38,7 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [isImage, setIsImage] = useState(false);
+  const [pdfAspect, setPdfAspect] = useState<number | null>(null);
 
   const isImageUri = (uriPath: string) => {
     const cleanPath = uriPath.split('?')[0];
@@ -49,8 +50,10 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
       setLocalUri(null);
       setError(null);
       setIsImage(false);
+      setPdfAspect(null);
       return;
     }
+    setPdfAspect(null);
 
     if (uri.startsWith('data:')) {
       const writeInlineDoc = async () => {
@@ -334,9 +337,13 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
                 key={localUri}
                 source={{ uri: localUri, cache: false }}
                 trustAllCerts={false}
+                fitPolicy={2}
                 style={[styles.pdf, { backgroundColor: isDark ? colors.surface : '#f8fafc' }]}
-                onLoadComplete={(numberOfPages) => {
+                onLoadComplete={(numberOfPages, path, size) => {
                   console.log(`[PdfPreviewModal] Loaded ${numberOfPages} pages`);
+                  const w = size?.width;
+                  const h = size?.height;
+                  if (w && h) setPdfAspect(w / h);
                 }}
                 onPageChanged={(page) => {
                   console.log(`[PdfPreviewModal] Page: ${page}`);
@@ -406,8 +413,8 @@ const styles = StyleSheet.create({
   },
   pdf: {
     flex: 1,
-    width: Dimensions.get('window').width,
-    height: Dimensions.get('window').height,
+    width: '100%',
+    height: '100%',
   },
   centerContainer: {
     flex: 1,

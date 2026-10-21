@@ -36,8 +36,9 @@ import {
 } from '../../../utils/activity-log/funding-log';
 import { isReissue } from '../utils/funding';
 import { LeadService } from '../../../services/api/leads';
-import { isOnline } from '../../../services/connectivity';
 import { isNetworkError, shouldAnnounceFailure } from '../../../utils/network-error';
+import { leadReachableOnServer } from '../../../utils/lead-server-ready';
+import { LEAD_NOT_SYNCED_MESSAGE } from '../../../utils/lead-sync-state';
 import { getRawPhoneNumber } from '../../../utils/phone-util';
 
 export interface FundingActionResult<T = void> {
@@ -117,7 +118,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
   );
 
   const refetch = useCallback(async (): Promise<FundingRecord | null> => {
-    if (!leadId) return null;
+    if (!leadId || !leadReachableOnServer(leadId)) return null;
     try {
       const res = await FundingService.getFunding(leadId, companyId, actorId);
       const next = res.data?.data?.funding ?? null;
@@ -182,6 +183,9 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
           if (__DEV__) console.error(`[funding] BAD REQUEST during ${context}:`, error.message);
           FlashMessage.error(context, error.message);
           break;
+        case 'leadNotSynced':
+          FlashMessage.info('Saved on your device', error.message);
+          break;
         default:
           FlashMessage.error(context, error.message);
       }
@@ -197,7 +201,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       opts: { pid?: string } = {}
     ): Promise<FundingActionResult<any>> => {
       if (!leadId) return { ok: false, error: { kind: 'bug', message: 'No lead id' } };
-      if (!isOnline()) {
+      if (!leadReachableOnServer(leadId)) {
         const message = `${context} needs a connection. Nothing was sent — try again once you have signal.`;
         FlashMessage.info('Needs a connection', message);
         return { ok: false, error: { kind: 'offline', message } };
@@ -218,7 +222,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
   );
 
   const load = useCallback(async (): Promise<FundingRecord | null> => {
-    if (!leadId) return null;
+    if (!leadId || !leadReachableOnServer(leadId)) return null;
     setIsLoading(true);
     setPaymentsSetupError(null);
     try {
@@ -236,7 +240,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
 
   const refreshPayment = useCallback(
     async (pid: string) => {
-      if (!leadId) return null;
+      if (!leadId || !leadReachableOnServer(leadId)) return null;
       try {
         const res = await FundingService.getPayment(leadId, pid, companyId, actorId);
         const payment = res.data?.data?.payment;
@@ -576,6 +580,9 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
 
   const submit = useCallback(async (): Promise<FundingActionResult> => {
     if (!leadId) return { ok: false, error: { kind: 'bug', message: 'No lead id' } };
+    if (!leadReachableOnServer(leadId)) {
+      return { ok: false, error: { kind: 'offline', message: LEAD_NOT_SYNCED_MESSAGE } };
+    }
     setIsSubmitting(true);
     const submitted = recordRef.current;
     const shape = {

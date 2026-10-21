@@ -461,10 +461,14 @@ export function DynamicManagePhotosView({
     navigation.navigate('ImageAnnotation', {
       selectedPhotos,
       lead,
-      onSaveSuccess: () => {
+      onSaveSuccess: async () => {
         exitSelectMode();
-        queryClient.invalidateQueries({ queryKey: ['leadAnnotations', annotationLeadId] });
-        refetch?.();
+        await queryClient.invalidateQueries({ queryKey: ['leadAnnotations', annotationLeadId] });
+        try {
+          await refetch?.();
+        } catch (e) {
+          console.warn('[DynamicManagePhotosView] refetch after annotate failed', e);
+        }
         onReopen?.();
       },
       onCancel: () => {

@@ -46,6 +46,15 @@ export const ImageSlideshowModal = ({
   asOverlay = false,
 }: ImageSlideshowModalProps) => {
   const thumbnailListRef = useRef<FlatList>(null);
+  const [imageAspect, setImageAspect] = React.useState<number | null>(null);
+
+  useEffect(() => {
+    const uri = previewImages[previewIndex]?.uri;
+    if (!uri) return;
+    Image.getSize(uri, (w, h) => {
+      if (w > 0 && h > 0) setImageAspect(w / h);
+    }, () => setImageAspect(4 / 3));
+  }, [previewImages, previewIndex]);
 
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -229,7 +238,7 @@ export const ImageSlideshowModal = ({
           {/* Center Image */}
           {previewImages[previewIndex] && (
             <GestureDetector gesture={composedGesture}>
-              <Animated.View className="w-full h-[70%]" style={animatedStyle}>
+              <Animated.View className="w-full h-full" style={animatedStyle}>
                 <LoadingImage
                   uri={previewImages[previewIndex].uri}
                   style={{ width: '100%', height: '100%' }}

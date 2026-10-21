@@ -18,7 +18,8 @@ describe('order-sheet-pdf', () => {
     const out = extractSingleJpegFromPdf(pdf);
     expect(out).not.toBeNull();
     expect(out!.jpegBase64).toBe(jpeg);
-    expect(out!.mediaBox).toEqual({ width: 595, height: 842 });
+    // The page follows the image's aspect (8x6 fake JPEG), not a fixed A4.
+    expect(out!.mediaBox).toEqual({ width: 595, height: 446.25 });
   });
 
   it('returns null for something that is not a one-image PDF', () => {

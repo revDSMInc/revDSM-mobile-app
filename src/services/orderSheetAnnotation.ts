@@ -19,7 +19,7 @@ import { getSessionOwner } from './sessionScope';
 import { warmToLocalCache } from '../utils/imageFileCache';
 import { base64ByteLength, stripDataUriPrefix } from '../utils/jpeg-to-pdf';
 import { countPdfPages, extractEmbeddedJpeg } from '../utils/pdf-extract-jpeg';
-import { multiPageMessage, shouldRasterize } from '../utils/order-sheet-annotation';
+import { serverErrorText, shouldRasterize } from '../utils/order-sheet-annotation';
 import { MOBILE_ANNOTATION_FORMAT } from '../utils/annotation-restore';
 import { logOrderSheetAnnotated } from '../utils/activity-log/job-builder-logs';
 import { findLocalOriginal, saveLocalOriginalCopy } from './orderSheetSync';
@@ -106,7 +106,6 @@ export interface OpenOrderSheetEditorArgs {
 export async function openOrderSheetEditor({ navigation, lead, leadId, doc }: OpenOrderSheetEditorArgs): Promise<void> {
   const documentId = String(doc?.serverId ?? '');
   if (!documentId || !doc?.uri) {
-    FlashMessage.warning('Cannot annotate this order sheet', 'It has not finished uploading yet.');
     return;
   }
   const owner = getSessionOwner();
@@ -125,7 +124,8 @@ export async function openOrderSheetEditor({ navigation, lead, leadId, doc }: Op
     if (rasterize) {
       const extracted = extractEmbeddedJpeg(currentBase64);
       if (!extracted) {
-        FlashMessage.warning('Cannot annotate this order sheet', multiPageMessage(countPdfPages(currentBase64)));
+        // No app-written message: say nothing rather than a fixed warning (the server speaks for itself).
+        console.warn('[OrderSheet] no single scan found in the PDF', { pages: countPdfPages(currentBase64), bytes: currentBytes });
         return;
       }
       currentJpeg = extracted.jpegBase64;
@@ -179,6 +179,7 @@ export async function openOrderSheetEditor({ navigation, lead, leadId, doc }: Op
     });
   } catch (e: any) {
     console.warn('[OrderSheet] could not open the editor', e);
-    FlashMessage.error('Could not open the order sheet', 'Check your connection and try again.');
+    const serverText = serverErrorText(e?.response ? e : null);
+    if (serverText) FlashMessage.error('Could not open the order sheet', serverText);
   }
 }
