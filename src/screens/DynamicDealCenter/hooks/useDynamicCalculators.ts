@@ -41,7 +41,7 @@ import {
   resolveAppointmentFallback,
   resolveOnlineLoadSource,
 } from '../../../utils/deal-center-load';
-import { canAddCalculatorTab } from '../../../utils/calculator-tab-gate';
+import { canAddCalculatorTab, canDuplicateCalculatorTab } from '../../../utils/calculator-tab-gate';
 
 export interface CalcTab {
   id: string;
@@ -1099,6 +1099,8 @@ export function useDynamicCalculators(
     [appointmentId]
   );
 
+  const addingTabRef = useRef(false);
+
   const handleAddTab = useCallback(async () => {
     /**
      * ⚠️ Second line of defence. `CalculatorView` already refuses and explains, but the gate
@@ -1106,67 +1108,36 @@ export function useDynamicCalculators(
      * would silently create the blank tab the rule exists to prevent. Returns quietly - the
      * UI owns the message, and two flashes for one tap is worse than none.
      *
-     * ⚠️ READS `tabsRef.current`, NOT `tabs`. This callback's dep array is `tabs.length`, so
-     * the captured `tabs` is frozen at the last length change - typing a quantity does not
-     * change the length, so the closure still holds the EMPTY tabs. Reading the prop here
-     * blocked the button forever once the gate was added, with no message, because the hook
-     * returned before any UI ran.
+     * ⚠️ READS `tabsRef.current`, NOT `tabs`, and locks `addingTabRef` synchronously across
+     * the async `createRemoteTab` round-trip so rapid taps on `+` can never create two empty
+     * calculators before the first request finishes.
      */
+    if (addingTabRef.current) return;
     if (!canAddCalculatorTab(tabsRef.current as any, activeTabId).allowed) return;
-    const placeholder = String(tabs.length + 1);
-    if (onDevice() && offlineWorkIdRef.current) {
-      const defaults = inheritedDefaults();
-      const created = deviceTabFrom(placeholder, {}, defaults);
-      if (enteredBy) {
-        logCalculatorCreated({
-          userId: enteredBy,
-          calculatorId: created.id,
-          appointmentId: appointmentId || '',
-          calculatorTitle: created.title,
-          calculatorPosition: tabs.length + 1,
-          leadId: leadId || undefined,
-        }).catch(() => {});
-        if (defaults.paymentMethod) {
-          logPaymentMethodInherited({
+    addingTabRef.current = true;
+    try {
+      const nextPos = tabsRef.current.length + 1;
+      const placeholder = String(nextPos);
+      if (onDevice() && offlineWorkIdRef.current) {
+        const defaults = inheritedDefaults();
+        const created = deviceTabFrom(placeholder, {}, defaults);
+        if (enteredBy) {
+          logCalculatorCreated({
             userId: enteredBy,
             calculatorId: created.id,
             appointmentId: appointmentId || '',
             calculatorTitle: created.title,
-            fromCalculator: null,
-            toCalculator: created.id,
-            paymentMethod: defaults.paymentMethod,
-            inheritanceSource: 'default payment method',
-            ...(leadId ? { leadId } : {}),
-          }).catch(() => {});
-        }
-      }
-      return;
-    }
-    if (appointmentId) {
-      const defaults = inheritedDefaults();
-      const created = await createRemoteTab(appointmentId, placeholder, {}, leadId, enteredBy, schemasRef.current, tabs.length + 1, defaults);
-      if (created) {
-        lastSavedTitle.current[created.id] = created.title; // baseline for auto_rename
-        setTabs((p) => retitle([...p, created]));
-        setActiveTabId(created.id);
-        cacheTabsSnapshotRef.current?.([...tabsRef.current, created]);
-        if (enteredBy) {
-          logCalculatorCreated({
-            userId: enteredBy,
-            calculatorId: (created as any).calculatorId || created.id,
-            appointmentId: appointmentId,
-            calculatorTitle: created.title,
-            calculatorPosition: tabs.length + 1,
+            calculatorPosition: nextPos,
             leadId: leadId || undefined,
           }).catch(() => {});
           if (defaults.paymentMethod) {
             logPaymentMethodInherited({
               userId: enteredBy,
-              calculatorId: (created as any).calculatorId || created.id,
-              appointmentId: appointmentId,
+              calculatorId: created.id,
+              appointmentId: appointmentId || '',
               calculatorTitle: created.title,
               fromCalculator: null,
-              toCalculator: (created as any).calculatorId || created.id,
+              toCalculator: created.id,
               paymentMethod: defaults.paymentMethod,
               inheritanceSource: 'default payment method',
               ...(leadId ? { leadId } : {}),
@@ -1175,19 +1146,64 @@ export function useDynamicCalculators(
         }
         return;
       }
+      if (appointmentId) {
+        const defaults = inheritedDefaults();
+        const created = await createRemoteTab(appointmentId, placeholder, {}, leadId, enteredBy, schemasRef.current, nextPos, defaults);
+        if (created) {
+          if (!canAddCalculatorTab(tabsRef.current as any, activeTabId).allowed) {
+            LeadService.deleteCalculator(created.id).catch(() => {});
+            return;
+          }
+          lastSavedTitle.current[created.id] = created.title; // baseline for auto_rename
+          const next = retitle([...tabsRef.current, created]);
+          tabsRef.current = next;
+          setTabs(next);
+          setActiveTabId(created.id);
+          cacheTabsSnapshotRef.current?.(next);
+          if (enteredBy) {
+            logCalculatorCreated({
+              userId: enteredBy,
+              calculatorId: (created as any).calculatorId || created.id,
+              appointmentId: appointmentId,
+              calculatorTitle: created.title,
+              calculatorPosition: nextPos,
+              leadId: leadId || undefined,
+            }).catch(() => {});
+            if (defaults.paymentMethod) {
+              logPaymentMethodInherited({
+                userId: enteredBy,
+                calculatorId: (created as any).calculatorId || created.id,
+                appointmentId: appointmentId,
+                calculatorTitle: created.title,
+                fromCalculator: null,
+                toCalculator: (created as any).calculatorId || created.id,
+                paymentMethod: defaults.paymentMethod,
+                inheritanceSource: 'default payment method',
+                ...(leadId ? { leadId } : {}),
+              }).catch(() => {});
+            }
+          }
+          return;
+        }
+      }
+      const local: CalcTab = { id: `local-${Date.now()}`, title: placeholder, entries: buildAllEntriesMap(schemasRef.current), totals: { ...ZERO } };
+      const next = retitle([...tabsRef.current, local]);
+      tabsRef.current = next;
+      setTabs(next);
+      setActiveTabId(local.id);
+    } finally {
+      addingTabRef.current = false;
     }
-    const local: CalcTab = { id: `local-${Date.now()}`, title: placeholder, entries: buildAllEntriesMap(schemasRef.current), totals: { ...ZERO } };
-    setTabs((p) => retitle([...p, local]));
-    setActiveTabId(local.id);
-  }, [tabs.length, appointmentId, leadId, enteredBy, retitle, inheritedDefaults, onDevice, deviceTabFrom]);
+  }, [activeTabId, tabs.length, appointmentId, leadId, enteredBy, retitle, inheritedDefaults, onDevice, deviceTabFrom]);
 
   const handleDuplicateTab = useCallback(
     async (tabId: string) => {
-      const source = tabs.find((t) => t.id === tabId);
+      if (!canDuplicateCalculatorTab(tabsRef.current as any, tabId).allowed) return;
+      const source = tabsRef.current.find((t) => t.id === tabId);
       if (!source) return;
-      const placeholder = String(tabs.length + 1);
+      const position = tabsRef.current.length + 1;
+      const placeholder = String(position);
       const entries = mergeFullEntries(JSON.parse(JSON.stringify(source.entries)), schemasRef.current);
-      const position = tabs.length + 1;
       const sourceBackendId = isBackendId(source.id) ? source.id : undefined;
       if (onDevice() && offlineWorkIdRef.current) {
         const copy = deviceTabFrom(placeholder, entries, {
@@ -1317,7 +1333,9 @@ export function useDynamicCalculators(
         return;
       }
       const local: CalcTab = { id: `local-${Date.now()}`, title: placeholder, entries, totals: source.totals ? JSON.parse(JSON.stringify(source.totals)) : computeTotals(entries) };
-      setTabs((p) => retitle([...p, local]));
+      const next = retitle([...tabsRef.current, local]);
+      tabsRef.current = next;
+      setTabs(next);
       setActiveTabId(local.id);
     },
     [tabs, appointmentId, leadId, enteredBy, retitle, inheritedDefaults, onDevice, deviceTabFrom, markDirty]

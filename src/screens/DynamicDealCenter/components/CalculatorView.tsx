@@ -27,6 +27,9 @@ import {
   ADD_TAB_BLOCKED_MESSAGE,
   ADD_TAB_BLOCKED_TITLE,
   canAddCalculatorTab,
+  canDuplicateCalculatorTab,
+  DUPLICATE_TAB_BLOCKED_MESSAGE,
+  DUPLICATE_TAB_BLOCKED_TITLE,
 } from '../../../utils/calculator-tab-gate';
 import { FlashMessage } from '../../../config/message';
 import {
@@ -524,22 +527,27 @@ export function CalculatorView({
 }: CalculatorViewProps) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   /**
+   * ⚠️ The ACTIVE tab is judged on the live `entries` prop, not on its copy inside `tabs`.
+   * `entries` is what the rep is typing into right now; the `tabs` entry for it is written
+   * by the same render, but reading the prop makes the gate independent of that ordering.
+   * A gate that lags one keystroke behind is a gate that blocks a tab the rep just filled.
+   */
+  const liveTabs = useMemo(
+    () =>
+      (tabs || []).map((t) =>
+        t && t.id === activeTabId ? { ...t, entries: entries || t.entries } : t
+      ),
+    [tabs, activeTabId, entries]
+  );
+  /**
    * ⚠️ Looks at EVERY tab, not just the active one. The rep can add a tab, switch away
    * and press plus again from elsewhere - gating on the active tab alone would still
    * leave blanks behind, which is the thing being prevented.
    */
-  const addTabGate = useMemo(() => {
-    /**
-     * ⚠️ The ACTIVE tab is judged on the live `entries` prop, not on its copy inside `tabs`.
-     * `entries` is what the rep is typing into right now; the `tabs` entry for it is written
-     * by the same render, but reading the prop makes the gate independent of that ordering.
-     * A gate that lags one keystroke behind is a gate that blocks a tab the rep just filled.
-     */
-    const live = (tabs || []).map((t) =>
-      t && t.id === activeTabId ? { ...t, entries: entries || t.entries } : t
-    );
-    return canAddCalculatorTab(live as any, activeTabId);
-  }, [tabs, activeTabId, entries]);
+  const addTabGate = useMemo(
+    () => canAddCalculatorTab(liveTabs as any, activeTabId),
+    [liveTabs, activeTabId]
+  );
   const { user } = useAuth();
   const numPadActive = useNumPadActive();
   const bodyScrollRef = useRef<ScrollView>(null);
@@ -866,8 +874,22 @@ export function CalculatorView({
       {/* Tab context menu (duplicate / delete) - self-contained so opening it does not re-render this screen. */}
       <TabContextMenu
         ref={tabMenuRef}
-        tabs={tabs}
-        onDuplicateTab={onDuplicateTab}
+        tabs={liveTabs}
+        onDuplicateTab={
+          onDuplicateTab
+            ? (id) => {
+                const gate = canDuplicateCalculatorTab(liveTabs as any, id);
+                if (!gate.allowed) {
+                  FlashMessage.warning(
+                    gate.title || DUPLICATE_TAB_BLOCKED_TITLE,
+                    gate.message || DUPLICATE_TAB_BLOCKED_MESSAGE
+                  );
+                  return;
+                }
+                onDuplicateTab(id);
+              }
+            : undefined
+        }
         onDeleteRequest={onDeleteTab ? (id, name) => setDeleteModal({ visible: true, tabId: id, name }) : undefined}
       />
 
