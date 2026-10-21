@@ -1609,3 +1609,7 @@ On device the Deal screen ended with TWO order sheets after an annotate. `Summar
 ### REVUIUX-569 follow-up - the summary's "Reset all changes" on an order-sheet tile is queued offline
 
 `SummaryFinalizeCards.confirmResetOrderSheet` now uses `requestOrderSheetReset` (`services/annotationSaveService.ts`) like the Job-docs row. Offline it returns `'queued'` and the tile is NOT re-read (`onRefreshDocs` is skipped); the tile's "Syncing" state comes from `usePendingOrderSheetJobs`, and the existing "a job finished -> re-read the order sheets" effect refreshes it when the queued reset lands. Details: `docs/claude/offline.md`.
+
+### REVUIUX-569 follow-up - the order-sheet pencil is back on the job builder summary (not only My Deals edit)
+
+`SummaryFinalizeCards` had limited the pencil (and the "Reset all changes" tile button) to `editMode`; both now show on the create-flow summary too, for any order sheet the server already holds (`canAnnotateOrderSheet`: a `serverId`/`_id`, not mid-upload). The old static "Cannot annotate yet" warning is gone - a tile with no server id simply has no pencil. The create flow already passes `onRefreshDocs` (`DynamicJobBuilderScreen.handleRefreshDocs`), so the tile re-reads when the queued job lands. ⚠️ A sheet filed offline and still queued has no server id, so it cannot be annotated until it syncs. Log coverage: `tests/annotation/order-sheet-logs.test.ts` (connection + action time on opened / stored / reset). Not verified on device.
