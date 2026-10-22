@@ -277,15 +277,6 @@ export default function ChatDetailScreen() {
     [markAcked, currentUserId]
   );
 
-  const handleSeeWho = useCallback((messageId: string) => {
-    ChatService.getChannelAcks(messageId)
-      .then((data) => {
-        const names = (list: any[]) => (list?.length ? list.map((p: any) => p.fullName || 'Unknown').join(', ') : 'No one');
-        Alert.alert('Read confirmations', `Confirmed:\n${names(data.confirmed)}\n\nHaven't confirmed:\n${names(data.pending)}`);
-      })
-      .catch((e) => ChatService.alertChannelRefusal(e));
-  }, []);
-
   useEffect(() => {
     if (isChannel && channelRemoved) {
       Alert.alert('Channel unavailable', 'This channel is no longer available.');
@@ -720,13 +711,12 @@ export default function ChatDetailScreen() {
               currentUserId={String(currentUserId || '')}
               canManage={canManageChannel}
               onConfirm={handleConfirmRead}
-              onSeeWho={handleSeeWho}
             />
           )}
         </View>
       );
     },
-    [currentUserId, filteredParticipants, setReplyingTo, handleNavigateToMessage, imageUrls, isViewOnly, canReply, canReact, canEditOwn, isChannel, requireAck, canManageChannel, handleConfirmRead, handleSeeWho, handleDisabledClick, searchQuery, highlightedMessageId, searchResults, searchIndex, chatId, user._id, setMessages, isChannel, leadId, setEditingMessage, setComposerText, setShowMentions, setPinnedMessages]
+    [currentUserId, filteredParticipants, setReplyingTo, handleNavigateToMessage, imageUrls, isViewOnly, canReply, canReact, canEditOwn, isChannel, requireAck, canManageChannel, handleConfirmRead, handleDisabledClick, searchQuery, highlightedMessageId, searchResults, searchIndex, chatId, user._id, setMessages, isChannel, leadId, setEditingMessage, setComposerText, setShowMentions, setPinnedMessages]
   );
 
   const openAddendumPdf = useCallback(
