@@ -26,7 +26,7 @@ const sameId = (a: any, b: any) => !!a && !!b && String(a) === String(b);
 /**
  * Permissions come from the server per viewer (channel.permissions). The channel is kept live
  * from `team-channel-created/updated/archived` (each carries the channel as THIS user sees it)
- * and refetched from `GET /channels/v1/` on socket reconnect, so a manager changing a setting
+ * and refetched from `GET /api/v1/channels/` on socket reconnect, so a manager changing a setting
  * updates an open conversation without a reload. Nothing here looks at the channel type or name.
  */
 export function useTeamChannelPermission(channel: ChannelData | null | undefined) {

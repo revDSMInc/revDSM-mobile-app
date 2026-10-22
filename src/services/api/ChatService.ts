@@ -514,7 +514,7 @@ class ChatService {
 
   deleteMessage(messageId: string, isChannel = false): void {
     if (isChannel) {
-      api.delete(`/channels/v1/messages/${messageId}`).catch((e: any) => this.alertChannelRefusal(e));
+      api.delete(`/api/v1/channels/messages/${messageId}`).catch((e: any) => this.alertChannelRefusal(e));
       return;
     }
     SocketManager.emit('delete-message', { messageId });
@@ -584,7 +584,7 @@ class ChatService {
     SocketManager.emit('typing', { chatId, isTyping });
   }
 
-  // ─── Team channels (REVDSM-1313): stored data over HTTP /channels/v1, live changes over sockets ──
+  // ─── Team channels (REVDSM-1313): stored data over HTTP /api/v1/channels, live changes over sockets ──
 
   private channelsCache: any[] = [];
   private channelsInitialized = false;
@@ -617,14 +617,14 @@ class ChatService {
     if (code && refusals.includes(code) && err?.message) Alert.alert('Not allowed', err.message);
   }
 
-  /** `GET /channels/v1/` (the caller's office); `POST /channels/v1/initialize` once when it is empty. */
+  /** `GET /api/v1/channels/` (the caller's office); `POST /api/v1/channels/initialize` once when it is empty. */
   async loadChannels(): Promise<any[]> {
     const read = (res: any) => res?.data?.data?.channels || [];
-    let list = read(await api.get<any>('/channels/v1/'));
+    let list = read(await api.get<any>('/api/v1/channels/'));
     if (list.length === 0 && !this.channelsInitialized) {
       this.channelsInitialized = true;
       try {
-        list = read(await api.post<any>('/channels/v1/initialize'));
+        list = read(await api.post<any>('/api/v1/channels/initialize'));
       } catch (e) {
         console.warn('[ChatService] channel initialize failed:', e);
       }
@@ -653,7 +653,7 @@ class ChatService {
   ): Promise<{ messages: any[]; hasMore: boolean; nextBefore: string | null }> {
     const params: any = { limit: opts.limit ?? 50 };
     if (opts.before) params.before = opts.before;
-    const res = await api.get<any>(`/channels/v1/${channelId}/messages`, { params });
+    const res = await api.get<any>(`/api/v1/channels/${channelId}/messages`, { params });
     const data = res.data?.data || {};
     return {
       messages: (data.messages || []).map((m: any) => this.normalizeMessage(m)),
@@ -663,20 +663,20 @@ class ChatService {
   }
 
   async getChannelReplies(messageId: string): Promise<any[]> {
-    const res = await api.get<any>(`/channels/v1/messages/${messageId}/replies`);
+    const res = await api.get<any>(`/api/v1/channels/messages/${messageId}/replies`);
     return (res.data?.data?.replies || []).map((m: any) => this.normalizeMessage(m));
   }
 
   /** Managers: who confirmed a read-ack message. */
   async getChannelAcks(messageId: string): Promise<{ confirmed: any[]; pending: any[] }> {
-    const res = await api.get<any>(`/channels/v1/messages/${messageId}/acks`);
+    const res = await api.get<any>(`/api/v1/channels/messages/${messageId}/acks`);
     const data = res.data?.data || {};
     return { confirmed: data.confirmed || [], pending: data.pending || [] };
   }
 
   private async postChannelFormData(channelId: string, formData: FormData): Promise<any> {
     try {
-      const res = await api.post<any>(`/channels/v1/${channelId}/messages`, formData);
+      const res = await api.post<any>(`/api/v1/channels/${channelId}/messages`, formData);
       return res?.data?.data?.message || null;
     } catch (e) {
       this.alertChannelRefusal(e);

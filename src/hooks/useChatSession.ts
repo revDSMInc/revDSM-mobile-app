@@ -185,7 +185,7 @@ export const useChatSession = (
   }, [chatId, leadId, isChannel, limit, loadMessages, loadChannelMessages]);
 
   useEffect(() => {
-    // Channels: opening the history (GET /channels/v1/:id/messages) already marks messages seen.
+    // Channels: opening the history (GET /api/v1/channels/:id/messages) already marks messages seen.
     if (messages.length > 0 && chatId && !isChannel) {
       SocketManager.emit('mark-all-messages-as-read', { chatId, userId: currentUserId });
     }
