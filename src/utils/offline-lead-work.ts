@@ -569,6 +569,27 @@ export const applyStepDecision = (
   }
 };
 
+/**
+ * The LOCAL calendar day of an instant, as a date-only string (`YYYY-MM-DD`).
+ *
+ * ⚠️ THE CARD FORMATS THIS WITH `new Date(...)`, so the value handed to it decides the day.
+ * `work.createdAt` is a UTC instant (`toISOString()`), and a lead created at 22:30 UTC on the
+ * 22nd renders as the **23rd** for a rep at +05:00 - the same off-by-one that put yesterday's
+ * leads on the Today tab. Emitting the local Y/M/D means the card prints the day the rep
+ * actually made the lead.
+ *
+ * ⚠️ Date-ONLY on purpose, matching what the server sends (`2026-10-22T00:00:00-04:00`
+ * parses back to midnight local). Do not append a time or a `Z`: a `Z` re-introduces the shift.
+ */
+export const localDateOnly = (iso: string | null | undefined): string => {
+  const ms = Date.parse(String(iso || ''));
+  if (Number.isNaN(ms)) return '';
+  const d = new Date(ms);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+};
+
 export const offlineWorkToLead = (work: OfflineLeadWork): Record<string, any> | null => {
   if (work.origin !== 'created-offline' || !work.lead) return null;
   const payload = work.lead as Record<string, any>;
@@ -588,6 +609,15 @@ export const offlineWorkToLead = (work: OfflineLeadWork): Record<string, any> | 
     leadId: payload.lfLeadId || 'N/A',
     leadCode: payload.leadCode || (isIssued ? 'N/A' : 'SelfGen'),
     leadDatetime: payload.lfLeadDate || work.createdAt,
+    /**
+     * ⚠️ `leadDate` IS A SEPARATE FIELD FROM `leadDatetime`, and the lead CARD reads this one.
+     *
+     * Reported: a lead created offline showed its date as **N/A** on the leads list, while Lead
+     * Center showed it correctly. Both were right about their own data - Lead Center renders
+     * `leadDatetime` (set above), `LeadCard` renders `leadDate` (never set). A server lead
+     * carries BOTH, so the gap only ever showed on an offline-created lead.
+     */
+    leadDate: payload.lfLeadDate ? localDateOnly(payload.lfLeadDate) : localDateOnly(work.createdAt),
     leadTime: payload.lfLeadTime || 'N/A',
     lowesLead: payload.lowesLead === true,
     location: payload.location,

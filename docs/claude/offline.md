@@ -449,6 +449,37 @@ screen passes it on the TODAY sub-tabs and omits it everywhere else.
 - Work with an unparseable `createdAt` is excluded from Today (`createdAtMs` returns 0) but still returned
   wherever no day scope applies, so it can never be stranded.
 
+### Follow-up — the offline lead card showed its date as N/A
+
+`utils/offline-lead-work.ts` (`offlineWorkToLead`, `localDateOnly`).
+Test: `tests/offline/offline-lead-card-date.test.ts`.
+
+Reported with two screenshots of the SAME lead: the leads-list card showed **N/A** where the date goes,
+while **Lead Center showed 10/22/2026**. Both surfaces were reading their own data correctly:
+
+| Surface | Field read | Set by `offlineWorkToLead`? |
+|---|---|---|
+| `LeadCenter` | `lead.leadDatetime` | ✅ yes |
+| `LeadCard` | `lead.leadDate` | ❌ **never** |
+
+A SERVER lead carries both (`leadDate: "2026-10-22T00:00:00-04:00"` and
+`leadDatetime: "2026-10-22T01:48:02-04:00"` - confirmed in a real device store), so the gap only ever
+showed on a lead created offline. `offlineWorkToLead` now emits `leadDate` too.
+
+- ⚠️ **It is NOT `work.createdAt` passed through.** The card formats with `new Date(lead.leadDate)`, and
+  `createdAt` is a UTC instant - a lead made at 22:30 UTC on the 22nd renders as the **23rd** for a rep at
+  +05:00. `localDateOnly` emits the LOCAL `YYYY-MM-DD`, so the card prints the day the rep actually made
+  the lead. Same off-by-one class as the Today-tab ticket above, and it is deliberately solved the same
+  way, so the card date and the tab filter can never disagree.
+- ⚠️ **Date-ONLY, with no time and no `Z`.** It mirrors what the server sends (`...T00:00:00-04:00`
+  parses back to local midnight). Appending a `Z` re-introduces the shift this exists to remove.
+- ⚠️ **An ISSUED lead keeps `lfLeadDate`**, its scheduled appointment day - NOT the day the work item was
+  created. Only a self-gen lead falls back to the creation day.
+- An unparseable timestamp yields `''`, so `LeadCard` falls back to **N/A** exactly as before rather than
+  printing `Invalid Date`.
+- `LeadCard`'s memo already compares `leadDate`; the value is stable per work item, so this adds no
+  re-renders.
+
 ## The leads list kept saying "Resume Appointment" on a lead resulted offline
 
 Reported from a device with three screenshots. A rep resulted a self-gen lead at a door with no
