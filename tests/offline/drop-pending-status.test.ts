@@ -4,6 +4,7 @@ import {
   resolveAutoSecureIndex, autoSecureLastDrop, resolveActiveDownPayment,
   hasAcceptedDrop, toDropPricePayload, normalizeSingleAcceptedDrop,
   idlessDropSignature, adoptServerDropIds,
+  appendDrop, supersededPendingDrops,
 } from '../../src/screens/DynamicDealCenter/utils/drop-prices';
 
 const drop = (price: number, status: string, downPayment = 0) => ({
@@ -201,5 +202,75 @@ describe('the dropPrice wire contract', () => {
     }]);
     expect(full._id).toBe('srv1');
     expect(full.paymentMethods).toEqual(['wf1']);
+  });
+});
+
+/**
+ * CLIENT RULE (Lance, on the screenshot showing 3rd/4th/5th all PENDING at once):
+ *
+ *   "The pending was to just handle the edge case of a sales rep not hitting a secure or a
+ *    decline. We do not want to add a 'pending' button to the drop price screen. This means on a
+ *    per job level only the most recent price drop could ONLY have pending status if the rep
+ *    didn't hit a secure / decline."
+ *
+ * So pending is a CATCH, not a workflow: at most ONE, always the last row.
+ */
+describe('only the most recent drop may be pending', () => {
+  it('⚠️ the reported bug: entering a 2nd drop declines the 1st instead of stacking', () => {
+    const first = [drop(305, DROP_PENDING)];
+    const out = appendDrop(first, drop(306, DROP_PENDING));
+    expect(out.map((d) => d.status)).toEqual([DROP_DECLINED, DROP_PENDING]);
+  });
+
+  it('three in a row leave exactly one pending — the last', () => {
+    let list: any[] = [];
+    for (const p of [304, 305, 306]) list = appendDrop(list, drop(p, DROP_PENDING));
+    expect(list.map((d) => d.status)).toEqual([DROP_DECLINED, DROP_DECLINED, DROP_PENDING]);
+    expect(list.filter(isPendingDrop)).toHaveLength(1);
+    expect(isPendingDrop(list[list.length - 1])).toBe(true);
+    expect(hasUnresolvedDrop(list)).toBe(true);
+  });
+
+  it('a superseded drop is DECLINED, never discarded — the customer saw that price', () => {
+    const out = appendDrop([drop(305, DROP_PENDING)], drop(306, DROP_PENDING));
+    expect(out).toHaveLength(2);
+    expect(out[0].dropedPrice).toBe(305);   // still on the record
+    expect(out[0].status).toBe(DROP_DECLINED);
+  });
+
+  it('already-resolved drops are untouched by a new entry', () => {
+    const list = [drop(300, DROP_ACCEPTED), drop(304, DROP_DECLINED)];
+    const out = appendDrop(list, drop(306, DROP_PENDING));
+    expect(out.map((d) => d.status)).toEqual([DROP_ACCEPTED, DROP_DECLINED, DROP_PENDING]);
+  });
+
+  it('supersededPendingDrops reports what the caller must log', () => {
+    expect(supersededPendingDrops([drop(305, DROP_PENDING)])).toEqual([
+      { index: 0, drop: expect.objectContaining({ dropedPrice: 305 }) },
+    ]);
+    // nothing to log when the previous drops were already resolved
+    expect(supersededPendingDrops([drop(300, DROP_ACCEPTED), drop(304, DROP_DECLINED)])).toEqual([]);
+    expect(supersededPendingDrops([])).toEqual([]);
+    expect(supersededPendingDrops(null)).toEqual([]);
+  });
+
+  it('securing the pending one leaves no pending behind (the full flow)', () => {
+    let list: any[] = [];
+    for (const p of [304, 305, 306]) list = appendDrop(list, drop(p, DROP_PENDING));
+    // Result Lead opens the pending row; the rep secures it
+    const idx = pendingDropIndex(list);
+    list = list.map((d, i) => (i === idx ? { ...d, status: DROP_ACCEPTED } : d));
+    expect(hasUnresolvedDrop(list)).toBe(false);
+    expect(hasAcceptedDrop(list)).toBe(true);
+    expect(list.map((d) => d.status)).toEqual([DROP_DECLINED, DROP_DECLINED, DROP_ACCEPTED]);
+  });
+
+  it('the payload for a superseded drop is still the six-key contract', () => {
+    const out = appendDrop([drop(305, DROP_PENDING)], drop(306, DROP_PENDING));
+    const sent = toDropPricePayload(out);
+    expect(sent.map((d) => d.status)).toEqual([DROP_DECLINED, DROP_PENDING]);
+    sent.forEach((row) => expect(Object.keys(row).sort()).toEqual(
+      ['balance', 'downPayment', 'dropedPrice', 'paymentMethod', 'pricemarkup', 'status'],
+    ));
   });
 });

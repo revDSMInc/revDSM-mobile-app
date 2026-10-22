@@ -1374,6 +1374,38 @@ through `updateCalculator`, so the pending row reaches the server on reconnect w
 create — it always arrives via `calculatorState`. Removing or reordering that step would silently lose
 every offline drop, pending or not.
 
+### Follow-up — the client's rule: ONLY the most recent drop may be pending
+
+QA screenshot showed **3rd / 4th / 5th Dropped Price all PENDING at once**, each with a Resolve button.
+Lance's answer, verbatim:
+
+> *"No. The pending was to just handle the edge case of a sales rep not hitting a 'secure' or a 'decline'.
+> We do not want to add a 'pending' button to the drop price screen. This means on a per job level only the
+> most recent price drop could ONLY have pending status if the rep didn't hit a secure / decline."*
+
+**Pending is a CATCH, not a workflow.** The first implementation let `openDrop` append blindly, so every
+unresolved drop stayed pending and the screen filled with them.
+
+| Was | Now |
+|---|---|
+| A new drop appended; older pendings stayed pending | `appendDrop` DECLINES every existing pending row as it appends. At most one pending, always the last |
+| Superseded drops would have been silently left | They become `declined` and each gets its own `drop price declined` log (`supersededPendingDrops` tells the caller which) |
+| Pending card was amber: amber border, amber price, amber `Resolve` button, `PENDING` trailing label | The card is styled **exactly like a declined one** (plain border, grey price, `Display` / `LOCKED`). The only marker is the `PENDING` badge beside the "*Nth* Dropped Price" title |
+| `View` was shown on a pending drop | Hidden - there is nothing to show the customer until it is resolved |
+| Result Lead raised a red `FlashMessage.error` | No toast. It opens the outcome modal on the pending drop, which IS the asked-for flow: *"when the rep presses Result Lead the last drop price will be shown there and he can secure or decline that one"*. `secureDrop` / `declineDrop` then continue into the chooser as normal |
+
+- ⚠️ **A superseded drop is DECLINED, never discarded.** The rep showed that price to the customer, so it
+  stays on the Forever Record. Dropping the row would lose a price that was quoted.
+- ⚠️ **Entering a new drop IS an outcome for the old one.** That is the whole reading of Lance's rule -
+  moving on without securing is a decline - so the transition is logged, not silent.
+- ⚠️ **Do not re-style the pending card.** The client asked for it to look like a declined card with a
+  badge; the amber treatment was the thing being rejected. The badge carries the state, nothing else.
+- ⚠️ **`resolveAutoSecureIndex` still skips pending rows** and `hasUnresolvedDrop` still gates Result Lead.
+  Those guards are unchanged and still load-bearing: with only one pending row possible, they are what stop
+  it becoming the sold price by accident.
+- **Online and offline are identical** - every rule above lives in `utils/drop-prices.ts` (pure, tested) and
+  the queued payload still goes through `toDropPricePayload`, so a superseded drop syncs as `declined`.
+
 ### ⚠️ The 500 this caused on a device — the offline payload was sending RAW drop rows
 
 Reported immediately after the above landed: the calculator write failed with a **500** on sync.

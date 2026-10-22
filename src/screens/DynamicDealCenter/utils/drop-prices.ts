@@ -31,6 +31,42 @@ export const isResolvedDrop = (d: any): boolean =>
 export const hasUnresolvedDrop = (drops: any[] | null | undefined): boolean =>
   (Array.isArray(drops) ? drops : []).some(isPendingDrop);
 
+/**
+ * Add a new drop, enforcing the client's rule: **ONLY THE MOST RECENT DROP MAY BE PENDING.**
+ *
+ * Lance, on the screenshot that showed 3rd / 4th / 5th all PENDING at once:
+ *   *"The pending was to just handle the edge case of a sales rep not hitting a secure or a
+ *   decline. We do not want to add a 'pending' button to the drop price screen. This means on a
+ *   per job level only the most recent price drop could ONLY have pending status if the rep
+ *   didn't hit a secure / decline."*
+ *
+ * So pending is a CATCH, not a workflow. Typing a new drop while an older one is still pending
+ * means the rep moved on from it without securing it - which is a decline.
+ *
+ * ⚠️ The superseded drop becomes DECLINED, never silently dropped: the rep showed that price to
+ * the customer and the Forever Record has to keep it. The caller logs that transition.
+ */
+export const appendDrop = <T extends Record<string, any>>(
+  drops: T[] | null | undefined,
+  next: T
+): T[] => [
+  ...(Array.isArray(drops) ? drops : []).map((d) =>
+    isPendingDrop(d) ? ({ ...d, status: DROP_DECLINED } as T) : d
+  ),
+  next,
+];
+
+/**
+ * The drops superseded by a new entry - i.e. the ones `appendDrop` is about to decline.
+ * The caller needs them to write one `drop price declined` log per row.
+ */
+export const supersededPendingDrops = <T extends Record<string, any>>(
+  drops: T[] | null | undefined
+): Array<{ index: number; drop: T }> =>
+  (Array.isArray(drops) ? drops : [])
+    .map((drop, index) => ({ index, drop }))
+    .filter(({ drop }) => isPendingDrop(drop));
+
 export const pendingDropIndex = (drops: any[] | null | undefined): number =>
   (Array.isArray(drops) ? drops : []).findIndex(isPendingDrop);
 

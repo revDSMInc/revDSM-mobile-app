@@ -12,7 +12,7 @@ import { resolveSchemaStyle } from '../utils/icon-color';
 import { formatAmountInput, stripAmount } from '../utils/format-amount';
 import { MODAL_BLUR_AMOUNT, MODAL_SCRIM, MODAL_CARD_SHADOW } from './modal-chrome';
 import { describeFullPackage } from '../utils/tab-naming';
-import { autoSecureLastDrop, dropPriceOf, DROP_PENDING, isPendingDrop, pendingDropIndex as findPendingDropIndex } from '../utils/drop-prices';
+import { autoSecureLastDrop, dropPriceOf, DROP_PENDING, isPendingDrop, pendingDropIndex as findPendingDropIndex, appendDrop, supersededPendingDrops } from '../utils/drop-prices';
 import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { FlashMessage } from '../../../config/message';
 import { allRolloutsConfirmed, rolloutCalculators } from '../../../utils/rollout-status';
@@ -1093,9 +1093,15 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
      * open - a number the rep floated must never become the sold price on its own.
      */
     const idx = drops.length;
-    onDropChange(calculator.id, [
-      ...drops,
-      {
+    /**
+     * ⚠️ ONLY THE MOST RECENT DROP MAY BE PENDING (client rule - see `appendDrop`). Typing a new
+     * drop while an older one is still pending means the rep moved on without securing it, so the
+     * older one is DECLINED - and logged as such, because the customer was shown that price.
+     */
+    const superseded = supersededPendingDrops(drops);
+    onDropChange(
+      calculator.id,
+      appendDrop(drops, {
         price: v,
         dropedPrice: v,
         status: DROP_PENDING,
@@ -1103,8 +1109,27 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         paymentMethod: method,
         downPayment: 0,
         balance: v,
-      },
-    ]);
+      })
+    );
+    const uidS2 = user?._id || user?.id;
+    if (uidS2) {
+      superseded.forEach(({ index, drop }) => {
+        const dp = dropPriceOf(drop);
+        logRolloutChange({
+          userId: uidS2,
+          leadId,
+          calculator: logCalculator,
+          tiers: logTiers,
+          percentageOfRollout: markupLabel(dp, logTiers),
+          change: {
+            fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: dp, fieldCategory: 'drop',
+            oldValue: dp, newValue: dp,
+            isSecured: false, isDeclined: true, dropNumber: index + 1, dropPrice: dp,
+            action: 'drop price declined',
+          },
+        }).catch(() => {});
+      });
+    }
     const uidP = user?._id || user?.id;
     if (uidP) {
       const lastDrop = idx > 0 ? (drops[idx - 1]?.dropedPrice ?? drops[idx - 1]?.price) : (calculator.price || priceNum);
@@ -1252,10 +1277,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       setPendingDrop(dropPriceOf(drops[unresolvedAt]));
       setPendingDropIndex(unresolvedAt);
       setShowDropModal(true);
-      FlashMessage.error(
-        'Finish this drop first',
-        `Secure or decline ${fmt(dropPriceOf(drops[unresolvedAt]))} before resulting the lead.`
-      );
+      /**
+       * ⚠️ NOT an error - this IS the flow the client asked for: *"when the rep presses Result
+       * Lead the last drop price will be shown there and he can secure or decline that one"*. The
+       * modal is already open on that drop; the rep carries straight on and Result Lead reopens
+       * by itself from `secureDrop` / `declineDrop`. A red 'failed' toast over a working step
+       * reads as a bug.
+       */
       return;
     }
     const secured = autoSecureLastDrop(drops);
@@ -1674,7 +1702,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                         green ONLY for the secured drop; locked/declined drops use the
                         muted secondary gray (web `isSecured ? '#2e7d32' : text.secondary`).
                         Was hardcoded green for every row. */}
-                    <Text style={{ fontSize: 11, fontWeight: '900', color: secured ? '#16A34A' : pending ? '#B45309' : '#64748B', marginRight: 8, letterSpacing: -0.3 }}>{ordinal} Dropped Price</Text>
+                    <Text style={{ fontSize: 11, fontWeight: '900', color: secured ? '#16A34A' : '#64748B', marginRight: 8, letterSpacing: -0.3 }}>{ordinal} Dropped Price</Text>
                     {secured && (
                       <View style={{ backgroundColor: '#16A34A', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
                         <Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>✓ SECURED</Text>
@@ -1687,7 +1715,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                     )}
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-                    {!declined && (
+                    {/* No View while pending: there is nothing to show the customer yet. */}
+                    {!declined && !pending && (
                       <TouchableOpacity onPress={() => { setChooserPrice(dp); setChooserDown(Number(d.downPayment) || 0); setShowChooser(true); }}>
                         <Text style={{ fontSize: 11, fontWeight: '700', color: secured ? '#16A34A' : '#64748B' }}>View</Text>
                       </TouchableOpacity>
@@ -1703,8 +1732,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                     )}
                   </View>
                 </View>
-                <View style={{ backgroundColor: '#fff', borderWidth: 2, borderColor: secured ? '#22C55E' : pending ? '#F59E0B' : '#E2E8F0', borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text style={{ fontSize: 20, fontWeight: '900', color: secured ? '#16A34A' : pending ? '#B45309' : '#94A3B8' }}>{fmt(dp)}</Text>
+                <View style={{ backgroundColor: '#fff', borderWidth: 2, borderColor: secured ? '#22C55E' : '#E2E8F0', borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ fontSize: 20, fontWeight: '900', color: secured ? '#16A34A' : '#94A3B8' }}>{fmt(dp)}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
                     <TouchableOpacity
                       onPress={() => {
@@ -1712,12 +1741,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                         setPendingDropIndex(i);
                         setShowDropModal(true);
                       }}
-                      style={{ paddingHorizontal: 24, paddingVertical: 8, borderRadius: 8, backgroundColor: secured ? '#22C55E' : pending ? '#F59E0B' : '#E2E8F0' }}
+                      style={{ paddingHorizontal: 24, paddingVertical: 8, borderRadius: 8, backgroundColor: secured ? '#22C55E' : '#E2E8F0' }}
                     >
-                      {/* While pending the button is the way BACK to Secure/Decline, so it says so. */}
-                      <Text style={{ fontSize: 12, fontWeight: '900', color: secured || pending ? '#fff' : '#64748B' }}>{pending ? 'Resolve' : 'Display'}</Text>
+                      {/* ⚠️ A pending card looks EXACTLY like a declined one (client's ask): the only
+                          difference is the PENDING badge beside the title. Tapping still reopens the
+                          outcome modal, which is how the rep resolves it. */}
+                      <Text style={{ fontSize: 12, fontWeight: '900', color: secured ? '#fff' : '#64748B' }}>Display</Text>
                     </TouchableOpacity>
-                    <Text style={{ fontSize: 10, fontWeight: '900', color: secured ? '#16A34A' : pending ? '#B45309' : '#94A3B8' }}>{secured ? 'SECURED' : pending ? 'PENDING' : 'LOCKED'}</Text>
+                    <Text style={{ fontSize: 10, fontWeight: '900', color: secured ? '#16A34A' : '#94A3B8' }}>{secured ? 'SECURED' : 'LOCKED'}</Text>
                   </View>
                 </View>
               </View>
