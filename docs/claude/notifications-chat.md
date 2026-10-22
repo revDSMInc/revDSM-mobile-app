@@ -698,6 +698,19 @@ Ticket (Lance): from Messages, for jobs **Pending Rehash / Pending Install / Ins
 - Known, preserved quirks (not fixed on purpose): `isInstallingToday` compares a UTC date string and does not require `status === 'sale'` (the backend bucket does). Offline, the header link is absent (no lead to evaluate).
 - Not verified on device: header tap -> `Deal`; back returns to the chat; Already Installed header not tappable; push-opened chat gets the link; a real Pending Rehash lead (`isRehashed: true`, unresulted).
 
+### Follow-up - in-chat link was dead for Pending Install / Installing Today
+
+Report: tapping the lead title inside the chat opened the deal for **Pending Rehash** but did nothing for **Pending Install** and **Installing Today**.
+
+- **Cause:** `f55b9263` rewrote the two install predicates to read `leadDetails.installBucket`, which is correct for the Messages LIST - the backend computes that field into the `all-lead-chats-response` socket payload. The chat HEADER has no socket lead: it is reached from pushes and notifications too, so it refetches with `LeadService.getLeadDetailsById` (`lead/v1/details/:id`), a generic lead read that **does not return `installBucket` at all**. Both predicates therefore returned false and the title rendered unlinked. Pending Rehash survived only because `isRehashed` / `status` DO come back from that endpoint.
+- **Fix, two halves:**
+  1. `deal-link.installBucketOf(leadDetails)` resolves the bucket: the server's `installBucket` when present, otherwise derived from `installationDate` + `status` (the pre-`f55b9263` rule, kept as a FALLBACK ONLY). `isPendingInstall` / `isInstallingToday` both go through it, so the list and the header still share one rule.
+  2. The list hands its bucket over the navigation (`ChatThreads.navigateToChat` -> `ChatDetail` route param -> `ChatHeader installBucket` prop), and the header merges it onto the refetched lead. When the list knows, nothing is re-derived. The param is declared on `ChatDetail` in `RootStackParamList` (`src/navigation/index.tsx`) - that file is otherwise Zone Canvasser territory, so the note lives here with the rest of the chat work.
+- ⚠️ **The server's bucket always wins** - it is resolved off the job builder and the date arithmetic here cannot reproduce that. The fallback exists for the entries that carry no bucket (push / notification), not to second-guess the backend.
+- ⚠️ The install day is compared as **TEXT** (`CLAUDE.md` §6). `new Date(iso)` shifts the calendar day by the device's timezone offset, which would call tomorrow's install "today" for any rep west of UTC.
+- Tests: `tests/chat/deal-link.test.ts` (18) covers each derived bucket, server-wins precedence, and the timezone-drift case.
+- Not verified on device: open a chat from the **Pending Install** filter and from **Installing Today** - the title should be underlined and open `Deal`; an **Already Installed** chat must stay unlinked; a push-opened chat for a sold job with a future install date should still link.
+
 
 ### Follow-up - the appointment-photo picker's "Send N photo(s)" bar sat under the Android nav bar
 

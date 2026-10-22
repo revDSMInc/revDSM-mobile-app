@@ -1,5 +1,6 @@
 import {
   canOpenDeal,
+  installBucketOf,
   isInstallingToday,
   isPendingInstall,
   isPendingRehash,
@@ -76,5 +77,55 @@ describe('canOpenDeal', () => {
     expect(canOpenDeal({ status: 'selfGenerated' })).toBe(false);
     expect(canOpenDeal({ status: 'notHit' })).toBe(false);
     expect(canOpenDeal(null)).toBe(false);
+  });
+});
+
+// The chat header refetches the lead from `lead/v1/details/:id`, which does NOT carry
+// `installBucket` - only the Messages socket does. Without a fallback the Pending Install
+// and Installing Today links were dead inside the chat (REVUIUX-552 follow-up).
+describe('installBucketOf - fallback when the server sent no bucket', () => {
+  const dayOffset = (days: number): string => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + days);
+    return `${d.toISOString().slice(0, 10)}T00:00:00.000Z`;
+  };
+
+  it("derives 'Installing Today' from an install date of today", () => {
+    const lead = { status: 'sale', installationDate: dayOffset(0) };
+    expect(installBucketOf(lead)).toBe('Installing Today');
+    expect(isInstallingToday(lead)).toBe(true);
+    expect(canOpenDeal(lead)).toBe(true);
+  });
+
+  it("derives 'Pending Install' from a sold job installing later", () => {
+    const lead = { status: 'sale', installationDate: dayOffset(5) };
+    expect(installBucketOf(lead)).toBe('Pending Install');
+    expect(isPendingInstall(lead)).toBe(true);
+    expect(canOpenDeal(lead)).toBe(true);
+  });
+
+  it("derives 'Already Installed' from a past install date, which is not tappable", () => {
+    const lead = { status: 'sale', installationDate: dayOffset(-3) };
+    expect(installBucketOf(lead)).toBe('Already Installed');
+    expect(canOpenDeal(lead)).toBe(false);
+  });
+
+  it('does not invent a bucket for a lead with no install date', () => {
+    expect(installBucketOf({ status: 'sale' })).toBeNull();
+    expect(installBucketOf(null)).toBeNull();
+  });
+
+  // The server resolves the bucket off the job builder; our date arithmetic cannot.
+  it('prefers the bucket the server sent over the derived one', () => {
+    const lead = { status: 'sale', installationDate: dayOffset(5), installBucket: 'Installing Today' };
+    expect(installBucketOf(lead)).toBe('Installing Today');
+    expect(isPendingInstall(lead)).toBe(false);
+  });
+
+  // Parsed as TEXT: `new Date()` would shift the day by the device's timezone offset.
+  it('reads the calendar day without timezone drift', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    expect(installBucketOf({ installationDate: `${today}T23:30:00.000Z` })).toBe('Installing Today');
+    expect(installBucketOf({ installationDate: `${today}T00:15:00.000Z` })).toBe('Installing Today');
   });
 });

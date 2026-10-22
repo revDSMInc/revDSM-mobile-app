@@ -131,6 +131,10 @@ export default function ChatThreadsScreen({ navigation }: any) {
       initialParticipants: item.participants || [],
       previewImage: item.leadDetails?.previewImage,
       previewImages: item.leadDetails?.previewImages,
+      // The socket lead carries `installBucket`; the header's own refetch
+      // (`lead/v1/details/:id`) does not. Hand it over so the Pending Install /
+      // Installing Today link does not depend on re-deriving it. REVUIUX-552.
+      installBucket: item.leadDetails?.installBucket,
     });
   };
 

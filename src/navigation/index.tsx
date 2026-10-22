@@ -60,6 +60,8 @@ export type RootStackParamList = {
     salesPhotos?: any[];
     previewImage?: any;
     previewImages?: any;
+    /** From the Messages list only; see `ChatThreads/utils/deal-link.ts`. */
+    installBucket?: string;
   };
   MapDetail: { currentLead?: any };
   Pitchbook: { lead: any; bookId?: string; bookName?: string };

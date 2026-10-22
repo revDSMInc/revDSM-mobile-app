@@ -67,6 +67,7 @@ export const ChatHeader = ({
   customerName,
   description,
   leadPreview,
+  installBucket,
   isChannel,
   isViewOnly,
   colors,
@@ -91,7 +92,7 @@ export const ChatHeader = ({
   // REVUIUX-552: the job number in the header opens the deal. ChatDetail is navigated with scalars only (push and
   // notification entries pass no lead data at all), so the lead is fetched here and the link is gated on LEAD STATE
   // via the same `canOpenDeal` the Messages list uses - not on the filter the rep happened to arrive from.
-  const { data: dealLead } = useQuery({
+  const { data: fetchedLead } = useQuery({
     queryKey: ['chatDealLead', leadId],
     queryFn: async () => {
       const res = await LeadService.getLeadDetailsById(leadId);
@@ -100,6 +101,12 @@ export const ChatHeader = ({
     enabled: !!leadId && !isChannel && !isInstaller && online,
     staleTime: 60_000,
   });
+  // ⚠️ The bucket comes from the MESSAGES LIST, not from the lead we just fetched.
+  // `lead/v1/details/:id` does not return `installBucket` (only the chat-list socket does),
+  // so evaluating the refetched lead alone left the title dead for Pending Install and
+  // Installing Today. When the list handed us the bucket we trust it; `installBucketOf`
+  // derives it from the install date for the entries that pass none (push / notification).
+  const dealLead = installBucket && fetchedLead ? { ...fetchedLead, installBucket } : fetchedLead;
   const dealLinkEnabled = !isChannel && !isInstaller && !!dealLead && canOpenDeal(dealLead);
   const openDeal = () => navigation.navigate('LeadCenter', { lead: dealLead, fromMyDeals: true });
 
