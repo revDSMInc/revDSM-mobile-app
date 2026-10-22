@@ -569,6 +569,27 @@ export const applyStepDecision = (
   }
 };
 
+/**
+ * The LOCAL calendar day of an instant, as a date-only string (`YYYY-MM-DD`).
+ *
+ * ⚠️ THE CARD FORMATS THIS WITH `new Date(...)`, so the value handed to it decides the day.
+ * `work.createdAt` is a UTC instant (`toISOString()`), and a lead created at 22:30 UTC on the
+ * 22nd renders as the **23rd** for a rep at +05:00 - the same off-by-one that put yesterday's
+ * leads on the Today tab. Emitting the local Y/M/D means the card prints the day the rep
+ * actually made the lead.
+ *
+ * ⚠️ Date-ONLY on purpose, matching what the server sends (`2026-10-22T00:00:00-04:00`
+ * parses back to midnight local). Do not append a time or a `Z`: a `Z` re-introduces the shift.
+ */
+export const localDateOnly = (iso: string | null | undefined): string => {
+  const ms = Date.parse(String(iso || ''));
+  if (Number.isNaN(ms)) return '';
+  const d = new Date(ms);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+};
+
 export const offlineWorkToLead = (work: OfflineLeadWork): Record<string, any> | null => {
   if (work.origin !== 'created-offline' || !work.lead) return null;
   const payload = work.lead as Record<string, any>;
@@ -588,6 +609,15 @@ export const offlineWorkToLead = (work: OfflineLeadWork): Record<string, any> | 
     leadId: payload.lfLeadId || 'N/A',
     leadCode: payload.leadCode || (isIssued ? 'N/A' : 'SelfGen'),
     leadDatetime: payload.lfLeadDate || work.createdAt,
+    /**
+     * ⚠️ `leadDate` IS A SEPARATE FIELD FROM `leadDatetime`, and the lead CARD reads this one.
+     *
+     * Reported: a lead created offline showed its date as **N/A** on the leads list, while Lead
+     * Center showed it correctly. Both were right about their own data - Lead Center renders
+     * `leadDatetime` (set above), `LeadCard` renders `leadDate` (never set). A server lead
+     * carries BOTH, so the gap only ever showed on an offline-created lead.
+     */
+    leadDate: payload.lfLeadDate ? localDateOnly(payload.lfLeadDate) : localDateOnly(work.createdAt),
     leadTime: payload.lfLeadTime || 'N/A',
     lowesLead: payload.lowesLead === true,
     location: payload.location,
@@ -762,7 +792,38 @@ export const offlineArchivedLeads = (
 export interface OfflineLeadsForTabOptions {
   serverLeadIds?: Iterable<string> | null | undefined;
   keepUploaded?: Iterable<string> | null | undefined;
+  /**
+   * Keep only work created on this calendar day. The Leads screen passes `Date.now()` for the
+   * TODAY sub-tab and omits it everywhere else (Archived / Sold / Rehash are not day-scoped).
+   */
+  todayAt?: number | null;
 }
+
+/**
+ * Same CALENDAR day in the DEVICE's timezone.
+ *
+ * ⚠️ Not a rolling 24h window, and not `AT_THE_DOOR_TTL_MS`. "Today" on this screen is the day
+ * the rep is living in - the tab's own caption says *"All Self Gen Leads will be archived end of
+ * day"* - so it has to RESET AT MIDNIGHT. A 24h TTL would keep a lead made at 11pm yesterday on
+ * Today until 11pm tonight, which is the reported bug with extra steps.
+ *
+ * ⚠️ Local, deliberately. This is compared against the rep's own clock and the server's
+ * `period: 'today'`, both of which mean the rep's day. Normalising to UTC would move the boundary
+ * by the offset and drop a lead made this evening in a UTC-negative timezone.
+ *
+ * ⚠️ `createdAt` is a full ISO INSTANT (`new Date().toISOString()`), not a bare calendar date,
+ * so `new Date()` is correct here - this is not the date-as-text trap from the root guide, which
+ * is about bare `YYYY-MM-DD` strings being shifted by an offset.
+ */
+export const isSameLocalDay = (aMs: number, bMs: number): boolean => {
+  const a = new Date(aMs);
+  const b = new Date(bMs);
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+};
 
 const idSet = (values: Iterable<string> | null | undefined): Set<string> => {
   const out = new Set<string>();
@@ -781,10 +842,24 @@ export const offlineLeadsForTab = (
 ): Record<string, any>[] => {
   const onServer = idSet(options?.serverLeadIds);
   const bridging = idSet(options?.keepUploaded);
+  const todayAt = typeof options?.todayAt === 'number' ? options.todayAt : null;
   return (items || [])
     .filter((w) => !w.deleteLead)
     .filter((w) => w.status !== 'uploaded' || bridging.has(w.clientId))
     .filter((w) => !onServer.has(workLeadId(w)))
+    /**
+     * ⚠️ THE TODAY TAB IS DAY-SCOPED, and this overlay used to ignore that entirely.
+     *
+     * Reported: "when I go offline it also shows the old leads - I made those yesterday and it's
+     * showing them under Today." The SERVER list is filtered with `period: 'today'`, but these
+     * queued leads are prepended by the device, so every un-uploaded lead ever made stayed on
+     * Today until it synced. A rep with no signal for two days saw both days piled together, with
+     * yesterday's dates printed on the cards.
+     *
+     * ⚠️ The lead is NOT lost or deleted - it is still queued, still syncs, and still appears on
+     * the pending-uploads banner. It is only kept off a tab that promises one day.
+     */
+    .filter((w) => todayAt === null || isSameLocalDay(createdAtMs(w), todayAt))
     .slice()
     .sort((a, b) => createdAtMs(b) - createdAtMs(a))
     .map(offlineWorkToLead)

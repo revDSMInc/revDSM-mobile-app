@@ -5418,3 +5418,20 @@ user-scoped query key and stopped caching an empty answer.
   list is empty, and `refetchOnReconnect` is on.
 - ⚠️ **An owner-scoped MMKV cache needs an owner-scoped QUERY KEY too**, or the in-memory half is still
   shared between reps on one device.
+
+## The Leads list's Today tab is day-scoped on BOTH halves (2026-10-22)
+
+`screens/Leads/index.tsx` + `utils/offline-lead-work.ts` (`offlineLeadsForTab`, `isSameLocalDay`).
+Full ticket, traps and tests: [`offline.md`](offline.md) § *The Today tab showed YESTERDAY's offline leads*.
+
+Recorded here because `screens/Leads/**` is a Deal Center path: the list prepends queued offline leads to
+the server list, and only the server half was day-filtered (`apiParams` sends `period: 'today'`). Every
+un-uploaded lead therefore stayed pinned to Today until it synced.
+
+- ⚠️ **`withWorkflow` is the single funnel for every overlay in this file** (rehash, archived, today,
+  pending). The day filter sits on `offlineLeadsForTab`, i.e. on what is *fed into* that funnel - not at
+  a call site - so no future path can skip it.
+- ⚠️ **`todayAt` is optional and MUST stay omitted off the Today sub-tabs.** Archived / Sold / Rehash are
+  not day-scoped; passing a stamp there would hide queued archived leads.
+- ⚠️ **The lead is filtered from the TAB, never from the queue** - it still syncs and still shows on the
+  pending-uploads banner.

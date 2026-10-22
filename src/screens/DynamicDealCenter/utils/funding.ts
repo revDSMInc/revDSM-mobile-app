@@ -782,7 +782,7 @@ export function formatStamp(iso?: string | null): string {
 }
 
 export function fundedAmount(p: FundingPayment): number {
-  if (p.type === 'bank' && p.approvedAmt != null) return p.approvedAmt;
+  if (p.type === 'bank') return p.approvedAmt ?? 0;
   return p.amount;
 }
 

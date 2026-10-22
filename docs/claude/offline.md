@@ -404,6 +404,82 @@ and taxes every unrelated write in the app.
 ⚠️ **The write effect early-returns while serving FROM the cache**, or the screen rewrites its own
 snapshot with a copy of itself.
 
+## The Today tab showed YESTERDAY's offline leads (2026-10-22)
+
+`utils/offline-lead-work.ts` (`offlineLeadsForTab`, `isSameLocalDay`) + `screens/Leads/index.tsx`.
+Tests: `tests/offline/offline-leads-today.test.ts`.
+
+Reported with two screenshots: *"when I'm online it shows me today's leads, but when I go offline it also
+shows the old leads - I made those offline yesterday and it's showing them under Today. Today is the 22nd
+and it's showing the 21st."*
+
+**The two halves of that list are filtered by different rules, and only one of them knew about the day.**
+The Leads screen renders `[...pendingOfflineLeads, ...serverLeads]`:
+
+| Half | Day scope |
+|---|---|
+| Server leads | `apiParams` sends `{ status: 'selfGenerated', period: 'today' }` - the backend filters |
+| Queued offline leads | `offlineLeadsForTab` filtered on deleted / uploaded / already-on-server... and **nothing else** |
+
+So every un-uploaded lead ever created stayed pinned to Today until it synced. A rep with no signal for two
+days saw both days piled together, with yesterday's dates printed on the cards. Online it never showed,
+because an online lead is created on the server immediately and leaves the queue.
+
+**Fix:** `offlineLeadsForTab` takes `todayAt`, and keeps only work created on that calendar day. The Leads
+screen passes it on the TODAY sub-tabs and omits it everywhere else.
+
+- ⚠️ **A CALENDAR day, not a rolling 24h window** (`isSameLocalDay`, not `AT_THE_DOOR_TTL_MS`). The tab's
+  own caption says *"All Self Gen Leads will be archived end of day"*, so it must RESET AT MIDNIGHT. A 24h
+  TTL would keep a lead made at 11pm yesterday on Today until 11pm tonight - the reported bug with extra
+  steps.
+- ⚠️ **Local time, deliberately.** It is compared against the rep's own clock and the server's
+  `period: 'today'`, both of which mean the rep's day. Normalising to UTC would move the boundary by the
+  offset and drop a lead made this evening in a UTC-negative timezone.
+- ⚠️ **`createdAt` is a full ISO INSTANT, so `new Date()` is right here.** This is NOT the parse-dates-as-
+  text trap in the root guide - that one is about bare `YYYY-MM-DD` strings being shifted by an offset.
+- ⚠️ **`todayAt` is OPTIONAL and omitted off the Today tabs.** Archived / Sold / Rehash are not day-scoped;
+  passing a stamp there would hide queued archived leads.
+- ⚠️ **The lead is filtered from the TAB, never from the queue.** It is still `draft`, still syncs, and
+  still shows on the pending-uploads banner (`PendingLeadsBanner` reads `activeWork`, untouched). Filtering
+  it out of the work list instead would strand it forever - pinned by a test.
+- ⚠️ **The day stamp is re-read on FOCUS, not once at mount.** A rep leaves the app open overnight in the
+  truck; a stamp captured at mount keeps yesterday's date and the tab silently goes on showing yesterday.
+  `useFocusEffect` only replaces it when the day actually changed, so the memo is not invalidated on every
+  return to the screen.
+- Work with an unparseable `createdAt` is excluded from Today (`createdAtMs` returns 0) but still returned
+  wherever no day scope applies, so it can never be stranded.
+
+### Follow-up — the offline lead card showed its date as N/A
+
+`utils/offline-lead-work.ts` (`offlineWorkToLead`, `localDateOnly`).
+Test: `tests/offline/offline-lead-card-date.test.ts`.
+
+Reported with two screenshots of the SAME lead: the leads-list card showed **N/A** where the date goes,
+while **Lead Center showed 10/22/2026**. Both surfaces were reading their own data correctly:
+
+| Surface | Field read | Set by `offlineWorkToLead`? |
+|---|---|---|
+| `LeadCenter` | `lead.leadDatetime` | ✅ yes |
+| `LeadCard` | `lead.leadDate` | ❌ **never** |
+
+A SERVER lead carries both (`leadDate: "2026-10-22T00:00:00-04:00"` and
+`leadDatetime: "2026-10-22T01:48:02-04:00"` - confirmed in a real device store), so the gap only ever
+showed on a lead created offline. `offlineWorkToLead` now emits `leadDate` too.
+
+- ⚠️ **It is NOT `work.createdAt` passed through.** The card formats with `new Date(lead.leadDate)`, and
+  `createdAt` is a UTC instant - a lead made at 22:30 UTC on the 22nd renders as the **23rd** for a rep at
+  +05:00. `localDateOnly` emits the LOCAL `YYYY-MM-DD`, so the card prints the day the rep actually made
+  the lead. Same off-by-one class as the Today-tab ticket above, and it is deliberately solved the same
+  way, so the card date and the tab filter can never disagree.
+- ⚠️ **Date-ONLY, with no time and no `Z`.** It mirrors what the server sends (`...T00:00:00-04:00`
+  parses back to local midnight). Appending a `Z` re-introduces the shift this exists to remove.
+- ⚠️ **An ISSUED lead keeps `lfLeadDate`**, its scheduled appointment day - NOT the day the work item was
+  created. Only a self-gen lead falls back to the creation day.
+- An unparseable timestamp yields `''`, so `LeadCard` falls back to **N/A** exactly as before rather than
+  printing `Invalid Date`.
+- `LeadCard`'s memo already compares `leadDate`; the value is stable per work item, so this adds no
+  re-renders.
+
 ## The leads list kept saying "Resume Appointment" on a lead resulted offline
 
 Reported from a device with three screenshots. A rep resulted a self-gen lead at a door with no
