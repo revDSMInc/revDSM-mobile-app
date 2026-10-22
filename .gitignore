@@ -75,7 +75,7 @@ __tests__/
 *.spec.ts
 *.spec.tsx
 *.txt
-
+tests
 # ─── Markdown ─────────────────────────────────────────────────────────────────
 # No markdown is pushed EXCEPT the Claude repo guide, so ticket write-ups and handoff
 # notes stay on the machine that wrote them. What IS pushed:
