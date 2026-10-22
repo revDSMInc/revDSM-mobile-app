@@ -40,6 +40,7 @@ import {
   pendingLeadDeletes,
   createdAtTheDoor,
   offlineCheckInModule,
+  isSameLocalDay,
 } from '../../utils/offline-lead-work';
 import {
   getOfflineWork,
@@ -145,6 +146,21 @@ export default function LeadsPage() {
 
   const isRehash = currentTab === 'rehash';
 
+  /**
+   * The day the TODAY tabs are scoped to.
+   *
+   * ⚠️ Re-read on every focus, not once at mount. A rep leaves the app open overnight in the
+   * truck; without this the memo keeps yesterday's stamp and the tab silently goes on showing
+   * yesterday - the same bug in a different disguise. `useFocusEffect` already fires on return
+   * to this screen, which is the moment the list is looked at.
+   */
+  const [dayStamp, setDayStamp] = useState(() => Date.now());
+  useFocusEffect(
+    useCallback(() => {
+      setDayStamp((prev) => (isSameLocalDay(prev, Date.now()) ? prev : Date.now()));
+    }, [])
+  );
+
   const apiParams = useMemo(() => {
     if (currentTab === 'rehash') return {};
     if (currentTab === 'issued') return { status: 'lfLead', period: issuedSubTab };
@@ -234,7 +250,14 @@ export default function LeadsPage() {
     const pending = offlineLeadsForTab(
       offlineWork,
       currentTab === 'issued' ? 'lfLead' : 'selfGen',
-      { serverLeadIds, keepUploaded: justLandedIds }
+      {
+        serverLeadIds,
+        keepUploaded: justLandedIds,
+        // Only reached on a TODAY sub-tab (`onCurrentTab` above), and the server half of this
+        // list is fetched with `period: 'today'` - so the queued half has to be day-scoped too,
+        // or leads made on earlier days pile up here until they sync.
+        todayAt: dayStamp,
+      }
     );
     if (!pending.length) return withWorkflow(serverLeads);
     return withWorkflow([...pending, ...(serverLeads || [])]);
@@ -251,6 +274,7 @@ export default function LeadsPage() {
     currentTab,
     issuedSubTab,
     selfGenSubTab,
+    dayStamp,
   ]);
   const isListLoading = isRehash ? rehashLoading : loading;
   const refreshActive = useCallback(

@@ -5277,3 +5277,20 @@ keeps the server lines, which can be a snapshot from before the edit.
 ### Lead card / Job docs: "Resulted - bank decline" now reads "Bank Decline"
 
 `LeadCard.getLeadState` and `JobDocsSection.getStatusLabel` fell back to the raw `lead.status` ("bank decline") for any status without a hand-written label. The fallback now goes through `titleCaseStatus` (`utils/status-label.ts`, tested in `tests/offline/status-label.test.ts`): every word capitalised, `_`/`-` read as spaces. ⚠️ Known labels (`RESULTED_LABELS`, the Job-docs map) are untouched - add a label there rather than relying on the fallback. Not verified on device.
+
+## The Leads list's Today tab is day-scoped on BOTH halves (2026-10-22)
+
+`screens/Leads/index.tsx` + `utils/offline-lead-work.ts` (`offlineLeadsForTab`, `isSameLocalDay`).
+Full ticket, traps and tests: [`offline.md`](offline.md) § *The Today tab showed YESTERDAY's offline leads*.
+
+Recorded here because `screens/Leads/**` is a Deal Center path: the list prepends queued offline leads to
+the server list, and only the server half was day-filtered (`apiParams` sends `period: 'today'`). Every
+un-uploaded lead therefore stayed pinned to Today until it synced.
+
+- ⚠️ **`withWorkflow` is the single funnel for every overlay in this file** (rehash, archived, today,
+  pending). The day filter sits on `offlineLeadsForTab`, i.e. on what is *fed into* that funnel - not at
+  a call site - so no future path can skip it.
+- ⚠️ **`todayAt` is optional and MUST stay omitted off the Today sub-tabs.** Archived / Sold / Rehash are
+  not day-scoped; passing a stamp there would hide queued archived leads.
+- ⚠️ **The lead is filtered from the TAB, never from the queue** - it still syncs and still shows on the
+  pending-uploads banner.
