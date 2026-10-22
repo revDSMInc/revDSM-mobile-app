@@ -1319,6 +1319,90 @@ inheritanceSource: 'default pre order discount'
   "Inherited Pre Order Discount — 20%" needs a change there too. Confirm with the portal team before
   closing the ticket.
 
+## A drop price saves on DONE, as `pending` — it is no longer lost (2026-10-21)
+
+`screens/DynamicDealCenter/utils/drop-prices.ts` (rules) + `components/RolloutView.tsx` (UI).
+Tests: `tests/offline/drop-pending-status.test.ts`.
+
+Reported by a rep, about two real leads: *"It doesn't matter if I never hit secure or never hit decline,
+I hit done on the keypad. These drops always have to save. It literally did not save on both those leads.
+I dropped to cost price on both of them... there was no cost price displayed on my deal center and none on
+tnt scoreboard."*
+
+**They were right, and the cause was structural:** `openDrop` only set component state
+(`setPendingDrop` + `setShowDropModal`). `onDropChange` was called **exclusively** from `secureDrop` /
+`declineDrop`, so a drop that never reached an outcome was never persisted anywhere — and the modal is
+deliberately non-dismissable (web parity), so the rep's only exits were Secure, Decline, or navigating
+away and losing it.
+
+**Now:** Done saves the row immediately as `status: 'pending'`, logs `drop price entered`, and the modal
+gains an **X** that leaves it pending. Backend accepts `'pending'` (confirmed with the client).
+
+### ⚠️ The trap this nearly introduced — pending must NEVER price the job
+
+`autoSecureLastDrop` promotes `list.length - 1` to `accepted` when nothing is accepted, and it runs on
+**Result Lead**. With pending rows saved and no guard, a price the rep merely *typed* would have become
+the **SOLD** price, carrying a `drop price secured` log for an outcome that never happened. **That is
+worse than the bug being fixed** — losing a drop costs a re-entry; selling an unagreed price does not
+unwind. Three defences, deliberately overlapping:
+
+| Guard | Where | Why it is not redundant |
+|---|---|---|
+| `resolveAutoSecureIndex` skips pending rows | `drop-prices.ts` | Silent correctness for every present and future caller |
+| Result Lead refuses while `pendingDropIndex(drops) >= 0`, reopens the modal on that row | `RolloutView.openResultChooser` | TELLS the rep, instead of quietly picking a different row |
+| `resolveActiveDownPayment` ignores pending | `drop-prices.ts` | A pending down payment must not seed the Investment Center |
+
+- ⚠️ **`toDropPricePayload`'s `|| 'declined'` fallback is for a row with NO status** (legacy rows). A
+  deliberate `'pending'` passes through untouched — coercing it there would file an unresolved drop as
+  declined on the server and lose exactly the state this feature adds.
+- ⚠️ **The X is only safe BECAUSE the drop is already saved.** Before this, any dismissal discarded the
+  drop, which is why the backdrop is still inert and web passes no `onClose`. Closing now means "decide
+  later", never "throw it away" — and it does **not** resolve the drop, so Result Lead stays blocked.
+- ⚠️ **`openDrop` now passes a real `pendingDropIndex`**, so Secure/Decline UPDATE the pending row via
+  `resolveDropTargetIndex` instead of appending a second one. Passing `-1` would double every drop.
+- UI: amber `PENDING` chip beside the price, amber border, and the `Display` button reads **`Resolve`**
+  while pending (it is the way back to Secure/Decline). `SECURED` / `LOCKED` are unchanged.
+- ⚠️ `RolloutView.tsx` has a local state variable named `pendingDropIndex`, so the helper of the same
+  name is imported **aliased** as `findPendingDropIndex`. Do not un-alias it.
+
+### Offline: identical, and tested
+`handleSetDrops` → `saveDropsNow`, which on `!isOnline()` calls `persistOffline` — that stores
+`dropPrice` verbatim on the calculator payload. The `calculatorState` sync step then sends that payload
+through `updateCalculator`, so the pending row reaches the server on reconnect with its status intact.
+
+⚠️ **The `calculator` CREATE step deletes `dropPrice`** (`offlineLeadStore.ts`), so a drop NEVER rides the
+create — it always arrives via `calculatorState`. Removing or reordering that step would silently lose
+every offline drop, pending or not.
+
+### ⚠️ The 500 this caused on a device — the offline payload was sending RAW drop rows
+
+Reported immediately after the above landed: the calculator write failed with a **500** on sync.
+Cause, in `useDynamicCalculators.persistOffline`:
+
+```
+dropPrice: t.dropPrice || [],                                   // was: the INTERNAL row
+dropPrice: toDropPricePayload(normalizeSingleAcceptedDrop(...))  // now: the six-key contract
+```
+
+The API accepts exactly `{ dropedPrice, status, paymentMethod, pricemarkup, downPayment, balance }`
+(plus `_id` / `paymentMethods` when present). The UI's own drop row additionally carries `price`, which
+`toDropPricePayload` strips — and **both online savers already mapped through it**, so the raw shape was
+only ever sent from the offline path. That is why it never appeared in online testing.
+
+⚠️ **This bug PRE-DATES the pending work** (the raw spread was already there); pending only made it
+reachable sooner, because a drop now exists before an outcome is chosen. Do not assume a drop payload
+problem is new code.
+
+⚠️ **Every path that writes `dropPrice` must go through `toDropPricePayload`.** There are three:
+`saveDropsNow` (drop-only save), `cacheTabsSnapshot` (cache) and `persistOffline` (queue). The contract
+is pinned by KEY SET in `tests/offline/drop-pending-status.test.ts` › *the dropPrice wire contract*, so a
+field added to a drop row in the UI can never leak to the API again.
+
+**Still open — ask the client:** nothing forces a pending drop to resolve *before* Result Lead is
+attempted; the gate only fires at that moment. If deals are expected never to carry a pending drop at
+all, a sweep at Confirm Rollouts (or auto-decline on result) is the follow-up. Confirm Rollouts
+deliberately does NOT block today: it confirms rollouts, and drops legitimately come after it.
+
 ## Ticket 409 — a resulted lead locks every rollout tab, and the resulted one offers Reset Job Builder
 
 Ticket: *"when a lead is resulted from one tab, the other tabs of the same lead remain active, allowing

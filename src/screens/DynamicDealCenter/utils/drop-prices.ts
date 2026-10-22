@@ -1,3 +1,39 @@
+/**
+ * DROP STATUSES: 'accepted' | 'declined' | 'pending'.
+ *
+ * `pending` is a drop the rep TYPED and committed (Done on the keypad) but has not yet taken an
+ * outcome on. It exists because the drop used to live only in component state until Secure or
+ * Decline was pressed, so a rep who typed a price and navigated away lost it - reported from the
+ * field as "these drops always have to save, I hit done on the keypad".
+ *
+ * ⚠️ A PENDING DROP MUST NEVER PRICE THE JOB. It is a number the rep floated, not one the
+ * customer agreed to. Every helper here that chooses a price, a down payment or an auto-secure
+ * target treats pending as "not an outcome" - see `isResolvedDrop` / `hasUnresolvedDrop`. Getting
+ * this wrong is worse than the bug it fixes: it would sell a job at a price nobody accepted and
+ * log a `drop price secured` event that never happened.
+ */
+export const DROP_PENDING = 'pending';
+export const DROP_ACCEPTED = 'accepted';
+export const DROP_DECLINED = 'declined';
+
+export const isPendingDrop = (d: any): boolean => d?.status === DROP_PENDING;
+
+/** A drop the rep has taken an outcome on. Only these may affect pricing. */
+export const isResolvedDrop = (d: any): boolean =>
+  d?.status === DROP_ACCEPTED || d?.status === DROP_DECLINED;
+
+/**
+ * Is a drop still waiting for Secure / Decline?
+ *
+ * Result Lead is blocked on this: a deal must not be resulted while a price the rep put in front
+ * of the customer has no recorded outcome.
+ */
+export const hasUnresolvedDrop = (drops: any[] | null | undefined): boolean =>
+  (Array.isArray(drops) ? drops : []).some(isPendingDrop);
+
+export const pendingDropIndex = (drops: any[] | null | undefined): number =>
+  (Array.isArray(drops) ? drops : []).findIndex(isPendingDrop);
+
 export function normalizeSingleAcceptedDrop<T extends { status?: string }>(drops: T[] | null | undefined): T[] {
   if (!Array.isArray(drops)) return [];
 
@@ -73,7 +109,10 @@ export function toDropPricePayload(drops: any[] | null | undefined): any[] {
     return {
       ...(d?._id ? { _id: String(d._id) } : null),
       dropedPrice: Number(d?.dropedPrice ?? d?.price) || 0,
-      status: d?.status || 'declined',
+      // ⚠️ The `|| 'declined'` fallback is for a row with NO status (legacy rows). A deliberate
+      // 'pending' must pass through untouched - coercing it here would file an unresolved drop as
+      // declined on the server and lose the very state this saves.
+      status: d?.status || DROP_DECLINED,
       paymentMethod: d?.paymentMethod || '',
       pricemarkup: d?.pricemarkup || '',
       downPayment: Number(d?.downPayment) || 0,
@@ -99,7 +138,17 @@ export function resolveAutoSecureIndex(drops: any[] | null | undefined): number 
   const list = Array.isArray(drops) ? drops : [];
   if (!list.length) return -1;
   if (hasAcceptedDrop(list)) return -1;
-  return list.length - 1;
+  /**
+   * ⚠️ NEVER auto-secure a PENDING drop. This runs when the rep taps Result Lead, and it used to
+   * take `list.length - 1` blindly - so a drop the rep merely typed would have become the SOLD
+   * price, with a `drop price secured` log for an outcome that never happened. Pending rows are
+   * skipped; `hasUnresolvedDrop` blocks the flow before this anyway, and this is the second line of
+   * defence so a future caller cannot reintroduce it.
+   */
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (!isPendingDrop(list[i])) return i;
+  }
+  return -1;
 }
 
 export function autoSecureLastDrop<T extends Record<string, any>>(
@@ -116,7 +165,8 @@ export function resolveActiveDownPayment(
   fallback?: number | string | null
 ): number {
   const list = Array.isArray(drops) ? drops : [];
-  const acceptedIdx = list.findIndex((d) => d?.status === 'accepted');
+  // ⚠️ A pending drop's down payment must not seed the Investment Center - same rule as pricing.
+  const acceptedIdx = list.findIndex((d) => d?.status === DROP_ACCEPTED);
   const idx = acceptedIdx >= 0 ? acceptedIdx : resolveAutoSecureIndex(list);
   const raw = idx >= 0 ? list[idx]?.downPayment : fallback;
   const n = Number(raw);

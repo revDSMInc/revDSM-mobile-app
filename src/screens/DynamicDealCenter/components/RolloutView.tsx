@@ -12,7 +12,7 @@ import { resolveSchemaStyle } from '../utils/icon-color';
 import { formatAmountInput, stripAmount } from '../utils/format-amount';
 import { MODAL_BLUR_AMOUNT, MODAL_SCRIM, MODAL_CARD_SHADOW } from './modal-chrome';
 import { describeFullPackage } from '../utils/tab-naming';
-import { autoSecureLastDrop, dropPriceOf } from '../utils/drop-prices';
+import { autoSecureLastDrop, dropPriceOf, DROP_PENDING, isPendingDrop, pendingDropIndex as findPendingDropIndex } from '../utils/drop-prices';
 import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { FlashMessage } from '../../../config/message';
 import { allRolloutsConfirmed, rolloutCalculators } from '../../../utils/rollout-status';
@@ -388,6 +388,24 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
           />
           <View style={MODAL_SCRIM} pointerEvents="none" />
           <Pressable style={{ backgroundColor: '#fff', borderRadius: 40, padding: 24, maxHeight: '88%', ...MODAL_CARD_SHADOW }}>
+            {/**
+              * Dismiss, leaving the drop PENDING.
+              *
+              * ⚠️ This is only safe because the drop is already saved (see `openDrop`). Before that it
+              * lived in component state until Secure/Decline, so any dismissal DISCARDED it - which is
+              * why the backdrop is still inert and web passes no `onClose`. Now that the row exists,
+              * closing is 'decide later', not 'throw it away'.
+              *
+              * ⚠️ It does NOT resolve the drop. Result Lead stays blocked until the rep chooses.
+              */}
+            <TouchableOpacity
+              onPress={onClose}
+              accessibilityLabel="Close, leave this drop pending"
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={{ position: 'absolute', top: 16, right: 16, zIndex: 2, width: 32, height: 32, borderRadius: 16, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Ionicons name="close" size={18} color="#64748B" />
+            </TouchableOpacity>
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {/* Header — green check + UPDATED PRICE + price + method badges */}
               <View style={{ alignItems: 'center', marginBottom: 24 }}>
@@ -1062,8 +1080,55 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }
     const planMin = plans[method]?.minPrice || 0;
     if (planMin && v < planMin) { FlashMessage.error('Invalid drop price', `This payment plan requires a minimum price of ${fmt(planMin)}.`); return; }
+    /**
+     * ⚠️ THE DROP IS SAVED HERE, on Done - not on Secure/Decline.
+     *
+     * Reported from the field: "it doesn't matter if I never hit secure or decline, I hit done
+     * on the keypad - these drops always have to save. It literally did not save on both those
+     * leads." The drop used to live only in component state until an outcome was chosen, so a rep
+     * who typed a price and navigated away lost it entirely.
+     *
+     * It is saved as `pending`: recorded, but explicitly NOT an outcome. `drop-prices.ts` keeps a
+     * pending drop out of every pricing decision, and Result Lead refuses to proceed while one is
+     * open - a number the rep floated must never become the sold price on its own.
+     */
+    const idx = drops.length;
+    onDropChange(calculator.id, [
+      ...drops,
+      {
+        price: v,
+        dropedPrice: v,
+        status: DROP_PENDING,
+        pricemarkup: markupLabel(v, logTiers),
+        paymentMethod: method,
+        downPayment: 0,
+        balance: v,
+      },
+    ]);
+    const uidP = user?._id || user?.id;
+    if (uidP) {
+      const lastDrop = idx > 0 ? (drops[idx - 1]?.dropedPrice ?? drops[idx - 1]?.price) : (calculator.price || priceNum);
+      logRolloutChange({
+        userId: uidP,
+        leadId,
+        calculator: logCalculator,
+        tiers: logTiers,
+        percentageOfRollout: markupLabel(v, logTiers),
+        change: {
+          fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: v, fieldCategory: 'drop',
+          oldValue: lastDrop, newValue: v,
+          oldPercentageOfRollout: markupLabel(Number(lastDrop) || 0, logTiers),
+          // Neither secured nor declined yet - the Forever Record shows the price was PUT UP.
+          isSecured: false, isDeclined: false, dropStatus: DROP_PENDING,
+          dropNumber: idx + 1, dropPrice: v,
+          paymentPlanKey: method, paymentPlanLabel: planLabelOf(pricing.plans, method),
+          action: 'drop price entered',
+        },
+      }).catch(() => {});
+    }
     setPendingDrop(v);
-    setPendingDropIndex(-1); // a fresh round → Secure/Decline APPEND it
+    // The row now EXISTS, so Secure/Decline must update it in place rather than append a second one.
+    setPendingDropIndex(idx);
     setShowDropModal(true);
     setShowDropInput(false);
     setDropText('');
@@ -1173,6 +1238,26 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   };
 
   const openResultChooser = () => {
+    /**
+     * ⚠️ A DEAL IS NEVER RESULTED WITH A DROP STILL PENDING.
+     *
+     * `autoSecureLastDrop` below promotes the last drop when nothing is accepted - so without
+     * this gate a price the rep merely typed would become the SOLD price, carrying a
+     * `drop price secured` log for an outcome that never happened. (`resolveAutoSecureIndex` also
+     * skips pending rows; this is the half that tells the REP, rather than silently picking a
+     * different row.)
+     */
+    const unresolvedAt = findPendingDropIndex(drops);
+    if (unresolvedAt >= 0) {
+      setPendingDrop(dropPriceOf(drops[unresolvedAt]));
+      setPendingDropIndex(unresolvedAt);
+      setShowDropModal(true);
+      FlashMessage.error(
+        'Finish this drop first',
+        `Secure or decline ${fmt(dropPriceOf(drops[unresolvedAt]))} before resulting the lead.`
+      );
+      return;
+    }
     const secured = autoSecureLastDrop(drops);
     let chooseAt = finalPrice;
     let chooseDown = resultDownPayment;
@@ -1578,6 +1663,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             const ordinal = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][i] || `${i + 1}th`;
             const declined = d.status === 'declined';
             const secured = d.status === 'accepted';
+            // A drop saved on Done but not yet secured/declined. It is recorded, not an outcome.
+            const pending = isPendingDrop(d);
             const dp = dropPriceOf(d);
             return (
               <View key={i} style={{ marginBottom: 24 }}>
@@ -1587,10 +1674,15 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                         green ONLY for the secured drop; locked/declined drops use the
                         muted secondary gray (web `isSecured ? '#2e7d32' : text.secondary`).
                         Was hardcoded green for every row. */}
-                    <Text style={{ fontSize: 11, fontWeight: '900', color: secured ? '#16A34A' : '#64748B', marginRight: 8, letterSpacing: -0.3 }}>{ordinal} Dropped Price</Text>
+                    <Text style={{ fontSize: 11, fontWeight: '900', color: secured ? '#16A34A' : pending ? '#B45309' : '#64748B', marginRight: 8, letterSpacing: -0.3 }}>{ordinal} Dropped Price</Text>
                     {secured && (
                       <View style={{ backgroundColor: '#16A34A', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
                         <Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>✓ SECURED</Text>
+                      </View>
+                    )}
+                    {pending && (
+                      <View style={{ backgroundColor: '#F59E0B', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>PENDING</Text>
                       </View>
                     )}
                   </View>
@@ -1611,8 +1703,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                     )}
                   </View>
                 </View>
-                <View style={{ backgroundColor: '#fff', borderWidth: 2, borderColor: secured ? '#22C55E' : '#E2E8F0', borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text style={{ fontSize: 20, fontWeight: '900', color: secured ? '#16A34A' : '#94A3B8' }}>{fmt(dp)}</Text>
+                <View style={{ backgroundColor: '#fff', borderWidth: 2, borderColor: secured ? '#22C55E' : pending ? '#F59E0B' : '#E2E8F0', borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ fontSize: 20, fontWeight: '900', color: secured ? '#16A34A' : pending ? '#B45309' : '#94A3B8' }}>{fmt(dp)}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
                     <TouchableOpacity
                       onPress={() => {
@@ -1620,11 +1712,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                         setPendingDropIndex(i);
                         setShowDropModal(true);
                       }}
-                      style={{ paddingHorizontal: 24, paddingVertical: 8, borderRadius: 8, backgroundColor: secured ? '#22C55E' : '#E2E8F0' }}
+                      style={{ paddingHorizontal: 24, paddingVertical: 8, borderRadius: 8, backgroundColor: secured ? '#22C55E' : pending ? '#F59E0B' : '#E2E8F0' }}
                     >
-                      <Text style={{ fontSize: 12, fontWeight: '900', color: secured ? '#fff' : '#64748B' }}>Display</Text>
+                      {/* While pending the button is the way BACK to Secure/Decline, so it says so. */}
+                      <Text style={{ fontSize: 12, fontWeight: '900', color: secured || pending ? '#fff' : '#64748B' }}>{pending ? 'Resolve' : 'Display'}</Text>
                     </TouchableOpacity>
-                    <Text style={{ fontSize: 10, fontWeight: '900', color: secured ? '#16A34A' : '#94A3B8' }}>{secured ? 'SECURED' : 'LOCKED'}</Text>
+                    <Text style={{ fontSize: 10, fontWeight: '900', color: secured ? '#16A34A' : pending ? '#B45309' : '#94A3B8' }}>{secured ? 'SECURED' : pending ? 'PENDING' : 'LOCKED'}</Text>
                   </View>
                 </View>
               </View>

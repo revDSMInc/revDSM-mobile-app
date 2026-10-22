@@ -566,7 +566,18 @@ export function useDynamicCalculators(
       serverId: isBackendId(t.id) ? t.id : undefined,
       payload: {
         ...buildPayloadRef.current(t),
-        dropPrice: t.dropPrice || [],
+        /**
+         * ⚠️ THROUGH `toDropPricePayload`, exactly like the online saves (and never raw).
+         *
+         * This used to send `t.dropPrice` as-is, so the queued payload carried the INTERNAL row -
+         * `price`, `paymentMethods`, and any other field the UI hangs on a drop - instead of the
+         * six-key contract the API accepts. Online it never showed, because both online savers
+         * already map through the builder; offline the raw row went up on sync and the calculator
+         * write failed with a 500.
+         *
+         * `normalizeSingleAcceptedDrop` matches the online path too: at most one accepted drop.
+         */
+        dropPrice: toDropPricePayload(normalizeSingleAcceptedDrop(t.dropPrice || [])),
       },
     }));
     saveOfflineDealCenter(workId, {
