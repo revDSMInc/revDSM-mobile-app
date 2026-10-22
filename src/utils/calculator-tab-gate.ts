@@ -117,3 +117,42 @@ export const emptyTabMessage = (
   if (tabCount > 1 && !isActive) return ADD_TAB_BLOCKED_MESSAGE_OTHER;
   return ADD_TAB_BLOCKED_MESSAGE;
 };
+
+export const DUPLICATE_TAB_BLOCKED_TITLE = 'Finish this calculator first';
+
+export const DUPLICATE_TAB_BLOCKED_MESSAGE =
+  'Add at least one item to this calculator before duplicating it.';
+
+/**
+ * May the rep duplicate `targetTabId`?
+ *
+ * Duplicating an empty calculator creates a second empty calculator tab, bypassing the
+ * single-empty-tab gate on `+`.
+ */
+export const canDuplicateCalculatorTab = (
+  tabs: GateTab[] | null | undefined,
+  targetTabId?: string | null
+): AddTabDecision => {
+  const list = (tabs || []).filter(Boolean);
+  if (!list.length || !targetTabId) {
+    return {
+      allowed: false,
+      blockingTabId: targetTabId ?? null,
+      title: DUPLICATE_TAB_BLOCKED_TITLE,
+      message: DUPLICATE_TAB_BLOCKED_MESSAGE,
+    };
+  }
+
+  const target = list.find((t) => String(t.id) === String(targetTabId));
+  if (!target || isTabEmpty(target)) {
+    return {
+      allowed: false,
+      blockingTabId: target?.id ?? targetTabId,
+      title: DUPLICATE_TAB_BLOCKED_TITLE,
+      message: DUPLICATE_TAB_BLOCKED_MESSAGE,
+    };
+  }
+
+  return { allowed: true };
+};
+

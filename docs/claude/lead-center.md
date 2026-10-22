@@ -2452,6 +2452,44 @@ No new storage and no new request: the file is already there, and `DocumentItem`
 - ⚠️ **The scanner's `initialFiles` still takes server-only `resolvedDocuments`** — a queued
   document has no server id, so the scanner could not address it for removal.
 
+### Leaving a lead: the pause LOG queued, the RELEASE did not (2026-10-20)
+
+> "Created offline, started, Deal Center, rollout price, back to the lead list from the header,
+> reconnected on WiFi, synced successfully — the portal still shows the lead ON SITE."
+
+The screenshot showed **"Session paused"** in the timeline, which is the tell: leaving a lead is
+**two facts** and only one of them survived.
+
+| | path | survived a bad connection? |
+|---|---|---|
+| pause **log** | `logLeadSessionPause` → `logEvent` → activity-log queue | yes, always |
+| work **release** (`work: null`) | bare `LeadService.endWorkLead` PUT | **no** |
+
+`pauseLeadSession` (`screens/LeadCenter/index.tsx`) guarded the release with
+`!isClientId(leadId) && isOnline()`, so offline it was **never attempted and never queued**, and
+online a failure was only `console.warn`ed. The rep stayed "ON SITE" on the ops board
+indefinitely while their own timeline said they had paused — each device self-consistent, which
+is why it reads as a sync bug and is not one.
+
+Three fixes:
+- `pauseLeadSession` now queues via `queueLeadWorkEnd` when offline, when the id is a client id,
+  and in the `.catch` of a failed online PUT.
+- The **resume** half (the refocus effect right below it) had the identical shape and now queues
+  `queueLeadWorkStart` the same way — coming back to a lead must re-open it on the ops board.
+- `endActiveLeadWorkSession` (`utils/lead-work-session.ts`) early-returned on a client id with the
+  comment *"the queued work carries it"* — nothing did. It now calls the release hook.
+
+⚠️ **`queueLeadWorkEnd` must ACCEPT a client id.** It used to `return false` for one, which is
+the normal case for a lead created at the door. The work item already exists under that client
+id; `workEnd` runs after `work` and after `lead` in `UPLOAD_STEPS`, so both replay against the
+real lead once the create lands (order pinned by a test).
+
+⚠️ **Any "leaving" action must queue both halves or neither.** A log that queues beside a
+fire-and-forget PUT produces exactly this: a timeline that says paused and a board that says
+on-site. The same pairing applies to check-in/resume.
+
+⚠️ A **resulted** lead still skips `work`/`workEnd` (`!work.submit`) — see `docs/claude/offline.md`.
+Do not "fix" that back.
 
 ## REVUIUX-569 - annotate an order sheet (pencil on every order sheet; REPLACES it; "Reset all changes")
 

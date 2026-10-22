@@ -1,3 +1,5 @@
+import { findUnresolvedClientIds } from './offline-lead-work';
+
 export interface QueuedActivityLog {
   id: string;
   eventType: string;
@@ -13,6 +15,24 @@ export interface QueuedActivityLog {
 // the funding / result-lead / roofline-deck / investment-center logs went missing. Only a log that
 // can never be replayed under a rep's session belongs here.
 export const NON_QUEUEABLE_LOG_MODULES: readonly string[] = ['system'];
+
+/**
+ * ⚠️ A log that names a lead the SERVER HAS NEVER SEEN must be queued, not sent.
+ *
+ * Reported: "I created the lead offline, started working, synced on WiFi — the check-in log
+ * never arrived, and the lead is not checked in on the other device."
+ *
+ * A lead created offline is addressed by a CLIENT id (`lead-1792...`) until its create drains.
+ * `logEvent` only held a log when `isOnline()` was false, so an offline-created lead opened
+ * while the phone had signal sent its check-in STRAIGHT OUT carrying that client id - a lead
+ * reference the backend cannot resolve. The log was accepted-and-orphaned or refused, and
+ * either way it never appeared against the real lead.
+ *
+ * Being online says nothing about whether the IDS in the payload exist yet. These are separate
+ * questions and the gate has to ask both.
+ */
+export const hasUnsendableClientId = (payload: unknown): boolean =>
+  findUnresolvedClientIds(payload).length > 0;
 
 export const isQueueableLog = (moduleType: unknown): boolean =>
   typeof moduleType === 'string' &&
@@ -81,18 +101,81 @@ export const replayableLogs = (
   return (queue || []).filter((l) => String(l?.ownerId || '').trim() === me);
 };
 
+/**
+ * ⚠️ A failure the NETWORK caused must not spend an attempt.
+ *
+ * Reported from the field: on slow mobile data, check-in / rollout / pause-work logs went
+ * missing after a sync. `MAX_LOG_ATTEMPTS` is 5, and every failure used to count - so five
+ * timeouts on a weak radio DELETED the log, even though the server had never seen it and
+ * nothing was wrong with the payload. On office Wi-Fi five consecutive failures essentially
+ * never happen, which is why it only showed up on cellular.
+ *
+ * The attempt counter exists to stop a POISON log (one the server keeps refusing) cycling
+ * forever. A timeout is not that: it is the same log, undelivered. So a transport failure keeps
+ * the log and spends nothing, and only a real answer from the server counts toward the cap.
+ */
+export type LogFailureKind = 'transport' | 'rejected';
+
 export const settleQueuedLog = (
   queue: QueuedActivityLog[] | null | undefined,
   id: string,
   outcome: 'sent' | 'failed',
-  maxAttempts: number = MAX_LOG_ATTEMPTS
+  maxAttempts: number = MAX_LOG_ATTEMPTS,
+  failure: LogFailureKind = 'rejected'
 ): QueuedActivityLog[] =>
   (queue || []).flatMap((l) => {
     if (l.id !== id) return [l];
     if (outcome === 'sent') return [];
+    // ⚠️ Undelivered, not refused: keep it, unchanged, for the next drain.
+    if (failure === 'transport') return [l];
     const attempts = (l.attempts || 0) + 1;
     return attempts >= maxAttempts ? [] : [{ ...l, attempts }];
   });
+
+/**
+ * Swap one device id for its server id everywhere it appears in a queued log.
+ *
+ * ⚠️ IT USED TO REWRITE ONLY `meta.leadId`, and that is a second way a rollout log went missing on
+ * mobile data. A rollout log also carries `meta.calculatorId` and `meta.appointmentId`, and offline
+ * those are device ids (`calc-...`, `appt-...`) too. Leaving them behind has two consequences, both
+ * observed:
+ *
+ *  1. `hasUnsendableClientId` still finds a client id in the payload, so the log stays HELD - and
+ *     `nextSendableLog` blocks every later log of that lead behind it. One unrepaired calculator id
+ *     therefore strands the whole lead's timeline, not just its own row.
+ *  2. When the hold policy finally stops holding (no work left that could mint ids), the log is
+ *     RELEASED carrying the counterfeit id, and the backend drops it on the floor.
+ *
+ * The send-time resolver (`setActivityLogIdResolver`) does cover these ids, but it is not persisted:
+ * it repairs the copy being sent, never the stored row. So on Wi-Fi, where the first send succeeds,
+ * nothing is ever noticed; on cellular, where the send fails and the row is read again, the stored
+ * row is still broken. Rewriting the row here makes the repair durable.
+ *
+ * Matching is by VALUE, at any depth, so a new id-bearing field in a future log needs no change here.
+ */
+const swapIdDeep = <T,>(value: T, from: string, to: string): T => {
+  if (typeof value === 'string') return (value === from ? to : value) as unknown as T;
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((v) => {
+      const out = swapIdDeep(v, from, to);
+      if (out !== v) changed = true;
+      return out;
+    });
+    return (changed ? next : value) as unknown as T;
+  }
+  if (value && typeof value === 'object') {
+    let changed = false;
+    const out: Record<string, unknown> = {};
+    Object.entries(value as Record<string, unknown>).forEach(([k, v]) => {
+      const nv = swapIdDeep(v, from, to);
+      if (nv !== v) changed = true;
+      out[k] = nv;
+    });
+    return (changed ? out : value) as unknown as T;
+  }
+  return value;
+};
 
 export const rekeyQueuedLogs = (
   logs: readonly QueuedActivityLog[],
@@ -105,17 +188,11 @@ export const rekeyQueuedLogs = (
 
   let changed = false;
   const next = logs.map((row) => {
-    const metaMatches = String(row.meta?.leadId ?? '') === from;
-    const payloadMatches = String(row.payload?.meta?.leadId ?? '') === from;
-    if (!metaMatches && !payloadMatches) return row;
+    const meta = swapIdDeep(row.meta, from, to);
+    const payload = swapIdDeep(row.payload, from, to);
+    if (meta === row.meta && payload === row.payload) return row;
     changed = true;
-    return {
-      ...row,
-      meta: metaMatches ? { ...row.meta, leadId: to } : row.meta,
-      payload: payloadMatches
-        ? { ...row.payload, meta: { ...row.payload.meta, leadId: to } }
-        : row.payload,
-    };
+    return { ...row, meta, payload };
   });
   return changed ? next : (logs as QueuedActivityLog[]);
 };

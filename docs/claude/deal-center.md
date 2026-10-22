@@ -1191,6 +1191,134 @@ indicator on this specific action — flag if that indicator turns out to matter
 wifi mid-request, or throttle to induce a real timeout, and confirm the drop survives an app kill
 and reappears after the sweep/reconnect drain.
 
+## ✅ ROOT CAUSE: the `end price entered` log was MISSING ON ANDROID — the footer sat above the number pad (2026-10-21)
+
+`screens/DynamicDealCenter/components/RolloutView.tsx`. Reported as an offline/sync bug ("logs generate on
+Wi-Fi, this one is missing on mobile data"), then narrowed by the reporter to **Android only; iOS is fine**.
+That second report is what identified it: it is not a network bug at all, and nothing in the offline queue
+chain is platform-specific.
+
+**The end price is logged on COMMIT, not on keystroke.** `logEndPriceEntered` runs from the field's commit
+(the number pad's green ✓) and is also what calls `onPriceChange`. It is guarded by `loggedPriceRef`, so it
+fires exactly once per distinct price.
+
+| Platform | Pad | What the rep could do |
+|---|---|---|
+| iOS | system keyboard — a **native overlay** | It covers the footer. `Confirm Rollouts` is unreachable until Done is pressed, so the commit **always** happens first. The log is always written |
+| Android | in-app pad — an **in-flow sibling view** | `NumPadProvider` is a passthrough on iOS but `AndroidNumPadProvider` (`mode='inflow'`) on Android, so the pad **shrinks the column** rather than covering it. The footer is pushed up and `Confirm Rollouts` is fully tappable with the pad still open |
+
+So an Android rep could type `333`, skip the ✓, and tap `Confirm Rollouts` directly. The `rollout confirmed`
+log fired (it is on the button) but `end price entered` **was never created** — nothing was lost in transit,
+it never existed. The Forever Record then showed "CONFIRMED ROLLOUTS" with no price above it.
+
+**Fix:** the footer is hidden while an entry is open (`entryOpen = numPadActive || systemKeyboardUp`), which
+is deliberately the behaviour iOS gets for free. Both footers are gated — the un-confirmed bar *and* the
+all-confirmed "Jobs Built" CTA, which occupies the same space.
+
+- ⚠️ **This is the SAME SIGNATURE as ticket 1310 and a completely different cause.** 1310 lost a log that
+  was sent (a timeout on mobile data); this one never produced a log at all. Confirming "rollout confirmed
+  with no price above it" therefore does **not** on its own point at the network — check whether the log was
+  ever created before investigating the queue. The first pass on this ticket went down the offline path on
+  exactly that assumption.
+- ⚠️ **Do NOT "fix" this by logging the price at Confirm time instead.** The commit is also what writes the
+  price into the calculator via `onPriceChange`; moving the log would let the two diverge, and a Confirm-time
+  log would report a price the calculator may not hold.
+- ⚠️ **`numPadActive` alone is not enough.** A field can opt out with `numPad={false}`, and on iPad the
+  numeric layouts come from the system keyboard — so the system keyboard is checked too. Same rule either
+  way: if something is being typed, the commit has not happened yet.
+- ⚠️ **An in-flow pad does not hide anything.** Any screen whose footer performs a commit-dependent action
+  needs this gate; iOS will not reveal the bug, because there the overlay hides the footer by accident. The
+  established pattern is `keyboardUp` in `DynamicJobBuilderScreen`.
+
+Offline/queue notes from the first pass on this report (three real cellular defects, all still valid and
+fixed): [`offline.md`](offline.md) § *A rollout log survived a Wi-Fi sync and vanished on mobile data*.
+
+## Reopening a signature pad is an EDIT, online and offline (2026-10-21)
+
+`widgets/modals/job-builder/AgreementSignatureModal.tsx` (online),
+`widgets/components/dynamic-job-builder/agreement/AgreementSignatureCapture.tsx` +
+`DynamicAgreementGenerator.tsx` (offline).
+
+Reported: *"if one time I added the signature and open the modal again to edit it, the checkbox should
+be selected as the rep already made it selected"*, and *"offline the rep can't edit again until he
+presses Clear — please do the same flow for offline as well."*
+
+**There are TWO signature pads and they had drifted apart.** `DynamicAgreementDialog` picks between
+them: online the rep gets `AgreementSignatureModal`, offline they never reach it and the
+device-rendered `DynamicAgreementGenerator` IS the signing screen, hosting `AgreementSignatureCapture`.
+A change to one is not a change to the other.
+
+| Pad | Was | Now |
+|---|---|---|
+| Online | `useEffect(() => setAgreedToESign(false), [activePad])` reset the tick on **every** pad open. Ink WAS restored (`setLiveInitials([...initialsPaths])`), so the rep saw their signature on screen with the consent cleared and `Save Mark` dead | The tick is pre-set when that pad already holds a saved mark |
+| Offline | The caller kept only a rendered **PNG** (`signatureUri`), never the strokes, so the pad reopened **blank** — and the tick reset too. The rep had to redraw *and* re-agree, i.e. "can't edit until Clear" | The generator also keeps `signaturePaths` / `initialsPaths`, passes them as `initialPaths`, and the pad restores them and pre-ticks consent |
+
+- ⚠️ **Ink on a saved mark IS the evidence of consent.** Saving is gated on `agreedToESign && padHasInk`
+  in both pads, so a mark cannot exist without the tick having been given. Re-asking for it reads as the
+  app having forgotten something the rep demonstrably did.
+- ⚠️ **A FRESH pad still opens unticked, and consent stays PER MARK.** Initials and signature are agreed
+  to separately, so each pad keys off *its own* saved ink — never the other pad's state, and never one
+  document-level flag. That separation is deliberate; do not collapse it.
+- ⚠️ **`Clear` drops the tick again** in both pads. Clearing discards the mark that carried the consent,
+  so what follows is a new mark. Without this, Clear would leave a ticked box over an empty pad.
+- ⚠️ **The restore effect is keyed on the pad OPENING only** (`[visible]` / `[activePad]`). Re-running it
+  as the rep draws would re-tick a box they had just cleared and re-seed ink they had just discarded.
+- ⚠️ **Offline, the PNG and the strokes must be cleared TOGETHER.** The generator's "Clear" drops both;
+  dropping only the URI would leave a cleared pad reopening with the old ink.
+- ⚠️ **`save()` snapshots `paths` BEFORE `clear()`** — `toDataURL` is async, so reading them inside the
+  callback hands back an empty array. (`current` is always flushed into `paths` on stroke release, so the
+  snapshot is complete.)
+- The offline pad's PNG is still what the document renders; the strokes are kept **alongside** it purely
+  so the pad can be reopened for editing. They are not sent anywhere.
+
+### The default Pre Order Discount now logs `inheritanceSource`, so the portal can call it inherited (2026-10-21)
+
+`utils/activity-log/rollout-log-meta.ts` (`logPreOrderDiscount`).
+
+The Forever Record showed **"Inherited Payment Method — CK"** but the discount line underneath read only
+*"In Home Pre Order Discount: 20%"*, with no indication it came from the rep's own default.
+
+The meta already carried `isDefaultDiscount: true` (confirmed in the device DevTools payload), so nothing
+was missing from the data — but the portal renders "inherited" off **`inheritanceSource`**, the key
+`logPaymentMethodInherited` sets. The discount log never set it. Added:
+
+```
+inheritanceSource: 'default pre order discount'
+```
+
+- ⚠️ **`isDefaultDiscount` and `inheritanceSource` answer different questions and BOTH are kept.** The
+  boolean says the value *equals* the rep's default; `inheritanceSource` says it *came from* there. A rep
+  can deliberately pick 20% when their default is also 20% — equal, but not inherited.
+- ⚠️ **Only on the SEEDED log** (`seeded && opts.isDefault`, where `seeded` is `oldDiscountPercentage == null`).
+  A rep who taps a chip has chosen explicitly, so a *changed* discount is never inherited even when the
+  number matches their default. Setting it on the changed log would relabel a deliberate choice as
+  inheritance on a record the customer's pricing is justified from.
+- ⚠️ **The value is a STRING naming the source**, matching `logPaymentMethodInherited`
+  (`'default payment method'`, `'calculator duplication'`). Keep the vocabulary consistent — the portal
+  switches on it.
+- ⚠️ `utils/calculator/calculator-field-map.ts` also lists `isDefaultDiscount`, but that filters CALCULATOR
+  payloads, not activity-log meta. It does not touch this key.
+- **Not testable under jest here**: `rollout-log-meta.ts` imports `LoggerService`, which pulls in React
+  Native and hangs the runner (the rule in the root guide). The four cases were verified by mirroring the
+  spread logic: seeded+default sets the key; seeded+non-default, changed+default and changed+non-default
+  all omit it.
+- **Offline works the same way, and it is tested** (`tests/offline/discount-inheritance-offline.test.ts`).
+  Two independent halves had to hold:
+  1. **The key survives the queue.** `inheritanceSource` reaches `meta` through `restChange`, so it is an
+     ordinary meta field - `stampOfflineLog` spreads the whole meta, the deep re-key swaps only id VALUES,
+     the send-time resolver rebuilds the object, and a transport failure keeps the row untouched. Verified
+     through queue → re-key → resolve → retry, including a lead/appointment/calculator created at a door.
+  2. **`isDefault` is computed correctly offline.** It reads `user.defaultPercentage` from the Redux user,
+     and `defaultPercentage` is itself a queued setting (`utils/offline-settings.ts`) applied optimistically
+     by `applyPendingSettingsToUser`. So a default the rep sets at a door is already on the user when the
+     discount is seeded. ⚠️ **Without that optimistic apply the key would silently vanish offline** - the
+     log would still send, just without its inheritance, which is the quiet failure worth guarding.
+  `rollout_and_drop` is queueable (only `system` is excluded) and is not in `ExcludedModuleTypes`, so the
+  log both queues and keeps its `leadId`.
+- ⚠️ **Portal side is NOT in this repo.** The key is now emitted; whether the portal renders
+  "Inherited Pre Order Discount — 20%" needs a change there too. Confirm with the portal team before
+  closing the ticket.
+
 ## Ticket 409 — a resulted lead locks every rollout tab, and the resulted one offers Reset Job Builder
 
 Ticket: *"when a lead is resulted from one tab, the other tabs of the same lead remain active, allowing
@@ -5031,6 +5159,20 @@ The Investment Center takes its calculator from this hook, so a new API field th
 that mapper never arrives: the consuming screen looks correct in code and renders nothing on
 device, with no error anywhere. Add the field here when the API grows one.
 
+### Follow-up — `queueLeadWorkEnd` accepts a client id
+
+Full ticket: `docs/claude/lead-center.md` ("Leaving a lead: the pause LOG queued, the RELEASE did
+not"). The queue-side change is here.
+
+`queueLeadWorkEnd` (`services/offlineLeadStore.ts`) began `if (!id || isClientId(id)) return false`,
+so the work-release for a lead created at the door was discarded — the normal case, not an edge
+one. The rep stayed "ON SITE" on the portal after leaving the lead, while the pause log (which
+does queue) arrived. It now attaches to the existing work item under that client id;
+`beginOfflineWorkOnLead` cannot be used for this because it matches on `serverIds.leadId` only.
+
+⚠️ **A client id is not a reason to drop queued work.** It means the lead has not been created
+yet, which is precisely when the queue is needed — `workEnd` runs after `work` and after `lead`
+in `UPLOAD_STEPS`, so the release replays against the real lead once the create lands.
 
 ### REVUIUX-569 - `utils/pdf-extract-jpeg.ts` and the summary tile pencil
 
@@ -5072,6 +5214,61 @@ Both builders (`convertJpegToPdf`, `convertJpegToPdfAsync`) share `buildPdfParts
 - Only NEWLY generated PDFs are fixed; documents already filed stretched stay stretched. Re-scan to fix.
 - Annotation re-wrap passes the original page size, but the page now follows the flattened image's aspect.
 - Pages are no longer always A4 - do not re-introduce a fixed height.
+
+## Ticket — Investment Center descriptions evaluated on device (2026-10-21)
+
+Offline the "Includes the Following" panel showed bare category names ("Gutters"), and the scope
+CHANGED once the lead synced — on the text a customer reads before signing.
+
+The lines are rendered **server-side** inside `GET /appointments/:id/lfcalculators` and are **not
+stored on the calculator**; no other endpoint returns them. So a calculator built offline has none
+at all, and caching the calculator cannot help. They have to be evaluated on device.
+Backend spec: `docs/MOBILE-DEAL-CENTER-DESCRIPTIONS-OFFLINE.md` (backend `staging`, 2026-10-21).
+No backend change was needed.
+
+⚠️ **TWO description-schema collections, same authoring UI, near-identical shapes:**
+
+| endpoint | collection | input |
+|---|---|---|
+| `/sales-rep/v1/description-schema` | job builder | nested `verticalState` |
+| `/company/v1/deal-center-description-schema` | **deal center** | flat calculator |
+
+Caching the first does **not** give you the second. A first attempt cached the job-builder list
+(`useGetDescriptionSchemas`) and the panel was unchanged. `useGetDealCenterDescriptionSchemas`
+(`hooks/useDescriptionSchema.ts`) caches the right one; `DynamicDealCenterScreen` calls both purely
+to **warm** them — it renders neither, and the Investment Center was otherwise the only screen
+loading them, so a rep who never opened it had nothing cached.
+
+`utils/deal-center-descriptions.ts` (pure, 36 tests) ports the backend evaluator.
+
+⚠️ **`entries` has TWO shapes and both reach the evaluator.** The server sends an ARRAY; the app's
+in-memory `CalcTab.entries` is a RECORD keyed by field id. The port checked `Array.isArray` alone,
+so it flattened **nothing** for the on-device tab — every field looked absent, the presence gate
+rejected every schema, and the panel fell back to category names. It failed by rendering the wrong
+text rather than throwing, which is why it read as "the fix did not ship".
+
+⚠️ **The presence gate inverts the usual reading of an empty condition.** A deal-center schema is
+authored per product but an LFCalculator carries no product id, so every schema is evaluated
+against every calculator and field presence keeps a Gutter schema silent on a Flooring one. A
+mapping with **no condition at all is dropped** (it would print on every product), while inside the
+evaluator an empty condition **passes**. Both are required — spec §4.
+
+⚠️ **`mergeFullEntries` seeds every schema field with `inputValue: 0`, and `0` counts as PRESENT.**
+So on device the gate matches every schema and the `> 0` rules do the real filtering. Two tests pin
+the consequence: a fully seeded but empty calculator prints nothing, and a partly filled one prints
+only the lines whose fields the rep filled.
+
+⚠️ Other ported rules with tests: `entries[]` override same-named top-level keys (the backend's loop
+runs after the spread); an object value is ABSENT (no grid support here); a numeric field of `0`
+renders as `''`, not `"0"`; an unclosed `[IF]` closes at the end of the template while a stray
+`[/IF]` is dropped; the flat and grouped lists dedupe **independently**; order is never sorted.
+
+⚠️ **Server lines always win.** The local result only fills a gap and never overrides, so an online
+deal renders exactly as before.
+
+*Not done:* the panel does not re-evaluate when the rep edits a quantity on a calculator the server
+HAS described (spec §8 suggests preferring local evaluation whenever values are dirty). Today it
+keeps the server lines, which can be a snapshot from before the edit.
 
 ### Send Signed Agreement prompt - "Valid lead id is required" on a lead created offline, then reconnected
 

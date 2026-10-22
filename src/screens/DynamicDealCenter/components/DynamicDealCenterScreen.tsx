@@ -7,6 +7,10 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCalculatorSchema } from '../hooks/useCalculatorSchema';
 import { useDynamicCalculators } from '../hooks/useDynamicCalculators';
 import { useDynamicCalculatorSchemas } from '../hooks/useDynamicCalculatorSchemas';
+import {
+  useGetDescriptionSchemas,
+  useGetDealCenterDescriptionSchemas,
+} from '../hooks/useDescriptionSchema';
 import { useDealPricing } from '../hooks/useDealPricing';
 import { CalculatorView } from './CalculatorView';
 import { RolloutView } from './RolloutView';
@@ -99,6 +103,22 @@ function DynamicDealCenterCreate({ navigation, route }: DynamicDealCenterScreenP
     isLoading: isJobBuilderConfigLoading,
     refetch: refetchJobBuilderConfig,
   } = useDynamicCalculatorSchemas();
+
+  /**
+   * ⚠️ Fetched here only to WARM ITS CACHE - the Deal Center does not render these.
+   *
+   * The Investment Center builds its "Includes the Following" scope from them, and it was the
+   * only screen that loaded them. A rep who went offline before opening it had nothing cached,
+   * so the panel fell back to bare category names ("Gutters", "Soffit") and the scope the
+   * customer had already been shown CHANGED once the lead synced.
+   *
+   * The Deal Center is always visited first, which makes it the right place to warm them.
+   */
+  useGetDescriptionSchemas();
+  // ⚠️ And the DEAL CENTER schemas - a different collection, and the one the Investment
+  // Center's scope is actually built from. Caching only the job-builder list above is what
+  // left the offline panel showing bare category names.
+  useGetDealCenterDescriptionSchemas();
 
   const {
     configuredSchemas,

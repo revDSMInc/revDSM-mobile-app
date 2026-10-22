@@ -14,13 +14,23 @@ interface AgreementSignatureCaptureProps {
   visible: boolean;
   title?: string;
   onClose: () => void;
-  onCapture: (dataUri: string) => void;
+  /**
+   * The strokes of the mark already saved for this pad, so reopening it can be an EDIT.
+   *
+   * ⚠️ The caller stores a rendered PNG for the document, which cannot be drawn back into an
+   * SVG pad - so without these the pad reopened EMPTY and the rep had to redraw from scratch.
+   * The online pad (`AgreementSignatureModal`) keeps its paths in state and has always restored
+   * them; this is that behaviour for the offline twin.
+   */
+  initialPaths?: string[];
+  onCapture: (dataUri: string, paths: string[]) => void;
 }
 
 export function AgreementSignatureCapture({
   visible,
   title = 'Draw Your Signature',
   onClose,
+  initialPaths,
   onCapture,
 }: AgreementSignatureCaptureProps) {
   const svgRef = useRef<any>(null);
@@ -30,10 +40,28 @@ export function AgreementSignatureCapture({
   const currentRef = useRef('');
   const [agreedToESign, setAgreedToESign] = useState(false);
 
-  // Each mark is its own explicit agreement, so the tick resets every time a pad opens - the
-  // initials and the signature are consented to separately. Matches the online pad.
+  /**
+   * Opening the pad RESTORES the mark already saved for it, and pre-ticks the consent that mark
+   * was saved under.
+   *
+   * ⚠️ Both halves were missing offline, and together they made an existing mark uneditable:
+   * the pad opened blank (the caller only kept a PNG), and the tick was cleared, so the rep had
+   * to redraw AND re-agree just to adjust a signature. The online pad has always restored its
+   * paths; this is the same flow for the offline twin.
+   *
+   * ⚠️ A FRESH pad still opens empty and UNTICKED. Consent is per mark - initials and
+   * signature are agreed to separately - so it keys off this pad's own saved ink, nothing else.
+   *
+   * ⚠️ Keyed on `visible` only: re-running while the rep draws would undo a `Clear`.
+   */
   useEffect(() => {
-    if (visible) setAgreedToESign(false);
+    if (!visible) return;
+    const existing = initialPaths && initialPaths.length > 0 ? [...initialPaths] : [];
+    setPaths(existing);
+    setCurrent('');
+    currentRef.current = '';
+    setAgreedToESign(existing.length > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   const panResponder = useRef(
@@ -77,6 +105,8 @@ export function AgreementSignatureCapture({
     setPaths([]);
     setCurrent('');
     currentRef.current = '';
+    // The consent belonged to the mark just discarded; what gets drawn next is a new one.
+    setAgreedToESign(false);
   };
 
   const hasDrawing = paths.length > 0 || current !== '';
@@ -97,8 +127,10 @@ export function AgreementSignatureCapture({
       handleClose();
       return;
     }
+    // Snapshot BEFORE `clear()` - the callback runs async and `paths` would already be empty.
+    const saved = [...paths];
     ref.toDataURL((base64: string) => {
-      if (base64) onCapture(`data:image/png;base64,${base64}`);
+      if (base64) onCapture(`data:image/png;base64,${base64}`, saved);
       clear();
       onClose();
     });

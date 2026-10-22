@@ -87,3 +87,50 @@ export const isBeforeTimeWindow = (scheduledDateTime: Date | null): boolean => {
   if (!scheduledDateTime) return false;
   return Date.now() < scheduledDateTime.getTime() - 15 * 60 * 1000;
 };
+
+/**
+ * Do we actually KNOW where the rep and the lead are?
+ *
+ * IMPORTANT: `isLeadInGeofence` answers false both for "the rep is far away" and for "we have
+ * no GPS fix yet" - two very different things, and the caller cannot tell them apart.
+ */
+export const hasGeofenceAnswer = (
+  lead: any,
+  userLocation: { latitude: number; longitude: number } | null
+): boolean => {
+  const coords = lead?.location?.coordinates;
+  return !!userLocation && Array.isArray(coords) && coords.length >= 2;
+};
+
+/**
+ * Is the rep close enough to count as being at the door, for the purpose of RECORDING a visit?
+ *
+ * IMPORTANT: an unknown location counts as in range. `userLocation` starts null on the Leads
+ * screen and fills in asynchronously, so a rep who taps Start Appointment before the fix lands
+ * looked "out of range" - and the check-in was then NEVER QUEUED AT ALL: no log, no `work`
+ * call, and the manager's device still reading "Start Appointment" after a clean sync.
+ *
+ * Not knowing where someone is is not evidence that they are elsewhere, and the two mistakes
+ * do not cost the same: a check-in wrongly recorded is a tidy-up, a check-in silently dropped
+ * loses the rep's visit with nothing left to show it happened. A REAL fix that puts them out
+ * of range still says so.
+ */
+export const countsAsAtTheDoor = (
+  lead: any,
+  userLocation: { latitude: number; longitude: number } | null,
+  gpsBypass: boolean = false
+): boolean =>
+  isLeadInGeofenceAt(lead, userLocation) || !hasGeofenceAnswer(lead, userLocation) || gpsBypass;
+
+/** The raw distance test, with no "unknown" allowance. */
+export const isLeadInGeofenceAt = (
+  lead: any,
+  userLocation: { latitude: number; longitude: number } | null
+): boolean => {
+  const coords = lead?.location?.coordinates;
+  if (!userLocation || !Array.isArray(coords) || coords.length < 2) return false;
+  return (
+    calculateDistance(userLocation.latitude, userLocation.longitude, coords[1], coords[0]) <=
+    GEOFENCE_RADIUS_MILES
+  );
+};

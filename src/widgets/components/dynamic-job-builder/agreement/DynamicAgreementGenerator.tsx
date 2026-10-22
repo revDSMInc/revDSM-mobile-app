@@ -61,6 +61,10 @@ export const DynamicAgreementGenerator = forwardRef<
   const containerRef = useRef<View>(null);
   const [signatureUri, setSignatureUri] = useState<string | null>(null);
   const [initialsUri, setInitialsUri] = useState<string | null>(null);
+  // The STROKES behind each rendered mark. The document renders the PNG above; these exist so
+  // reopening a pad can restore what was drawn and be an edit rather than a redraw.
+  const [signaturePaths, setSignaturePaths] = useState<string[]>([]);
+  const [initialsPaths, setInitialsPaths] = useState<string[]>([]);
   const [padTarget, setPadTarget] = useState<null | 'signature' | 'initials'>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -295,6 +299,9 @@ export const DynamicAgreementGenerator = forwardRef<
           onPress={() => {
             setSignatureUri(null);
             setInitialsUri(null);
+            // Drop the strokes with the marks, or a cleared pad would reopen holding the old ink.
+            setSignaturePaths([]);
+            setInitialsPaths([]);
           }}
           style={styles.clearBtn}
         >
@@ -316,10 +323,16 @@ export const DynamicAgreementGenerator = forwardRef<
         visible={padTarget !== null}
         title={padTarget === 'initials' ? 'Draw Your Initials' : 'Draw Your Signature'}
         onClose={() => setPadTarget(null)}
-        onCapture={(uri) => {
+        initialPaths={padTarget === 'initials' ? initialsPaths : signaturePaths}
+        onCapture={(uri, paths) => {
           const target = padTarget;
-          if (target === 'initials') setInitialsUri(uri);
-          else setSignatureUri(uri);
+          if (target === 'initials') {
+            setInitialsUri(uri);
+            setInitialsPaths(paths);
+          } else {
+            setSignatureUri(uri);
+            setSignaturePaths(paths);
+          }
           if (uri && user?._id) {
             const isInitials = target === 'initials';
             logEvent('add', {

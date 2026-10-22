@@ -2,6 +2,7 @@ import { AppState } from 'react-native';
 import { Storage } from '../utils/storage';
 import { isOnline, onReconnect } from './connectivity';
 import { isUnauthorizedError } from '../utils/upload-retry-policy';
+import { isNetworkError } from '../utils/network-error';
 import { findUnresolvedClientIds } from '../utils/offline-lead-work';
 import { sanitizeForLog } from '../utils/sanitize-for-log';
 import { getSessionOwner, registerSessionResetHook } from './sessionScope';
@@ -11,6 +12,7 @@ import {
   replayableLogs,
   rekeyQueuedLogs,
   settleQueuedLog,
+  MAX_LOG_ATTEMPTS,
   type QueuedActivityLog,
 } from '../utils/offline-activity-log';
 
@@ -50,6 +52,19 @@ export const setActivityLogHoldPolicy = (fn: () => boolean): void => {
 
 const hasUnresolvedIds = (entry: QueuedActivityLog): boolean =>
   holdIsUseful() && findUnresolvedClientIds(resolvedPayload(entry)).length > 0;
+
+// Write a resolved payload back onto its stored row. A no-op when the resolver changed nothing, so an
+// already-resolved queue costs no MMKV write (this runs once per log per drain pass).
+// ⚠️ It mutates `store` and persists in one step: `persist()` serialises the module-level `store`,
+// so building a new array and writing it back out of order would save the pre-repair copy.
+const persistResolvedPayload = (id: string, payload: Record<string, any>): void => {
+  const i = store.findIndex((l) => l.id === id);
+  if (i < 0 || store[i].payload === payload) return;
+  const next = [...store];
+  next[i] = { ...next[i], payload, meta: payload?.meta ?? next[i].meta };
+  store = next;
+  persist();
+};
 
 // Runtime trace of the activity-log queue (dev builds only). Payloads go through `sanitizeForLog` so a
 // document or base64 string can never flood the CDP socket.
@@ -119,7 +134,16 @@ export const queueActivityLog = (
 ): void => {
   load();
   const ownerId = getSessionOwner();
-  if (!ownerId) return;
+  if (!ownerId) {
+    // IMPORTANT: this is a silent DROP, not a hold - the log is gone. It should only happen
+    // before login; if it fires during normal work, the session owner was lost and every
+    // queued log of that moment went with it.
+    console.warn(
+      '[ActivityLogQueue] DROPPED %s - no session owner',
+      entry.payload?.module_type ?? entry.eventType
+    );
+    return;
+  }
   store = appendQueuedLog(store, { ...entry, id: nextId(), ownerId, attempts: 0 });
   persist();
   // Drain on enqueue, as the other queues do: a log held during a brief dropout would otherwise
@@ -155,11 +179,32 @@ export const drainActivityLogs = async (): Promise<void> => {
   // rather than letting the sender throw is what stops a few launches burning all 5 attempts
   // and discarding a check-in the rep really did make.
   if (draining || !isOnline() || !sender || !getSessionOwner() || !Storage.getItem('accessToken')) {
+    // IMPORTANT: every one of these returns silently, and between them they account for most
+    // of the "the log API is never called" reports. `!sender` in particular means LoggerService
+    // has not been imported yet - the queue is fine, nothing can send it.
+    if (store.length) {
+      console.log(
+        '[ActivityLogQueue] NOT draining %d queued - draining=%s online=%s sender=%s owner=%s token=%s',
+        store.length,
+        draining,
+        isOnline(),
+        !!sender,
+        !!getSessionOwner(),
+        !!Storage.getItem('accessToken')
+      );
+    }
     return;
   }
   draining = true;
   try {
     const waiting = replayableLogs(store, getSessionOwner());
+    const blocked = waiting.filter(hasUnresolvedIds);
+    console.log(
+      '[ActivityLogQueue] drain: %d queued (%d held for unresolved ids) - %s',
+      waiting.length,
+      blocked.length,
+      waiting.map((l) => l.payload?.module_type ?? l.eventType).join(', ') || '(empty)'
+    );
     if (TRACE && waiting.length) {
       traceSnapshot('online - draining', waiting);
       const held = waiting.filter(hasUnresolvedIds);
@@ -173,7 +218,18 @@ export const drainActivityLogs = async (): Promise<void> => {
         return;
       }
       let outcome: 'sent' | 'failed' = 'sent';
+      let failure: 'transport' | 'rejected' = 'rejected';
       const body = { ...next, payload: resolvedPayload(next) };
+      /**
+       * Keep the resolved ids ON THE STORED ROW, not just on the copy going out.
+       *
+       * The resolver repaired `body.payload`; `next` in MMKV still names the device ids. On Wi-Fi
+       * that is invisible because the first send succeeds and the row is deleted. On mobile data the
+       * send fails, the row is read again on the next pass, and it is unrepaired - so if the work
+       * that minted those ids has finished by then, the hold policy has gone false and the row is
+       * released carrying a counterfeit id. Writing the repair back makes it durable.
+       */
+      persistResolvedPayload(next.id, body.payload);
       if (TRACE) {
         console.log(
           `${TAG} -> uploading lead=${leadOf(body)} ${describe(body)}\n` +
@@ -196,6 +252,9 @@ export const drainActivityLogs = async (): Promise<void> => {
           return;
         }
         outcome = 'failed';
+        // IMPORTANT: a timeout / DNS / reset is the log UNDELIVERED, not refused. Spending an
+        // attempt on it deleted check-in and rollout logs after five bad moments on mobile data.
+        failure = isNetworkError(e) ? 'transport' : 'rejected';
         if (TRACE) {
           console.log(
             `${TAG} FAILED ${describe(body)} - ${e?.response?.status ?? 'no response'}: ${e?.message ?? e}\n` +
@@ -204,7 +263,7 @@ export const drainActivityLogs = async (): Promise<void> => {
         }
       }
       const before = store.length;
-      store = settleQueuedLog(store, next.id, outcome);
+      store = settleQueuedLog(store, next.id, outcome, MAX_LOG_ATTEMPTS, failure);
       persist();
       if (store.length === before && outcome === 'failed') return;
     }

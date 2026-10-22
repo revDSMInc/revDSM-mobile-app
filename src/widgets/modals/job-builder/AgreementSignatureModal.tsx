@@ -138,8 +138,28 @@ export const AgreementSignatureModal = ({
 
   const [activePad, setActivePad] = useState<'initials' | 'signature' | null>(null);
   const [agreedToESign, setAgreedToESign] = useState(false);
+  /**
+   * The tick is pre-set when the pad opens on a mark that was ALREADY SAVED.
+   *
+   * ⚠️ It used to reset on every `activePad` change, so a rep reopening a signature to touch it
+   * up found the box cleared and `Save Mark` dead, with their ink still on screen - it reads as
+   * the app having forgotten a consent they demonstrably gave, because a mark cannot be saved
+   * without it. Saving is already gated on `agreedToESign && padHasInk`, so ink on a saved mark
+   * is itself the proof that the tick was given.
+   *
+   * ⚠️ A FRESH pad still starts unticked. Consent is per mark - the initials and the signature
+   * are agreed to separately - so this must key off whether THAT pad already holds a saved mark,
+   * never off the other pad's state or a single document-level flag.
+   *
+   * ⚠️ `Clear` deliberately drops the tick again: clearing discards the mark that carried the
+   * consent, so what follows is a new one.
+   */
   useEffect(() => {
-    setAgreedToESign(false);
+    if (activePad === 'initials') setAgreedToESign(initialsPaths.length > 0);
+    else if (activePad === 'signature') setAgreedToESign(signaturePaths.length > 0);
+    else setAgreedToESign(false);
+    // Only when the pad OPENS - re-running as the rep draws would re-tick a box they just cleared.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePad]);
   const [currentPage, setCurrentPage] = useState(1);
   const [containerLayout, setContainerLayout] = useState({ width: 0, height: 0 });
@@ -266,6 +286,8 @@ export const AgreementSignatureModal = ({
       setLiveSignature([]);
       setCurrentSignaturePath('');
     }
+    // The consent belonged to the mark just discarded; what gets drawn next is a new one.
+    setAgreedToESign(false);
   };
 
   const padHasInk = activePad === 'initials' ? liveInitials.length > 0 : liveSignature.length > 0;

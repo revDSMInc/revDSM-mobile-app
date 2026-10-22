@@ -1,13 +1,14 @@
 import React, { forwardRef, memo, useImperativeHandle, useState } from 'react';
 import { Modal, Pressable, Text, TouchableOpacity, View } from 'react-native';
 import Feather from 'react-native-vector-icons/Feather';
+import { isTabEmpty, type GateTab } from '../../../utils/calculator-tab-gate';
 
 export interface TabContextMenuHandle {
   open: (tabIndex: number) => void;
 }
 
 interface Props {
-  tabs: { id: string; title: string }[];
+  tabs: (GateTab & { id: string; title: string })[];
   onDuplicateTab?: (id: string) => void;
   onDeleteRequest?: (id: string, name: string) => void;
 }
@@ -23,6 +24,7 @@ function TabContextMenuBase({ tabs, onDuplicateTab, onDeleteRequest }: Props, re
   useImperativeHandle(ref, () => ({ open: (i: number) => setIdx(i) }), []);
 
   const tab = idx !== null ? tabs[idx] : null;
+  const canDuplicate = Boolean(tab && !isTabEmpty(tab));
   const close = () => setIdx(null);
 
   return (
@@ -30,7 +32,11 @@ function TabContextMenuBase({ tabs, onDuplicateTab, onDeleteRequest }: Props, re
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.2)' }} onPress={close}>
         <View style={{ position: 'absolute', bottom: 90, left: 20, right: 20, backgroundColor: '#fff', borderRadius: 16, padding: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 10 }}>
           {onDuplicateTab && tab && (
-            <TouchableOpacity onPress={() => { onDuplicateTab(tab.id); close(); }} style={ROW}>
+            <TouchableOpacity
+              onPress={() => { onDuplicateTab(tab.id); close(); }}
+              accessibilityState={{ disabled: !canDuplicate }}
+              style={[ROW, !canDuplicate && { opacity: 0.4 }]}
+            >
               <Feather name="copy" size={18} color="#637381" />
               <Text style={{ marginLeft: 12, fontSize: 14, fontWeight: '600', color: '#1C252E' }}>Duplicate</Text>
             </TouchableOpacity>

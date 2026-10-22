@@ -30,6 +30,7 @@ import {
 } from '../utils/offline-lead-location';
 import { reverseGeocode } from '../utils/places';
 import { leadCreateIdempotencyKey } from '../utils/upload-idempotency';
+import { isNetworkError } from '../utils/network-error';
 import { queryClient } from './api/queryClient';
 import {
   clearLeadCheckedInOffline,
@@ -66,6 +67,8 @@ import {
   documentRootKey,
   offlineDocumentName,
   uploadableWork,
+  workCanStillMintIds,
+  UPLOAD_STEPS as uploadSteps,
   type OfflineCalculatorWork,
   type OfflineDocumentCategory,
   type OfflineConsentForm,
@@ -479,12 +482,18 @@ export const queueLeadWorkStart = (lead: any, userId: string): boolean => {
   const base = work || adoptForLead(lead, id);
   if (!base) return false;
   if (base.workStarted) return true;
-  putOfflineWork({
-    ...base,
-    workStarted: { userId, at: new Date().toISOString() },
-    status: base.status === 'uploaded' ? 'draft' : base.status,
-    label: base.label || labelForLead(lead),
-  });
+  /**
+   * ⚠️ PATCH, never `putOfflineWork({ ...base })`. `base` was read before this call and a
+   * drain may be running right now (`runUpload` is fired by the check-in itself), so writing
+   * a whole snapshot back puts STALE `done` / `serverIds` / `status` over what the drain has
+   * just recorded - silently undoing completed steps.
+   */
+  patchOfflineWork(base.clientId, (w) => ({
+    ...w,
+    workStarted: w.workStarted || { userId, at: new Date().toISOString() },
+    status: w.status === 'uploaded' ? 'draft' : w.status,
+    label: w.label || labelForLead(lead),
+  }));
   runUpload();
   return true;
 };
@@ -499,14 +508,26 @@ export const queueLeadWorkStart = (lead: any, userId: string): boolean => {
 export const queueLeadWorkEnd = (leadId: string): boolean => {
   load();
   const id = String(leadId || '').trim();
-  if (!id || isClientId(id)) return false;
-  const base = beginOfflineWorkOnLead(id, '');
+  if (!id) return false;
+  /**
+   * ⚠️ A CLIENT id is not a reason to drop the release - it is the normal case for a lead
+   * created at the door. This used to `return false`, so a rep who created a lead offline,
+   * worked it and left stayed "ON SITE" on the portal forever: the pause LOG queued, the
+   * release did not. The work item already exists under that client id, and `workEnd` runs
+   * after `work` in UPLOAD_STEPS, so both replay against the real lead once it lands.
+   */
+  const base = isClientId(id)
+    ? mine().find((w) => w.clientId === id)
+    : beginOfflineWorkOnLead(id, '');
   if (!base) return false;
-  putOfflineWork({
-    ...base,
-    workEnded: { at: new Date().toISOString() },
-    status: base.status === 'uploaded' ? 'draft' : base.status,
-  });
+  // ⚠️ PATCH, not a whole-snapshot write - see `queueLeadWorkStart`. The release is queued
+  // while a drain is typically IN FLIGHT (the check-in started one), so a stale snapshot here
+  // overwrote the drain's progress and the workEnd step was lost with it.
+  patchOfflineWork(base.clientId, (w) => ({
+    ...w,
+    workEnded: w.workEnded || { at: new Date().toISOString() },
+    status: w.status === 'uploaded' ? 'draft' : w.status,
+  }));
   runUpload();
   return true;
 };
@@ -1329,6 +1350,14 @@ const adoptDropIdsIntoWork = (
 
 const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
   let work = putOfflineWork({ ...start, status: 'uploading' });
+  // The whole plan up front: if a step the rep expects is missing from THIS list, it was never
+  // queued, and nothing in the drain can be at fault.
+  console.log(
+    '[LeadSync] draining %s - steps pending: %s',
+    work.clientId,
+    uploadSteps.filter((st) => isStepPending(work, st)).join(', ') ||
+      '(none)'
+  );
   let guarded = false;
 
 
@@ -1346,7 +1375,36 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
 
     try {
       const sent = work;
+      // ⚠️ Only FAILURES used to be logged, so a step that never ran was invisible - and
+      // "the check-in never reached the server" looks identical to "the app is running an
+      // older bundle". Announce every step, with the ids it is using.
+      console.log(
+        '[LeadSync] %s step=%s leadId=%s',
+        work.clientId,
+        step,
+        work.serverIds.leadId || '(none yet)'
+      );
       const ids = await runStep(sent, step, guarded);
+      /**
+       * Repair the queued activity logs for EVERY id this step just minted.
+       *
+       * ⚠️ Only the lead id was re-keyed (in the `lead` step), and that is one of the ways a
+       * rollout log went missing on mobile data. A `rollout_and_drop` log also names
+       * `meta.calculatorId` and `meta.appointmentId`, which are device ids (`calc-...`, `appt-...`)
+       * for work created offline. An unrepaired one keeps `hasUnsendableClientId` true, so the log
+       * stays held - and `nextSendableLog` holds back every LATER log of that lead with it. The
+       * send-time resolver papered over this on Wi-Fi, where the first send succeeds; on cellular
+       * the row is read again and the stale id is still there.
+       *
+       * Done here, at the single funnel, rather than per step: every `StepResult` id passes through
+       * this point, so a future id-minting step needs no new call.
+       */
+      if (ids.appointmentId && sent.appointmentClientId) {
+        rekeyActivityLogs(sent.appointmentClientId, ids.appointmentId);
+      }
+      Object.entries(ids.calculators || {}).forEach(([clientId, serverId]) => {
+        if (serverId) rekeyActivityLogs(clientId, serverId);
+      });
       const now = latest(work);
       let landed = markStepDone(now, step, ids);
       if (stepPayloadChanged(sent, now, step)) landed = rearmStep(landed, step);
@@ -1372,7 +1430,18 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
         work = putOfflineWork({ ...latest(work), status: 'uploading', lastError: messageOfError(err) });
         continue;
       }
-      putOfflineWork(applyStepDecision(latest(work), decision, messageOfError(err)));
+      // ⚠️ A transport failure (timeout / DNS / reset) is the step UNDELIVERED, not refused,
+      // so it spends no attempt. Burning the budget on a weak radio pushed work to
+      // `needs-review`, and a rep retrying from there is how the duplicate lead was created.
+      putOfflineWork(
+        applyStepDecision(
+          latest(work),
+          decision,
+          messageOfError(err),
+          Date.now(),
+          isNetworkError(err) ? 'transport' : 'rejected'
+        )
+      );
       return;
     }
   }
@@ -1387,7 +1456,10 @@ setActivityLogIdResolver((value) => {
 
 setActivityLogHoldPolicy(() => {
   load();
-  return uploadableWork(mine()).length > 0;
+  // ⚠️ `workCanStillMintIds`, NOT `uploadableWork`: the latter requires status 'draft', so it
+  // went false for the whole drain - precisely when ids are being minted - and lead-scoped
+  // logs were released carrying unresolved client ids.
+  return workCanStillMintIds(mine());
 });
 
 export const drainOfflineWork = async (): Promise<void> => {

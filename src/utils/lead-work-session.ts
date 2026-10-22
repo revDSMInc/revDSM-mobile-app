@@ -105,8 +105,17 @@ export const endActiveLeadWorkSession = async (): Promise<void> => {
     }
   }
 
-  // An offline-created lead has no server record to release yet; the queued work carries it.
-  if (isClientId(session.leadId)) return;
+  /**
+   * IMPORTANT: an offline-created lead has no server record to PUT to yet, but the release must
+   * still be queued against its work item - the comment here used to say "the queued work
+   * carries it" when nothing actually queued it, so the rep stayed ON SITE on the portal while
+   * their own timeline showed "Session paused". `queueLeadWorkEnd` accepts the client id and
+   * `workEnd` replays after `work` once the lead lands.
+   */
+  if (isClientId(session.leadId)) {
+    queueRelease?.(session.leadId);
+    return;
+  }
 
   await releaseWork(session.leadId, '[LeadWork] Work end failed:');
 };

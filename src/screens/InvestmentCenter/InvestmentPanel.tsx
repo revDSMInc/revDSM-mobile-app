@@ -23,6 +23,8 @@ import {
 } from '../DynamicDealCenter/utils/dynamic-rollout-pricing';
 import { buildInvestmentJobScope } from '../DynamicDealCenter/utils/investment-job-scope';
 import { buildScopeGroups, flattenScopeGroups } from '../../utils/investment-scope-groups';
+import { evaluateDealCenterDescriptions } from '../../utils/deal-center-descriptions';
+import { useGetDealCenterDescriptionSchemas } from '../DynamicDealCenter/hooks/useDescriptionSchema';
 import { formatAmountInput, stripAmount } from '../DynamicDealCenter/utils/format-amount';
 import { resolveActiveDownPayment } from '../DynamicDealCenter/utils/drop-prices';
 import { ProgramCard } from './ProgramCard';
@@ -382,10 +384,36 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
    * (or an offline cache written before this field existed) sends only the flat list - so the
    * panel never goes blank on older data.
    */
-  const descriptionsByCategory = (calculator as any)?.descriptionsByCategory;
+  /**
+   * ⚠️ Evaluated ON DEVICE when the server sent nothing.
+   *
+   * The lines are rendered server-side inside `GET /appointments/:id/lfcalculators` and are not
+   * stored on the calculator, so a calculator built OFFLINE has none at all - the panel then fell
+   * back to bare category names ("Gutters") and the scope the customer had already been shown
+   * CHANGED after the sync.
+   *
+   * ⚠️ Server lines WIN whenever they exist. This only fills a gap; it never overrides, so an
+   * online deal is byte-for-byte what it always was and nothing else on this screen moves.
+   */
+  const { schemas: dealCenterDescriptionSchemas } = useGetDealCenterDescriptionSchemas();
+  const serverByCategory = (calculator as any)?.descriptionsByCategory;
+  const serverFlat = (calculator as any)?.descriptions;
+  const localDescriptions = useMemo(() => {
+    const hasServer =
+      (Array.isArray(serverByCategory) && serverByCategory.length > 0) ||
+      (Array.isArray(serverFlat) && serverFlat.length > 0);
+    if (hasServer || !dealCenterDescriptionSchemas.length) return null;
+    return evaluateDealCenterDescriptions(dealCenterDescriptionSchemas, calculator);
+  }, [serverByCategory, serverFlat, dealCenterDescriptionSchemas, calculator]);
+
+  const descriptionsByCategory = serverByCategory ?? localDescriptions?.descriptionsByCategory;
+  // The flat fallback prefers locally evaluated lines over bare category names.
+  const scopeLines = localDescriptions?.descriptions?.length
+    ? localDescriptions.descriptions
+    : inclusions;
   const scopeGroups = useMemo(
-    () => buildScopeGroups(descriptionsByCategory, inclusions),
-    [descriptionsByCategory, inclusions],
+    () => buildScopeGroups(descriptionsByCategory, scopeLines),
+    [descriptionsByCategory, scopeLines],
   );
   const hasScopeLines = flattenScopeGroups(scopeGroups).length > 0;
 

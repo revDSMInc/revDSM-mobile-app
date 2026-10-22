@@ -216,6 +216,43 @@ Files: `utils/offline-activity-log.ts` (pure rules), `services/offlineActivityLo
 - ⚠️ The backend is not in this repo: whether it shows `meta.occurredAt` instead of its own receive time as the log's time is unverified. Backend analytics that read `meta.timestamp` on photo logs must read `meta.occurredAt`.
 - Not renamed (separate queues, not activity logs): `OfflineLeadWork.createdAt/updatedAt`, `workStarted.at`, `workEnded.at`, `fundingSubmitted.at`, the upload queue's own `timestamp`.
 
+### A rollout log survived a Wi-Fi sync and vanished on mobile data (2026-10-20)
+Files: `utils/network-error.ts` (`NETWORK_MESSAGE_RE`), `utils/offline-activity-log.ts` (`rekeyQueuedLogs`),
+`services/offlineActivityLog.ts` (`persistResolvedPayload`), `services/offlineLeadStore.ts` (re-key at the step funnel).
+Tests: `tests/offline/network-error-cellular.test.ts`, `tests/offline/activity-log-rekey-deep.test.ts`.
+
+Reported: *"create a lead offline and sync on Wi-Fi — logs generate correctly; create a lead offline and
+sync on mobile data — this log is missing."* The sample was a `rollout_and_drop` / `end price entered`
+log carrying `queuedOffline: true`. **Three independent defects, each on its own sufficient, and all three
+invisible on Wi-Fi.** The queue, the hold policy and the one-id-per-log work from the earlier tickets were
+all correct; these sit underneath them.
+
+| # | Was | Fix |
+|---|---|---|
+| 1 | `NETWORK_MESSAGE_RE` recognised `timeout` / `aborted` / `econn` / `socket`, but **not** the wordings a dying *cellular* socket actually produces — `connection reset`, `connection closed`, `connection refused`, `stream was reset`, `broken pipe`, `unexpected end of stream`, `software caused connection abort`, `no address associated with hostname`, `host is unreachable`, `network is unreachable`, `handshake`/`ssl`/`tls`. None carries an axios `code` on RN, so there was nothing else to recognise them by: they fell through to `'rejected'`, **spent one of `MAX_LOG_ATTEMPTS` (5), and the fifth one DELETED the log** | The regex covers them, so they classify `'transport'` → the log is kept, unchanged, attempts untouched |
+| 2 | `rekeyQueuedLogs` rewrote **only `meta.leadId`**. A rollout log also names `meta.calculatorId` and `meta.appointmentId`, which are device ids (`calc-...`, `appt-...`) offline. An unrepaired one keeps `hasUnsendableClientId` true, so the log stays held — and `nextSendableLog` holds back **every later log of that lead** with it | `swapIdDeep` matches **by value at any depth**, so a new id-bearing field needs no change here. `rekeyActivityLogs` is now also called for the appointment and every calculator id, at the **single step funnel** in `uploadOne` rather than per step |
+| 3 | The send-time resolver repaired only the **copy going out**; the stored MMKV row kept its device ids. On Wi-Fi invisible (first send succeeds, row deleted). On cellular the send fails, the row is read again, still stale — and once the minting work has finished, the hold policy has gone false and the row is **released carrying a counterfeit id**, which the backend drops | `persistResolvedPayload` writes the repair back onto the stored row before sending |
+
+- ⚠️ **Wi-Fi is not a weaker version of cellular, it is a different failure distribution.** Every one of
+  these needs a *failed send that is later retried* to show at all; on office Wi-Fi the first POST
+  essentially never fails, so the row is deleted before any of the three can bite. Testing the offline
+  queues on Wi-Fi proves almost nothing about them.
+- ⚠️ **An omission in `NETWORK_MESSAGE_RE` is a LOST LOG, not a cosmetic issue.** It is the only thing
+  separating "keep forever" from "spend an attempt, then delete". Add a wording when in doubt — a
+  real HTTP answer is recognised by its **status**, which is checked first and always wins.
+- ⚠️ **`isTimeoutError` must NOT inherit the widened wording.** It answers a narrower question (did this
+  specific request time out) and is used for retry/backoff decisions elsewhere; a `connection reset` is
+  not a timeout. Tested explicitly.
+- ⚠️ **Re-key by VALUE, never by field name.** The previous version named `leadId`, which is why the
+  calculator and appointment ids were missed for so long: each new id-bearing field would have needed
+  another line, and nothing fails loudly when one is forgotten.
+- ⚠️ **The resolver is not a substitute for a re-key.** It is not persisted, so it repairs exactly one
+  attempt. The two are complementary: the re-key fixes the row when the id is minted, the resolver covers
+  a row whose id was minted by work this device no longer holds.
+- This is the **fifth** queue-shaped bug caused by a client id outliving its row (see the "any queue that
+  can hold a row for an offline-created lead needs a re-key" note above). The deep swap is the version of
+  that rule that does not need remembering.
+
 ### Activity logs: one stable id per log, so a retry is not a second row (2026-10-16)
 Files: `utils/offline-activity-log.ts` (`newActivityLogId`), `services/api/LoggerService.ts` (`logEvent` stamps `payload.user_activity_log_id`). Test: `tests/offline/offline-activity-log.test.ts`.
 
@@ -1468,6 +1505,283 @@ An annotated ORDER SHEET rides the same durable job queue (`OrderSheetJobAnnotat
 ## Agreement configuration is warmed for offline (REVUIUX: Lighting description lines)
 
 An agreement drawn on the device needs the layout (`agreement-config`) and each product's description schema (`description-schema:<productId>`, plus the list `description-schema-list` the Investment Center reads). They are now fetched ahead by `useWarmDealCenterConfig` (Leads screen) through `cachedFetch`, so they are on disk before signal is lost; `OFFLINE_CACHE.DESCRIPTION_SCHEMA_LIST` is new in `utils/offline-query-cache.ts`. A local agreement whose schema was never saved refuses to draw (`descriptionSchemaMissingOffline`). Full write-up, and the `[IF]` / `col:` evaluator port: `deal-center.md` § "Description-of-Work templates".
+
+## Ticket — slow mobile data: lost logs and duplicate leads (the attempt budget)
+
+Field report: working offline then reconnecting on **low-speed mobile data** lost the check-in,
+rollout and pause/work logs, and QA saw **duplicate leads** after the sync. Both on cellular
+only; Wi-Fi looked fine.
+
+⚠️ **One cause: every failure spent an attempt, including a failure the network caused.** Each
+queue caps retries at 5 (`MAX_LOG_ATTEMPTS`, `MAX_CREATE_ATTEMPTS`). On a weak radio five
+consecutive timeouts are routine, so:
+
+- `settleQueuedLog` (`utils/offline-activity-log.ts`) hit the cap and **deleted the log** —
+  though the server never saw it and nothing was wrong with the payload. That is the missing
+  check-in / rollout / pause entries.
+- `applyStepDecision` (`utils/offline-lead-work.ts`) hit the cap and moved the work to
+  **`needs-review`** — the state that asks the rep "is this on the server? retry if it is not".
+  A rep who knows they created the lead taps retry, and **that** is the duplicate lead. The
+  create itself is idempotent (`leadCreateIdempotencyKey(work.clientId)`), so the duplicate did
+  not come from the replay; it came from the queue giving up and handing the decision to a human.
+
+On office Wi-Fi five consecutive failures essentially never happen, which is why neither showed
+up in testing — the same reason ticket 1310's lost log only appeared on 4G.
+
+**The rule:** the attempt counter exists to stop something the server keeps **REFUSING** from
+cycling forever. A timeout is not that — it is the same work, undelivered. Both settle functions
+now take a `'transport' | 'rejected'` failure kind; a transport failure keeps the item unchanged
+and spends nothing. Callers classify with `isNetworkError` (`utils/network-error.ts`), which
+returns false whenever an HTTP status is present, so a real refusal can never be misread as
+transport. Rules are pure, 14 tests in `__tests__/utils/slow-network-attempts.test.ts`.
+
+⚠️ **Both default to `'rejected'`.** A caller that does not classify keeps the old counting
+behaviour, so a new call site cannot silently make something un-droppable.
+
+⚠️ **A transport failure does NOT rescue a definite decision.** `failed` and `needs-review` mean
+the server answered; only `retry` / `retry-guarded` are exempted. Otherwise a poison item on a
+bad radio would become immortal.
+
+⚠️ **`needs-review` must mean "the server answered something we could not interpret", never
+"the radio was weak".** It is the only state that asks the rep to judge whether their work
+landed, and every wrong entry into it is a chance for a duplicate.
+
+*Not changed:* `MAX_*_ATTEMPTS` stay at 5 — the cap is correct, it was being charged for the
+wrong thing. Retries are still bounded by the drain's own stall tracking and the 60 s sweep.
+
+### Follow-up — the check-in was never QUEUED (not a sync failure at all)
+
+> "I created the lead offline and started working on it, I synced on mobile data and it synced
+> successfully. I open the user on another phone and the lead was not even checked in. Why?"
+
+The sync was fine. **Device B was right** — there was nothing to sync, because
+`handleActionPress` (`screens/Leads/index.tsx`) had decided not to record the check-in. Two
+independent ways it reached that decision, both silent:
+
+**1. `createdAtTheDoor` expired the moment the lead uploaded.** It was
+`origin === 'created-offline' && isStepPending(work, 'lead')`. The reported sequence is create
+offline → the `lead` step drains on reconnect → *then* press Start Appointment. By then the
+rescue no longer applied, so nothing overrode a geofence plan that had already said "out of
+range". Now bounded by `AT_THE_DOOR_TTL_MS` (12 h) instead: uploading the row says nothing about
+where the rep is standing, but re-opening the lead days later must still go back through the
+geofence. ⚠️ That second half is load-bearing and has its own test — do not simplify this to a
+bare `origin` check.
+
+**2. An unknown location read as out of range.** `isLeadInGeofence` returns false both for "far
+away" and for "no GPS fix yet", and `userLocation` starts `null` on the Leads screen and fills in
+asynchronously. A rep tapping Start before the fix landed got `logModule = ''` →
+`shouldCallWork = false` → no log, no `work` call, **nothing queued**. `countsAsAtTheDoor`
+(`utils/location-util.ts`) now treats an unknown location as in range; both
+`planStartAppointment` and `planZoneCanvasserStartAppointment` use it.
+
+⚠️ **Not knowing where the rep is is not evidence that they are elsewhere.** The two mistakes do
+not cost the same: a check-in wrongly recorded is a tidy-up, a check-in silently dropped loses the
+visit with nothing left to show it happened. ⚠️ A REAL fix that puts the rep out of range still
+says so — the geofence is not disabled, and that has its own test.
+
+⚠️ **The rule lives in `location-util.ts` because `lead-activity-log.ts` cannot load under jest**
+(it imports `LoggerService` → netinfo). `lead-activity-log` delegates; the tests drive the pure
+module (`__tests__/utils/offline-checkin-reaches-server.test.ts`).
+
+⚠️ **This was NOT the attempt-budget bug above.** That one lost logs that had been queued; this
+one never queued anything. A queue fix can only replay what reached it — when a log is missing,
+check whether it was ever enqueued before looking at the drain.
+
+### Follow-up — a log sent ONLINE naming an id the server has never seen
+
+> "Offline or online, the same APIs should be called — offline they go in the queue with the
+> same payload. The check-in log api is not being called at all."
+
+The right framing, and it exposed a case neither side of the gate covered. `logEvent` held a log
+only when `isOnline()` was false. But the reported sequence is **create the lead offline, press
+Start once the phone has signal** — online is true, so the check-in went straight out carrying
+
+```
+meta.leadId = "lead-1792411303110-ab12"   // a CLIENT id, known only to this device
+```
+
+The backend cannot resolve that, so the log was orphaned or refused, and nothing ever appeared
+against the real lead. The `work` call had the same shape and was fixed separately; this is the
+log half.
+
+⚠️ **Being online and having sendable IDS are two different questions.** The hold gate in
+`services/api/LoggerService.ts` now asks both: `!isOnline() || hasQueuedActivityLogs() ||
+hasUnsendableClientId(payload)`. The rule is pure in `utils/offline-activity-log.ts` (7 tests)
+and reuses `findUnresolvedClientIds`, so it catches appointment and calculator ids too, at any
+depth.
+
+⚠️ **Held, not dropped.** The `lead` step calls `rekeyActivityLogs(work.clientId, id)` the moment
+the create lands (`services/offlineLeadStore.ts`), which swaps the client id for the real one and
+makes the queued log sendable. The drain's own `hasUnresolvedIds` already held such logs back —
+the bug was that this one never reached the queue to be held.
+
+⚠️ **The match must not over-fire.** `isClientId` is anchored (`^(lead|appt|calc|work)-\d{10,}-`),
+so ordinary text like `leadCode: 'SelfGen'` or `action: 'lead_check_in'` is not mistaken for an
+id. A looser test would hold every log forever and nothing would send — there is a test for this.
+
+**The general rule for this whole class of bug:** anything that travels offline must ask *both*
+"can I reach the server?" and "does the server know the things I am naming?" Most of the lost-log
+and duplicate reports this week were one or the other half of that question going unasked.
+
+### Follow-up — tracing the check-in log (still reported missing)
+
+Three fixes have landed for "the check-in log never arrives" (the `createdAtTheDoor` TTL, the
+unknown-GPS geofence, and the online-with-a-client-id hold gate) and it is **still reported**.
+Rather than guess at a fourth cause, the decision points now say what they chose:
+
+- `screens/Leads/index.tsx` logs `[CheckIn] offline start lead=… module=… shouldCallWork=…
+  atTheDoor=… inRange=…` on every offline start. ⚠️ `module=(none)` means the app **decided not
+  to record a check-in** — there is no failed request to find in the network tab, which is why
+  this presented three times as "the API is not called".
+- `services/offlineActivityLog.ts` warns `DROPPED … - no session owner`. That branch is a silent
+  **drop**, not a hold: the log is gone. It should only ever fire before login.
+
+⚠️ **"No request in the network tab" has two very different causes** — the app never asked, or
+the queue swallowed it. They need different fixes and the traces above separate them. Check
+`[CheckIn]` first: if `module=(none)`, nothing downstream is at fault.
+
+Verified sound while tracing (do not re-investigate without new evidence): `rekeyQueuedLogs`
+rewrites `meta.leadId` on both `meta` and `payload.meta`; `resolveIds` resolves client ids at
+SEND time from the live work map; a finished work item stays `uploaded` with its id map intact,
+so resolution still works after the drain; `nextSendableLog` blocks only the affected lead.
+
+### Follow-up — the drain now announces every step
+
+"We fix this daily and it comes back" turned out, for two of the four fixes, to be that they were
+**never in the build under test** — committed late, after the rebuild. The drain made that
+impossible to tell apart from a real failure, because only FAILURES were logged: a step that
+never ran left no trace at all.
+
+`services/offlineLeadStore.ts` now logs, per lead:
+
+```
+[LeadSync] draining <clientId> - steps pending: lead, work, chat, workEnd
+[LeadSync] <clientId> step=work leadId=<serverId|(none yet)>
+```
+
+⚠️ **Read the "steps pending" line first.** If the step the rep expects is not in it, the action
+was never queued and nothing in the drain can be at fault — that is a `Leads`/`LeadCenter`
+problem, not a queue one. The two have been confused repeatedly.
+
+⚠️ **The absence of a `[LeadSync]` line at all means the bundle is stale.** Check that before
+diagnosing anything else.
+
+Ruled out while tracing, with evidence (do not re-investigate without new): `runStep` captures
+`leadId` per call and `uploadOne` re-reads the work item between steps, so `work` always sees the
+id the `lead` step minted; `ChatService.getChatByLeadId` swallows its own errors and cannot halt
+the chain before `workEnd`; `serverSaysCheckedIn` and `refreshLeadLists` are both try/caught;
+`workLead` / `endWorkLead` PUT the correct bodies.
+
+### Follow-up — the chat 404 is NOT the blocker (and the log queue is now visible)
+
+Reported with a screenshot of `GET /chat/v1/lead/<id>` returning **404**, asking whether that
+failure stops the later logs. It does not, and the reasoning is worth keeping:
+
+⚠️ **`ChatService.getChatByLeadId` cannot throw.** A 404 falls through to `createChatForLead`,
+and any other error returns `null`. So the `chat` step - which sits between `work` and `workEnd`
+in `UPLOAD_STEPS` - cannot halt the chain. A 404 there is the NORMAL first-visit answer: the
+thread does not exist yet, so it is created.
+
+⚠️ **A red row in the network tab is not evidence of the bug being chased.** This one is expected
+traffic. Several rounds were spent on symptoms that turned out to be healthy.
+
+What the same screenshot DID show is that `PUT .../work` now fires - the earlier fix working.
+
+Since the drain's own guards all return silently, `services/offlineActivityLog.ts` now reports:
+
+```
+[ActivityLogQueue] drain: 3 queued (1 held for unresolved ids) - lead_check_in, lead_session, ...
+[ActivityLogQueue] NOT draining 3 queued - draining=false online=true sender=false owner=true token=true
+```
+
+⚠️ **`sender=false` means `LoggerService` has not been imported yet**, so nothing can send the
+queue however healthy it looks. (`hooks/useAppInitialization.ts` imports it at startup, so this
+should never be false in practice - but it was unobservable, and it is the only guard that fails
+without the rep doing anything wrong.)
+
+⚠️ **`drain: 0 queued` means the log was never enqueued** - look at `logEvent`'s hold gate and
+the `[CheckIn]` trace, not at the queue.
+
+## Ticket — THE check-in log bug: the hold policy went false during the drain
+
+The one that survived four previous fixes. Found from a network capture, not from reading code:
+after syncing an offline lead, **`leads_list` logs POST happily while `lead_check_in` never
+appears at all.**
+
+⚠️ **That asymmetry is the whole diagnosis.** `leads_list` is in `ExcludedModuleTypes`
+(`services/api/LoggerService.ts`), so `logEvent` never attaches a `leadId` to it — nothing to
+resolve, so it sends. Every LEAD-SCOPED log carries `meta.leadId`, which offline is a client id
+(`lead-1792...`).
+
+Such a log is held until the `lead` step mints the real id. The hold is gated on
+`holdIsUseful()`, which `offlineLeadStore` wired to:
+
+```ts
+setActivityLogHoldPolicy(() => uploadableWork(mine()).length > 0);
+```
+
+⚠️ **`uploadableWork` requires `status === 'draft'`** — it answers "what should the drain pick up
+next", and `uploadOne` sets `'uploading'` for the whole drain. So the gate went **false for
+exactly the window in which ids are minted**. `hasUnresolvedIds` collapsed with it
+(`holdIsUseful() && ...`), the log was released carrying the raw client id, and the backend
+discarded it. Silently, with a 2xx.
+
+Fixed with `workCanStillMintIds` (`utils/offline-lead-work.ts`, 7 tests), which counts `'draft'`
+**and** `'uploading'`. `uploadableWork` is unchanged — it is right for choosing work to drain.
+
+⚠️ **Do not re-wire the hold policy to `uploadableWork`.** The two questions look identical and
+are not: "what to drain next" excludes the item being drained; "can an id still appear" must
+include it.
+
+⚠️ **It must still go false at `'uploaded'`.** Holding forever blocks every later log of that
+lead — the opposite failure, equally bad. There is a test for both directions.
+
+⚠️ **Why four earlier fixes missed it:** each was real (the `createdAtTheDoor` TTL, the
+unknown-GPS geofence, the online-with-client-id gate, the queued work release) and each was
+upstream of this. The log reached the queue correctly every time; the queue then released it
+early. Reading the code could not show this because every component was individually correct —
+only the network capture, showing which module_types *did* arrive, located it.
+
+### Follow-up — the release was clobbered by a stale snapshot
+
+With the hold fixed the check-in arrived, but the portal still read **ON SITE**: the `workEnd`
+step was being lost after it was queued.
+
+`queueLeadWorkStart` and `queueLeadWorkEnd` (`services/offlineLeadStore.ts`) each read the work
+item and then wrote a WHOLE SNAPSHOT back:
+
+```ts
+const base = /* read */;
+putOfflineWork({ ...base, workEnded: { at: ... } });
+```
+
+⚠️ **The check-in itself calls `runUpload()`**, so by the time the rep leaves the lead a drain is
+usually IN FLIGHT. `base` was captured before it. Writing the snapshot back put stale `done`,
+`serverIds` and `status` over everything the drain had just recorded — undoing completed steps
+and losing the `workEnd` with them. The check-in survived only because it happens before any
+drain has started.
+
+Both now use `patchOfflineWork`, which re-reads from the store inside the write.
+
+⚠️ **Never `putOfflineWork({ ...base })` from a value read earlier in the call.** The queue is
+mutated concurrently by the drain; any read-then-write must go through `patchOfflineWork`. This
+is a general rule for this file, not a one-off.
+
+⚠️ **A finished item is re-armed to `'draft'`** so a release queued after the drain completed is
+still picked up; an in-flight `'uploading'` is left alone rather than fighting the drain.
+
+### Follow-up — `DEAL_CENTER_DESCRIPTION_SCHEMA` cache key
+
+`utils/offline-query-cache.ts` gains two keys for the Investment Center's scope text:
+`DESCRIPTION_SCHEMA_LIST` (job builder) and `DEAL_CENTER_DESCRIPTION_SCHEMA` (deal center).
+
+⚠️ **They are different collections, not a duplicate.** Full ticket in `docs/claude/deal-center.md`;
+the trap is that the two endpoints look interchangeable and are not, which cost one round of
+"fixed, still broken".
+
+Both are company CONFIGURATION — identical for every lead and rarely changed — so a cached copy is
+the same text the server would have sent. That is what makes caching them safe, and it is not true
+of lead-scoped data.
 
 ## Order-sheet annotation (REVUIUX-569) offline: annotate AND reset queue, every log carries online/offline + the action time
 
