@@ -21,6 +21,10 @@ import { useBottomInset } from '../../../hooks/useBottomInset';
 import { useSecureUrls } from '../../../hooks/useSecureUrls';
 import { LeadService } from '../../../services/api/leads';
 import { ENV } from '../../../config/env';
+import {
+  appointmentPhotoSendLabel,
+  isAnnotatedSalesPhoto,
+} from '../../../utils/appointment-photo-labels';
 import { IMAGE_CATEGORIES } from '../../../constants/lead-center';
 
 export interface SelectedAppointmentPhoto {
@@ -45,6 +49,8 @@ const isDynamicInspectionCategory = (cat?: string) => !!cat && cat.includes(' �
 const isSelectablePhotoCategory = (cat?: string) =>
   isManagePhotosCategory(cat) || isDynamicInspectionCategory(cat);
 const resolveCategoryName = (cat?: string) => findCategoryConfig(cat)?.name || cat || 'Other';
+// ⚠️ The LABEL keeps reading as the plain slot name ('Front', not 'Front (Annotated)'): the slot
+// is what a rep scans the grid for, and the badge says the rest. Don't move it into the text.
 const stripAnnotated = (s: string) => s.replace(/\(annotated\)/gi, '').replace(/\s+/g, ' ').trim();
 const resolveSubLabel = (cat?: string, sub?: string): string => {
   const category = findCategoryConfig(cat);
@@ -129,11 +135,10 @@ export const LeadImagePickerModal = ({
   const leadPhotos = useMemo(() => {
     const photos =
       (initialSalesPhotos && initialSalesPhotos.length ? initialSalesPhotos : lead?.salesPhotos) || [];
-    // Originals only: an annotated copy ("<slot> (Annotated)") is a derived image and must not be offered here. Tabs, counts
-    // and selection all derive from this list, so one filter covers them.
-    return photos.filter(
-      (p: any) => p?.s3url && isSelectablePhotoCategory(p.category) && !/\(annotated\)/i.test(String(p.subcategory || '')),
-    );
+    // ⚠️ REVUIUX-563 asks for annotated copies to be CLEARLY MARKED, not hidden. They were
+    // briefly filtered out here; an annotated shot is often the one a rep means to send, so it
+    // stays in the list and `isAnnotated` drives the badge on its tile.
+    return photos.filter((p: any) => p?.s3url && isSelectablePhotoCategory(p.category));
   }, [initialSalesPhotos, lead?.salesPhotos]);
 
   const { data: secureMap, isLoading: urlsLoading } = useSecureUrls(leadPhotos);
@@ -206,7 +211,10 @@ export const LeadImagePickerModal = ({
         bucketName: p.bucketName || ENV.S3_BUCKET,
         category: p.category || '',
         subcategory: p.subcategory || '',
-        label: resolveSubLabel(p.category, p.subcategory),
+        // ⚠️ The SENT label keeps the suffix even though the grid tile drops it (REVUIUX-563).
+        // `ChatMessageBubble.getPhotoLabel` prints this under the photo for everyone in the thread,
+        // and the recipient has no badge to look at - the text is all they get.
+        label: appointmentPhotoSendLabel(p, resolveSubLabel(p.category, p.subcategory)),
         secureUrl: secureByS3[p.s3url] || undefined,
       }));
     if (selected.length) onConfirm(selected);
@@ -224,15 +232,43 @@ export const LeadImagePickerModal = ({
     const uri = secureByS3[item.s3url];
     const selected = selectedKeys.includes(key);
     const label = resolveSubLabel(item.category, item.subcategory);
+    const annotated = isAnnotatedSalesPhoto(item);
     return (
       <View style={{ width: itemSize, marginBottom: 12 }}>
-        <Text
-          numberOfLines={1}
-          className="text-[11px] font-black mb-1"
-          style={{ color: colors.text }}
-        >
-          {label}
-        </Text>
+        {/* REVUIUX-563: the badge rides the TITLE, not the thumbnail - it was covering the
+            bottom-left of the photo, which is part of what the rep is trying to look at. */}
+        <View className="flex-row items-center mb-1">
+          <Text
+            numberOfLines={1}
+            className="text-[11px] font-black"
+            // ⚠️ shrink, don't grow: the tile is half the screen, so a long slot name must
+            // give way to the badge rather than push it off the row.
+            style={{ color: colors.text, flexShrink: 1 }}
+          >
+            {label}
+          </Text>
+          {annotated && (
+            <View
+              className="flex-row items-center rounded ml-1"
+              style={{
+                // Amber on a tint of itself, flipped for dark mode - the chip now sits on the
+                // sheet, not over a photo, so it needs the card's contrast and not black.
+                backgroundColor: isDark ? 'rgba(251,191,36,0.18)' : '#FEF3C7',
+                paddingHorizontal: 4,
+                paddingVertical: 1,
+                flexShrink: 0,
+              }}
+            >
+              <MCIcon name="draw" size={9} color={isDark ? '#FBBF24' : '#B45309'} />
+              <Text
+                className="text-[8px] font-black ml-0.5"
+                style={{ color: isDark ? '#FBBF24' : '#B45309' }}
+              >
+                ANNOTATED
+              </Text>
+            </View>
+          )}
+        </View>
         <TouchableOpacity
           activeOpacity={0.85}
           onPress={() => togglePhoto(key)}

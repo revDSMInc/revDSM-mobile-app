@@ -716,7 +716,19 @@ Report: tapping the lead title inside the chat opened the deal for **Pending Reh
 
 `LeadImagePickerModal` (the "Appointment Photos" sheet opened from chat) is a `Modal`, so its safe-area insets read 0 / stale and the Android 3-button / gesture bar covered the Send bar. The sheet now carries `paddingBottom = max(useBottomInset(), 48 on Android)` - the same floor `CategorySheet` uses (see `app-wide.md`). ⚠️ The padding is on the SHEET, not the Send bar, so the photo grid's last row also clears the bar when nothing is selected. Don't swap it back to a fixed padding. Not verified on device: 3-button and gesture navigation on Android, and iOS home indicator.
 
-- **Originals only.** `LeadImagePickerModal.leadPhotos` now drops any photo whose `subcategory` contains `(Annotated)` - annotated copies are derived images and must not be offered in the appointment-photo picker. ⚠️ One filter on purpose: the tabs, the per-tab counts, the "N photos for this lead" line and the selection all derive from `leadPhotos`, so don't filter at the render site instead.
+- ~~**Originals only.**~~ **Superseded - see REVUIUX-563 below.** `LeadImagePickerModal.leadPhotos` briefly dropped any photo whose `subcategory` contains `(Annotated)`. That is not what the ticket asked for and it hid photos reps want to send; annotated copies are shown and badged instead. ⚠️ If you do ever need to filter this list again, note that the tabs, the per-tab counts, the "N photos for this lead" line and the selection all derive from `leadPhotos`, so filter there and not at the render site.
+
+
+## REVUIUX-563 - Messages appt photos: make the annotated ones obvious
+
+Ticket: "Messages - appt photos - the annotated ones should be clear they're annotated." An annotated photo is a derived copy stored under the original's subcategory with an `(Annotated)` suffix, so in the picker it sits directly beside the shot it was drawn from - **same slot name, near-identical thumbnail at grid size**. The rep could not tell which of the two they were about to send (the reporter drew the word "Annotated" onto their screenshot to point at the tile that needed marking).
+
+- **Rule:** `utils/appointment-photo-labels.ts` - `isAnnotatedSalesPhoto` (badge predicate) and `appointmentPhotoSendLabel` (the label that goes out with the photo). Pure, no RN imports, so it is testable: `tests/chat/appointment-photo-labels.test.ts`.
+- **Picker tile** (`widgets/components/chat/LeadImagePickerModal.tsx`): an `ANNOTATED` pill (pencil icon, amber) on the **title row, right after the slot name** - `Back-Right  [ANNOTATED]`. ⚠️ It is NOT on the thumbnail: it was first placed bottom-left over the image and that covers part of what the rep is trying to look at. ⚠️ The title `Text` takes `flexShrink: 1` and the pill `flexShrink: 0`, so on a half-screen tile a long slot name truncates instead of pushing the pill off the row.
+- ⚠️ **Two different labels, deliberately.** The grid tile shows the bare slot name (`Front`), because that is what a rep scans the grid for and the badge beside it already says "annotated". The label SENT with the photo keeps the suffix (`Front (Annotated)`), because `ChatMessageBubble.getPhotoLabel` prints it under the photo for **everyone in the thread** and a recipient has no badge to look at. Don't "tidy" these into one.
+- ⚠️ **They are NOT filtered out.** An earlier pass at this ticket hid annotated copies from the picker; the annotation is usually the whole reason a rep is sending the photo. Mark them, don't hide them.
+- Selection is keyed by `_id` / `s3url`, not by the label, so the clean shot and its annotated twin select independently even though both read `Front`.
+- Not verified on device: a lead with both an original and an annotated copy of the same slot - the badge should sit on the annotated tile only, both should be selectable separately, and the sent message should read `Front (Annotated)` for the recipient.
 
 
 ### Follow-up - tapping the chat header's street-view picture spun for a long time on iOS
