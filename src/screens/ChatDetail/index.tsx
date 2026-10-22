@@ -20,6 +20,7 @@ import MCIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import SocketManager from '../../services/SocketManager';
 import { ChatMessageAck } from '../../widgets/components/chat/ChatMessageAck';
+import { ackVisualState } from '../../widgets/components/chat/chat-confirmation';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useAuth } from '../../hooks/useAuth';
@@ -707,6 +708,11 @@ export default function ChatDetailScreen() {
             onDisabledClick={handleDisabledClick}
             searchQuery={searchQuery}
             activeMatchId={highlightedMessageId || searchResults[searchIndex]}
+            ackRequired={
+              isChannel && requireAck
+                ? ackVisualState(props.currentMessage, String(currentUserId || ''), canManageChannel)
+                : null
+            }
           />
           {isChannel && requireAck && (
             <ChatMessageAck

@@ -29,6 +29,7 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { MediaViewerModal } from '../../modals/MediaViewerModal';
 import { ImageGalleryModal } from '../../modals/ImageGalleryModal';
 import { REACTION_EMOJIS, MORE_EMOJIS } from './chat-constants';
+import { ACK_AMBER, ACK_GREEN } from './chat-confirmation';
 import { ENV } from '../../../config/env';
 import { getFileType, getAvatarProps, getNativeModules, cleanFilePath } from './chat-utils';
 import { VoiceNotePlayer } from './VoiceNotePlayer';
@@ -190,6 +191,8 @@ interface Props {
   searchQuery?: string;
   activeMatchId?: string | null;
   onLayout?: (event: any) => void;
+  /** REVDSM-1313 read confirmation: tint + header the ack-required message carries. */
+  ackRequired?: 'pending' | 'confirmed' | 'count' | null;
 }
 
 export const ChatMessageBubble = React.memo(function ChatMessageBubble({
@@ -212,6 +215,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
   onDisabledClick,
   searchQuery,
   activeMatchId,
+  ackRequired = null,
 }: Props) {
   const { colors, isDark } = useTheme();
   const { currentMessage, previousMessage } = bubbleProps;
@@ -219,6 +223,29 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
   const position = bubbleProps.position || (String(msg.user?._id) === String(currentUserId) ? 'right' : 'left');
   const isMe = position === 'right';
   const isPinned = msg.isPinned || false;
+
+  // Read confirmation (REVDSM-1313): amber while the read is still open, green once it is settled.
+  // The manager's own message keeps its green bubble — only the header restyles over it.
+  const ackPalette = ackRequired === 'pending' ? ACK_AMBER : ACK_GREEN;
+  const ackUi = !ackRequired
+    ? null
+    : isMe
+      ? {
+          bg: null as string | null,
+          border: null as string | null,
+          label: 'rgba(255,255,255,0.95)',
+          stripBg: 'rgba(0,0,0,0.08)',
+          stripBorder: 'rgba(255,255,255,0.25)',
+          icon: ackRequired === 'pending' ? 'checkmark-circle-outline' : 'checkmark-circle',
+        }
+      : {
+          bg: isDark ? ackPalette.dark.bg : ackPalette.light.bg,
+          border: isDark ? ackPalette.dark.border : ackPalette.light.border,
+          label: isDark ? ackPalette.dark.accent : ackPalette.light.accent,
+          stripBg: 'transparent',
+          stripBorder: isDark ? ackPalette.dark.border : ackPalette.light.border,
+          icon: ackRequired === 'pending' ? 'checkmark-circle-outline' : 'checkmark-circle',
+        };
 
   const isSameUser = (m1: any, m2: any) => m1?.user?._id === m2?.user?._id;
 
@@ -1163,16 +1190,26 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                 <View
                   className="shadow-sm relative"
                   style={{
-                    backgroundColor: isPinned
-                      ? '#FFFDE7'
-                      : isMe
-                        ? '#00A884'
-                        : isDark
-                          ? '#202C33'
-                          : '#FFFFFF',
+                    backgroundColor: ackUi?.bg
+                      ? ackUi.bg
+                      : isPinned
+                        ? '#FFFDE7'
+                        : isMe
+                          ? '#00A884'
+                          : isDark
+                            ? '#202C33'
+                            : '#FFFFFF',
                     borderRadius: hasTextOrFiles ? 8 : 5,
-                    borderWidth: msg._id === activeMatchId ? 2.5 : (!isPinned && !isMe ? 1 : 0),
-                    borderColor: msg._id === activeMatchId ? '#FFD700' : '#919EAB33',
+                    borderWidth:
+                      msg._id === activeMatchId
+                        ? 2.5
+                        : ackUi?.border
+                          ? 1
+                          : !isPinned && !isMe
+                            ? 1
+                            : 0,
+                    borderColor:
+                      msg._id === activeMatchId ? '#FFD700' : (ackUi?.border || '#919EAB33'),
                     borderLeftWidth: isPinned ? 6 : undefined,
                     borderLeftColor: isPinned ? '#FBC02B' : undefined,
                     shadowColor: msg._id === activeMatchId ? '#FFD700' : 'transparent',
@@ -1195,6 +1232,32 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                     <View className="flex-row items-center px-2 py-1 bg-black/5 border-b border-black/10">
                       <Icon name="pin" size={12} color="#FBC02D" />
                       <Text className="text-[10px] font-black ml-1 text-[#C39529]">PINNED</Text>
+                    </View>
+                  )}
+                  {ackUi && (
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        paddingHorizontal: 10,
+                        paddingVertical: 7,
+                        backgroundColor: ackUi.stripBg,
+                        borderBottomWidth: 1,
+                        borderBottomColor: ackUi.stripBorder,
+                      }}
+                    >
+                      <Icon name={ackUi.icon} size={13} color={ackUi.label} />
+                      <Text
+                        className="ml-1"
+                        style={{
+                          fontSize: 10,
+                          fontWeight: '900',
+                          letterSpacing: 0.5,
+                          color: ackUi.label,
+                        }}
+                      >
+                        READ CONFIRMATION REQUIRED
+                      </Text>
                     </View>
                   )}
                   {(msg.replyToDetails || msg.replyTo) && (

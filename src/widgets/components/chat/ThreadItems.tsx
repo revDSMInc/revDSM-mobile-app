@@ -8,6 +8,7 @@ import { useLeadPreviewUrl } from '../../../hooks/useLeadPreviewUrl';
 import { buildJobNumber } from '../../../utils/office-initials';
 import { sortLeadThreadsByLeadTime } from '../../../utils/lead-thread-order';
 import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { ACK_AMBER } from './chat-confirmation';
 
 export function MainTabOption({ label, active, onPress }: any) {
   const { colors } = useTheme();
@@ -321,10 +322,14 @@ const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
 
 export function ChannelThreadItem({ channel, onPress }: any) {
   const { colors, isDark } = useTheme();
-  const { name, unread_count: unreadCount, description, icon_emoji, icon_url } = channel;
+  const { name, unread_count: unreadCount, description, icon_emoji, icon_url, require_ack: requireAck } = channel;
   const displayName = name || 'General';
   const scheme = CHANNEL_SCHEMES[displayName] || CHANNEL_SCHEMES.General;
   const tint = colors.primary.main;
+  // REVDSM-1313: a channel that requires read confirmation still has unread posts —
+  // show the amber "Confirm needed" badge beside the counter (QA mockup, REP 1).
+  const confirmNeeded = requireAck && unreadCount > 0;
+  const ackPalette = isDark ? ACK_AMBER.dark : ACK_AMBER.light;
 
   return (
     <TouchableOpacity
@@ -353,9 +358,33 @@ export function ChannelThreadItem({ channel, onPress }: any) {
         <Text className="text-xs" style={{ color: '#637381' }} numberOfLines={1}>
           {description || 'Team Communication Channel'}
         </Text>
+        {confirmNeeded && (
+          <View className="flex-row items-center mt-1.5">
+            <View
+              className="flex-row items-center px-2 py-[3px] rounded-full"
+              style={{ backgroundColor: ackPalette.bg, borderWidth: 1, borderColor: ackPalette.border }}
+            >
+              <Icon name="alert-circle-outline" size={12} color={ackPalette.accent} />
+              <Text
+                className="ml-1"
+                style={{ fontSize: 10, fontWeight: '800', color: ackPalette.accent }}
+              >
+                Confirm needed
+              </Text>
+            </View>
+            {unreadCount > 0 && (
+              <View
+                className="w-5 h-5 rounded-full items-center justify-center ml-2"
+                style={{ backgroundColor: colors.primary.main }}
+              >
+                <Text className="text-white text-[9px] font-black">{unreadCount}</Text>
+              </View>
+            )}
+          </View>
+        )}
       </View>
 
-      {unreadCount > 0 && (
+      {!confirmNeeded && unreadCount > 0 && (
         <View className="w-5 h-5 rounded-full items-center justify-center mr-2" style={{ backgroundColor: colors.primary.main }}>
           <Text className="text-white text-[9px] font-black">{unreadCount}</Text>
         </View>
