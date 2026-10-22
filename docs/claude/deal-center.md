@@ -5361,3 +5361,28 @@ keeps the server lines, which can be a snapshot from before the edit.
 ### Lead card / Job docs: "Resulted - bank decline" now reads "Bank Decline"
 
 `LeadCard.getLeadState` and `JobDocsSection.getStatusLabel` fell back to the raw `lead.status` ("bank decline") for any status without a hand-written label. The fallback now goes through `titleCaseStatus` (`utils/status-label.ts`, tested in `tests/offline/status-label.test.ts`): every word capitalised, `_`/`-` read as spaces. ⚠️ Known labels (`RESULTED_LABELS`, the Job-docs map) are untouched - add a label there rather than relying on the fallback. Not verified on device.
+
+## Deal Center config warming now covers the deal-center description schemas (2026-10-22)
+
+`hooks/useWarmDealCenterConfig.ts`, `hooks/useDescriptionSchema.ts` (`useGetDealCenterDescriptionSchemas`).
+Endpoints: `/company/v1/deal-center-description-schema` (this one) vs `/sales-rep/v1/description-schema`
+(job builder). Symptom, device evidence and the full table: [`investment-center-job-tracker.md`](investment-center-job-tracker.md)
+§ *"Sometimes" the Investment Center scope was missing offline*.
+
+Recorded here because both hooks are Deal Center paths. `useWarmDealCenterConfig` is the screen-agnostic
+warmer (it runs from `screens/Leads`, not from the Deal Center) and it now fetches the DEAL CENTER
+description schemas alongside the job-builder ones; `useGetDealCenterDescriptionSchemas` gained a
+user-scoped query key and stopped caching an empty answer.
+
+- ⚠️ **`DynamicDealCenterScreen` is NOT a warming point for anything a later screen needs.** Its comment
+  says *"the Deal Center is always visited first"* - that assumption is false (a rep can go straight from a
+  lead to the Investment Center) and it is per-user, so a second rep on the same handset got nothing. Put
+  config warming in `useWarmDealCenterConfig`, which every session reaches.
+- ⚠️ **The two description-schema collections are not interchangeable** - separate endpoints, separate
+  unique `{companyId, productId}` indexes, same authoring UI. `useGetDescriptionSchemas` (job builder) and
+  `useGetDealCenterDescriptionSchemas` must BOTH be warmed; caching one has already masked the other twice.
+- ⚠️ **`.catch(() => [])` + a long `staleTime` makes a transient miss sticky.** The catch is right (it keeps
+  the screen up), but the empty value must not be cached: `staleTime` is a function returning 0 when the
+  list is empty, and `refetchOnReconnect` is on.
+- ⚠️ **An owner-scoped MMKV cache needs an owner-scoped QUERY KEY too**, or the in-memory half is still
+  shared between reps on one device.

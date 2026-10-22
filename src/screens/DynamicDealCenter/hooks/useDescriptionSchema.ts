@@ -123,7 +123,12 @@ export function useGetDealCenterDescriptionSchemas(enabled: boolean = true) {
   const userId = user?._id || user?.id;
 
   const { data, isLoading, error, isFetching } = useQuery<any>({
-    queryKey: ['dealCenterDescriptionSchemas'],
+    /**
+     * ⚠️ THE USER IS PART OF THE KEY. The MMKV copy is already owner-scoped
+     * (`cachedFetch(..., { userId })`), but the in-memory TanStack entry was not - so on a shared
+     * handset the second rep read the first rep's result, or inherited their EMPTY fallback.
+     */
+    queryKey: ['dealCenterDescriptionSchemas', userId || ''],
     queryFn: () =>
       cachedFetch<any[]>(
         OFFLINE_CACHE.DEAL_CENTER_DESCRIPTION_SCHEMA,
@@ -134,10 +139,17 @@ export function useGetDealCenterDescriptionSchemas(enabled: boolean = true) {
         { online: isOnline(), userId },
       ).catch(() => []), // never take the screen down - the panel degrades to category names
     enabled,
-    staleTime: 5 * 60 * 1000,
+    /**
+     * ⚠️ A MISS MUST NOT STICK. The catch above turns "not cached and no connection" into `[]`,
+     * and with a 5-minute `staleTime` and no reconnect refetch that empty answer was held even
+     * after signal returned - the panel kept showing bare category names until the screen was
+     * left and re-entered. An empty result is therefore NOT cached (`staleTime: 0`), and signal
+     * coming back re-asks.
+     */
+    staleTime: (query: any) => ((query.state.data as any[])?.length ? 5 * 60 * 1000 : 0),
     retry: false,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
+    refetchOnReconnect: true,
   });
 
   return useMemo(

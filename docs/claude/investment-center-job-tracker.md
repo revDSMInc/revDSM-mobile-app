@@ -663,3 +663,49 @@ leads the quote.
 *Not done:* the panel does not yet re-evaluate when the rep changes a quantity on a calculator the
 server HAS described (spec §8 suggests preferring local evaluation whenever values are dirty).
 Today it keeps the server lines, which can be a snapshot from before the edit.
+
+## "Sometimes" the Investment Center scope was missing offline — it was WHICH REP (2026-10-22)
+
+`hooks/useWarmDealCenterConfig.ts` + `hooks/useDescriptionSchema.ts` (`useGetDealCenterDescriptionSchemas`).
+Test: `tests/offline/deal-center-description-cache.test.ts`.
+
+Reported: *"sometimes in offline mode the description doesn't show in Investment Center - are we caching
+the configuration properly? I tried it 2 times."* One screenshot showed the full scope (Gutters, LeafFilter,
+Soffit, Fascia, Lighting, Additional Services), the other a single bare **LeafFilter** - i.e. the fallback
+to category names, not the empty state.
+
+**Caching was working; WARMING was not.** Evidence from a real device store (4 reps had used that handset):
+
+```
+offline-cache:description-schema:<product>:<userId>      -> cached for THREE users   (job builder)
+offline-cache:deal-center-description-schema:<userId>    -> cached for ONE user       (deal center)
+```
+
+Three defects, each able to produce it on its own:
+
+| # | Was | Fix |
+|---|---|---|
+| 1 | The deal-center schema was warmed ONLY from inside `DynamicDealCenterScreen`, whose comment asserts *"the Deal Center is always visited first"*. It is not - a rep can open a lead and go straight to the Investment Center - and the cache is PER USER, so a second rep on the same handset had no copy at all | `useWarmDealCenterConfig` (which runs on the **Leads** screen, so every rep hits it while online) now calls `useGetDealCenterDescriptionSchemas(true)` beside the job-builder one |
+| 2 | `queryKey: ['dealCenterDescriptionSchemas']` ignored the user. The MMKV copy is owner-scoped but the in-memory TanStack entry was not, so rep B read rep A's result - or inherited their empty fallback | `['dealCenterDescriptionSchemas', userId \|\| '']` |
+| 3 | `.catch(() => [])` turns "not cached and no connection" into `[]`, and with `staleTime: 5 min` + `refetchOnReconnect: false` that EMPTY answer was held even after signal returned | `staleTime` is now a function: 5 min when there is data, **0 when empty**; `refetchOnReconnect: true` |
+
+- ⚠️ **TWO description-schema collections, and they are not interchangeable.**
+  `/sales-rep/v1/description-schema` is the JOB BUILDER's; `/company/v1/deal-center-description-schema` is
+  the one the Investment Center's scope is evaluated from. Separate endpoints, separate unique indexes,
+  same authoring UI. Caching one does not give the other - which is how the first attempt at offline
+  descriptions missed, and how this one did too, one layer up.
+- ⚠️ **Warm it where EVERY rep passes, not where the feature lives.** The Deal Center looked like the right
+  place and is the wrong one: it is the screen that needs the data, not the screen every session reaches.
+  The Leads screen is the funnel - same reason `start*Sync()` registrations live in `useAppInitialization`
+  rather than in the component that owns each queue.
+- ⚠️ **An empty fallback must never be cached.** `.catch(() => [])` is right for keeping the screen up, but
+  pairing it with a long `staleTime` converts a transient miss into a sticky one. Any query that degrades
+  to an empty value on failure needs this treatment.
+- ⚠️ **A per-user disk cache needs a per-user query key.** Owner-scoping only the MMKV write leaves the
+  in-memory half shared, which on a shared handset is a cross-rep data leak as well as a bug.
+- The panel's own degradation is unchanged and still honest: no schemas -> category names, never a crash
+  (pinned by a test).
+
+**Not verified here:** the warm itself cannot be tested under jest (the hook imports React Native). Confirm
+on a device by signing in as a rep who has never opened the Deal Center, going online once, then offline
+into the Investment Center.
