@@ -6,10 +6,6 @@ import {
 } from '../../src/screens/ChatThreads/utils/deal-link';
 
 // The three Messages buckets that may jump into My Deals (REVUIUX-552).
-const DAY = 24 * 60 * 60 * 1000;
-const todayIso = new Date().toISOString();
-const tomorrowIso = new Date(Date.now() + DAY).toISOString();
-const yesterdayIso = new Date(Date.now() - DAY).toISOString();
 
 describe('isPendingRehash', () => {
   it('is true for a lead sent back to the rep and not resulted', () => {
@@ -37,27 +33,28 @@ describe('isPendingRehash', () => {
 
 describe('isPendingInstall', () => {
   it('is true for a sold job whose install day is still ahead', () => {
-    expect(isPendingInstall({ status: 'sale', installationDate: tomorrowIso })).toBe(true);
+    expect(isPendingInstall({ installBucket: 'Pending Install' })).toBe(true);
   });
 
-  it('is false for a sold job already installed', () => {
-    expect(isPendingInstall({ status: 'sale', installationDate: yesterdayIso })).toBe(false);
+  it('is false for a sold job already installed or installing today', () => {
+    expect(isPendingInstall({ installBucket: 'Already Installed' })).toBe(false);
+    expect(isPendingInstall({ installBucket: 'Installing Today' })).toBe(false);
   });
 
-  it('is false when the lead is not sold or has no install day', () => {
-    expect(isPendingInstall({ status: 'selfGenerated', installationDate: tomorrowIso })).toBe(false);
+  it('is false when there is no install bucket', () => {
     expect(isPendingInstall({ status: 'sale' })).toBe(false);
     expect(isPendingInstall(null)).toBe(false);
   });
 });
 
 describe('isInstallingToday', () => {
-  it('is true when the install day is today', () => {
-    expect(isInstallingToday({ status: 'sale', installationDate: todayIso })).toBe(true);
+  it("is true when the install day is today", () => {
+    expect(isInstallingToday({ installBucket: 'Installing Today' })).toBe(true);
   });
 
-  it('is false for another day, or no day at all', () => {
-    expect(isInstallingToday({ status: 'sale', installationDate: tomorrowIso })).toBe(false);
+  it('is false for another bucket, or no bucket at all', () => {
+    expect(isInstallingToday({ installBucket: 'Pending Install' })).toBe(false);
+    expect(isInstallingToday({ installBucket: 'Already Installed' })).toBe(false);
     expect(isInstallingToday({ status: 'sale' })).toBe(false);
     expect(isInstallingToday(null)).toBe(false);
   });
@@ -66,15 +63,16 @@ describe('isInstallingToday', () => {
 describe('canOpenDeal', () => {
   it('opens for each of the three buckets the ticket names', () => {
     expect(canOpenDeal({ isRehashed: true, status: 'selfGenerated' })).toBe(true);
-    expect(canOpenDeal({ status: 'sale', installationDate: tomorrowIso })).toBe(true);
-    expect(canOpenDeal({ status: 'sale', installationDate: todayIso })).toBe(true);
+    expect(canOpenDeal({ installBucket: 'Pending Install' })).toBe(true);
+    expect(canOpenDeal({ installBucket: 'Installing Today' })).toBe(true);
   });
 
   it('does not open for an already installed job - no deal left to work', () => {
-    expect(canOpenDeal({ status: 'sale', installationDate: yesterdayIso })).toBe(false);
+    expect(canOpenDeal({ installBucket: 'Already Installed' })).toBe(false);
   });
 
-  it('does not open for an ordinary unresulted or no-sale lead', () => {
+  it('does not open for a row with no install bucket', () => {
+    expect(canOpenDeal({ status: 'sale' })).toBe(false);
     expect(canOpenDeal({ status: 'selfGenerated' })).toBe(false);
     expect(canOpenDeal({ status: 'notHit' })).toBe(false);
     expect(canOpenDeal(null)).toBe(false);

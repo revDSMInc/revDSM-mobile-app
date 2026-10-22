@@ -3,7 +3,7 @@
  *
  * Three buckets qualify: a sold job waiting to be installed, one installing
  * today, and a lead a manager sent back to the rep for rehash that has not
- * been resulted yet. Already Installed deliberately does not - there is no
+ * been resulted yet. Already Installed deliberately does not — there is no
  * deal left for the rep to work.
  *
  * The same predicates drive both the filter list and whether the job number /
@@ -33,15 +33,15 @@ export function isPendingRehash(leadDetails: any): boolean {
   return !RESULTED_STATUSES.includes(leadDetails?.status || '');
 }
 
+// The server resolves these off the job builder; the row cannot work them out
+// itself (REVUIUX-552). `installBucket` is 'Pending Install' | 'Installing
+// Today' | 'Already Installed' | null.
 export function isPendingInstall(leadDetails: any): boolean {
-  if (leadDetails?.status !== 'sale' || !leadDetails?.installationDate) return false;
-  return new Date(leadDetails.installationDate).getTime() > Date.now();
+  return leadDetails?.installBucket === 'Pending Install';
 }
 
 export function isInstallingToday(leadDetails: any): boolean {
-  const installationDate = leadDetails?.installationDate;
-  if (!installationDate) return false;
-  return String(installationDate).startsWith(new Date().toISOString().split('T')[0]);
+  return leadDetails?.installBucket === 'Installing Today';
 }
 
 /** Whether tapping this row's job number or lead id should open the deal. */

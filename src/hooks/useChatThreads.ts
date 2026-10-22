@@ -136,12 +136,7 @@ export const useChatThreads = (
     } else if (statusFilter === 'installingtoday') {
       result = result.filter((c) => isInstallingToday(c.leadDetails));
     } else if (statusFilter === 'alreadyinstalled') {
-      const now = new Date();
-      result = result.filter((c) => 
-        c.leadDetails?.status === 'sale' && 
-        c.leadDetails?.installationDate && 
-        new Date(c.leadDetails.installationDate) < now
-      );
+      result = result.filter((c) => c.leadDetails?.installBucket === 'Already Installed');
     } else if (statusFilter === 'nosales') {
       const noSaleStatuses = ['noSale', 'demoNoSale', 'noDemo', 'notHome', 'cancelled', 'notHit', 'reset', 'demo'];
       result = result.filter((c) => noSaleStatuses.includes(c.leadDetails?.status || ''));
