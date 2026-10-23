@@ -66,13 +66,16 @@ const PARKED_NOTICE_COOLDOWN_MS = 60_000;
 
 axiosInstance.interceptors.response.use(
   (res) => {
-    endRequest((res.config as any)?.__inFlightId ?? null);
+    endRequest((res.config as any)?.__inFlightId ?? null, true);
     reportRequestSignal('success');
     logTraffic(`← ${res.status} ${res.config.method?.toUpperCase()}`, res.config.url, res.data);
     return res;
   },
   async (error) => {
-    endRequest((error.config as any)?.__inFlightId ?? null);
+    endRequest(
+      (error.config as any)?.__inFlightId ?? null,
+      typeof error?.response?.status === 'number'
+    );
     reportRequestSignal(classifyRequestError(error));
     logTraffic(
       `✗ ${error.response?.status ?? 'ERR'} ${error.config?.method?.toUpperCase()}`,

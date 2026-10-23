@@ -67,7 +67,7 @@ export const bannerFor = (status: NetworkStatus): BannerCopy => {
  * untrustworthy, so recovery has to prove itself for several seconds.
  */
 export const BANNER_WORSEN_MS = 600;
-export const BANNER_RECOVER_MS = 4_000;
+export const BANNER_RECOVER_MS = 2_000;
 
 const severity = (tone: BannerTone): number =>
   tone === 'offline' ? 2 : tone === 'unstable' ? 1 : 0;

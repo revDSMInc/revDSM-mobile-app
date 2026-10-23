@@ -276,6 +276,11 @@ const probeAndApply = async (stalled = false): Promise<void> => {
     stalled ? PROBE_STALL_INTERVAL_MS : undefined
   );
   if (reachable === null) return; // throttled; keep the current state
+  // If this was a stall check and the request completed while the probe was in flight, do not
+  // downgrade a healthy online connection after the traffic has already succeeded.
+  if (stalled && reachable !== false && !inFlight.isChannelStalled(Date.now())) {
+    return;
+  }
   setNetState(applyProbeResult(netState, reachable, Date.now()));
 };
 
@@ -334,18 +339,19 @@ const clearSlowTimer = (): void => {
  * The timer is armed once for the whole batch rather than per request: it only has to notice
  * that SOMETHING is stuck, and a timer per request on a busy screen is pure overhead.
  */
-const armSlowTimer = (): void => {
+const armSlowTimer = (delayMs: number = inFlight.stallWatchMs()): void => {
   if (slowTimer) return;
   slowTimer = setTimeout(() => {
     slowTimer = null;
-    if (!inFlight.hasSlowRequest(Date.now())) return;
-    void probeAndApply(true);
-    // ⚠️ KEEP WATCHING while the request is still stuck. The first probe is the one most
-    // likely to be lost on a weak radio, and nothing else re-arms this: the screen is blocked,
-    // so no new request comes through `beginRequest` to start another timer. Without this the
-    // rep gets ONE chance at a banner per stall.
-    armSlowTimer();
-  }, SLOW_REQUEST_MS);
+    const now = Date.now();
+    if (!inFlight.hasSlowRequest(now, inFlight.stallWatchMs())) return;
+    if (inFlight.recordSlowCheck(now)) {
+      void probeAndApply(true);
+    }
+    // ⚠️ KEEP WATCHING while the request is still stuck. Requires two consecutive stall
+    // checks before probing, and re-probes at `PROBE_STALL_INTERVAL_MS` while stalled.
+    armSlowTimer(PROBE_STALL_INTERVAL_MS);
+  }, delayMs);
 };
 
 export const beginRequest = (url?: string | null): number | null => {
@@ -355,9 +361,9 @@ export const beginRequest = (url?: string | null): number | null => {
   return id;
 };
 
-export const endRequest = (id: number | null): void => {
+export const endRequest = (id: number | null, recordSample: boolean = true): void => {
   if (id === null) return;
-  inFlight.end(id);
+  inFlight.end(id, Date.now(), recordSample);
   if (inFlight.size === 0) clearSlowTimer();
 };
 
