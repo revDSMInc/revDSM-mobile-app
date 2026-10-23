@@ -6,6 +6,7 @@ import {
   isPendingInstall,
   isPendingRehash,
 } from '../screens/ChatThreads/utils/deal-link';
+import { channelInOffice } from '../utils/team-channel-offices';
 
 export const useChatThreads = (
   user: any,
@@ -141,7 +142,9 @@ export const useChatThreads = (
         sortChannels(
           prev.map((c) => {
             const idx = ids.indexOf(String(c.id));
-            return idx !== -1 && (!data?.officeId || sameId(c.office_id, data.officeId))
+            // A channel shared with that office moves too, so match on its whole
+            // office set, not just the primary one it is ordered within.
+            return idx !== -1 && (!data?.officeId || channelInOffice(c, data.officeId))
               ? { ...c, sort_order: idx }
               : c;
           })
