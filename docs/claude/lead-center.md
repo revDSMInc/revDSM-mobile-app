@@ -2376,6 +2376,17 @@ Ask: *"if I use double fingers can we pinch in/out zoom even if I'm on text / sh
 - The frame (`frameRef`, non-transformed) is measured once for its page rect, so the pinch anchors correctly. `zoomScale` fed to the `dx / scale` correction updates when the pinch ends, not during it.
 - Not verified on device: pinch in each of the three tools on Android and iOS, a pinch starting on a text note, and no stray dot after a fast pinch.
 
+### Follow-up - the Zoom button now REPORTS zoom, and resets it
+
+Once the pinch worked in every tool, a rep could zoom the photo without ever pressing Zoom - and nothing on screen said the photo was zoomed, nor offered a way back to fit. (Read of the ticket: "zoom button should [be] green automatically which means rep made the zoom, and when rep press that button picture comes to its [original] state and button colour should be same like it was before.")
+
+- **State:** `isZoomed = zoomScale > 1.01` in `screens/ImageAnnotation`. WARNING: compared with a TOLERANCE, not `!== 1` - `zoomScale` comes out of a live pinch as a float and settles on values like 1.0000001, which would leave the button lit on a photo that looks untouched.
+- **Reset:** `AnnotationCanvas` exposes `reset()` on `TwoFingerZoomApi` (alongside `touches` / `release`). The canvas owns the transform, so the screen only asks; `reset()` calls the same `resetZoom` the photo-change effect uses, so the two cannot drift. It ends in `reportScale(1)`, which flows back through `onZoomChange` and clears `isZoomed` - the button turns itself off, nothing toggles it by hand.
+- **Main toolbar button:** lit when `isZoomed || activeTool === 'zoom'`; while lit it reads "Reset" with a `magnify-minus-outline` icon and a tap resets to fit instead of re-selecting the tool.
+- WARNING: **the main toolbar is REPLACED while Draw / Text / Shapes is open**, so the Zoom button is not on screen there - a rep who pinched mid-draw had no way back without leaving the tool and losing their place. The centred caption in each tool footer ("BRUSH" / "SHAPES") becomes a "Reset Zoom" pill while zoomed (`ToolFooterLabel`), reusing the caption's own slot so it costs no layout. If a new tool footer is added, give it `ToolFooterLabel` rather than a bare `<Text>`.
+- `clampZoomScale` floors the scale at 1, so pinching out always lands exactly back at 1 and the button can never be left stuck lit.
+- Not verified on device: pinch in Draw / Shapes and confirm the footer caption becomes "Reset Zoom"; tap it and the photo returns to fit with the caption back; pinch with no tool selected and confirm the main Zoom button lights and resets.
+
 
 ## Annotation Save: background + offline-safe, NO loader ("takes too long to save")
 

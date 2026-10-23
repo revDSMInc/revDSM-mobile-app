@@ -57,16 +57,22 @@ import { AnnotationOverlayPreview } from './AnnotationOverlayPreview';
  * photo narrower than the box loses the whole difference off the TOP AND BOTTOM. At the old 1.6
  * a portrait 3:4 phone photo showed only ~47% of its height - the reporter's thumbnail had cut
  * away the TV that is plainly there when the photo is opened, so the tile did not look like the
- * same picture. At 4:3 the same photo keeps ~75%.
+ * same picture.
  *
- * 4:3 is the shape a phone camera actually produces, so a landscape shot now fills the tile with
- * no crop at all, and a portrait one keeps as much as a fixed-ratio grid can show.
+ * ⚠️ SQUARE is the setting that fixes this, and the two obvious alternatives were both tried
+ * and rejected:
+ *   - `resizeMode="contain"` shows the whole frame but pads a portrait photo with ~44% empty
+ *     background: "I don't want to show the empty spaces from left and right."
+ *   - A wider 4:3 tile still cropped a portrait photo to ~56% of its height.
+ * A 1:1 tile with `cover` fills the card edge to edge - no bars - while a portrait 3:4 photo keeps
+ * ~75% of its height and a landscape one keeps all of it. No resize mode can both fill a fixed box
+ * and show everything; matching the TILE to the photos is what buys the view back.
  *
  * ⚠️ `AnnotationOverlayPreview` draws saved marks over the photo and MUST be given the same
  * ratio, or the drawing lands away from what it was drawn on. Use this constant in all three
  * places; don't inline the number again.
  */
-export const PHOTO_TILE_ASPECT = 4 / 3;
+export const PHOTO_TILE_ASPECT = 3/3;
 
 const GREEN = '#4CBB17';
 const RED = '#EF4444';
@@ -594,12 +600,10 @@ export function DynamicManagePhotosView({
               <LoadingImage
                 uri={(tileState === 'ready' ? localUri : undefined) || uri!}
                 style={{ width: '100%', height: '100%' }}
-                // ⚠️ `contain`, not `cover` (REVUIUX-574). `cover` fills the tile by throwing away
-                // whatever does not fit, so a portrait photo lost its top and bottom and the thumbnail
-                // was not the picture it opened. `contain` shows the WHOLE frame and pads with the
-                // card's own background instead. The tile is a means of recognising a photo, so showing
-                // all of it beats filling the box.
-                resizeMode="contain"
+                // ⚠️ Stays `cover` - see PHOTO_TILE_ASPECT. `contain` was tried and does show the whole
+                // frame, but it pads a portrait photo with ~44% empty background, which was rejected.
+                // The SQUARE tile is what buys the view back here, not the resize mode.
+                resizeMode="cover"
                 spinnerColor="#fff"
                 unavailableLabel={online ? 'Tap to retry' : 'Needs a connection'}
                 onRetry={() => {

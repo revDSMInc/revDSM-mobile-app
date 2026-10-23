@@ -382,6 +382,45 @@ export default function ImageAnnotationScreen() {
   // committed when the fingers lift.
   const multiTouchRef = useRef(false);
   const twoFingerZoomRef = useRef<TwoFingerZoomApi | null>(null);
+
+  /**
+   * REVUIUX-561: is the photo currently zoomed in?
+   *
+   * WARNING: compared with a tolerance, not `!== 1`. `zoomScale` is a float coming out of a
+   * live pinch, so it settles on things like 1.0000001 and an exact comparison would leave the
+   * button lit on a photo that looks untouched.
+   */
+  const isZoomed = zoomScale > 1.01;
+
+  // Back to fit. The canvas owns the transform, so this just asks it; `onZoomChange` then
+  // clears `isZoomed` and the button goes dark on its own.
+  const resetZoom = useCallback(() => {
+    twoFingerZoomRef.current?.reset();
+  }, []);
+
+  /**
+   * The centred caption in a tool's footer ("BRUSH" / "SHAPES"), which turns into a reset
+   * control while the photo is zoomed.
+   *
+   * WARNING: the main toolbar - and with it the Zoom button - is REPLACED while a tool is open,
+   * so a rep who pinches mid-draw would otherwise have no way back to fit without leaving the
+   * tool and losing their place. This reuses the caption's own slot, so it costs no layout.
+   */
+  const ToolFooterLabel = ({ title }: { title: string }) =>
+    isZoomed ? (
+      <TouchableOpacity
+        onPress={resetZoom}
+        accessibilityLabel="Reset zoom"
+        className="flex-row items-center rounded-full bg-[#72BD00] px-3 py-1.5"
+      >
+        <Icon name="magnify-minus-outline" size={14} color="white" />
+        <Text className="text-white font-extrabold text-[11px] uppercase tracking-widest ml-1.5">
+          Reset Zoom
+        </Text>
+      </TouchableOpacity>
+    ) : (
+      <Text className="text-white font-extrabold text-sm uppercase tracking-widest">{title}</Text>
+    );
   const abortForMultiTouch = () => {
     multiTouchRef.current = true;
     activeStrokeRef.current = null;
@@ -1130,14 +1169,22 @@ export default function ImageAnnotationScreen() {
             {(activeTool === 'none' || activeTool === 'zoom') && !showStylePanel ? (
               <View className="bg-[#0b0e0c] border-t border-white/10 px-4 py-4 pb-8 flex-row items-center justify-between">
                 <View className="flex-row gap-1.5">
+                  {/* REVUIUX-561. Two-finger pinch works in EVERY tool, so the photo can be zoomed
+                      without this button ever being pressed - and then there was nothing on screen
+                      saying so, and no obvious way back to fit. The button now REPORTS zoom as well
+                      as selecting the tool: lit whenever the photo is zoomed (`isZoomed`), and while
+                      lit a tap resets to fit instead of re-selecting the tool. */}
                   <TouchableOpacity
-                    onPress={() => setActiveTool('zoom')}
+                    onPress={() => (isZoomed ? resetZoom() : setActiveTool('zoom'))}
+                    accessibilityLabel={isZoomed ? 'Reset zoom' : 'Zoom'}
                     className={`w-12 h-14 rounded-xl items-center justify-center ${
-                      activeTool === 'zoom' ? 'bg-[#72BD00]' : 'bg-white/10'
+                      isZoomed || activeTool === 'zoom' ? 'bg-[#72BD00]' : 'bg-white/10'
                     }`}
                   >
-                    <Icon name="magnify" size={20} color="white" />
-                    <Text className="text-white text-[10px] font-bold mt-1">Zoom</Text>
+                    <Icon name={isZoomed ? 'magnify-minus-outline' : 'magnify'} size={20} color="white" />
+                    <Text className="text-white text-[10px] font-bold mt-1">
+                      {isZoomed ? 'Reset' : 'Zoom'}
+                    </Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -1284,7 +1331,7 @@ export default function ImageAnnotationScreen() {
                   <TouchableOpacity onPress={cancelDrawMode} className="w-12 h-12 rounded-full bg-white/5 items-center justify-center">
                     <Icon name="close" size={24} color="white" />
                   </TouchableOpacity>
-                  <Text className="text-white font-extrabold text-sm uppercase tracking-widest">Brush</Text>
+                  <ToolFooterLabel title="Brush" />
                   <TouchableOpacity onPress={commitDrawMode} className="w-12 h-12 rounded-full bg-white/5 items-center justify-center">
                     <Icon name="check" size={24} color="#72BD00" />
                   </TouchableOpacity>
@@ -1368,7 +1415,7 @@ export default function ImageAnnotationScreen() {
                       <Text className="text-white text-xs font-bold ml-1.5">Delete shape</Text>
                     </TouchableOpacity>
                   ) : (
-                    <Text className="text-white font-extrabold text-sm uppercase tracking-widest">Shapes</Text>
+                    <ToolFooterLabel title="Shapes" />
                   )}
                   <TouchableOpacity onPress={commitShapeMode} className="w-12 h-12 rounded-full bg-white/5 items-center justify-center">
                     <Icon name="check" size={24} color="#72BD00" />

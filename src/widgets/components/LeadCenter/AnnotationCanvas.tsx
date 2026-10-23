@@ -59,6 +59,8 @@ export interface PageTouch {
 export interface TwoFingerZoomApi {
   touches: (list: PageTouch[]) => void;
   release: () => void;
+  /** Back to fit (scale 1, no pan). Used by the Zoom button to undo a pinch. */
+  reset: () => void;
 }
 
 export const AnnotationCanvas = ({
@@ -141,7 +143,9 @@ export const AnnotationCanvas = ({
     boxH.value = canvasLayout.height;
   }, [canvasLayout.width, canvasLayout.height, boxW, boxH]);
 
-  useEffect(() => {
+  // Back to fit. Shared by the photo-change effect and the Zoom button (REVUIUX-561), so the
+  // two can never drift into resetting different things.
+  const resetZoom = useCallback(() => {
     scale.value = 1;
     savedScale.value = 1;
     tx.value = 0;
@@ -149,6 +153,11 @@ export const AnnotationCanvas = ({
     savedTx.value = 0;
     savedTy.value = 0;
     reportScale(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportScale]);
+
+  useEffect(() => {
+    resetZoom();
     setLiveStroke(null);
     setLiveShape(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -237,7 +246,7 @@ export const AnnotationCanvas = ({
 
   // Re-assigned every render so it always sees the current shared values; the ref object itself is stable.
   if (twoFingerZoomRef) {
-    twoFingerZoomRef.current = { touches: twoFingerTouches, release: finishPinch };
+    twoFingerZoomRef.current = { touches: twoFingerTouches, release: finishPinch, reset: resetZoom };
   }
 
   // One finger pans the zoomed photo in Zoom mode AND with no tool selected (a one-finger touch is otherwise free
