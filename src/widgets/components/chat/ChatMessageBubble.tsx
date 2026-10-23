@@ -192,7 +192,7 @@ interface Props {
   activeMatchId?: string | null;
   onLayout?: (event: any) => void;
   /** REVDSM-1313 read confirmation: tint + header the ack-required message carries. */
-  ackRequired?: 'pending' | 'confirmed' | 'count' | null;
+  ackRequired?: 'pending' | 'confirmed' | null;
 }
 
 export const ChatMessageBubble = React.memo(function ChatMessageBubble({

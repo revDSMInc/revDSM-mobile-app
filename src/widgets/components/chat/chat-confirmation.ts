@@ -27,7 +27,7 @@ export const confirmationSenderFirstName = (message: any): string => {
 
 /** The time a user confirmed at ("6:02 PM"), from an `ackBy` entry. */
 export const confirmationTimeOf = (entry: any): string => {
-  const at = entry?.ackedAt || entry?.createdAt || null;
+  const at = entry?.ackedAt || entry?.createdAt || entry?.acknowledgedAt || null;
   if (!at) return '';
   try {
     const d = new Date(at);
@@ -40,19 +40,16 @@ export const confirmationTimeOf = (entry: any): string => {
   }
 };
 
-export type AckVisualState = 'pending' | 'confirmed' | 'count';
+export type AckVisualState = 'pending' | 'confirmed';
 
 /**
  * Which visual state the read-confirmation UI takes for the viewer, or null when
- * the message has nothing to confirm (unsent, waiting for approval, system cards).
+ * the message has nothing to confirm (unsent, waiting for approval, system cards)
+ * or is the viewer's own post (that bubble only carries the header strip).
  * Mirrors the branches of the under-bubble banner so the bubble header and the
  * banner always agree.
  */
-export const ackVisualState = (
-  message: any,
-  currentUserId: string,
-  canManage: boolean
-): AckVisualState | null => {
+export const ackVisualState = (message: any, currentUserId: string): AckVisualState | null => {
   const messageId = String(message?._id || message?.id || '');
   if (!messageId || messageId.startsWith('temp_') || message?.pendingApproval) return null;
 
@@ -60,9 +57,9 @@ export const ackVisualState = (
   const me = String(currentUserId || '');
   const senderId = String(message?.user?._id || message?.senderId || '');
   const isSender = !!me && senderId === me;
-  const confirmedByMe = !!me && ackBy.some((a) => String(a?.userId) === me);
+  // Personal flag from the messages API, with the fuller `ackBy` as fallback.
+  const confirmedByMe = !!me && (message?.acknowledgedByMe === true || ackBy.some((a) => String(a?.userId) === me));
 
-  if (!isSender && !confirmedByMe) return 'pending';
-  if (!isSender && confirmedByMe && !canManage) return 'confirmed';
-  return 'count';
+  if (!isSender) return confirmedByMe ? 'confirmed' : 'pending';
+  return 'confirmed';
 };

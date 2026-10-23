@@ -231,7 +231,6 @@ export default function ChatDetailScreen() {
     canEditOwn,
     removed: channelRemoved,
     requireAck,
-    canManage: canManageChannel,
   } = useTeamChannelPermission(isChannel ? channelObj : null);
   const isViewOnly = isChannel ? !canPost : false;
 
@@ -701,7 +700,7 @@ export default function ChatDetailScreen() {
             activeMatchId={highlightedMessageId || searchResults[searchIndex]}
             ackRequired={
               isChannel && requireAck
-                ? ackVisualState(props.currentMessage, String(currentUserId || ''), canManageChannel)
+                ? ackVisualState(props.currentMessage, String(currentUserId || ''))
                 : null
             }
           />
@@ -709,14 +708,13 @@ export default function ChatDetailScreen() {
             <ChatMessageAck
               message={props.currentMessage}
               currentUserId={String(currentUserId || '')}
-              canManage={canManageChannel}
               onConfirm={handleConfirmRead}
             />
           )}
         </View>
       );
     },
-    [currentUserId, filteredParticipants, setReplyingTo, handleNavigateToMessage, imageUrls, isViewOnly, canReply, canReact, canEditOwn, isChannel, requireAck, canManageChannel, handleConfirmRead, handleDisabledClick, searchQuery, highlightedMessageId, searchResults, searchIndex, chatId, user._id, setMessages, isChannel, leadId, setEditingMessage, setComposerText, setShowMentions, setPinnedMessages]
+    [currentUserId, filteredParticipants, setReplyingTo, handleNavigateToMessage, imageUrls, isViewOnly, canReply, canReact, canEditOwn, isChannel, requireAck, handleConfirmRead, handleDisabledClick, searchQuery, highlightedMessageId, searchResults, searchIndex, chatId, user._id, setMessages, isChannel, leadId, setEditingMessage, setComposerText, setShowMentions, setPinnedMessages]
   );
 
   const openAddendumPdf = useCallback(
