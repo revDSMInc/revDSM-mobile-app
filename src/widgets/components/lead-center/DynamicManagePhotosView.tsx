@@ -50,30 +50,6 @@ import { usePendingAnnotations } from '../../../hooks/usePendingAnnotations';
 import { annotationIdentity, type PendingAnnotationJobView } from '../../../utils/pending-annotations';
 import { AnnotationOverlayPreview } from './AnnotationOverlayPreview';
 
-/**
- * Thumbnail shape in Manage Photos (REVUIUX-574 - "thumbnails are way too zoomed in").
- *
- * ⚠️ This is a CROP ratio, not a decoration. The tile draws with `resizeMode="cover"`, so a
- * photo narrower than the box loses the whole difference off the TOP AND BOTTOM. At the old 1.6
- * a portrait 3:4 phone photo showed only ~47% of its height - the reporter's thumbnail had cut
- * away the TV that is plainly there when the photo is opened, so the tile did not look like the
- * same picture.
- *
- * ⚠️ SQUARE is the setting that fixes this, and the two obvious alternatives were both tried
- * and rejected:
- *   - `resizeMode="contain"` shows the whole frame but pads a portrait photo with ~44% empty
- *     background: "I don't want to show the empty spaces from left and right."
- *   - A wider 4:3 tile still cropped a portrait photo to ~56% of its height.
- * A 1:1 tile with `cover` fills the card edge to edge - no bars - while a portrait 3:4 photo keeps
- * ~75% of its height and a landscape one keeps all of it. No resize mode can both fill a fixed box
- * and show everything; matching the TILE to the photos is what buys the view back.
- *
- * ⚠️ `AnnotationOverlayPreview` draws saved marks over the photo and MUST be given the same
- * ratio, or the drawing lands away from what it was drawn on. Use this constant in all three
- * places; don't inline the number again.
- */
-export const PHOTO_TILE_ASPECT = 3/3;
-
 const GREEN = '#4CBB17';
 const RED = '#EF4444';
 
@@ -583,7 +559,7 @@ export function DynamicManagePhotosView({
               else if (unavailableOffline) return;
               else if (!selectMode) openPreview(card);
             }}
-            style={{ width: '100%', aspectRatio: PHOTO_TILE_ASPECT, alignItems: 'center', justifyContent: 'center' }}
+            style={{ width: '100%', aspectRatio: 1.6, alignItems: 'center', justifyContent: 'center' }}
           >
             {/* ⚠️ THREE states, not two — see `photoTileState`. A photo uploaded while online
                 exists only as a pre-signed S3 url; if this screen was never opened with a
@@ -594,15 +570,12 @@ export function DynamicManagePhotosView({
               <AnnotationOverlayPreview
                 job={annot.job}
                 width={cardWidth - 3}
-                height={(cardWidth - 3) / PHOTO_TILE_ASPECT}
+                height={(cardWidth - 3) / 1.6}
               />
             ) : tileState === 'ready' || tileState === 'loading' ? (
               <LoadingImage
                 uri={(tileState === 'ready' ? localUri : undefined) || uri!}
                 style={{ width: '100%', height: '100%' }}
-                // ⚠️ Stays `cover` - see PHOTO_TILE_ASPECT. `contain` was tried and does show the whole
-                // frame, but it pads a portrait photo with ~44% empty background, which was rejected.
-                // The SQUARE tile is what buys the view back here, not the resize mode.
                 resizeMode="cover"
                 spinnerColor="#fff"
                 unavailableLabel={online ? 'Tap to retry' : 'Needs a connection'}
@@ -634,7 +607,7 @@ export function DynamicManagePhotosView({
 
             {holdJob && (
               <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} pointerEvents="none">
-                <AnnotationOverlayPreview job={holdJob} width={cardWidth - 3} height={(cardWidth - 3) / PHOTO_TILE_ASPECT} />
+                <AnnotationOverlayPreview job={holdJob} width={cardWidth - 3} height={(cardWidth - 3) / 1.6} />
               </View>
             )}
 
