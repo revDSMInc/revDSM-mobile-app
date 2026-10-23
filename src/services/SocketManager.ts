@@ -91,22 +91,45 @@ class SocketManager {
 
     this.socket.emit(event, roomId, () => {
       console.log(`[SocketManager] Joined room "${roomId}" via "${event}"`);
-      this.socket?.emit('get-pinned-messages', roomId);
-      if (event === 'join-team-channel' && userId) {
-        this.socket?.emit('mark-channel-read', { channelId: roomId, userId });
-      }
+      if (event === 'join-chat') this.socket?.emit('get-pinned-messages', roomId);
     });
 
-    setTimeout(() => {
-      if (this.socket?.connected) {
-        this.socket.emit('get-pinned-messages', roomId);
-      }
-    }, 800);
+    if (event === 'join-chat') {
+      setTimeout(() => {
+        if (this.socket?.connected) {
+          this.socket.emit('get-pinned-messages', roomId);
+        }
+      }, 800);
+    }
   }
 
   leaveRoom(roomId: string): void {
+    const event = this.joinedRooms.get(roomId);
     this.joinedRooms.delete(roomId);
-    this.socket?.emit('leave-chat', roomId);
+    this.socket?.emit(event === 'join-team-channel' ? 'leave-team-channel' : 'leave-chat', roomId);
+  }
+
+  /** Emit with the server's ack callback ({ success, data? } | { success:false, message, code }). Rejects when offline. */
+  emitWithAck(event: string, payload: any, timeoutMs = 15000): Promise<any> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket?.connected) {
+        reject({ message: 'Not connected', code: 'NOT_CONNECTED' });
+        return;
+      }
+      let done = false;
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        reject({ message: 'Request timed out', code: 'TIMEOUT' });
+      }, timeoutMs);
+      this.socket.emit(event, payload, (res: any) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (res && res.success === false) reject(res);
+        else resolve(res);
+      });
+    });
   }
 
   joinLeadOnsiteWatch(leadId: string): void {
@@ -166,7 +189,7 @@ class SocketManager {
     this.joinedRooms.forEach((event, roomId) => {
       this.socket?.emit(event, roomId, () => {
         console.log(`[SocketManager] Re-joined room "${roomId}"`);
-        this.socket?.emit('get-pinned-messages', roomId);
+        if (event === 'join-chat') this.socket?.emit('get-pinned-messages', roomId);
       });
     });
   }

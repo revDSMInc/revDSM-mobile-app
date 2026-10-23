@@ -1,7 +1,7 @@
 import api from './index';
 import SocketManager from '../SocketManager';
 import RNFS from 'react-native-fs';
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 import { readChatId } from '../../utils/chat-response';
 import { isHttpStatus } from '../../utils/network-error';
 
@@ -368,7 +368,7 @@ class ChatService {
     return result;
   }
 
-  async sendFileMessage(chatId: string, file: any, message = '', replyTo?: string): Promise<any> {
+  async sendFileMessage(chatId: string, file: any, message = '', replyTo?: string, isChannel = false): Promise<any> {
     let resolvedUri = file?.uri ?? '';
 
     if (Platform.OS === 'android' && resolvedUri.startsWith('content://')) {
@@ -395,6 +395,7 @@ class ChatService {
       type: file.type || 'application/octet-stream',
     } as any);
 
+    if (isChannel) return this.postChannelFormData(chatId, formData);
     const res = await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
     return res?.data?.data?.message || res?.data?.message || res?.data || null;
   }
@@ -403,7 +404,8 @@ class ChatService {
     chatId: string,
     files: Array<{ uri?: string; name?: string; fileName?: string; type?: string }>,
     message = '',
-    replyTo?: string
+    replyTo?: string,
+    isChannel = false
   ): Promise<any> {
     const formData = new FormData();
     formData.append('message', message || ' ');
@@ -442,6 +444,7 @@ class ChatService {
       } as any);
     }
 
+    if (isChannel) return this.postChannelFormData(chatId, formData);
     const res = await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
     return res?.data?.data?.message || res?.data?.message || res?.data || null;
   }
@@ -459,8 +462,10 @@ class ChatService {
       fileType?: string;
     }>,
     message = ' ',
-    replyTo?: string
+    replyTo?: string,
+    isChannel = false
   ): Promise<any> {
+    if (isChannel) return this.sendChannelMessage({ channelId: chatId, message: message || ' ', replyTo, files });
     const payload: any = {
       chatId,
       message: message || ' ',
@@ -476,7 +481,17 @@ class ChatService {
     chatId: string;
     message: string;
     replyTo?: string;
+    isChannel?: boolean;
+    taggedUsers?: string[];
   }): Promise<any> {
+    if (payload.isChannel) {
+      return this.sendChannelMessage({
+        channelId: payload.chatId,
+        message: payload.message,
+        replyTo: payload.replyTo,
+        taggedUsers: payload.taggedUsers,
+      });
+    }
     const res = await api.post(`/chat/v1/${payload.chatId}/messages`, {
       message: payload.message,
       replyTo: payload.replyTo,
@@ -497,7 +512,11 @@ class ChatService {
     SocketManager.emit('send-message', payload);
   }
 
-  deleteMessage(messageId: string): void {
+  deleteMessage(messageId: string, isChannel = false): void {
+    if (isChannel) {
+      api.delete(`/api/v1/channels/messages/${messageId}`).catch((e: any) => this.alertChannelRefusal(e));
+      return;
+    }
     SocketManager.emit('delete-message', { messageId });
   }
 
@@ -505,7 +524,11 @@ class ChatService {
     SocketManager.emit('get-replies', { messageId, chatId });
   }
 
-  markSeen(chatId: string, messageIds: string[]): void {
+  markSeen(chatId: string, messageIds: string[], isChannel = false): void {
+    if (isChannel) {
+      SocketManager.emit('mark-channel-messages-seen', { channelId: chatId, messageIds });
+      return;
+    }
     SocketManager.emit('mark-messages-seen', { chatId, messageIds });
   }
 
@@ -517,37 +540,37 @@ class ChatService {
     SocketManager.emit('get-pinned-messages', chatId);
   }
 
-  pinMessage(chatId: string, messageId: string, isChannel: boolean): void {
-    const payload: any = { messageId };
-    if (isChannel) payload.channelId = chatId;
-    else payload.chatId = chatId;
+  pinMessage(chatId: string, messageId: string): void {
+    const payload: any = { messageId, chatId };
     console.log('[ChatService] pin-message:', payload);
     SocketManager.emit('pin-message', payload);
   }
 
-  unpinMessage(chatId: string, messageId: string, isChannel: boolean): void {
-    const payload: any = { messageId };
-    if (isChannel) payload.channelId = chatId;
-    else payload.chatId = chatId;
+  unpinMessage(chatId: string, messageId: string): void {
+    const payload: any = { messageId, chatId };
     console.log('[ChatService] unpin-message:', payload);
     SocketManager.emit('unpin-message', payload);
   }
 
-  addReaction(chatId: string, messageId: string, emoji: string): void {
+  addReaction(chatId: string, messageId: string, emoji: string, isChannel = false): void {
     const payload = { messageId, emoji };
     console.log('[ChatService] add-reaction:', payload);
-    SocketManager.emit('add-reaction', payload);
+    SocketManager.emit(isChannel ? 'add-channel-reaction' : 'add-reaction', payload);
   }
 
-  removeReaction(chatId: string, messageId: string, emoji: string): void {
+  removeReaction(chatId: string, messageId: string, emoji: string, isChannel = false): void {
     const payload = { messageId, emoji };
     console.log('[ChatService] remove-reaction:', payload);
-    SocketManager.emit('remove-reaction', payload);
+    SocketManager.emit(isChannel ? 'remove-channel-reaction' : 'remove-reaction', payload);
   }
 
-  async editMessage(messageId: string, message: string): Promise<void> {
+  async editMessage(messageId: string, message: string, isChannel = false): Promise<void> {
     const payload = { messageId, message };
     console.log('[ChatService] edit-message:', payload);
+    if (isChannel) {
+      await SocketManager.emitWithAck('edit-channel-message', payload);
+      return;
+    }
     SocketManager.emit('edit-message', payload);
   }
 
@@ -561,26 +584,126 @@ class ChatService {
     SocketManager.emit('typing', { chatId, isTyping });
   }
 
+  // ─── Team channels (REVDSM-1313): stored data over HTTP /api/v1/channels, live changes over sockets ──
+
+  private channelsCache: any[] = [];
+  private channelsInitialized = false;
+
+  /** The channel currently open in ChatDetail (null when none). Lets the list skip unread bumps for it. */
+  openChannelId: string | null = null;
+  private openChannelListeners = new Set<(id: string | null) => void>();
+
+  setOpenChannel(id: string | null): void {
+    this.openChannelId = id;
+    this.openChannelListeners.forEach((fn) => fn(id));
+  }
+
+  onOpenChannelChange(fn: (id: string | null) => void): () => void {
+    this.openChannelListeners.add(fn);
+    return () => {
+      this.openChannelListeners.delete(fn);
+    };
+  }
+
+  /** Machine code of a refusal, whether it came from an HTTP rejection or a socket ack. */
+  channelErrorCode(err: any): string | undefined {
+    return err?.data?.code ?? err?.response?.data?.data?.code ?? (typeof err?.code === 'string' ? err.code : undefined);
+  }
+
+  /** Shows the refusal alerts the channel UI has always shown (HTTP failures; socket ones also arrive as `error`). */
+  alertChannelRefusal(err: any): void {
+    const refusals = ['MANAGERS_ONLY', 'SLOW_MODE', 'UPLOADS_DISABLED', 'REPLIES_DISABLED', 'EDIT_DISABLED', 'ACK_NOT_REQUIRED'];
+    const code = this.channelErrorCode(err);
+    if (code && refusals.includes(code) && err?.message) Alert.alert('Not allowed', err.message);
+  }
+
+  /** `GET /api/v1/channels/` (the caller's office); `POST /api/v1/channels/initialize` once when it is empty. */
+  async loadChannels(): Promise<any[]> {
+    const read = (res: any) => res?.data?.data?.channels || [];
+    let list = read(await api.get<any>('/api/v1/channels/'));
+    if (list.length === 0 && !this.channelsInitialized) {
+      this.channelsInitialized = true;
+      try {
+        list = read(await api.post<any>('/api/v1/channels/initialize'));
+      } catch (e) {
+        console.warn('[ChatService] channel initialize failed:', e);
+      }
+    }
+    this.channelsCache = list;
+    return list;
+  }
+
+  getCachedChannel(channelId: string): any | undefined {
+    return this.channelsCache.find((c: any) => String(c.id) === String(channelId));
+  }
+
+  async getChannel(channelId: string): Promise<any | undefined> {
+    return this.getCachedChannel(channelId) || (await this.loadChannels(), this.getCachedChannel(channelId));
+  }
+
   async getChannelParticipants(channelId: string): Promise<any[]> {
+    const channel = await this.getChannel(channelId);
+    return channel?.participants || [];
+  }
+
+  /** One page of history, newest first. Pass the previous `nextBefore` as `before` for older messages. */
+  async getChannelMessages(
+    channelId: string,
+    opts: { limit?: number; before?: string | null } = {}
+  ): Promise<{ messages: any[]; hasMore: boolean; nextBefore: string | null }> {
+    const params: any = { limit: opts.limit ?? 50 };
+    if (opts.before) params.before = opts.before;
+    const res = await api.get<any>(`/api/v1/channels/${channelId}/messages`, { params });
+    const data = res.data?.data || {};
+    return {
+      messages: (data.messages || []).map((m: any) => this.normalizeMessage(m)),
+      hasMore: !!data.pagination?.has_more,
+      nextBefore: data.pagination?.next_before ?? null,
+    };
+  }
+
+  async getChannelReplies(messageId: string): Promise<any[]> {
+    const res = await api.get<any>(`/api/v1/channels/messages/${messageId}/replies`);
+    return (res.data?.data?.replies || []).map((m: any) => this.normalizeMessage(m));
+  }
+
+  /** Managers: who confirmed a read-ack message. */
+  async getChannelAcks(messageId: string): Promise<{ confirmed: any[]; pending: any[] }> {
+    const res = await api.get<any>(`/api/v1/channels/messages/${messageId}/acks`);
+    const data = res.data?.data || {};
+    return { confirmed: data.confirmed || [], pending: data.pending || [] };
+  }
+
+  private async postChannelFormData(channelId: string, formData: FormData): Promise<any> {
     try {
-      const res = await api.get<any>(`/chat/v1/channels/${channelId}/members`);
-      return res.data?.data?.participants || res.data?.data?.members || [];
-    } catch {
-      const details = await this.getChatDetails(channelId);
-      return details?.participants || [];
+      const res = await api.post<any>(`/api/v1/channels/${channelId}/messages`, formData);
+      return res?.data?.data?.message || null;
+    } catch (e) {
+      this.alertChannelRefusal(e);
+      throw e;
     }
   }
 
-  markChannelSeen(channelId: string, user: any): void {
-    SocketManager.emit('mark-channel-as-read', {
-      channelId,
-      userId: user?.id || user?._id,
-    });
+  /** Text (or already-uploaded files) over the socket, resolved by the server's ack. */
+  async sendChannelMessage(payload: {
+    channelId: string;
+    message: string;
+    replyTo?: string;
+    taggedUsers?: string[];
+    files?: any[];
+  }): Promise<any> {
+    const res = await SocketManager.emitWithAck('send-channel-message', payload);
+    return res?.data?.message || res?.data || null;
   }
 
-  createChannel(channelData: any): void {
+  acknowledgeChannelMessage(messageId: string): void {
+    SocketManager.emit('acknowledge-channel-message', { messageId });
+  }
+
+  /** Flat snake_case payload: { name, icon_emoji, description?, ...settings }. Resolves with the ack. */
+  async createChannel(channelData: any): Promise<any> {
     console.log('[ChatService] create-team-channel:', channelData);
-    SocketManager.emit('create-team-channel', channelData);
+    return SocketManager.emitWithAck('create-team-channel', channelData);
   }
 
 

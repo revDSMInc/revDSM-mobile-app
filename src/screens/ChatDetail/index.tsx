@@ -17,7 +17,10 @@ import {
 import { GiftedChat, IMessage, InputToolbar, Composer, Day, Message } from 'react-native-gifted-chat';
 import Icon from 'react-native-vector-icons/Ionicons';
 import MCIcon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { useRoute, RouteProp } from '@react-navigation/native';
+import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
+import SocketManager from '../../services/SocketManager';
+import { ChatMessageAck } from '../../widgets/components/chat/ChatMessageAck';
+import { ackVisualState } from '../../widgets/components/chat/chat-confirmation';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useAuth } from '../../hooks/useAuth';
@@ -130,6 +133,7 @@ export default function ChatDetailScreen() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const route = useRoute<RouteProp<RootStackParamList, 'ChatDetail'>>();
+  const navigation = useNavigation<any>();
   const { leadId, chatId: initialChatId, customerName, description, chatType = 'lead', initialParticipants = [], salesPhotos: routeSalesPhotos, previewImage: routePreviewImage, previewImages: routePreviewImages, installBucket: routeInstallBucket } = route.params;
   const isChannel = chatType === 'channel';
 
@@ -162,6 +166,7 @@ export default function ChatDetailScreen() {
     typingUsers,
     setLimit,
     channel,
+    loadOlder,
   } = useChatSession(initialChatId || null, leadId, isChannel, user, initialParticipants);
 
   const filteredParticipants = useMemo(() => {
@@ -215,23 +220,68 @@ export default function ChatDetailScreen() {
     leadId
   );
 
-  const channelObj = useMemo(() => {
-    return channel || {
-      _id: chatId,
-      id: chatId,
-      channelType: description?.toLowerCase().includes('announcement') || customerName?.toLowerCase().includes('announcement')
-        ? 'announcements'
-        : description?.toLowerCase().includes('commission') || customerName?.toLowerCase().includes('commission')
-          ? 'commission-sheets'
-          : description?.toLowerCase().includes('file') || customerName?.toLowerCase().includes('file')
-            ? 'files'
-            : 'general'
-    };
-  }, [channel, chatId, description, customerName]);
+  // Permissions come from the server per viewer; nothing here looks at the channel's type or name.
+  const channelObj = useMemo(() => channel || { id: chatId }, [channel, chatId]);
 
-  const { canPost } = useTeamChannelPermission(isChannel ? channelObj : null);
-  const isManager = user?.role === 'Manager' || user?.role === 'Admin' || user?.isAdmin;
-  const isViewOnly = isChannel ? (!canPost && !isManager) : false;
+  const {
+    canPost,
+    canReply,
+    canReact,
+    canUpload,
+    canEditOwn,
+    removed: channelRemoved,
+    requireAck,
+  } = useTeamChannelPermission(isChannel ? channelObj : null);
+  const isViewOnly = isChannel ? !canPost : false;
+
+  // Server refusals (stale UI, e.g. a manager changed a setting while typing) and removed channels.
+  useEffect(() => {
+    if (!isChannel) return;
+    const refusals = ['MANAGERS_ONLY', 'SLOW_MODE', 'UPLOADS_DISABLED', 'REPLIES_DISABLED', 'EDIT_DISABLED', 'ACK_NOT_REQUIRED'];
+    return SocketManager.on('error', (err: any) => {
+      if (err?.code && refusals.includes(err.code) && err.message) {
+        Alert.alert('Not allowed', err.message);
+      }
+    });
+  }, [isChannel]);
+
+  // Read confirmation: add the confirmer to the message's ackBy (idempotent, so the optimistic
+  // update and the server broadcast can both land).
+  const markAcked = useCallback(
+    (messageId: string, userId: string) => {
+      setMessages((prev: any[]) =>
+        prev.map((m: any) => {
+          if (String(m._id) !== String(messageId)) return m;
+          const ackBy = Array.isArray(m.ackBy) ? m.ackBy : [];
+          if (ackBy.some((a: any) => String(a?.userId) === String(userId))) return m;
+          return { ...m, ackBy: [...ackBy, { userId, ackedAt: new Date().toISOString() }] };
+        })
+      );
+    },
+    [setMessages]
+  );
+
+  useEffect(() => {
+    if (!isChannel) return;
+    return SocketManager.on('channel-message-acknowledged', (data: any) => {
+      if (data?.messageId && data?.userId) markAcked(data.messageId, data.userId);
+    });
+  }, [isChannel, markAcked]);
+
+  const handleConfirmRead = useCallback(
+    (messageId: string) => {
+      markAcked(messageId, String(currentUserId));
+      SocketManager.emit('acknowledge-channel-message', { messageId });
+    },
+    [markAcked, currentUserId]
+  );
+
+  useEffect(() => {
+    if (isChannel && channelRemoved) {
+      Alert.alert('Channel unavailable', 'This channel is no longer available.');
+      navigation.goBack();
+    }
+  }, [isChannel, channelRemoved]);
 
   const online = useIsOnline();
 
@@ -478,7 +528,7 @@ export default function ChatDetailScreen() {
     (composerProps: any) => (
       <View className="flex-1 flex-row items-center">
         {/* Attachment "+" — opens the action sheet (Photos / Files / Annotated / Voice) */}
-        <TouchableOpacity
+        {(!isChannel || canUpload) && (<TouchableOpacity
           onPress={() => {
             Keyboard.dismiss();
             setShowAttachmentSheet(true);
@@ -488,7 +538,7 @@ export default function ChatDetailScreen() {
           style={{ backgroundColor: colors.surface }}
         >
           <Icon name="add" size={28} color={colors.text} />
-        </TouchableOpacity>
+        </TouchableOpacity>)}
         <View
           className="flex-1 flex-row items-center rounded-[28px] px-4 min-h-[44px]"
           style={{ backgroundColor: colors.surface }}
@@ -515,7 +565,7 @@ export default function ChatDetailScreen() {
         </View>
       </View>
     ),
-    [colors.surface, colors.text, handleComposerChange]
+    [colors.surface, colors.text, handleComposerChange, isChannel, canUpload]
   );
 
   const renderBubble = useCallback(
@@ -527,11 +577,11 @@ export default function ChatDetailScreen() {
           if (user?._id) {
             logEvent('pin', {
               user_id: user._id,
-              module_type: isChannel ? 'team_channel' : 'chat',
+              module_type: 'chat',
               created_by: user._id,
               meta: {
                 leadId,
-                type: isChannel ? 'team_channel' : 'chat',
+                type: 'chat',
                 action: action === 'pin' ? 'pinned message' : 'unpinned message',
                 messageId: msg._id,
               },
@@ -542,9 +592,9 @@ export default function ChatDetailScreen() {
           );
 
           if (action === 'pin') {
-            ChatService.pinMessage(chatId, msg._id, isChannel);
+            ChatService.pinMessage(chatId, msg._id);
           } else {
-            ChatService.unpinMessage(chatId, msg._id, isChannel);
+            ChatService.unpinMessage(chatId, msg._id);
           }
         } catch (err) {
           console.error('Pinning failed:', err);
@@ -613,10 +663,10 @@ export default function ChatDetailScreen() {
           );
 
           if (myPrevReaction) {
-            ChatService.removeReaction(chatId, m._id, myPrevReaction.emoji);
+            ChatService.removeReaction(chatId, m._id, myPrevReaction.emoji, isChannel);
           }
           if (!alreadyReactedSameEmoji) {
-            ChatService.addReaction(chatId, m._id, e);
+            ChatService.addReaction(chatId, m._id, e, isChannel);
           }
         } catch (err) {
           console.error('Reaction failed:', err);
@@ -624,30 +674,47 @@ export default function ChatDetailScreen() {
       };
 
       return (
-        <ChatMessageBubble
-          bubbleProps={props}
-          currentUserId={currentUserId || ''}
-          participants={filteredParticipants}
-          onReply={setReplyingTo}
-          onEdit={handleEdit}
-          onReact={handleReact}
-          onPin={handlePin}
-          onViewHistory={handleViewHistory}
-          onNavigateToMessage={handleNavigateToMessage}
-          onDelete={(id: string) => {
-            setMessages((prev: any[]) => prev.filter((m: any) => m._id?.toString() !== id?.toString()));
-            setPinnedMessages((prev: any[]) => prev.filter((m: any) => m._id?.toString() !== id?.toString()));
-            ChatService.deleteMessage(id);
-          }}
-          imageUrls={imageUrls}
-          isViewOnly={isViewOnly}
-          onDisabledClick={handleDisabledClick}
-          searchQuery={searchQuery}
-          activeMatchId={highlightedMessageId || searchResults[searchIndex]}
-        />
+        <View>
+          <ChatMessageBubble
+            bubbleProps={props}
+            currentUserId={currentUserId || ''}
+            participants={filteredParticipants}
+            onReply={setReplyingTo}
+            onEdit={handleEdit}
+            onReact={handleReact}
+            onPin={isChannel ? undefined : handlePin}
+            onViewHistory={handleViewHistory}
+            onNavigateToMessage={handleNavigateToMessage}
+            onDelete={(id: string) => {
+              setMessages((prev: any[]) => prev.filter((m: any) => m._id?.toString() !== id?.toString()));
+              setPinnedMessages((prev: any[]) => prev.filter((m: any) => m._id?.toString() !== id?.toString()));
+              ChatService.deleteMessage(id, isChannel);
+            }}
+            imageUrls={imageUrls}
+            isViewOnly={isViewOnly}
+            canReply={!isChannel || canReply}
+            canReact={!isChannel || canReact}
+            canEditOwn={!isChannel || canEditOwn}
+            onDisabledClick={handleDisabledClick}
+            searchQuery={searchQuery}
+            activeMatchId={highlightedMessageId || searchResults[searchIndex]}
+            ackRequired={
+              isChannel && requireAck
+                ? ackVisualState(props.currentMessage, String(currentUserId || ''))
+                : null
+            }
+          />
+          {isChannel && requireAck && (
+            <ChatMessageAck
+              message={props.currentMessage}
+              currentUserId={String(currentUserId || '')}
+              onConfirm={handleConfirmRead}
+            />
+          )}
+        </View>
       );
     },
-    [currentUserId, filteredParticipants, setReplyingTo, handleNavigateToMessage, imageUrls, isViewOnly, handleDisabledClick, searchQuery, highlightedMessageId, searchResults, searchIndex, chatId, user._id, setMessages, isChannel, leadId, setEditingMessage, setComposerText, setShowMentions, setPinnedMessages]
+    [currentUserId, filteredParticipants, setReplyingTo, handleNavigateToMessage, imageUrls, isViewOnly, canReply, canReact, canEditOwn, isChannel, requireAck, handleConfirmRead, handleDisabledClick, searchQuery, highlightedMessageId, searchResults, searchIndex, chatId, user._id, setMessages, isChannel, leadId, setEditingMessage, setComposerText, setShowMentions, setPinnedMessages]
   );
 
   const openAddendumPdf = useCallback(
@@ -927,11 +994,12 @@ export default function ChatDetailScreen() {
     >
       <ChatHeader
         leadId={isChannel ? undefined : leadId}
-        customerName={customerName}
-        description={description}
+        customerName={customerName || (isChannel ? channel?.name : undefined)}
+        description={description || (isChannel ? channel?.description : undefined)}
         leadPreview={{ previewImage: routePreviewImage, previewImages: routePreviewImages }}
         installBucket={routeInstallBucket}
         isChannel={isChannel}
+        channelIcon={isChannel ? { emoji: channel?.icon_emoji, url: channel?.icon_url } : undefined}
         isViewOnly={isViewOnly}
         colors={colors}
         isDark={isDark}
@@ -978,6 +1046,8 @@ export default function ChatDetailScreen() {
                 keyboardShouldPersistTaps: 'never',
                 contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
                 keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
+                // Channels page their history: reaching the end of the inverted list loads older messages.
+                ...(isChannel ? { onEndReached: loadOlder, onEndReachedThreshold: 0.4 } : {}),
                 getItemLayout: (data: any, index: number) => ({
                   length: 160,
                   offset: 160 * index,
@@ -1058,6 +1128,8 @@ export default function ChatDetailScreen() {
                 keyboardShouldPersistTaps: 'handled',
                 contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
                 keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
+                // Channels page their history: reaching the end of the inverted list loads older messages.
+                ...(isChannel ? { onEndReached: loadOlder, onEndReachedThreshold: 0.4 } : {}),
                 getItemLayout: (data: any, index: number) => ({
                   length: 160,
                   offset: 160 * index,
@@ -1118,7 +1190,7 @@ export default function ChatDetailScreen() {
         isChannel={isChannel}
       />
       <Modal
-        visible={showPinned}
+        visible={showPinned && !isChannel}
         transparent
         animationType="fade"
         onRequestClose={() => setShowPinned(false)}
@@ -1157,7 +1229,7 @@ export default function ChatDetailScreen() {
             <PinnedMessagesArea
               pinnedMessages={pinnedMessages}
               imageUrls={imageUrls}
-              onUnpin={(msg: any) => ChatService.unpinMessage(chatId!, msg._id, isChannel)}
+              onUnpin={(msg: any) => ChatService.unpinMessage(chatId!, msg._id)}
               onNavigate={(msg: any) => {
                 handleNavigateToMessage(msg);
                 setShowPinned(false);

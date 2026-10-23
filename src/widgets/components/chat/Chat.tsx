@@ -301,9 +301,9 @@ export default function Chat({ onClose, lead }: Props) {
         prev.map((m) => (m._id === msg._id ? { ...m, isPinned: !msg.isPinned } : m))
       );
       if (action === 'pin') {
-        ChatService.pinMessage(chatId, msg._id, false);
+        ChatService.pinMessage(chatId, msg._id);
       } else {
-        ChatService.unpinMessage(chatId, msg._id, false);
+        ChatService.unpinMessage(chatId, msg._id);
       }
     } catch (err) {
       console.error('Pinning failed:', err);
