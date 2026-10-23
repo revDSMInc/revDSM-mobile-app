@@ -1039,11 +1039,18 @@ export default function ImageAnnotationScreen() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView className="flex-1" style={{ backgroundColor: '#090e0c' }}>
-        {/* Header: a true three-slot row. The two side slots have EQUAL flex, so the title is centred on the screen whatever the
-            width of the back button on the left or of the Save / Save All / Saving... button on the right. (With
-            `justify-between` the title sat wherever the leftover space put it.) */}
+        {/* Header: a three-slot row - back button, title, Save / Save All / Saving... button. The title slot is the
+            only one that flexes, so it takes all the leftover space and centres its own text between the two
+            buttons. (With `justify-between` the title sat wherever the leftover space put it.)
+            WARNING: the side slots must NOT be given `flex`. `flex: 1` is shorthand for
+            `flexGrow:1, flexShrink:1, flexBasis:0`, which clamped the right slot to about a quarter of the screen -
+            less than "Save All" needs - so the label first wrapped to two lines (overflowing the h-10 pill) and then,
+            once pinned to one line, truncated to "Save...". Adding `flexBasis:'auto'` next to `flex: 1` does NOT help:
+            the `flex` shorthand overwrites the longhands in the same style object whatever the key order. So the side
+            slots take `flexGrow: 0, flexShrink: 0` (natural width, never clipped) and ONLY the title flexes and
+            shrinks. Button padding is `px-4`, not `px-6`, to leave the title more room. */}
         <View className="flex-row items-center px-4 pt-2 pb-4 bg-[#090e0c]">
-          <View style={{ flex: 1, alignItems: 'flex-start', justifyContent: 'center' }}>
+          <View style={{ flexGrow: 0, flexShrink: 0, alignItems: 'flex-start', justifyContent: 'center' }}>
             <TouchableOpacity
               onPress={handleBackPress}
               accessibilityLabel="Back"
@@ -1053,20 +1060,21 @@ export default function ImageAnnotationScreen() {
             </TouchableOpacity>
           </View>
 
-          <View style={{ flex: 2, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}>
+          <View style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}>
             <Text numberOfLines={1} className="text-white/60 font-bold text-sm" style={{ textAlign: 'center' }}>
               {isOrderSheetEdit ? 'Annotate Order Sheet' : `Annotate (${activeImageIndex + 1}/${selectedPhotos.length})`}
             </Text>
           </View>
 
-          <View style={{ flex: 1, alignItems: 'flex-end', justifyContent: 'center' }}>
+          <View style={{ flexGrow: 0, flexShrink: 0, alignItems: 'flex-end', justifyContent: 'center' }}>
             <TouchableOpacity
               onPress={handleSaveAll}
               disabled={isSaving}
-              className="px-6 h-10 rounded-full bg-[#72BD00] items-center justify-center"
+              className="px-4 h-10 rounded-full bg-[#72BD00] items-center justify-center"
               style={{ opacity: isSaving ? 0.7 : 1 }}
             >
-              <Text className="text-white font-extrabold text-sm">
+              {/* Single line, always: the pill is a fixed h-10, so a wrapped label overflows it. */}
+              <Text numberOfLines={1} className="text-white font-extrabold text-sm">
                 {isSaving ? 'Saving\u2026' : isOrderSheetEdit ? 'Save' : 'Save All'}
               </Text>
             </TouchableOpacity>
