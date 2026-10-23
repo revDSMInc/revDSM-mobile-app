@@ -720,6 +720,8 @@ Report: opening the header thumbnail (a Google street view) showed a black scree
 
 ### REVDSM-1313 - a channel can belong to several offices (the app only READS this)
 
+API contract (shapes, routes, socket events, error codes): `docs/REVDSM-1313-channels-api-contract.md`.
+
 Channels are created and managed **in the portal only**: managers and VPs work there, and the roles that use this app (sales rep, installer) do not create channels. The "New Channel" button in `ChatThreads/index.tsx` is commented out and `CreateChannelModal` is unreachable dead code from this ticket — ⚠️ do NOT build onto it (an office picker was added there and reverted for exactly this reason). If channel management is ever wanted on mobile, decide that as its own ticket; the modal is also missing the icon picker and the ten per-channel settings the portal has.
 - **One channel, several offices.** The channel document keeps `office_id` as its PRIMARY office and adds `office_ids` with the whole set. Everyone who can see any office in the set shares the same conversation and one message history. `utils/team-channel-offices.ts` (`officeIdsOf`, `channelInOffice`) is the only reader: `office_ids` when it has entries, else `office_id`. ⚠️ A channel created before this ticket carries ONLY `office_id` - nothing was backfilled, so never read `office_ids` directly or those channels vanish.
 - **Nothing here filters by office.** `GET /api/v1/channels/` is already scoped per viewer on the server, so the list is taken as given — the app never decides what a rep may see.
