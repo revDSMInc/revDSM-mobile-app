@@ -2589,3 +2589,23 @@ Reported as "Save All button is not showing responsive in iOS": on a narrower iP
 - Natural button widths are ~99pt (`Save All`), ~108pt (`Saving...`) and ~66pt (`Save`), leaving the title ~132pt even on a 320pt iPhone SE - enough for "Annotate (1/1)" and "Annotate Order Sheet". A longer title truncates rather than stealing the button's width.
 - WARNING: `screens/ImageAnnotation/index.tsx` is **pure ASCII** (note `'Saving\u2026'` rather than a literal ellipsis). Keep escapes out of literals and symbols out of comments.
 - Not verified on device: iPhone SE / 13 mini (narrowest), the `Saving...` state mid-save, and order-sheet mode where the button reads `Save`.
+
+## REVUIUX-574 - Manage Photos thumbnails "way too zoomed in"
+
+Reported with two screenshots of the same photo: opened full size it shows a ceiling fan AND the TV below it; as a thumbnail the TV is gone, so the tile does not look like the picture it opens.
+
+- **Cause** (`widgets/components/lead-center/DynamicManagePhotosView.tsx`): the tile was `aspectRatio: 1.6` - a wide landscape box - drawn with `resizeMode="cover"`. `cover` fills the box and throws away the overflow, so a photo NARROWER than the box loses the difference off the top and bottom. A portrait 3:4 phone photo in a 1.6 box keeps only ~47% of its height; 9:16 keeps ~35%. Nothing was scaled wrongly - the shape of the box was the bug.
+- **Fix:** one exported constant `PHOTO_TILE_ASPECT = 4 / 3`, used by the tile and by both `AnnotationOverlayPreview` height calculations. The same 3:4 photo now keeps ~75% of its height, and a landscape 4:3 shot - the shape a phone camera actually produces - fills the tile with no crop at all.
+- The **legacy** `LeadCenter/ManagePhotosModal.tsx` grid was ALREADY `aspect-[4/3]`. Only the schema-driven dynamic view was at 1.6, so companies with an inspection schema saw tighter crops than those without; this brings the two into line rather than inventing a new shape.
+- WARNING: `AnnotationOverlayPreview` draws saved marks over the photo and derives its own `coverBox` from the width/height it is handed, so it must be given the SAME ratio as the tile or the drawing lands away from what it was drawn on. That is why all three sites read one constant - don't inline the number again.
+- The 48pt thumbnail in the "Discard this photo?" confirmation is deliberately left alone; it only has to identify which photo is about to go.
+### Follow-up - settled: SQUARE tile, still `cover`
+
+`contain` was tried next (nothing cropped, whole frame drawn) and rejected on sight: it pads a portrait photo with ~44% of the card's dark background. "I don't want to show the empty spaces from left and right, is there any property we have so it cover the card and also in thumbnail maximum part of the image will show?"
+
+- WARNING: **there is no such property.** For a FIXED-SIZE box, filling it and showing all of the photo are mutually exclusive - `cover` crops the overflow, `contain` pads the shortfall, and `stretch` distorts. The only way to have both is to stop fixing the box, so the answer was to change the TILE, not the resize mode.
+- **Settled:** `PHOTO_TILE_ASPECT = 1` (square) with `resizeMode="cover"`. The card fills edge to edge with no bars, a portrait 3:4 photo keeps ~75% of its height (it was ~47% at the original 1.6) and a landscape photo keeps all of its height. 4:3 was an intermediate step and still cropped portraits to ~56%.
+- Per-photo tile heights (`Image.getSize` per card, so `cover` would have nothing to crop) were considered and NOT done: nothing in the photo record carries dimensions, so every tile would need an async measure and the grid would reflow as each one landed. If that is ever revisited, measure before first paint or keep a cached size - don't let the grid jump.
+- WARNING: the legacy `LeadCenter/ManagePhotosModal.tsx` grid is still `cover` at `aspect-[4/3]`, so the two Manage Photos views now crop differently depending on whether the company has an inspection schema. Worth aligning.
+- `AnnotationOverlayPreview` derives its own `coverBox` from the width/height it is handed, so it follows the constant automatically - but only because all three sites read it. Don't inline the number.
+- Not verified on device: a portrait photo and a landscape one side by side in a schema-driven Manage Photos grid, and an annotated card (marks must still sit on the same spot they were drawn).
