@@ -2609,3 +2609,33 @@ Reported with two screenshots of the same photo: opened full size it shows a cei
 - WARNING: the legacy `LeadCenter/ManagePhotosModal.tsx` grid is still `cover` at `aspect-[4/3]`, so the two Manage Photos views now crop differently depending on whether the company has an inspection schema. Worth aligning.
 - `AnnotationOverlayPreview` derives its own `coverBox` from the width/height it is handed, so it follows the constant automatically - but only because all three sites read it. Don't inline the number.
 - Not verified on device: a portrait photo and a landscape one side by side in a schema-driven Manage Photos grid, and an annotated card (marks must still sit on the same spot they were drawn).
+
+### Follow-up - REVUIUX-574 REVERSES this: 4:3 tile with `contain`
+
+`DynamicManagePhotosView.tsx`: `PHOTO_TILE_ASPECT = 4 / 3` and the tile's `resizeMode` is now
+**`contain`**. This change was in the working tree already (not authored with the rounds above); it is
+recorded here because it overturns what the two notes above call settled.
+
+| | Round 1 | Round 2 ("settled") | REVUIUX-574 (current) |
+|---|---|---|---|
+| Ratio | 1.6 | **1** (square) | **4 / 3** |
+| Resize | `cover` | `cover` | **`contain`** |
+| Portrait 3:4 keeps | ~47% | ~75% | **all of it** (padded) |
+
+The trade it accepts is the one round 2 explicitly rejected: `contain` pads a portrait photo with the
+card's background. The new rationale in the code is that **a tile exists to let a rep recognise a photo**,
+so showing the whole frame beats filling the box - the complaint that started all of this was a thumbnail
+that had cropped away the TV and "did not look like the same picture".
+
+- ⚠️ **The "no such property" note above still holds** - filling a fixed box and showing everything remain
+  mutually exclusive. This is a deliberate choice of which side to lose, NOT a solution to that; do not
+  read it as one.
+- ⚠️ **Empty side bars are now EXPECTED on portrait photos.** They were a reported complaint once
+  ("I don't want to show the empty spaces from left and right"). If that comes back, it is a re-litigation
+  of this trade-off, not a regression - check with the client before flipping it a third time.
+- ⚠️ `AnnotationOverlayPreview` still derives its `coverBox` from the ratio it is handed, so all three
+  sites must keep reading `PHOTO_TILE_ASPECT`. With `contain` the drawn marks sit inside the padded frame;
+  **verify an annotated portrait photo on a device** - a mismatch here puts saved marks off the picture.
+- ⚠️ The legacy `LeadCenter/ManagePhotosModal.tsx` grid is `cover` at `aspect-[4/3]`. The ratios now match,
+  but the resize modes do not, so the two Manage Photos views still crop differently. Worth aligning.
+

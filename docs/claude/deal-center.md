@@ -1406,6 +1406,45 @@ unresolved drop stayed pending and the screen filled with them.
 - **Online and offline are identical** - every rule above lives in `utils/drop-prices.ts` (pure, tested) and
   the queued payload still goes through `toDropPricePayload`, so a superseded drop syncs as `declined`.
 
+### Follow-up — duplicated drop prices, and the crash that produced them
+
+Reported twice: *"I created the new lead, added the drop price and pressed Done - the app instantly crashed,
+and when I opened it again there were 2 drop prices (duplication) and both pending."* A tester saw the same
+on a lead completed ONLINE. Screenshot showed `$300/$300`, `$400/$400`, `$500 SECURED/$500 PENDING`.
+
+**Three independent defects**, each able to duplicate a row on its own:
+
+| # | Was | Fix |
+|---|---|---|
+| 1 | `resolveDropTargetIndex` addressed the row by `pendingDropIndex` - **component state**. After a crash, a remount, or any re-render that reset it, the lookup missed and `secureDrop` **appended** instead of updating: `$500 SECURED` + `$500 PENDING` | Rows carry a device `uid` (`newDropUid`), and `findDropIndex` addresses by it. A uid survives MMKV and a process restart, so it cannot go stale |
+| 2 | `openDrop` had no re-entrancy guard, so a double-tap on the keypad's Done (or a re-render firing the handler again) wrote the same price twice - the `$201 / $201` pair | `openingDrop` ref, set after validation and cleared once the modal is up |
+| 3 | The logging half of `openDrop` ran **after** `onDropChange` had already saved the row. A synchronous throw there is fatal in release - so the crash left a saved-but-unresolved drop, and the retry added another | The whole logging block is wrapped in `try/catch`. The save is already done; logging is best-effort |
+
+Plus a repair: **`dedupeDrops` runs on read** (`const drops = useMemo(() => dedupeDrops(...))`), so a lead
+already corrupted by the shipped build fixes itself when the screen opens, and the clean list is written
+back on the next save. No migration, and a rep cannot delete a drop by hand.
+
+- ⚠️ **NEVER address a drop by index.** Index is a view-level accident; `uid` is identity. This is the
+  second bug caused by index addressing in this file - the first was `resolveDropTargetIndex` matching on
+  price alone and attaching an outcome to the wrong round.
+- ⚠️ **`findDropIndex`'s price fallback only ever matches a PENDING row.** Legacy rows have no uid, so a
+  fallback is required - but matching a resolved row by price would let a new outcome overwrite one the
+  customer already agreed to.
+- ⚠️ **`dedupeDrops` is a REPAIR, not a rule, and it is deliberately narrow.** Two rows collapse only when
+  they share a uid, or when one is pending and a twin has the identical price. Two *resolved* rows at the
+  same price are legitimate history (a rep may drop to the same number in separate rounds) and are kept.
+  A resolved row always beats a pending one.
+- ⚠️ **The guard is set AFTER the validation early-returns.** Setting it on entry would lock the Done
+  button for the rest of the session the first time a price was rejected.
+- ⚠️ **An exception in a React event handler is fatal in release**, and anything that runs after a save is
+  where it hurts most: the work is on disk but the screen never finishes, so the rep retries and doubles
+  it. Anything non-essential that follows a write belongs in a `try/catch`.
+- Online and offline are identical: all of it is in `utils/drop-prices.ts` (pure, tested), and the queued
+  payload still goes through `toDropPricePayload`.
+
+Tests: `tests/offline/drop-duplication.test.ts` - 13 cases, including the exact `300/300, 400/400, 500/500`
+shape from the report.
+
 ### ⚠️ The 500 this caused on a device — the offline payload was sending RAW drop rows
 
 Reported immediately after the above landed: the calculator write failed with a **500** on sync.

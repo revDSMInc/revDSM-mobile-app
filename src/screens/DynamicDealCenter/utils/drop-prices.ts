@@ -46,6 +46,100 @@ export const hasUnresolvedDrop = (drops: any[] | null | undefined): boolean =>
  * ⚠️ The superseded drop becomes DECLINED, never silently dropped: the rep showed that price to
  * the customer and the Forever Record has to keep it. The caller logs that transition.
  */
+/**
+ * A device-minted id for a drop row, so it can be addressed WITHOUT relying on its index.
+ *
+ * ⚠️ INDEX-BASED ADDRESSING IS WHAT DUPLICATED DROPS. `resolveDropTargetIndex` matched on a
+ * `pendingDropIndex` held in component STATE; after a crash, a remount or a re-render that reset
+ * it, the lookup missed and `secureDrop` APPENDED instead of updating - producing the reported
+ * `$500 SECURED` + `$500 PENDING` pair. An id travels with the row, through MMKV and through a
+ * process restart, so it cannot go stale.
+ *
+ * Not the server `_id`: the row exists on the device before the server has ever seen it.
+ */
+export const newDropUid = (): string =>
+  `drop-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+export const dropUidOf = (d: any): string => String(d?.uid ?? '');
+
+/**
+ * Find a drop by its device id, falling back to an exact price+pending match for rows written
+ * before uids existed (and for anything that arrived from the server without one).
+ */
+export const findDropIndex = (
+  drops: any[] | null | undefined,
+  uid: string,
+  fallbackPrice?: number
+): number => {
+  const list = Array.isArray(drops) ? drops : [];
+  const id = String(uid || '');
+  if (id) {
+    const byUid = list.findIndex((d) => dropUidOf(d) === id);
+    if (byUid >= 0) return byUid;
+  }
+  if (typeof fallbackPrice === 'number' && Number.isFinite(fallbackPrice)) {
+    const target = Math.round(fallbackPrice);
+    // Prefer a PENDING row at that price - that is the one an outcome is being taken on.
+    const pendingAt = list.findIndex(
+      (d) => isPendingDrop(d) && Math.round(dropPriceOf(d)) === target
+    );
+    if (pendingAt >= 0) return pendingAt;
+  }
+  return -1;
+};
+
+/**
+ * Collapse rows that are the SAME drop recorded twice.
+ *
+ * ⚠️ A REPAIR, not a rule. Duplicates should not exist once drops are addressed by uid, but
+ * rows already written to a device (or to the server) by the buggy build still carry them, and a
+ * rep should not have to delete them by hand. Two rows collapse only when they share a uid, or
+ * when one is PENDING and an adjacent row has the identical price - the exact shape the bug
+ * produced. A resolved row always wins over a pending one, because an outcome outranks a draft.
+ *
+ * ⚠️ Deliberately NOT "same price = duplicate". A rep may legitimately drop to the same number
+ * twice in separate rounds; only an unresolved twin of a resolved row is a duplicate.
+ */
+export const dedupeDrops = <T extends Record<string, any>>(
+  drops: T[] | null | undefined
+): T[] => {
+  const list = Array.isArray(drops) ? drops : [];
+  if (list.length < 2) return list;
+
+  const out: T[] = [];
+  const seenUids = new Set<string>();
+  let changed = false;
+
+  for (const row of list) {
+    const uid = dropUidOf(row);
+    if (uid && seenUids.has(uid)) {
+      changed = true;
+      const at = out.findIndex((d) => dropUidOf(d) === uid);
+      if (at >= 0 && isPendingDrop(out[at]) && !isPendingDrop(row)) out[at] = row;
+      continue;
+    }
+
+    const price = Math.round(dropPriceOf(row));
+    const twin = out.findIndex(
+      (d) =>
+        Math.round(dropPriceOf(d)) === price &&
+        (isPendingDrop(d) || isPendingDrop(row)) &&
+        !(isPendingDrop(d) && isPendingDrop(row) && dropUidOf(d) !== dropUidOf(row) && !!dropUidOf(d))
+    );
+    if (twin >= 0) {
+      changed = true;
+      // Keep whichever row carries the real outcome.
+      if (isPendingDrop(out[twin]) && !isPendingDrop(row)) out[twin] = row;
+      continue;
+    }
+
+    if (uid) seenUids.add(uid);
+    out.push(row);
+  }
+
+  return changed ? out : list;
+};
+
 export const appendDrop = <T extends Record<string, any>>(
   drops: T[] | null | undefined,
   next: T

@@ -12,7 +12,7 @@ import { resolveSchemaStyle } from '../utils/icon-color';
 import { formatAmountInput, stripAmount } from '../utils/format-amount';
 import { MODAL_BLUR_AMOUNT, MODAL_SCRIM, MODAL_CARD_SHADOW } from './modal-chrome';
 import { describeFullPackage } from '../utils/tab-naming';
-import { autoSecureLastDrop, dropPriceOf, DROP_PENDING, isPendingDrop, pendingDropIndex as findPendingDropIndex, appendDrop, supersededPendingDrops } from '../utils/drop-prices';
+import { autoSecureLastDrop, dropPriceOf, DROP_PENDING, isPendingDrop, pendingDropIndex as findPendingDropIndex, appendDrop, supersededPendingDrops, newDropUid, findDropIndex, dedupeDrops } from '../utils/drop-prices';
 import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { FlashMessage } from '../../../config/message';
 import { allRolloutsConfirmed, rolloutCalculators } from '../../../utils/rollout-status';
@@ -727,6 +727,20 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const [pendingDrop, setPendingDrop] = useState(0);
   const [showDropModal, setShowDropModal] = useState(false);
   const [pendingDropIndex, setPendingDropIndex] = useState(-1);
+  /**
+   * The row an outcome is being taken on, addressed by its DEVICE ID rather than its index.
+   *
+   * ⚠️ `pendingDropIndex` alone caused the duplicated drops: it lives in component state, so a
+   * crash, a remount or any re-render that reset it made `resolveDropTargetIndex` miss - and
+   * `secureDrop` then APPENDED a second row instead of updating the one on screen.
+   */
+  const pendingDropUid = useRef<string>('');
+  /**
+   * ⚠️ `openDrop` must not run twice for one tap. A double-tap on the keypad's Done, or a
+   * re-render firing the handler again, wrote the SAME price twice - the `$201 / $201` pair in the
+   * report. A ref, not state: it has to be true for the rest of this tick, before any re-render.
+   */
+  const openingDrop = useRef(false);
   const [showChooser, setShowChooser] = useState(false);
   const [chooserPrice, setChooserPrice] = useState(0);
   const [declinedPrice, setDeclinedPrice] = useState<number | null>(null);
@@ -745,7 +759,20 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     () => resolveOneYearDefaultKey(plans, user, method),
     [plans, user?.defaultOneYearPaymentMethod, user?.defaultPaymentMethod, method],
   );
-  const drops: any[] = calculator.dropPrice || [];
+  /**
+   * ⚠️ DEDUPED ON READ, so a lead already corrupted by the earlier build repairs itself.
+   *
+   * The duplication bug wrote real rows to MMKV and to the server (`$500 SECURED` + `$500
+   * PENDING`), and a rep cannot delete a drop by hand. Collapsing here means the screen is
+   * correct the moment it opens; the repaired list is written back on the next save, so the
+   * cleanup reaches the server without a migration.
+   *
+   * `dedupeDrops` returns the SAME array when nothing was wrong, so a clean lead costs nothing.
+   */
+  const drops: any[] = useMemo(
+    () => dedupeDrops(calculator.dropPrice || []),
+    [calculator.dropPrice],
+  );
   const acceptedDrop = drops.find((d) => d.status === 'accepted');
   const activeMethod = acceptedDrop?.paymentMethod || method;
   const activeDownPayment = Number(acceptedDrop?.downPayment) || 0;
@@ -1065,6 +1092,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   };
 
   const openDrop = () => {
+    // ⚠️ One tap, one row. See `openingDrop`.
+    if (openingDrop.current) return;
     const v = parseFloat(dropText) || 0;
     if (v <= 0) return;
     const cost = tiers.find((t) => t.label === 'COST')?.value ?? effectiveCostOf(calculator);
@@ -1099,9 +1128,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
      * older one is DECLINED - and logged as such, because the customer was shown that price.
      */
     const superseded = supersededPendingDrops(drops);
+    openingDrop.current = true;
+    const uid = newDropUid();
+    pendingDropUid.current = uid;
     onDropChange(
       calculator.id,
       appendDrop(drops, {
+        uid,
         price: v,
         dropedPrice: v,
         status: DROP_PENDING,
@@ -1111,6 +1144,20 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         balance: v,
       })
     );
+    /**
+     * ⚠️ EVERYTHING BELOW IS LOGGING, AND IT MUST NEVER TAKE THE APP DOWN.
+     *
+     * Reported: "I added the drop price and pressed done - the app instantly crashed, and when I
+     * reopened it there were 2 drop prices." An exception thrown from a React event handler is
+     * fatal in release, and it fired AFTER `onDropChange` had already written the row - which is
+     * how a crash produced a saved-but-unresolved drop, then a second one on the retry.
+     *
+     * The save is done by this point. Logging is best-effort by definition (every `logEvent` call
+     * here is already `.catch()`-ed for its async half), so its SYNCHRONOUS half is wrapped too:
+     * a bad tier, a missing plan or an undefined calculator field can no longer cost the rep
+     * their work.
+     */
+    try {
     const uidS2 = user?._id || user?.id;
     if (uidS2) {
       superseded.forEach(({ index, drop }) => {
@@ -1151,15 +1198,34 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         },
       }).catch(() => {});
     }
+    } catch (e) {
+      // The drop is saved; a logging failure is not worth a crash.
+      console.warn('[RolloutView] drop logging failed', e);
+    }
     setPendingDrop(v);
     // The row now EXISTS, so Secure/Decline must update it in place rather than append a second one.
     setPendingDropIndex(idx);
     setShowDropModal(true);
     setShowDropInput(false);
     setDropText('');
+    // The modal is up and the row is written; a later tap is a new drop, not a repeat of this one.
+    openingDrop.current = false;
   };
 
+  /**
+   * Which row is this outcome for?
+   *
+   * ⚠️ BY UID FIRST. The old version trusted `pendingDropIndex` (component state) plus a price
+   * match; after a crash or a remount that index was stale, the lookup returned -1, and
+   * `secureDrop` appended a SECOND row at the same price - the reported duplication. The uid
+   * travels with the row through MMKV and a process restart, so it survives all of that.
+   *
+   * The price fallback covers rows written before uids existed; `findDropIndex` only ever matches
+   * a PENDING row that way, so an outcome already recorded can never be overwritten.
+   */
   const resolveDropTargetIndex = () => {
+    const byUid = findDropIndex(drops, pendingDropUid.current, Number(pendingDrop));
+    if (byUid >= 0) return byUid;
     const priceOf = (d: any) => Math.round(dropPriceOf(d));
     const target = Math.round(Number(pendingDrop));
     if (
@@ -1222,6 +1288,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
+    // The outcome is recorded; the next drop mints its own uid.
+    pendingDropUid.current = '';
     setChooserPrice(pendingDrop);
     setChooserDown(Number(data.downPayment) || 0);
     setShowChooser(true);
@@ -1259,6 +1327,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
+    // The outcome is recorded; the next drop mints its own uid.
+    pendingDropUid.current = '';
     setDeclinedPrice(pendingDrop);
   };
 
