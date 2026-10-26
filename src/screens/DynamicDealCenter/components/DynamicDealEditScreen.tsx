@@ -281,6 +281,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   // "Yes" books the time (REVDSM-1300); a counter re-asks the scheduler when a time was just taken.
   const [installBooking, setInstallBooking] = useState(false);
   const [installAvailabilityRefresh, setInstallAvailabilityRefresh] = useState(0);
+  // Windows this lead's "Yes" came back `taken` for, on the day being looked at. Cleared
+  // whenever the day changes — a window full on Monday says nothing about Tuesday.
+  const [failedInstallWindows, setFailedInstallWindows] = useState<string[]>([]);
 
   // What the scheduler says about the chosen day. Until it answers — or if it never
   // does — every window is offered exactly as before.
@@ -1277,6 +1280,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       }
       setProposedDate(day);
       setProposedSlotIdx(0);
+      // ⚠️ A new day must clear the failed windows, or a window that was full on the day just
+      // looked at keeps showing "No crew available" on a day that may be wide open.
+      setFailedInstallWindows([]);
     },
     [dealLogTarget, loggedSchedule, proposedDate]
   );
@@ -1315,6 +1321,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setScheduleTimeWindow('');
     setProposedDate(null);
     setProposedSlotIdx(0);
+    setFailedInstallWindows([]);
     setDateStep('success');
   }, [dealLogTarget, scheduleDate, scheduleTimeWindow]);
 
@@ -1334,6 +1341,24 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setDateStep('calendar');
   }, [proposedSlotIdx, proposedDate, dealLogTarget, offeredInstallWindows]);
 
+  // The window "Yes" just found no crew for, and the other one if it has not failed too.
+  // Mirrors `AppointmentSchedulerModal` (the job builder), deliberately.
+  const noCrewForCurrentInstall = failedInstallWindows.includes(currentInstallWindow.value);
+  const otherInstallWindowIdx = offeredInstallWindows.findIndex(
+    (w, i) => i !== proposedSlotIdx && !failedInstallWindows.includes(w.value)
+  );
+
+  const handleTryOtherInstallWindow = useCallback(() => {
+    if (otherInstallWindowIdx >= 0) setProposedSlotIdx(otherInstallWindowIdx);
+  }, [otherInstallWindowIdx]);
+
+  const handlePickAnotherInstallDate = useCallback(() => {
+    // A new day is a clean slate: the windows that were full today may be free tomorrow.
+    setFailedInstallWindows([]);
+    setProposedSlotIdx(0);
+    setDateStep('calendar');
+  }, []);
+
   const handleAcceptProposedTime = useCallback(async () => {
     if (!proposedDate || installBooking) return;
     // First come, first served, as in the job builder: the server re-checks and holds the crew
@@ -1349,8 +1374,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       });
       setInstallBooking(false);
       if (booked.kind === 'taken') {
-        FlashMessage.error('No crew available', booked.message);
-        setProposedSlotIdx(0);
+        // Say it ON the step, as the job builder does, instead of a flash that is gone in
+        // seconds: the rep needs the two ways out (the other window, another date) in front
+        // of them. Nothing was booked.
+        setFailedInstallWindows((prev) =>
+          prev.includes(currentInstallWindow.value) ? prev : [...prev, currentInstallWindow.value]
+        );
         setInstallAvailabilityRefresh((n) => n + 1);
         return;
       }
@@ -1375,6 +1404,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setDateStep('intro');
     setProposedDate(null);
     setProposedSlotIdx(0);
+    setFailedInstallWindows([]);
     setStep(1);
   }, []);
 
@@ -1933,9 +1963,18 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 slot={currentInstallWindow}
                 loading={installAvailabilityLoading}
                 noAvailability={!installAvailabilityLoading && offeredInstallWindows.length === 0}
+                noCrewForWindow={noCrewForCurrentInstall}
+                otherWindowLabel={
+                  otherInstallWindowIdx >= 0
+                    ? offeredInstallWindows[otherInstallWindowIdx]?.value ?? null
+                    : null
+                }
                 notice={installWindowNotice}
+                booking={installBooking}
                 onNo={handleProposeNextSlot}
                 onYes={handleAcceptProposedTime}
+                onTryOtherWindow={handleTryOtherInstallWindow}
+                onPickAnotherDate={handlePickAnotherInstallDate}
               />
             ) : (
               <View style={styles.dateCard}>
@@ -2876,17 +2915,29 @@ function ProposedTimeCard({
   slot,
   loading,
   noAvailability,
+  noCrewForWindow,
+  otherWindowLabel,
   notice,
+  booking,
   onNo,
   onYes,
+  onTryOtherWindow,
+  onPickAnotherDate,
 }: {
   date: Date | null;
   slot: { period: string; value: string };
   loading?: boolean;
   noAvailability?: boolean;
+  /** This window came back `taken` from the booking call (REVDSM-1300). */
+  noCrewForWindow?: boolean;
+  /** Label of the other window, when one is left that has not failed. */
+  otherWindowLabel?: string | null;
   notice?: { tone: 'ok' | 'warn'; text: string } | null;
+  booking?: boolean;
   onNo: () => void;
   onYes: () => void;
+  onTryOtherWindow?: () => void;
+  onPickAnotherDate?: () => void;
 }) {
   if (!date) return null;
 
@@ -2895,6 +2946,29 @@ function ProposedTimeCard({
       <View style={styles.dateCard}>
         <Text style={styles.dateCardTitle}>Checking availability…</Text>
         <ActivityIndicator size="small" color="#22C55E" />
+      </View>
+    );
+  }
+
+  // This window was just taken by someone else (REVDSM-1300, 409). More specific than
+  // `noAvailability`, so it is checked first: name the window that failed and offer the two
+  // ways out, exactly as the job builder's scheduler does.
+  if (noCrewForWindow) {
+    return (
+      <View style={styles.dateCard}>
+        <Text style={styles.dateCardTitle}>No crew available</Text>
+        <Text style={styles.confirmDate}>{format(date, 'EEEE, MMMM d, yyyy')}</Text>
+        <Text style={styles.confirmPrompt}>
+          {`No crew can take this job on ${format(date, 'EEEE, MMM d')} from ${slot.value}.`}
+        </Text>
+        {!!otherWindowLabel && (
+          <TouchableOpacity onPress={onTryOtherWindow} style={[styles.useDateBtn, { marginBottom: 12 }]}>
+            <Text style={styles.useDateBtnText}>{`Try ${otherWindowLabel}`}</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity onPress={onPickAnotherDate} style={styles.tbdBtn}>
+          <Text style={styles.tbdBtnText}>Pick Another Date</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -2949,9 +3023,13 @@ function ProposedTimeCard({
         <TouchableOpacity onPress={onNo} style={styles.tbdBtn}>
           <Text style={styles.tbdBtnText}>Doesn&apos;t Work</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={onYes} style={styles.useDateBtn}>
+        <TouchableOpacity
+          onPress={onYes}
+          disabled={booking}
+          style={[styles.useDateBtn, booking ? { opacity: 0.7 } : null]}
+        >
           <Text style={styles.useDateBtnText}>
-            {notice?.tone === 'warn' ? 'Confirm Anyway' : 'Confirm'}
+            {booking ? 'Checking…' : notice?.tone === 'warn' ? 'Confirm Anyway' : 'Confirm'}
           </Text>
         </TouchableOpacity>
       </View>

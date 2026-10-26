@@ -1586,6 +1586,38 @@ re-checks availability and competencies, and holds the crew as a `draft`, which 
   `InstallerHandler.activateDraftAssignment` is the backend call that does it.
 - Not verified on device; no jest test (the screen imports RN).
 
+### Follow-up — a taken window is answered ON the step, not by a flash (REVDSM-1300)
+
+`handleAcceptProposedTime`'s `taken` branch raised `FlashMessage.error('No crew available')` and reset the
+window index. A flash is gone in seconds and takes the two ways out with it, so the rep was left on a window
+the server had just refused with nothing to act on. It now matches the job builder
+(`AppointmentSchedulerModal`), which has always drawn this inline: `ProposedTimeCard` gains a
+`noCrewForWindow` branch naming the day and window that failed, with **"Try <other window>"** (only when one
+is left) and **"Pick Another Date"**.
+
+- New state `failedInstallWindows: string[]` — the windows this lead's "Yes" came back `taken` for, on the
+  day being looked at. `noCrewForCurrentInstall` / `otherInstallWindowIdx` derive from it exactly as the
+  modal's `noCrewForCurrent` / `otherWindowIdx` do.
+- ⚠️ **The `taken` branch no longer resets `proposedSlotIdx`.** It has to stay on the failed window for the
+  card to name it; resetting sent the rep back to the morning slot and the card described the wrong window.
+- ⚠️ **Any path that changes the day MUST clear `failedInstallWindows`** — `handleInlineDateSelect`,
+  `handlePickAnotherInstallDate`, `handleSelectTbd` and `handleFinishInstallDate` all do. A window full on
+  Monday says nothing about Tuesday, and a stale entry shows "No crew available" on a day that is wide open.
+- The branch is checked **before** `noAvailability`: a window the server refused is more specific than a day
+  with no offered windows at all.
+- Confirm is disabled and reads "Checking…" while `installBooking` is in flight (the modal already did this);
+  a double tap previously fired a second `bookInstallSlot`.
+- The submit-time safeguard still flashes "Install time unavailable" — that one is correct, as there is no
+  step left to draw on.
+- Tests: `__tests__/utils/install-window-fallback.test.ts` (6) pins the selection rules — which window the
+  card names, when "Try the other" is offered, and that a date change clears the list. The screen itself
+  imports RN so it cannot load under jest.
+- Not verified on device.
+
+⚠️ The backend hand-over (`docs/install-availability-mobile-flow.md`) lists "calendar dimming — **not
+wired**" for My Deals. That is **out of date**: `InstallDateCalendar` has called
+`useInstallCalendarAvailability` since the ticket above. Only the inline card (its item 3) was outstanding.
+
 
 ## REVUIUX-569 - pencil on the summary's order-sheet tiles (annotate = REPLACE)
 
