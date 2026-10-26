@@ -22,6 +22,11 @@ interface DraggableTextProps {
   handleMoveText: (id: string, newPx: number, newPy: number) => void;
   zoomScale?: number;
   dragEnabled?: boolean;
+  /**
+   * 'all' while the Text tool is active (before the tick), 'selected' while the Adjust Style panel is open (that note only),
+   * otherwise 'none': a touch is then a tap (select -> menu) and the note stays exactly where the rep placed it.
+   */
+  moveMode?: 'none' | 'selected' | 'all';
   /** A second finger landed on the note: hand the live touches to the canvas's pinch-zoom. */
   onTwoFingerTouches?: (touches: any[]) => void;
   onTwoFingerEnd?: () => void;
@@ -38,16 +43,18 @@ export const DraggableText = ({
   handleMoveText,
   zoomScale = 1,
   dragEnabled = true,
+  moveMode = 'none',
   onTwoFingerTouches,
   onTwoFingerEnd,
 }: DraggableTextProps) => {
+  const isSelected = text.id === selectedTextId;
   const startPx = useRef(text.px);
   const startPy = useRef(text.py);
   const [layout, setLayout] = useState<{ width: number; height: number } | null>(null);
-  const textStateRef = useRef({ text, canvasLayout, zoomScale, dragEnabled, layout });
+  const textStateRef = useRef({ text, canvasLayout, zoomScale, dragEnabled, moveMode, isSelected: false, layout });
 
   useEffect(() => {
-    textStateRef.current = { text, canvasLayout, zoomScale, dragEnabled, layout };
+    textStateRef.current = { text, canvasLayout, zoomScale, dragEnabled, moveMode, isSelected, layout };
   });
 
   // The note's whole box (text + padding) must stay inside the photo, so the limit depends on its measured size.
@@ -63,8 +70,6 @@ export const DraggableText = ({
     if (nx !== text.px || ny !== text.py) handleMoveText(text.id, nx, ny);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout?.width, layout?.height, text.px, text.py, canvasLayout.width, canvasLayout.height]);
-
-  const isSelected = text.id === selectedTextId;
 
   const onTwoFingerTouchesRef = useRef(onTwoFingerTouches);
   const onTwoFingerEndRef = useRef(onTwoFingerEnd);
@@ -86,6 +91,9 @@ export const DraggableText = ({
           return;
         }
         onTwoFingerEndRef.current?.();
+        // Locked: the note does not follow the finger. A tap (release under 8px) still selects it.
+        const { moveMode: mode, isSelected: selected } = textStateRef.current;
+        if (mode === 'none' || (mode === 'selected' && !selected)) return;
         const { text: currentText, canvasLayout: currentLayout, zoomScale: currentScale, layout: box } =
           textStateRef.current;
         const scale = currentScale > 0 ? currentScale : 1;

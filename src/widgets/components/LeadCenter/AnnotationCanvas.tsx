@@ -43,6 +43,8 @@ interface AnnotationCanvasProps {
   setShowStylePanel: (show: boolean) => void;
   handleDeleteTextNote: (id: string) => void;
   handleMoveText: (id: string, newPx: number, newPy: number) => void;
+  /** Who can be dragged: every note while the Text tool is active ('all'), only the selected one while its Adjust Style panel is open ('selected'), else none. */
+  textMoveMode?: 'none' | 'selected' | 'all';
   onZoomChange?: (scale: number) => void;
   /**
    * Two-finger zoom for Draw / Text / Shapes. The touch responder that owns those tools reports its live touches
@@ -83,6 +85,7 @@ export const AnnotationCanvas = ({
   setShowStylePanel,
   handleDeleteTextNote,
   handleMoveText,
+  textMoveMode = 'none',
   onZoomChange,
   twoFingerZoomRef,
 }: AnnotationCanvasProps) => {
@@ -456,6 +459,7 @@ export const AnnotationCanvas = ({
               handleMoveText={handleMoveText}
               zoomScale={jsScale}
               dragEnabled={!zoomEnabled}
+              moveMode={textMoveMode}
               onTwoFingerTouches={twoFingerTouches}
               onTwoFingerEnd={finishPinch}
             />

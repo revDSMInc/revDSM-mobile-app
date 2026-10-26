@@ -23,7 +23,13 @@ import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { useWarmedImageUris } from '../../hooks/useWarmedImageUris';
 import { FlashMessage } from '../../config/message';
-import { buildMobileAnnotationData, countMarks, resetToBaseline } from '../../utils/annotation-restore';
+import {
+  buildMobileAnnotationData,
+  countMarks,
+  historySignature,
+  resetToBaseline,
+  type RestoredMarks,
+} from '../../utils/annotation-restore';
 
 import { AnnotationCanvas, type TwoFingerZoomApi } from '../../widgets/components/LeadCenter/AnnotationCanvas';
 import { AnnotationTextToolbar } from '../../widgets/components/LeadCenter/AnnotationTextToolbar';
@@ -62,7 +68,7 @@ interface SectionImage {
   /** `_id` of the clean ORIGINAL photo - stored with the annotation so a later re-edit can find its base. */
   salesPhotoId?: string | null;
   /** Re-edit: saved marks to put back on the canvas (only when `uri` is the clean original). */
-  initialMarks?: { strokes: any[]; texts: any[]; shapes: any[] } | null;
+  initialMarks?: ({ strokes: any[]; texts: any[]; shapes: any[] } & Partial<Pick<RestoredMarks, 'history' | 'redo'>>) | null;
   /** Re-edit: remote urls of the annotated copy whose cached bytes are stale once it is overwritten. */
   staleUris?: string[];
   /**
@@ -120,6 +126,11 @@ export default function ImageAnnotationScreen() {
       const texts: Record<string, any[]> = {};
       const shapes: Record<string, AnnotationShape[]> = {};
       const count: Record<string, number> = {};
+      // Undo / redo steps saved with the marks: a re-edit can undo last week's steps. `sig` is the "nothing changed yet" baseline
+      // for the undo stack (it is no longer empty on open).
+      const history: Record<string, any[]> = {};
+      const redo: Record<string, any[]> = {};
+      const sig: Record<string, string> = {};
       (selectedPhotos as SectionImage[]).forEach((p) => {
         const m = p?.initialMarks;
         if (!m) return;
@@ -128,8 +139,11 @@ export default function ImageAnnotationScreen() {
         texts[pid] = m.texts || [];
         shapes[pid] = (m.shapes || []) as AnnotationShape[];
         count[pid] = countMarks(m);
+        history[pid] = m.history || [];
+        redo[pid] = m.redo || [];
+        sig[pid] = historySignature(history[pid]);
       });
-      return { strokes, texts, shapes, count };
+      return { strokes, texts, shapes, count, history, redo, sig };
     })(),
   ).current;
 
@@ -138,8 +152,8 @@ export default function ImageAnnotationScreen() {
   const [shapesMap, setShapesMap] = useState<Record<string, AnnotationShape[]>>(seededMarks.shapes);
   const [activeShapeKind, setActiveShapeKind] = useState<ShapeKind>('arrow');
   const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
-  const [historyMap, setHistoryMap] = useState<Record<string, any[]>>({});
-  const [redoMap, setRedoMap] = useState<Record<string, any[]>>({});
+  const [historyMap, setHistoryMap] = useState<Record<string, any[]>>(seededMarks.history);
+  const [redoMap, setRedoMap] = useState<Record<string, any[]>>(seededMarks.redo);
 
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [containerLayout, setContainerLayout] = useState<{ width: number; height: number } | null>(null);
@@ -700,8 +714,9 @@ export default function ImageAnnotationScreen() {
     setTextsMap((tm) => ({ ...tm, [photoId]: baseline.texts }));
     setShapesMap((sm) => ({ ...sm, [photoId]: baseline.shapes as AnnotationShape[] }));
     setSelectedShapeId(null);
-    setHistoryMap((hm) => ({ ...hm, [photoId]: [] }));
-    setRedoMap((rm) => ({ ...rm, [photoId]: [] }));
+    // Back to the steps the screen opened with (a re-edit's saved stacks), so Undo still works on last week's marks.
+    setHistoryMap((hm) => ({ ...hm, [photoId]: [...(seededMarks.history[photoId] || [])] }));
+    setRedoMap((rm) => ({ ...rm, [photoId]: [...(seededMarks.redo[photoId] || [])] }));
   };
 
   const updateSelectedText = (properties: Partial<any>) => {
@@ -789,6 +804,7 @@ export default function ImageAnnotationScreen() {
 
   const enterDrawMode = () => {
     backupStrokesRef.current = [...currentStrokes];
+    backupShapeHistoryRef.current = { history: [...(historyMap[photoId] || [])], redo: [...(redoMap[photoId] || [])] };
     setActiveTool('draw');
   };
 
@@ -798,6 +814,11 @@ export default function ImageAnnotationScreen() {
 
   const cancelDrawMode = () => {
     setStrokesMap((sm) => ({ ...sm, [photoId]: backupStrokesRef.current }));
+    // The strokes drawn since Draw was entered are gone, so their undo steps must go with them (a saved step pointing at a stroke
+    // that no longer exists would make Undo do nothing).
+    const { history, redo } = backupShapeHistoryRef.current;
+    setHistoryMap((hm) => ({ ...hm, [photoId]: history }));
+    setRedoMap((rm) => ({ ...rm, [photoId]: redo }));
     setActiveTool('none');
   };
 
@@ -856,6 +877,10 @@ export default function ImageAnnotationScreen() {
   };
 
   const commitTextMode = () => {
+    // The tick locks every note: close the menu / style panel too, so nothing is left in a state where a note could move.
+    setSelectedTextId(null);
+    setShowStylePanel(false);
+    setShowFontDropdown(false);
     setActiveTool('none');
   };
 
@@ -899,8 +924,13 @@ export default function ImageAnnotationScreen() {
   });
 
   // True when the rep changed this photo since it opened (a re-edit's restored marks do not count).
-  const isEditedPhoto = (pId: string) =>
-    countMarks(marksFor(pId)) !== (seededMarks.count[pId] || 0) || (historyMap[pId] || []).length > 0;
+  const stacksFor = (pId: string) => ({ history: historyMap[pId] || [], redo: redoMap[pId] || [] });
+
+  // The undo stack is compared with what it opened with, not with empty: a re-edit opens with last week's steps in it.
+  const hasChangedSinceOpen = (pId: string) =>
+    countMarks(marksFor(pId)) !== (seededMarks.count[pId] || 0) ||
+    historySignature(historyMap[pId]) !== (seededMarks.sig[pId] || '');
+  const isEditedPhoto = hasChangedSinceOpen;
 
   // REVUIUX-569: an ORDER SHEET is replaced in place, never added. Same durable job queue as the photos (mode `orderSheet`): Save
   // writes the job and closes; flattening, the PDF wrap and the PATCH happen in the background - offline included.
@@ -930,7 +960,7 @@ export default function ImageAnnotationScreen() {
           subcategory: 'Order Sheet (Annotated)',
           annotation: {
             mode: 'orderSheet' as const,
-            annotationData: buildMobileAnnotationData(marks, null),
+            annotationData: buildMobileAnnotationData(marks, null, stacksFor(pId)),
             orderSheetDocumentId: photo.orderSheetDocumentId,
             baseName: photo.orderSheetBaseName,
             contentKind: meta?.contentKind || 'pdf',
@@ -990,7 +1020,7 @@ export default function ImageAnnotationScreen() {
         const marks = marksFor(pId);
         const category = photo.categoryName || (photo as any).category || '';
         const baseSub = String(photo.subcategory || '').replace(/\s*\(Annotated\)\s*$/i, '').trim();
-        const annotationData = buildMobileAnnotationData(marks, photo.salesPhotoId);
+        const annotationData = buildMobileAnnotationData(marks, photo.salesPhotoId, stacksFor(pId));
         return {
           leadId: lead._id,
           // The local copy the screen already warmed, so the job needs no download.
@@ -1049,7 +1079,7 @@ export default function ImageAnnotationScreen() {
   const handleBackPress = () => {
     const hasUnsavedChanges = (selectedPhotos as SectionImage[]).some((p) => {
       const pid = p.id || p.uri;
-      return countMarks(marksFor(pid)) !== (seededMarks.count[pid] || 0) || (historyMap[pid] || []).length > 0;
+      return hasChangedSinceOpen(pid);
     });
     if (hasUnsavedChanges) {
       Alert.alert(
@@ -1151,6 +1181,7 @@ export default function ImageAnnotationScreen() {
                 setShowStylePanel={setShowStylePanel}
                 handleDeleteTextNote={handleDeleteTextNote}
                 handleMoveText={handleMoveText}
+                textMoveMode={activeTool === 'text' ? 'all' : showStylePanel ? 'selected' : 'none'}
                 onZoomChange={setZoomScale}
                 twoFingerZoomRef={twoFingerZoomRef}
               />
