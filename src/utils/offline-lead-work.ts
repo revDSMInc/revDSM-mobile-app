@@ -486,7 +486,22 @@ export const resolveStepDecision = (
        * replays a key it has already seen rather than rejecting it. So a Self Gen duplicate
        * still goes to needs-review for a human to look at.
        */
-      return step === 'lead' && hasServerUniqueKey(work.lead) ? 'done' : 'needs-review';
+      if (step === 'lead') return hasServerUniqueKey(work.lead) ? 'done' : 'needs-review';
+      /**
+       * ⚠️ A conflict on a NON-lead step is recoverable, and used to dead-end here.
+       *
+       * Every other step hangs off a parent the server has already accepted, so a 409 means the
+       * row we are creating is one WE created on an earlier, half-finished drain. A `guarded`
+       * step can look it up and adopt it (`findExistingAppointment`, `findUnclaimedCalculators`),
+       * so give it that chance instead of parking the whole deal in `needs-review` - the state
+       * whose only exit is a rep pressing retry, which replays the identical request and fails
+       * identically. That loop is what the client kept reporting after an offline sync.
+       *
+       * `manual` steps are deliberately excluded: those are the ones a human must look at.
+       */
+      if (safety === 'guarded') return 'retry-guarded';
+      if (safety === 'idempotent') return 'retry';
+      return 'needs-review';
     case 'ambiguous':
       if (safety === 'idempotent') return 'retry';
       if (safety === 'guarded') return 'retry-guarded';

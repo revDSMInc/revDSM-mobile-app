@@ -5474,3 +5474,12 @@ un-uploaded lead therefore stayed pinned to Today until it synced.
   not day-scoped; passing a stamp there would hide queued archived leads.
 - ⚠️ **The lead is filtered from the TAB, never from the queue** - it still syncs and still shows on the
   pending-uploads banner.
+
+## Calculator sync: a 409 on `lfcalculators` dead-ended the deal (see `offline.md`)
+
+Client-reported, only ever after syncing offline work: `POST /appointments/{id}/lfcalculators` answers 409 and the deal sticks on "Couldn't be uploaded". The queue-side fix and the full audit live in **`docs/claude/offline.md`** ("409 on sync"); recorded here because the calculator drain is Deal Center work.
+
+- WARNING: **online cannot reproduce it.** A rep creates calculators one at a time against a server that already knows the earlier ones, so a title clash is caught in the UI (`calculator-title-conflict.ts`) before any request. Offline the whole set is posted in one drain, so the first collision is found mid-flight with no UI in front of it. Don't go looking for the bug in the Deal Center screens.
+- WARNING: the `calculator` step in `services/offlineLeadStore.ts` used to collect its new ids in a local `out` and return them only after the WHOLE loop finished - and `markStepDone` is the only thing that persists them. A failure on the third calculator therefore discarded the two the server had already created, and the next sweep created them again. Ids are now banked with `patchOfflineWork` the moment each one is minted. If you add another multi-row create step, bank per row.
+- A 409 on the create now adopts an unclaimed calculator (`findUnclaimedCalculators`) instead of throwing, mirroring what the `appointment` step already did.
+- Related, already recorded above: `resolveSafeTitle` / `resolvePersistableTitle` keep the decorated display title (`⚠️ G ⚠️`) out of what is saved - a different cause with the same 409 symptom.

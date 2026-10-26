@@ -82,6 +82,24 @@ export const classifyCreateOutcome = (err: any): CreateOutcome => {
   if (status === 401) return 'unauthorized';
   if (status >= 500) return 'ambiguous';
   if (status === 408 || status === 429) return 'never-sent';
+  /**
+   * ⚠️ 409 IS NOT A REJECTION. It fell into the `status >= 400` bucket below and came out
+   * `rejected`, which `resolveStepDecision` turns into `failed` - a DEAD END on the very first
+   * attempt, with no guarded retry and no chance to adopt what is already there.
+   *
+   * A conflict means the server is holding a record that collides with ours: usually the one we
+   * ourselves created on an earlier, half-finished drain. That is recoverable - look it up and
+   * claim it - which is exactly what a guarded retry is for, and what the `appointment` and
+   * `calculator` steps now do.
+   *
+   * Reported as: offline deal syncs, rep is told "Couldn't be uploaded", and the calculator
+   * turns out to be on the server already. Never seen online, because online each create goes
+   * out alone against a server that already knows about the previous ones.
+   *
+   * ⚠️ A step whose `stepReplaySafety` is `manual` still lands in `needs-review` - this only
+   * changes WHICH door a conflict goes through, not whether a human can be bypassed.
+   */
+  if (status === 409) return 'duplicate';
   if (status >= 400) return 'rejected';
 
   return 'ambiguous';

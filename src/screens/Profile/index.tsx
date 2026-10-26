@@ -993,7 +993,7 @@ export default function ProfilePage() {
 
               {/* Connection diagnostics: what the app believes, and which url it is testing.
                   A rep can read this out when they report "it said offline". */}
-              <ConnectionDiagnosticsCard />
+              {/* <ConnectionDiagnosticsCard /> */}
 
               <PendingUploadsCard />
 
