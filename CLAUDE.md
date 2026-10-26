@@ -57,6 +57,9 @@ causes, decisions, and the ⚠️ traps not to "fix" back) live in `docs/claude/
 - Cross-screen callbacks (e.g. RevRender `onGenerate`, JobBuilder `onGoBack`) are passed as **nav params**.
 - Analytics: `logEvent(...)` from `src/services/api/LoggerService.ts` is used app-wide.
 - The header is context-driven (`HeaderContext` / `MainHeader`) and only shown for the main authenticated screens.
+- **Commits carry no `Co-Authored-By` trailer.** Do not add one (for Claude or any other assistant), and do not add
+  a "Generated with" line to commit messages or PR descriptions. The repo owner is the sole author; the trailer
+  renders a second contributor avatar on every commit in GitHub, which they do not want.
 
 ---
 
