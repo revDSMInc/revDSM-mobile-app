@@ -33,6 +33,7 @@ import {
 
 import { AnnotationCanvas, type TwoFingerZoomApi } from '../../widgets/components/LeadCenter/AnnotationCanvas';
 import { AnnotationTextToolbar } from '../../widgets/components/LeadCenter/AnnotationTextToolbar';
+import { ConfirmDialog } from '../DynamicDealCenter/components/ConfirmDialog';
 import {
   MIN_SHAPE_DRAG_PX,
   SHAPE_KINDS,
@@ -717,7 +718,16 @@ export default function ImageAnnotationScreen() {
     // Back to the steps the screen opened with (a re-edit's saved stacks), so Undo still works on last week's marks.
     setHistoryMap((hm) => ({ ...hm, [photoId]: [...(seededMarks.history[photoId] || [])] }));
     setRedoMap((rm) => ({ ...rm, [photoId]: [...(seededMarks.redo[photoId] || [])] }));
+    // Close anything tied to a note that may be gone, and bring the photo back to its normal fit position.
+    setSelectedTextId(null);
+    setShowStylePanel(false);
+    setShowFontDropdown(false);
+    resetZoom();
   };
+
+  // The reset button ALWAYS asks first (even when nothing changed yet - the rep expects the warning every time).
+  const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
+  const confirmResetCanvas = () => setShowResetConfirm(true);
 
   const updateSelectedText = (properties: Partial<any>) => {
     if (!selectedTextId) return;
@@ -1264,7 +1274,7 @@ export default function ImageAnnotationScreen() {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={handleResetCanvas}
+                    onPress={confirmResetCanvas}
                     accessibilityLabel="Undo my changes"
                     className="w-10 h-10 rounded-xl items-center justify-center bg-white/10"
                   >
@@ -1574,6 +1584,21 @@ export default function ImageAnnotationScreen() {
         )}
       </SafeAreaView>
 
+      {/* The app's own ConfirmDialog (a native Alert ignores the theme). Same wording / tone as the order-sheet "Reset all changes". */}
+      <ConfirmDialog
+        visible={showResetConfirm}
+        tone="warn"
+        title="Reset changes?"
+        message="This removes everything you added or changed since you opened this photo and returns it to how it was. Saved annotations are kept."
+        note="This cannot be undone."
+        confirmLabel="Reset"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          setShowResetConfirm(false);
+          handleResetCanvas();
+        }}
+        onCancel={() => setShowResetConfirm(false)}
+      />
     </GestureHandlerRootView>
   );
 }
