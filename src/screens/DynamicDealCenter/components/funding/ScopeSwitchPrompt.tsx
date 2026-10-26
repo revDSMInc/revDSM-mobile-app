@@ -1,12 +1,15 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { FS, FUND, PS } from './funding-theme';
-import { scopeSwitchOptions } from '../../utils/funding';
+import { scopeSwitchOptions, settledRowsSummary } from '../../utils/funding';
+import type { SettledRow } from '../../../../services/api/FundingService';
 
 export type ScopePrompt =
-  | { kind: 'decision'; settledAmount: number; overage?: number }
-  | { kind: 'approval'; message: string }
-  | { kind: 'refundFirst'; message: string; settledAmount?: number };
+  | { kind: 'decision'; settledAmount: number; overage?: number; settledRows?: SettledRow[] }
+  | { kind: 'approval'; message: string; settledRows?: SettledRow[] }
+  | { kind: 'refundFirst'; message: string; settledAmount?: number; settledRows?: SettledRow[] }
+  // REVUIUX-519 add. 2: signed job - a scope change is an addendum. Not a prompt, not retryable.
+  | { kind: 'afterSubmit'; message: string };
 
 interface Props {
   prompt: ScopePrompt;
@@ -44,6 +47,11 @@ export function ScopeSwitchPrompt({ prompt, busy, onReuse, onRefund, onConfirmRe
             <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, lineHeight: 17, marginTop: 6 }}>
               Choose what happens to it before this calculator takes over.
             </Text>
+            {!!settledRowsSummary(prompt.settledRows) && (
+              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.SUBTEXT, lineHeight: 17, marginTop: 8 }}>
+                Held on: {settledRowsSummary(prompt.settledRows)}
+              </Text>
+            )}
             {option(opts.reuse, opts.reuseNote, onReuse, 'ok')}
             {option(opts.refund, '', onRefund, 'warn')}
           </>
@@ -52,6 +60,11 @@ export function ScopeSwitchPrompt({ prompt, busy, onReuse, onRefund, onConfirmRe
           <>
             <Text style={{ fontSize: FS.LEAD, fontFamily: PS.extrabold, color: FUND.TEXT }}>Refund approval needed</Text>
             <Text style={{ fontSize: FS.BODY, fontFamily: PS.semibold, color: FUND.SUBTEXT, lineHeight: 20, marginTop: 8 }}>{prompt.message}</Text>
+            {!!settledRowsSummary(prompt.settledRows) && (
+              <Text style={{ fontSize: FS.SMALL, fontFamily: PS.semibold, color: FUND.MUTED, lineHeight: 17, marginTop: 6 }}>
+                Refund comes from: {settledRowsSummary(prompt.settledRows)}
+              </Text>
+            )}
             <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
               <TouchableOpacity activeOpacity={0.85} disabled={busy} onPress={onClose} style={{ flex: 1, borderWidth: 1.5, borderColor: FUND.BORDER, borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}>
                 <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: FUND.SUBTEXT }}>No</Text>
@@ -62,9 +75,11 @@ export function ScopeSwitchPrompt({ prompt, busy, onReuse, onRefund, onConfirmRe
             </View>
           </>
         )}
-        {prompt.kind === 'refundFirst' && (
+        {(prompt.kind === 'refundFirst' || prompt.kind === 'afterSubmit') && (
           <>
-            <Text style={{ fontSize: FS.LEAD, fontFamily: PS.extrabold, color: FUND.TEXT }}>Refund first</Text>
+            <Text style={{ fontSize: FS.LEAD, fontFamily: PS.extrabold, color: FUND.TEXT }}>
+              {prompt.kind === 'afterSubmit' ? 'Job already submitted' : 'Refund first'}
+            </Text>
             <Text style={{ fontSize: FS.BODY, fontFamily: PS.semibold, color: FUND.SUBTEXT, lineHeight: 20, marginTop: 8 }}>{prompt.message}</Text>
             <TouchableOpacity activeOpacity={0.85} onPress={onClose} style={{ marginTop: 14, borderRadius: 12, paddingVertical: 12, alignItems: 'center', backgroundColor: FUND.GREEN }}>
               <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: '#fff' }}>OK</Text>

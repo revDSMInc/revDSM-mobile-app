@@ -14,6 +14,7 @@ import {
   doneFor,
   formatStamp,
   isApplicationClosed,
+  isClosedAfterApproval,
   FINANCING_BYPASS_NOTICE_ENABLED,
   isFinancingBypassed,
   lastSendNote,
@@ -190,6 +191,9 @@ export function PaymentFundingCard({
   const sendNote = lastSendNote(p);
   const finished = doneFor(p, covered);
   const isOpenShort = openShort(p, covered);
+  // Bank Decline closes out the DECLINED attempt only. Another method the rep adds afterwards is a live
+  // payment and keeps its link / decision / activate actions.
+  const rowShelved = bankDeclined && p.decision === 'declined';
   const shortfall = p.decision === 'short' && p.requested != null ? p.requested - (p.approvedAmt || 0) : 0;
   const drift =
     p.drifted && p.decision !== 'declined' && Number(p.baseline) > 0 && Number(p.liveUsage) !== Number(p.baseline)
@@ -200,7 +204,8 @@ export function PaymentFundingCard({
           up: Number(p.liveUsage) > Number(p.baseline),
         }
       : null;
-  const closed = isApplicationClosed(p);
+  const closedAfterApproval = isClosedAfterApproval(p);
+  const closed = isApplicationClosed(p) || closedAfterApproval;
   const closedNote = applicationClosedNote(p);
   const ordinal = /\((\d+ of \d+)\)\s*$/.exec(title || '')?.[0] || '';
 
@@ -262,9 +267,9 @@ export function PaymentFundingCard({
         {/* ⚠️ Sits ABOVE the send button so the rep reads why they are sending again
             before the button that does it — the row is back at `linkSent: false`, so
             without this the card is indistinguishable from one never sent. */}
-        {!!closedNote && !bankDeclined && <Banner tone="warn">{closedNote}</Banner>}
+        {!!closedNote && !rowShelved && <Banner tone="warn">{closedNote}</Banner>}
 
-        {(p.type === 'cc' || p.type === 'bank') && !p.linkSent && !bankDeclined && !(offline && p.type === 'bank') && (
+        {(p.type === 'cc' || p.type === 'bank') && !p.linkSent && !rowShelved && !(offline && p.type === 'bank') && (
           <ActionButton
             label={
               linkBlocked
@@ -291,7 +296,7 @@ export function PaymentFundingCard({
             `canResendLink`. Past that a resend has no legitimate use and the backend
             intends to refuse it; the route for a different card is to remove the row
             in the pricing panel and add a new one. */}
-        {canResendLink(p) && !bankDeclined && (
+        {canResendLink(p) && !rowShelved && (
           <View style={{ marginTop: 14, paddingHorizontal: 14, paddingVertical: 14, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 14 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Ionicons
@@ -338,7 +343,7 @@ export function PaymentFundingCard({
             a single number cannot say that. The button is the only thing that closes
             the gap — `reactivate` is refused on a declined row and 409s when the two
             already match, so it is offered only while both are true here. */}
-        {drift && !bankDeclined && (
+        {drift && !rowShelved && (
           <View style={{ marginTop: 12, paddingHorizontal: 13, paddingVertical: 12, backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#F1F5F9', borderRadius: 12 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: onReactivate ? 10 : 0 }}>
               <View>
@@ -378,11 +383,11 @@ export function PaymentFundingCard({
           </Banner>
         )}
 
-        {!!onRecordDecision && canRecordDecision(p, { offline }) && !bankDeclined && (
+        {!!onRecordDecision && canRecordDecision(p, { offline }) && !rowShelved && (
           <DecisionButtons payment={p} busy={isBusy} onRecord={onRecordDecision} />
         )}
 
-        {p.type === 'bank' && !p.activated && (p.decision === 'full' || (p.decision === 'short' && !isOpenShort)) && (
+        {p.type === 'bank' && !p.activated && !closedAfterApproval && (p.decision === 'full' || p.decision === 'short') && (
           <ActionButton
             label={`Authorize & activate loan for $${(p.approvedAmt != null ? p.approvedAmt : p.amount).toLocaleString()}`}
             onPress={onActivate}
@@ -400,7 +405,14 @@ export function PaymentFundingCard({
           </>
         )}
 
-        {p.type === 'bank' && p.decision === 'declined' && !bankDeclined && (
+        {p.type === 'bank' && p.decision === 'declined' && !bankDeclined && covered && (
+          <Banner tone="warn">
+            Declined by the lender. The contract is covered by the other approved payment methods, so this one stays on the
+            record only.
+          </Banner>
+        )}
+
+        {p.type === 'bank' && p.decision === 'declined' && !bankDeclined && !covered && (
           <>
             <Banner tone="bad">
               Declined. The full ${p.amount.toLocaleString()} needs a different payment method — or the job gets resulted as a
