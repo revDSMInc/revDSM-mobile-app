@@ -154,6 +154,12 @@ export interface FundingArchivedPlan {
   decision?: FundingDecision | null;
   approvedAmt?: number | null;
   archivedAt?: string;
+  linkSent?: boolean;
+  activated?: boolean;
+  /** REVUIUX-536: money moved on this plan. Such an entry is reference-only and can never be restored. */
+  charged?: boolean;
+  collected?: boolean;
+  refundedAmount?: number | null;
   [k: string]: unknown;
 }
 
@@ -268,6 +274,12 @@ export type FundingErrorKind =
   | 'scopeNeedsDecision'
   | 'scopeNeedsRefundApproval'
   | 'scopeRefundFirst'
+  | 'scopeAfterSubmit'
+  | 'rowSettled'
+  | 'rowRefundInFlight'
+  | 'rowHasDecision'
+  | 'rowApplicationSent'
+  | 'rowHoldsPlans'
   | 'offline'
   | 'leadNotSynced'   // ← new: the lead has not uploaded yet; nothing was sent
   | 'unknown';
@@ -299,6 +311,28 @@ export const FUNDING_SETTLED_ON_OTHER_CALCULATOR = 'FUNDING_SETTLED_ON_OTHER_CAL
 export const FUNDING_SCOPE_SWITCH_NEEDS_DECISION = 'FUNDING_SCOPE_SWITCH_NEEDS_DECISION';
 export const FUNDING_SCOPE_SWITCH_NEEDS_REFUND_APPROVAL = 'FUNDING_SCOPE_SWITCH_NEEDS_REFUND_APPROVAL';
 export const FUNDING_SCOPE_SWITCH_REFUND_FIRST = 'FUNDING_SCOPE_SWITCH_REFUND_FIRST';
+
+// REVUIUX-519 add. 2: the job builder is submitted, so a scope change is an addendum — not a prompt, not retryable.
+export const FUNDING_SCOPE_SWITCH_AFTER_SUBMIT = 'FUNDING_SCOPE_SWITCH_AFTER_SUBMIT';
+// REVUIUX-519 add. 3 / 536 §6: refusals to DROP a row by omission. Each carries its own sentence in `message`.
+export const FUNDING_ROW_SETTLED = 'FUNDING_ROW_SETTLED';
+export const FUNDING_ROW_REFUND_IN_FLIGHT = 'FUNDING_ROW_REFUND_IN_FLIGHT';
+export const FUNDING_ROW_HAS_DECISION = 'FUNDING_ROW_HAS_DECISION';
+export const FUNDING_ROW_APPLICATION_SENT = 'FUNDING_ROW_APPLICATION_SENT';
+export const FUNDING_ROW_HOLDS_PLANS = 'FUNDING_ROW_HOLDS_PLANS';
+
+const KIND_BY_CODE: Record<string, FundingErrorKind> = {
+  [FUNDING_SETTLED_ON_OTHER_CALCULATOR]: 'settledOnOtherCalculator',
+  [FUNDING_SCOPE_SWITCH_NEEDS_DECISION]: 'scopeNeedsDecision',
+  [FUNDING_SCOPE_SWITCH_NEEDS_REFUND_APPROVAL]: 'scopeNeedsRefundApproval',
+  [FUNDING_SCOPE_SWITCH_REFUND_FIRST]: 'scopeRefundFirst',
+  [FUNDING_SCOPE_SWITCH_AFTER_SUBMIT]: 'scopeAfterSubmit',
+  [FUNDING_ROW_SETTLED]: 'rowSettled',
+  [FUNDING_ROW_REFUND_IN_FLIGHT]: 'rowRefundInFlight',
+  [FUNDING_ROW_HAS_DECISION]: 'rowHasDecision',
+  [FUNDING_ROW_APPLICATION_SENT]: 'rowApplicationSent',
+  [FUNDING_ROW_HOLDS_PLANS]: 'rowHoldsPlans',
+};
 
 export type SettledAction = 'reuse' | 'refund' | 'reuseWithRefund';
 
@@ -350,10 +384,7 @@ export function classifyFundingError(
   const reminder = body?.reminder ?? body?.data?.reminder;
   const code: string | undefined = typeof body?.data?.code === 'string' ? body.data.code : undefined;
   // Match on `data.code`, never the message. A refused re-scope is not a stale record: no refetch/retry.
-  if (code === FUNDING_SETTLED_ON_OTHER_CALCULATOR) kind = 'settledOnOtherCalculator';
-  else if (code === FUNDING_SCOPE_SWITCH_NEEDS_DECISION) kind = 'scopeNeedsDecision';
-  else if (code === FUNDING_SCOPE_SWITCH_NEEDS_REFUND_APPROVAL) kind = 'scopeNeedsRefundApproval';
-  else if (code === FUNDING_SCOPE_SWITCH_REFUND_FIRST) kind = 'scopeRefundFirst';
+  if (code && KIND_BY_CODE[code]) kind = KIND_BY_CODE[code];
   const settledAmount = Number(body?.data?.settledAmount);
   const overage = Number(body?.data?.overage);
 

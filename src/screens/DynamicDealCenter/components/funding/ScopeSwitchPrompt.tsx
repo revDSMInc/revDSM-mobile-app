@@ -6,7 +6,9 @@ import { scopeSwitchOptions } from '../../utils/funding';
 export type ScopePrompt =
   | { kind: 'decision'; settledAmount: number; overage?: number }
   | { kind: 'approval'; message: string }
-  | { kind: 'refundFirst'; message: string; settledAmount?: number };
+  | { kind: 'refundFirst'; message: string; settledAmount?: number }
+  // REVUIUX-519 add. 2: signed job - a scope change is an addendum. Not a prompt, not retryable.
+  | { kind: 'afterSubmit'; message: string };
 
 interface Props {
   prompt: ScopePrompt;
@@ -62,9 +64,11 @@ export function ScopeSwitchPrompt({ prompt, busy, onReuse, onRefund, onConfirmRe
             </View>
           </>
         )}
-        {prompt.kind === 'refundFirst' && (
+        {(prompt.kind === 'refundFirst' || prompt.kind === 'afterSubmit') && (
           <>
-            <Text style={{ fontSize: FS.LEAD, fontFamily: PS.extrabold, color: FUND.TEXT }}>Refund first</Text>
+            <Text style={{ fontSize: FS.LEAD, fontFamily: PS.extrabold, color: FUND.TEXT }}>
+              {prompt.kind === 'afterSubmit' ? 'Job already submitted' : 'Refund first'}
+            </Text>
             <Text style={{ fontSize: FS.BODY, fontFamily: PS.semibold, color: FUND.SUBTEXT, lineHeight: 20, marginTop: 8 }}>{prompt.message}</Text>
             <TouchableOpacity activeOpacity={0.85} onPress={onClose} style={{ marginTop: 14, borderRadius: 12, paddingVertical: 12, alignItems: 'center', backgroundColor: FUND.GREEN }}>
               <Text style={{ fontSize: FS.BODY_LG, fontFamily: PS.bold, color: '#fff' }}>OK</Text>

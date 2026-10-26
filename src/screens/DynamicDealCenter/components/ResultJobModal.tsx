@@ -74,6 +74,8 @@ import {
   formatStamp,
   fundingBlockers,
   hasDecline,
+  bankDeclineSubmitBlocker,
+  hasApprovedFinancing,
   hydrateRowsFromRecord,
   inferPayMode,
   inferNoDownPayment,
@@ -631,7 +633,12 @@ export function ResultJobModal({
 
   const needsRowId = useMemo(() => needsAttentionRowId(activeRows, banners, payMode), [activeRows, banners, payMode]);
 
-  const structureIsLocked = useMemo(() => structureLocked(payments), [payments]);
+  // Judge the structure by what THIS scope's rows hold. The record is lead-wide: another scope's sent
+  // application must not disable the dropdown here (REVUIUX-519 add. 1 s1b-3).
+  const structureIsLocked = useMemo(
+    () => structureLocked(fundingBelongsToCalculator(funding.record?.calculatorId, calculatorId) ? payments : []),
+    [payments, funding.record?.calculatorId, calculatorId]
+  );
 
   const decisionBanners = banners.map((b) => (
     <View key={b.id} style={{ backgroundColor: b.tone === 'bad' ? FUND.RED_BG : FUND.AMBER_BG, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 12 }}>
@@ -716,7 +723,9 @@ export function ResultJobModal({
     // so a re-scoping save keeps sending the settled rows, with their original pids.
     const res = await funding.savePayments(
       Math.round(contractNum),
-      withSettledRows(upsert, funding.record),
+      withSettledRows(upsert, funding.record, {
+        rescoping: !fundingBelongsToCalculator(funding.record?.calculatorId, calculatorId),
+      }),
       payMode,
       settledAction
     );
@@ -728,6 +737,10 @@ export function ResultJobModal({
       }
       if (err?.kind === 'scopeNeedsRefundApproval') {
         setScopePrompt({ kind: 'approval', message: err.message });
+        return;
+      }
+      if (err?.kind === 'scopeAfterSubmit') {
+        setScopePrompt({ kind: 'afterSubmit', message: err.message });
         return;
       }
       if (err?.kind === 'scopeRefundFirst') {
@@ -879,14 +892,34 @@ export function ResultJobModal({
     [funding]
   );
 
+  // The rep added another method after resulting as Bank Decline and the lender approved enough to cover
+  // the contract: the job is a Sale again, so put the result back instead of submitting a "bank decline".
+  const reopenedAsSaleRef = useRef(false);
+  useEffect(() => {
+    if (!bankDeclined) {
+      reopenedAsSaleRef.current = false;
+      return;
+    }
+    if (reopenedAsSaleRef.current || !covered || !hasApprovedFinancing(payments)) return;
+    reopenedAsSaleRef.current = true;
+    handleSetResult('sale');
+  }, [bankDeclined, covered, payments, handleSetResult]);
+
   const linkPayment = useMemo(() => payments.find((p) => p.pid === linkTarget) || null, [payments, linkTarget]);
 
   const demoDisabled =
     !demoReason || (demoReason === 'Other (Explain)' && !reasonExplanation.trim()) || !(contractNum > 0);
-  const submitDisabled = funding.isSubmitting || (!bankDeclined && localBlockers.length > 0);
+  // Bank decline no longer submits as-is: the rep needs a new, approved financing method first.
+  const bankDeclineBlocker = bankDeclineSubmitBlocker(bankDeclined, payments);
+  const submitDisabled = funding.isSubmitting || !!bankDeclineBlocker || localBlockers.length > 0;
 
   const handleBuild = useCallback(async () => {
     const isDemo = resultType === 'demo';
+
+    if (!isDemo && bankDeclineBlocker) {
+      FlashMessage.warning('Financing declined', bankDeclineBlocker);
+      return;
+    }
 
     if (!isDemo) {
       if (leadReachableOnServer(leadLogId)) {
@@ -949,7 +982,7 @@ export function ResultJobModal({
     });
   }, [
     resultType, oneLeg, contractNum, downTotal, balanceTotal, primaryDownMethod, primaryBalanceMethod,
-    allocations, demoReason, reasonExplanation, versatile, pineapple, bankDeclined, payments, funding, onConfirm,
+    allocations, demoReason, reasonExplanation, versatile, pineapple, bankDeclined, bankDeclineBlocker, payments, funding, onConfirm,
     logCtx, resolveOfflineWorkId, offlineRecord, leadLogId,
   ]);
 
@@ -1315,7 +1348,9 @@ export function ResultJobModal({
                     readyText="✓ Every payment is as far as you can take it. Ready to submit."
                     override={
                       bankDeclined
-                        ? { title: 'No funding to satisfy.', body: 'The job is closing as a bank decline.' }
+                        ? bankDeclineBlocker
+                          ? { title: 'Submit is blocked.', body: bankDeclineBlocker }
+                          : { title: 'New financing approved.', body: 'Resolve the remaining items below, then submit.' }
                         : undefined
                     }
                   />

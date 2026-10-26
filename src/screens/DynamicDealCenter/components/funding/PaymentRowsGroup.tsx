@@ -18,6 +18,9 @@ import {
   showsChip,
   methodLabelOf,
   visibleArchived,
+  isReferenceEntry,
+  referenceEntryNote,
+  canRestoreEntry,
   type LenderTone,
   type PaymentRow,
 } from '../../utils/funding';
@@ -322,11 +325,13 @@ export function PaymentRowsGroup({
                   {stripBankFee(a.method)}
                 </Text>
                 <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: '#B0B4BA', marginTop: 1 }} numberOfLines={1}>
-                  Archived{a.decision ? ` · ${a.decision === 'declined' ? 'Declined' : 'Approved'}` : ''}
+                  {isReferenceEntry(a)
+                    ? referenceEntryNote(a)
+                    : `Archived${a.decision ? ` · ${a.decision === 'declined' ? 'Declined' : 'Approved'}` : ''}`}
                 </Text>
               </View>
             </View>
-            {!!onRestore && (
+            {!!onRestore && canRestoreEntry(row, a) && (
               <TouchableOpacity
                 onPress={() => onRestore(row.pid, a.archivedId)}
                 style={{ flexShrink: 0, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#EFF4FF' }}

@@ -150,6 +150,7 @@ import {
   MULTI_METHOD_ENABLED,
   needsAttentionRowId,
   newPaymentId,
+  canRestoreEntry,
   findApprovedArchive,
   restoreRowPlan,
   swapRowMethod,
@@ -691,7 +692,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         });
       }
       const approved = row && key ? findApprovedArchive(row, key, pricing.plans) : undefined;
-      if (approved && !isLocalArchive(approved)) {
+      if (approved && !isLocalArchive(approved) && canRestoreEntry(row!, approved)) {
         funding.restoreArchivedPlan(pid, approved.archivedId);
         return;
       }

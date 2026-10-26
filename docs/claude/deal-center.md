@@ -5474,3 +5474,55 @@ un-uploaded lead therefore stayed pinned to Today until it synced.
   not day-scoped; passing a stamp there would hide queued archived leads.
 - ⚠️ **The lead is filtered from the TAB, never from the queue** - it still syncs and still shows on the
   pending-uploads banner.
+
+### REVUIUX-519 add. 1-3 + REVUIUX-536: row carry, structure lock, net coverage, archive rule
+
+Specs: `REVUIUX-519-mobile-scope-switch-addendum (1).md` (add. 1-3) and `REVUIUX-536-mobile-handoff.md`. Jira comments
+read: 519 #30464 / #30537, 536 #30484 (the "archive is not a selection history" rule). Code: `utils/funding.ts`,
+`services/api/FundingService.ts`, `hooks/useFunding.ts`, `ResultJobModal.tsx`, `funding/{ScopeSwitchPrompt,PaymentRowsGroup,PaymentFundingCard}.tsx`.
+Tests: `__tests__/screens/DynamicDealCenter/funding-scope-archive-rules.test.ts`.
+
+- **Error kinds keyed on `data.code`**: `scopeAfterSubmit` (terminal: OK card, no refetch, no re-send) and five row refusals
+  (`rowSettled`, `rowRefundInFlight`, `rowHasDecision`, `rowApplicationSent`, `rowHoldsPlans`) show the server's sentence and
+  never fall to `stale` -> "Funding updated". Bare 409s (swap/restore, edit refusals) still have no code: do NOT string-match,
+  ask backend for codes.
+- **`withSettledRows` carries `mustCarryPayment`** = charged | collected | decision | (linkSent && bank) | filed plans. With
+  `{ rescoping: true }` (record owned by another calculator) it also carries an uncharged card on file (`linkSent`/`step>=2`), since the
+  new scope's blank rows would otherwise delete it at HTTP 200. ⚠️ NEVER carry such a card when staying on the same scope: the
+  carry would undo a deliberate card removal (REVDSM-1155). This rescoping carry is our interim reading of add. 3 s4 option 2 - backend has not decided.
+- **`structureLocked` = decision | collected | charged | activated** (no `linkSent`, no `step`) and the hint no longer says "Void".
+  ResultJobModal judges it by the record only when the record belongs to this calculator.
+- **Coverage is net of live refunds** (`netFundedAmount`, `refundedAgainst`): pendingApproval/pendingCustomer/customerSigned/issuing/refunded
+  count, declined/cancelled/failed do not. A row's own amount stays gross.
+- **`worthArchiving(row, plans)`** gates the local archive: financing when `linkSent`/decision, card only `charged`, cheque only `collected`.
+  ⚠️ `hasLenderState` is deliberately untouched (`showsChip` and the reset branch use it). Switching back restores the entry as filed
+  (still sent) and it leaves the shelf. Reference entries (`charged`/`collected`) render as a note with no Restore;
+  `canRestoreEntry` also blocks financing onto a down payment, mirroring the two server 422s.
+- **Closed after approval** (`isClosedAfterApproval`): keyed off `applicationClosed`, not `decision`/`step`; shown as a dead loan, no Activate.
+- Not built: post-submission "switch to another appointment calculator" screen (519 add. 2 s3 - its own ticket); a refund-flow deep link
+  from `refundDue` (the banner points at the per-row refund action); lead-wide archive restore (backend restore is row-scoped).
+
+### Bank Decline cannot be submitted until a new financing method is approved
+
+`bankDeclineSubmitBlocker(bankDeclined, payments)` (`utils/funding.ts`) gates **Submit Bank Decline** in `ResultJobModal`: the button is
+disabled, `handleBuild` refuses, and the blocker card says why, until a financing row has `decision` full/short with `approvedAmt > 0` that is
+not `isClosedAfterApproval`. Before this, Bank Decline bypassed every blocker. ⚠️ Not applied to `DynamicDealEditScreen`: that checklist
+only reports and never blocks (signed-deal addendum). Once a new loan is approved the rep still has to clear the declined row / Undo to Sale.
+
+### A declined loan no longer blocks Submit once other methods cover the contract
+
+`fundingBlockers` only raises "was declined — reassign it" while `coverageOK` is false. When the other rows (e.g. $580 + $920 approved and activated on a
+$1,500 job) cover the price, the declined row is history: `PaymentFundingCard` shows a note instead of "Add another payment method" / "Result as Bank
+Decline", so the whole-lead Bank Decline result is only offered while the contract is NOT covered. ⚠️ The result is lead-level on the server
+(`POST /funding/result`), so there is no per-method "bank decline" - the declined row IS that record. If the server's own submit still refuses a declined
+row, its `data.blockers` replace this list; ask backend to treat a covered job as submittable.
+
+### After Bank Decline: a new method keeps its actions; a partial approval can be activated
+
+- `PaymentFundingCard`: Bank Decline hides send-link / resend / record-decision only on the DECLINED row (`rowShelved = bankDeclined && decision === 'declined'`), not on every row - a method added afterwards was stuck with no "Send application link".
+- "Authorize & activate" now shows for `decision === 'short'` too (it used to wait until the shortfall was covered); the shortfall banner + "Add another payment method" remain. `stateOf` marks the Activated step `now` for a short approval. ⚠️ If the server refuses activating while uncovered, its message surfaces through `useFunding.run`; the old client-side wait was deliberate, so ask backend if that refusal exists.
+- `ResultJobModal`: while resulted as Bank Decline, once the contract is covered and `hasApprovedFinancing`, the result is set back to Sale automatically (once), so Submit reads "Submit Funding".
+
+### Leads list refreshes live on status changes
+
+`useLeadsData` / `useRehashLeads` call `useLiveLeadRefresh` (`hooks/useLeadsData.ts`): on socket `funding-updated`, `pending-addendum`, `lead-updated`, `lead-status-updated`, `lead-resulted`, `connect` and on the app returning to the foreground, the `['leads']` (or `['rehashLeads']`) queries are invalidated after a 700 ms debounce. Before, only focus/pull-to-refresh/post-upload refreshed it and `staleTime` is 5 min, so a "Resulted — Sale" card could sit stale while the screen was open. ⚠️ Only `funding-updated` and `pending-addendum` are confirmed server events; the three `lead-*` names are a best guess - confirm the real lead-status event with backend and trim the list.

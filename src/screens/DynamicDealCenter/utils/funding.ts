@@ -124,17 +124,58 @@ export function isLocalArchive(entry: { archivedId?: string } | null | undefined
 }
 
 function snapshotPlan(row: PaymentRow, plans: Record<string, DealPlan>): FundingArchivedPlan {
+  const type = methodTypeOf(plans, row.method);
   return {
     archivedId: `${LOCAL_ARCHIVE_PREFIX}${Math.random().toString(36).slice(2, 10)}`,
     method: methodLabelOf(plans, row.method) || row.methodLabel || row.method || '',
     planKey: row.method || methodLabelOf(plans, row.method) || row.methodLabel || '',
+    ...(type ? { type } : {}),
     ...(row.decision ? { decision: row.decision } : {}),
     ...(row.decision ? { linkSent: true, activated: !!row.activated, approvedAmt: rowAmount(row) } : {}),
+    // A financing application that is out but undecided is still worth keeping (pending financing).
+    ...(!row.decision && type === 'bank' && row.linkSent ? { linkSent: true } : {}),
   };
 }
 
-export function isArchivableRow(row: PaymentRow): boolean {
-  return Boolean(row.decision || row.activated || row.charged || row.collected);
+/**
+ * REVUIUX-536 - the archive is a reference list of payments that are ACTUALLY ACTIVE, not a
+ * selection history. Financing files once the application is out (or decided); a card only once
+ * it is charged; a cheque only once it is collected. A card whose link merely went out, or that
+ * the homeowner saved but nobody charged, files nothing. Mirrors the server's `worthArchiving`.
+ *
+ * ⚠️ Not `hasLenderState`: that also asks "has this row started at all" (`showsChip`, and the
+ * reset branch of `swapRowMethod`), and narrowing it there changes unrelated behaviour.
+ */
+export function worthArchiving(row: PaymentRow, plans?: Record<string, DealPlan>): boolean {
+  if (row.charged || row.collected) return true;
+  // Only a lender row carries a decision or an activation.
+  if (row.decision || row.activated) return true;
+  return Boolean(row.linkSent && plans && methodTypeOf(plans, row.method) === 'bank');
+}
+
+/** An entry whose money actually moved: kept so a card/cheque is never lost, never restorable. */
+export function isReferenceEntry(entry: Pick<FundingArchivedPlan, 'charged' | 'collected'> | null | undefined): boolean {
+  return Boolean(entry?.charged || entry?.collected);
+}
+
+export function referenceEntryNote(entry: FundingArchivedPlan): string {
+  const verb = entry.collected ? 'collected' : 'charged';
+  const amount = Number(entry.amount) > 0 ? ` $${money(Number(entry.amount))}` : '';
+  const refunded = Number(entry.refundedAmount) > 0 ? `, refunded $${money(Number(entry.refundedAmount))}` : ', refunded';
+  return `Kept for reference - ${verb}${amount}${refunded}`;
+}
+
+/**
+ * Local mirror of the server's two restore refusals, so the app never offers what it will reject:
+ * a reference entry (422) and financing onto a down payment (422). Server wording is the fallback.
+ */
+export function canRestoreEntry(
+  row: Pick<PaymentRow, 'kind'>,
+  entry: Pick<FundingArchivedPlan, 'charged' | 'collected' | 'type'>
+): boolean {
+  if (isReferenceEntry(entry)) return false;
+  if (entry.type === 'bank' && wireKind(row.kind) === 'down') return false;
+  return true;
 }
 
 function planKeyOf(entry: FundingArchivedPlan): string {
@@ -160,7 +201,10 @@ export function visibleArchived(
   const list = withoutPlan(
     (row.archived || []).filter((a) => {
       const e = a as any;
-      return isLocalArchive(a) || Boolean(e.decision || e.approvedAmt != null || e.charged || e.collected || e.activated);
+      return (
+        isLocalArchive(a) ||
+        Boolean(e.decision || e.approvedAmt != null || e.charged || e.collected || e.activated || (e.linkSent && e.type === 'bank'))
+      );
     }),
     row.method,
     plans
@@ -219,7 +263,10 @@ export function findApprovedArchive(
 ): FundingArchivedPlan | undefined {
   const label = methodLabelOf(plans, key);
   return (row.archived || []).find(
-    (a) => (planKeyOf(a) === key || a.method === label) && (a.decision === 'full' || a.decision === 'short')
+    (a) =>
+      (planKeyOf(a) === key || a.method === label) &&
+      !isReferenceEntry(a) &&
+      (a.decision === 'full' || a.decision === 'short' || (a.type === 'bank' && !!a.linkSent))
   );
 }
 
@@ -234,8 +281,8 @@ export function swapRowMethod(
     if (!nextKey || nextKey === r.method) return { ...r, method: nextKey };
     const shelf = r.archived || [];
     const approved = findApprovedArchive(r, nextKey, plans);
-    if (approved) return restoreRowPlan([r], pid, approved.archivedId, plans)[0];
-    if (!(r.method || r.methodLabel) || !isArchivableRow(r)) {
+    if (approved && canRestoreEntry(r, approved)) return restoreRowPlan([r], pid, approved.archivedId, plans)[0];
+    if (!(r.method || r.methodLabel) || !worthArchiving(r, plans)) {
       return {
         ...r,
         method: nextKey,
@@ -266,19 +313,19 @@ export function restoreRowPlan(
     if (r.pid !== pid) return r;
     const shelf = r.archived || [];
     const entry = shelf.find((a) => a.archivedId === archivedId);
-    if (!entry) return r;
+    if (!entry || !canRestoreEntry(r, entry)) return r;
     const key = (entry as any).planKey || planKeyForLabel(plans, entry.method) || entry.method || '';
-    const rest = shelf;
-    const outgoing = (r.method || r.methodLabel) && isArchivableRow(r) ? [snapshotPlan(r, plans)] : [];
+    const rest = shelf.filter((a) => a.archivedId !== archivedId);
+    const outgoing = (r.method || r.methodLabel) && worthArchiving(r, plans) ? [snapshotPlan(r, plans)] : [];
     return {
       ...r,
       method: key,
       methodLabel: key && plans[key] ? undefined : entry.method,
-      ...(entry.decision === 'full' || entry.decision === 'short'
+      ...(entry.decision === 'full' || entry.decision === 'short' || entry.linkSent
         ? {
             linkSent: true,
             activated: !!(entry as any).activated,
-            decision: entry.decision,
+            decision: entry.decision === 'full' || entry.decision === 'short' ? entry.decision : null,
             ...(entry.approvedAmt != null ? { amount: String(entry.approvedAmt) } : {}),
           }
         : { linkSent: false, activated: false, decision: null }),
@@ -341,13 +388,39 @@ export function isSettledPayment(p: { charged?: boolean; collected?: boolean }):
   return Boolean(p.charged || p.collected);
 }
 
+/**
+ * Every row the server will not let a save drop by omission (REVUIUX-519 add. 3 s2): money on it,
+ * a lender decision, a sent credit application, or filed plans on its shelf. Funding is lead-wide,
+ * so a client sending only the new scope's rows omits every one of these by definition.
+ */
+export function mustCarryPayment(p: Partial<FundingPaymentRow>): boolean {
+  return Boolean(
+    p.charged ||
+      p.collected ||
+      p.decision != null ||
+      (p.linkSent && p.type === 'bank') ||
+      (p.archived?.length ?? 0) > 0
+  );
+}
+
+/**
+ * Re-scoping only: a card the homeowner saved but nobody charged IS removable by omission (REVDSM-1155
+ * changes a card by removing it), and the rep never sees it on the new scope's blank rows - so it
+ * would vanish at HTTP 200. On a scope change, carry it. Never when staying on the same scope, or a
+ * deliberate card removal would be undone.
+ */
+function isUnseenCardOnFile(p: Partial<FundingPaymentRow>): boolean {
+  return p.type === 'cc' && (Boolean(p.linkSent) || Number(p.step) >= 2);
+}
+
 export function withSettledRows(
   upsert: FundingUpsertRow[],
-  record: FundingRecord | null | undefined
+  record: FundingRecord | null | undefined,
+  opts?: { rescoping?: boolean }
 ): FundingUpsertRow[] {
   const have = new Set(upsert.map((r) => r.pid));
   const carried = (record?.payments || [])
-    .filter((p) => isSettledPayment(p) && !have.has(p.pid))
+    .filter((p) => (mustCarryPayment(p) || (opts?.rescoping && isUnseenCardOnFile(p))) && !have.has(p.pid))
     .map(
       (p) =>
         ({
@@ -448,16 +521,24 @@ export function inferPayMode(record: FundingRecord | null | undefined): PayMode 
   return saved.some((p) => p.kind === 'bal') ? 'split' : 'upfront';
 }
 
-export function structureLocked(payments: FundingPayment[]): boolean {
-  return payments.some(
-    (p) => p.linkSent || p.step > 0 || p.decision != null || p.collected || p.charged || p.activated
-  );
+/**
+ * REVUIUX-519 add. 3 s3 - matches the server: a lender decision, collected/charged money or an
+ * activated loan locks the structure. A sent link (re-sendable) or a vaulted card (undone by a new
+ * link) does not, and neither does a plain `step > 0`.
+ */
+export function structureLocked(payments: Array<Partial<FundingPaymentRow>>): boolean {
+  return payments.some((p) => p.decision != null || p.collected || p.charged || p.activated);
+}
+
+/** The same rule over the rows on screen (what the rep is actually editing). */
+export function structureLockedRows(rows: PaymentRow[]): boolean {
+  return rows.some((r) => r.decision != null || r.collected || r.charged || r.activated);
 }
 
 export function structureHint(mode: PayMode, locked: boolean, nudge?: boolean, noDown?: boolean): string {
   if (locked) {
     return nudge
-      ? 'A payment on this job has already started. Void it on the funding screen before switching structure.'
+      ? 'A payment on this job has already started. Remove that payment, or refund it if money has already moved, before switching structure.'
       : 'Structure is set — a payment on this job has already started.';
   }
   if (mode === 'upfront') return 'Upfront collects the whole contract now. No down payment or balance is created.';
@@ -611,8 +692,18 @@ const APPLICATION_CLOSED_SHORT: Record<FundingApplicationClosed, string> = {
   error: 'hit a provider error',
 };
 
+/** An undecided application that wound back: needs a new link. */
 export function isApplicationClosed(p: FundingPayment): boolean {
   return !!p.applicationClosed && !p.linkSent && !p.decision;
+}
+
+/**
+ * REVUIUX-536 s3: a lender closed an application that was ALREADY approved. The row keeps `step`,
+ * `linkSent`, `decision` and the lender ids, but `approvedAmt` is 0 and `activated` false. Key it off
+ * `applicationClosed`, never `decision`/`step`, or a dead loan renders as approved.
+ */
+export function isClosedAfterApproval(p: FundingPayment): boolean {
+  return !!p.applicationClosed && p.decision != null && p.decision !== 'declined' && !p.activated && !(Number(p.approvedAmt) > 0);
 }
 
 export function canResendLink(p: FundingPayment): boolean {
@@ -681,6 +772,10 @@ export function reissueWarning(
   return `This cancels the link already sent to ${pretty}. It will stop working, and a new one will be sent instead.`;
 }
 export function applicationClosedNote(p: FundingPayment): string | null {
+  if (isClosedAfterApproval(p)) {
+    const why = APPLICATION_CLOSED_TEXT[p.applicationClosed as FundingApplicationClosed];
+    return `${why || 'The lender closed this application.'} It was approved, but it no longer covers any of the contract.`;
+  }
   if (!isApplicationClosed(p)) return null;
   const why = APPLICATION_CLOSED_TEXT[p.applicationClosed as FundingApplicationClosed];
   return `${why || 'The application closed without completing.'} Send them a new link to try again.`;
@@ -696,7 +791,7 @@ export function hydrateRowsFromRecord(
   const rows: PaymentRow[] = saved.map((p) => ({
     pid: p.pid,
     kind: upfront ? 'up' : p.kind,
-    amount: String(p.decision ? (p.approvedAmt ?? p.amount) : p.amount),
+    amount: String(p.decision && !isClosedAfterApproval(p) ? (p.approvedAmt ?? p.amount) : p.amount),
     method: planKeyForLabel(plans, p.method),
     methodLabel: p.method,
     decision: p.decision,
@@ -786,8 +881,28 @@ export function fundedAmount(p: FundingPayment): number {
   return p.amount;
 }
 
+const COVERAGE_CLAIMING_REFUND_STATES: FundingRefundState[] = [
+  'pendingApproval',
+  'pendingCustomer',
+  'customerSigned',
+  'issuing',
+  'refunded',
+];
+
+/** Refunded or promised back from the moment it is raised. declined / cancelled / failed promise nothing. */
+export function refundedAgainst(p: FundingPayment): number {
+  return (p.refunds || [])
+    .filter((r) => r && COVERAGE_CLAIMING_REFUND_STATES.includes(r.state))
+    .reduce((n, r) => n + (Number(r.amount) || 0), 0);
+}
+
+/** Coverage is NET of live refunds (REVUIUX-519). A row's own amount and label stay gross - that is history. */
+export function netFundedAmount(p: FundingPayment): number {
+  return Math.max(0, fundedAmount(p) - refundedAgainst(p));
+}
+
 export function coverageOK(payments: FundingPayment[], price: number): boolean {
-  return payments.reduce((n, p) => n + fundedAmount(p), 0) >= price;
+  return payments.reduce((n, p) => n + netFundedAmount(p), 0) >= price;
 }
 
 export function openShort(p: FundingPayment, covered: boolean): boolean {
@@ -825,13 +940,20 @@ export function stateOf(p: FundingPayment, covered: boolean): Record<number, Ste
   }
 
   st[0] = linkStep;
+  if (isClosedAfterApproval(p)) {
+    // Dead loan: key off `applicationClosed`, not `decision`/`step`.
+    st[1] = 'bad';
+    st[2] = 'locked';
+    st[3] = 'locked';
+    return st;
+  }
   if (p.decision === 'declined') st[1] = 'bad';
   else if (p.decision === 'short') st[1] = openShort(p, covered) ? 'warn' : 'done';
   else if (p.decision === 'full') st[1] = 'done';
   else st[1] = p.linkSent ? 'now' : 'next';
   st[2] = p.activated
     ? 'done'
-    : p.decision === 'full' || (p.decision === 'short' && !openShort(p, covered))
+    : p.decision === 'full' || p.decision === 'short'
       ? 'now'
       : 'next';
   st[3] = 'locked';
@@ -882,7 +1004,11 @@ export function fundingBlockers(
   payments.forEach((p) => {
     const who = describePayment(p, payments);
     const reason =
-      p.decision === 'declined' ? 'was declined — reassign it'
+      isClosedAfterApproval(p)
+        ? `— the approved application ${APPLICATION_CLOSED_SHORT[p.applicationClosed as FundingApplicationClosed] || 'closed'}; it no longer covers anything`
+      // A declined row only blocks while nothing else covers the contract: once the other methods are
+      // approved it stays on the record as history and Submit is allowed.
+      : p.decision === 'declined' ? (covered ? null : 'was declined — reassign it')
       : openShort(p, covered) ? 'came back short — cover the difference'
       : isApplicationClosed(p)
         ? `— the application ${APPLICATION_CLOSED_SHORT[p.applicationClosed as FundingApplicationClosed] || 'closed'}; send a new link`
@@ -897,9 +1023,9 @@ export function fundingBlockers(
     if (reason) out.push(`${who} ${reason}`);
   });
 
-  const total = payments.reduce((n, p) => n + fundedAmount(p), 0);
+  const total = payments.reduce((n, p) => n + netFundedAmount(p), 0);
   const heldOver = scopeOverCollectedBlocker(
-    payments.filter(isSettledPayment).reduce((n, p) => n + p.amount, 0),
+    payments.filter(isSettledPayment).reduce((n, p) => n + Math.max(0, p.amount - refundedAgainst(p)), 0),
     price
   );
   if (heldOver) {
@@ -1010,6 +1136,25 @@ export function offlineFundingRecord(
     })),
     attemptHistory: [],
   } as FundingRecord;
+}
+
+/** A financing row the lender approved (in full or part) and has not since closed. */
+export function hasApprovedFinancing(payments: FundingPayment[]): boolean {
+  return (payments || []).some(
+    (p) => p.type === 'bank' && (p.decision === 'full' || p.decision === 'short') && !isClosedAfterApproval(p) && Number(p.approvedAmt) > 0
+  );
+}
+
+export const BANK_DECLINE_BLOCKER =
+  'The lender declined this financing. Add a new financing method and get it approved before you can submit this job.';
+
+/**
+ * While the job is resulted as a Bank Decline, nothing may be submitted until a NEW financing
+ * method is approved. Returns the reason, or null when the rep may go on.
+ */
+export function bankDeclineSubmitBlocker(bankDeclined: boolean, payments: FundingPayment[]): string | null {
+  if (!bankDeclined) return null;
+  return hasApprovedFinancing(payments) ? null : BANK_DECLINE_BLOCKER;
 }
 
 export function hasDecline(record: FundingRecord | null | undefined): boolean {
