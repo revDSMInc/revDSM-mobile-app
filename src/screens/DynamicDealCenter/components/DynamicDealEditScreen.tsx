@@ -151,8 +151,10 @@ import {
   needsAttentionRowId,
   newPaymentId,
   canRestoreEntry,
+  findShelfEntry,
   findApprovedArchive,
   restoreRowPlan,
+  withSettledRows,
   swapRowMethod,
   paymentAllocations,
   structureHint,
@@ -704,7 +706,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const restorePlan = useCallback(
     (pid: string, archivedId: string) => {
       const row = rows.find((r) => r.pid === pid);
-      const entry = (row?.archived || []).find((a) => a.archivedId === archivedId);
+      const entry = findShelfEntry(rows, archivedId);
       if (entry && isLocalArchive(entry)) {
         setRows((prev) => restoreRowPlan(prev, pid, archivedId, pricing.plans));
         return;
@@ -1089,7 +1091,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       return;
     }
 
-    const res = await funding.savePayments(Math.round(contractNum), upsert, payMode);
+    // ⚠️ `payments` is the COMPLETE list - a stored row left out is deleted. Keep every row the server will not let go.
+    const res = await funding.savePayments(Math.round(contractNum), withSettledRows(upsert, funding.record), payMode);
     if (!res.ok) return;
     logFundingOpened({
       ...fundingLog,

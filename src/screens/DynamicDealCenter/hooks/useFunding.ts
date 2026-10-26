@@ -15,6 +15,7 @@ import {
   type FundingResult,
   type FundingUpsertRow,
   type SettledAction,
+  type SettledRow,
 } from '../../../services/api/FundingService';
 import {
   logFundingCardCharged,
@@ -184,6 +185,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         case 'rowHasDecision':
         case 'rowApplicationSent':
         case 'rowHoldsPlans':
+        case 'conflict':
           // The server's own sentence says what is in the way. Not a stale record: refetching
           // would reload the rep's rows away and announce "Funding updated".
           FlashMessage.warning(context, error.message);
@@ -277,7 +279,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       payments: FundingUpsertRow[],
       payMode = 'split',
       settledAction?: SettledAction
-    ): Promise<FundingActionResult<{ refundDue?: number }>> => {
+    ): Promise<FundingActionResult<{ refundDue?: number; settledRows?: SettledRow[] }>> => {
       setIsSaving(true);
       try {
         const res = await run('Save payments', () =>

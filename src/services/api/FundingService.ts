@@ -280,6 +280,7 @@ export type FundingErrorKind =
   | 'rowHasDecision'
   | 'rowApplicationSent'
   | 'rowHoldsPlans'
+  | 'conflict'
   | 'offline'
   | 'leadNotSynced'   // ← new: the lead has not uploaded yet; nothing was sent
   | 'unknown';
@@ -293,6 +294,8 @@ export interface FundingError {
   /** REVUIUX-519 scope-switch refusals: what is still held (net of refunds) and what the new contract cannot hold. */
   settledAmount?: number;
   overage?: number;
+  /** Which rows hold the money (scope-switch prompts and the `reuseWithRefund` 200). `held` is net of live refunds. */
+  settledRows?: SettledRow[];
   blockers?: string[];
   reminder?: FundingApprovalReminder;
 }
@@ -321,7 +324,35 @@ export const FUNDING_ROW_HAS_DECISION = 'FUNDING_ROW_HAS_DECISION';
 export const FUNDING_ROW_APPLICATION_SENT = 'FUNDING_ROW_APPLICATION_SENT';
 export const FUNDING_ROW_HOLDS_PLANS = 'FUNDING_ROW_HOLDS_PLANS';
 
+// FUNDING-MOBILE-API.md s1: every refusal carries `data.code`. These 409s are rule refusals, never a stale record.
+const CONFLICT_CODES = new Set<string>([
+  'FUNDING_ROW_SETTLED_NOT_REASSIGNABLE',
+  'FUNDING_ROW_DECISION_KIND_LOCKED',
+  'FUNDING_ROW_AMOUNT_LOCKED',
+  'FUNDING_REMOVE_SETTLED',
+  'FUNDING_REMOVE_LENDER_DECISION',
+  'FUNDING_REMOVE_APPLICATION_SENT',
+  'FUNDING_SHELF_NO_HOST',
+  'FUNDING_SHELF_LAST_PAYMENT',
+  'FUNDING_STRUCTURE_LOCKED',
+  'FUNDING_RESTORE_ROW_SETTLED',
+  'FUNDING_REFUND_NOT_EDITABLE',
+  'FUNDING_REFUND_TRANSITION_INVALID',
+  'FUNDING_REFUND_TERMINAL',
+  'FUNDING_REFUND_NOT_SIGNED',
+  'FUNDING_REFUND_CHECK_STEP_OUT_OF_ORDER',
+]);
+
+/** A removal refused because money is on the row: the way out is a refund, not Remove. */
+export const REFUND_INSTEAD_CODES = ['FUNDING_REMOVE_SETTLED', 'FUNDING_ROW_SETTLED', 'FUNDING_ROW_SETTLED_NOT_REASSIGNABLE'];
+
 const KIND_BY_CODE: Record<string, FundingErrorKind> = {
+  FUNDING_REMOVE_REFUND_IN_FLIGHT: 'rowRefundInFlight',
+  FUNDING_REMOVE_LENDER_DECISION: 'rowHasDecision',
+  FUNDING_REMOVE_APPLICATION_SENT: 'rowApplicationSent',
+  FUNDING_REMOVE_SETTLED: 'rowSettled',
+  FUNDING_SHELF_NO_HOST: 'rowHoldsPlans',
+  FUNDING_SHELF_LAST_PAYMENT: 'rowHoldsPlans',
   [FUNDING_SETTLED_ON_OTHER_CALCULATOR]: 'settledOnOtherCalculator',
   [FUNDING_SCOPE_SWITCH_NEEDS_DECISION]: 'scopeNeedsDecision',
   [FUNDING_SCOPE_SWITCH_NEEDS_REFUND_APPROVAL]: 'scopeNeedsRefundApproval',
@@ -333,6 +364,29 @@ const KIND_BY_CODE: Record<string, FundingErrorKind> = {
   [FUNDING_ROW_APPLICATION_SENT]: 'rowApplicationSent',
   [FUNDING_ROW_HOLDS_PLANS]: 'rowHoldsPlans',
 };
+
+export interface SettledRow {
+  pid: string;
+  kind: FundingKind;
+  type: FundingMethodType;
+  method: string;
+  label: string;
+  held: number;
+}
+
+export function parseSettledRows(raw: unknown): SettledRow[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((r: any) => r && typeof r.pid === 'string')
+    .map((r: any) => ({
+      pid: r.pid,
+      kind: r.kind === 'bal' ? 'bal' : 'down',
+      type: r.type === 'cc' || r.type === 'bank' ? r.type : 'check',
+      method: String(r.method ?? ''),
+      label: String(r.label ?? r.method ?? ''),
+      held: Math.max(0, Math.round(Number(r.held) || 0)),
+    }));
+}
 
 export type SettledAction = 'reuse' | 'refund' | 'reuseWithRefund';
 
@@ -385,6 +439,9 @@ export function classifyFundingError(
   const code: string | undefined = typeof body?.data?.code === 'string' ? body.data.code : undefined;
   // Match on `data.code`, never the message. A refused re-scope is not a stale record: no refetch/retry.
   if (code && KIND_BY_CODE[code]) kind = KIND_BY_CODE[code];
+  else if (code && CONFLICT_CODES.has(code)) kind = 'conflict';
+  // An unknown FUNDING_* 409 is still a refusal with its own sentence, not a stale record.
+  else if (code && kind === 'stale' && code.startsWith('FUNDING_') && !onLink && !onRefund && !onRemind) kind = 'conflict';
   const settledAmount = Number(body?.data?.settledAmount);
   const overage = Number(body?.data?.overage);
 
@@ -395,6 +452,7 @@ export function classifyFundingError(
     ...(code ? { code } : {}),
     ...(Number.isFinite(settledAmount) ? { settledAmount } : {}),
     ...(Number.isFinite(overage) && overage > 0 ? { overage } : {}),
+    ...(Array.isArray(body?.data?.settledRows) ? { settledRows: parseSettledRows(body.data.settledRows) } : {}),
     ...(Array.isArray(blockers) ? { blockers } : {}),
     ...(reminder && typeof reminder === 'object' ? { reminder: reminder as FundingApprovalReminder } : {}),
   };

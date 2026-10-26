@@ -59,6 +59,7 @@ import { ScopeSwitchPrompt, type ScopePrompt } from './funding/ScopeSwitchPrompt
 import { useFunding } from '../hooks/useFunding';
 import { LeadService } from '../../../services/api/leads';
 import type {
+  SettledRow,
   FundingChannel,
   FundingPaymentRow,
   FundingRecord,
@@ -74,6 +75,7 @@ import {
   formatStamp,
   fundingBlockers,
   hasDecline,
+  refundRowsHint,
   bankDeclineSubmitBlocker,
   hasApprovedFinancing,
   hydrateRowsFromRecord,
@@ -313,6 +315,7 @@ export function ResultJobModal({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [scopePrompt, setScopePrompt] = useState<ScopePrompt | null>(null);
   const [refundDue, setRefundDue] = useState<number | null>(null);
+  const [refundRows, setRefundRows] = useState<SettledRow[]>([]);
   // Offline there is no server record, so the Funding screen is fed from the rows the rep
   // just entered. Cleared whenever the modal reopens, with the rest of the state.
   const [offlineRecord, setOfflineRecord] = useState<FundingRecord | null>(null);
@@ -732,11 +735,11 @@ export function ResultJobModal({
     if (!res.ok) {
       const err = res.error;
       if (err?.kind === 'scopeNeedsDecision') {
-        setScopePrompt({ kind: 'decision', settledAmount: err.settledAmount ?? 0, overage: err.overage });
+        setScopePrompt({ kind: 'decision', settledAmount: err.settledAmount ?? 0, overage: err.overage, settledRows: err.settledRows });
         return;
       }
       if (err?.kind === 'scopeNeedsRefundApproval') {
-        setScopePrompt({ kind: 'approval', message: err.message });
+        setScopePrompt({ kind: 'approval', message: err.message, settledRows: err.settledRows });
         return;
       }
       if (err?.kind === 'scopeAfterSubmit') {
@@ -744,14 +747,17 @@ export function ResultJobModal({
         return;
       }
       if (err?.kind === 'scopeRefundFirst') {
-        setScopePrompt({ kind: 'refundFirst', message: err.message, settledAmount: err.settledAmount });
+        setScopePrompt({ kind: 'refundFirst', message: err.message, settledAmount: err.settledAmount, settledRows: err.settledRows });
         return;
       }
       setSaveError(err?.message || 'The payments could not be saved.');
       return;
     }
     setScopePrompt(null);
-    if (res.data?.refundDue && res.data.refundDue > 0) setRefundDue(Math.round(res.data.refundDue));
+    if (res.data?.refundDue && res.data.refundDue > 0) {
+      setRefundDue(Math.round(res.data.refundDue));
+      setRefundRows(res.data.settledRows || []);
+    }
     setSaveError(null);
     logFundingOpened({
       ...logCtx,
@@ -1037,6 +1043,11 @@ export function ResultJobModal({
                     The new contract is smaller than what was collected. Raise this refund (it needs an approver and the
                     customer’s signature) — Submit Funding stays blocked until it exists.
                   </Text>
+                  {refundRows.length > 0 && (
+                    <Text style={{ fontSize: FS.SMALL, fontFamily: PS.bold, lineHeight: 17, color: FUND.AMBER_TEXT, marginTop: 6 }}>
+                      {refundRowsHint(refundRows, refundDue)}
+                    </Text>
+                  )}
                 </View>
               )}
               {onFunding ? (

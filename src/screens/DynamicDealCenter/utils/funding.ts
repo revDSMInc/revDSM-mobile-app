@@ -18,6 +18,7 @@ import {
   type FundingRecord,
   type FundingUpsertRow,
   type PaymentAllocation,
+  type SettledRow,
 } from '../../../services/api/FundingService';
 import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
 
@@ -303,12 +304,63 @@ export function swapRowMethod(
   });
 }
 
+/**
+ * FUNDING-MOBILE-API.md s3: the server now restores an entry found ANYWHERE on the lead, so the shelf
+ * is the lead's, not one row's. Every row's filed plans, minus what is active on another row and minus
+ * what this row cannot carry (reference entries, financing on a down payment).
+ */
+export function leadShelfFor(
+  row: PaymentRow,
+  allRows: PaymentRow[],
+  activeLabels: string[],
+  plans: Record<string, DealPlan>
+): FundingArchivedPlan[] {
+  const seen = new Set<string>();
+  const out: FundingArchivedPlan[] = [];
+  const ordered = [row, ...allRows.filter((r) => r.pid !== row.pid)];
+  for (const r of ordered) {
+    for (const a of visibleArchived(r, activeLabels, plans)) {
+      const label = String(a.method || planKeyOf(a));
+      // A reference entry stays visible (it is the record) but never offers Restore - see canRestoreEntry.
+      if (seen.has(label)) continue;
+      seen.add(label);
+      out.push(a);
+    }
+  }
+  return out;
+}
+
+/** Moves a filed plan from whichever row holds it onto `pid`'s shelf, so a local restore matches the server's lead-wide one. */
+function moveEntryToRow(rows: PaymentRow[], pid: string, archivedId: string): PaymentRow[] {
+  const target = rows.find((r) => r.pid === pid);
+  if (!target || (target.archived || []).some((a) => a.archivedId === archivedId)) return rows;
+  const holder = rows.find((r) => (r.archived || []).some((a) => a.archivedId === archivedId));
+  if (!holder) return rows;
+  const entry = (holder.archived || []).find((a) => a.archivedId === archivedId)!;
+  return rows.map((r) =>
+    r.pid === holder.pid
+      ? { ...r, archived: (r.archived || []).filter((a) => a.archivedId !== archivedId) }
+      : r.pid === pid
+        ? { ...r, archived: [entry, ...(r.archived || [])] }
+        : r
+  );
+}
+
+export function findShelfEntry(rows: PaymentRow[], archivedId: string): FundingArchivedPlan | undefined {
+  for (const r of rows) {
+    const hit = (r.archived || []).find((a) => a.archivedId === archivedId);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 export function restoreRowPlan(
-  rows: PaymentRow[],
+  allRows: PaymentRow[],
   pid: string,
   archivedId: string,
   plans: Record<string, DealPlan>
 ): PaymentRow[] {
+  const rows = moveEntryToRow(allRows, pid, archivedId);
   return rows.map((r) => {
     if (r.pid !== pid) return r;
     const shelf = r.archived || [];
@@ -432,6 +484,23 @@ export function withSettledRows(
         }) as FundingUpsertRow
     );
   return carried.length ? [...carried, ...upsert] : upsert;
+}
+
+/** "$2,000 AMEX (card)" per row, for the scope-switch prompt. */
+export function settledRowsSummary(rows?: SettledRow[]): string {
+  return (rows || [])
+    .filter((r) => r.held > 0)
+    .map((r) => `${r.label || r.method} - $${money(r.held)}`)
+    .join(', ');
+}
+
+/** Which row the refund comes from, and how it can be paid out (only a card row can refund to a card). */
+export function refundRowsHint(rows: SettledRow[], due?: number | null): string {
+  const held = rows.filter((r) => r.held > 0);
+  if (!held.length) return '';
+  const names = held.map((r) => `${r.label || r.method} (${r.type === 'cc' ? 'card' : 'cheque'})`).join(' or ');
+  const amount = due ? `$${money(due)} ` : '';
+  return `Refund ${amount}from ${names}.${held.some((r) => r.type === 'cc') ? '' : ' Pay it back by cheque.'}`;
 }
 
 export function scopeSwitchOptions(settledAmount: number, overage?: number) {

@@ -17,7 +17,7 @@ import {
   planBlockedOffline,
   showsChip,
   methodLabelOf,
-  visibleArchived,
+  leadShelfFor,
   isReferenceEntry,
   referenceEntryNote,
   canRestoreEntry,
@@ -217,8 +217,9 @@ export function PaymentRowsGroup({
     const lender = chip ? lenderState(row, plans[row.method]?.type === 'financing') : null;
     const tone = lender ? CHIP[lender.tone] : CHIP.neutral;
     const drift = driftNote(row);
-    const archived = visibleArchived(
+    const archived = leadShelfFor(
       row,
+      allRows,
       allRows.filter((r) => r.pid !== row.pid).map((r) => methodLabelOf(plans, r.method) || r.methodLabel || ''),
       plans
     );
