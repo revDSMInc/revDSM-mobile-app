@@ -8,6 +8,8 @@ import { useLeadPreviewUrl } from '../../../hooks/useLeadPreviewUrl';
 import { buildJobNumber } from '../../../utils/office-initials';
 import { sortLeadThreadsByLeadTime } from '../../../utils/lead-thread-order';
 import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { ACK_AMBER } from './chat-confirmation';
+import { isGifMessageText } from '../../../utils/gif-message';
 
 export function MainTabOption({ label, active, onPress }: any) {
   const { colors } = useTheme();
@@ -220,7 +222,7 @@ export function LeadChatThreadItem({ chat, onPress, installerView }: any) {
   );
 
   const senderName = lastMsg?.senderDetails?.firstName || 'User';
-  const messageContent = lastMsg?.message?.trim() || 'Sent an attachment';
+  const messageContent = isGifMessageText(lastMsg?.message) ? 'Sent a GIF' : lastMsg?.message?.trim() || 'Sent an attachment';
 
   return (
     <TouchableOpacity
@@ -321,9 +323,14 @@ const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
 
 export function ChannelThreadItem({ channel, onPress }: any) {
   const { colors, isDark } = useTheme();
-  const { title, name, unreadCount, channelConfig } = channel;
-  const displayName = title || name || 'General';
+  const { name, unread_count: unreadCount, description, icon_emoji, icon_url, require_ack: requireAck } = channel;
+  const displayName = name || 'General';
   const scheme = CHANNEL_SCHEMES[displayName] || CHANNEL_SCHEMES.General;
+  const tint = colors.primary.main;
+  // REVDSM-1313: a channel that requires read confirmation still has unread posts —
+  // show the amber "Confirm needed" badge beside the counter (QA mockup, REP 1).
+  const confirmNeeded = requireAck && unreadCount > 0;
+  const ackPalette = isDark ? ACK_AMBER.dark : ACK_AMBER.light;
 
   return (
     <TouchableOpacity
@@ -336,21 +343,49 @@ export function ChannelThreadItem({ channel, onPress }: any) {
     >
       <View
         className="w-12 h-12 rounded-lg items-center justify-center mr-3"
-        style={{ backgroundColor: scheme.color + '20' }}
+        style={{ backgroundColor: tint + '20' }}
       >
-        <Text className="text-lg">{scheme.icon}</Text>
+        {icon_url ? (
+          <Image source={{ uri: icon_url }} style={{ width: 48, height: 48, borderRadius: 8 }} />
+        ) : (
+          <Text className="text-lg">{icon_emoji || scheme.icon}</Text>
+        )}
       </View>
 
       <View className="flex-1 pr-2">
         <Text className="font-semibold text-sm mb-0.5" style={{ color: '#1C252E' }}>
-          {title || name}
+          {name}
         </Text>
         <Text className="text-xs" style={{ color: '#637381' }} numberOfLines={1}>
-          {channelConfig?.description || 'Team Communication Channel'}
+          {description || 'Team Communication Channel'}
         </Text>
+        {confirmNeeded && (
+          <View className="flex-row items-center mt-1.5">
+            <View
+              className="flex-row items-center px-2 py-[3px] rounded-full"
+              style={{ backgroundColor: ackPalette.bg, borderWidth: 1, borderColor: ackPalette.border }}
+            >
+              <Icon name="alert-circle-outline" size={12} color={ackPalette.accent} />
+              <Text
+                className="ml-1"
+                style={{ fontSize: 10, fontWeight: '800', color: ackPalette.accent }}
+              >
+                Confirm needed
+              </Text>
+            </View>
+            {unreadCount > 0 && (
+              <View
+                className="w-5 h-5 rounded-full items-center justify-center ml-2"
+                style={{ backgroundColor: colors.primary.main }}
+              >
+                <Text className="text-white text-[9px] font-black">{unreadCount}</Text>
+              </View>
+            )}
+          </View>
+        )}
       </View>
 
-      {unreadCount > 0 && (
+      {!confirmNeeded && unreadCount > 0 && (
         <View className="w-5 h-5 rounded-full items-center justify-center mr-2" style={{ backgroundColor: colors.primary.main }}>
           <Text className="text-white text-[9px] font-black">{unreadCount}</Text>
         </View>

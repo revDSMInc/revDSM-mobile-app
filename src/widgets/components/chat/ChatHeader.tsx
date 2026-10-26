@@ -69,6 +69,7 @@ export const ChatHeader = ({
   leadPreview,
   installBucket,
   isChannel,
+  channelIcon,
   isViewOnly,
   colors,
   isDark,
@@ -150,10 +151,15 @@ export const ChatHeader = ({
             <View
               className="w-10 h-10 rounded-xl items-center justify-center mr-3"
               style={{
-                backgroundColor: (CHANNEL_SCHEMES[customerName]?.color || '#748FFC') + '33',
+                backgroundColor: colors.primary.main + '33',
+                overflow: 'hidden',
               }}
             >
-              <Text className="text-md">{CHANNEL_SCHEMES[customerName]?.icon || '💬'}</Text>
+              {channelIcon?.url ? (
+                <Image source={{ uri: channelIcon.url }} style={{ width: 40, height: 40 }} />
+              ) : (
+                <Text className="text-md">{channelIcon?.emoji || CHANNEL_SCHEMES[customerName]?.icon || '💬'}</Text>
+              )}
             </View>
           ) : (
             <LeadHeaderThumbnail leadPreview={leadPreview} title={customerName} />
@@ -194,14 +200,16 @@ export const ChatHeader = ({
         </View>
 
         <View className="flex-row items-center gap-3">
-          <TouchableOpacity onPress={() => setShowPinned(true)} className="relative">
-            <Pin width={30} height={30} />
-            {pinnedMessages.length > 0 && (
-              <View className="absolute -top-1.5 -right-1.5 bg-amber-500 w-4 h-4 rounded-full border-2 border-white dark:border-slate-900 items-center justify-center">
-                <Text className="text-[8px] text-white font-bold">{pinnedMessages.length}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
+          {!isChannel && (
+            <TouchableOpacity onPress={() => setShowPinned(true)} className="relative">
+              <Pin width={30} height={30} />
+              {pinnedMessages.length > 0 && (
+                <View className="absolute -top-1.5 -right-1.5 bg-amber-500 w-4 h-4 rounded-full border-2 border-white dark:border-slate-900 items-center justify-center">
+                  <Text className="text-[8px] text-white font-bold">{pinnedMessages.length}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          )}
           <TouchableOpacity onPress={() => setParticipantModalVisible(true)} className="relative">
             <Icon name="people" size={30} color="#94a3b8" />
             <View className="absolute -top-1 -right-1 bg-green-500 w-4 h-4 rounded-full border-2 border-white dark:border-slate-900 items-center justify-center">

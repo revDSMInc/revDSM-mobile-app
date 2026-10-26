@@ -742,3 +742,39 @@ Report: opening the header thumbnail (a Google street view) showed a black scree
 - **Second follow-up - still a black screen after that (iOS 26 simulator), no spinner.** With the picture already local the gallery drew nothing: `ZoomablePage` parked the image at `opacity 0` until `onLoadEnd`, and its `onError` just set opacity 1 over a failed image - i.e. a silent black screen. Now (`widgets/modals/ImageGalleryModal.tsx`): a LOCAL file starts at full opacity (only a remote image fades in); if a local copy errors, `onError` drops it (`forgetWarmedUri`) and draws the REMOTE original (`fallbackUri`); if that fails too it shows "Could not load this photo" instead of black. Google Maps urls are loaded plainly - no `cache: 'force-cache'`, no `progressiveRenderingEnabled` - exactly like the header thumbnail that already worked. ⚠️ Don't reintroduce "opacity 0 until an event" for local files, and don't let `onError` end in a blank view. The root cause on iOS was not reproduced from code alone; if a street view still fails, log the `onError` nativeEvent here first.
 
 - **Follow-up - the appointment-photo picker also floors its bottom padding on iOS** (`LeadImagePickerModal`): `max(useBottomInset(), 48 on Android / 20 on iOS)`. A `Modal`'s insets can read 0 / stale on iOS too, which would put the Send bar on the home indicator. Not verified on device.
+
+### REVDSM-1313 - a channel can belong to several offices (the app only READS this)
+
+API contract (shapes, routes, socket events, error codes): `docs/REVDSM-1313-channels-api-contract.md`.
+
+Channels are created and managed **in the portal only**: managers and VPs work there, and the roles that use this app (sales rep, installer) do not create channels. The "New Channel" button in `ChatThreads/index.tsx` is commented out and `CreateChannelModal` is unreachable dead code from this ticket — ⚠️ do NOT build onto it (an office picker was added there and reverted for exactly this reason). If channel management is ever wanted on mobile, decide that as its own ticket; the modal is also missing the icon picker and the ten per-channel settings the portal has.
+- **One channel, several offices.** The channel document keeps `office_id` as its PRIMARY office and adds `office_ids` with the whole set. Everyone who can see any office in the set shares the same conversation and one message history. `utils/team-channel-offices.ts` (`officeIdsOf`, `channelInOffice`) is the only reader: `office_ids` when it has entries, else `office_id`. ⚠️ A channel created before this ticket carries ONLY `office_id` - nothing was backfilled, so never read `office_ids` directly or those channels vanish.
+- **Nothing here filters by office.** `GET /api/v1/channels/` is already scoped per viewer on the server, so the list is taken as given — the app never decides what a rep may see.
+- **`team-channels-reordered` matches on the whole set** (`channelInOffice`), not on `office_id` alone. A manager reordering from office B emits `officeId: B`, but a channel shared with B may have A as its primary — matching the primary only would silently skip it and leave the rep's list in the old order. There is one `sort_order` per channel, so the move applies in every office that has it.
+- Not verified on device: a rep in a shared channel's second office sees it in the list and can post; a manager reordering from that second office moves it in the rep's list too; an older single-office channel is unaffected.
+
+- **Merge note - `ChatDetail/index.tsx` conflicted when REVDSM-1313 landed on `dev-v1-multi-tenat`.** Both sides edited the same two lines at the top of `ChatDetailScreen`: HEAD had added `installBucket: routeInstallBucket` to the `route.params` destructure, REVDSM-1313 had added `const navigation = useNavigation<any>()` and destructured without `installBucket`. **Resolved by keeping BOTH** - HEAD's destructure is a strict superset of the branch's, so nothing from REVDSM-1313 is lost. ⚠️ Both are load-bearing and dropping either compiles-but-breaks: `routeInstallBucket` is passed on at the installer photo preview, and `navigation.goBack()` is used in the channel-permission effect. If this file conflicts again, check the destructure line is still the superset rather than taking one side wholesale.
+
+## Chat GIF picker (REVDSM-575)
+
+Ticket: add GIFs to chat. The attach menu (`+`) gets a **GIF** row that opens a bottom sheet — search pill, 3-column grid with 2px gaps — fed by the **GIPHY REST API** (Tenor's API was shut down 30 Jun 2026, and GIPHY's RN SDK adds native code with unverified RN 0.84 support).
+
+| piece | where |
+|---|---|
+| GIPHY client (`trending` / `search`, paged) | `services/api/giphy.ts` |
+| debounced infinite query | `hooks/useGifSearch.ts` |
+| picker sheet | `widgets/modals/chat/GifPickerModal.tsx` |
+| inline bubble renderer | `widgets/components/chat/GifMessage.tsx` |
+| detection + aspect ratio (pure, tested) | `utils/gif-message.ts` |
+| send | `useChatLogic.sendGif` → `sendTextMessage` |
+| key | `GIPHY_API_KEY` in `.env` → `config/env.ts` (optional) |
+
+- **A GIF is a TEXT message whose whole body is a `media*.giphy.com` / `i.giphy.com` `.gif|.webp` URL.** The backend has no GIF type, so web and older builds show the link and nothing needed a server change. `isGifMessageText` is an exact-match on the trimmed body — ⚠️ do not loosen it to "contains": a sentence with a link in it must stay text.
+- ⚠️ **GIPHY is called with plain `fetch`, never the axios wrapper** — that attaches the revDSM bearer token to every request.
+- The sent URL is the `downsized` rendition with its query string stripped; the grid uses `fixed_width_small`. Rating is capped at `pg-13`.
+- **No key ⇒ the picker shows "not set up", the app does not throw** (`GIPHY_API_KEY` is deliberately not in `required()`). Production needs GIPHY's upgraded key and the "Powered by GIPHY" line, which the sheet renders.
+- The picker opens through `selectAttachmentOption`, so it waits for the attach menu to finish dismissing (never stack native Modals). It lifts itself by the keyboard height rather than using `KeyboardAvoidingView`, and caps its height from the window so iPad landscape fits.
+- Reply previews show `GIF` and the thread list shows `Sent a GIF` instead of the raw URL.
+- Tests: `__tests__/utils/gif-message.test.ts`. ⚠️ Needs a device check on iOS and Android: GIFs animate in the grid and bubble, the sheet sits above the keyboard, long-press on a GIF bubble opens the reaction bar, and a failed load falls back to the link.
+
+- **Android showed GIFs as a still frame (REVDSM-575 follow-up).** Root cause: React Native 0.84 does **not** bundle Fresco's animated decoders (`node_modules/react-native/gradle/libs.versions.toml` lists only `fresco`, `middleware`, `imagepipeline-okhttp3`, `ui-common`), so the stock `<Image>` decodes only the first frame on Android while iOS animates natively. Fix is in `android/app/build.gradle`: `animated-gif`, `animated-webp` and `webpsupport` at the SAME version as RN's `fresco`. ⚠️ Needs a **native rebuild** (`yarn android`) — Metro reload does nothing — and the three versions must be bumped together with every RN upgrade. This also makes any other animated GIF/WebP `<Image>` in the app animate on Android.

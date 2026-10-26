@@ -23,6 +23,9 @@ export const useChatSession = (
   const [typingUsers, setTypingUsers] = useState<any[]>([]);
   const [channel, setChannel] = useState<any>(null);
   const typingTimers = useRef<Map<string, any>>(new Map());
+  // Team channels page their history: `next_before` of the last page is the cursor for the next older one.
+  const nextBeforeRef = useRef<string | null>(null);
+  const loadingOlderRef = useRef(false);
 
   const currentUserId = user?._id || user?.id || 'ghost';
 
@@ -114,6 +117,41 @@ export const useChatSession = (
     }
   }, []);
 
+  // Channel history: first page on open, then only socket events (plus older pages on scroll).
+  const loadChannelMessages = useCallback(async (id: string) => {
+    setLoading(true);
+    try {
+      const page = await ChatService.getChannelMessages(id, { limit: 50 });
+      nextBeforeRef.current = page.nextBefore;
+      setHasMore(page.hasMore);
+      setMessages(page.messages);
+      fetchSecureUrls(page.messages);
+    } catch (err) {
+      console.error('Load channel messages error:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadOlder = useCallback(async () => {
+    if (!isChannel || !chatId || !hasMore || loadingOlderRef.current || !nextBeforeRef.current) return;
+    loadingOlderRef.current = true;
+    try {
+      const page = await ChatService.getChannelMessages(chatId, { limit: 50, before: nextBeforeRef.current });
+      nextBeforeRef.current = page.nextBefore;
+      setHasMore(page.hasMore);
+      setMessages((prev) => {
+        const have = new Set(prev.map((m) => String(m._id)));
+        return [...prev, ...page.messages.filter((m: any) => !have.has(String(m._id)))];
+      });
+      fetchSecureUrls(page.messages);
+    } catch (err) {
+      console.error('Load older channel messages error:', err);
+    } finally {
+      loadingOlderRef.current = false;
+    }
+  }, [isChannel, chatId, hasMore]);
+
   useEffect(() => {
     const init = async () => {
       setLoading(true);
@@ -124,13 +162,15 @@ export const useChatSession = (
           setChatId(activeId);
         }
         if (activeId) {
-          await loadMessages(activeId, limit);
           if (isChannel) {
-            ChatService.getChatDetails(activeId)
+            await loadChannelMessages(activeId);
+            ChatService.getChannel(activeId)
               .then((chan) => {
                 if (chan) setChannel(chan);
               })
               .catch(console.error);
+          } else {
+            await loadMessages(activeId, limit);
           }
           const fetchAction = isChannel
             ? ChatService.getChannelParticipants(activeId)
@@ -142,15 +182,12 @@ export const useChatSession = (
       }
     };
     init();
-  }, [chatId, leadId, isChannel, limit, loadMessages]);
+  }, [chatId, leadId, isChannel, limit, loadMessages, loadChannelMessages]);
 
   useEffect(() => {
-    if (messages.length > 0 && chatId) {
-      if (isChannel) {
-        SocketManager.emit('mark-channel-as-read', { channelId: chatId, userId: currentUserId });
-      } else {
-        SocketManager.emit('mark-all-messages-as-read', { chatId, userId: currentUserId });
-      }
+    // Channels: opening the history (GET /api/v1/channels/:id/messages) already marks messages seen.
+    if (messages.length > 0 && chatId && !isChannel) {
+      SocketManager.emit('mark-all-messages-as-read', { chatId, userId: currentUserId });
     }
   }, [messages.length, chatId, isChannel, currentUserId]);
 
@@ -160,22 +197,39 @@ export const useChatSession = (
     const joinEvent = isChannel ? 'join-team-channel' : 'join-chat';
     SocketManager.joinRoom(chatId, joinEvent, currentUserId);
 
-    SocketManager.emit(isChannel ? 'get-channel-pinned-messages' : 'get-pinned-messages', {
-      chatId,
-      channelId: chatId,
-    });
+    if (isChannel) {
+      ChatService.setOpenChannel(chatId);
+    } else {
+      SocketManager.emit('get-pinned-messages', {
+        chatId,
+        channelId: chatId,
+      });
+    }
+
+    // After a reconnect, pull what was missed while offline (latest page only) and merge it in.
+    const resyncChannel = () => {
+      ChatService.getChannelMessages(chatId, { limit: 50 })
+        .then((page) => {
+          fetchSecureUrls(page.messages);
+          setMessages((prev) => {
+            const fresh = new Map(page.messages.map((m: any) => [String(m._id), m]));
+            const merged = prev.map((m) => (fresh.has(String(m._id)) ? fresh.get(String(m._id)) : m));
+            const have = new Set(prev.map((m) => String(m._id)));
+            const added = page.messages.filter((m: any) => !have.has(String(m._id)));
+            return [...added, ...merged].sort(
+              (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+            );
+          });
+        })
+        .catch((e) => console.warn('[useChatSession] resync failed:', e));
+    };
 
     const markAllRead = (msgs: any[]) => {
       const allIds = msgs.map((m: any) => m._id?.toString()).filter(Boolean);
       if (allIds.length === 0) return;
       
       if (isChannel) {
-        SocketManager.emit('mark-channel-as-read', { channelId: chatId, userId: currentUserId });
-        SocketManager.emit('mark-channel-message-seen', {
-          channelId: chatId,
-          messageIds: allIds,
-          userId: currentUserId,
-        });
+        ChatService.markSeen(chatId, allIds, true);
       } else {
         SocketManager.emit('mark-messages-seen', { chatId, messageIds: allIds });
         SocketManager.emit('mark-all-messages-as-read', { chatId, userId: currentUserId });
@@ -184,13 +238,21 @@ export const useChatSession = (
 
     markAllRead(messages);
 
-    const onConnect = () => setIsConnected(true);
+    const onConnect = () => {
+      setIsConnected(true);
+      if (isChannel) resyncChannel();
+    };
     const onDisconnect = () => setIsConnected(false);
     const unsubConnect = SocketManager.on('connect', onConnect);
     const unsubDisconnect = SocketManager.on('disconnect', onDisconnect);
 
     const handleNewMessage = (m: any) => {
       console.log('[Socket] handleNewMessage Raw Payload:', JSON.stringify(m, null, 2));
+      if (isChannel) {
+        // Channel events carry their channel id; ignore other channels' traffic on the user room.
+        const evChannel = m?.channelId || m?.message?.chatId;
+        if (evChannel && String(evChannel) !== String(chatId)) return;
+      }
       const normalized = ChatService.normalizeMessage(m);
       if (normalized.audio || normalized.voice || normalized.isVoiceNote) {
         console.log('[Socket] Incoming Voice Note Detected:', normalized);
@@ -295,11 +357,7 @@ export const useChatSession = (
       });
 
       if (isChannel) {
-        SocketManager.emit('mark-channel-message-seen', {
-          channelId: chatId,
-          messageIds: [normalized._id],
-          userId: currentUserId,
-        });
+        ChatService.markSeen(chatId, [normalized._id as string], true);
       } else {
         SocketManager.emit('mark-messages-seen', {
           chatId,
@@ -338,7 +396,10 @@ export const useChatSession = (
       setPinnedMessages((prev) => prev.filter((msg) => (msg as any)._id?.toString() !== deletedId));
     });
 
-    const unsubPinned = SocketManager.on('message-pinned', (data: any) => {
+    // Pinning is lead-chat only: channels never subscribe to pin events.
+    const onLeadOnly = (ev: string, fn: (d: any) => void) => (isChannel ? () => {} : SocketManager.on(ev, fn));
+
+    const unsubPinned = onLeadOnly('message-pinned', (data: any) => {
       Vibration.vibrate(50);
       const msgId = (data.messageId || data.id || data.message?._id || data._id)?.toString();
       console.log('[useChatSession] message-pinned:', msgId);
@@ -359,7 +420,7 @@ export const useChatSession = (
       });
     });
 
-    const unsubUnpinned = SocketManager.on('message-unpinned', (data: any) => {
+    const unsubUnpinned = onLeadOnly('message-unpinned', (data: any) => {
       Vibration.vibrate(50);
       const msgId = (data.messageId || data.id || data.message?._id || data._id)?.toString();
       console.log('[useChatSession] message-unpinned:', msgId);
@@ -369,7 +430,7 @@ export const useChatSession = (
       setPinnedMessages((prev) => prev.filter((m: any) => m._id?.toString() !== msgId));
     });
 
-    const unsubPinnedResponse = SocketManager.on('pinned-messages-response', (data: any) => {
+    const unsubPinnedResponse = onLeadOnly('pinned-messages-response', (data: any) => {
       const pins = data?.pinnedMessages || (Array.isArray(data) ? data : []);
       const normalized = pins.map((m: any) => ChatService.normalizeMessage(m));
       fetchSecureUrls(normalized);
@@ -456,6 +517,7 @@ export const useChatSession = (
     return () => {
       // Leave the room but DO NOT disconnect the global socket
       SocketManager.leaveRoom(chatId);
+      if (isChannel) ChatService.setOpenChannel(null);
 
       unsubConnect();
       unsubDisconnect();
@@ -494,5 +556,6 @@ export const useChatSession = (
     setLimit,
     typingUsers,
     channel,
+    loadOlder,
   };
 };

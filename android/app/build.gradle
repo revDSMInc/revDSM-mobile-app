@@ -139,6 +139,12 @@ dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
+    // RN 0.84 no longer bundles Fresco's animated-image decoders, so remote GIFs render as a still frame on
+    // Android without these. Keep the version equal to `fresco` in node_modules/react-native/gradle/libs.versions.toml.
+    implementation("com.facebook.fresco:animated-gif:3.6.0")
+    implementation("com.facebook.fresco:animated-webp:3.6.0")
+    implementation("com.facebook.fresco:webpsupport:3.6.0")
+
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
     } else {

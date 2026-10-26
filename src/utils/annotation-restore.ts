@@ -8,7 +8,12 @@
  */
 
 export const MOBILE_ANNOTATION_FORMAT = 'revdsm-mobile-annotation';
-export const MOBILE_ANNOTATION_VERSION = 1;
+// v2 adds the undo / redo stacks (`history`, `redo`). A v1 doc has none and restores with empty stacks; an older app build reads
+// only strokes / texts / shapes and ignores the rest, so the bump breaks nothing.
+export const MOBILE_ANNOTATION_VERSION = 2;
+
+/** Most undo (and redo) steps kept in a saved doc - older ones are dropped so the JSON stays small. */
+export const MAX_PERSISTED_HISTORY = 50;
 
 export interface AnnotationMarks {
   strokes: any[];
@@ -16,7 +21,16 @@ export interface AnnotationMarks {
   shapes: any[];
 }
 
-export interface MobileAnnotationData extends AnnotationMarks {
+/** Undo / redo stacks as the editor keeps them (last entry = the next step). */
+export interface AnnotationStacks {
+  history: any[];
+  redo: any[];
+}
+
+/** Marks plus the (already validated) stacks, as the editor is seeded on a re-edit. */
+export interface RestoredMarks extends AnnotationMarks, AnnotationStacks {}
+
+export interface MobileAnnotationData extends AnnotationMarks, Partial<AnnotationStacks> {
   format: typeof MOBILE_ANNOTATION_FORMAT;
   version: number;
   /** `_id` of the clean ORIGINAL salesPhoto, so a PATCH-written (flat) doc still knows its base photo. */
@@ -28,51 +42,152 @@ export interface ParsedAnnotationDoc {
   annotatedId: string;
   /** `_id` of the clean original, when the doc recorded it. */
   originalId: string | null;
-  /** Editable marks, only when the doc was written by mobile. */
-  marks: AnnotationMarks | null;
+  /** Editable marks (and undo / redo stacks), only when the doc was written by mobile. */
+  marks: RestoredMarks | null;
 }
 
 export const countMarks = (m?: Partial<AnnotationMarks> | null): number =>
   (m?.strokes?.length || 0) + (m?.texts?.length || 0) + (m?.shapes?.length || 0);
 
+const cleanStroke = (s: any) => ({
+  id: s.id,
+  isEraser: !!s.isEraser,
+  color: s.color,
+  width: s.width,
+  points: s.points,
+});
+
+const cleanText = (t: any) => ({
+  id: t.id,
+  text: t.text,
+  color: t.color,
+  fontSize: t.fontSize,
+  fontStyle: t.fontStyle,
+  fontFamily: t.fontFamily,
+  opacity: t.opacity,
+  px: t.px,
+  py: t.py,
+});
+
+const cleanShape = (sh: any) => ({
+  id: sh.id,
+  kind: sh.kind,
+  color: sh.color,
+  width: sh.width,
+  p1: sh.p1,
+  p2: sh.p2,
+});
+
+const cleanShapeOrNull = (sh: any) => (sh && typeof sh === 'object' ? cleanShape(sh) : null);
+
+/**
+ * The stacks as they are saved. Undo entries for a stroke / text carry only `{ id, type }` - the mark itself is already in
+ * `strokes` / `texts` (hydrated back on restore), so the points are not stored twice. Redo entries hold the mark itself (it is no
+ * longer on the canvas). Shape entries are small and keep `before` / `after`. Only the newest MAX_PERSISTED_HISTORY steps go.
+ */
+export const compactStacks = (stacks?: Partial<AnnotationStacks> | null): AnnotationStacks => {
+  const entry = (a: any, withData: boolean): any | null => {
+    if (!a || a.id === undefined || a.id === null) return null;
+    if (a.type === 'shape') return { id: a.id, type: 'shape', before: cleanShapeOrNull(a.before), after: cleanShapeOrNull(a.after) };
+    if (a.type === 'stroke' || a.type === 'text') {
+      if (!withData) return { id: a.id, type: a.type };
+      if (!a.data || typeof a.data !== 'object') return null;
+      return { id: a.id, type: a.type, data: a.type === 'stroke' ? cleanStroke(a.data) : cleanText(a.data) };
+    }
+    return null;
+  };
+  const pack = (list: any[] | undefined, withData: boolean) =>
+    (Array.isArray(list) ? list : [])
+      .map((a) => entry(a, withData))
+      .filter(Boolean)
+      .slice(-MAX_PERSISTED_HISTORY);
+  return { history: pack(stacks?.history, false), redo: pack(stacks?.redo, true) };
+};
+
 /** Only the persisted fields - ids, selection and other transient state never go to the server. */
 export const buildMobileAnnotationData = (
   marks: AnnotationMarks,
   originalId?: string | null,
+  stacks?: Partial<AnnotationStacks> | null,
 ): MobileAnnotationData => ({
   format: MOBILE_ANNOTATION_FORMAT,
   version: MOBILE_ANNOTATION_VERSION,
   originalId: originalId || null,
-  strokes: (marks.strokes || []).map((s) => ({
-    id: s.id,
-    isEraser: !!s.isEraser,
-    color: s.color,
-    width: s.width,
-    points: s.points,
-  })),
-  texts: (marks.texts || []).map((t) => ({
-    id: t.id,
-    text: t.text,
-    color: t.color,
-    fontSize: t.fontSize,
-    fontStyle: t.fontStyle,
-    fontFamily: t.fontFamily,
-    opacity: t.opacity,
-    px: t.px,
-    py: t.py,
-  })),
-  shapes: (marks.shapes || []).map((sh) => ({
-    id: sh.id,
-    kind: sh.kind,
-    color: sh.color,
-    width: sh.width,
-    p1: sh.p1,
-    p2: sh.p2,
-  })),
+  strokes: (marks.strokes || []).map(cleanStroke),
+  texts: (marks.texts || []).map(cleanText),
+  shapes: (marks.shapes || []).map(cleanShape),
+  // Validated against the marks being saved, so a stack that drifted (a step pointing at a mark that is gone) can never be stored.
+  ...(stacks ? compactStacks(restoreStacks(stacks, marks)) : {}),
 });
 
 const isMobileData = (d: any): d is MobileAnnotationData =>
   !!d && typeof d === 'object' && d.format === MOBILE_ANNOTATION_FORMAT && Array.isArray(d.strokes);
+
+const idOf = (kind: string, id: any) => `${kind}:${String(id)}`;
+
+/**
+ * Validates saved stacks against the marks that were saved with them, so a stack can never point at something that is not
+ * there (which would make Undo / Redo do nothing, or add a duplicate). Walks from the NEXT step outwards, simulating which
+ * marks exist; at the first step that cannot apply, it and everything older is dropped. Anything malformed is just dropped -
+ * a bad saved history must never stop the photo from opening.
+ */
+export const restoreStacks = (raw: any, marks: AnnotationMarks): AnnotationStacks => {
+  const empty: AnnotationStacks = { history: [], redo: [] };
+  try {
+    const present = new Set<string>();
+    marks.strokes.forEach((m) => present.add(idOf('stroke', m?.id)));
+    marks.texts.forEach((m) => present.add(idOf('text', m?.id)));
+    marks.shapes.forEach((m) => present.add(idOf('shape', m?.id)));
+    const strokeById = new Map(marks.strokes.map((m) => [idOf('stroke', m?.id), m]));
+    const textById = new Map(marks.texts.map((m) => [idOf('text', m?.id), m]));
+
+    // One walk for both stacks: `undo` = history (applies `before`), otherwise redo (applies `after`).
+    const walk = (list: any, undo: boolean): any[] => {
+      if (!Array.isArray(list)) return [];
+      const exists = new Map<string, boolean>();
+      const has = (key: string) => (exists.has(key) ? exists.get(key)! : present.has(key));
+      const kept: any[] = [];
+      for (let i = list.length - 1; i >= 0; i--) {
+        const a = list[i];
+        if (!a || a.id === undefined || a.id === null) break;
+        const key = idOf(a.type, a.id);
+        let ok = false;
+        let entry: any = null;
+        let after: boolean;
+        if (a.type === 'shape') {
+          const before = cleanShapeOrNull(a.before);
+          const aft = cleanShapeOrNull(a.after);
+          // History is undone (needs the "after" state to be live); redo is applied (needs the "before" state).
+          ok = has(key) === (undo ? !!aft : !!before);
+          after = undo ? !!before : !!aft;
+          entry = { id: a.id, type: 'shape', before, after: aft };
+        } else if (a.type === 'stroke' || a.type === 'text') {
+          const source = undo ? (a.type === 'stroke' ? strokeById : textById).get(key) : a.data;
+          ok = has(key) === undo && !!source && typeof source === 'object' && source.id === a.id;
+          after = !undo;
+          if (ok) entry = { id: a.id, type: a.type, data: a.type === 'stroke' ? cleanStroke(source) : cleanText(source) };
+        } else {
+          break;
+        }
+        if (!ok) break;
+        exists.set(key, after);
+        kept.push(entry);
+      }
+      return kept.reverse().slice(-MAX_PERSISTED_HISTORY);
+    };
+
+    return { history: walk(raw?.history, true), redo: walk(raw?.redo, false) };
+  } catch {
+    return empty;
+  }
+};
+
+/** Editable marks + validated stacks from a saved mobile `annotationData` object; null for anything else (web's Konva JSON, none). */
+export const marksFromData = (data: any): RestoredMarks | null => {
+  if (!isMobileData(data)) return null;
+  const marks: AnnotationMarks = { strokes: data.strokes || [], texts: data.texts || [], shapes: data.shapes || [] };
+  return { ...marks, ...restoreStacks(data, marks) };
+};
 
 /**
  * One doc from `GET leads/:id/annotations`. A PUT stores `{ salesPhotoId, annotationData }` NESTED inside
@@ -91,13 +206,7 @@ export const parseAnnotationDoc = (doc: any): ParsedAnnotationDoc | null => {
   return {
     annotatedId: String(annotatedId),
     originalId: originalId ? String(originalId) : null,
-    marks: isMobileData(data)
-      ? {
-          strokes: data.strokes || [],
-          texts: data.texts || [],
-          shapes: data.shapes || [],
-        }
-      : null,
+    marks: marksFromData(data),
   };
 };
 
@@ -175,3 +284,10 @@ export const resetToBaseline = (
   texts: [...(seeded?.texts?.[photoId] ?? [])],
   shapes: [...(seeded?.shapes?.[photoId] ?? [])],
 });
+
+/**
+ * What the undo stack looks like, as one string. The editor compares it with the value it opened with to tell "the rep changed
+ * something" from "the stack just contains last week's steps" - the stack is no longer empty on a re-edit.
+ */
+export const historySignature = (history?: any[] | null): string =>
+  (history || []).map((a) => `${a?.type}:${a?.id}`).join(',');
