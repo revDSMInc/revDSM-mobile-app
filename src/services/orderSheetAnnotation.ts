@@ -23,7 +23,7 @@ import { base64ByteLength, stripDataUriPrefix } from '../utils/jpeg-to-pdf';
 import { countPdfPages, extractEmbeddedJpeg } from '../utils/pdf-extract-jpeg';
 import { httpStatusOf } from '../utils/network-error';
 import { serverErrorText, shouldRasterize } from '../utils/order-sheet-annotation';
-import { MOBILE_ANNOTATION_FORMAT } from '../utils/annotation-restore';
+import { marksFromData, type RestoredMarks } from '../utils/annotation-restore';
 import { logOrderSheetAnnotated } from '../utils/activity-log/job-builder-logs';
 import { findLocalOriginal, saveLocalOriginalCopy } from './orderSheetSync';
 
@@ -71,11 +71,7 @@ const writeCacheJpeg = async (jpegBase64: string): Promise<string> => {
 };
 
 /** The marks the server stored with the last annotation, when they are OURS (the web app writes a different format). */
-const savedMarks = (annotation: any): { strokes: any[]; texts: any[]; shapes: any[] } | null => {
-  const data = annotation?.data;
-  if (!data || typeof data !== 'object' || data.format !== MOBILE_ANNOTATION_FORMAT || !Array.isArray(data.strokes)) return null;
-  return { strokes: data.strokes || [], texts: data.texts || [], shapes: data.shapes || [] };
-};
+const savedMarks = (annotation: any): RestoredMarks | null => marksFromData(annotation?.data);
 
 /**
  * The CLEAN picture a re-edit should draw its restored marks over. Needs the server to say where the pristine original is
