@@ -28,6 +28,7 @@ import ChatService from '../../services/api/ChatService';
 import { ChatReplyBar, ChatEditBar } from '../../widgets/components/chat/ChatBars';
 import { ChatMessageBubble } from '../../widgets/components/chat/ChatMessageBubble';
 import { LeadImagePickerModal } from '../../widgets/components/chat/LeadImagePickerModal';
+import { GifPickerModal } from '../../widgets/modals/chat/GifPickerModal';
 import {
   ParticipantsModal,
   PinnedMessagesArea,
@@ -195,6 +196,7 @@ export default function ChatDetailScreen() {
     handleSend,
     handleAttach,
     handleDocumentAttach,
+    sendGif,
     pendingAttachments,
     addPendingAppointmentPhotos,
     removePendingAttachment,
@@ -306,6 +308,7 @@ export default function ChatDetailScreen() {
 
   const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
   const [showLeadImagePicker, setShowLeadImagePicker] = useState(false);
+  const [showGifPicker, setShowGifPicker] = useState(false);
   const pendingAttachmentAction = useRef<null | (() => void)>(null);
 
   const runPendingAttachmentAction = useCallback(() => {
@@ -1296,6 +1299,12 @@ export default function ChatDetailScreen() {
                 onPress: () => selectAttachmentOption(handleDocumentAttach),
               },
               {
+                key: 'gif',
+                label: 'GIF',
+                render: (c: string) => <MCIcon name="file-gif-box" size={26} color={c} />,
+                onPress: () => selectAttachmentOption(() => setShowGifPicker(true)),
+              },
+              {
                 key: 'voice',
                 label: 'Voice Memo',
                 render: (c: string) => (
@@ -1349,6 +1358,15 @@ export default function ChatDetailScreen() {
         uri={addendumPdf.uri}
         title="Signed Addendum"
         onClose={() => setAddendumPdf({ visible: false, uri: '' })}
+      />
+
+      <GifPickerModal
+        visible={showGifPicker}
+        onClose={() => setShowGifPicker(false)}
+        onSelect={(gif) => {
+          setShowGifPicker(false);
+          sendGif(gif.url);
+        }}
       />
 
       <LeadImagePickerModal

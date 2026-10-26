@@ -617,6 +617,21 @@ export const useChatLogic = (
     sendTextMessage,
   ]);
 
+  // A GIF goes out as a text message whose body is the GIPHY URL (see utils/gif-message.ts).
+  const sendGif = useCallback(
+    async (url: string) => {
+      if (!chatId || !url) return;
+      const reply = replyingTo;
+      setReplyingTo(null);
+      try {
+        await sendTextMessage(url, reply);
+      } catch (e) {
+        console.warn('[Chat] sendGif failed:', e);
+      }
+    },
+    [chatId, replyingTo, sendTextMessage]
+  );
+
   const handleDocumentAttach = useCallback(async () => {
     try {
       const results = await DocumentPicker.pick({
@@ -785,6 +800,7 @@ export const useChatLogic = (
     handleSend,
     handleAttach,
     handleDocumentAttach,
+    sendGif,
     sendImageAsMessage,
     pendingAttachments,
     addPendingAppointmentPhotos,

@@ -35,6 +35,8 @@ import { getFileType, getAvatarProps, getNativeModules, cleanFilePath } from './
 import { VoiceNotePlayer } from './VoiceNotePlayer';
 import { DownloadProgressRing } from './DownloadProgressRing';
 import { ChatMessageText } from './ChatMessageText';
+import { GifMessage } from './GifMessage';
+import { GIF_REPLY_LABEL, isGifMessageText } from '../../../utils/gif-message';
 import { ScrollView } from 'react-native-gesture-handler';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -633,7 +635,10 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     let replyIcon = null;
     let replyLabel = text;
 
-    if (isReplyVoice) {
+    if (isGifMessageText(text)) {
+      replyIcon = 'images';
+      replyLabel = GIF_REPLY_LABEL;
+    } else if (isReplyVoice) {
       replyIcon = 'mic';
       replyLabel = `Voice Message ${replyTo.duration ? `(${replyTo.duration})` : ''}`;
     } else if (replyFileType === 'image' || replyTo.image) {
@@ -1461,13 +1466,21 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                     if (msg.text && msg.text.trim().length > 0 && isSimpleText) {
                       return (
                         <View className="px-2.5 pt-1 pb-0.5" style={{ minWidth: 50 }}>
-                          <ChatMessageText
-                            text={msg.text}
-                            isMe={isMe}
-                            colors={colors}
-                            isPinned={isPinned}
-                            searchQuery={searchQuery}
-                          />
+                          {isGifMessageText(msg.text) ? (
+                            <GifMessage
+                              url={msg.text}
+                              maxWidth={MAX_BUBBLE_WIDTH - 40}
+                              onLongPress={() => setShowReactionBar(true)}
+                            />
+                          ) : (
+                            <ChatMessageText
+                              text={msg.text}
+                              isMe={isMe}
+                              colors={colors}
+                              isPinned={isPinned}
+                              searchQuery={searchQuery}
+                            />
+                          )}
                           <View className="flex-row justify-end items-center mt-0 pb-0.5">
                             {msg.isEdited && (
                               <TouchableOpacity

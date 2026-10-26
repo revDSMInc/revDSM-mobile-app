@@ -5,6 +5,7 @@ import {
   WEATHER_API_KEY,
   MAPBOX_ACCESS_TOKEN,
   LMS_REDIRECT_URL,
+  GIPHY_API_KEY,
   S3_BUCKET,
   S3_BASE_URL,
 } from '@env';
@@ -26,6 +27,8 @@ export const ENV = {
   WEATHER_API_KEY: required('WEATHER_API_KEY', WEATHER_API_KEY),
   MAPBOX_ACCESS_TOKEN: required('MAPBOX_ACCESS_TOKEN', MAPBOX_ACCESS_TOKEN),
   LMS_REDIRECT_URL: required('LMS_REDIRECT_URL', LMS_REDIRECT_URL),
+  // Optional: without it the chat GIF picker shows a "not configured" state instead of crashing the app.
+  GIPHY_API_KEY: GIPHY_API_KEY || '',
   S3_BUCKET: s3Bucket,
   S3_BASE_URL: S3_BASE_URL || `https://${s3Bucket}.s3.amazonaws.com/`,
 } as const;

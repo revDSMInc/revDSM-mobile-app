@@ -754,3 +754,27 @@ Channels are created and managed **in the portal only**: managers and VPs work t
 - Not verified on device: a rep in a shared channel's second office sees it in the list and can post; a manager reordering from that second office moves it in the rep's list too; an older single-office channel is unaffected.
 
 - **Merge note - `ChatDetail/index.tsx` conflicted when REVDSM-1313 landed on `dev-v1-multi-tenat`.** Both sides edited the same two lines at the top of `ChatDetailScreen`: HEAD had added `installBucket: routeInstallBucket` to the `route.params` destructure, REVDSM-1313 had added `const navigation = useNavigation<any>()` and destructured without `installBucket`. **Resolved by keeping BOTH** - HEAD's destructure is a strict superset of the branch's, so nothing from REVDSM-1313 is lost. ⚠️ Both are load-bearing and dropping either compiles-but-breaks: `routeInstallBucket` is passed on at the installer photo preview, and `navigation.goBack()` is used in the channel-permission effect. If this file conflicts again, check the destructure line is still the superset rather than taking one side wholesale.
+
+## Chat GIF picker (REVDSM-575)
+
+Ticket: add GIFs to chat. The attach menu (`+`) gets a **GIF** row that opens a bottom sheet — search pill, 3-column grid with 2px gaps — fed by the **GIPHY REST API** (Tenor's API was shut down 30 Jun 2026, and GIPHY's RN SDK adds native code with unverified RN 0.84 support).
+
+| piece | where |
+|---|---|
+| GIPHY client (`trending` / `search`, paged) | `services/api/giphy.ts` |
+| debounced infinite query | `hooks/useGifSearch.ts` |
+| picker sheet | `widgets/modals/chat/GifPickerModal.tsx` |
+| inline bubble renderer | `widgets/components/chat/GifMessage.tsx` |
+| detection + aspect ratio (pure, tested) | `utils/gif-message.ts` |
+| send | `useChatLogic.sendGif` → `sendTextMessage` |
+| key | `GIPHY_API_KEY` in `.env` → `config/env.ts` (optional) |
+
+- **A GIF is a TEXT message whose whole body is a `media*.giphy.com` / `i.giphy.com` `.gif|.webp` URL.** The backend has no GIF type, so web and older builds show the link and nothing needed a server change. `isGifMessageText` is an exact-match on the trimmed body — ⚠️ do not loosen it to "contains": a sentence with a link in it must stay text.
+- ⚠️ **GIPHY is called with plain `fetch`, never the axios wrapper** — that attaches the revDSM bearer token to every request.
+- The sent URL is the `downsized` rendition with its query string stripped; the grid uses `fixed_width_small`. Rating is capped at `pg-13`.
+- **No key ⇒ the picker shows "not set up", the app does not throw** (`GIPHY_API_KEY` is deliberately not in `required()`). Production needs GIPHY's upgraded key and the "Powered by GIPHY" line, which the sheet renders.
+- The picker opens through `selectAttachmentOption`, so it waits for the attach menu to finish dismissing (never stack native Modals). It lifts itself by the keyboard height rather than using `KeyboardAvoidingView`, and caps its height from the window so iPad landscape fits.
+- Reply previews show `GIF` and the thread list shows `Sent a GIF` instead of the raw URL.
+- Tests: `__tests__/utils/gif-message.test.ts`. ⚠️ Needs a device check on iOS and Android: GIFs animate in the grid and bubble, the sheet sits above the keyboard, long-press on a GIF bubble opens the reaction bar, and a failed load falls back to the link.
+
+- **Android showed GIFs as a still frame (REVDSM-575 follow-up).** Root cause: React Native 0.84 does **not** bundle Fresco's animated decoders (`node_modules/react-native/gradle/libs.versions.toml` lists only `fresco`, `middleware`, `imagepipeline-okhttp3`, `ui-common`), so the stock `<Image>` decodes only the first frame on Android while iOS animates natively. Fix is in `android/app/build.gradle`: `animated-gif`, `animated-webp` and `webpsupport` at the SAME version as RN's `fresco`. ⚠️ Needs a **native rebuild** (`yarn android`) — Metro reload does nothing — and the three versions must be bumped together with every RN upgrade. This also makes any other animated GIF/WebP `<Image>` in the app animate on Android.

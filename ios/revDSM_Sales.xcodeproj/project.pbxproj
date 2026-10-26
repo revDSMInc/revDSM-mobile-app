@@ -19,7 +19,7 @@
 		52CA88BD2FD6D3890054DEBF /* UITextView+DoneButton.m in Sources */ = {isa = PBXBuildFile; fileRef = 52CA88BB2FD6D3890054DEBF /* UITextView+DoneButton.m */; };
 		52CA88BE2FD6D3890054DEBF /* UITextField+DoneButton.m in Sources */ = {isa = PBXBuildFile; fileRef = 52CA88BA2FD6D3890054DEBF /* UITextField+DoneButton.m */; };
 		57A649A7CA7C46AD81AF785A /* PublicSans-Regular_italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 9F093EBB22864D18ADA195E7 /* PublicSans-Regular_italic.ttf */; };
-		5B7A0D032FF0A001001CFA8C /* revDSM_Sales/BackgroundUploadTask.m in Sources */ = {isa = PBXBuildFile; fileRef = 5B7A0D022FF0A001001CFA8C /* revDSM_Sales/BackgroundUploadTask.m */; };
+		5B7A0D032FF0A001001CFA8C /* BackgroundUploadTask.m in Sources */ = {isa = PBXBuildFile; fileRef = 5B7A0D022FF0A001001CFA8C /* BackgroundUploadTask.m */; };
 		60B4407C44E5461B87E537B7 /* PublicSans-Light.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C9322F957A5D4516A981DD92 /* PublicSans-Light.ttf */; };
 		68A572B955B942D0AE0E05E4 /* PublicSans-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D39F2F44B2AB4F439F52EF18 /* PublicSans-Medium.ttf */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
@@ -43,8 +43,8 @@
 		526A0DF12FE94DB6001CFA8C /* RNHapticFeedback.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RNHapticFeedback.m; sourceTree = "<group>"; };
 		52CA88BA2FD6D3890054DEBF /* UITextField+DoneButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "UITextField+DoneButton.m"; sourceTree = "<group>"; };
 		52CA88BB2FD6D3890054DEBF /* UITextView+DoneButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "UITextView+DoneButton.m"; sourceTree = "<group>"; };
-		5B7A0D012FF0A001001CFA8C /* revDSM_Sales/BackgroundUploadTask.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = revDSM_Sales/BackgroundUploadTask.h; sourceTree = "<group>"; };
-		5B7A0D022FF0A001001CFA8C /* revDSM_Sales/BackgroundUploadTask.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = revDSM_Sales/BackgroundUploadTask.m; sourceTree = "<group>"; };
+		5B7A0D012FF0A001001CFA8C /* BackgroundUploadTask.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = revDSM_Sales/BackgroundUploadTask.h; sourceTree = "<group>"; };
+		5B7A0D022FF0A001001CFA8C /* BackgroundUploadTask.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = revDSM_Sales/BackgroundUploadTask.m; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = revDSM_Sales/AppDelegate.swift; sourceTree = "<group>"; };
 		7D2FCED0DAF301DB3F3BA8EF /* libPods-revDSM_Sales.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-revDSM_Sales.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = revDSM_Sales/LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -83,8 +83,8 @@
 				DBBF2F80304A9ADB0028F1BE /* revDSM_Sales.entitlements */,
 				526A0DF02FE94DB6001CFA8C /* RNHapticFeedback.h */,
 				526A0DF12FE94DB6001CFA8C /* RNHapticFeedback.m */,
-				5B7A0D012FF0A001001CFA8C /* revDSM_Sales/BackgroundUploadTask.h */,
-				5B7A0D022FF0A001001CFA8C /* revDSM_Sales/BackgroundUploadTask.m */,
+				5B7A0D012FF0A001001CFA8C /* BackgroundUploadTask.h */,
+				5B7A0D022FF0A001001CFA8C /* BackgroundUploadTask.m */,
 				52CA88BC2FD6D3890054DEBF /* RNKeyboardToolbar */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
@@ -300,13 +300,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -321,13 +317,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-resources-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -345,7 +337,7 @@
 				52CA88BE2FD6D3890054DEBF /* UITextField+DoneButton.m in Sources */,
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
 				526A0DF22FE94DB6001CFA8C /* RNHapticFeedback.m in Sources */,
-				5B7A0D032FF0A001001CFA8C /* revDSM_Sales/BackgroundUploadTask.m in Sources */,
+				5B7A0D032FF0A001001CFA8C /* BackgroundUploadTask.m in Sources */,
 				18C0645130775FA000A51B71 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
