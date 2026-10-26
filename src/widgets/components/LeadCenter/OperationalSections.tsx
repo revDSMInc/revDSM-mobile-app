@@ -36,8 +36,8 @@ export const ToolsSection = ({
   onShowPitchbook,
   onShowRooflineDeck,
   revRenderJobs = [],
-  onRetryRevRender,
-  onDismissRevRender,
+  onRetryAllRevRenders,
+  onDismissAllRevRenders,
   isConsentGenerating,
   isWaiverGenerating,
   isInspectionGenerating,
@@ -126,6 +126,11 @@ export const ToolsSection = ({
   const hasActiveJobs = revRenderJobs.some(
     (j: any) => j.status !== 'completed' && j.status !== 'failed'
   );
+  /**
+   * Every render that failed, shown as ONE row rather than one card each - a batch of views
+   * fails together and the rep's action is the same for all of them.
+   */
+  const failedRenders = revRenderJobs.filter((j: any) => j.status === 'failed');
   /** Any still-running render whose last status poll could not reach the server. */
   const revRenderWaiting = revRenderJobs.some(
     (j: any) => j.waiting && j.status !== 'completed' && j.status !== 'failed'
@@ -331,56 +336,54 @@ export const ToolsSection = ({
           </View>
         )}
 
-        {/* Renders that did NOT start / finish stay here with the server's own reason (a timeout or lost connection included),
-            their payload kept, until the rep retries or dismisses them - a failed batch never wipes the queue. */}
-        {revRenderJobs
-          .filter((j: any) => j.status === 'failed')
-          .map((job: any, i: number) => (
-            <View
-              key={`rr-failed-${job.id}`}
-              className="mb-3 p-3 rounded-xl border"
-              style={{ borderColor: '#FECACA', backgroundColor: '#FEF2F2' }}
+        {/* Renders that did NOT start / finish keep their payload until the rep retries or
+            dismisses them - a failed batch never wipes the queue.
+
+            ⚠️ ONE ROW FOR THE WHOLE BATCH, not one card each. A batch fails as a batch: five
+            views of one house lose the same download and produced five identical cards
+            ("Front - not rendered / Failed to download house image"), which filled the Tools
+            panel and buried the controls under it. The per-view detail said nothing the rep
+            could act on differently - the action is the same for all of them. */}
+        {failedRenders.length > 0 && (
+          <View
+            className="mb-3 px-3 py-2.5 rounded-xl border flex-row items-center"
+            style={{ borderColor: '#FECACA', backgroundColor: '#FEF2F2' }}
+          >
+            <Icon
+              name={failedRenders[0].errorKind === 'network' ? 'wifi-off' : 'alert-circle-outline'}
+              size={16}
+              color="#B91C1C"
+            />
+            <Text
+              className="text-[13px] font-bold flex-1 ml-2"
+              style={{ color: '#991B1B' }}
+              numberOfLines={1}
             >
-              <View className="flex-row items-start">
-                <Icon
-                  name={job.errorKind === 'network' ? 'wifi-off' : 'alert-circle-outline'}
-                  size={18}
-                  color="#B91C1C"
-                  style={{ marginTop: 1 }}
-                />
-                <View className="flex-1 ml-2">
-                  <Text className="text-[13px] font-bold" style={{ color: '#991B1B' }} numberOfLines={1}>
-                    {job.payload?.viewLabel ? `${job.payload.viewLabel} - not rendered` : `Render ${i + 1} - not rendered`}
-                  </Text>
-                  <Text className="text-[12px] mt-0.5" style={{ color: '#7F1D1D' }}>
-                    {job.error || 'The render did not finish.'}
-                  </Text>
-                </View>
-              </View>
-              <View className="flex-row justify-end mt-2 gap-2">
-                <TouchableOpacity
-                  onPress={() => onDismissRevRender?.(job.id)}
-                  className="px-3 py-1.5 rounded-lg"
-                  style={{ backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#FECACA' }}
-                  accessibilityLabel="Dismiss failed render"
-                >
-                  <Text className="text-[12px] font-bold" style={{ color: '#991B1B' }}>
-                    Dismiss
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => onRetryRevRender?.(job.id)}
-                  className="px-3 py-1.5 rounded-lg"
-                  style={{ backgroundColor: '#B91C1C' }}
-                  accessibilityLabel="Retry render"
-                >
-                  <Text className="text-[12px] font-bold" style={{ color: '#FFFFFF' }}>
-                    Retry
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))}
+              {failedRenders.length === 1
+                ? 'RevRender failed'
+                : `RevRender failed (${failedRenders.length})`}
+            </Text>
+            <TouchableOpacity
+              onPress={() => onDismissAllRevRenders?.()}
+              className="px-2.5 py-1.5 rounded-lg"
+              accessibilityLabel="Dismiss failed renders"
+            >
+              <Text className="text-[12px] font-bold" style={{ color: '#991B1B' }}>
+                Dismiss
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => onRetryAllRevRenders?.()}
+              className="px-3 py-1.5 rounded-lg ml-1"
+              style={{ backgroundColor: '#B91C1C' }}
+              accessibilityLabel={failedRenders.length === 1 ? 'Retry render' : 'Retry all renders'}
+            >
+              <Text className="text-[12px] font-bold" style={{ color: '#FFFFFF' }}>
+                {failedRenders.length === 1 ? 'Retry' : 'Retry all'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {isLoading ? (
           <View className="flex-row">

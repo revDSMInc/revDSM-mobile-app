@@ -2618,3 +2618,14 @@ Ticket: once a text note is placed and confirmed, it must not move any more; it 
 - Edit Text alone does NOT unlock dragging - only the open style panel does.
 - Not verified on device: that a one-finger drag that starts on a locked note does nothing (it does not pan the photo either - the note still holds the touch, as before).
 - **Follow-up - notes ARE draggable while the Text tool is active; the tick locks them.** The prop is now `textMoveMode` on `AnnotationCanvas` / `moveMode` on `DraggableText`: `'all'` while `activeTool === 'text'` (every note, before the tick), `'selected'` while the Adjust Style panel is open (that note only), else `'none'`. `commitTextMode` (the tick) also clears the selection and closes the style / font panels. Cancel (X) still restores the notes from before the mode was entered. Not verified on device.
+
+## RevRender failures: five identical cards became one row
+
+Reported with a screenshot of the Tools tab filled by five stacked cards, all reading "Front - not rendered / Failed to download house image", each with its own Dismiss and Retry: "so irritating".
+
+- **Cause** (`widgets/components/LeadCenter/OperationalSections.tsx`): the failed-render block mapped one card per failed job. A RevRender batch is several views of ONE house, so when the house image cannot be downloaded every view fails for the same reason at the same moment - one card each, all saying the same thing, burying the rest of the panel.
+- **Fix:** a single row - `RevRender failed` (or `RevRender failed (N)`) with `Dismiss` and `Retry all` on the right. Driven by `failedRenders`, a filter over `revRenderJobs`.
+- WARNING: **do not implement "retry all" as a loop over `retryRevRender` at the call site.** That function raises its own `FlashMessage.error` per job, so a batch of five failing again would stack five identical toasts - the same pile-up in a different place. `services/revRenderJobs.ts` now has `retryAllRevRenders` (one summary toast, in the shape `startRevRenders` already used) and `dismissAllRevRenders` (one write, one persist).
+- The per-job `retryRevRender` / `dismissRevRender` remain in the service and the hook; only the now-dead `onRetryRevRender` / `onDismissRevRender` PROPS were dropped from `OperationalSections`. Re-add them if a per-row control ever comes back.
+- The icon still reflects the first failure's `errorKind` (`wifi-off` vs `alert-circle-outline`), so a connectivity failure still looks different from a server one at a glance.
+- Not verified on device: fail a multi-view batch (airplane mode mid-render) and confirm ONE row appears; Retry all re-submits every one and raises at most one message; Dismiss clears them all.

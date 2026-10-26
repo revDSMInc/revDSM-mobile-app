@@ -1944,3 +1944,25 @@ Asked after the 409 audit: "does this also cover funding?" It did NOT - a differ
 - Tests: `tests/offline/funding-settled-merge.test.ts` (9) - carry, pid collision, verbatim copy, unsettled rows left out, and the no-op cases.
 - **The general rule for any new queue step:** if the endpoint takes a FULL LIST, reconcile against the server before sending. `documents`, `consent`, `addendumRefund` and `fundingDecision` are safe because they are per-row or have `guarded` pre-checks; `funding` was the one wholesale save in the queue.
 - Not verified on device: collect a payment from the portal while the phone is offline on the same deal, then sync - the funding step should carry that row and succeed instead of showing "Cannot remove".
+
+## Home screen: the pending-uploads CARD became a one-line strip
+
+Ask: "instead of this card just show the syncing bar like the offline bar, and when syncing is done make the bar green and change text to syncing done. No need to show the whole thing, keep it only in account settings. And if any api failed please don't show any message in home screen like we are showing in the form of card."
+
+- **Gone from the lead list:** `PendingLeadsBanner` is no longer mounted (`screens/Leads/index.tsx`). It put queue mechanics - per-lead rows, "N of M uploaded", retry buttons and raw API errors - on the screen a rep works from.
+- **In its place:** `widgets/common/SyncBanner.tsx`, mounted in `MainHeader` directly under `OfflineBanner`, so both strips stack and behave alike. Blue + spinner "Syncing your work..." while in flight; green "Syncing done" for `SYNC_DONE_HOLD_MS` (3 s) after the queue empties; otherwise nothing. Rules are pure in `utils/sync-banner.ts`, tests in `tests/offline/sync-banner.test.ts` (9).
+- WARNING: **failures are SILENT on the home screen, deliberately.** No error text, no error count, no retry. A rep on a driveway cannot act on "the calculator conflicted", and a red card on the lead list reads as "the app is broken" when the work is safe on the device. Blocked work (`failed` / `needs-review`) maps to tone `none`. This is a product decision - do not add an error state to this strip.
+- WARNING: `justFinished` is tracked in component state, not derived from an empty queue. An empty queue on a cold start is the NORMAL case; deriving "done" from it would greet every launch with "Syncing done" for work the rep never saw start.
+- The strip stays silent while OFFLINE even with work queued - `OfflineBanner` is already saying the useful thing, and two stacked strips about one situation is noise.
+- **Nothing was lost, it moved:** Profile keeps `PendingUploadsCard`, which navigates to `screens/PendingUploads/` - per-item status, `describeQueueError` text, Retry and Remove all still live there.
+- `widgets/components/PendingLeadsBanner.tsx` is left in the tree, unreferenced, on purpose: the client has not seen this change yet and re-mounting it is one line. Delete it once they confirm.
+- Not verified on device: queue work offline then reconnect - the strip should go blue while draining and green for ~3 s; a failing item should show NOTHING on home and still appear under Profile -> pending uploads.
+
+### RevRender queue: batch retry / dismiss (`retryAllRevRenders`, `dismissAllRevRenders`)
+
+Added for the collapsed failure row in the Tools tab - full note in **`docs/claude/lead-center.md`** ("RevRender failures: five identical cards became one row"). Recorded here because the job queue itself lives in `services/revRenderJobs.ts`.
+
+- WARNING: **a batch action must not be a loop over the single-job function.** `retryRevRender` raises its own `FlashMessage.error` when a job fails again, so retrying five would stack five identical toasts. `retryAllRevRenders` submits them with `Promise.all` and reports ONCE, in the same shape `startRevRenders` already uses for a batch ("N of M renders not started", with the first job's error as the detail).
+- `dismissAllRevRenders` filters and persists once rather than calling `dismissRevRender` per job, which would write the store N times.
+- Both are no-ops when nothing is failed, so they are safe to call from a control that may be visible for a moment after the last job clears.
+- The per-job `retryRevRender` / `dismissRevRender` are unchanged and still exported - the UI simply no longer has a per-row control.

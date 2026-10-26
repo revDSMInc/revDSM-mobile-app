@@ -5543,3 +5543,10 @@ row, its `data.blockers` replace this list; ask backend to treat a covered job a
 - **Lead-wide shelf**: `leadShelfFor` lists every row's filed plans on each row (deduped by label); `restoreRowPlan` moves a local entry from the holding row; the server restore is already lead-wide. Restore is still hidden by `canRestoreEntry` for reference entries and financing onto a down payment (`FUNDING_FINANCING_ON_DOWN_PAYMENT`).
 - **No removal marker (s4)**: `DynamicDealEditScreen`'s save now goes through `withSettledRows` too. The re-scoping card carry in `ResultJobModal` stays - without it a saved card is deleted at HTTP 200.
 - s5: a calculator switch after submit is NOT blocked by the server today, so `scopeAfterSubmit` never fires; the handling is left in place, harmless. The doc's "four answers" for `settledAction` lists a fourth we do not know - only `reuse | refund | reuseWithRefund` are sent.
+
+## The lead list no longer carries the pending-uploads card
+
+`screens/Leads/index.tsx` used to mount `PendingLeadsBanner` as its `ListHeaderComponent`. It is gone: sync now gets one line from `SyncBanner` in `MainHeader`, app-wide. Full note in **`docs/claude/offline.md`** ("the pending-uploads CARD became a one-line strip").
+
+- WARNING: do not re-add a sync or error card to the lead list. The card put per-lead rows, progress counts, retry buttons and raw API errors on the screen a rep works from; failures are now deliberately silent outside Profile -> pending uploads.
+- `widgets/components/PendingLeadsBanner.tsx` is still in the tree but unreferenced, pending the client seeing the new strip. If they confirm, delete it; if they want the card back, it is one `ListHeaderComponent` line.

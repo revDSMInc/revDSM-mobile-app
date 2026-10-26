@@ -287,6 +287,43 @@ export const retryRevRender = async (leadId: string, jobId: string | number): Pr
   maybeFinalize(leadId);
 };
 
+/**
+ * Retry EVERY failed render for this lead, reporting once.
+ *
+ * ⚠️ Not a loop over `retryRevRender` at the call site. That one raises its own
+ * `FlashMessage.error` per job, so retrying a batch of five that fails again would stack five
+ * identical toasts - the same pile-up the single collapsed row exists to remove. One summary,
+ * like `startRevRenders` already does for a batch.
+ */
+export const retryAllRevRenders = async (leadId: string): Promise<void> => {
+  const failed = read(leadId).filter((j) => j.status === 'failed');
+  if (!failed.length) return;
+  ensureLifecycle();
+  const outcomes = await Promise.all(failed.map((j) => submitJob(leadId, j.id)));
+  const stillFailed = outcomes.filter((o) => o === 'failed').length;
+  if (stillFailed) {
+    const first = read(leadId).find(
+      (j) => failed.some((f) => f.id === j.id) && j.status === 'failed'
+    );
+    FlashMessage.error(
+      stillFailed === outcomes.length
+        ? 'RevRender not started'
+        : `${stillFailed} of ${outcomes.length} renders not started`,
+      first?.error || 'Please try again.'
+    );
+  }
+  maybeFinalize(leadId);
+};
+
+/** Dismiss every failed render for this lead in one write. */
+export const dismissAllRevRenders = (leadId: string): void => {
+  const before = read(leadId);
+  const next = before.filter((j) => j.status !== 'failed');
+  if (next.length === before.length) return;
+  jobsByLead[leadId] = next;
+  persist(leadId);
+};
+
 export const dismissRevRender = (leadId: string, jobId: string | number): void => {
   jobsByLead[leadId] = read(leadId).filter((j) => String(j.id) !== String(jobId));
   persist(leadId);

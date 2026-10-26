@@ -1530,3 +1530,11 @@ Reported twice in different places ("[Reports] S3 Resolve Error: Network Error" 
 - Not a fix for the cause: the call that failed still failed (the row simply keeps its last data). Not verified on device.
 
 - **File map for the two app-wide changes this session:** `index.js` installs `installNetworkErrorDowngrade()` (see "A dropped connection no longer raises the red Console Error screen"); `screens/RevRender/index.tsx` awaits the submit before clearing its queue (see "RevRender screen - the queue is cleared only after the submit is answered"). Both are written up above.
+
+## The strips under the header: connection, then sync
+
+`MainHeader` renders two one-line strips directly under the header bar, in this order: `OfflineBanner` (connection) then `SyncBanner` (queue). Both are app-wide, so every main screen gets them and no screen rolls its own. Full note on the sync one - why it replaced the pending-uploads card, and why it never reports errors - is in **`docs/claude/offline.md`** ("the pending-uploads CARD became a one-line strip").
+
+- WARNING: **neither strip ever shows an error.** The sync strip is silent for `failed` / `needs-review` work on purpose: a rep cannot act on a sync error mid-appointment, and a red notice on the main screens reads as "the app is broken". Anything needing a human belongs in Profile -> pending uploads. Do not add an error state to either strip.
+- They stack and must stay visually alike: same height, same 11pt single-line text, same centred icon-plus-text. `OfflineBanner` owns amber (offline / weak); `SyncBanner` owns blue (in flight) and green (done). Don't reuse amber in the sync strip - the colours are how a rep tells the two apart at a glance.
+- Logic for both is pure and testable - `utils/connection-banner.ts` and `utils/sync-banner.ts` - because neither component can be loaded under jest. Put any new rule in the util, not the component.
