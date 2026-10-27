@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, Image } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { isGifMessageText } from '../../../utils/gif-message';
 
 interface ReplyBarProps {
   replyingTo: any;
@@ -52,8 +53,12 @@ export function ChatReplyBar({ replyingTo, currentUserId, onCancel }: ReplyBarPr
 
   let replyIcon = null;
   let replyLabel = replyingTo.text || replyingTo.message || '';
+  // A GIF reply shows the GIF itself, never its url.
+  const replyGifUrl = isGifMessageText(replyLabel) ? replyLabel.trim() : null;
 
-  if (isReplyVoice) {
+  if (replyGifUrl) {
+    replyLabel = 'GIF';
+  } else if (isReplyVoice) {
     replyIcon = 'mic';
     replyLabel = `Voice Message ${replyingTo.duration ? `(${replyingTo.duration})` : ''}`;
   } else if (replyFileType === 'image' || replyingTo.image) {
@@ -84,16 +89,26 @@ export function ChatReplyBar({ replyingTo, currentUserId, onCancel }: ReplyBarPr
           Replying to {senderName}
         </Text>
         <View className="flex-row items-center">
-          {replyIcon && (
-            <Icon name={replyIcon} size={14} color={colors.text} style={{ marginRight: 4, opacity: 0.6 }} />
+          {replyGifUrl ? (
+            <Image
+              source={{ uri: replyGifUrl }}
+              style={{ width: 48, height: 48, borderRadius: 8, marginTop: 2 }}
+              resizeMode="cover"
+            />
+          ) : (
+            <>
+              {replyIcon && (
+                <Icon name={replyIcon} size={14} color={colors.text} style={{ marginRight: 4, opacity: 0.6 }} />
+              )}
+              <Text
+                className="text-[12px] font-semibold opacity-60 flex-1"
+                style={{ color: colors.text }}
+                numberOfLines={isReplyVoice ? undefined : 1}
+              >
+                {replyLabel || 'Attachment'}
+              </Text>
+            </>
           )}
-          <Text
-            className="text-[12px] font-semibold opacity-60 flex-1"
-            style={{ color: colors.text }}
-            numberOfLines={isReplyVoice ? undefined : 1}
-          >
-            {replyLabel || 'Attachment'}
-          </Text>
         </View>
       </View>
       <TouchableOpacity onPress={onCancel} className="ml-3 p-1">

@@ -284,7 +284,8 @@ class ChatService {
         bucketName: f.bucketName || undefined,
       })),
       reactions: m.reactions || [],
-      isPinned: m.isPinned || false,
+      // Backend may serialise the flag under any of these names; accept all so a rename does not silently drop pins.
+      isPinned: !!(m.isPinned || m.pinned || m.is_pinned || m.pinnedMessage),
       isEdited: m.isEdited || false,
       editHistory: m.editHistory || [],
       received: !!m.seenBy?.length,

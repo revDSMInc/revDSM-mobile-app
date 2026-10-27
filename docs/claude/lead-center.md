@@ -2667,3 +2667,14 @@ There is ONE editor (`screens/ImageAnnotation`) and ONE order-sheet opener (`ope
 - **Order sheet, Job docs** (Lead Center, and My Deals detail which reuses Lead Center): `JobDocsSection.handleAnnotateOrderSheet` -> `openOrderSheetEditor`; its list already warms each sheet (`resolveDocs`).
 - **Order sheet, job builder before submit AND the My Deals edit wizard:** `SummaryFinalizeCards.handleAnnotateOrderSheet` -> `openOrderSheetEditor` with the full doc (`filePath`, `bucketName`, `annotation`). ⚠️ This tile did NOT warm its sheets, so its pencil only worked offline if the Job-docs list had been opened first. It now runs `warmOrderSheetForOffline` over `orderSheetFiles` itself (server-held sheets only; also keeps the clean original of an annotated one).
 - A sheet that exists only locally (not yet uploaded / no `serverId`) has no pencil, by design (`canAnnotateOrderSheet`), so there is nothing to annotate offline before it lands on the server.
+
+### REVUIUX-571 follow-up - undo/redo missing on the 2nd open of a saved annotation
+
+- **Root cause:** the first save of an annotation (queue mode `new`, POST `images` with `annotations`) never refreshed the saved-annotation docs
+  (`['leadAnnotations', leadId]` + the MMKV `lead_annotations:<leadId>` copy). Only the re-edit PATCH path invalidated them, and `onSaveSuccess`
+  invalidates when the job is only ENQUEUED (before the upload). So the next open found no doc for the new photo, drew on the flattened copy with
+  no marks, and Undo/Redo had nothing to restore.
+- **Fix:** `uploadQueue.refreshAnnotationDocs(leadId)` re-reads `GET leads/:id/annotations`, writes the MMKV cache and `setQueryData`; called
+  after BOTH the `new` upload and the re-edit PATCH.
+- Not covered (by design): reopening a re-edit while its own save is still queued shows the pre-save doc; a pending `new` annotation has no server id
+  to reopen. Not verified on device.

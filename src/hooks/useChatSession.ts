@@ -4,6 +4,12 @@ import { IMessage } from 'react-native-gifted-chat';
 import ChatService from '../services/api/ChatService';
 import SocketManager from '../services/SocketManager';
 
+const mergePins = (current: any[], incoming: any[]): any[] => {
+  const byId = new Map<string, any>();
+  [...current, ...incoming].forEach((m) => m?._id && byId.set(String(m._id), { ...byId.get(String(m._id)), ...m, isPinned: true }));
+  return Array.from(byId.values());
+};
+
 export const useChatSession = (
   initialChatId: string | null,
   leadId: string | undefined,
@@ -28,6 +34,17 @@ export const useChatSession = (
   const loadingOlderRef = useRef(false);
 
   const currentUserId = user?._id || user?.id || 'ghost';
+
+  // Keep the pinned list in step with the message list: pins that are in the loaded page come from `messages.isPinned`,
+  // and pins from older pages that are not in `messages` are retained. A message that is now unpinned is dropped.
+  useEffect(() => {
+    setPinnedMessages((prev: any[]) => {
+      const currentIds = new Set(messages.map((m: any) => String(m?._id)));
+      const extras = (prev || []).filter((pm: any) => !currentIds.has(String(pm?._id)));
+      const currentPins = messages.filter((m: any) => m?.isPinned);
+      return mergePins(currentPins, extras);
+    });
+  }, [messages]);
 
   const cleanFilePath = (filePath: string): string => {
     let p = filePath;
@@ -106,9 +123,11 @@ export const useChatSession = (
       setMessages(normalized);
       fetchSecureUrls(normalized);
 
+      setPinnedMessages([]);
       const initialPinned = normalized.filter((m: any) => m.isPinned === true);
+      console.log(`[pins] REST page: ${normalized.length} messages, ${initialPinned.length} isPinned`);
       if (initialPinned.length > 0) {
-        setPinnedMessages(initialPinned);
+        setPinnedMessages((prev) => mergePins(prev, initialPinned));
       }
     } catch (err) {
       console.error('Load messages error:', err);
@@ -199,12 +218,10 @@ export const useChatSession = (
 
     if (isChannel) {
       ChatService.setOpenChannel(chatId);
-    } else {
-      SocketManager.emit('get-pinned-messages', {
-        chatId,
-        channelId: chatId,
-      });
     }
+    // ⚠️ Lead chat pins are requested by SocketManager.joinRoom (plain chat id, on join ack / +800ms / reconnect) - the same
+    // shape the web sends. A second `{ chatId, channelId }` request used to go out here as well; if the server answers it
+    // differently, its `pinned-messages-response` replaces the list (unverified - removed to keep one request shape).
 
     // After a reconnect, pull what was missed while offline (latest page only) and merge it in.
     const resyncChannel = () => {
@@ -403,17 +420,23 @@ export const useChatSession = (
       Vibration.vibrate(50);
       const msgId = (data.messageId || data.id || data.message?._id || data._id)?.toString();
       console.log('[useChatSession] message-pinned:', msgId);
+      if (!msgId) return;
+
+      const fromPayload = data.message || data.pinnedMessage || data.msg;
+      const normalizedPayload = fromPayload ? ChatService.normalizeMessage(fromPayload) : null;
 
       setMessages((prev) => {
         const updated = prev.map((m: any) =>
           m._id?.toString() === msgId ? { ...m, isPinned: true } : m
         );
-        const pinned = updated.find((m: any) => m._id?.toString() === msgId);
+        let pinned = updated.find((m: any) => m._id?.toString() === msgId);
+        if (!pinned && normalizedPayload) pinned = { ...normalizedPayload, isPinned: true };
         if (pinned) {
+          const toAdd = { ...pinned, isPinned: true };
           setPinnedMessages((pv: any[]) => {
             const alreadyIn = pv.some((pm: any) => pm._id?.toString() === msgId);
             if (alreadyIn) return pv;
-            return [...pv, { ...pinned, isPinned: true }];
+            return [...pv, toAdd];
           });
         }
         return updated;
@@ -424,6 +447,7 @@ export const useChatSession = (
       Vibration.vibrate(50);
       const msgId = (data.messageId || data.id || data.message?._id || data._id)?.toString();
       console.log('[useChatSession] message-unpinned:', msgId);
+      if (!msgId) return;
       setMessages((prev) =>
         prev.map((m: any) => (m._id?.toString() === msgId ? { ...m, isPinned: false } : m))
       );
@@ -432,11 +456,18 @@ export const useChatSession = (
 
     const unsubPinnedResponse = onLeadOnly('pinned-messages-response', (data: any) => {
       const pins = data?.pinnedMessages || (Array.isArray(data) ? data : []);
+      console.log(`[pins] pinned-messages-response: ${pins.length} pinned`);
       const normalized = pins.map((m: any) => ChatService.normalizeMessage(m));
       fetchSecureUrls(normalized);
-      const pinnedIds = new Set(normalized.map((m: any) => m._id));
-      setMessages((prev) => prev.map((m) => ({ ...m, isPinned: pinnedIds.has(m._id as string) })));
-      setPinnedMessages(normalized);
+      // ⚠️ MERGE, never replace. The web lead chat never asks for this list and trusts each message's `isPinned`; a short or
+      // empty reply here used to wipe pins the message history already proved (pins vanished on reopen) and drop older
+      // pins that the latest page of history does not contain. Removal is the `message-unpinned` event's job.
+      setPinnedMessages((prev) => {
+        const merged = mergePins(prev, normalized);
+        const ids = new Set(merged.map((m: any) => String(m._id)));
+        setMessages((msgs) => msgs.map((m) => (ids.has(String(m._id)) ? { ...m, isPinned: true } : m)));
+        return merged;
+      });
     });
 
     const handleMessageSeen = (data: any) => {
