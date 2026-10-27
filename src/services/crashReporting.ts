@@ -13,6 +13,7 @@ type CrashlyticsApi = typeof import('@react-native-firebase/crashlytics');
 
 let api: CrashlyticsApi | null = null;
 let instance: any = null;
+let loadError: string | null = null;
 
 const load = (): { api: CrashlyticsApi; instance: any } | null => {
   if (api && instance) return { api, instance };
@@ -24,7 +25,8 @@ const load = (): { api: CrashlyticsApi; instance: any } | null => {
     api = mod;
     instance = mod.getCrashlytics(getApp());
     return { api, instance };
-  } catch {
+  } catch (e: any) {
+    loadError = String(e?.message || e);
     return null;
   }
 };
@@ -38,6 +40,44 @@ const safe = (fn: (c: { api: CrashlyticsApi; instance: any }) => unknown) => {
   }
 };
 
+const DEBUG_REPORTING_KEY = 'crashlyticsDebugReporting';
+
+const nonProductionBackend = (): boolean => {
+  try {
+    // eslint-disable-next-line global-require
+    return resolveCrashEnvironment(require('../config/env').ENV.API_URL).environment !== 'production';
+  } catch {
+    return true;
+  }
+};
+
+/**
+ * Opt-in used ONLY by the test panel: lets a debug (Metro) build report to Crashlytics. Persisted, so the report from a
+ * deliberate crash uploads on the relaunch. Ignored on a production backend, so it can never leak dev noise there.
+ */
+export const isDebugReportingOn = (): boolean => {
+  if (!__DEV__ || !nonProductionBackend()) return false;
+  try {
+    // eslint-disable-next-line global-require
+    return require('../utils/storage').Storage.getItem(DEBUG_REPORTING_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+export const setDebugReporting = (on: boolean) => {
+  if (!__DEV__ || !nonProductionBackend()) return;
+  try {
+    // eslint-disable-next-line global-require
+    const { Storage } = require('../utils/storage');
+    if (on) Storage.setItem(DEBUG_REPORTING_KEY, '1');
+    else Storage.removeItem(DEBUG_REPORTING_KEY);
+  } catch {
+    // storage unavailable: the toggle simply does not persist.
+  }
+  safe(({ api: a, instance: i }) => void a.setCrashlyticsCollectionEnabled(i, !__DEV__ || on).catch(() => {}));
+};
+
 const MAX_ATTR = 1000;
 const clip = (v: string) => (v.length > MAX_ATTR ? v.slice(0, MAX_ATTR) : v);
 
@@ -48,7 +88,7 @@ const clip = (v: string) => (v.length > MAX_ATTR ? v.slice(0, MAX_ATTR) : v);
  */
 export const initCrashReporting = () =>
   safe(({ api: a, instance: i }) => {
-    void a.setCrashlyticsCollectionEnabled(i, !__DEV__).catch(() => {});
+    void a.setCrashlyticsCollectionEnabled(i, !__DEV__ || isDebugReportingOn()).catch(() => {});
     let apiUrl = '';
     try {
       // eslint-disable-next-line global-require
@@ -91,10 +131,22 @@ const safeJson = (v: unknown) => {
   }
 };
 
-/** Verification helpers for the non-production test panel. Release builds only: collection is off under __DEV__. */
-export const sendTestNonFatal = () => recordError(new Error('Crashlytics test: non-fatal error'), 'crashlytics-test');
+/** Why reporting is unavailable (null = the native module loaded). Shown by the test panel. */
+export const getCrashlyticsStatus = (): { available: boolean; error: string | null } => {
+  const c = load();
+  return { available: !!c, error: c ? null : loadError };
+};
 
-export const forceTestCrash = () => {
+/** Verification helpers for the non-production test panel. Release builds only: collection is off under __DEV__. */
+export const sendTestNonFatal = (): boolean => {
+  if (!getCrashlyticsStatus().available) return false;
+  recordError(new Error('Crashlytics test: non-fatal error'), 'crashlytics-test');
+  return true;
+};
+
+export const forceTestCrash = (): boolean => {
+  if (!getCrashlyticsStatus().available) return false;
   logBreadcrumb('crashlytics-test: forcing a native crash');
   safe(({ api: a, instance: i }) => a.crash(i));
+  return true;
 };
