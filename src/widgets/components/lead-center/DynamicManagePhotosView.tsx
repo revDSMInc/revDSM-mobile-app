@@ -24,6 +24,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
+import { readAnnotationDocsCache, writeAnnotationDocsCache } from '../../../utils/annotation-docs-cache';
 import {
   findOriginalPhoto,
   indexAnnotationDocs,
@@ -306,11 +307,19 @@ export function DynamicManagePhotosView({
   // Saved annotation docs, so an annotated photo can be re-opened with its marks (REVUIUX-558).
   const annotationLeadId: string | undefined = lead?._id || lead?.id;
   const queryClient = useQueryClient();
+  // ⚠️ The saved annotation docs (editable marks + undo steps) are kept on the phone: with no signal - or after the app restarted -
+  // the query has nothing in memory, a saved photo then opened WITHOUT its marks, and saving overwrote them with only the new ones.
   const { data: annotationResponse } = useQuery({
     queryKey: ['leadAnnotations', annotationLeadId],
-    queryFn: async () => (await LeadService.getAnnotations(annotationLeadId as string)).data,
+    queryFn: async () => {
+      const data = (await LeadService.getAnnotations(annotationLeadId as string)).data;
+      writeAnnotationDocsCache(annotationLeadId as string, data);
+      return data;
+    },
     enabled: !!annotationLeadId && online,
     staleTime: 30_000,
+    initialData: () => readAnnotationDocsCache(annotationLeadId)?.data,
+    initialDataUpdatedAt: () => readAnnotationDocsCache(annotationLeadId)?.at,
   });
   const annotationDocs = useMemo(() => indexAnnotationDocs(annotationResponse), [annotationResponse]);
 
@@ -422,6 +431,16 @@ export function DynamicManagePhotosView({
         'Photo not on this device',
         'Connect once to open that photo, then you can annotate it offline.',
       );
+    }
+    // A saved annotation's marks live in its doc. With no signal and no stored copy of it, opening would drop the marks and the save
+    // would overwrite them - leave that photo out instead (the doc is stored the first time it is opened online).
+    const missingDoc = cards.filter((c) => isAnnotatedCard(c) && !!c.photo._id && !online && !annotationDocs.has(c.photo._id));
+    if (missingDoc.length) {
+      FlashMessage.warning(
+        'Annotation not on this device',
+        'Connect once to open this annotated photo, then you can edit it offline.',
+      );
+      missingDoc.forEach((c) => cards.splice(cards.indexOf(c), 1));
     }
     if (!cards.length) return;
     const allPhotos: any[] = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];

@@ -30,7 +30,7 @@ import {
 import { useAuth } from '../../../../hooks/useAuth';
 import { convertJpegToPdfAsync } from '../../../../utils/jpeg-to-pdf-native';
 import { useNavigation } from '@react-navigation/native';
-import { openOrderSheetEditor } from '../../../../services/orderSheetAnnotation';
+import { openOrderSheetEditor, warmOrderSheetForOffline } from '../../../../services/orderSheetAnnotation';
 import { FlashMessage } from '../../../../config/message';
 import { usePendingOrderSheetJobs } from '../../../../hooks/usePendingOrderSheetJobs';
 import { requestOrderSheetReset } from '../../../../services/annotationSaveService';
@@ -191,6 +191,22 @@ export function SummaryFinalizeCards({
     () => mergeDocSources(resolvedDocuments?.orderSheets, orderSheets),
     [orderSheets, resolvedDocuments, mergeDocSources]
   );
+
+  // Keep every server-held order sheet (and, once annotated, its clean original) on the phone while there is signal, so the pencil on
+  // this tile - job builder AND the My Deals edit flow - still opens with none. Same warm-up the Job docs list does.
+  useEffect(() => {
+    orderSheetFiles.forEach((file: any) => {
+      const src = fileSrc(file);
+      if (!(file?.serverId ?? file?._id) || !src || !/^https?:/i.test(String(src))) return;
+      void warmOrderSheetForOffline({
+        uri: String(src),
+        filePath: file?.filePath,
+        bucketName: file?.bucketName,
+        contentType: file?.contentType || file?.fileData?.contentType,
+        annotation: file?.annotation,
+      });
+    });
+  }, [orderSheetFiles]);
 
   const logSchedulerOpened = () => {
     if (!user?._id) return;
