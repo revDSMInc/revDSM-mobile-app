@@ -14,6 +14,7 @@ import { MODAL_BLUR_AMOUNT, MODAL_SCRIM, MODAL_CARD_SHADOW } from './modal-chrom
 import { describeFullPackage } from '../utils/tab-naming';
 import { autoSecureLastDrop, dropPriceOf, DROP_PENDING, isPendingDrop, pendingDropIndex as findPendingDropIndex, appendDrop, supersededPendingDrops, newDropUid, findDropIndex, dedupeDrops } from '../utils/drop-prices';
 import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
+import DropPriceGauge from './DropPriceGauge';
 import { FlashMessage } from '../../../config/message';
 import { allRolloutsConfirmed, rolloutCalculators } from '../../../utils/rollout-status';
 import { useAuth } from '../../../hooks/useAuth';
@@ -43,6 +44,7 @@ import {
   screensCountFromEntries,
   screenUnitPriceFromSchemas,
   markupLabel,
+  monthlyForPlan,
   WELLS_FARGO_HIGH_KEYS,
   WF_HIGH_MIN_PRICE,
 } from '../utils/dynamic-rollout-pricing';
@@ -926,6 +928,31 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       { label: 'RETAIL', value: tierValue('retail'), isRetail: true },
     ];
   }, [liveTotals, method, plans, pricingConfig]);
+
+  /**
+   * REVUIUX-584 - inputs for the drop-price gauge.
+   *
+   * ⚠️ REUSES `tiers` ABOVE, not `logTiers`. The two differ: `tiers` is plan-fee-adjusted
+   * (`withPlanFee(plans, ..., method)`) and is what the COST / PAR / RETAIL tiles on this very
+   * screen already show; `logTiers` is not, because the activity log records tiers before any
+   * plan fee. The gauge sits inches below those tiles, so it must agree with THEM - taking
+   * `logTiers` here would print two different COST figures on one screen.
+   */
+  const gaugeTotals = useMemo(
+    () => ({
+      cost: tiers.find((t) => t.label === 'COST')?.value || 0,
+      par: tiers.find((t) => t.label === 'PAR')?.value || 0,
+      retail: tiers.find((t) => t.label === 'RETAIL')?.value || 0,
+    }),
+    [tiers],
+  );
+  /** The locked rollout the drop is measured against - the saved price, never the live field. */
+  const gaugeRollout = Number(calculator.price) || parseFloat(endPrice) || 0;
+  /** Monthly under the SELECTED plan, so the tiles agree with every other monthly on screen. */
+  const gaugeMonthlyFor = useCallback(
+    (v: number) => monthlyForPlan(plans[method], v),
+    [plans, method],
+  );
 
   const categoryChips = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1828,25 +1855,35 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           {/* Inline drop input */}
           {showDropInput && (
             <View style={{ marginBottom: 16 }}>
-              <View style={{ backgroundColor: '#F4F6F8', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 16, height: 56, flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={{ fontSize: 14, fontWeight: '900', color: '#94A3B8', marginRight: 8 }}>$</Text>
-                <TextInput
-                  style={{ flex: 1, fontSize: 14, fontWeight: '800', color: '#1C252E' }}
-                  value={formatAmountInput(dropText)}
-                  onChangeText={(t) => setDropText(stripAmount(t))}
-                  onSubmitEditing={openDrop}
-                  onBlur={
-                    Platform.OS === 'ios' && !NUMERIC_KEYBOARD_HAS_RETURN_KEY
-                      ? openDrop
-                      : undefined
-                  }
-                  placeholder="Enter price..."
-                  placeholderTextColor="#919EAB"
-                  keyboardType={NUMERIC_KEYBOARD}
-                  returnKeyType="done"
-                  autoFocus
-                />
-              </View>
+              {/* REVUIUX-584 - the gauge OWNS this row: tiles, scale and commission pills above,
+                  then the price field paired with its live per-month readout. Display-only - it
+                  reads `dropText` and sets nothing. */}
+              <DropPriceGauge
+                price={parseFloat(dropText) || 0}
+                tiers={gaugeTotals}
+                rollout={gaugeRollout}
+                monthlyFor={gaugeMonthlyFor}
+              >
+                <View style={{ backgroundColor: '#F4F6F8', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 16, height: 56, flexDirection: 'row', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 14, fontWeight: '900', color: '#94A3B8', marginRight: 8 }}>$</Text>
+                  <TextInput
+                    style={{ flex: 1, fontSize: 14, fontWeight: '800', color: '#1C252E' }}
+                    value={formatAmountInput(dropText)}
+                    onChangeText={(t) => setDropText(stripAmount(t))}
+                    onSubmitEditing={openDrop}
+                    onBlur={
+                      Platform.OS === 'ios' && !NUMERIC_KEYBOARD_HAS_RETURN_KEY
+                        ? openDrop
+                        : undefined
+                    }
+                    placeholder="Enter price..."
+                    placeholderTextColor="#919EAB"
+                    keyboardType={NUMERIC_KEYBOARD}
+                    returnKeyType="done"
+                    autoFocus
+                  />
+                </View>
+              </DropPriceGauge>
             </View>
           )}
 
