@@ -29,6 +29,7 @@ import { ChatReplyBar, ChatEditBar } from '../../widgets/components/chat/ChatBar
 import { ChatMessageBubble } from '../../widgets/components/chat/ChatMessageBubble';
 import { LeadImagePickerModal } from '../../widgets/components/chat/LeadImagePickerModal';
 import { GifPickerModal } from '../../widgets/modals/chat/GifPickerModal';
+import { PollCreateModal } from '../../widgets/modals/chat/PollCreateModal';
 import {
   ParticipantsModal,
   PinnedMessagesArea,
@@ -309,6 +310,7 @@ export default function ChatDetailScreen() {
   const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
   const [showLeadImagePicker, setShowLeadImagePicker] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showPollCreate, setShowPollCreate] = useState(false);
   const pendingAttachmentAction = useRef<null | (() => void)>(null);
 
   const runPendingAttachmentAction = useCallback(() => {
@@ -1304,6 +1306,17 @@ export default function ChatDetailScreen() {
                 render: (c: string) => <MCIcon name="file-gif-box" size={26} color={c} />,
                 onPress: () => selectAttachmentOption(() => setShowGifPicker(true)),
               },
+              // Polls are team-channel only - lead chats never show this row.
+              ...(isChannel
+                ? [
+                  {
+                    key: 'poll',
+                    label: 'Poll',
+                    render: (c: string) => <MCIcon name="poll" size={26} color={c} />,
+                    onPress: () => selectAttachmentOption(() => setShowPollCreate(true)),
+                  },
+                ]
+                : []),
               {
                 key: 'voice',
                 label: 'Voice Memo',
@@ -1359,6 +1372,10 @@ export default function ChatDetailScreen() {
         title="Signed Addendum"
         onClose={() => setAddendumPdf({ visible: false, uri: '' })}
       />
+
+      {isChannel && (
+        <PollCreateModal visible={showPollCreate} onClose={() => setShowPollCreate(false)} />
+      )}
 
       <GifPickerModal
         visible={showGifPicker}

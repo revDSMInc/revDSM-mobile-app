@@ -778,3 +778,12 @@ Ticket: add GIFs to chat. The attach menu (`+`) gets a **GIF** row that opens a 
 - Tests: `__tests__/utils/gif-message.test.ts`. ⚠️ Needs a device check on iOS and Android: GIFs animate in the grid and bubble, the sheet sits above the keyboard, long-press on a GIF bubble opens the reaction bar, and a failed load falls back to the link.
 
 - **Android showed GIFs as a still frame (REVDSM-575 follow-up).** Root cause: React Native 0.84 does **not** bundle Fresco's animated decoders (`node_modules/react-native/gradle/libs.versions.toml` lists only `fresco`, `middleware`, `imagepipeline-okhttp3`, `ui-common`), so the stock `<Image>` decodes only the first frame on Android while iOS animates natively. Fix is in `android/app/build.gradle`: `animated-gif`, `animated-webp` and `webpsupport` at the SAME version as RN's `fresco`. ⚠️ Needs a **native rebuild** (`yarn android`) — Metro reload does nothing — and the three versions must be bumped together with every RN upgrade. This also makes any other animated GIF/WebP `<Image>` in the app animate on Android.
+
+## Team-channel "Create poll" UI — display only (REVUIUX-577)
+
+Ticket REVUIUX-577 ("Messages - team channel - add Polls", WhatsApp-style workflow). Ask: a poll option in the attach menu **below GIF**, **team channels only** (never lead chats), UI only, with Send telling the user backend work is required, plus a backend handoff doc.
+
+- `widgets/modals/chat/PollCreateModal.tsx` (dark sheet: close, "Create poll", Send; QUESTION; OPTIONS; "Allow multiple answers"). Rules in the pure `utils/poll-draft.ts` (2–5 options (add/remove freely, max 5), 200/100 char caps, no duplicates) — tests in `__tests__/utils/poll-draft.test.ts`.
+- ChatDetail adds the `Poll` row only when `isChannel`, between GIF and Voice Memo, and mounts the modal only for channels. It opens through `selectAttachmentOption` (never stack native Modals).
+- ⚠️ **Send posts NOTHING.** An invalid draft gets a warning; a valid one gets the info flash "Backend work is required first". Do not wire a send until the contract in `docs/team-channel-polls-backend.md` ships (message `messageType: 'poll'` + `poll`, `POST /api/v1/channels/messages/:id/poll/vote`, socket `team-channel-poll-updated`). Then replace the notice in `handleSend` and add the bubble card.
+- Not device-verified: sheet above the keyboard on iOS/Android, the new option row on the next empty row as you type, the switch colours.
