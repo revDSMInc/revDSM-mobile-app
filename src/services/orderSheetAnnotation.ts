@@ -78,16 +78,47 @@ const savedMarks = (annotation: any): RestoredMarks | null => marksFromData(anno
  * (`annotation.original.{filePath,bucketName}`) - not in the agreed contract yet, so without it a re-edit opens on the
  * annotated picture with no restored marks (drawing on top of what is baked in).
  */
+const CLEAN_DIR_NAME = 'order_sheet_clean';
+const cleanCachePath = (filePath: string) =>
+  `${ReactNativeBlobUtil.fs.dirs.DocumentDir}/${CLEAN_DIR_NAME}/${String(filePath).replace(/[^a-zA-Z0-9_-]/g, '_').slice(-120)}.jpg`;
+
+/**
+ * ⚠️ The clean original is kept ON THE PHONE (DocumentDir) the first time it is read, and read from there first. A re-edit needs it to
+ * restore the saved marks (and their undo steps) - with no signal it used to come back null, the editor opened on the flattened sheet
+ * with NO marks, and saving then overwrote the stored marks with only the new ones (the old ones were lost for good). Now a previously
+ * opened / warmed sheet re-edits offline, and one that cannot be restored is refused by the caller instead of being silently degraded.
+ */
 const loadCleanOriginalJpeg = async (annotation: any, fallbackBucket?: string): Promise<string | null> => {
   const original = annotation?.original;
   if (!original?.filePath) return null;
+  const fs = ReactNativeBlobUtil.fs;
+  const cachePath = cleanCachePath(original.filePath);
+  try {
+    if (await fs.exists(cachePath)) {
+      const cached = await fs.readFile(cachePath, 'base64');
+      if (cached && cached.length > 2000) return cached;
+    }
+  } catch {
+    /* unreadable cache: fall through to the network */
+  }
+  if (!isOnline()) return null;
   try {
     const res = await LeadService.getSecureUrls([{ bucketName: original.bucketName || fallbackBucket || '', filePath: original.filePath }]);
     const rows = res?.data?.data || res?.data || [];
     const url = (Array.isArray(rows) ? rows[0] : null)?.secureUrl || (Array.isArray(rows) ? rows[0] : null)?.url;
     if (!url) return null;
     const b64 = await loadDocumentBase64(url);
-    return extractEmbeddedJpeg(b64)?.jpegBase64 ?? null;
+    const jpeg = extractEmbeddedJpeg(b64)?.jpegBase64 ?? null;
+    if (jpeg) {
+      try {
+        const dir = `${fs.dirs.DocumentDir}/${CLEAN_DIR_NAME}`;
+        if (!(await fs.exists(dir))) await fs.mkdir(dir);
+        await fs.writeFile(cachePath, jpeg, 'base64');
+      } catch (e) {
+        console.warn('[OrderSheet] could not keep the pristine original on the phone', e);
+      }
+    }
+    return jpeg;
   } catch (e) {
     console.warn('[OrderSheet] could not load the pristine original', e);
     return null;
@@ -99,11 +130,22 @@ const loadCleanOriginalJpeg = async (annotation: any, fallbackBucket?: string): 
  * uri is the plain S3 url (the signed one cannot be fetched), a different cache key from the signed url that was downloaded, so
  * the file is also adopted under that key. Best effort: never throws, never blocks the list.
  */
-export const warmOrderSheetForOffline = async (doc: { uri?: string; filePath?: string; contentType?: string }): Promise<void> => {
+export const warmOrderSheetForOffline = async (doc: {
+  uri?: string;
+  filePath?: string;
+  contentType?: string;
+  bucketName?: string;
+  annotation?: any;
+}): Promise<void> => {
   try {
-    if (!doc?.uri || !/^https?:/i.test(doc.uri)) return;
-    const local = await warmToLocalCache(doc.uri);
-    if (local && doc.filePath) await adoptLocalFileAsCached(local, resolveS3Url(doc.filePath));
+    if (doc?.uri && /^https?:/i.test(doc.uri)) {
+      const local = await warmToLocalCache(doc.uri);
+      if (local && doc.filePath) await adoptLocalFileAsCached(local, resolveS3Url(doc.filePath));
+    }
+    // An already-annotated sheet also needs its CLEAN original to re-edit offline (restores the marks + undo steps).
+    if (doc?.annotation?.original?.filePath && marksFromData(doc.annotation?.data)) {
+      await loadCleanOriginalJpeg(doc.annotation, doc.bucketName);
+    }
   } catch {
     /* offline or evicted: the editor will simply need a connection once */
   }
@@ -155,8 +197,19 @@ export async function openOrderSheetEditor({ navigation, lead, leadId, doc }: Op
     let initialMarks = savedMarks(doc.annotation);
     if (initialMarks) {
       const clean = await loadCleanOriginalJpeg(doc.annotation, doc.bucketName);
-      if (clean) imageUri = await writeCacheJpeg(clean);
-      else initialMarks = null;
+      if (clean) {
+        imageUri = await writeCacheJpeg(clean);
+      } else if (doc.annotation?.original?.filePath) {
+        // The server HAS a clean original but this phone does not (never opened / warmed, and no signal). Opening anyway would drop
+        // the saved marks and the next save would overwrite them - so say what is needed instead.
+        FlashMessage.warning(
+          'Original not on this device',
+          'Connect once to open this annotated order sheet, then you can edit it offline.',
+        );
+        return;
+      } else {
+        initialMarks = null;
+      }
     }
 
     // Fallback reset needs the pristine original on THIS phone: what is being viewed IS the original only before the first

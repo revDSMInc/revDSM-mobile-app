@@ -15,6 +15,7 @@ import {
   type FundingResult,
   type FundingUpsertRow,
   type SettledAction,
+  type SettledRow,
 } from '../../../services/api/FundingService';
 import {
   logFundingCardCharged,
@@ -175,6 +176,20 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
         case 'scopeRefundFirst':
           // The sheet turns these into a prompt; a banner on top of it would be noise.
           break;
+        case 'scopeAfterSubmit':
+          // Terminal: a signed job needs an addendum. No refetch (nothing changed), no retry.
+          // The Result sheet also raises an OK card for it, so this stays quiet there.
+          break;
+        case 'rowSettled':
+        case 'rowRefundInFlight':
+        case 'rowHasDecision':
+        case 'rowApplicationSent':
+        case 'rowHoldsPlans':
+        case 'conflict':
+          // The server's own sentence says what is in the way. Not a stale record: refetching
+          // would reload the rep's rows away and announce "Funding updated".
+          FlashMessage.warning(context, error.message);
+          break;
         case 'notFound':
           await refetch();
           FlashMessage.error(context, error.message);
@@ -264,7 +279,7 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       payments: FundingUpsertRow[],
       payMode = 'split',
       settledAction?: SettledAction
-    ): Promise<FundingActionResult<{ refundDue?: number }>> => {
+    ): Promise<FundingActionResult<{ refundDue?: number; settledRows?: SettledRow[] }>> => {
       setIsSaving(true);
       try {
         const res = await run('Save payments', () =>

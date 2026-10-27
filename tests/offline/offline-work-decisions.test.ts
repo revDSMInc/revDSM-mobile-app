@@ -83,3 +83,54 @@ describe('existing step rules are unchanged', () => {
     expect(stepReplaySafety('lead')).toBe('idempotent');
   });
 });
+
+
+/**
+ * The 409 that reached the client as "Couldn't be uploaded" after an offline sync.
+ * It only ever happened offline: online each calculator is created on its own against a server
+ * that already knows the earlier ones, so the clash is caught in the UI before any request.
+ */
+describe('a 409 conflict is recoverable, not a rejection', () => {
+  it('classifies 409 as duplicate rather than rejected', () => {
+    expect(classifyCreateOutcome({ httpStatus: 409, message: 'title must be unique' })).toBe(
+      'duplicate'
+    );
+    expect(classifyCreateOutcome({ response: { status: 409 } })).toBe('duplicate');
+  });
+
+  it('still treats other 4xx as a rejection', () => {
+    expect(classifyCreateOutcome({ httpStatus: 400 })).toBe('rejected');
+    expect(classifyCreateOutcome({ httpStatus: 422 })).toBe('rejected');
+  });
+
+  // The old behaviour: straight to a dead end on the first attempt, no adoption attempted.
+  it('gives a guarded step a chance to adopt what is already there', () => {
+    expect(resolveStepDecision('duplicate', work(), 'calculator')).toBe('retry-guarded');
+    expect(resolveStepDecision('duplicate', work(), 'appointment')).toBe('retry-guarded');
+    expect(stepReplaySafety('calculator')).toBe('guarded');
+  });
+
+  it('retries an idempotent step on a conflict', () => {
+    expect(resolveStepDecision('duplicate', work(), 'calculatorState')).toBe('retry');
+  });
+
+  it('end to end: a 409 on the calculator step asks for a guarded retry', () => {
+    expect(decideAfterStepError({ httpStatus: 409 }, work(), 'calculator')).toBe('retry-guarded');
+  });
+
+  // Unchanged: the lead step's own rules still decide, and a Self Gen still needs a human.
+  it('leaves the lead step alone', () => {
+    expect(resolveStepDecision('duplicate', work({ lead: { leadType: 'lfLead', lfLeadId: 'X' } as any }), 'lead')).toBe(
+      'done'
+    );
+    expect(resolveStepDecision('duplicate', work(), 'lead')).toBe('needs-review');
+  });
+
+  // A conflict that adoption cannot resolve (two genuinely identical calculators) must not spin
+  // forever - the attempt budget is what stops it.
+  it('still gives up after the attempt budget, so a real clash is not an infinite loop', () => {
+    let w = work({ attempts: 4 });
+    w = applyStepDecision(w, 'retry-guarded', 'title must be unique');
+    expect(w.status).toBe('needs-review');
+  });
+});

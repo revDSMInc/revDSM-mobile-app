@@ -30,7 +30,6 @@ import { useWorkLeadMutation } from '../../hooks/useLeadMutation';
 import LeadCreateModal from '../../widgets/modals/LeadCreate';
 import ZoneCanvasserMap from '../../widgets/modals/ZoneCanvasserMap';
 import { LeadCard } from '../../widgets/components/LeadCard';
-import { PendingLeadsBanner } from '../../widgets/components/PendingLeadsBanner';
 import {
   applyOfflineResult,
   offlineArchivedLeads,
@@ -758,7 +757,6 @@ export default function LeadsPage() {
           keyExtractor={(item, index) =>
             String(item._id ?? (item as any).id ?? item.leadId ?? index)
           }
-          ListHeaderComponent={<PendingLeadsBanner colors={colors} isDark={isDark} />}
           windowSize={15}
           initialNumToRender={8}
           maxToRenderPerBatch={10}

@@ -17,7 +17,10 @@ import {
   planBlockedOffline,
   showsChip,
   methodLabelOf,
-  visibleArchived,
+  leadShelfFor,
+  isReferenceEntry,
+  referenceEntryNote,
+  canRestoreEntry,
   type LenderTone,
   type PaymentRow,
 } from '../../utils/funding';
@@ -214,8 +217,9 @@ export function PaymentRowsGroup({
     const lender = chip ? lenderState(row, plans[row.method]?.type === 'financing') : null;
     const tone = lender ? CHIP[lender.tone] : CHIP.neutral;
     const drift = driftNote(row);
-    const archived = visibleArchived(
+    const archived = leadShelfFor(
       row,
+      allRows,
       allRows.filter((r) => r.pid !== row.pid).map((r) => methodLabelOf(plans, r.method) || r.methodLabel || ''),
       plans
     );
@@ -322,11 +326,13 @@ export function PaymentRowsGroup({
                   {stripBankFee(a.method)}
                 </Text>
                 <Text style={{ fontSize: FS.TINY, fontFamily: PS.semibold, color: '#B0B4BA', marginTop: 1 }} numberOfLines={1}>
-                  Archived{a.decision ? ` · ${a.decision === 'declined' ? 'Declined' : 'Approved'}` : ''}
+                  {isReferenceEntry(a)
+                    ? referenceEntryNote(a)
+                    : `Archived${a.decision ? ` · ${a.decision === 'declined' ? 'Declined' : 'Approved'}` : ''}`}
                 </Text>
               </View>
             </View>
-            {!!onRestore && (
+            {!!onRestore && canRestoreEntry(row, a) && (
               <TouchableOpacity
                 onPress={() => onRestore(row.pid, a.archivedId)}
                 style={{ flexShrink: 0, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#EFF4FF' }}

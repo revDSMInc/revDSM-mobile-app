@@ -5,6 +5,7 @@ import { LeadService } from './api/leads';
 import ChatService from './api/ChatService';
 import { adoptServerDropIds, readServerDrops } from '../screens/DynamicDealCenter/utils/drop-prices';
 import { FundingService } from './api/FundingService';
+import { mergeSettledPayments } from '../utils/offline-funding-merge';
 import { fetchOutcomeDocumentRows } from '../screens/DynamicDealCenter/utils/outcome-documents';
 import { buildDocumentPayloads } from '../screens/DynamicDealCenter/utils/document-payloads';
 import { isOnline, onReconnect } from './connectivity';
@@ -979,18 +980,55 @@ const runStep = async (
       const adopted = guarded ? await findUnclaimedCalculators(work) : [];
       const out: Record<string, string> = {};
 
+      /**
+       * ⚠️ BANK EVERY ID THE MOMENT IT IS MINTED.
+       *
+       * `out` used to be returned only after the WHOLE loop finished, and `markStepDone` is the
+       * only thing that persists it. So three calculators where the third fails threw away the
+       * two ids already created on the server - on the next sweep they were still `pending`, and
+       * the drain created them AGAIN. That is a duplicate factory, and it is why the deal the rep
+       * eventually sees has more calculators than they built.
+       */
+      const bank = (clientId: string, id: string) => {
+        out[clientId] = id;
+        patchOfflineWork(work.clientId, (w) => ({
+          ...w,
+          serverIds: { ...w.serverIds, calculators: { ...w.serverIds.calculators, [clientId]: id } },
+        }));
+      };
+
       for (let i = 0; i < pending.length; i += 1) {
         const calc = pending[i];
         if (adopted[i]) {
-          out[calc.clientId] = adopted[i];
+          bank(calc.clientId, adopted[i]);
           continue;
         }
         const createBody: any = { ...(calc.payload || {}) };
         delete createBody.dropPrice;
-        const res = await LeadService.createCalculator(apptId, send(createBody));
-        const id = readCreatedId(res?.data);
-        if (!id) throw new Error('calculator created but the response carried no _id');
-        out[calc.clientId] = id;
+        try {
+          const res = await LeadService.createCalculator(apptId, send(createBody));
+          const id = readCreatedId(res?.data);
+          if (!id) throw new Error('calculator created but the response carried no _id');
+          bank(calc.clientId, id);
+        } catch (err) {
+          /**
+           * ⚠️ A 409 here is "this calculator is ALREADY ON THE SERVER", not "the payload is
+           * bad" - the same shape the `appointment` case above has always handled. Without this
+           * the step threw, `classifyCreateOutcome` read 409 as `rejected`, and the work went
+           * straight to a dead end the rep sees as "Couldn't be uploaded" - on a deal that had,
+           * in fact, synced.
+           *
+           * Online this never fires: the rep creates calculators one at a time against a server
+           * that already knows about the earlier ones, so the title clash is caught in the UI
+           * before any request. Offline the whole set is posted in one drain, which is why the
+           * client only ever sees this after a sync.
+           */
+          if (!readIs409(err)) throw err;
+          const claimable = await findUnclaimedCalculators(work).catch(() => []);
+          const free = claimable.find((id) => !Object.values(out).includes(id));
+          if (!free) throw err;
+          bank(calc.clientId, free);
+        }
       }
       return { calculators: out };
     }
@@ -1047,9 +1085,43 @@ const runStep = async (
     case 'funding': {
       if (!leadId) throw new Error('no lead id for the funding');
       const body = send(work.funding) as any;
+      const queued = Array.isArray(body?.payments) ? body.payments : [];
+      /**
+       * ⚠️ CARRY FORWARD ANY ROW THE SERVER HAS ALREADY SETTLED.
+       *
+       * Reported as "Cannot remove $100 Check - it has already been collected" on a sync. The
+       * server refuses a save that DROPS a row with money on it, and a save is the full list:
+       * anything missing from `payments` reads as a removal. Our queued list is a snapshot of
+       * what the rep saw offline, so a payment collected since (by the office, the portal, or an
+       * earlier partial drain of this same deal) is simply absent - and the whole funding step
+       * is refused.
+       *
+       * The ONLINE path never hits this because `ResultJobModal` re-sends settled rows through
+       * `withSettledRows`. This is the offline equivalent, and the reason it must be done at
+       * drain time rather than when queueing: the collection can happen while the phone is
+       * offline, long after the snapshot was taken.
+       *
+       * ⚠️ Settled rows are carried, never edited - a collected payment is money that moved,
+       * and only a refund reverses it. On a read failure we send what we have rather than block
+       * the deal; the server stays the authority and will refuse if it must.
+       */
+      let payments = queued;
+      try {
+        const current =
+          (await FundingService.getFunding(leadId))?.data?.data?.funding?.payments || [];
+        payments = mergeSettledPayments(queued, current);
+        if (payments.length !== queued.length) {
+          console.log(
+            '[LeadSync] funding: carrying %s settled row(s) the queued snapshot did not have',
+            payments.length - queued.length
+          );
+        }
+      } catch (e) {
+        console.warn('[LeadSync] funding: could not read current funding, sending the snapshot', e);
+      }
       await FundingService.savePayments(leadId, {
         contractPrice: Number(body?.contractPrice) || 0,
-        payments: Array.isArray(body?.payments) ? body.payments : [],
+        payments,
         payMode: body?.payMode === 'upfront' ? 'upfront' : 'split',
         ...(body?.calculatorId ? { calculatorId: String(body.calculatorId) } : {}),
       });

@@ -169,9 +169,8 @@ export const DocumentItem = ({ doc, isDark, colors, onOpen, onImagePreview, onAn
                 accessibilityLabel="Annotate order sheet"
                 style={{ opacity: syncing ? 0.35 : 1 }}
               >
-                {/* A distinct glyph: three other pencils nearby already mean "edit contract", "scan a document" and
-                    "annotate photos", and a fourth plain one would be read as one of those. */}
-                <Icon name="pencil-ruler" size={21} color="#637381" />
+                {/* A plain pencil, as the client asked (it was `pencil-ruler`). */}
+                <Icon name="pencil" size={21} color="#637381" />
               </TouchableOpacity>
             )
           )}

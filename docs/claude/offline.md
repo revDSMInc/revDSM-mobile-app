@@ -1915,3 +1915,54 @@ Reported on the **Send Signed Agreement** prompt (`AgreementDeliveryPrompt`): cr
 - Tests: `tests/offline/lead-sync-state.test.ts` (`findClientIdInUrl`, `isNetworkError` regression). Needs a device check: airplane mode -> create lead -> reconnect at once -> Generate Agreement -> prompt -> Send: no red error, agreement opens, preference sent after the lead syncs.
 
 - **File map for the "Unsynced lead" section above:** `utils/lead-sync-state.ts` (`findClientIdInUrl` added; `urlHasClientId` now delegates to it), `services/api/index.ts` (the pre-axios client-id guard on every `api.*` call), `services/offlineAgreementDelivery.ts` (drain skips client-id rows).
+
+## 409 on sync: "Couldn't be uploaded" on a deal that HAD synced (lfcalculators)
+
+Client reported repeatedly, always after syncing offline work, never online: the pending-uploads card shows `POST /appointments/{id}/lfcalculators` 409 and the deal is stuck. Three separate defects, all in the create path.
+
+**Why only offline.** Online a rep creates calculators one at a time against a server that already knows the earlier ones, so a title clash is caught in the UI before any request goes out. Offline the whole set is posted in one drain, so the first collision is discovered mid-flight, with no UI in front of it.
+
+- **1. A 409 was classified as a flat rejection** (`utils/offline-lead-queue.ts`). It fell into the generic `status >= 400 -> 'rejected'` bucket, and `resolveStepDecision` turns `rejected` into `failed` - a DEAD END on the first attempt. 409 is now `'duplicate'`. WARNING: a conflict is not "your payload is bad", it is "the server already holds a row that collides with yours" - usually one WE created on an earlier half-finished drain.
+- **2. A non-lead `duplicate` went to `needs-review`** (`utils/offline-lead-work.ts`, `resolveStepDecision`). Every non-lead step hangs off a parent the server has accepted, so the colliding row is adoptable: a `guarded` step now gets `retry-guarded` and an `idempotent` one `retry`, so `findExistingAppointment` / `findUnclaimedCalculators` actually get a chance to run. `manual` steps still stop for a human, and the `lead` step's own rules are untouched. WARNING: `needs-review`'s only exit is the rep pressing "Try again", which replays the identical request and fails identically - that loop is what the client kept hitting.
+- **3. The calculator step threw away ids it had already earned** (`services/offlineLeadStore.ts`). `out` was returned only after the whole loop finished and `markStepDone` is the only thing that persists it, so with three calculators a failure on the third discarded the two the server had already created. On the next sweep they were still `pending` and were created AGAIN - a duplicate factory, and the reason a stuck deal ends up with more calculators than the rep built. Each id is now banked with `patchOfflineWork` the moment it is minted, and the create is wrapped so a 409 adopts an unclaimed calculator instead of throwing.
+- **Audit of the other create steps:** `appointment` already caught 409 and adopted; `addendumDraft` already banks its id immediately with `patchOfflineWork`; `documents` / `consent` / `addendumRefund` / `funding` all have `guarded` pre-checks. The calculator step was the only one missing both. With fix 1+2 those existing pre-checks are now actually REACHED on a conflict instead of being skipped by a premature `failed`.
+- A genuinely unresolvable clash (two truly identical calculators) is still bounded: adoption finds nothing, the step rethrows, and `MAX_CREATE_ATTEMPTS` lands it in `needs-review` with the translated message from `utils/calculator-title-conflict.ts`. It does not spin forever.
+- Tests: `tests/offline/offline-work-decisions.test.ts` (+7) covers the classification, each step's decision, the untouched lead step, and the attempt-budget backstop.
+- Not verified on device: build two identical calculators offline, sync, and confirm the deal completes by adopting rather than showing "Couldn't be uploaded"; then three calculators where one collides, and confirm no duplicates appear on the server after repeated sweeps.
+
+### Follow-up - the SAME class in funding: "Cannot remove $100 Check - it has already been collected"
+
+Asked after the 409 audit: "does this also cover funding?" It did NOT - a different failure with the same shape, so it is worth stating the shape plainly.
+
+**The pattern:** a queued payload is a SNAPSHOT of what the rep saw offline. Anything the server learned in between is missing from it, and for a FULL-LIST save an absent row does not mean "unchanged" - it means "remove this". So the server refuses, and the whole step dead-ends.
+
+- **Cause** (`services/offlineLeadStore.ts`, `case 'funding'`): `FundingService.savePayments` replaces the payment list wholesale. A payment collected after the rep went offline - by the office, the portal, or an earlier partial drain of this same deal - is not in `work.funding.payments`, so the save reads as removing money that has already moved, and the server refuses it.
+- WARNING: the ONLINE path never hits this because `ResultJobModal` re-sends settled rows through `withSettledRows` (`screens/DynamicDealCenter/utils/funding.ts`). The queue had no equivalent.
+- **Fix:** `utils/offline-funding-merge.ts` - `mergeSettledPayments(queued, serverPayments)` carries forward every `charged`/`collected` row the server holds that the snapshot does not mention. Called at DRAIN time, not queue time, because the collection can happen while the phone is offline and long after the snapshot was taken.
+- WARNING: carried rows are copied verbatim, never edited or re-priced - that is money that moved, and only a refund reverses it. A queued row with the same `pid` WINS: that is the rep editing a row they could actually see.
+- On a read failure the snapshot is sent unchanged rather than blocking the deal; the server stays the authority.
+- Tests: `tests/offline/funding-settled-merge.test.ts` (9) - carry, pid collision, verbatim copy, unsettled rows left out, and the no-op cases.
+- **The general rule for any new queue step:** if the endpoint takes a FULL LIST, reconcile against the server before sending. `documents`, `consent`, `addendumRefund` and `fundingDecision` are safe because they are per-row or have `guarded` pre-checks; `funding` was the one wholesale save in the queue.
+- Not verified on device: collect a payment from the portal while the phone is offline on the same deal, then sync - the funding step should carry that row and succeed instead of showing "Cannot remove".
+
+## Home screen: the pending-uploads CARD became a one-line strip
+
+Ask: "instead of this card just show the syncing bar like the offline bar, and when syncing is done make the bar green and change text to syncing done. No need to show the whole thing, keep it only in account settings. And if any api failed please don't show any message in home screen like we are showing in the form of card."
+
+- **Gone from the lead list:** `PendingLeadsBanner` is no longer mounted (`screens/Leads/index.tsx`). It put queue mechanics - per-lead rows, "N of M uploaded", retry buttons and raw API errors - on the screen a rep works from.
+- **In its place:** `widgets/common/SyncBanner.tsx`, mounted in `MainHeader` directly under `OfflineBanner`, so both strips stack and behave alike. Blue + spinner "Syncing your work..." while in flight; green "Syncing done" for `SYNC_DONE_HOLD_MS` (3 s) after the queue empties; otherwise nothing. Rules are pure in `utils/sync-banner.ts`, tests in `tests/offline/sync-banner.test.ts` (9).
+- WARNING: **failures are SILENT on the home screen, deliberately.** No error text, no error count, no retry. A rep on a driveway cannot act on "the calculator conflicted", and a red card on the lead list reads as "the app is broken" when the work is safe on the device. Blocked work (`failed` / `needs-review`) maps to tone `none`. This is a product decision - do not add an error state to this strip.
+- WARNING: `justFinished` is tracked in component state, not derived from an empty queue. An empty queue on a cold start is the NORMAL case; deriving "done" from it would greet every launch with "Syncing done" for work the rep never saw start.
+- The strip stays silent while OFFLINE even with work queued - `OfflineBanner` is already saying the useful thing, and two stacked strips about one situation is noise.
+- **Nothing was lost, it moved:** Profile keeps `PendingUploadsCard`, which navigates to `screens/PendingUploads/` - per-item status, `describeQueueError` text, Retry and Remove all still live there.
+- `widgets/components/PendingLeadsBanner.tsx` is left in the tree, unreferenced, on purpose: the client has not seen this change yet and re-mounting it is one line. Delete it once they confirm.
+- Not verified on device: queue work offline then reconnect - the strip should go blue while draining and green for ~3 s; a failing item should show NOTHING on home and still appear under Profile -> pending uploads.
+
+### RevRender queue: batch retry / dismiss (`retryAllRevRenders`, `dismissAllRevRenders`)
+
+Added for the collapsed failure row in the Tools tab - full note in **`docs/claude/lead-center.md`** ("RevRender failures: five identical cards became one row"). Recorded here because the job queue itself lives in `services/revRenderJobs.ts`.
+
+- WARNING: **a batch action must not be a loop over the single-job function.** `retryRevRender` raises its own `FlashMessage.error` when a job fails again, so retrying five would stack five identical toasts. `retryAllRevRenders` submits them with `Promise.all` and reports ONCE, in the same shape `startRevRenders` already uses for a batch ("N of M renders not started", with the first job's error as the detail).
+- `dismissAllRevRenders` filters and persists once rather than calling `dismissRevRender` per job, which would write the store N times.
+- Both are no-ops when nothing is failed, so they are safe to call from a control that may be visible for a moment after the last job clears.
+- The per-job `retryRevRender` / `dismissRevRender` are unchanged and still exported - the UI simply no longer has a per-row control.

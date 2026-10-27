@@ -1,10 +1,53 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
 import { isOnline } from '../services/connectivity';
 import { OFFLINE_CACHE, cachedFetch } from '../utils/offline-query-cache';
 import { useAuth } from './useAuth';
+import SocketManager from '../services/SocketManager';
 import type { Lead } from '../config/types/lead';
+
+/**
+ * Socket events that mean a lead's status / result may have changed. `funding-updated` and
+ * `pending-addendum` are confirmed server events; the `lead-*` names are the backend's lead-status
+ * broadcasts - harmless if a server never emits one. `connect` covers anything missed while offline.
+ */
+const LEAD_CHANGE_EVENTS = [
+  'funding-updated',
+  'pending-addendum',
+  'lead-updated',
+  'lead-status-updated',
+  'lead-resulted',
+  'connect',
+];
+
+/** Keeps every cached leads list fresh while the screen is open (staleTime alone is 5 min). */
+export function useLiveLeadRefresh(enabled: boolean, keys: string[] = ['leads']) {
+  const queryClient = useQueryClient();
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    // A burst of events (one result touches funding, lead and addendum) becomes one refetch.
+    const refresh = () => {
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => {
+        keys.forEach((k) => queryClient.invalidateQueries({ queryKey: [k] }).catch(() => {}));
+      }, 700);
+    };
+    const offs = LEAD_CHANGE_EVENTS.map((ev) => SocketManager.on(ev, refresh));
+    const appSub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') refresh();
+    });
+    return () => {
+      offs.forEach((off) => off && off());
+      appSub.remove();
+      if (timer.current) clearTimeout(timer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, queryClient, keys.join('|')]);
+}
 
 export function useLeadsData(
   params?: { status?: string; period?: string },
@@ -12,6 +55,8 @@ export function useLeadsData(
 ) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+
+  useLiveLeadRefresh(!!user?._id && options?.enabled !== false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['leads', params],

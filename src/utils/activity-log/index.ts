@@ -10,3 +10,4 @@ export * from './job-builder-logs';
 export * from './job-builder-auto-log';
 export * from './installer-log';
 export * from './chat-log-files';
+export * from './annotation-log';

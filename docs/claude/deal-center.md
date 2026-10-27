@@ -5474,3 +5474,79 @@ un-uploaded lead therefore stayed pinned to Today until it synced.
   not day-scoped; passing a stamp there would hide queued archived leads.
 - ⚠️ **The lead is filtered from the TAB, never from the queue** - it still syncs and still shows on the
   pending-uploads banner.
+
+## Calculator sync: a 409 on `lfcalculators` dead-ended the deal (see `offline.md`)
+
+Client-reported, only ever after syncing offline work: `POST /appointments/{id}/lfcalculators` answers 409 and the deal sticks on "Couldn't be uploaded". The queue-side fix and the full audit live in **`docs/claude/offline.md`** ("409 on sync"); recorded here because the calculator drain is Deal Center work.
+
+- WARNING: **online cannot reproduce it.** A rep creates calculators one at a time against a server that already knows the earlier ones, so a title clash is caught in the UI (`calculator-title-conflict.ts`) before any request. Offline the whole set is posted in one drain, so the first collision is found mid-flight with no UI in front of it. Don't go looking for the bug in the Deal Center screens.
+- WARNING: the `calculator` step in `services/offlineLeadStore.ts` used to collect its new ids in a local `out` and return them only after the WHOLE loop finished - and `markStepDone` is the only thing that persists them. A failure on the third calculator therefore discarded the two the server had already created, and the next sweep created them again. Ids are now banked with `patchOfflineWork` the moment each one is minted. If you add another multi-row create step, bank per row.
+- A 409 on the create now adopts an unclaimed calculator (`findUnclaimedCalculators`) instead of throwing, mirroring what the `appointment` step already did.
+- Related, already recorded above: `resolveSafeTitle` / `resolvePersistableTitle` keep the decorated display title (`⚠️ G ⚠️`) out of what is saved - a different cause with the same 409 symptom.
+
+### REVUIUX-519 add. 1-3 + REVUIUX-536: row carry, structure lock, net coverage, archive rule
+
+Specs: `REVUIUX-519-mobile-scope-switch-addendum (1).md` (add. 1-3) and `REVUIUX-536-mobile-handoff.md`. Jira comments
+read: 519 #30464 / #30537, 536 #30484 (the "archive is not a selection history" rule). Code: `utils/funding.ts`,
+`services/api/FundingService.ts`, `hooks/useFunding.ts`, `ResultJobModal.tsx`, `funding/{ScopeSwitchPrompt,PaymentRowsGroup,PaymentFundingCard}.tsx`.
+Tests: `__tests__/screens/DynamicDealCenter/funding-scope-archive-rules.test.ts`.
+
+- **Error kinds keyed on `data.code`**: `scopeAfterSubmit` (terminal: OK card, no refetch, no re-send) and five row refusals
+  (`rowSettled`, `rowRefundInFlight`, `rowHasDecision`, `rowApplicationSent`, `rowHoldsPlans`) show the server's sentence and
+  never fall to `stale` -> "Funding updated". Bare 409s (swap/restore, edit refusals) still have no code: do NOT string-match,
+  ask backend for codes.
+- **`withSettledRows` carries `mustCarryPayment`** = charged | collected | decision | (linkSent && bank) | filed plans. With
+  `{ rescoping: true }` (record owned by another calculator) it also carries an uncharged card on file (`linkSent`/`step>=2`), since the
+  new scope's blank rows would otherwise delete it at HTTP 200. ⚠️ NEVER carry such a card when staying on the same scope: the
+  carry would undo a deliberate card removal (REVDSM-1155). This rescoping carry is our interim reading of add. 3 s4 option 2 - backend has not decided.
+- **`structureLocked` = decision | collected | charged | activated** (no `linkSent`, no `step`) and the hint no longer says "Void".
+  ResultJobModal judges it by the record only when the record belongs to this calculator.
+- **Coverage is net of live refunds** (`netFundedAmount`, `refundedAgainst`): pendingApproval/pendingCustomer/customerSigned/issuing/refunded
+  count, declined/cancelled/failed do not. A row's own amount stays gross.
+- **`worthArchiving(row, plans)`** gates the local archive: financing when `linkSent`/decision, card only `charged`, cheque only `collected`.
+  ⚠️ `hasLenderState` is deliberately untouched (`showsChip` and the reset branch use it). Switching back restores the entry as filed
+  (still sent) and it leaves the shelf. Reference entries (`charged`/`collected`) render as a note with no Restore;
+  `canRestoreEntry` also blocks financing onto a down payment, mirroring the two server 422s.
+- **Closed after approval** (`isClosedAfterApproval`): keyed off `applicationClosed`, not `decision`/`step`; shown as a dead loan, no Activate.
+- Not built: post-submission "switch to another appointment calculator" screen (519 add. 2 s3 - its own ticket); a refund-flow deep link
+  from `refundDue` (the banner points at the per-row refund action); lead-wide archive restore (backend restore is row-scoped).
+
+### Bank Decline cannot be submitted until a new financing method is approved
+
+`bankDeclineSubmitBlocker(bankDeclined, payments)` (`utils/funding.ts`) gates **Submit Bank Decline** in `ResultJobModal`: the button is
+disabled, `handleBuild` refuses, and the blocker card says why, until a financing row has `decision` full/short with `approvedAmt > 0` that is
+not `isClosedAfterApproval`. Before this, Bank Decline bypassed every blocker. ⚠️ Not applied to `DynamicDealEditScreen`: that checklist
+only reports and never blocks (signed-deal addendum). Once a new loan is approved the rep still has to clear the declined row / Undo to Sale.
+
+### A declined loan no longer blocks Submit once other methods cover the contract
+
+`fundingBlockers` only raises "was declined — reassign it" while `coverageOK` is false. When the other rows (e.g. $580 + $920 approved and activated on a
+$1,500 job) cover the price, the declined row is history: `PaymentFundingCard` shows a note instead of "Add another payment method" / "Result as Bank
+Decline", so the whole-lead Bank Decline result is only offered while the contract is NOT covered. ⚠️ The result is lead-level on the server
+(`POST /funding/result`), so there is no per-method "bank decline" - the declined row IS that record. If the server's own submit still refuses a declined
+row, its `data.blockers` replace this list; ask backend to treat a covered job as submittable.
+
+### After Bank Decline: a new method keeps its actions; a partial approval can be activated
+
+- `PaymentFundingCard`: Bank Decline hides send-link / resend / record-decision only on the DECLINED row (`rowShelved = bankDeclined && decision === 'declined'`), not on every row - a method added afterwards was stuck with no "Send application link".
+- "Authorize & activate" now shows for `decision === 'short'` too (it used to wait until the shortfall was covered); the shortfall banner + "Add another payment method" remain. `stateOf` marks the Activated step `now` for a short approval. ⚠️ If the server refuses activating while uncovered, its message surfaces through `useFunding.run`; the old client-side wait was deliberate, so ask backend if that refusal exists.
+- `ResultJobModal`: while resulted as Bank Decline, once the contract is covered and `hasApprovedFinancing`, the result is set back to Sale automatically (once), so Submit reads "Submit Funding".
+
+### Leads list refreshes live on status changes
+
+`useLeadsData` / `useRehashLeads` call `useLiveLeadRefresh` (`hooks/useLeadsData.ts`): on socket `funding-updated`, `pending-addendum`, `lead-updated`, `lead-status-updated`, `lead-resulted`, `connect` and on the app returning to the foreground, the `['leads']` (or `['rehashLeads']`) queries are invalidated after a 700 ms debounce. Before, only focus/pull-to-refresh/post-upload refreshed it and `staleTime` is 5 min, so a "Resulted — Sale" card could sit stale while the screen was open. ⚠️ Only `funding-updated` and `pending-addendum` are confirmed server events; the three `lead-*` names are a best guess - confirm the real lead-status event with backend and trim the list.
+
+### FUNDING-MOBILE-API.md merged (error codes, settledRows, lead-wide shelf, send every row)
+
+- **Codes** (`FundingService.classifyFundingError`): the new `FUNDING_REMOVE_*` / `FUNDING_SHELF_*` map to the existing row kinds; every other 409 conflict (`CONFLICT_CODES`) and ANY unknown `FUNDING_*` 409 becomes kind `conflict` (warning with the server's sentence, no refetch). Old `FUNDING_ROW_*` names stay mapped. 400 -> `bug`, 422 -> `rule` by status. A code we do not know falls back to `message`. Display `message`, never the code.
+- **`settledRows`** parsed on the scope-switch refusals (`err.settledRows`) and on the `reuseWithRefund` 200 (`res.data.settledRows`). `ScopeSwitchPrompt` shows "Held on: ..." / "Refund comes from: ..."; the `refundDue` banner names the row and method (`refundRowsHint`: only a `cc` row refunds to a card, else cheque). ⚠️ NOT built: tapping the banner straight into a refund. `POST .../refund` requires an addendum `draftId`, and the create flow has none - the refund is raised in the My Deals addendum wizard (`DynamicDealEditScreen`).
+- **Lead-wide shelf**: `leadShelfFor` lists every row's filed plans on each row (deduped by label); `restoreRowPlan` moves a local entry from the holding row; the server restore is already lead-wide. Restore is still hidden by `canRestoreEntry` for reference entries and financing onto a down payment (`FUNDING_FINANCING_ON_DOWN_PAYMENT`).
+- **No removal marker (s4)**: `DynamicDealEditScreen`'s save now goes through `withSettledRows` too. The re-scoping card carry in `ResultJobModal` stays - without it a saved card is deleted at HTTP 200.
+- s5: a calculator switch after submit is NOT blocked by the server today, so `scopeAfterSubmit` never fires; the handling is left in place, harmless. The doc's "four answers" for `settledAction` lists a fourth we do not know - only `reuse | refund | reuseWithRefund` are sent.
+
+## The lead list no longer carries the pending-uploads card
+
+`screens/Leads/index.tsx` used to mount `PendingLeadsBanner` as its `ListHeaderComponent`. It is gone: sync now gets one line from `SyncBanner` in `MainHeader`, app-wide. Full note in **`docs/claude/offline.md`** ("the pending-uploads CARD became a one-line strip").
+
+- WARNING: do not re-add a sync or error card to the lead list. The card put per-lead rows, progress counts, retry buttons and raw API errors on the screen a rep works from; failures are now deliberately silent outside Profile -> pending uploads.
+- `widgets/components/PendingLeadsBanner.tsx` is still in the tree but unreferenced, pending the client seeing the new strip. If they confirm, delete it; if they want the card back, it is one `ListHeaderComponent` line.

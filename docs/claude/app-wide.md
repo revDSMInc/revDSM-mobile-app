@@ -1543,3 +1543,11 @@ Reported twice in different places ("[Reports] S3 Resolve Error: Network Error" 
 - ⚠️ Never put tokens, document payloads or base64 in `recordError`/`logBreadcrumb`; `recordError`'s `extra` goes through `sanitizeForLog`.
 - Not verified on device (could not run pods/build here). Verify: release build, call `crash` once, relaunch, see it in the console.
 - **Device test:** `widgets/components/CrashlyticsTestPanel.tsx` at the bottom of Profile - "Send test non-fatal error" and "Force test crash". ⚠️ Rendered ONLY when `resolveCrashEnvironment(ENV.API_URL)` is non-production, so production builds never show or can trigger it; under `__DEV__` it warns that nothing is sent. Needs a RELEASE build; relaunch after the crash to upload; reports take a few minutes to appear (first one can take longer).
+
+## The strips under the header: connection, then sync
+
+`MainHeader` renders two one-line strips directly under the header bar, in this order: `OfflineBanner` (connection) then `SyncBanner` (queue). Both are app-wide, so every main screen gets them and no screen rolls its own. Full note on the sync one - why it replaced the pending-uploads card, and why it never reports errors - is in **`docs/claude/offline.md`** ("the pending-uploads CARD became a one-line strip").
+
+- WARNING: **neither strip ever shows an error.** The sync strip is silent for `failed` / `needs-review` work on purpose: a rep cannot act on a sync error mid-appointment, and a red notice on the main screens reads as "the app is broken". Anything needing a human belongs in Profile -> pending uploads. Do not add an error state to either strip.
+- They stack and must stay visually alike: same height, same 11pt single-line text, same centred icon-plus-text. `OfflineBanner` owns amber (offline / weak); `SyncBanner` owns blue (in flight) and green (done). Don't reuse amber in the sync strip - the colours are how a rep tells the two apart at a glance.
+- Logic for both is pure and testable - `utils/connection-banner.ts` and `utils/sync-banner.ts` - because neither component can be loaded under jest. Put any new rule in the util, not the component.

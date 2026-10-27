@@ -6,6 +6,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useUserRole } from '../../hooks/useUserRole';
 import { useSecureLogo } from '../../hooks/useSecureLogo';
 import { OfflineBanner } from './OfflineBanner';
+import { SyncBanner } from './SyncBanner';
 import { useTheme } from '../../theme/ThemeProvider';
 import { AccountPopover } from '../components/AccountPopover';
 import { ChatThreadsManager } from './ChatThreadsManager';
@@ -168,6 +169,9 @@ export function Header({
 
       {/* Directly under the header bar, above every screen's content. One indicator, app-wide. */}
       <OfflineBanner />
+      {/* Sync is background work and gets ONE line here, not a card on the lead list.
+          It stays silent on failure - anything needing a human is in Profile. */}
+      <SyncBanner />
 
       <AccountPopover
         visible={popoverVisible}

@@ -4,12 +4,12 @@ import {
   Text,
   TouchableOpacity,
   Image,
-  Alert,
   TextInput,
   StyleSheet,
   Dimensions,
   PanResponder,
   BackHandler,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -21,13 +21,14 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import { IMAGE_CATEGORIES } from '../../constants/lead-center';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
+import { logAnnotationClick } from '../../utils/activity-log/annotation-log';
+import { isOnline } from '../../services/connectivity';
 import { useWarmedImageUris } from '../../hooks/useWarmedImageUris';
 import { FlashMessage } from '../../config/message';
 import {
   buildMobileAnnotationData,
   countMarks,
   historySignature,
-  resetToBaseline,
   type RestoredMarks,
 } from '../../utils/annotation-restore';
 
@@ -171,6 +172,8 @@ export default function ImageAnnotationScreen() {
         module_type: 'annotated_photos',
         meta: {
           action: 'opened_annotation_dialog',
+          leadId: lead?._id,
+          mode: (selectedPhotos[0] as SectionImage)?.docKind === 'orderSheet' ? 'orderSheet' : (selectedPhotos[0] as SectionImage)?.existingAnnotationId ? 'reedit' : 'new',
           total_images: selectedPhotos.length,
           occurredAt: new Date().toISOString(),
         },
@@ -651,12 +654,30 @@ export default function ImageAnnotationScreen() {
     })
   ).current;
 
+  // One place that builds the context every annotation CLICK log shares (REVUIUX-571 - see utils/activity-log/annotation-log.ts).
+  const logClick = (action: 'undo' | 'redo' | 'reset' | 'discard', extra: Record<string, any> = {}) => {
+    const userId = user?._id || user?.id;
+    const photo = (currentPhoto || {}) as SectionImage;
+    logAnnotationClick({
+      userId,
+      leadId: lead?._id,
+      action,
+      mode: photo.docKind === 'orderSheet' ? 'orderSheet' : photo.existingAnnotationId ? 'reedit' : 'new',
+      category: photo.categoryName || (photo as any).category || null,
+      subcategory: photo.subcategory || null,
+      photoId: photo.existingAnnotationId || photo.id || null,
+      offline: !isOnline(),
+      ...extra,
+    });
+  };
+
   const handleUndo = () => {
     const history = historyMap[photoId] || [];
     if (history.length === 0) return;
 
     const action = history[history.length - 1];
     setHistoryMap((hm) => ({ ...hm, [photoId]: history.slice(0, -1) }));
+    logClick('undo', { stepType: action.type, undoLeft: history.length - 1, redoLeft: (redoMap[photoId] || []).length + 1 });
 
     setRedoMap((rm) => {
       const existing = rm[photoId] || [];
@@ -685,6 +706,7 @@ export default function ImageAnnotationScreen() {
 
     const action = redo[redo.length - 1];
     setRedoMap((rm) => ({ ...rm, [photoId]: redo.slice(0, -1) }));
+    logClick('redo', { stepType: action.type, undoLeft: (historyMap[photoId] || []).length + 1, redoLeft: redo.length - 1 });
 
     setHistoryMap((hm) => {
       const existing = hm[photoId] || [];
@@ -707,25 +729,29 @@ export default function ImageAnnotationScreen() {
     }
   };
 
-  // "Undo my changes": back to what the screen OPENED with (a re-edit's restored marks), NOT an empty canvas - emptying it threw
-  // away marks saved last week, and the save that followed stored an EMPTY annotation. See `resetToBaseline`.
+  // Reset: strip EVERY annotation off this photo - the ones saved earlier included - so it is back to the original picture. A re-edit
+  // opens its saved marks over the CLEAN original, so removing them all and tapping Save writes the clean photo back (an empty
+  // annotation is a valid save: `isEditedPhoto` sees the mark count differ from what the screen opened with). Back / Discard instead
+  // leaves what was saved untouched. The undo / redo stacks go too: their steps point at marks that no longer exist.
   const handleResetCanvas = () => {
-    const baseline = resetToBaseline(seededMarks, photoId);
-    setStrokesMap((sm) => ({ ...sm, [photoId]: baseline.strokes }));
-    setTextsMap((tm) => ({ ...tm, [photoId]: baseline.texts }));
-    setShapesMap((sm) => ({ ...sm, [photoId]: baseline.shapes as AnnotationShape[] }));
+    logClick('reset', {
+      marksRemoved: countMarks(marksFor(photoId)),
+      includedSavedMarks: (seededMarks.count[photoId] || 0) > 0,
+    });
+    setStrokesMap((sm) => ({ ...sm, [photoId]: [] }));
+    setTextsMap((tm) => ({ ...tm, [photoId]: [] }));
+    setShapesMap((sm) => ({ ...sm, [photoId]: [] }));
     setSelectedShapeId(null);
-    // Back to the steps the screen opened with (a re-edit's saved stacks), so Undo still works on last week's marks.
-    setHistoryMap((hm) => ({ ...hm, [photoId]: [...(seededMarks.history[photoId] || [])] }));
-    setRedoMap((rm) => ({ ...rm, [photoId]: [...(seededMarks.redo[photoId] || [])] }));
-    // Close anything tied to a note that may be gone, and bring the photo back to its normal fit position.
+    setHistoryMap((hm) => ({ ...hm, [photoId]: [] }));
+    setRedoMap((rm) => ({ ...rm, [photoId]: [] }));
+    // Close anything tied to a note that is gone, and bring the photo back to its normal fit position.
     setSelectedTextId(null);
     setShowStylePanel(false);
     setShowFontDropdown(false);
     resetZoom();
   };
 
-  // The reset button ALWAYS asks first (even when nothing changed yet - the rep expects the warning every time).
+  // The reset button ALWAYS asks first, with the app's own ConfirmDialog (a native Alert ignores the theme).
   const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
   const confirmResetCanvas = () => setShowResetConfirm(true);
 
@@ -1077,6 +1103,7 @@ export default function ImageAnnotationScreen() {
         module_type: 'annotated_photos',
         meta: {
           action: 'saved_annotated_images',
+          leadId: lead?._id,
           image_count: photosToProcess.length,
           occurredAt: new Date().toISOString(),
         },
@@ -1086,27 +1113,16 @@ export default function ImageAnnotationScreen() {
     navigation.goBack();
   };
 
+  // The app's own ConfirmDialog (a native Alert ignores the theme); the dialog itself is rendered at the bottom of the screen.
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState<boolean>(false);
+
   const handleBackPress = () => {
     const hasUnsavedChanges = (selectedPhotos as SectionImage[]).some((p) => {
       const pid = p.id || p.uri;
       return hasChangedSinceOpen(pid);
     });
     if (hasUnsavedChanges) {
-      Alert.alert(
-        'Discard Changes',
-        'Are you sure you want to discard your drawing changes?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Discard',
-            style: 'destructive',
-            onPress: () => {
-              onCancel?.();
-              navigation.goBack();
-            },
-          },
-        ]
-      );
+      setShowDiscardConfirm(true);
     } else {
       onCancel?.();
       navigation.goBack();
@@ -1584,13 +1600,13 @@ export default function ImageAnnotationScreen() {
         )}
       </SafeAreaView>
 
-      {/* The app's own ConfirmDialog (a native Alert ignores the theme). Same wording / tone as the order-sheet "Reset all changes". */}
+      {/* Same wording / tone as the order-sheet "Reset all changes" dialog. */}
       <ConfirmDialog
         visible={showResetConfirm}
         tone="warn"
         title="Reset changes?"
-        message="This removes everything you added or changed since you opened this photo and returns it to how it was. Saved annotations are kept."
-        note="This cannot be undone."
+        message="This removes ALL annotations from this photo, including ones you saved earlier, and returns it to the original image."
+        note="Tap Save afterwards to keep the original. Going back instead keeps what was saved."
         confirmLabel="Reset"
         cancelLabel="Cancel"
         onConfirm={() => {
@@ -1598,6 +1614,32 @@ export default function ImageAnnotationScreen() {
           handleResetCanvas();
         }}
         onCancel={() => setShowResetConfirm(false)}
+      />
+
+      <ConfirmDialog
+        visible={showDiscardConfirm}
+        tone="warn"
+        title="Discard changes?"
+        message="Are you sure you want to discard your drawing changes?"
+        note="Your unsaved changes will be lost."
+        confirmLabel="Discard"
+        cancelLabel="Keep Editing"
+        onConfirm={() => {
+          setShowDiscardConfirm(false);
+          logClick('discard', {
+            marksRemoved: countMarks(marksFor(photoId)),
+            includedSavedMarks: (seededMarks.count[photoId] || 0) > 0,
+          });
+          // iOS: popping the screen while the dialog's native Modal is still dismissing can drop the pop (or the dismissal), leaving the
+          // rep on the editor. Wait for the dialog to finish leaving; Android has no such window.
+          const leave = () => {
+            onCancel?.();
+            navigation.goBack();
+          };
+          if (Platform.OS === 'ios') setTimeout(leave, 400);
+          else leave();
+        }}
+        onCancel={() => setShowDiscardConfirm(false)}
       />
     </GestureHandlerRootView>
   );

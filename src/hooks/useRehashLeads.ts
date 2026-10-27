@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
 import { useAuth } from './useAuth';
+import { useLiveLeadRefresh } from './useLeadsData';
 import type { Lead } from '../config/types/lead';
 
 export interface RehashPagination {
@@ -20,11 +21,13 @@ export interface RehashLeadsParams {
   status?: string;
 }
 
+const REHASH_KEYS = ['rehashLeads'];
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 200;
 
 export function useRehashLeads(enabled: boolean, params?: RehashLeadsParams) {
   const { user } = useAuth();
+  useLiveLeadRefresh(enabled && !!user?._id, REHASH_KEYS);
   const queryClient = useQueryClient();
 
   const page = params?.page ?? DEFAULT_PAGE;

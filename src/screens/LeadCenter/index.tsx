@@ -315,6 +315,8 @@ export default function LeadCenterPage() {
     handleStartRevRenders,
     handleRetryRevRender,
     handleDismissRevRender,
+    handleRetryAllRevRenders,
+    handleDismissAllRevRenders,
   } = useLeadReports(lead, refetch);
 
   const {
@@ -1420,8 +1422,8 @@ export default function LeadCenterPage() {
                 secureUrls={secureUrls}
                 riskJob={riskJob}
                 revRenderJobs={revRenderJobs}
-                onRetryRevRender={handleRetryRevRender}
-                onDismissRevRender={handleDismissRevRender}
+                onRetryAllRevRenders={handleRetryAllRevRenders}
+                onDismissAllRevRenders={handleDismissAllRevRenders}
                 isConsentGenerating={isConsentGenerating}
                 isWaiverGenerating={isWaiverGenerating}
                 isInspectionGenerating={isInspectionGenerating}

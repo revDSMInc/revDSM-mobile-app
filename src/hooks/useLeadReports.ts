@@ -12,6 +12,8 @@ import {
   retryRevRender,
   startRevRenders,
   subscribeRevRenderJobs,
+  retryAllRevRenders,
+  dismissAllRevRenders,
 } from '../services/revRenderJobs';
 import { LeadService } from '../services/api/leads';
 import { FlashMessage } from '../config/message';
@@ -432,6 +434,9 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
 
   const handleRetryRevRender = (jobId: string | number) => retryRevRender(leadId, jobId);
   const handleDismissRevRender = (jobId: string | number) => dismissRevRender(leadId, jobId);
+  // Batch forms: one toast / one write for the whole set - see `services/revRenderJobs.ts`.
+  const handleRetryAllRevRenders = () => retryAllRevRenders(leadId);
+  const handleDismissAllRevRenders = () => dismissAllRevRenders(leadId);
 
   return {
     secureUrls,
@@ -445,5 +450,7 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     handleStartRevRenders,
     handleRetryRevRender,
     handleDismissRevRender,
+    handleRetryAllRevRenders,
+    handleDismissAllRevRenders,
   };
 };
