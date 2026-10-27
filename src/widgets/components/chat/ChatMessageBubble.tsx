@@ -384,6 +384,9 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     return secure;
   }, [voiceUri, imageUrls, isMsgVoice]);
 
+  // A GIF message is a text message whose body is a GIPHY url: never show that url, copy it or edit it.
+  const isGifMsg = isGifMessageText(msg.text);
+
   const hasTextOrFiles = useMemo(() => {
     return !!((msg.text && msg.text.trim().length > 0) || files.length > 0 || isMsgVoice);
   }, [msg.text, files, isMsgVoice]);
@@ -635,7 +638,8 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     let replyIcon = null;
     let replyLabel = text;
 
-    if (isGifMessageText(text)) {
+    const replyGifUrl = isGifMessageText(text) ? text.trim() : null;
+    if (replyGifUrl) {
       replyIcon = 'images';
       replyLabel = GIF_REPLY_LABEL;
     } else if (isReplyVoice) {
@@ -672,7 +676,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
           {author}
         </Text>
         <View className="flex-row items-center">
-          {replyIcon && (
+          {replyIcon && !replyGifUrl && (
             <Icon
               name={replyIcon}
               size={12}
@@ -680,14 +684,22 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
               style={{ marginRight: 4, opacity: 0.7 }}
             />
           )}
-          <Text
-            className="text-[12px] opacity-70"
-            style={{ color: isMe ? '#fff' : colors.text, flex: 1 }}
-            numberOfLines={isReplyVoice ? undefined : 1}
-            ellipsizeMode={isReplyVoice ? undefined : "tail"}
-          >
-            {replyLabel}
-          </Text>
+          {replyGifUrl ? (
+            <Image
+              source={{ uri: replyGifUrl }}
+              style={{ width: 64, height: 64, borderRadius: 8, marginTop: 2 }}
+              resizeMode="cover"
+            />
+          ) : (
+            <Text
+              className="text-[12px] opacity-70"
+              style={{ color: isMe ? '#fff' : colors.text, flex: 1 }}
+              numberOfLines={isReplyVoice ? undefined : 1}
+              ellipsizeMode={isReplyVoice ? undefined : "tail"}
+            >
+              {replyLabel}
+            </Text>
+          )}
         </View>
       </TouchableOpacity>
     );
@@ -1707,7 +1719,18 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                 >
                   {isMe ? 'You' : msg.user?.name || 'Member'}
                 </Text>
-                {msg.image ||
+                {isGifMsg ? (
+                  <View
+                    className="rounded-xl overflow-hidden mt-1 shadow-sm"
+                    style={{ width: 150, height: 150, backgroundColor: 'rgba(0,0,0,0.08)' }}
+                  >
+                    <Image
+                      source={{ uri: msg.text.trim() }}
+                      style={{ width: '100%', height: '100%' }}
+                      resizeMode="cover"
+                    />
+                  </View>
+                ) : msg.image ||
                   msg.imageUrl ||
                   (msg.files?.[0] && getFileType(msg.files[0]) === 'image') ? (
                   <View
@@ -1781,7 +1804,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                   <Icon name="arrow-undo-outline" size={20} color={isDark ? '#aaa' : '#555'} />
                 </TouchableOpacity>
               )}
-              {fileType === 'text' && !isMsgVoice && !!msg.text && (
+              {fileType === 'text' && !isMsgVoice && !!msg.text && !isGifMsg && (
                 <TouchableOpacity
                   onPress={handleCopy}
                   className="flex-row items-center justify-between px-5 py-3.5 border-b"
@@ -1851,7 +1874,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                   <Icon name="time-outline" size={20} color={isDark ? '#aaa' : '#555'} />
                 </TouchableOpacity>
               )}
-              {!isViewOnly && canEditOwn && isMe && (
+              {!isViewOnly && canEditOwn && isMe && !isGifMsg && (
                 <>
                   {(() => {
                     const now = new Date();
