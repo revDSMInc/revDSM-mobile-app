@@ -2675,3 +2675,13 @@ There is ONE editor (`screens/ImageAnnotation`) and ONE order-sheet opener (`ope
   after BOTH the `new` upload and the re-edit PATCH.
 - Not covered (by design): reopening a re-edit while its own save is still queued shows the pre-save doc; a pending `new` annotation has no server id
   to reopen. Not verified on device.
+
+## Job Builder sticky header: grey "shadow" smear on iOS mid-scroll
+
+Reported with a screenshot of the collapsing header caught mid-scroll: a grey smudge across the "Job Builder" title and the step circles.
+
+- **Cause** (`hooks/useCollapsingHeader.ts`): it is not a shadow and nothing casts one. The header is an OPAQUE WHITE layer that slides up over the step tracker, and its opacity used to interpolate across the whole travel (0.35 at the halfway point). A part-transparent white sheet sitting over the tracker's text and circles reads as a dirty grey overlay, and iOS composites a fractional-opacity layer in a way that makes it more obvious than Android.
+- **Fix:** the header now fades to 0 over the FIRST 60% of the travel, so it is fully invisible before it overlaps the tracker. The slide itself is unchanged - only the opacity ramp moved.
+- ⚠️ Do not "soften" this back to a gentle fade across the full range: a partially transparent header ON TOP of the tracker IS the bug.
+- The header translates by its full height, so when collapsed it is off-screen entirely and cannot swallow taps meant for the tracker; the transparent-but-present window exists only while it is still moving.
+- Not verified on device: scroll the Job Builder slowly on iOS and watch the title area - the header should vanish cleanly with no grey wash over the step row.

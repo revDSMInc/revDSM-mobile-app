@@ -516,7 +516,7 @@ function renderField(
       return (
         <OptionToggleField
           key={field.id}
-          label={visibleLabel}
+          fieldLabel={field.label}
           options={visOpts}
           value={toggleValue}
           onChange={onChange}
@@ -542,7 +542,7 @@ function renderField(
       return (
         <OptionToggleField
           key={field.id}
-          label={visibleLabel}
+          fieldLabel={field.label}
           options={visOpts}
           value={listValue}
           onChange={onChange}
