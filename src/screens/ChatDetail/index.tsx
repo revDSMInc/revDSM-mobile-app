@@ -613,11 +613,17 @@ export default function ChatDetailScreen() {
             prev.map((m) => (m._id === msg._id ? { ...m, isPinned: !msg.isPinned } : m))
           );
 
+          // Awaited, so the catch below can actually undo the optimistic flip.
+          // These used to be fire-and-forget socket emits: the call could not
+          // fail from here, which is why a pin that the server never stored
+          // still looked like it had worked.
           if (action === 'pin') {
-            ChatService.pinMessage(chatId, msg._id);
+            await ChatService.pinMessage(chatId, msg._id);
           } else {
-            ChatService.unpinMessage(chatId, msg._id);
+            await ChatService.unpinMessage(chatId, msg._id);
           }
+          // The pinned bar is filled by the `message-pinned` broadcast, which
+          // this device receives too, so there is nothing to add here.
         } catch (err) {
           console.error('Pinning failed:', err);
           setMessages((prev) =>

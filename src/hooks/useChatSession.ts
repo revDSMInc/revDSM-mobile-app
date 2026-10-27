@@ -201,10 +201,23 @@ export const useChatSession = (
     if (isChannel) {
       ChatService.setOpenChannel(chatId);
     } else {
-      SocketManager.emit('get-pinned-messages', {
-        chatId,
-        channelId: chatId,
-      });
+      // Was `SocketManager.emit('get-pinned-messages', ...)`, whose handler
+      // REVDSM-1313 deleted -- so nothing ever answered and the pinned bar
+      // stayed empty. Pinned messages are an endpoint now.
+      ChatService.getPinnedMessages(chatId)
+        .then((pins) => {
+          const normalized = pins.map((m: any) => ChatService.normalizeMessage(m));
+          fetchSecureUrls(normalized);
+          const pinnedIds = new Set(normalized.map((m: any) => String(m._id)));
+          setMessages((prev) =>
+            prev.map((m) => ({ ...m, isPinned: pinnedIds.has(String((m as any)._id)) })),
+          );
+          setPinnedMessages(normalized);
+        })
+        .catch(() => {
+          // An empty bar is the right failure here: it is a read of something
+          // the history page already carries per-message.
+        });
     }
 
     // After a reconnect, pull what was missed while offline (latest page only) and merge it in.

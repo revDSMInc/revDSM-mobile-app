@@ -536,20 +536,34 @@ class ChatService {
     await api.post(`/chat/v1/${chatId}/participants`, { userId });
   }
 
-  getPinnedMessages(chatId: string): void {
-    SocketManager.emit('get-pinned-messages', chatId);
+  /**
+   * The chat's pinned messages. Its own endpoint rather than a filter over the
+   * loaded page, so the bar fills even when the pin is on a message far back in
+   * the history.
+   */
+  async getPinnedMessages(chatId: string): Promise<any[]> {
+    const res = await api.get<any>(`/chat/v1/${chatId}/pinned`);
+    return res.data?.data?.pinnedMessages || [];
   }
 
-  pinMessage(chatId: string, messageId: string): void {
-    const payload: any = { messageId, chatId };
-    console.log('[ChatService] pin-message:', payload);
-    SocketManager.emit('pin-message', payload);
+  /**
+   * Pin or unpin. These are HTTP calls, not socket emits: the write has to be
+   * acknowledged and ordered, and the socket's job is only to tell the rest of
+   * the room. The old `pin-message` / `unpin-message` socket events no longer
+   * exist on the server -- emitting them was why pinning silently stopped
+   * working (REVDSM-1313 removed the handlers).
+   *
+   * Resolves with the server's copy of the message so the caller can replace
+   * its optimistic one; rejects on a refusal, which puts the pin back.
+   */
+  async pinMessage(chatId: string, messageId: string): Promise<any> {
+    const res = await api.put<any>(`/chat/v1/messages/${messageId}/pin`);
+    return res.data?.data?.message || null;
   }
 
-  unpinMessage(chatId: string, messageId: string): void {
-    const payload: any = { messageId, chatId };
-    console.log('[ChatService] unpin-message:', payload);
-    SocketManager.emit('unpin-message', payload);
+  async unpinMessage(chatId: string, messageId: string): Promise<any> {
+    const res = await api.delete<any>(`/chat/v1/messages/${messageId}/pin`);
+    return res.data?.data?.message || null;
   }
 
   addReaction(chatId: string, messageId: string, emoji: string, isChannel = false): void {
