@@ -2675,3 +2675,9 @@ There is ONE editor (`screens/ImageAnnotation`) and ONE order-sheet opener (`ope
   after BOTH the `new` upload and the re-edit PATCH.
 - Not covered (by design): reopening a re-edit while its own save is still queued shows the pre-save doc; a pending `new` annotation has no server id
   to reopen. Not verified on device.
+
+## RevRender progress shows a stage word
+
+`OperationalSections.tsx` label next to the bar was a fixed "Rendering". It now follows `renderPercent` via `utils/revrender-stage.ts` `revRenderStageWord`: 0-10 Warming up, 11-35 Engine running, 36-75 Rendering, 76-92 Hold On, 93-100 Almost Finished. The amber "Paused" label still wins while the status check cannot reach the server.
+
+Follow-up: the bar and word use a DISPLAYED percent (`stepShownPercent`, one stage per 700 ms tick), not the raw estimate, so a fast render still shows all five words. When the jobs finish, the bar runs to 100% (ending on "Almost Finished"), holds 1.2 s, then the card hides. A failed job cancels the sequence. Do NOT drive the label from `renderPercent` directly - it skips stages.
