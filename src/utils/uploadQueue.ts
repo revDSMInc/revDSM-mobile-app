@@ -22,6 +22,7 @@ import {
   photoIdempotencyKey,
 } from './upload-idempotency';
 import { pruneRecentlyCompleted } from './photo-upload-progress';
+import { writeAnnotationDocsCache } from './annotation-docs-cache';
 
 export interface RecentlyCompletedUpload {
   leadId: string;
@@ -514,6 +515,7 @@ class UploadQueueManager {
      */
     try {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
+      if (item.annotation) await this.refreshAnnotationDocs(item.leadId);
       await queryClient.refetchQueries({ queryKey: ['lead', item.leadId] });
     } catch (qcErr) {
       console.warn('[UploadQueue] Failed to refresh queries:', qcErr);
@@ -531,6 +533,22 @@ class UploadQueueManager {
       }
     } catch (cleanupError) {
       console.warn('[UploadQueue] Failed to delete temporary cache file:', cleanupError);
+    }
+  }
+
+  /**
+   * REVUIUX-571: the saved annotation docs (marks + undo/redo steps) are what a re-edit restores from. They are re-read and re-stored
+   * the moment an annotation lands, so reopening the photo (even offline, or after a restart) finds the marks and steps just saved
+   * instead of a stale list that has none. Best effort - the photo is already saved.
+   */
+  private async refreshAnnotationDocs(leadId: string): Promise<void> {
+    try {
+      const data = (await LeadService.getAnnotations(leadId)).data;
+      writeAnnotationDocsCache(leadId, data);
+      queryClient.setQueryData(['leadAnnotations', leadId], data);
+    } catch (e) {
+      console.warn('[UploadQueue] Could not refresh the annotation docs:', e);
+      queryClient.invalidateQueries({ queryKey: ['leadAnnotations', leadId] });
     }
   }
 
@@ -566,7 +584,7 @@ class UploadQueueManager {
     try {
       queryClient.invalidateQueries({ queryKey: ['secureUrls'] });
       queryClient.invalidateQueries({ queryKey: ['leads'] });
-      queryClient.invalidateQueries({ queryKey: ['leadAnnotations', item.leadId] });
+      await this.refreshAnnotationDocs(item.leadId);
       await queryClient.refetchQueries({ queryKey: ['lead', item.leadId] });
     } catch (qcErr) {
       console.warn('[UploadQueue] Failed to refresh queries after an annotation edit:', qcErr);

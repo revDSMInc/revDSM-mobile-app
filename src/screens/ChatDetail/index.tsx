@@ -591,8 +591,16 @@ export default function ChatDetailScreen() {
             });
           }
           setMessages((prev) =>
-            prev.map((m) => (m._id === msg._id ? { ...m, isPinned: !msg.isPinned } : m))
+            prev.map((m) => (m._id?.toString() === msg._id?.toString() ? { ...m, isPinned: !msg.isPinned } : m))
           );
+          setPinnedMessages((prev: any[]) => {
+            const id = msg._id?.toString();
+            if (action === 'pin') {
+              if (prev.some((m: any) => m?._id?.toString() === id)) return prev;
+              return [...prev, { ...msg, isPinned: true }];
+            }
+            return prev.filter((m: any) => m?._id?.toString() !== id);
+          });
 
           if (action === 'pin') {
             ChatService.pinMessage(chatId, msg._id);
