@@ -199,12 +199,10 @@ export const useChatSession = (
 
     if (isChannel) {
       ChatService.setOpenChannel(chatId);
-    } else {
-      SocketManager.emit('get-pinned-messages', {
-        chatId,
-        channelId: chatId,
-      });
     }
+    // ⚠️ Lead chat pins are requested by SocketManager.joinRoom (plain chat id, on join ack / +800ms / reconnect) - the same
+    // shape the web sends. A second `{ chatId, channelId }` request used to go out here as well; if the server answers it
+    // differently, its `pinned-messages-response` replaces the list (unverified - removed to keep one request shape).
 
     // After a reconnect, pull what was missed while offline (latest page only) and merge it in.
     const resyncChannel = () => {
