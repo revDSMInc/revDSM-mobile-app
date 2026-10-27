@@ -54,7 +54,6 @@ import { formatUSPhoneNumber, getRawPhoneNumber } from '../../utils/phone-util';
 
 import { AxiosResponse } from 'axios';
 import { NUMERIC_KEYBOARD } from '../../utils/keyboard-type';
-import { CrashlyticsTestPanel } from '../../widgets/components/CrashlyticsTestPanel';
 
 type TabType = 'profile' | '2fa';
 
@@ -1274,7 +1273,6 @@ export default function ProfilePage() {
             </View>
           )}
 
-          <CrashlyticsTestPanel />
           <View className="h-20" />
         </ScrollView>
 

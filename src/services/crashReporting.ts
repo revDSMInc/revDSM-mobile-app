@@ -130,23 +130,3 @@ const safeJson = (v: unknown) => {
     return String(v);
   }
 };
-
-/** Why reporting is unavailable (null = the native module loaded). Shown by the test panel. */
-export const getCrashlyticsStatus = (): { available: boolean; error: string | null } => {
-  const c = load();
-  return { available: !!c, error: c ? null : loadError };
-};
-
-/** Verification helpers for the non-production test panel. Release builds only: collection is off under __DEV__. */
-export const sendTestNonFatal = (): boolean => {
-  if (!getCrashlyticsStatus().available) return false;
-  recordError(new Error('Crashlytics test: non-fatal error'), 'crashlytics-test');
-  return true;
-};
-
-export const forceTestCrash = (): boolean => {
-  if (!getCrashlyticsStatus().available) return false;
-  logBreadcrumb('crashlytics-test: forcing a native crash');
-  safe(({ api: a, instance: i }) => a.crash(i));
-  return true;
-};
