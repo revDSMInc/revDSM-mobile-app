@@ -21,6 +21,7 @@ import { FlashMessage } from '../../../config/message';
 import { RevRenderHistoryModal } from '../../modals/lead-center/RevRenderHistoryModal';
 import { getWarmedLocalUri, warmToLocalCache } from '../../../utils/imageFileCache';
 import { queueCounts, queueProgress } from '../../../utils/revrender-jobs';
+import { revRenderStageWord, stepShownPercent } from '../../../utils/revrender-stage';
 
 const QUEUED_FORM = { reportType: 'queued-offline', __queuedOffline: true } as const;
 
@@ -123,6 +124,34 @@ export const ToolsSection = ({
     return () => clearInterval(t);
   }, [revRenderJobs]);
   const renderPercent = queueProgress(revRenderJobs, renderNow);
+  // DISPLAYED percent: steps one stage per tick so every word is seen, and after the server says done the bar runs to 100 and
+  // plays any remaining words before the card hides.
+  const hasActiveNow = revRenderJobs.some((j: any) => j.status !== 'completed' && j.status !== 'failed');
+  const anyFailedNow = revRenderJobs.some((j: any) => j.status === 'failed');
+  const [sequenceOn, setSequenceOn] = React.useState(false);
+  const [shownPercent, setShownPercent] = React.useState(0);
+  const stageTarget = hasActiveNow ? renderPercent : sequenceOn ? 100 : 0;
+  React.useEffect(() => {
+    if (hasActiveNow) setSequenceOn(true);
+    else if (anyFailedNow) {
+      setSequenceOn(false);
+      setShownPercent(0);
+    }
+  }, [hasActiveNow, anyFailedNow]);
+  React.useEffect(() => {
+    if (!sequenceOn) return;
+    const t = setInterval(() => setShownPercent((s) => stepShownPercent(s, stageTarget)), 700);
+    return () => clearInterval(t);
+  }, [sequenceOn, stageTarget]);
+  React.useEffect(() => {
+    if (hasActiveNow || !sequenceOn || shownPercent < 100) return;
+    const t = setTimeout(() => {
+      setSequenceOn(false);
+      setShownPercent(0);
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [hasActiveNow, sequenceOn, shownPercent]);
+  const showRevRenderProgress = sequenceOn || hasActiveNow;
   const hasActiveJobs = revRenderJobs.some(
     (j: any) => j.status !== 'completed' && j.status !== 'failed'
   );
@@ -304,23 +333,23 @@ export const ToolsSection = ({
         </View>
 
         {/* Progress Bar for RevRender */}
-        {revRenderJobs.some((j: any) => j.status !== 'completed' && j.status !== 'failed') && (
+        {showRevRenderProgress && (
           <View className="mb-4">
             <View className="flex-row justify-between items-center mb-1.5">
               <View className="flex-row items-center">
                 <ActivityIndicator size="small" color={revRenderWaiting ? WAITING_AMBER : colors.primary.main} />
                 <Text className="text-[12px] font-black ml-2" style={{ color: revRenderWaiting ? WAITING_AMBER : '#637381' }}>
-                  {revRenderWaiting ? 'Paused' : 'Rendering'} · {renderCounts.label}
+                  {revRenderWaiting ? 'Paused' : revRenderStageWord(shownPercent)} {renderCounts.label ? `· ${renderCounts.label}` : ''}
                 </Text>
               </View>
-              <Text className="text-[12px] font-black text-slate-400">{renderPercent}%</Text>
+              <Text className="text-[12px] font-black text-slate-400">{shownPercent}%</Text>
             </View>
             <View className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
               <View
                 className={`h-full ${
                   revRenderWaiting ? 'bg-amber-500' : 'bg-[#2EDE56] shadow-sm shadow-[#2EDE56CC]'
                 }`}
-                style={{ width: `${renderPercent}%` }}
+                style={{ width: `${shownPercent}%` }}
               />
             </View>
             {/* The bar is a live ESTIMATE (`estimateJobProgress`): eased from the moment each render was sent, capped below 100 until
