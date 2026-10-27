@@ -106,9 +106,24 @@ export const AppointmentSchedulerModal = ({
   const [availabilityRefresh, setAvailabilityRefresh] = useState(0);
   // Windows on the picked day that "Yes" found no crew for, so they are not offered again.
   const [failedWindows, setFailedWindows] = useState<string[]>([]);
-  // A new job (not an edit) with a lead is checked and booked when the rep taps "Yes",
-  // not while picking a date. Everything else keeps the check it always had.
-  const checkOnYes = !isEdit && !!leadId;
+  /**
+   * Any flow with a lead is checked and booked when the rep taps "Yes", not while picking a date.
+   *
+   * ⚠️ EDITING AN APPOINTMENT TAKES THIS PATH TOO. REVDSM-1300 originally excluded `isEdit`
+   * (`!isEdit && !!leadId`), which left an edit with the OLD behaviour and, because the three
+   * things below are gated together, made it behave worse than the create flow in every respect:
+   * the calendar pre-dimmed days no crew could take, "Yes" never booked, and the "No crew
+   * available / Try <other window> / Pick Another Date" panel could never appear - the rep was
+   * simply blocked with no way forward. Reported from the field against the edit wizard.
+   *
+   * `checkOnYes` gates three things as one, so they cannot drift apart:
+   *   1. the calendar is NOT pre-dimmed (`useInstallCalendarAvailability` disabled)
+   *   2. the per-day window check is NOT run up front (`useInstallAvailability` disabled)
+   *   3. "Yes" books the window, and a `taken` answer shows the no-crew panel
+   *
+   * A caller with no `leadId` keeps the earlier checks - there is nothing to book without one.
+   */
+  const checkOnYes = !!leadId;
 
   // What the scheduler says about the chosen day. Until it answers — or if it never
   // does — every window is offered exactly as before.
@@ -186,31 +201,45 @@ export const AppointmentSchedulerModal = ({
           customerName,
         };
 
+  /**
+   * Book the chosen window, first come first served: the server books the time and assigns the
+   * crew at this moment, so a time someone else just took is caught here and not at the end of
+   * the job.
+   *
+   * Returns false when the window is gone, having already put the no-crew panel on screen; the
+   * caller must stop. Shared by the create flow's "Yes" and by an appointment EDIT, so the two
+   * cannot drift apart - an edit that skipped this could never reach the no-crew panel.
+   *
+   * ⚠️ OFFLINE IS A PASS, NOT A FAILURE. `bookInstallSlot` answers `offline` (or `error`) when
+   * the request cannot be made, and only `taken` stops the rep. The server does not enforce
+   * windows today, so a booking made with no signal is accepted whatever the crews' load is and
+   * the manager sees it on the dispatch board afterwards - see `offline.md`, "Install availability
+   * check is skipped offline". Do NOT make this gate the rep's progress on connectivity.
+   */
+  const bookChosenWindow = async (): Promise<boolean> => {
+    if (!checkOnYes) return true;
+    setBooking(true);
+    const result = await bookInstallSlot({
+      leadId,
+      date: format(selectedDate, 'yyyy-MM-dd'),
+      timeWindow: currentWindow.value,
+      isSale,
+    });
+    setBooking(false);
+
+    if (result.kind === 'taken') {
+      // No crew for this window: say so on this screen and let the rep try the other
+      // window or another date. Nothing was booked.
+      setFailedWindows((prev) => (prev.includes(currentWindow.value) ? prev : [...prev, currentWindow.value]));
+      setAvailabilityRefresh((n) => n + 1);
+      return false;
+    }
+    return true;
+  };
+
   const handleAcceptSlot = async () => {
     if (booking) return;
-
-    // First come, first served: the server books the time and assigns the crew at this
-    // moment, so a time someone else just took is caught here, not at the end of the job.
-    if (!isEdit && leadId) {
-      setBooking(true);
-      const result = await bookInstallSlot({
-        leadId,
-        date: format(selectedDate, 'yyyy-MM-dd'),
-        timeWindow: currentWindow.value,
-        isSale,
-      });
-      setBooking(false);
-
-      if (result.kind === 'taken') {
-        // No crew for this window: say so on this screen and let the rep try the other
-        // window or another date. Nothing was booked.
-        setFailedWindows((prev) => (prev.includes(currentWindow.value) ? prev : [...prev, currentWindow.value]));
-        setAvailabilityRefresh((n) => n + 1);
-        return;
-      }
-      // Offline (or any other failure): nothing is checked or held now; the booking carries on
-      // and the crew is assigned when the job builder syncs.
-    }
+    if (!(await bookChosenWindow())) return;
 
     setIsTBD(false);
     setView('success');
@@ -329,9 +358,17 @@ export const AppointmentSchedulerModal = ({
   };
 
   const handleEditConfirm = async () => {
+    if (booking) return;
     const appointmentData = buildEditAppointmentData();
     const changes = buildScheduleChanges(appointmentData);
     const scheduleChanged = changes.length > 0;
+
+    /**
+     * ⚠️ An edit books the window too, and only when the schedule actually CHANGED. Confirming
+     * an edit that left the date and window alone must not re-book the slot the lead already
+     * holds - the server would be asked to take a window this same lead is sitting on.
+     */
+    if (scheduleChanged && !(await bookChosenWindow())) return;
 
     if (leadId && scheduleChanged && requireScheduleAmendment) {
       await openAmendmentFlow(appointmentData, changes);

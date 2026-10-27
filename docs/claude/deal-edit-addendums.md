@@ -1647,3 +1647,76 @@ On device the Deal screen ended with TWO order sheets after an annotate. `Summar
 `SummaryFinalizeCards` had limited the pencil (and the "Reset all changes" tile button) to `editMode`; both now show on the create-flow summary too, for any order sheet the server already holds (`canAnnotateOrderSheet`: a `serverId`/`_id`, not mid-upload). The old static "Cannot annotate yet" warning is gone - a tile with no server id simply has no pencil. The create flow already passes `onRefreshDocs` (`DynamicJobBuilderScreen.handleRefreshDocs`), so the tile re-reads when the queued job lands. ⚠️ A sheet filed offline and still queued has no server id, so it cannot be annotated until it syncs. Log coverage: `tests/annotation/order-sheet-logs.test.ts` (connection + action time on opened / stored / reset). Not verified on device.
 
 - **REVUIUX-571: the order-sheet tile in `SummaryFinalizeCards` (job builder + My Deals edit) now warms its sheets for offline annotation** (`warmOrderSheetForOffline` in an effect over `orderSheetFiles`), so the pencil works with no signal even when the Job-docs list was never opened. Details: `lead-center.md` ("annotation entry points across the whole app").
+
+### An appointment EDIT now takes the same scheduling path as the create flow (REVUIUX follow-up to REVDSM-1300)
+
+Reported from the field against "Edit Job Build": the install calendar greyed out almost every day,
+and there was no way forward. Asked for as *"no need to disable the dates, and show things like we
+are doing in Job Builder"*.
+
+Cause: `AppointmentSchedulerModal` computed `checkOnYes = !isEdit && !!leadId`, so an edit
+(`SummaryFinalizeCards` passes `isEdit={isEditingAppt}`) fell to the OLD pre-REVDSM-1300 behaviour.
+That flag gates three things at once, and all three flipped the wrong way for an edit:
+
+| | create (`checkOnYes`) | edit, before | edit, now |
+|---|---|---|---|
+| calendar pre-dimmed | no | **yes** | no |
+| per-day window check up front | no | **yes** | no |
+| "Yes" books + no-crew panel | yes | **never** | yes |
+
+So the rep was shown dimmed days *and* could never reach the "No crew available / Try 12:00 PM -
+4:00 PM / Pick Another Date" panel that the create flow offers. Now `checkOnYes = !!leadId`.
+
+- ⚠️ **The first attempt at this fix edited the wrong file.** `DynamicDealEditScreen`'s own
+  `InstallDateCalendar` was turned off instead; it is a *different* calendar (the wizard's step 1)
+  from the modal in the screenshots. That change was reverted - `InstallDateCalendar` still
+  pre-dims, which is correct, because the wizard has no "Yes" step to check on and books at submit
+  instead (see "Submitting a changed install time books the crew as a draft" above). **These two
+  calendars are deliberately different; do not "unify" them.**
+- ⚠️ **`handleEditConfirm` had to book as well.** Edit mode confirms through it, not through
+  `handleAcceptSlot`, so flipping `checkOnYes` alone would have shown a panel that nothing could
+  trigger. The booking is now one shared `bookChosenWindow()` helper used by both, which returns
+  false (and has already put the panel on screen) when the window is gone.
+- ⚠️ **An edit books only when the schedule actually CHANGED** (`scheduleChanged && !(await
+  bookChosenWindow())`). Confirming an unchanged edit must not re-book the slot the lead already
+  holds, or the server is asked to take a window this same lead is sitting on.
+- ⚠️ **OFFLINE IS A PASS, NOT A FAILURE.** `bookInstallSlot` answers `offline` / `error` when the
+  request cannot be made, and ONLY `taken` stops the rep - unchanged from the create flow, and
+  consistent with `offline.md` ("Install availability check is skipped offline"): the server does
+  not enforce windows today, so a booking made with no signal is accepted and the manager sees it
+  on the dispatch board. Disabling the calendar also means an offline edit no longer waits on a
+  calendar request that cannot succeed. Do not make this gate progress on connectivity.
+- `isEdit` still selects the confirm button's label/handler; it no longer decides how scheduling
+  is checked.
+- ⚠️ `deal-center.md` § "Create flow: availability is checked on 'Yes' only" says *"Edit flows
+  (`isEdit`) and callers without a `leadId` keep the earlier checks"* - that is now true only of
+  callers with no `leadId`. Corrected there as well.
+- Not verified on device.
+
+### The edit wizard showed a raw ISO install date where the job builder showed `M/d/yyyy`
+
+Reported with screenshots: the job builder's "Scheduled Appointment" card read `11/2/2026`, the
+edit wizard's read `2026-10-27T03:00:00-04:00`. **Same card component** (`SummaryFinalizeCards`) —
+the difference was the data each caller seeded it with.
+
+The chain: the job builder keeps `scheduleTime.date` as `M/d/yyyy` while the rep works and converts
+to ISO only on submit (`normalizeScheduleTimeForSubmit` in `DynamicJobBuilderScreen`). The edit
+wizard seeds `scheduleDate` from what the SERVER stored — that ISO string — and passed it straight
+through as `scheduleTimeOverride`.
+
+Fixed at the seed with `formatInstallDateForDisplay` (`utils/install-date-format.ts`, tested in
+`tests/offline/install-date-format.test.ts`), so every downstream consumer sees the one shape the
+job builder uses rather than each re-handling ISO.
+
+- ⚠️ **The ISO string is parsed as TEXT, never through `new Date()`.** `2026-10-27T03:00:00-04:00`
+  is the 27th to the customer who booked it, but `new Date(...).getDate()` is 26 anywhere west of
+  that offset — and this date reaches a signed agreement. The repo rule (CLAUDE.md § "Data &
+  correctness") applies exactly here; the timezone cases are locked down in the tests.
+- ⚠️ **`scheduleChanged` must normalise BOTH sides.** `scheduleDate` is now `M/d/yyyy` while
+  `lead.jobBuilder.scheduleTime.date` is still the server's ISO, so comparing them raw makes
+  `scheduleChanged` permanently true — every edit would look like a reschedule, re-book the slot
+  the lead already holds and raise a pointless addendum. Both sides go through the formatter.
+- `new Date('11/2/2026')` parses as LOCAL midnight, so the booking call (`format(day, 'yyyy-MM-dd')`)
+  and the `M/d/yy` card both stay correct. `M/d/yyyy` is in fact safer than ISO there — it carries
+  no offset that could shift the day.
+- Not verified on device.

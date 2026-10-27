@@ -5161,7 +5161,7 @@ against the schedule as it is at that moment and assigns the crew it picks (firs
 - ⚠️ Not done on the edit flow (`isEdit`, My Deals): rescheduling a job that already has a crew does not re-pick a crew.
 
 ### Create flow: availability is checked on "Yes" only (REVDSM-1300)
-In `AppointmentSchedulerModal`, a NEW job with a lead (`!isEdit && leadId`, `checkOnYes`) no longer asks the scheduler when a date is picked (no per-day check, no calendar dimming). The one check is the **Yes** tap: the server checks that exact window (8-12 or 12-4) and assigns the crew. No crew -> a "No crew available" panel on the same screen with **Try <other window>** (only if it has not failed too) and **Pick Another Date**. Edit flows (`isEdit`) and callers without a `leadId` keep the earlier checks.
+In `AppointmentSchedulerModal`, a NEW job with a lead (`!isEdit && leadId`, `checkOnYes`) no longer asks the scheduler when a date is picked (no per-day check, no calendar dimming). The one check is the **Yes** tap: the server checks that exact window (8-12 or 12-4) and assigns the crew. No crew -> a "No crew available" panel on the same screen with **Try <other window>** (only if it has not failed too) and **Pick Another Date**. Callers without a `leadId` keep the earlier checks. ⚠️ **Edit flows NO LONGER do** - `checkOnYes` is now `!!leadId`, so an appointment edit takes this same path; see `deal-edit-addendums.md` § "An appointment EDIT now takes the same scheduling path".
 - A demo has its window checked too (409 if no crew) but no crew is assigned; only a sale is assigned.
 
 ## REVDSM-1300 - install scheduling on mobile: APIs, when they fire, and how availability is checked
@@ -5707,3 +5707,26 @@ Reported against Lighting -> Mounting Substrate: "Fascia is showing locked, it s
 - Validation is unaffected: `tab-validation` checks the selected VALUE, so a required field left empty blocks the step exactly like any other - which is the point of allowing deselect.
 - ⚠️ Separate latent bug fixed here: `optionsKey` used `join('<raw NUL>')` - a literal 0x00 in the source, which made git and grep treat the file as BINARY (`file` reported `data`). Now the escape `'\u0000'`, per CLAUDE.md section 6.
 - Not verified on device: tap the lone option to clear it and confirm it STAYS clear; a required field should then block Next; both job builders, online and offline.
+
+### `scheduleTime.date` has TWO shapes — and the job builder owns the conversion
+
+`DynamicJobBuilderScreen` keeps `jobState.scheduleTime.date` as **`M/d/yyyy`** while the rep is
+working, and converts to **ISO** only on submit (`normalizeScheduleTimeForSubmit`, which also drops
+`reason`). So the server stores ISO, and anything seeding itself from saved lead data gets ISO back.
+
+This bit the My Deals edit wizard: it seeded `scheduleDate` from the server and passed it straight
+into the shared `SummaryFinalizeCards` card, which printed `2026-10-27T03:00:00-04:00` where the job
+builder printed `11/2/2026`. Fix and the full write-up: **`deal-edit-addendums.md`** § "The edit
+wizard showed a raw ISO install date".
+
+- Shared formatter: `screens/DynamicDealCenter/utils/install-date-format.ts`
+  (`formatInstallDateForDisplay`, `isTbdInstallDate`), tested in
+  `tests/offline/install-date-format.test.ts`. Use it for any new consumer of a stored
+  `scheduleTime.date` rather than re-handling ISO at the call site.
+- ⚠️ **It parses the ISO head as TEXT, never `new Date()`** — `2026-10-27T03:00:00-04:00` is the
+  27th to the customer but the 26th to `getDate()` west of that offset, and this date reaches a
+  signed agreement (CLAUDE.md § "Data & correctness").
+- ⚠️ **Comparing a normalised date against a stored one needs BOTH sides formatted**, or the
+  "changed?" test is permanently true. See the edit wizard's `scheduleChanged`.
+- `normalizeScheduleTimeForSubmit` stays the single place that converts *for the wire*; the
+  formatter is display/compare only. Don't fold them together — one drops `reason`, the other must not.

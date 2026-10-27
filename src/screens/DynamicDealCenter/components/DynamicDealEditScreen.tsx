@@ -62,6 +62,7 @@ import {
   windowNotice,
 } from '../../../hooks/useInstallAvailability';
 import { bookInstallSlot } from '../../../services/api/installAvailability';
+import { formatInstallDateForDisplay } from '../utils/install-date-format';
 import { readOfflineCache, writeOfflineCache } from '../../../utils/offline-query-cache';
 import { addendumOfflineBlock } from '../../../utils/offline-addendum';
 import {
@@ -408,7 +409,18 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     if (seededRef.current) return;
     seededRef.current = true;
     const sched = lead?.jobBuilder?.scheduleTime || lead?.jobBuilderData?.scheduleTime || {};
-    setScheduleDate(sched.date || null);
+    /**
+     * ⚠️ NORMALISED TO `M/d/yyyy` AT THE SEED, not at each place it is shown.
+     *
+     * The server stores what `normalizeScheduleTimeForSubmit` sent it - an ISO string - so a
+     * raw seed put `2026-10-27T03:00:00-04:00` on the "Scheduled Appointment" card where the
+     * job builder reads `11/2/2026`. Same card component, different data.
+     *
+     * Doing it here means every downstream consumer (the card via `scheduleTimeOverride`, the
+     * install-date step, `buildScheduleChanges`' string comparison, and the addendum payload)
+     * sees the one shape the job builder uses, instead of each having to re-handle ISO.
+     */
+    setScheduleDate(formatInstallDateForDisplay(sched.date) || null);
     setScheduleTimeWindow(sched.timeWindow || '');
     setContractPrice(parsePrice(lead?.originalContractPrice));
     setCustomerPhone(formatLocalUSPhone(readLeadPhone(lead)));
@@ -882,9 +894,15 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   );
   const buildChanged = buildChangeGroups.some((g) => g.changes.length > 0);
 
+  /**
+   * ⚠️ BOTH SIDES GO THROUGH `formatInstallDateForDisplay`. `scheduleDate` is normalised to
+   * `M/d/yyyy` when it is seeded, while the lead still holds the server's ISO string, so
+   * comparing them raw would make `scheduleChanged` permanently true - every edit would look
+   * like a reschedule, re-book the slot the lead already holds and raise a pointless addendum.
+   */
   const scheduleChanged =
     !!scheduleDate &&
-    (scheduleDate !== (lead?.jobBuilder?.scheduleTime?.date || null) ||
+    (scheduleDate !== (formatInstallDateForDisplay(lead?.jobBuilder?.scheduleTime?.date) || null) ||
       scheduleTimeWindow !== (lead?.jobBuilder?.scheduleTime?.timeWindow || ''));
   const priceChanged = parsePrice(lead?.originalContractPrice) !== Number(contractPrice);
   const noteChanged = String(lead?.note ?? '') !== note;
