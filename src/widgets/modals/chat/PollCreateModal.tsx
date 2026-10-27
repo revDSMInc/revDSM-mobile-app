@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Keyboard,
   Modal,
   Platform,
@@ -18,6 +19,7 @@ import { useBottomInset } from '../../../hooks/useBottomInset';
 import { FlashMessage } from '../../../config/message';
 import {
   emptyPollDraft,
+  filledPollOptions,
   pollDraftError,
   POLL_MAX_OPTIONS,
   POLL_MIN_OPTIONS,
@@ -34,13 +36,16 @@ const GREEN = '#30D158';
 interface PollCreateModalProps {
   visible: boolean;
   onClose: () => void;
+  /** Posts the poll. Rejects on a server refusal, which keeps the sheet open. */
+  onSubmit: (poll: { question: string; options: string[]; allowMultiple: boolean }) => Promise<void>;
 }
 
-// ⚠️ DISPLAY ONLY. Send validates the draft and then says the backend is not ready; nothing is posted.
-// The contract for the backend is docs/team-channel-polls-backend.md. When it ships, replace
-// `handleSend`'s notice with a call to ChatService and close the sheet on success.
-export const PollCreateModal = ({ visible, onClose }: PollCreateModalProps) => {
+// REVUIUX-577. The draft rules live in utils/poll-draft.ts (pure, tested); this
+// only collects them. The server re-checks every one of them, so a refusal here
+// is a convenience, not the gate - see docs/team-channel-polls-backend.md.
+export const PollCreateModal = ({ visible, onClose, onSubmit }: PollCreateModalProps) => {
   const [draft, setDraft] = useState<PollDraft>(emptyPollDraft);
+  const [sending, setSending] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const { height } = useWindowDimensions();
   const bottomInset = useBottomInset();
@@ -50,6 +55,7 @@ export const PollCreateModal = ({ visible, onClose }: PollCreateModalProps) => {
     if (!visible) {
       setDraft(emptyPollDraft());
       setKeyboardHeight(0);
+      setSending(false);
     }
   }, [visible]);
 
@@ -86,22 +92,34 @@ export const PollCreateModal = ({ visible, onClose }: PollCreateModalProps) => {
     optionRefs.current.splice(index, 1);
   }, []);
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
+    if (sending) return;
     const error = pollDraftError(draft);
     if (error) {
       FlashMessage.warning('Poll is incomplete', error);
       return;
     }
     Keyboard.dismiss();
-    FlashMessage.info(
-      'Backend work is required first',
-      'Polls cannot be sent yet. This screen is a preview until the backend supports poll messages.',
-    );
-  }, [draft]);
+    setSending(true);
+    try {
+      // The trimmed, non-empty rows only: the composer keeps blank placeholders
+      // and the server would drop them anyway.
+      await onSubmit({
+        question: draft.question.trim(),
+        options: filledPollOptions(draft.options),
+        allowMultiple: draft.allowMultiple,
+      });
+      onClose();
+    } catch {
+      // ChatService has already shown the server's reason; the sheet stays open
+      // with the draft intact so it can be corrected and sent again.
+      setSending(false);
+    }
+  }, [draft, onSubmit, onClose, sending]);
 
   const lift = Math.max(keyboardHeight - bottomInset, 0);
   const sheetHeight = Math.min(height * 0.92, height - 40);
-  const canSend = !pollDraftError(draft);
+  const canSend = !pollDraftError(draft) && !sending;
 
   return (
     <Modal visible={visible} animationType="slide" transparent statusBarTranslucent onRequestClose={onClose}>
@@ -115,10 +133,15 @@ export const PollCreateModal = ({ visible, onClose }: PollCreateModalProps) => {
             <Text style={styles.title}>Create poll</Text>
             <TouchableOpacity
               onPress={handleSend}
+              disabled={sending}
               style={[styles.sendBtn, !canSend && styles.sendBtnDim]}
               accessibilityRole="button"
             >
-              <Text style={styles.sendText}>Send</Text>
+              {sending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.sendText}>Send</Text>
+              )}
             </TouchableOpacity>
           </View>
 

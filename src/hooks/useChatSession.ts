@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Vibration } from 'react-native';
 import { IMessage } from 'react-native-gifted-chat';
 import ChatService from '../services/api/ChatService';
+import { messageWithPollUpdate } from '../utils/channel-poll';
 import SocketManager from '../services/SocketManager';
 
 export const useChatSession = (
@@ -390,6 +391,26 @@ export const useChatSession = (
     const unsubReactAdded = SocketManager.on('reaction-added', handleReaction);
     const unsubReactRemoved = SocketManager.on('reaction-removed', handleReaction);
 
+    /**
+     * REVUIUX-577: someone voted. The broadcast is one payload for the whole
+     * room, so it carries counts only - this device's own `myVotes` is kept,
+     * never read from it, or every viewer would inherit the voter's ticks.
+     * A missed broadcast self-heals: the next history fetch carries both.
+     */
+    const handlePollUpdated = (data: any) => {
+      const msgId = String(data?.messageId || '');
+      if (!msgId || !data?.poll) return;
+      const updater = (prev: any[]) =>
+        prev.map((msg) =>
+          String((msg as any)._id) === msgId ? messageWithPollUpdate(msg, data.poll) : msg,
+        );
+      setMessages(updater);
+      setPinnedMessages(updater);
+    };
+    const unsubPollUpdated = isChannel
+      ? SocketManager.on('team-channel-poll-updated', handlePollUpdated)
+      : () => {};
+
     const unsubDeleted = SocketManager.on('message-deleted', (data: any) => {
       const deletedId = (data.messageId || data.id || data.message?._id || data._id)?.toString();
       setMessages((prev) => prev.filter((msg) => msg._id?.toString() !== deletedId));
@@ -531,6 +552,7 @@ export const useChatSession = (
       unsubEdited();
       unsubReactAdded();
       unsubReactRemoved();
+      unsubPollUpdated();
       unsubDeleted();
       unsubPinned();
       unsubUnpinned();

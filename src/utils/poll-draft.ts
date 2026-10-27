@@ -1,5 +1,6 @@
 // Draft rules for the team-channel "Create poll" sheet. Pure so they can be tested under jest.
-// The numbers mirror the limits proposed in docs/team-channel-polls-backend.md - change both together.
+// The numbers mirror the server's limits in docs/team-channel-polls-backend.md - change both
+// together, or the sheet accepts a draft the server then refuses and Send is a dead button.
 
 export const POLL_MIN_OPTIONS = 2;
 export const POLL_MAX_OPTIONS = 5;

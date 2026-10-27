@@ -779,11 +779,72 @@ Ticket: add GIFs to chat. The attach menu (`+`) gets a **GIF** row that opens a 
 
 - **Android showed GIFs as a still frame (REVDSM-575 follow-up).** Root cause: React Native 0.84 does **not** bundle Fresco's animated decoders (`node_modules/react-native/gradle/libs.versions.toml` lists only `fresco`, `middleware`, `imagepipeline-okhttp3`, `ui-common`), so the stock `<Image>` decodes only the first frame on Android while iOS animates natively. Fix is in `android/app/build.gradle`: `animated-gif`, `animated-webp` and `webpsupport` at the SAME version as RN's `fresco`. ⚠️ Needs a **native rebuild** (`yarn android`) — Metro reload does nothing — and the three versions must be bumped together with every RN upgrade. This also makes any other animated GIF/WebP `<Image>` in the app animate on Android.
 
-## Team-channel "Create poll" UI — display only (REVUIUX-577)
+## Team-channel polls (REVUIUX-577)
 
-Ticket REVUIUX-577 ("Messages - team channel - add Polls", WhatsApp-style workflow). Ask: a poll option in the attach menu **below GIF**, **team channels only** (never lead chats), UI only, with Send telling the user backend work is required, plus a backend handoff doc.
+WhatsApp-style polls, **team channels only** — the Poll row never appears in a lead chat, and
+`/chat/v1/*` has no poll support. The server contract is `docs/team-channel-polls-backend.md`;
+the backend is built, so this is now wired end to end.
 
-- `widgets/modals/chat/PollCreateModal.tsx` (dark sheet: close, "Create poll", Send; QUESTION; OPTIONS; "Allow multiple answers"). Rules in the pure `utils/poll-draft.ts` (2–5 options (add/remove freely, max 5), 200/100 char caps, no duplicates) — tests in `__tests__/utils/poll-draft.test.ts`.
-- ChatDetail adds the `Poll` row only when `isChannel`, between GIF and Voice Memo, and mounts the modal only for channels. It opens through `selectAttachmentOption` (never stack native Modals).
-- ⚠️ **Send posts NOTHING.** An invalid draft gets a warning; a valid one gets the info flash "Backend work is required first". Do not wire a send until the contract in `docs/team-channel-polls-backend.md` ships (message `messageType: 'poll'` + `poll`, `POST /api/v1/channels/messages/:id/poll/vote`, socket `team-channel-poll-updated`). Then replace the notice in `handleSend` and add the bubble card.
-- Not device-verified: sheet above the keyboard on iOS/Android, the new option row on the next empty row as you type, the switch colours.
+**Why a poll is a normal message.** The server stores it on `channelschatmessages` with
+`messageType: 'poll'` and an embedded `poll`, and sets the message body to the question. That is
+what makes replies, seen, acks, delete, the approval queue, push previews and `new-channel-message`
+delivery keep working untouched — and what makes an app build that predates polls show the question
+as a plain text bubble instead of an empty one. **Never send a `message` alongside a `poll`**: the
+server ignores it, so the question has one source of truth.
+
+- `widgets/modals/chat/PollCreateModal.tsx` — the dark sheet (close / "Create poll" / Send;
+  QUESTION; OPTIONS; "Allow multiple answers"). It only collects a draft and calls `onSubmit`;
+  the rules are the pure `utils/poll-draft.ts` (2–5 options, 200/100 char caps, no duplicates,
+  case-insensitive). The **server re-checks every one of them**, so the sheet is a convenience,
+  not the gate — keep the two sets of numbers in step or Send dies on a refusal.
+- `utils/channel-poll.ts` — pure reading/updating of a poll on a message: `getPollMeta`,
+  `nextSelection`, `optimisticPoll`, `applyPollUpdate`, `messageWithPollUpdate`, `pollAfterVote`.
+- `widgets/components/chat/PollMessageCard.tsx` — the bubble. Rendered from `ChatDetail.renderMessage`
+  as its own row, like `JobChangeMessageCard`, **not** through `ChatMessageBubble`: that component is
+  1,800 lines serving every other message type in both lead chats and channels, and a poll needs none
+  of it. The trade-off is that a poll has no long-press menu (no reply, no reaction) — accepted for v1.
+- `widgets/modals/chat/PollVotersModal.tsx` — "View votes". Fetched on open from
+  `GET /api/v1/channels/messages/:id/poll/votes`, because a history page **never** carries voter ids;
+  only counts. That endpoint is the only place names exist.
+- `ChatService`: `sendChannelPoll` (socket `send-channel-message` with `poll`, falling back to the
+  REST send endpoint **only** on `NOT_CONNECTED`/`TIMEOUT` — a refusal would just be refused again),
+  `voteChannelPoll`, `getChannelPollVoters`. The poll refusal codes were added to
+  `alertChannelRefusal`, which now reads the reason from `response.data.message` for HTTP failures
+  (it was showing axios's "Request failed with status code 400" for every channel refusal).
+
+⚠️ **Voting is set semantics, never a toggle.** `optionIds` is the voter's COMPLETE selection, so
+`[]` retracts and a retry lands on the same answer. Always send an explicit array — the server
+refuses a missing one (`POLL_OPTION_IDS_INVALID`) rather than reading it as a retraction, precisely
+so a client bug cannot silently wipe someone's vote.
+
+⚠️ **`myVotes` is per viewer and a broadcast never carries it.** `team-channel-poll-updated` is one
+payload for the whole room and ships counts only; `applyPollUpdate` keeps this device's own
+selection and must never take it from the broadcast, or every viewer inherits the voter's ticks.
+A missed broadcast self-heals — the next history fetch carries fresh counts *and* `myVotes`.
+
+⚠️ **Order poll payloads by `poll.rev`, never by arrival.** The server `$add`s it by one inside the
+vote's own update pipeline, so it is the write order; every payload carrying a poll (history page,
+vote reply, broadcast) carries it. Without this, two people voting in the same instant can leave one
+of them showing stale counts: their reply was computed before the other's write and can land after
+the other's broadcast. The rules, all in `utils/channel-poll.ts`:
+- `applyPollUpdate` **drops** a broadcast whose `rev` is `<=` what is drawn — it has nothing to add,
+  and applying it walks the counts backwards.
+- `pollAfterVote` takes the reply whole at `rev >= ` the screen's, but at `<` keeps the screen's
+  fresher counts and adopts only `myVotes` from the reply. **Equal must be taken whole**, because
+  this device also receives the broadcast of its *own* vote at the same `rev`, and that broadcast
+  carries no `myVotes` to restore the tick from.
+- A payload with **no `rev`** is applied as-is, so the app keeps working against a server that
+  predates the counter — do not "tidy" that fallback away.
+- The optimistic copy deliberately does **not** bump `rev`; it is not a server write, and bumping it
+  would make the real reply look stale.
+
+⚠️ **The attach `+` was gated on `canUpload` alone**, which hid the whole menu in a channel with
+uploads turned off — taking GIF and Poll with it, neither of which uploads anything (a GIF is sent
+as a text message). The gate is now `!isChannel || canUpload || canPost` and each genuinely-upload
+row (appointment photos, gallery, files, voice) gates itself.
+
+- Tests: `tests/chat/poll-draft.test.ts`, `tests/chat/channel-poll.test.ts`. ⚠️ Put chat tests in
+  `tests/`, **not** `__tests__/` — that directory is gitignored, so a suite there never survives a
+  clone (the poll-draft suite this file previously claimed existed had been lost exactly that way).
+- Not device-verified: the sheet above the keyboard on iOS/Android, tapping an option (optimistic
+  tick and bar), two devices voting at once, and "View votes".

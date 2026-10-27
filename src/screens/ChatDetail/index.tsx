@@ -30,6 +30,15 @@ import { ChatMessageBubble } from '../../widgets/components/chat/ChatMessageBubb
 import { LeadImagePickerModal } from '../../widgets/components/chat/LeadImagePickerModal';
 import { GifPickerModal } from '../../widgets/modals/chat/GifPickerModal';
 import { PollCreateModal } from '../../widgets/modals/chat/PollCreateModal';
+import { PollVotersModal } from '../../widgets/modals/chat/PollVotersModal';
+import { PollMessageCard } from '../../widgets/components/chat/PollMessageCard';
+import {
+  PollView,
+  getPollMeta,
+  nextSelection,
+  optimisticPoll,
+  pollAfterVote,
+} from '../../utils/channel-poll';
 import {
   ParticipantsModal,
   PinnedMessagesArea,
@@ -311,6 +320,10 @@ export default function ChatDetailScreen() {
   const [showLeadImagePicker, setShowLeadImagePicker] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showPollCreate, setShowPollCreate] = useState(false);
+  const [pollVotersFor, setPollVotersFor] = useState<string | null>(null);
+  // The option being voted on, so only that row spins and a double tap cannot
+  // send two selections that race each other.
+  const [pendingVote, setPendingVote] = useState<{ messageId: string; optionId: string } | null>(null);
   const pendingAttachmentAction = useRef<null | (() => void)>(null);
 
   const runPendingAttachmentAction = useCallback(() => {
@@ -532,8 +545,12 @@ export default function ChatDetailScreen() {
   const renderComposer = useCallback(
     (composerProps: any) => (
       <View className="flex-1 flex-row items-center">
-        {/* Attachment "+" — opens the action sheet (Photos / Files / Annotated / Voice) */}
-        {(!isChannel || canUpload) && (<TouchableOpacity
+        {/* Attachment "+" — opens the action sheet (Photos / Files / Annotated / GIF / Poll / Voice) */}
+        {/* REVUIUX-577: `canUpload` alone hid the whole menu in a channel with
+            uploads turned off, which also hid GIF and Poll — neither of which
+            uploads anything (a GIF is sent as a text message, a poll as a
+            message with a `poll`). Each row below gates itself instead. */}
+        {(!isChannel || canUpload || canPost) && (<TouchableOpacity
           onPress={() => {
             Keyboard.dismiss();
             setShowAttachmentSheet(true);
@@ -570,7 +587,7 @@ export default function ChatDetailScreen() {
         </View>
       </View>
     ),
-    [colors.surface, colors.text, handleComposerChange, isChannel, canUpload]
+    [colors.surface, colors.text, handleComposerChange, isChannel, canUpload, canPost]
   );
 
   const renderBubble = useCallback(
@@ -756,8 +773,89 @@ export default function ChatDetailScreen() {
     [openAddendumPdf]
   );
 
+  // REVUIUX-577 -------------------------------------------------------------
+
+  /**
+   * Post a poll. It comes back through `new-channel-message` like any other
+   * message, so nothing is inserted here - that would show it twice.
+   */
+  const handleCreatePoll = useCallback(
+    async (poll: { question: string; options: string[]; allowMultiple: boolean }) => {
+      if (!chatId) throw new Error('No channel open');
+      await ChatService.sendChannelPoll(chatId, poll);
+      if (user?._id) {
+        logEvent('poll', {
+          user_id: user._id,
+          module_type: 'team_channel',
+          created_by: user._id,
+          meta: { type: 'team_channel', action: 'created poll', channelId: chatId },
+        });
+      }
+    },
+    [chatId, user?._id]
+  );
+
+  /**
+   * Vote, switch or retract. The server takes the COMPLETE selection, so the
+   * tap is turned into a whole set rather than a toggle, and the response
+   * replaces the optimistic copy - a refusal therefore undoes it.
+   */
+  const handlePollVote = useCallback(
+    async (messageId: string, optionId: string) => {
+      if (pendingVote) return;
+      const current = messages.find((m: any) => String(m._id) === String(messageId));
+      const poll = getPollMeta(current);
+      if (!poll) return;
+
+      const selection = nextSelection(poll, optionId);
+
+      // Every write below is merged against whatever is on screen at the time,
+      // never against the copy this callback closed over: someone else's vote
+      // can be broadcast while the request is in flight, and pollAfterVote is
+      // what stops this device walking their counts back. The optimistic copy
+      // is the one exception - it IS this device's own tick, applied outright.
+      const patch = (next: (shown: PollView | null) => PollView) => (prev: any[]) =>
+        prev.map((m: any) =>
+          String(m._id) === String(messageId) ? { ...m, poll: next(getPollMeta(m)) } : m,
+        );
+
+      setPendingVote({ messageId, optionId });
+      setMessages(patch(() => optimisticPoll(poll, selection)));
+      try {
+        const updated = await ChatService.voteChannelPoll(messageId, selection);
+        const confirmed = getPollMeta(ChatService.normalizeMessage(updated));
+        if (confirmed) setMessages(patch((shown) => pollAfterVote(shown, confirmed)));
+      } catch {
+        // ChatService has already said why; take this device's tick back off.
+        setMessages(patch((shown) => pollAfterVote(shown, poll)));
+      } finally {
+        setPendingVote(null);
+      }
+    },
+    [messages, pendingVote, setMessages]
+  );
+
   const renderMessage = useCallback(
     (props: any) => {
+      // REVUIUX-577: a poll is its own row - see PollMessageCard for why it does
+      // not go through ChatMessageBubble.
+      const pollMeta = isChannel ? getPollMeta(props.currentMessage) : null;
+      if (pollMeta) {
+        const messageId = String(props.currentMessage?._id || '');
+        return (
+          <PollMessageCard
+            message={props.currentMessage}
+            poll={pollMeta}
+            isMine={String(props.currentMessage?.user?._id) === String(currentUserId)}
+            canVote={!isViewOnly}
+            pendingOptionId={pendingVote?.messageId === messageId ? pendingVote.optionId : null}
+            onVote={(optionId) => handlePollVote(messageId, optionId)}
+            onViewVotes={() => setPollVotersFor(messageId)}
+            colors={colors}
+          />
+        );
+      }
+
       const jobChangeMeta = getJobChangeMeta(props.currentMessage);
       if (jobChangeMeta) {
         return (
@@ -788,7 +886,17 @@ export default function ChatDetailScreen() {
         />
       );
     },
-    [handleViewJobChange, addendumPdfPending, colors, isDark]
+    [
+      handleViewJobChange,
+      addendumPdfPending,
+      colors,
+      isDark,
+      isChannel,
+      isViewOnly,
+      currentUserId,
+      pendingVote,
+      handlePollVote,
+    ]
   );
 
   const renderInputToolbar = useCallback(
@@ -1278,7 +1386,7 @@ export default function ChatDetailScreen() {
             }}
           >
             {[
-              ...(leadId && !isChannel
+              ...(leadId && !isChannel && canUpload
                 ? [
                   {
                     key: 'annotated',
@@ -1288,18 +1396,23 @@ export default function ChatDetailScreen() {
                   },
                 ]
                 : []),
-              {
-                key: 'gallery',
-                label: 'Personal Gallery Photos',
-                render: (c: string) => <Icon name="images-outline" size={24} color={c} />,
-                onPress: () => selectAttachmentOption(handleAttach),
-              },
-              {
-                key: 'files',
-                label: 'Files',
-                render: (c: string) => <Icon name="document-outline" size={24} color={c} />,
-                onPress: () => selectAttachmentOption(handleDocumentAttach),
-              },
+              // Genuine uploads: hidden when the channel has them turned off.
+              ...(!isChannel || canUpload
+                ? [
+                  {
+                    key: 'gallery',
+                    label: 'Personal Gallery Photos',
+                    render: (c: string) => <Icon name="images-outline" size={24} color={c} />,
+                    onPress: () => selectAttachmentOption(handleAttach),
+                  },
+                  {
+                    key: 'files',
+                    label: 'Files',
+                    render: (c: string) => <Icon name="document-outline" size={24} color={c} />,
+                    onPress: () => selectAttachmentOption(handleDocumentAttach),
+                  },
+                ]
+                : []),
               {
                 key: 'gif',
                 label: 'GIF',
@@ -1317,19 +1430,23 @@ export default function ChatDetailScreen() {
                   },
                 ]
                 : []),
-              {
-                key: 'voice',
-                label: 'Voice Memo',
-                render: (c: string) => (
-                  <View
-                    className="w-[24px] h-[24px] rounded-full items-center justify-center"
-                    style={{ borderWidth: 2, borderColor: c }}
-                  >
-                    <MCIcon name="waveform" size={12} color={c} />
-                  </View>
-                ),
-                onPress: () => selectAttachmentOption(handleVoicePress),
-              },
+              ...(!isChannel || canUpload
+                ? [
+                  {
+                    key: 'voice',
+                    label: 'Voice Memo',
+                    render: (c: string) => (
+                      <View
+                        className="w-[24px] h-[24px] rounded-full items-center justify-center"
+                        style={{ borderWidth: 2, borderColor: c }}
+                      >
+                        <MCIcon name="waveform" size={12} color={c} />
+                      </View>
+                    ),
+                    onPress: () => selectAttachmentOption(handleVoicePress),
+                  },
+                ]
+                : []),
             ].map((opt, idx, arr) => (
               <TouchableOpacity
                 key={opt.key}
@@ -1374,7 +1491,15 @@ export default function ChatDetailScreen() {
       />
 
       {isChannel && (
-        <PollCreateModal visible={showPollCreate} onClose={() => setShowPollCreate(false)} />
+        <PollCreateModal
+          visible={showPollCreate}
+          onClose={() => setShowPollCreate(false)}
+          onSubmit={handleCreatePoll}
+        />
+      )}
+
+      {isChannel && (
+        <PollVotersModal messageId={pollVotersFor} onClose={() => setPollVotersFor(null)} />
       )}
 
       <GifPickerModal
