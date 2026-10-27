@@ -2,6 +2,7 @@ import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import { Storage } from '../../utils/storage';
 import { sanitizeForLog } from '../../utils/sanitize-for-log';
 import { ENV } from '../../config/env';
+import { recordError } from '../crashReporting';
 
 import { FlashMessage } from '../../config/message';
 import { store } from '../../redux/store';
@@ -82,6 +83,7 @@ axiosInstance.interceptors.response.use(
       error.config?.url,
       { sent: error.config?.data, received: error.response?.data }
     );
+    reportServerError(error);
     if (error.response?.status === 401) {
       const errorMsg = error.response.data?.message || error.response.data?.error || '';
       const isLoginRequest = error.config?.url?.includes('/company/login');
@@ -136,6 +138,17 @@ axiosInstance.interceptors.response.use(
     return Promise.reject(normalizeApiError(error));
   }
 );
+
+/**
+ * 5xx is a backend fault worth seeing; 4xx/offline/timeouts are expected in the field and would only be noise.
+ * Only method + path with ids masked and the status go out - never bodies, query strings or tokens.
+ */
+const reportServerError = (error: any) => {
+  const status = error?.response?.status;
+  if (typeof status !== 'number' || status < 500) return;
+  const path = String(error?.config?.url ?? '').split('?')[0].replace(/[0-9a-f]{24}|\d{3,}/gi, ':id');
+  recordError(new Error(`API ${status} ${error?.config?.method?.toUpperCase()} ${path}`), 'api-5xx');
+};
 
 const normalizeApiError = (error: any): Record<string, any> => {
   const data = error?.response?.data;

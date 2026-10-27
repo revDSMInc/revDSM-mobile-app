@@ -13,6 +13,7 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/Ionicons';
 import ChatService from '../../../services/api/ChatService';
 import { getAvatarProps } from './chat-utils';
+import { GIF_REPLY_LABEL, isGifMessageText } from '../../../utils/gif-message';
 
 export const PinnedMessagesArea = ({
   pinnedMessages,
@@ -36,7 +37,14 @@ export const PinnedMessagesArea = ({
     );
   }
 
+  // A GIF message's body is its url: show the GIF itself, never the link.
+  const gifUrlOf = (msg: any): string | null => {
+    const t = msg.text || msg.message;
+    return isGifMessageText(t) ? String(t).trim() : null;
+  };
+
   const getMessagePreview = (msg: any) => {
+    if (gifUrlOf(msg)) return GIF_REPLY_LABEL;
     if (msg.image || msg.imageUrl) return 'Shared Image';
     if (msg.video || msg.videoUrl) return 'Shared Video';
     if (msg.audio || msg.voice || msg.isVoiceNote) return 'Voice Note';
@@ -45,6 +53,8 @@ export const PinnedMessagesArea = ({
   };
 
   const getThumbnail = (msg: any) => {
+    const gif = gifUrlOf(msg);
+    if (gif) return gif;
     let p = msg.image || msg.imageUrl || msg.video || msg.videoUrl;
 
     if (!p && msg.files?.length > 0) {
@@ -57,6 +67,7 @@ export const PinnedMessagesArea = ({
   };
 
   const getIcon = (msg: any) => {
+    if (gifUrlOf(msg)) return 'images-outline';
     if (msg.image || msg.imageUrl) return 'image-outline';
     if (msg.video || msg.videoUrl) return 'videocam-outline';
     if (msg.audio || msg.voice || msg.isVoiceNote) return 'mic-outline';

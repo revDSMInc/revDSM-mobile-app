@@ -10,6 +10,9 @@ import { installNetworkErrorDowngrade } from './src/utils/console-noise';
 // A dropped connection must not raise the red LogBox screen: transport failures passed to console.error are logged quietly.
 installNetworkErrorDowngrade();
 
+// Crashlytics: loads the native module (which also installs the JS global error + unhandled-rejection handlers) and keeps dev builds out of the dashboard.
+require('./src/services/crashReporting').initCrashReporting();
+
 try {
   // eslint-disable-next-line global-require
   const { getApp } = require('@react-native-firebase/app');

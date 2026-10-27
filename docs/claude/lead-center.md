@@ -2618,6 +2618,9 @@ Ticket: once a text note is placed and confirmed, it must not move any more; it 
 - Edit Text alone does NOT unlock dragging - only the open style panel does.
 - Not verified on device: that a one-finger drag that starts on a locked note does nothing (it does not pan the photo either - the note still holds the touch, as before).
 - **Follow-up - notes ARE draggable while the Text tool is active; the tick locks them.** The prop is now `textMoveMode` on `AnnotationCanvas` / `moveMode` on `DraggableText`: `'all'` while `activeTool === 'text'` (every note, before the tick), `'selected'` while the Adjust Style panel is open (that note only), else `'none'`. `commitTextMode` (the tick) also clears the selection and closes the style / font panels. Cancel (X) still restores the notes from before the mode was entered. Not verified on device.
+- **Follow-up - one editor, three entry points.** The classic `ManagePhotosModal`, `DynamicManagePhotosView` and the order sheet (`orderSheetAnnotation`) all navigate to the SAME `screens/ImageAnnotation`, so the locked-note rule, undo / redo and reset apply to all of them with no per-caller wiring. (The classic modal only creates NEW annotations, so it has no saved history to undo - only the session's own steps.)
+- **Reset (the refresh button) now asks first.** `confirmResetCanvas`: with changes since open it shows "Reset changes?" (Cancel / Reset); Reset runs `handleResetCanvas` = back to the marks and undo / redo stacks the screen OPENED with (saved annotations are kept - see `resetToBaseline`), closes the note menu / style panel, and returns the photo to its normal fit position (`resetZoom`). The dialog is shown EVERY time, also when nothing has changed (a skipped dialog read as 'the warning is missing'). Not verified on device.
+- **Follow-up - the reset warning uses the app's `ConfirmDialog`** (tone `warn`, Cancel / Reset, 'This cannot be undone.' note) instead of a native `Alert`, like the order-sheet 'Reset all changes'. State: `showResetConfirm`. Not verified on device.
 
 ## RevRender failures: five identical cards became one row
 
@@ -2685,3 +2688,9 @@ Reported with a screenshot of the collapsing header caught mid-scroll: a grey sm
 - ⚠️ Do not "soften" this back to a gentle fade across the full range: a partially transparent header ON TOP of the tracker IS the bug.
 - The header translates by its full height, so when collapsed it is off-screen entirely and cannot swallow taps meant for the tracker; the transparent-but-present window exists only while it is still moving.
 - Not verified on device: scroll the Job Builder slowly on iOS and watch the title area - the header should vanish cleanly with no grey wash over the step row.
+
+## RevRender progress shows a stage word
+
+`OperationalSections.tsx` label next to the bar was a fixed "Rendering". It now follows `renderPercent` via `utils/revrender-stage.ts` `revRenderStageWord`: 0-10 Warming up, 11-35 Engine running, 36-75 Rendering, 76-92 Hold On, 93-100 Almost Finished. The amber "Paused" label still wins while the status check cannot reach the server.
+
+Follow-up: the bar and word use a DISPLAYED percent (`stepShownPercent`, one stage per 700 ms tick), not the raw estimate, so a fast render still shows all five words. When the jobs finish, the bar runs to 100% (ending on "Almost Finished"), holds 1.2 s, then the card hides. A failed job cancels the sequence. Do NOT drive the label from `renderPercent` directly - it skips stages.
