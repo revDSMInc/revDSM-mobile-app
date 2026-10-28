@@ -7,7 +7,7 @@ import {
   ACK_AMBER,
   ACK_GREEN,
   confirmationSenderFirstName,
-  confirmationTimeOf,
+  confirmationTimeLabel,
 } from './chat-confirmation';
 
 interface Props {
@@ -34,7 +34,9 @@ export const ChatMessageAck = React.memo(function ChatMessageAck({ message, curr
   // manager/creator payload, which still carries the fuller rows.
   const confirmedByMe =
     message?.acknowledgedByMe === true || ackBy.some((a) => String(a?.userId) === me);
-  const myAckTime = message?.acknowledgedAt || confirmationTimeOf(ackBy.find((a) => String(a?.userId) === me));
+  // Both sources go through one formatter - `acknowledgedAt` is a raw ISO string and used to
+  // be printed verbatim after a reload. See `confirmationTimeLabel`.
+  const myAckTime = confirmationTimeLabel(message, me);
 
   // Unsent, pending-approval and system rows have nothing to confirm.
   if (!messageId || messageId.startsWith('temp_') || message?.pendingApproval) return null;

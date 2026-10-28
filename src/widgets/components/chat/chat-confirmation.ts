@@ -25,9 +25,17 @@ export const confirmationSenderFirstName = (message: any): string => {
   return String(name).trim().split(/\s+/)[0] || 'The sender';
 };
 
-/** The time a user confirmed at ("6:02 PM"), from an `ackBy` entry. */
+/**
+ * The time a user confirmed at ("6:02 PM").
+ *
+ * Takes either an `ackBy` ENTRY or a bare timestamp (string / number / Date), because the two
+ * shapes reach the banner from different places - see `confirmationTimeLabel`.
+ */
 export const confirmationTimeOf = (entry: any): string => {
-  const at = entry?.ackedAt || entry?.createdAt || entry?.acknowledgedAt || null;
+  const at =
+    typeof entry === 'string' || typeof entry === 'number' || entry instanceof Date
+      ? entry
+      : entry?.ackedAt || entry?.createdAt || entry?.acknowledgedAt || null;
   if (!at) return '';
   try {
     const d = new Date(at);
@@ -38,6 +46,28 @@ export const confirmationTimeOf = (entry: any): string => {
   } catch {
     return '';
   }
+};
+
+/**
+ * The "Confirmed - <time>" time for the VIEWER, whatever shape the message arrived in.
+ *
+ * ⚠️ `message.acknowledgedAt` is a RAW ISO STRING and was printed verbatim. Reported:
+ * confirming showed "Confirmed - 5:10 PM", but leaving the channel and coming back showed
+ * "Confirmed - 2026-10-28T11:58:48...". The two paths explain it exactly - the freshly
+ * confirmed message has no `acknowledgedAt` yet, so it fell through to the formatted `ackBy`
+ * entry; the reloaded one carries `acknowledgedAt` from the server and that won.
+ *
+ * ⚠️ Keep BOTH sources going through `confirmationTimeOf`. `acknowledgedAt` is the personal
+ * flag from the messages API and `ackBy` is the fuller manager/creator payload; either can be
+ * the only one present, so neither may be dropped - they just have to be formatted the same.
+ */
+export const confirmationTimeLabel = (message: any, currentUserId: string): string => {
+  const me = String(currentUserId || '');
+  const ackBy: any[] = Array.isArray(message?.ackBy) ? message.ackBy : [];
+  return (
+    confirmationTimeOf(message?.acknowledgedAt) ||
+    confirmationTimeOf(ackBy.find((a) => String(a?.userId) === me))
+  );
 };
 
 export type AckVisualState = 'pending' | 'confirmed';
