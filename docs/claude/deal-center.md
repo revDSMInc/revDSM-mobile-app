@@ -5161,7 +5161,7 @@ against the schedule as it is at that moment and assigns the crew it picks (firs
 - ⚠️ Not done on the edit flow (`isEdit`, My Deals): rescheduling a job that already has a crew does not re-pick a crew.
 
 ### Create flow: availability is checked on "Yes" only (REVDSM-1300)
-In `AppointmentSchedulerModal`, a NEW job with a lead (`!isEdit && leadId`, `checkOnYes`) no longer asks the scheduler when a date is picked (no per-day check, no calendar dimming). The one check is the **Yes** tap: the server checks that exact window (8-12 or 12-4) and assigns the crew. No crew -> a "No crew available" panel on the same screen with **Try <other window>** (only if it has not failed too) and **Pick Another Date**. Edit flows (`isEdit`) and callers without a `leadId` keep the earlier checks.
+In `AppointmentSchedulerModal`, a NEW job with a lead (`!isEdit && leadId`, `checkOnYes`) no longer asks the scheduler when a date is picked (no per-day check, no calendar dimming). The one check is the **Yes** tap: the server checks that exact window (8-12 or 12-4) and assigns the crew. No crew -> a "No crew available" panel on the same screen with **Try <other window>** (only if it has not failed too) and **Pick Another Date**. Callers without a `leadId` keep the earlier checks. ⚠️ **Edit flows NO LONGER do** - `checkOnYes` is now `!!leadId`, so an appointment edit takes this same path; see `deal-edit-addendums.md` § "An appointment EDIT now takes the same scheduling path".
 - A demo has its window checked too (409 if no crew) but no crew is assigned; only a sale is assigned.
 
 ## REVDSM-1300 - install scheduling on mobile: APIs, when they fire, and how availability is checked
@@ -5692,3 +5692,41 @@ re-deriving anything here, read the stylesheet too, not just the script.
   stop's colour. It renders as a flat bar in the pin's colour, which is exactly how this shipped
   once and was reported as *"bar color is not showing"*. The Svg, the gradient's `x2` and the
   `<Rect>` all take one shared `fillW` so they cannot drift apart.
+
+## A one-option field is selectable AND deselectable (no padlock)
+
+Reported against Lighting -> Mounting Substrate: "Fascia is showing locked, it should be selectable like Soffit below", then "allow me to unselect as well". Two fields in the same card looked like two different kinds of control when they are the same kind of choice, and the padlock reads as "you may not touch this".
+
+- **Cause** (`widgets/components/dynamic-job-builder/OptionToggleField.tsx`): any single-select field whose VISIBLE options came to exactly one rendered `LockedSingleOption` - a padlock chip plus "Only option available". Nothing in the schema marked it locked; it was purely a count of 1.
+- ⚠️ **SCOPED TO ONE FIELD, and it must stay that way.** A first pass unlocked EVERY single-option field and was rejected: "I told you to implement for Fascia only, it's also impacting the other product single values, like Gutter etc". Elsewhere a lone option is an imposed value the rep should not be able to clear, so the padlock there is correct. `allowsSingleOptionChoice(label)` gates both the render and the seeding; `tests/job-builder/single-option-choice.test.ts` asserts Gutter / Soffit / Track Material stay locked.
+- **Fix, two halves.** (1) The one-option branch is gone, so the field renders its ordinary button; `OptionList` already clears on re-tap (`onChange(value === opt ? '' : opt)`), so deselect came for free. (2) ⚠️ The auto-select effect now SEEDS ONCE per option list (`seededForRef`), because it previously ran on every render - clearing the value re-picked it instantly and the rep's tap looked broken. An empty value after that first seed is the rep's own choice.
+- ⚠️ `seededForRef` is keyed by the option list, not a boolean, so a field whose options change (a dependency switched) is seeded again for the NEW list rather than staying empty. A padlocked field keeps the ORIGINAL always-reselect behaviour - only the scoped field seeds once.
+- ⚠️ Matched on the LABEL (`fieldLabel={field.label}`, NOT the screen's `visibleLabel`, which is undefined when the label is hidden). The field is portal-authored, so there is no id or flag naming it - which makes this fragile: a rename in the portal silently restores the padlock. The durable fix is a schema flag (e.g. `allowClear: true`); ask the backend for one before adding a second entry to `SINGLE_OPTION_CHOICE_LABELS`.
+- ⚠️ NOT the same as a genuinely imposed value. A deal-center-driven `locked` field still renders `LockedField` / `LockedFieldWithColor` from `DynamicTabRenderer` and must - there the value really is not the rep's to change. `LockedSingleOption` stays in the tree (still exported from the barrel) for that kind of use; don't wire it back to an option count.
+- **Covers both flows and offline from one place:** `DynamicDealCenterScreen` (create) and `DynamicDealEditScreen` (My Deals edit) both render `DynamicJobBuilderScreen` -> `DynamicTabRenderer` -> this component, and neither it nor `DynamicOptionField` branches on connectivity, so the offline render is identical.
+- Validation is unaffected: `tab-validation` checks the selected VALUE, so a required field left empty blocks the step exactly like any other - which is the point of allowing deselect.
+- ⚠️ Separate latent bug fixed here: `optionsKey` used `join('<raw NUL>')` - a literal 0x00 in the source, which made git and grep treat the file as BINARY (`file` reported `data`). Now the escape `'\u0000'`, per CLAUDE.md section 6.
+- Not verified on device: tap the lone option to clear it and confirm it STAYS clear; a required field should then block Next; both job builders, online and offline.
+
+### `scheduleTime.date` has TWO shapes — and the job builder owns the conversion
+
+`DynamicJobBuilderScreen` keeps `jobState.scheduleTime.date` as **`M/d/yyyy`** while the rep is
+working, and converts to **ISO** only on submit (`normalizeScheduleTimeForSubmit`, which also drops
+`reason`). So the server stores ISO, and anything seeding itself from saved lead data gets ISO back.
+
+This bit the My Deals edit wizard: it seeded `scheduleDate` from the server and passed it straight
+into the shared `SummaryFinalizeCards` card, which printed `2026-10-27T03:00:00-04:00` where the job
+builder printed `11/2/2026`. Fix and the full write-up: **`deal-edit-addendums.md`** § "The edit
+wizard showed a raw ISO install date".
+
+- Shared formatter: `screens/DynamicDealCenter/utils/install-date-format.ts`
+  (`formatInstallDateForDisplay`, `isTbdInstallDate`), tested in
+  `tests/offline/install-date-format.test.ts`. Use it for any new consumer of a stored
+  `scheduleTime.date` rather than re-handling ISO at the call site.
+- ⚠️ **It parses the ISO head as TEXT, never `new Date()`** — `2026-10-27T03:00:00-04:00` is the
+  27th to the customer but the 26th to `getDate()` west of that offset, and this date reaches a
+  signed agreement (CLAUDE.md § "Data & correctness").
+- ⚠️ **Comparing a normalised date against a stored one needs BOTH sides formatted**, or the
+  "changed?" test is permanently true. See the edit wizard's `scheduleChanged`.
+- `normalizeScheduleTimeForSubmit` stays the single place that converts *for the wire*; the
+  formatter is display/compare only. Don't fold them together — one drops `reason`, the other must not.

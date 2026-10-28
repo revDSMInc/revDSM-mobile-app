@@ -142,13 +142,28 @@ export function useCollapsingHeader(
     collapsed.value = 0;
   }, [collapsed, lastY, settling, userDriven]);
 
+  /**
+   * ⚠️ THE HEADER MUST BE FULLY GONE BEFORE THE TRACKER REACHES IT.
+   *
+   * Reported on iOS: "in sticky header sometime shadow came" - a grey smudge across the title
+   * and the step row, mid-scroll. It is not a shadow and nothing casts one here. The header is
+   * an opaque white layer sliding up over the tracker, and it used to fade across its WHOLE
+   * travel (0.35 opacity at the halfway point). A part-transparent white sheet over the
+   * tracker's text and circles reads exactly like a dirty grey overlay, and on iOS a
+   * fractional opacity on a composited layer makes it more pronounced.
+   *
+   * Fading out over the FIRST 60% of the travel means the layer is at zero before it overlaps
+   * the tracker, so there is nothing half-visible to smear. The motion is unchanged.
+   *
+   * ⚠️ Don't "restore" a gentler fade across the full range - that is the bug.
+   */
   const headerAnimatedStyle = useAnimatedStyle(() => ({
     opacity:
       headerH.value > 0
         ? interpolate(
             collapsed.value,
-            [0, headerH.value * 0.5, headerH.value],
-            [1, 0.35, 0],
+            [0, headerH.value * 0.6],
+            [1, 0],
             Extrapolation.CLAMP
           )
         : 1,
