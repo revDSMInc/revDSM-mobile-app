@@ -437,3 +437,20 @@ export function gaugeFillStops(
     return { color: st.color, offset };
   });
 }
+
+/**
+ * Should the pin's price badge be drawn?
+ *
+ * ⚠️ THE BADGE AND THE COMMISSION BANDS ARE MUTUALLY EXCLUSIVE - the prototype's
+ * `.dscl.rngon .sl-pin u { display: none }`. Both sit in the same strip directly under the
+ * track, so drawing both stacks the badge over the band pills. Hiding the badge loses nothing:
+ * the price is in the field the rep is typing into, and the highlighted band already says which
+ * range it falls in.
+ *
+ * ⚠️ The rule is SCOPED to the bands being open, not a blanket hide. An older copy of the
+ * mockup carried an unconditional `.sl-pin u { display: none }`, which read as a leftover and led
+ * to the badge being shown always; the live mockup shows it is conditional.
+ */
+export function shouldShowPriceBadge(price: number, bandsOpen: boolean): boolean {
+  return (Number(price) || 0) > 0 && !bandsOpen;
+}

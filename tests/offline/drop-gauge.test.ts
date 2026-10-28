@@ -12,6 +12,7 @@ import {
   countUpValue,
   mutedLabelColor,
   gaugeFillStops,
+  shouldShowPriceBadge,
   badgeTextColor,
   GAUGE_ENTER,
   GAUGE_LABEL_GREY,
@@ -534,5 +535,38 @@ describe('gaugeFillStops - the fill is a gradient through every tier passed', ()
   it('does not divide by zero at the very first tier, where the fill has no width', () => {
     const stops = gaugeFillStops(M.cost, tiers, bands, false, ROLLOUT);
     stops.forEach((st) => expect(Number.isFinite(st.offset)).toBe(true));
+  });
+});
+
+describe('shouldShowPriceBadge - the badge and the bands never share the strip', () => {
+  /**
+   * `.dscl.rngon .sl-pin u { display: none }` - both sit directly under the track, so showing
+   * both stacks the badge over the band pills.
+   */
+  it('shows the badge when the bands are closed', () => {
+    expect(shouldShowPriceBadge(4000, false)).toBe(true);
+  });
+
+  it('hides the badge while the bands are open', () => {
+    expect(shouldShowPriceBadge(2800, true)).toBe(false);
+  });
+
+  it('never shows it before a price is typed, either way', () => {
+    expect(shouldShowPriceBadge(0, false)).toBe(false);
+    expect(shouldShowPriceBadge(0, true)).toBe(false);
+  });
+
+  it('is exclusive with the bands for every price on the scale', () => {
+    const tiers = gaugeTiers(M, ROLLOUT);
+    const bands = gaugeBands(M, ROLLOUT);
+    for (let p = M.cost; p <= ROLLOUT; p += 53) {
+      const open = shouldShowBands(p, M);
+      const badge = shouldShowPriceBadge(p, open);
+      // Exactly one of the two may occupy the strip under the track.
+      expect(badge && open).toBe(false);
+      if (!open) expect(badge).toBe(true);
+    }
+    expect(bands.length).toBe(2);
+    expect(tiers.length).toBe(4);
   });
 });

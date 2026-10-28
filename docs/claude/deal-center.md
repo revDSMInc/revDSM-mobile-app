@@ -5657,12 +5657,23 @@ re-deriving anything here, read the stylesheet too, not just the script.
   half off each side - on a real device the ROLLOUT dot was clipped by the Done button. The
   component derives the inset from the measured row width and tile count, so it holds for a 1-, 2-,
   3- or 4-tile scale.
-- ⚠️ **The price badge under the pin IS shown, deliberately against the prototype's CSS.** The
-  stylesheet carries `.sl-pin u { display: none }`, but its JS still writes the figure into that
-  badge on every keystroke, and the client's own screenshots show it visible. The hide rule is
-  treated as a leftover. Requested directly: *"price badge also showing in the mockup but not
-  showing on my ui"*. If a later prototype revision clearly drops the badge, this is the one place
-  the implementation knowingly diverges - change it here, not by re-reading the CSS.
+- ⚠️ **The price badge and the commission bands are MUTUALLY EXCLUSIVE** - the prototype's
+  `.dscl.rngon .sl-pin u { display: none }`, i.e. bands open → badge hidden, bands closed → badge
+  shown. Both occupy the same strip directly under the track, so drawing both stacks the badge
+  over the band pills. Hiding the badge loses nothing: the price is in the field the rep is typing
+  into, and the highlighted band already names the range. Rule lives in `shouldShowPriceBadge()`
+  with a test sweeping every price on the scale to prove the two never coexist.
+  - ⚠️ **CORRECTION to an earlier note here.** An older copy of the mockup carried what looked
+    like an unconditional `.sl-pin u { display: none }`; it was read as a dead leftover and the
+    badge was shown always, recorded as a deliberate divergence. That was wrong - the live mockup
+    shows the rule is scoped to `rngon`. The lesson: a bare `display:none` in that stylesheet may
+    be the *base* of a conditional pair, so check for a scoped override before calling it dead.
+  - ⚠️ **The scale row's HEIGHT must follow the badge too.** The badge is the only thing needing
+    space below the track (`top: 22`), so a fixed row height left a dead gap above the band pills
+    once the badge was conditionally hidden - reported as *"reduce the gap"*. The row is now 50
+    with the badge and 20 without. The prototype sizes this block at `52u` with the pills at
+    `top: 25u` INSIDE it; the port lands them at 24px (row 20 + 4 margin), i.e. tight under the
+    track rather than stacked below a badge-sized row.
 - **Badge text colour is per-fill**, via `badgeTextColor()`: `#422006` on PAR yellow and `#7C2D12`
   on the upper commission band, white everywhere else. White on either light fill is unreadable;
   the prototype makes the same two exceptions.

@@ -16,6 +16,7 @@ import {
   countUpValue,
   mutedLabelColor,
   gaugeFillStops,
+  shouldShowPriceBadge,
   badgeTextColor,
   GAUGE_TIER_COLORS,
   GAUGE_BAND_COLORS,
@@ -384,9 +385,18 @@ const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, 
           ⚠️ The track spans CENTRE-TO-CENTRE of the first and last tiles, not edge to edge
           (prototype `paintScale`: `ln.style.left = L; width = Rr - L`, where L/Rr are tile
           centres). Running it the full width pushes the end dots half off each side - the
-          ROLLOUT dot was clipped by the Done button on a real device. */}
+          ROLLOUT dot was clipped by the Done button on a real device.
+
+          ⚠️ THE ROW HEIGHT FOLLOWS THE BADGE, which is the only thing needing space below the
+          track (it sits at `top: 22`). With the bands open the badge is hidden - see
+          `shouldShowPriceBadge` - so reserving its height leaves a dead gap above the band pills.
+          The prototype sizes this block at 52u and places the pills at `top: 25u` INSIDE it, i.e.
+          tight under the track, not stacked below a badge-sized row. */}
       {tileSet.length > 1 && (
-        <View style={{ height: 50 }} onLayout={onTrackLayout}>
+        <View
+          style={{ height: shouldShowPriceBadge(p, bandsOpen) ? 50 : 20 }}
+          onLayout={onTrackLayout}
+        >
           {/* Track */}
           <View
             style={{
@@ -536,8 +546,18 @@ const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, 
             />
           )}
           {/* Price badge. Tracks the pin, and is clamped to the row so it stays readable at either
-              end instead of running off the edge. */}
-          {hasPrice && trackWidth > 0 && (
+              end instead of running off the edge.
+
+              ⚠️ HIDDEN WHILE THE COMMISSION BANDS ARE OPEN, and shown otherwise - the prototype's
+              `.dscl.rngon .sl-pin u { display: none }`. The two occupy the same strip directly
+              under the track, so showing both stacks the badge on top of the band pills. The
+              price is never lost by hiding it: it is in the field the rep is typing into, and the
+              highlighted band already says which range it falls in.
+
+              ⚠️ The rule is SCOPED TO `rngon`, not a blanket hide. An earlier read of an older
+              copy of the mockup saw only an unconditional `.sl-pin u { display: none }` and took
+              it for a leftover, so the badge was shown always. It is conditional. */}
+          {trackWidth > 0 && shouldShowPriceBadge(p, bandsOpen) && (
             <Animated.View
               pointerEvents="none"
               style={{
@@ -578,7 +598,7 @@ const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, 
           5% commission at these tiers respectively so if they're under par it'll be good to know
           those tiers as a rep"*. Open by default on a below-par price; the COST chevron hides them. */}
       {bandsOpen && bands.length > 0 && (
-        <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+        <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
           {bands.map((b, k) => (
             <View
               key={`lg-${b.lowPct}-${b.highPct}`}
