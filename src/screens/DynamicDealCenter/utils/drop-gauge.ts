@@ -307,8 +307,20 @@ export const GAUGE_ENTER = {
   COUNT_UP_MS: 700,
   COUNT_UP_DELAY_MS: 300,
   COUNT_UP_STAGGER_MS: 80,
-  /** Pin slide between keystrokes. */
+  /** Pin slide between keystrokes (`.sl-pin { transition: left .28s }`). */
   PIN_MS: 280,
+  /**
+   * Tile ring pulse: `@keyframes ring .9s ease-out`, delayed `520ms + i * 70ms`.
+   *
+   * ⚠️ THE MOCKUP NEVER PLAYS THIS, and that is a bug in the mockup, not intent. Its tiles
+   * carry two `style` attributes, so the browser drops the second and `--i` is never set, making
+   * `calc(520ms + var(--i) * 70ms)` invalid - every ring fires at 0ms with no stagger. The
+   * client's own animation spec calls this out (§2.4) and says to FIX it in the port, so the
+   * intended 520 / 590 / 660 / 730 cascade is implemented here.
+   */
+  RING_MS: 900,
+  RING_DELAY_MS: 520,
+  RING_STAGGER_MS: 70,
 } as const;
 
 /**

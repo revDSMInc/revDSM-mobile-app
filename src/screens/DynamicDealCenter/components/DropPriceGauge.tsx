@@ -135,6 +135,27 @@ const TierTile: React.FC<{
   isCurrent: boolean;
   bandsToggle?: { open: boolean; onToggle: () => void };
 }> = ({ label, price, color, monthly, index, runKey, isCurrent, bandsToggle }) => {
+  /**
+   * The ring pulse - a green halo that expands out of each tile and fades, cascading left to
+   * right. See `GAUGE_ENTER.RING_*`: the mockup's own markup bug stops this ever playing there,
+   * so the stagger is implemented as the client's animation spec intends.
+   *
+   * Drawn as a sibling overlay because React Native has no spreading `box-shadow`.
+   */
+  const ring = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    ring.setValue(0);
+    const anim = Animated.timing(ring, {
+      toValue: 1,
+      duration: GAUGE_ENTER.RING_MS,
+      delay: GAUGE_ENTER.RING_DELAY_MS + index * GAUGE_ENTER.RING_STAGGER_MS,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    });
+    anim.start();
+    return () => anim.stop();
+  }, [runKey, index, ring]);
+
   const body = (
     <View
       style={{
@@ -151,6 +172,21 @@ const TierTile: React.FC<{
         borderColor: isCurrent ? color : '#DFE3E7',
       }}
     >
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+          borderRadius: 12,
+          borderWidth: 2,
+          borderColor: 'rgba(75,160,84,0.45)',
+          opacity: ring.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+          transform: [{ scale: ring.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) }],
+        }}
+      />
       {/* The coloured cap: how a tile says which tier it is even before a price is typed. */}
       <View
         style={{
@@ -419,6 +455,38 @@ const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, 
               </Svg>
             </Animated.View>
           )}
+          {/* ⚠️ COMMISSION BANDS DRAWN ON THE TRACK ITSELF.
+
+              The prototype's `.sl-band` is `top: 6u; height: 10u` - a thick segment sitting ON
+              the line, between the track and the dots. Reported by the client as *"Missing 55-60
+              and 60-65 on timeline"*: the pills below carry the dollar ranges, but on their own
+              they read as a legend, and the segment that shows WHERE on the scale those ranges
+              fall was absent.
+
+              ⚠️ Unhit band = its colour at 38% (`color-mix(... 38%, transparent)`); the band
+              holding the price = the solid colour. A single flat opacity loses the "which band am
+              I in" signal the bands exist for. */}
+          {bandsOpen && trackWidth > 0 &&
+            bands.map((b, k) => {
+              const from = trackInset + pinFraction(b.from, tileSet, bands, true) * trackSpan;
+              const to = trackInset + pinFraction(b.to, tileSet, bands, true) * trackSpan;
+              return (
+                <View
+                  key={`band-${b.lowPct}-${b.highPct}`}
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    top: 5,
+                    left: from,
+                    width: Math.max(3, to - from),
+                    height: 10,
+                    borderRadius: 5,
+                    backgroundColor:
+                      bandIdx === k ? GAUGE_BAND_COLORS[k] : `${GAUGE_BAND_COLORS[k]}61`,
+                  }}
+                />
+              );
+            })}
           {/* Tier dots */}
           {trackWidth > 0 &&
             tileSet.map((t, i) => (

@@ -1122,7 +1122,24 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     // ⚠️ One tap, one row. See `openingDrop`.
     if (openingDrop.current) return;
     const v = parseFloat(dropText) || 0;
-    if (v <= 0) return;
+    /**
+     * ⚠️ DONE WITH NO PRICE CLOSES THE ROW - it does not sit there doing nothing.
+     *
+     * Reported from the field: a rep who opened the drop row, thought better of it and pressed
+     * Done was left looking at the tiles and scale with an empty field, and the only way out was
+     * to type a price they did not want. Collapsing the row is the honest answer to "I am done
+     * here with nothing entered".
+     *
+     * ⚠️ NOTHING IS SAVED on this path - no drop row, no log, no server call. It is purely
+     * local UI state, so it behaves identically offline; there is no queue entry to make and
+     * nothing that could later sync a drop the rep never entered. Do not "improve" this by
+     * recording an empty or zero drop.
+     */
+    if (v <= 0) {
+      setShowDropInput(false);
+      setDropText('');
+      return;
+    }
     const cost = tiers.find((t) => t.label === 'COST')?.value ?? effectiveCostOf(calculator);
     if (v < cost) { FlashMessage.error('Invalid drop price', `Drop price must be at least the cost price (${fmt(cost)}).`); return; }
     if (priceNum > 0 && v === priceNum) {

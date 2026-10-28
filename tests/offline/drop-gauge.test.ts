@@ -362,6 +362,28 @@ describe('GAUGE_ENTER - timings carried over from the prototype', () => {
     expect(GAUGE_ENTER.PIN_MS).toBe(280);
   });
 
+  it('stages the ring pulse in the cascade the spec intends, not as the mockup behaves', () => {
+    /**
+     * The mockup never plays this - duplicate `style` attributes leave `--i` unset, so every ring
+     * fires at 0ms. The client's animation spec (§2.4) calls that out as a bug to FIX in the
+     * port, so the intended 520 / 590 / 660 / 730 cascade is asserted here.
+     */
+    expect(GAUGE_ENTER.RING_MS).toBe(900);
+    const delays = [0, 1, 2, 3].map(
+      (i) => GAUGE_ENTER.RING_DELAY_MS + i * GAUGE_ENTER.RING_STAGGER_MS,
+    );
+    expect(delays).toEqual([520, 590, 660, 730]);
+  });
+
+  it('overlaps the rings with the tail of the count-up cascade, as the mockup does', () => {
+    // The first ring (520ms) lands between the 3rd count-up (460ms) and the 4th (540ms): the two
+    // cascades interleave rather than running in series, which keeps the entry under a second.
+    const firstRing = GAUGE_ENTER.RING_DELAY_MS;
+    const lastCountUp = GAUGE_ENTER.COUNT_UP_DELAY_MS + 3 * GAUGE_ENTER.COUNT_UP_STAGGER_MS;
+    expect(firstRing).toBeGreaterThan(GAUGE_ENTER.COUNT_UP_DELAY_MS);
+    expect(firstRing).toBeLessThan(lastCountUp);
+  });
+
   it('staggers four tiles inside the entry window, so none starts after the rise ends', () => {
     const last = GAUGE_ENTER.COUNT_UP_DELAY_MS + 3 * GAUGE_ENTER.COUNT_UP_STAGGER_MS;
     expect(last).toBe(540);

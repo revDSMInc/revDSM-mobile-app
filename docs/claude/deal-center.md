@@ -5730,3 +5730,58 @@ wizard showed a raw ISO install date".
   "changed?" test is permanently true. See the edit wizard's `scheduleChanged`.
 - `normalizeScheduleTimeForSubmit` stays the single place that converts *for the wire*; the
   formatter is display/compare only. Don't fold them together — one drops `reason`, the other must not.
+
+### REVUIUX-584 follow-up — bands on the timeline, and the ring pulse
+
+Two client reports against the shipped gauge. Both are additive; nothing else was touched.
+
+**1. "Missing 55-60 and 60-65 on timeline".** The band pills below the scale carry the dollar
+ranges, but on their own they read as a legend — the segment showing WHERE on the scale those
+ranges fall was absent. The prototype draws `.sl-band` as a thick segment ON the track
+(`top: 6u; height: 10u`), between the line and the dots. Added; the pills are kept, because the
+track segments cannot carry the dollar figures.
+- ⚠️ Unhit band = its colour at ~38% opacity; the band holding the price = solid. A single flat
+  opacity loses the "which band am I in" signal the bands exist for.
+
+**2. The ring pulse is implemented as the spec INTENDS, not as the mockup behaves.** The client's
+animation spec (§2.4) documents a bug in their own markup: duplicate `style` attributes drop
+`--i`, so `calc(520ms + var(--i) * 70ms)` is invalid and all four rings fire at 0ms with no
+stagger. The spec says to fix it in the port. `GAUGE_ENTER.RING_*` carries the intended
+520 / 590 / 660 / 730 cascade.
+- Drawn as a sibling overlay scaling to 1.12 and fading, because React Native has no spreading
+  `box-shadow`.
+- ⚠️ The first ring (520ms) deliberately lands BEFORE the last count-up (540ms) — the cascades
+  interleave rather than running in series, which keeps the entry under a second. A test pins
+  that relationship.
+
+**⚠️ A reverted mistake worth not repeating: the gauge must NOT be hidden until a price is typed.**
+An earlier attempt gated the tiles and scale on `hasPrice`. That is wrong — the mockup shows the
+full gauge with an empty field (`Enter price…`), and hiding it also broke the entry animation,
+because the mount-only `.enter` effect then ran against zero tiles. The gauge mounts with the drop
+row and animates once; leave it that way.
+
+**3. Done with an EMPTY field closes the drop row.** `openDrop` opened with `if (v <= 0) return;`,
+so a rep who opened the row, thought better of it and pressed Done was left staring at the tiles
+and scale above an empty field, with no way out but typing a price they did not want. It now
+clears `dropText` and `showDropInput`.
+
+- ⚠️ **Nothing is saved on that path** - no drop row, no activity log, no server call. It is purely
+  local UI state, so it behaves identically offline: there is no queue entry to make and nothing
+  that could later sync a drop the rep never entered. Do not "improve" this by recording an empty
+  or zero drop.
+- ⚠️ All three entry points funnel through `openDrop` - the keypad's Done (`onSubmitEditing`), the
+  iPhone blur path (`NUMERIC_KEYBOARD_HAS_RETURN_KEY` is false only on iPhone, where the in-app
+  pad has no return key, so blur IS Done), and a second tap on `+ Nth Drop`. One guard covers all
+  three; do not add a second one at a call site.
+- The chevron on the COST tile does not trip the blur path: both scroll containers already set
+  `keyboardShouldPersistTaps="handled"`, so a tap on a handled press does not dismiss the pad. An
+  earlier attempt added `onStartShouldSetResponder` to the chevron for this and was removed - it
+  was unnecessary and risked swallowing the press itself.
+
+**Not done: the shared-element (FLIP) transition.** The mockup morphs the rollout screen's
+COST/PAR/RETAIL tiles into the drop screen's tiles (`flip()`, 640ms, 45ms stagger,
+`cubic-bezier(.22,1,.36,1)`). The app's drop row expands inline below those tiles rather than
+replacing the screen, so there is no source-to-destination pairing to morph between — the tiles
+stay on screen throughout. Implementing it would mean restructuring the drop entry into a separate
+full-screen view, which is beyond "do not change anything else". Raise with the client if they
+want the full screen swap.
