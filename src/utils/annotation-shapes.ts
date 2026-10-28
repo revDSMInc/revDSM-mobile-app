@@ -150,6 +150,68 @@ export const hitShapeHandle = (
   return null;
 };
 
+/** Handles drawn / hit for a shape. A circle has ONE (the edge point): its centre is not a handle, so grabbing inside the ring never resizes it. */
+export const shapeHandles = (s: AnnotationShape): ShapeHandle[] => (s.kind === 'circle' ? ['p2'] : ['p1', 'p2']);
+
+export type ShapeTouch = { mode: 'resize'; handle: ShapeHandle } | { mode: 'move' } | null;
+
+/**
+ * What a touch on the SELECTED shape does (REVUIUX-587). Circle: on the ring (or the edge handle) RESIZES - the radius follows the
+ * finger, the centre stays; anywhere INSIDE the circle MOVES it. The ring band is capped at half the radius so a small circle
+ * always keeps an inner area to grab. Other kinds keep the old rule: an end handle resizes, the outline moves, an interior is not hit.
+ */
+export const hitShapeTouch = (
+  s: AnnotationShape,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  handleTol: number,
+  bodyTol: number
+): ShapeTouch => {
+  if (s.kind === 'circle') {
+    const a = toPx(s.p1, w, h);
+    const r = circleRadiusPx(s, w, h);
+    const d = Math.hypot(x - a.x, y - a.y);
+    const band = Math.min(handleTol, r / 2);
+    if (hitShapeHandle(s, x, y, w, h, band) === 'p2' || Math.abs(d - r) <= band) return { mode: 'resize', handle: 'p2' };
+    if (d < r) return { mode: 'move' };
+    return null;
+  }
+  const handle = hitShapeHandle(s, x, y, w, h, handleTol);
+  if (handle) return { mode: 'resize', handle };
+  return hitShapeBody(s, x, y, w, h, bodyTol) ? { mode: 'move' } : null;
+};
+
+/**
+ * The shape (and what to do with it) under a touch that starts a drag. The SELECTED shape is tried first, any kind. Then every CIRCLE,
+ * topmost first: a circle is grabbed from inside / its ring even when it is not selected, so after a tap on empty canvas cleared the
+ * selection a drag inside it still moves it (REVUIUX-587). Lines, arrows and boxes keep the rule "select with a tap first".
+ */
+export const pickShapeTouch = (
+  shapes: AnnotationShape[],
+  selectedId: string | null,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  handleTol: number,
+  bodyTol: number
+): { shape: AnnotationShape; touch: NonNullable<ShapeTouch> } | null => {
+  const selected = shapes.find((sh) => sh.id === selectedId);
+  if (selected) {
+    const t = hitShapeTouch(selected, x, y, w, h, handleTol, bodyTol);
+    if (t) return { shape: selected, touch: t };
+  }
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    const sh = shapes[i];
+    if (sh.kind !== 'circle' || sh.id === selectedId) continue;
+    const t = hitShapeTouch(sh, x, y, w, h, handleTol, bodyTol);
+    if (t) return { shape: sh, touch: t };
+  }
+  return null;
+};
+
 /** Topmost (last drawn) shape whose outline is under the point. */
 export const pickShapeAt = (
   shapes: AnnotationShape[],
