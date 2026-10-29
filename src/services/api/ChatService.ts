@@ -537,20 +537,34 @@ class ChatService {
     await api.post(`/chat/v1/${chatId}/participants`, { userId });
   }
 
-  getPinnedMessages(chatId: string): void {
-    SocketManager.emit('get-pinned-messages', chatId);
+  /**
+   * The chat's pinned messages. Its own endpoint rather than a filter over the
+   * loaded page, so the bar fills even when the pin is on a message far back in
+   * the history.
+   */
+  async getPinnedMessages(chatId: string): Promise<any[]> {
+    const res = await api.get<any>(`/chat/v1/${chatId}/pinned`);
+    return res.data?.data?.pinnedMessages || [];
   }
 
-  pinMessage(chatId: string, messageId: string): void {
-    const payload: any = { messageId, chatId };
-    console.log('[ChatService] pin-message:', payload);
-    SocketManager.emit('pin-message', payload);
+  /**
+   * Pin or unpin. These are HTTP calls, not socket emits: the write has to be
+   * acknowledged and ordered, and the socket's job is only to tell the rest of
+   * the room. The old `pin-message` / `unpin-message` socket events no longer
+   * exist on the server -- emitting them was why pinning silently stopped
+   * working (REVDSM-1313 removed the handlers).
+   *
+   * Resolves with the server's copy of the message so the caller can replace
+   * its optimistic one; rejects on a refusal, which puts the pin back.
+   */
+  async pinMessage(chatId: string, messageId: string): Promise<any> {
+    const res = await api.put<any>(`/chat/v1/messages/${messageId}/pin`);
+    return res.data?.data?.message || null;
   }
 
-  unpinMessage(chatId: string, messageId: string): void {
-    const payload: any = { messageId, chatId };
-    console.log('[ChatService] unpin-message:', payload);
-    SocketManager.emit('unpin-message', payload);
+  async unpinMessage(chatId: string, messageId: string): Promise<any> {
+    const res = await api.delete<any>(`/chat/v1/messages/${messageId}/pin`);
+    return res.data?.data?.message || null;
   }
 
   addReaction(chatId: string, messageId: string, emoji: string, isChannel = false): void {
@@ -613,9 +627,20 @@ class ChatService {
 
   /** Shows the refusal alerts the channel UI has always shown (HTTP failures; socket ones also arrive as `error`). */
   alertChannelRefusal(err: any): void {
-    const refusals = ['MANAGERS_ONLY', 'SLOW_MODE', 'UPLOADS_DISABLED', 'REPLIES_DISABLED', 'EDIT_DISABLED', 'ACK_NOT_REQUIRED'];
+    const refusals = [
+      'MANAGERS_ONLY', 'SLOW_MODE', 'UPLOADS_DISABLED', 'REPLIES_DISABLED', 'EDIT_DISABLED', 'ACK_NOT_REQUIRED',
+      // REVUIUX-577. A poll refusal is a dead end for the tap that caused it,
+      // so it has to say why rather than leaving the bars unchanged.
+      'POLL_QUESTION_INVALID', 'POLL_OPTIONS_INVALID', 'POLL_OPTIONS_DUPLICATE', 'POLL_UNSUPPORTED_FIELD',
+      'POLL_SINGLE_CHOICE', 'POLL_OPTION_NOT_FOUND', 'POLL_OPTION_IDS_INVALID', 'POLL_CLOSED',
+      'POLL_NOT_APPROVED', 'POLL_NOT_EDITABLE', 'NOT_A_POLL',
+    ];
     const code = this.channelErrorCode(err);
-    if (code && refusals.includes(code) && err?.message) Alert.alert('Not allowed', err.message);
+    // A socket ack carries the reason on `message`; an axios rejection puts it
+    // under `response.data` and leaves `err.message` as "Request failed with
+    // status code 400", which is not something to show anyone.
+    const reason = err?.response?.data?.message || (err?.response ? '' : err?.message);
+    if (code && refusals.includes(code) && reason) Alert.alert('Not allowed', reason);
   }
 
   /** `GET /api/v1/channels/` (the caller's office); `POST /api/v1/channels/initialize` once when it is empty. */
@@ -699,6 +724,65 @@ class ChatService {
 
   acknowledgeChannelMessage(messageId: string): void {
     SocketManager.emit('acknowledge-channel-message', { messageId });
+  }
+
+  // ─── Polls (REVUIUX-577) ──────────────────────────────────────────────────
+
+  /**
+   * Post a poll. It is an ordinary channel message carrying a `poll`, so it
+   * takes the same socket path as text and comes back through
+   * `new-channel-message` like anything else.
+   *
+   * No `message` is sent: the server uses the question as the body, so the
+   * question has one source of truth. Falls back to REST when the socket is
+   * down, which is the same JSON the server accepts on the send endpoint.
+   */
+  async sendChannelPoll(
+    channelId: string,
+    poll: { question: string; options: string[]; allowMultiple: boolean }
+  ): Promise<any> {
+    try {
+      const res = await SocketManager.emitWithAck('send-channel-message', { channelId, poll });
+      return res?.data?.message || res?.data || null;
+    } catch (e: any) {
+      const code = this.channelErrorCode(e);
+      // Only a dead socket is worth retrying: a refusal would be refused again.
+      if (code !== 'NOT_CONNECTED' && code !== 'TIMEOUT') {
+        this.alertChannelRefusal(e);
+        throw e;
+      }
+      try {
+        const res = await api.post<any>(`/api/v1/channels/${channelId}/messages`, { poll });
+        return res?.data?.data?.message || null;
+      } catch (httpError) {
+        this.alertChannelRefusal(httpError);
+        throw httpError;
+      }
+    }
+  }
+
+  /**
+   * Cast, change or retract a vote. `optionIds` is the COMPLETE selection, so
+   * `[]` retracts and a replay lands on the same answer rather than toggling.
+   * Always an explicit array - the server refuses a missing one rather than
+   * reading it as a retraction.
+   */
+  async voteChannelPoll(messageId: string, optionIds: string[]): Promise<any> {
+    try {
+      const res = await api.post<any>(`/api/v1/channels/messages/${messageId}/poll/vote`, {
+        optionIds: optionIds || [],
+      });
+      return res?.data?.data?.message || null;
+    } catch (e) {
+      this.alertChannelRefusal(e);
+      throw e;
+    }
+  }
+
+  /** "View votes": who chose what. */
+  async getChannelPollVoters(messageId: string): Promise<any[]> {
+    const res = await api.get<any>(`/api/v1/channels/messages/${messageId}/poll/votes`);
+    return res.data?.data?.options || [];
   }
 
   /** Flat snake_case payload: { name, icon_emoji, description?, ...settings }. Resolves with the ack. */

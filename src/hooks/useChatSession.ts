@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Vibration } from 'react-native';
 import { IMessage } from 'react-native-gifted-chat';
 import ChatService from '../services/api/ChatService';
+import { messageWithPollUpdate } from '../utils/channel-poll';
 import SocketManager from '../services/SocketManager';
 
 const mergePins = (current: any[], incoming: any[]): any[] => {
@@ -218,10 +219,29 @@ export const useChatSession = (
 
     if (isChannel) {
       ChatService.setOpenChannel(chatId);
+    } else {
+      // Was `SocketManager.emit('get-pinned-messages', ...)`, whose handler REVDSM-1313 deleted -- so nothing ever
+      // answered and the pinned bar stayed empty. Pinned messages are an endpoint now.
+      ChatService.getPinnedMessages(chatId)
+        .then((pins) => {
+          const normalized = pins.map((m: any) => ChatService.normalizeMessage(m));
+          fetchSecureUrls(normalized);
+          // ⚠️ MERGE, never replace (see `pinned-messages-response` below): a short or empty reply must not wipe pins
+          // the message history already proved, and it must not un-pin messages it simply did not list.
+          const pinnedIds = new Set(normalized.map((m: any) => String(m._id)));
+          setMessages((prev) =>
+            prev.map((m) => (pinnedIds.has(String((m as any)._id)) ? { ...m, isPinned: true } : m)),
+          );
+          setPinnedMessages((prev) => mergePins(prev, normalized));
+        })
+        .catch(() => {
+          // An empty bar is the right failure here: it is a read of something
+          // the history page already carries per-message.
+        });
     }
-    // ⚠️ Lead chat pins are requested by SocketManager.joinRoom (plain chat id, on join ack / +800ms / reconnect) - the same
-    // shape the web sends. A second `{ chatId, channelId }` request used to go out here as well; if the server answers it
-    // differently, its `pinned-messages-response` replaces the list (unverified - removed to keep one request shape).
+    // ⚠️ Pins come from the REST read above. `SocketManager.joinRoom` still emits a plain-id `get-pinned-messages` on join; its
+    // `pinned-messages-response` (if the server ever answers) is MERGED below, never replacing. Do not re-add a second
+    // `{ chatId, channelId }` request shape.
 
     // After a reconnect, pull what was missed while offline (latest page only) and merge it in.
     const resyncChannel = () => {
@@ -407,6 +427,26 @@ export const useChatSession = (
     const unsubReactAdded = SocketManager.on('reaction-added', handleReaction);
     const unsubReactRemoved = SocketManager.on('reaction-removed', handleReaction);
 
+    /**
+     * REVUIUX-577: someone voted. The broadcast is one payload for the whole
+     * room, so it carries counts only - this device's own `myVotes` is kept,
+     * never read from it, or every viewer would inherit the voter's ticks.
+     * A missed broadcast self-heals: the next history fetch carries both.
+     */
+    const handlePollUpdated = (data: any) => {
+      const msgId = String(data?.messageId || '');
+      if (!msgId || !data?.poll) return;
+      const updater = (prev: any[]) =>
+        prev.map((msg) =>
+          String((msg as any)._id) === msgId ? messageWithPollUpdate(msg, data.poll) : msg,
+        );
+      setMessages(updater);
+      setPinnedMessages(updater);
+    };
+    const unsubPollUpdated = isChannel
+      ? SocketManager.on('team-channel-poll-updated', handlePollUpdated)
+      : () => {};
+
     const unsubDeleted = SocketManager.on('message-deleted', (data: any) => {
       const deletedId = (data.messageId || data.id || data.message?._id || data._id)?.toString();
       setMessages((prev) => prev.filter((msg) => msg._id?.toString() !== deletedId));
@@ -562,6 +602,7 @@ export const useChatSession = (
       unsubEdited();
       unsubReactAdded();
       unsubReactRemoved();
+      unsubPollUpdated();
       unsubDeleted();
       unsubPinned();
       unsubUnpinned();

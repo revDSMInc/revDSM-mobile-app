@@ -177,7 +177,7 @@ export default function Chat({ onClose, lead }: Props) {
         setMessages((prev) => prev.map((msg) => (msg._id === normalized._id ? normalized : msg)));
       });
 
-      ChatService.getPinnedMessages(id);
+      ChatService.getPinnedMessages(id).catch(() => {});
     },
     [currentUserId, refreshChatParticipants]
   );

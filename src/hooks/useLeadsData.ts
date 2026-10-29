@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+const STALE_RETRY_MS = 15000;
 import { AppState } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
@@ -58,10 +60,17 @@ export function useLeadsData(
 
   useLiveLeadRefresh(!!user?._id && options?.enabled !== false);
 
+  // True while the list on screen is the saved on-disk copy served because an online fetch
+  // failed. The query counts that as a fresh success (5 min staleTime), so without this a
+  // weak-signal fetch left a list missing just-synced leads until some other event refetched.
+  const [servedStale, setServedStale] = useState(false);
+
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['leads', params],
+    refetchInterval: servedStale ? STALE_RETRY_MS : false,
     queryFn: async () => {
       if (!user?._id) return [];
+      setServedStale(false);
       const key = `${OFFLINE_CACHE.LEADS_LIST}:${params?.status || 'all'}:${params?.period || 'all'}`;
       try {
         return await cachedFetch<any[]>(
@@ -71,7 +80,7 @@ export function useLeadsData(
             const leadsData = res.data?.data?.leads || res.data?.data;
             return Array.isArray(leadsData) ? leadsData : [];
           },
-          { online: isOnline(), userId: user._id }
+          { online: isOnline(), userId: user._id, onStaleFallback: () => setServedStale(true) }
         );
       } catch (e) {
         if (!isOnline()) return [];

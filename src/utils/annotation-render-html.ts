@@ -48,87 +48,98 @@ export const ANNOTATION_RENDER_HTML = `
 
           ctx.drawImage(img, 0, 0, w, h);
 
-          // Ink is drawn on its OWN transparent layer and then laid over the photo: an eraser stroke
-          // ('destination-out') on the photo canvas itself punched transparent holes in the PICTURE,
-          // which a JPEG saves as black, instead of rubbing out only the pen marks as the preview does.
-          if (data.strokes && data.strokes.length) {
+          // One stroke on a context. Eraser = 'destination-out' (only meaningful on the transparent ink layer below).
+          function drawStroke(c, stroke) {
+            if (stroke.points.length === 0) return;
+            c.beginPath();
+            c.lineCap = 'round';
+            c.lineJoin = 'round';
+            if (stroke.isEraser) {
+              c.globalCompositeOperation = 'destination-out';
+              c.lineWidth = stroke.width * (w / data.layoutWidth);
+            } else {
+              c.globalCompositeOperation = 'source-over';
+              c.strokeStyle = stroke.color;
+              c.lineWidth = stroke.width * (w / data.layoutWidth);
+              // Pen transparency (REVUIUX-590). One stroke() call = one uniform alpha, so a stroke crossing itself does not darken.
+              c.globalAlpha = (typeof stroke.opacity === 'number' && stroke.opacity > 0 && stroke.opacity <= 1) ? stroke.opacity : 1;
+            }
+            const firstPoint = stroke.points[0];
+            c.moveTo(firstPoint.px * w, firstPoint.py * h);
+            stroke.points.forEach(pt => {
+              c.lineTo(pt.px * w, pt.py * h);
+            });
+            c.stroke();
+            c.globalAlpha = 1;
+          }
+
+          // One shape on a context: same maths as utils/annotation-shapes.ts (arrowGeometry) - keep the two in step.
+          function drawShape(c, sh) {
+            const sScale = w / data.layoutWidth;
+            const x1 = sh.p1.px * w, y1 = sh.p1.py * h;
+            const x2 = sh.p2.px * w, y2 = sh.p2.py * h;
+            const lw = sh.width * sScale;
+            c.globalCompositeOperation = 'source-over';
+            c.lineCap = 'round';
+            c.lineJoin = 'round';
+            c.strokeStyle = sh.color;
+            c.fillStyle = sh.color;
+            c.lineWidth = lw;
+            c.beginPath();
+            if (sh.kind === 'line') {
+              c.moveTo(x1, y1);
+              c.lineTo(x2, y2);
+              c.stroke();
+            } else if (sh.kind === 'arrow') {
+              const dx = x2 - x1, dy = y2 - y1;
+              const len = Math.hypot(dx, dy) || 1;
+              const ux = dx / len, uy = dy / len;
+              const headLen = Math.min(Math.max(14 * sScale, lw * 4.5), len * 0.6);
+              const bx = x2 - ux * headLen, by = y2 - uy * headLen;
+              const half = headLen * Math.tan(Math.PI / 7);
+              const shaft = headLen * 0.85;
+              c.moveTo(x1, y1);
+              c.lineTo(x2 - ux * shaft, y2 - uy * shaft);
+              c.stroke();
+              c.beginPath();
+              c.moveTo(x2, y2);
+              c.lineTo(bx - uy * half, by + ux * half);
+              c.lineTo(bx + uy * half, by - ux * half);
+              c.closePath();
+              c.lineWidth = lw * 0.4;
+              c.fill();
+              c.stroke();
+            } else if (sh.kind === 'circle') {
+              const r = Math.hypot((sh.p2.px - sh.p1.px) * data.layoutWidth, (sh.p2.py - sh.p1.py) * data.layoutHeight) * sScale;
+              c.arc(x1, y1, r, 0, Math.PI * 2);
+              c.stroke();
+            } else if (sh.kind === 'rect') {
+              c.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+              c.stroke();
+            }
+          }
+
+          // Ink AND shapes are drawn on their OWN transparent layer, oldest first (data.order = [['s'|'h', index], ...] from
+          // utils/annotation-layers.ts), then the layer is laid over the photo. An eraser stroke ('destination-out') therefore rubs
+          // out only what was drawn BEFORE it - pen marks and shapes - and never punches holes in the PICTURE (a JPEG saves
+          // those as black). Without data.order (an older caller) all ink goes first and the shapes after, as before.
+          const order = Array.isArray(data.order)
+            ? data.order
+            : (data.strokes || []).map(function (_s, i) { return ['s', i]; }).concat((data.shapes || []).map(function (_s, i) { return ['h', i]; }));
+          if (order.length) {
             const layer = document.createElement('canvas');
             layer.width = w;
             layer.height = h;
             const lctx = layer.getContext('2d');
-            data.strokes.forEach(stroke => {
-              if (stroke.points.length === 0) return;
-
-              lctx.beginPath();
-              lctx.lineCap = 'round';
-              lctx.lineJoin = 'round';
-
-              if (stroke.isEraser) {
-                lctx.globalCompositeOperation = 'destination-out';
-                lctx.lineWidth = stroke.width * (w / data.layoutWidth);
-              } else {
-                lctx.globalCompositeOperation = 'source-over';
-                lctx.strokeStyle = stroke.color;
-                lctx.lineWidth = stroke.width * (w / data.layoutWidth);
+            order.forEach(function (entry) {
+              if (entry[0] === 's') {
+                if (data.strokes && data.strokes[entry[1]]) drawStroke(lctx, data.strokes[entry[1]]);
+              } else if (data.shapes && data.shapes[entry[1]]) {
+                drawShape(lctx, data.shapes[entry[1]]);
               }
-
-              const firstPoint = stroke.points[0];
-              lctx.moveTo(firstPoint.px * w, firstPoint.py * h);
-
-              stroke.points.forEach(pt => {
-                lctx.lineTo(pt.px * w, pt.py * h);
-              });
-
-              lctx.stroke();
             });
+            lctx.globalCompositeOperation = 'source-over';
             ctx.drawImage(layer, 0, 0);
-          }
-
-          // Shapes: same maths as utils/annotation-shapes.ts (arrowGeometry) - keep the two in step.
-          if (data.shapes) {
-            const sScale = w / data.layoutWidth;
-            data.shapes.forEach(sh => {
-              const x1 = sh.p1.px * w, y1 = sh.p1.py * h;
-              const x2 = sh.p2.px * w, y2 = sh.p2.py * h;
-              const lw = sh.width * sScale;
-              ctx.lineCap = 'round';
-              ctx.lineJoin = 'round';
-              ctx.strokeStyle = sh.color;
-              ctx.fillStyle = sh.color;
-              ctx.lineWidth = lw;
-              ctx.beginPath();
-              if (sh.kind === 'line') {
-                ctx.moveTo(x1, y1);
-                ctx.lineTo(x2, y2);
-                ctx.stroke();
-              } else if (sh.kind === 'arrow') {
-                const dx = x2 - x1, dy = y2 - y1;
-                const len = Math.hypot(dx, dy) || 1;
-                const ux = dx / len, uy = dy / len;
-                const headLen = Math.min(Math.max(14 * sScale, lw * 4.5), len * 0.6);
-                const bx = x2 - ux * headLen, by = y2 - uy * headLen;
-                const half = headLen * Math.tan(Math.PI / 7);
-                const shaft = headLen * 0.85;
-                ctx.moveTo(x1, y1);
-                ctx.lineTo(x2 - ux * shaft, y2 - uy * shaft);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(x2, y2);
-                ctx.lineTo(bx - uy * half, by + ux * half);
-                ctx.lineTo(bx + uy * half, by - ux * half);
-                ctx.closePath();
-                ctx.lineWidth = lw * 0.4;
-                ctx.fill();
-                ctx.stroke();
-              } else if (sh.kind === 'circle') {
-                const r = Math.hypot((sh.p2.px - sh.p1.px) * data.layoutWidth, (sh.p2.py - sh.p1.py) * data.layoutHeight) * sScale;
-                ctx.arc(x1, y1, r, 0, Math.PI * 2);
-                ctx.stroke();
-              } else if (sh.kind === 'rect') {
-                ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
-                ctx.stroke();
-              }
-            });
           }
 
           ctx.globalCompositeOperation = 'source-over';

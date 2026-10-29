@@ -5796,3 +5796,9 @@ replacing the screen, so there is no source-to-destination pairing to morph betw
 stay on screen throughout. Implementing it would mean restructuring the drop entry into a separate
 full-screen view, which is beyond "do not change anything else". Raise with the client if they
 want the full screen swap.
+
+### Leads screen: just-synced card hand-off (see `docs/claude/offline.md`, "Offline lead list state")
+
+`screens/Leads/index.tsx` keeps a synced offline lead's card (`justLandedIds`) until the SERVER list contains its id (re-reading every 4 s, 45 s give-up) instead of releasing when the refetch settles; rows are keyed by `clientId` so the card does not remount when its id flips from client to server id. Full reasoning and the traps live in offline.md.
+
+Follow-up: the landed-effect in `screens/Leads/index.tsx` no longer keeps the give-up timer handle (`setTimeout(release, LEAD_HANDOFF_MAX_MS)` is fire-and-forget on purpose). Do not add a cleanup that clears it: the effect re-runs on every store update, so the cap would never fire.

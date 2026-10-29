@@ -49,3 +49,13 @@ export const uploadNotificationText = (
     body: `${pending} ${noun} left to upload.`,
   };
 };
+
+// The bar's range: `max` is the most items seen waiting during this run (work added mid-run raises it),
+// `current` how many of those are done. Never negative and never past `max`.
+export const uploadProgress = (peak: number, pending: number): { max: number; current: number } => {
+  const max = Math.max(peak, pending, 1);
+  return { max, current: Math.min(max, Math.max(0, max - pending)) };
+};
+
+// Nothing left to upload means no notification at all, not a "0 items left" one.
+export const shouldShowUploadNotification = (pending: number): boolean => pending > 0;

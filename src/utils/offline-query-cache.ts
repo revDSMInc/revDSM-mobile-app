@@ -86,9 +86,15 @@ export const cachedFetch = async <T,>(
     online: boolean;
     userId?: string | null;
     isEmpty?: (data: T) => boolean;
+    /**
+     * Called when an ONLINE fetch failed and the saved copy is returned instead. The caller's
+     * query sees a success either way, so this is the only way it can know the data is a stale
+     * snapshot and should be re-read soon rather than trusted for its whole staleTime.
+     */
+    onStaleFallback?: () => void;
   }
 ): Promise<T> => {
-  const { online, userId, isEmpty = defaultIsEmpty } = options;
+  const { online, userId, isEmpty = defaultIsEmpty, onStaleFallback } = options;
 
   const cached = (): T | undefined => readOfflineCache<T>(name, { userId })?.data;
 
@@ -104,7 +110,10 @@ export const cachedFetch = async <T,>(
     return fresh;
   } catch (e) {
     const saved = cached();
-    if (saved !== undefined) return saved;
+    if (saved !== undefined) {
+      onStaleFallback?.();
+      return saved;
+    }
     throw e;
   }
 };

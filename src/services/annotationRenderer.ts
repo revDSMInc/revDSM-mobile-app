@@ -6,6 +6,8 @@
  * a time - one WebView, one canvas - and each is matched to its answer by a request id echoed through `imageIndex`.
  */
 
+import { orderedLayers } from '../utils/annotation-layers';
+
 export interface RenderInput {
   backgroundImageBase64: string;
   layoutWidth: number;
@@ -86,6 +88,13 @@ const waitUntilReady = (): Promise<void> =>
     readyWaiters.push(onReady);
   });
 
+/** Oldest-first paint order as [kind, index] pairs into `strokes` / `shapes` (no mark is sent twice). Shared logic: utils/annotation-layers.ts. */
+const paintOrder = (strokes: any[], shapes: any[]): Array<['s' | 'h', number]> => {
+  const sIdx = new Map((strokes || []).map((s, i) => [s, i] as const));
+  const hIdx = new Map((shapes || []).map((s, i) => [s, i] as const));
+  return orderedLayers(strokes, shapes).map((l) => (l.kind === 'stroke' ? ['s', sIdx.get(l.item) as number] : ['h', hIdx.get(l.item) as number]));
+};
+
 const renderOne = async (input: RenderInput): Promise<string> => {
   await waitUntilReady();
   const id = `r${nextId++}`;
@@ -95,7 +104,7 @@ const renderOne = async (input: RenderInput): Promise<string> => {
       reject(new Error('Render timed out'));
     }, RENDER_TIMEOUT_MS);
     pending.set(id, { resolve, reject, timer });
-    post!(JSON.stringify({ ...input, imageIndex: id }));
+    post!(JSON.stringify({ ...input, order: paintOrder(input.strokes, input.shapes), imageIndex: id }));
   });
 };
 

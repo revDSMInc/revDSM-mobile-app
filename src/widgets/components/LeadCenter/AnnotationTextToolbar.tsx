@@ -5,8 +5,9 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import Svg, { Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { CustomSlider, OpacitySlider } from './AnnotationSlider';
+import { PaletteButton, PaletteGrid } from './ColorPalette';
+import { QUICK_COLORS } from '../../../utils/annotation-colors';
 
 interface AnnotationTextToolbarProps {
   selectedText: any;
@@ -16,6 +17,10 @@ interface AnnotationTextToolbarProps {
   setShowFontDropdown: (show: boolean) => void;
   /** Done / handle: closes the panel AND the note's menu (the screen also deselects the note). */
   onDone?: () => void;
+  /** The quick-colour row (a colour picked from the grid replaces the active swatch in it). */
+  quickColors?: string[];
+  /** A colour chosen in the full grid: the screen restyles the note AND updates the quick row. */
+  onPickGridColor?: (color: string) => void;
 }
 
 export const AnnotationTextToolbar = ({
@@ -25,7 +30,12 @@ export const AnnotationTextToolbar = ({
   showFontDropdown,
   setShowFontDropdown,
   onDone,
+  quickColors,
+  onPickGridColor,
 }: AnnotationTextToolbarProps) => {
+
+  // The full colour grid replaces the opacity / size rows while open, so the panel keeps its height (REVUIUX-589).
+  const [showPalette, setShowPalette] = React.useState(false);
 
   // Closing the panel also closes its font dropdown, so the next open starts clean.
   const closePanel = () => {
@@ -38,7 +48,7 @@ export const AnnotationTextToolbar = ({
   const textOpacity = selectedText.opacity !== undefined ? selectedText.opacity : 1.0;
   const textSize = selectedText.fontSize || 16;
   const textFontStyle = selectedText.fontStyle || 'regular';
-  const colors = ['#FF7043', '#4CBB17', '#42A5F5', '#FFB74D', '#FFFFFF', '#000000'];
+  const colors = quickColors || QUICK_COLORS;
 
   const fontOptions = [
     { label: 'Regular', value: 'regular' },
@@ -109,33 +119,23 @@ export const AnnotationTextToolbar = ({
             </TouchableOpacity>
           );
         })}
-        {/* Decorative multi-color wheel */}
-        <View
-          style={{
-            width: 30,
-            height: 30,
-            borderRadius: 15,
-            borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.2)',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'hidden',
-          }}
-        >
-          <Svg style={{ width: '100%', height: '100%' }}>
-            <Defs>
-              <LinearGradient id="rainbow" x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0%" stopColor="red" />
-                <Stop offset="33%" stopColor="green" />
-                <Stop offset="66%" stopColor="blue" />
-                <Stop offset="100%" stopColor="yellow" />
-              </LinearGradient>
-            </Defs>
-            <Rect width="100%" height="100%" fill="url(#rainbow)" />
-          </Svg>
-        </View>
+        <PaletteButton open={showPalette} onPress={() => setShowPalette((v) => !v)} size={34} />
       </View>
 
+      {showPalette ? (
+        <View style={{ marginBottom: 16 }}>
+          <PaletteGrid
+            value={textColor}
+            swatch={34}
+            onPick={(color) => {
+              if (onPickGridColor) onPickGridColor(color);
+              else updateSelectedText({ color });
+              setShowPalette(false);
+            }}
+          />
+        </View>
+      ) : (
+        <>
       {/* Opacity slider row */}
       <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
         <OpacitySlider
@@ -158,6 +158,9 @@ export const AnnotationTextToolbar = ({
         />
         <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 14, width: 30, textAlign: 'right' }}>{textSize}</Text>
       </View>
+
+        </>
+      )}
 
       {/* Font selector dropdown */}
       <View style={{ position: 'relative', zIndex: 1000 }}>

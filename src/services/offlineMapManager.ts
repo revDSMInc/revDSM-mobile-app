@@ -1,4 +1,5 @@
 import Mapbox from '@rnmapbox/maps';
+import { mapboxLogCallback } from '../utils/mapbox-log-noise';
 import { registerSessionResetHook } from './sessionScope';
 import { isOnWifi } from './connectivity';
 
@@ -166,6 +167,13 @@ class OfflineMapManager {
   async init(): Promise<void> {
     if (this._initialized) return;
     this._initialized = true;
+    // ⚠️ The native logger reports a failed region download through console.error (red LogBox in dev)
+    // even though the pack's `onError` below already handles it. See utils/mapbox-log-noise.ts.
+    try {
+      Mapbox.Logger.setLogCallback(mapboxLogCallback as any);
+    } catch (e) {
+      console.warn('[offlineMap] could not install the Mapbox log filter:', e);
+    }
     try {
       Mapbox.offlineManager.setProgressEventThrottle(PROGRESS_THROTTLE_MS);
       Mapbox.offlineManager.setTileCountLimit(TILE_COUNT_LIMIT);

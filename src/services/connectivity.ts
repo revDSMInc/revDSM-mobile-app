@@ -36,6 +36,68 @@ const listeners = new Set<ConnectivityListener>();
 const reconnectListeners = new Set<() => void>();
 const wifiReconnectListeners = new Set<() => void>();
 
+/**
+ * ⚠️ UPLOADS IN FLIGHT. A multipart photo upload saturates a weak cellular uplink, and the tiny
+ * `/health` GET that NetInfo uses for reachability then loses the race and times out - which
+ * flipped the app "offline" WHILE the upload was progressing, aborted the queue pass, and restarted
+ * the whole file from byte 0 on the next reconnect (a loop that never finished on a slow line).
+ * While an upload is genuinely in flight, "connected but not reachable" is evidence about the
+ * probe, not about the link - so it is not allowed to flip us offline. "Not connected" still does.
+ *
+ * Entries expire (`UPLOAD_GRACE_MS`) so a request that never reports back can never keep the app
+ * pinned online.
+ */
+const UPLOAD_GRACE_MS = 330_000; // just past the 300 s photo timeout
+const uploadsInFlight = new Map<number, number>();
+let uploadSeq = 0;
+
+export const beginUpload = (): number => {
+  uploadSeq += 1;
+  uploadsInFlight.set(uploadSeq, Date.now());
+  return uploadSeq;
+};
+
+export const endUpload = (id: number | null | undefined): void => {
+  if (typeof id === 'number') uploadsInFlight.delete(id);
+};
+
+const uploadIsInFlight = (now: number = Date.now()): boolean => {
+  uploadsInFlight.forEach((startedAt, id) => {
+    if (now - startedAt > UPLOAD_GRACE_MS) uploadsInFlight.delete(id);
+  });
+  return uploadsInFlight.size > 0;
+};
+
+/**
+ * ⚠️ ONE coalesced, staggered reconnect. The OS flag and the probe-driven status both used to fire
+ * every reconnect listener the instant they flipped, so a wifi->cellular handover or a tower hop
+ * started seven queues (photos, leads, deletes, settings, map filters, RevRender, reports) at the
+ * same moment, on the weakest the link would be. Now: wait for the link to hold for
+ * `RECONNECT_SETTLE_MS`, merge both firing paths into one, and start the listeners one after
+ * another `RECONNECT_STAGGER_MS` apart. A drop before the settle cancels it.
+ */
+const RECONNECT_SETTLE_MS = 2000;
+const RECONNECT_STAGGER_MS = 400;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+const scheduleReconnectListeners = () => {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (!currentOnline) return;
+    Array.from(reconnectListeners).forEach((l, i) => {
+      setTimeout(() => {
+        if (!currentOnline) return;
+        try {
+          l();
+        } catch (e) {
+          console.warn('[connectivity] reconnect listener threw:', e);
+        }
+      }, i * RECONNECT_STAGGER_MS);
+    });
+  }, RECONNECT_SETTLE_MS);
+};
+
 const clearPending = () => {
   if (pendingTransition) {
     clearTimeout(pendingTransition);
@@ -63,19 +125,16 @@ const commit = (nextOnline: boolean) => {
     }
   });
 
-  if (cameBackOnline) {
-    reconnectListeners.forEach((l) => {
-      try {
-        l();
-      } catch (e) {
-        console.warn('[connectivity] reconnect listener threw:', e);
-      }
-    });
-  }
+  if (cameBackOnline) scheduleReconnectListeners();
 };
 
 const applySnapshot = (snapshot: ConnectivitySnapshot | null | undefined) => {
-  const nextOnline = resolveOnline(snapshot);
+  let nextOnline = resolveOnline(snapshot);
+  // Only the reachability probe disagrees (the radio is still connected) while an upload is
+  // actively moving bytes: that is the probe being starved, not the link being gone.
+  if (!nextOnline && currentOnline && snapshot?.isConnected !== false && uploadIsInFlight()) {
+    nextOnline = true;
+  }
   const nextType = (snapshot as any)?.type ?? 'unknown';
   const nextWifi = nextType === 'wifi';
 
@@ -232,15 +291,7 @@ const setNetState = (next: NetworkState) => {
     }
   });
   syncRecoveryPoll();
-  if (next.status === 'online' && previous !== 'online') {
-    reconnectListeners.forEach((l) => {
-      try {
-        l();
-      } catch (e) {
-        console.warn('[connectivity] reconnect listener threw:', e);
-      }
-    });
-  }
+  if (next.status === 'online' && previous !== 'online') scheduleReconnectListeners();
 };
 
 export const classifyRequestError = (error: any): RequestSignal => {

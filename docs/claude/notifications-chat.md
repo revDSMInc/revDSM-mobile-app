@@ -814,3 +814,80 @@ Reported with two screenshots: confirming showed "Confirmed - 5:10 PM", but leav
 - ⚠️ Any new place that shows an ack time must call `confirmationTimeLabel`, never read `acknowledgedAt` directly. That raw read is the whole bug, and it is invisible until someone reopens the screen.
 - Tests: `tests/chat/confirmation-time.test.ts` (9) - both paths, the "never returns an ISO string" guard, midnight/noon as 12, and unparseable input.
 - Not verified on device: confirm a message, leave the channel and come back - the time must still read like "5:10 PM".
+
+## Team-channel polls (REVUIUX-577)
+
+WhatsApp-style polls, **team channels only** — the Poll row never appears in a lead chat, and
+`/chat/v1/*` has no poll support. The server contract is `docs/team-channel-polls-backend.md`;
+the backend is built, so this is now wired end to end.
+
+**Why a poll is a normal message.** The server stores it on `channelschatmessages` with
+`messageType: 'poll'` and an embedded `poll`, and sets the message body to the question. That is
+what makes replies, seen, acks, delete, the approval queue, push previews and `new-channel-message`
+delivery keep working untouched — and what makes an app build that predates polls show the question
+as a plain text bubble instead of an empty one. **Never send a `message` alongside a `poll`**: the
+server ignores it, so the question has one source of truth.
+
+- `widgets/modals/chat/PollCreateModal.tsx` — the dark sheet (close / "Create poll" / Send;
+  QUESTION; OPTIONS; "Allow multiple answers"). It only collects a draft and calls `onSubmit`;
+  the rules are the pure `utils/poll-draft.ts` (2–5 options, 200/100 char caps, no duplicates,
+  case-insensitive). The **server re-checks every one of them**, so the sheet is a convenience,
+  not the gate — keep the two sets of numbers in step or Send dies on a refusal.
+- `utils/channel-poll.ts` — pure reading/updating of a poll on a message: `getPollMeta`,
+  `nextSelection`, `optimisticPoll`, `applyPollUpdate`, `messageWithPollUpdate`, `pollAfterVote`.
+- `widgets/components/chat/PollMessageCard.tsx` — the bubble. Rendered from `ChatDetail.renderMessage`
+  as its own row, like `JobChangeMessageCard`, **not** through `ChatMessageBubble`: that component is
+  1,800 lines serving every other message type in both lead chats and channels, and a poll needs none
+  of it. The trade-off is that a poll has no long-press menu (no reply, no reaction) — accepted for v1.
+- `widgets/modals/chat/PollVotersModal.tsx` — "View votes". Fetched on open from
+  `GET /api/v1/channels/messages/:id/poll/votes`, because a history page **never** carries voter ids;
+  only counts. That endpoint is the only place names exist.
+- `ChatService`: `sendChannelPoll` (socket `send-channel-message` with `poll`, falling back to the
+  REST send endpoint **only** on `NOT_CONNECTED`/`TIMEOUT` — a refusal would just be refused again),
+  `voteChannelPoll`, `getChannelPollVoters`. The poll refusal codes were added to
+  `alertChannelRefusal`, which now reads the reason from `response.data.message` for HTTP failures
+  (it was showing axios's "Request failed with status code 400" for every channel refusal).
+
+⚠️ **Voting is set semantics, never a toggle.** `optionIds` is the voter's COMPLETE selection, so
+`[]` retracts and a retry lands on the same answer. Always send an explicit array — the server
+refuses a missing one (`POLL_OPTION_IDS_INVALID`) rather than reading it as a retraction, precisely
+so a client bug cannot silently wipe someone's vote.
+
+⚠️ **`myVotes` is per viewer and a broadcast never carries it.** `team-channel-poll-updated` is one
+payload for the whole room and ships counts only; `applyPollUpdate` keeps this device's own
+selection and must never take it from the broadcast, or every viewer inherits the voter's ticks.
+A missed broadcast self-heals — the next history fetch carries fresh counts *and* `myVotes`.
+
+⚠️ **Order poll payloads by `poll.rev`, never by arrival.** The server `$add`s it by one inside the
+vote's own update pipeline, so it is the write order; every payload carrying a poll (history page,
+vote reply, broadcast) carries it. Without this, two people voting in the same instant can leave one
+of them showing stale counts: their reply was computed before the other's write and can land after
+the other's broadcast. The rules, all in `utils/channel-poll.ts`:
+- `applyPollUpdate` **drops** a broadcast whose `rev` is `<=` what is drawn — it has nothing to add,
+  and applying it walks the counts backwards.
+- `pollAfterVote` takes the reply whole at `rev >= ` the screen's, but at `<` keeps the screen's
+  fresher counts and adopts only `myVotes` from the reply. **Equal must be taken whole**, because
+  this device also receives the broadcast of its *own* vote at the same `rev`, and that broadcast
+  carries no `myVotes` to restore the tick from.
+- A payload with **no `rev`** is applied as-is, so the app keeps working against a server that
+  predates the counter — do not "tidy" that fallback away.
+- The optimistic copy deliberately does **not** bump `rev`; it is not a server write, and bumping it
+  would make the real reply look stale.
+
+⚠️ **The attach `+` was gated on `canUpload` alone**, which hid the whole menu in a channel with
+uploads turned off — taking GIF and Poll with it, neither of which uploads anything (a GIF is sent
+as a text message). The gate is now `!isChannel || canUpload || canPost` and each genuinely-upload
+row (appointment photos, gallery, files, voice) gates itself.
+
+- Tests: `tests/chat/poll-draft.test.ts`, `tests/chat/channel-poll.test.ts`. ⚠️ Put chat tests in
+  `tests/`, **not** `__tests__/` — that directory is gitignored, so a suite there never survives a
+  clone (the poll-draft suite this file previously claimed existed had been lost exactly that way).
+- Not device-verified: the sheet above the keyboard on iOS/Android, tapping an option (optimistic
+  tick and bar), two devices voting at once, and "View votes".
+
+### Merge note: poll branch into multi-tenant - lead-chat pins (2026-10-29)
+`useChatSession.ts` conflicted: the multi-tenant side had dropped the lead-chat pin request (left to `SocketManager.joinRoom`'s socket `get-pinned-messages`), the poll branch had replaced it with `ChatService.getPinnedMessages` (`GET /chat/v1/:chatId/pinned`, REVDSM-1313 removed the socket handler). Resolution: the REST read is kept, but it **merges** (`mergePins`) and only marks listed ids pinned - the branch's version replaced `pinnedMessages` and set every unlisted message `isPinned: false`, which is exactly the "pins vanish on reopen" bug recorded above. ⚠️ `getPinnedMessages` now returns a Promise; `widgets/components/chat/Chat.tsx` calls it fire-and-forget, so it carries a `.catch`. Not device-verified.
+
+### Pin icon in the chat header went back on the first tap
+- **Root cause:** the "Back to Leads/Channels" `Pressable` in `ChatHeader.tsx` was a full-width row with `hitSlop` 20 and `zIndex: 9999`. Its invisible bottom slop (20px) was larger than the `mb-4` gap (16px) to the title row, so the top of the pin icon sat inside the Back button's hit area and the first tap navigated back; tapping lower opened the pin list.
+- **Fix:** the Back row now hugs its content (`alignSelf: 'flex-start'`), the `zIndex` is gone and the bottom slop is 8px (inside the gap). ⚠️ Don't restore a full-width Back row or a bottom slop over 16px - it will swallow taps on the pin/participants icons again. Not device-verified.

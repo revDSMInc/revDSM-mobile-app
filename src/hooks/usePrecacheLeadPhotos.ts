@@ -1,11 +1,32 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSecureUrls } from './useSecureUrls';
 import { useIsOnline } from './useIsOnline';
 import { warmToLocalCache } from '../utils/imageFileCache';
+import { uploadQueueManager } from '../utils/uploadQueue';
+import { subscribeOfflineWork } from '../services/offlineLeadStore';
+import { leadHasOfflineWork } from '../services/leadPhotoCache';
+import { trackLeadPhotoUrls } from '../services/leadPhotoIndex';
 
-export function usePrecacheLeadPhotos(lead: any, { enabled = true }: { enabled?: boolean } = {}) {
+export function usePrecacheLeadPhotos(lead: any, options: { enabled?: boolean } = {}) {
+  let enabled = options.enabled ?? true;
   const isOnline = useIsOnline();
   const leadId: string | undefined = lead?._id || lead?.id;
+
+  // ⚠️ Photos are saved to disk ONLY for a lead that has offline work. One worked online comes from the
+  // server (the photos are already on S3), so saving it just filled the device with data that is
+  // delivered. See utils/lead-photo-index.ts.
+  const [hasOfflineWork, setHasOfflineWork] = useState(() => leadHasOfflineWork(leadId));
+  useEffect(() => {
+    const recheck = () => setHasOfflineWork(leadHasOfflineWork(leadId));
+    recheck();
+    const offQueue = uploadQueueManager.addListener(recheck);
+    const offWork = subscribeOfflineWork(recheck);
+    return () => {
+      offQueue();
+      offWork();
+    };
+  }, [leadId]);
+  enabled = enabled && hasOfflineWork;
 
   const photos = useMemo(() => {
     if (!enabled || !isOnline || !leadId) return [];
@@ -40,6 +61,7 @@ export function usePrecacheLeadPhotos(lead: any, { enabled = true }: { enabled?:
     urls.forEach((uri) => {
       warmedRef.current.add(uri);
       void warmToLocalCache(uri).then((local) => {
+        if (local) trackLeadPhotoUrls(leadId, [uri]);
         if (cancelled || local) return;
         warmedRef.current.delete(uri);
       });
@@ -48,7 +70,7 @@ export function usePrecacheLeadPhotos(lead: any, { enabled = true }: { enabled?:
     return () => {
       cancelled = true;
     };
-  }, [enabled, isOnline, secure]);
+  }, [enabled, isOnline, secure, leadId]);
 
   useEffect(() => {
     warmedRef.current = new Set();

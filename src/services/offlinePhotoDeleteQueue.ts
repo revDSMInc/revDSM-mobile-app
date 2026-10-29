@@ -13,6 +13,8 @@ import {
   shouldRetryDelete,
   type QueuedPhotoDelete,
 } from '../utils/offline-photo-deletes';
+import { httpStatusOf } from '../utils/network-error';
+import { classifyTransferFailure, isFreeFailure } from '../utils/transfer-failure';
 
 const STORAGE_KEY = 'offline-photo-deletes';
 
@@ -146,7 +148,20 @@ class OfflinePhotoDeleteQueue {
           this.save();
           touchedLeads.add(entry.leadId);
         } catch (err: any) {
-          const status = err?.response?.status;
+          /**
+           * ⚠️ Only a REAL refusal from our API may spend a retry. A timeout / reset / gateway
+           * error / carrier 403 / expired session says nothing about the delete, so the entry
+           * stays and the pass stops (the rest would hit the same dead link). This used to read
+           * `err.response.status`, which the api wrapper's normalised rejection does not have -
+           * so every failure looked statusless and five bad cellular tries DROPPED the delete,
+           * leaving the photo on the server.
+           */
+          const failure = classifyTransferFailure(err);
+          if (failure === 'auth' || isFreeFailure(failure)) {
+            console.log(`[photoDeletes] ${failure} failure for ${entry.id}; keeping it for the next pass.`);
+            break;
+          }
+          const status = httpStatusOf(err);
           const retryCount = (entry.retryCount || 0) + 1;
           if (!shouldRetryDelete(status, retryCount)) {
             console.warn(
