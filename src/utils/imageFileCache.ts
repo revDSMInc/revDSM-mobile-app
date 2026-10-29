@@ -77,16 +77,30 @@ const MAX_CONCURRENT_WARMS = 3;
 let activeWarms = 0;
 const warmQueue: Array<() => void> = [];
 
-const acquireWarmSlot = (): Promise<void> =>
+/**
+ * ⚠️ THE QUEUE IS FIFO, AND THAT IS A USER-VISIBLE DECISION (REVUIUX-586).
+ *
+ * Only three warms run at once, so everything else waits its turn. A screen that queues
+ * several pictures at mount therefore decides, by ORDER ALONE, which ones are ready when the
+ * rep taps. The RevRender list queued every run's before+after and the viewer needs BOTH, so
+ * the picture the rep opened was often still queued behind pictures they had not asked for -
+ * "it says they're loaded already and I can see on the thumbnails it's loaded".
+ *
+ * `priority` jumps the waiting line for the image the rep is looking at RIGHT NOW. It does not
+ * cancel or pause an in-flight download; it only reorders what has not started.
+ */
+const acquireWarmSlot = (priority = false): Promise<void> =>
   new Promise((resolve) => {
     if (activeWarms < MAX_CONCURRENT_WARMS) {
       activeWarms += 1;
       resolve();
     } else {
-      warmQueue.push(() => {
+      const grant = () => {
         activeWarms += 1;
         resolve();
-      });
+      };
+      if (priority) warmQueue.unshift(grant);
+      else warmQueue.push(grant);
     }
   });
 
@@ -163,7 +177,16 @@ export const forgetWarmedUri = async (url?: string | null): Promise<void> => {
   await ReactNativeBlobUtil.fs.unlink(path).catch(() => {});
 };
 
-export const warmToLocalCache = async (url?: string | null): Promise<string | null> => {
+/**
+ * Download `url` into the on-disk cache and return its `file://` path.
+ *
+ * `priority` puts it at the FRONT of the warm queue - use it for the picture the rep is
+ * opening now, so it is not stuck behind a screenful of pictures they have not asked for.
+ */
+export const warmToLocalCache = async (
+  url?: string | null,
+  priority = false
+): Promise<string | null> => {
   if (!isRemoteImageUrl(url)) return null;
   const path = getLocalCachePath(url);
   if (!path) return null;
@@ -183,7 +206,7 @@ export const warmToLocalCache = async (url?: string | null): Promise<string | nu
   }
 
   if (!isOnline()) return null;
-  await acquireWarmSlot();
+  await acquireWarmSlot(priority);
   try {
     const ok = await downloadImage(url, path);
     if (ok) {

@@ -1551,3 +1551,14 @@ Reported twice in different places ("[Reports] S3 Resolve Error: Network Error" 
 - WARNING: **neither strip ever shows an error.** The sync strip is silent for `failed` / `needs-review` work on purpose: a rep cannot act on a sync error mid-appointment, and a red notice on the main screens reads as "the app is broken". Anything needing a human belongs in Profile -> pending uploads. Do not add an error state to either strip.
 - They stack and must stay visually alike: same height, same 11pt single-line text, same centred icon-plus-text. `OfflineBanner` owns amber (offline / weak); `SyncBanner` owns blue (in flight) and green (done). Don't reuse amber in the sync strip - the colours are how a rep tells the two apart at a glance.
 - Logic for both is pure and testable - `utils/connection-banner.ts` and `utils/sync-banner.ts` - because neither component can be loaded under jest. Put any new rule in the util, not the component.
+
+## Image cache: the warm queue is FIFO, and now takes a priority flag
+
+`utils/imageFileCache.ts` runs at most `MAX_CONCURRENT_WARMS` (3) downloads at once; everything else waits in `warmQueue`. `warmToLocalCache(url, priority)` takes an optional second argument that `unshift`s the grant instead of pushing it.
+
+- ⚠️ **For any screen that queues several pictures at mount, the ORDER is a user-visible decision, not an implementation detail.** With three slots, whatever is queued first decides what is ready when the user taps. This is not theoretical: it is exactly how the RevRender viewer ended up spinning on a render whose thumbnail was visibly loaded (full write-up in `lead-center.md`, REVUIUX-586).
+- Use `priority: true` for the ONE picture the user is looking at right now - the item they opened. Do not use it for prefetching neighbours or a whole list; if everything is priority, nothing is.
+- ⚠️ Priority only reorders what has NOT STARTED. It cannot cancel or pause an in-flight download, so the worst case stays "wait for the current slots to drain". Don't describe it as instant.
+- An already-cached url returns from `warmedPaths` before the queue is touched, so calling it at priority costs nothing when the work is already done - safe to call on every open.
+- The general rule for a new caller: warm what the screen needs to RENDER as a unit (a before/after pair together), not column by column across rows. `utils/warm-queue-order.ts` holds that rule, pure and tested.
+- ⚠️ `getWarmedLocalUri` reads the MMKV index SYNCHRONOUSLY and does not touch the filesystem. The index is a hint: cache files live in `CacheDir`, which iOS purges under storage pressure without telling the app. A caller that paints from it should also call `verifyIndexedUri` (async, once per session) and re-warm when the file has gone.
