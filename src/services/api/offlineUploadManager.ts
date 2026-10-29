@@ -14,6 +14,13 @@ import {
   isUnauthorizedError,
   rearmItem,
 } from '../../utils/upload-retry-policy';
+import {
+  afterFreeFailure,
+  classifyTransferFailure,
+  clearFreeFailure,
+  isFreeFailure,
+  makeDueNow,
+} from '../../utils/transfer-failure';
 
 export interface OfflineUploadFile {
   localPath: string;
@@ -43,6 +50,9 @@ export interface OfflineUploadItem {
   parkedAt?: string;
   /** Backoff: do not try again before this time (ms epoch). */
   nextAttemptAt?: number;
+  /** Free-failure streak (timeout / reset / 5xx / carrier 403): spends no attempt. See utils/transfer-failure.ts. */
+  transientSince?: number;
+  transientCount?: number;
 }
 
 const STORAGE_KEY = 'offline_image_uploads';
@@ -135,7 +145,7 @@ export function retryInstallerUpload(id?: string): number {
     readAllItems().map((i) => {
       if (!isMine(i) || !i.parkedAt || (id && i.id !== id)) return i;
       touched += 1;
-      return rearmItem(i);
+      return clearFreeFailure(rearmItem(i));
     })
   );
   if (touched) void processUploadQueue();
@@ -273,9 +283,15 @@ export async function processUploadQueue(onItemProcessed?: (itemId: string, succ
       }
 
       if (!allFilesExist) {
-        console.warn(`[OfflineUpload] Skipping item ${item.id} due to missing local files.`);
-        await cleanupItemFiles(item);
-        removeItem(item.id);
+        // ⚠️ PARK, never delete. One missing file used to discard the whole batch - including the
+        // files that WERE still on the device - with only a console line. Keep the item (and its
+        // surviving files) visible so the rep can re-take the missing one or remove the entry.
+        console.warn(`[OfflineUpload] Parking item ${item.id}: a local file is missing.`);
+        updateItem(item.id, (current) => ({
+          ...current,
+          parkedAt: new Date().toISOString(),
+          lastError: 'A photo file is no longer on this device. Re-take it, or remove this entry.',
+        }));
         onItemProcessed?.(item.id, false);
         continue;
       }
@@ -300,6 +316,16 @@ export async function processUploadQueue(onItemProcessed?: (itemId: string, succ
       console.error(`[OfflineUpload] Failed to process item ${item.id}:`, err);
       // Session gone or signal lost: not this item's fault, so it spends no attempt.
       if (isUnauthorizedError(err) || !isOnline()) break;
+      // ⚠️ A timeout / reset / gateway error / carrier 403 says nothing about the batch: keep it,
+      // back off with jitter, spend NO attempt (it used to park after 8 bad cellular tries), and
+      // stop the pass - the items behind it would hit the same dead link.
+      if (isFreeFailure(classifyTransferFailure(err))) {
+        const why = (err as any)?.message;
+        updateItem(item.id, (current) =>
+          afterFreeFailure(current, { error: why ? String(why) : undefined })
+        );
+        break;
+      }
       // ⚠️ One bad item used to `break` the whole loop and block every item behind it forever.
       // Back it off (and park it eventually) and carry on with the rest.
       const reason = (err as any)?.message;
@@ -338,6 +364,8 @@ export function startOfflineSyncTimer(): void {
 
   unsubscribeReconnect = onReconnect(() => {
     console.log('[OfflineUpload] Connectivity returned — draining queue.');
+    // A real reconnect is a new fact: whatever was backing off for a bad link is due now.
+    writeAllItems(readAllItems().map((i) => makeDueNow(i)));
     processUploadQueue();
   });
 

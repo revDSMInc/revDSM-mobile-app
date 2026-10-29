@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { Image, View } from 'react-native';
 import Svg, { Circle, G, Line, Mask, Path, Polygon, Rect, Text as SvgText } from 'react-native-svg';
 import { arrowGeometry, circleRadiusPx } from '../../../utils/annotation-shapes';
+import { strokeOpacity } from '../../../utils/annotation-brush';
+import { layerBlocks, orderedLayers } from '../../../utils/annotation-layers';
 import { coverBox, type PendingAnnotationJobView } from '../../../utils/pending-annotations';
 
 interface Props {
@@ -31,9 +33,8 @@ export function AnnotationOverlayPreview({ job, width, height }: Props) {
   const lh = job.layoutHeight || height;
   const box = useMemo(() => coverBox(width, height, lw, lh), [width, height, lw, lh]);
 
-  const eraser = (job.strokes || []).filter((s) => s.isEraser);
-  const ink = (job.strokes || []).filter((s) => !s.isEraser);
   const maskId = 'pending-annotation-eraser';
+  const blocks = useMemo(() => layerBlocks(orderedLayers(job.strokes, job.shapes)), [job.strokes, job.shapes]);
 
   const renderShape = (sh: any, i: number) => {
     const x1 = sh.p1.px * lw;
@@ -78,6 +79,46 @@ export function AnnotationOverlayPreview({ job, width, height }: Props) {
     }
   };
 
+  // Chronological layers (utils/annotation-layers.ts): an eraser stroke rubs out the ink AND shapes drawn before it, like the editor and the saved JPEG.
+  const renderLayers = () => {
+    let content: React.ReactNode[] = [];
+    blocks.forEach((blk, bi) => {
+      if (blk.erasers.length) {
+        const id = `${maskId}-${bi}`;
+        content = [
+          <Mask key={`m-${bi}`} id={id}>
+            <Rect x={0} y={0} width={lw} height={lh} fill="white" />
+            {blk.erasers.map((s, i) => (
+              <Path key={i} d={pathOf(s.points, lw, lh)} stroke="black" strokeWidth={s.width} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            ))}
+          </Mask>,
+          <G key={`g-${bi}`} mask={`url(#${id})`}>
+            {content}
+          </G>,
+        ];
+      }
+      blk.items.forEach((l, i) => {
+        content.push(
+          l.kind === 'stroke' ? (
+            <Path
+              key={`s-${bi}-${i}`}
+              d={pathOf(l.item.points, lw, lh)}
+              stroke={l.item.color}
+              strokeWidth={l.item.width}
+              strokeOpacity={strokeOpacity(l.item)}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          ) : (
+            <G key={`h-${bi}-${i}`}>{renderShape(l.item, i)}</G>
+          ),
+        );
+      });
+    });
+    return content;
+  };
+
   return (
     <View style={{ width, height, overflow: 'hidden', backgroundColor: '#16302A' }}>
       <Image
@@ -92,26 +133,7 @@ export function AnnotationOverlayPreview({ job, width, height }: Props) {
         viewBox={`0 0 ${lw} ${lh}`}
         pointerEvents="none"
       >
-        <Mask id={maskId}>
-          <Rect x={0} y={0} width={lw} height={lh} fill="white" />
-          {eraser.map((s, i) => (
-            <Path key={i} d={pathOf(s.points, lw, lh)} stroke="black" strokeWidth={s.width} fill="none" />
-          ))}
-        </Mask>
-        <G mask={`url(#${maskId})`}>
-          {ink.map((s, i) => (
-            <Path
-              key={i}
-              d={pathOf(s.points, lw, lh)}
-              stroke={s.color}
-              strokeWidth={s.width}
-              fill="none"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          ))}
-        </G>
-        {(job.shapes || []).map(renderShape)}
+        {renderLayers()}
         {(job.texts || []).map((t, i) => {
           const fontSize = t.fontSize || 16;
           return (

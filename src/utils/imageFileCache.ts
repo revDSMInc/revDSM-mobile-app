@@ -312,3 +312,16 @@ export const clearImageCache = async (): Promise<number> => {
   lastBudgetCheck = 0;
   return removed;
 };
+
+/** Delete one cache file (and its index entry). Resolves true when a file was removed. */
+export const removeCachedPath = async (path: string): Promise<boolean> => {
+  if (!isCacheFile(path)) return false;
+  forgetWarmedPath(path);
+  try {
+    if (!(await ReactNativeBlobUtil.fs.exists(path))) return false;
+    await ReactNativeBlobUtil.fs.unlink(path);
+    return true;
+  } catch {
+    return false;
+  }
+};

@@ -27,6 +27,7 @@ import { FlashMessage } from '../config/message';
 import { resetAnnotatedOrderSheet, saveAnnotatedOrderSheet, type ResetOutcome } from './orderSheetSync';
 import { serverErrorText } from '../utils/order-sheet-annotation';
 import { isNetworkError } from '../utils/network-error';
+import { classifyTransferFailure, isFreeFailure } from '../utils/transfer-failure';
 
 const JOBS_KEY = 'annotation_save_jobs';
 const MAX_ATTEMPTS = 3;
@@ -357,9 +358,11 @@ export const processAnnotationJobs = async (): Promise<void> => {
         // image has painted, and a missing file would blank it. Removed after a grace period (and by the startup sweep).
         setTimeout(() => void unlinkQuiet(job.originalUri), ORIGINAL_GRACE_MS);
       } catch (e: any) {
-        if (e?.offline || !isOnline() || isNetworkError(e)) {
-          // Waiting for the original's bytes: resume on reconnect. Not an attempt.
-          console.log('[AnnotationJobs] waiting for a connection to fetch the original');
+        // A timeout / reset / 5xx / carrier 403 is the link, not the job: keep it, spend no attempt.
+        // (A 5xx used to fall through to the 3-attempt budget and DELETE the rep's annotation.)
+        if (e?.offline || !isOnline() || isNetworkError(e) || isFreeFailure(classifyTransferFailure(e))) {
+          // Waiting for the original's bytes / a usable link: resume on reconnect or foreground.
+          console.log('[AnnotationJobs] waiting for a usable connection');
           break;
         }
         const attempts = (job.attempts || 0) + 1;
@@ -418,6 +421,11 @@ export const startAnnotationJobSync = (): void => {
   AppState.addEventListener('change', (next) => {
     if (next === 'active') void processAnnotationJobs();
   });
+  // Safety net: a 5xx / carrier 403 leaves the link UP, so no reconnect or foreground event will
+  // ever re-run a job that was kept for it.
+  setInterval(() => {
+    if (isOnline() && jobs.some(mine)) void processAnnotationJobs();
+  }, 60_000);
   void processAnnotationJobs();
   void sweepOrphanOriginals();
 };

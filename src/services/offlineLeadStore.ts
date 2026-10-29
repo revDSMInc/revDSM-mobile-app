@@ -31,7 +31,7 @@ import {
 } from '../utils/offline-lead-location';
 import { reverseGeocode } from '../utils/places';
 import { leadCreateIdempotencyKey } from '../utils/upload-idempotency';
-import { isNetworkError } from '../utils/network-error';
+import { leavesWorkUndelivered } from '../utils/transfer-failure';
 import { queryClient } from './api/queryClient';
 import {
   clearLeadCheckedInOffline,
@@ -884,6 +884,18 @@ const refreshLeadLists = async (): Promise<void> => {
   }
 };
 
+/**
+ * ⚠️ Called from the STORE, never from a screen effect. The Leads-screen effect only runs while
+ * that screen is mounted, so a rep who reconnected on the Map or in Lead Center had the pending
+ * card retire with no refetch behind it - the lead vanished until a socket/foreground event or
+ * the 5-minute staleTime brought it back. Fire-and-forget: a slow refetch must not hold the
+ * next upload step, and `refreshLeadLists` already swallows its own failure.
+ */
+const refreshAfterLeadLanded = (): void => {
+  void refreshLeadLists();
+  queryClient.invalidateQueries({ queryKey: ['mapJobs'] }).catch(() => {});
+};
+
 const runStep = async (
   work: OfflineLeadWork,
   step: UploadStep,
@@ -944,6 +956,7 @@ const runStep = async (
             : w.lead,
         }));
       }
+      refreshAfterLeadLanded();
       return { leadId: id };
     }
 
@@ -1438,6 +1451,7 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
     if (!step) {
       const finished = putOfflineWork({ ...work, status: 'uploaded' });
       if (finished.deleteLead) removeOfflineWork(finished.clientId);
+      else refreshAfterLeadLanded();
       return;
     }
     if (!isOnline()) {
@@ -1511,7 +1525,7 @@ const uploadOne = async (start: OfflineLeadWork): Promise<void> => {
           decision,
           messageOfError(err),
           Date.now(),
-          isNetworkError(err) ? 'transport' : 'rejected'
+          leavesWorkUndelivered(err) ? 'transport' : 'rejected'
         )
       );
       return;

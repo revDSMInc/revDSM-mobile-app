@@ -18,6 +18,7 @@ import { startMapFilterSync } from '../services/offlineMapFilters';
 import { startDeliveryPreferenceSync } from '../services/offlineAgreementDelivery';
 import { adoptSessionOwner } from '../services/sessionScope';
 import { startPhotoQueueSync } from '../utils/uploadQueue';
+import { startLeadPhotoCacheSync } from '../services/leadPhotoCache';
 import { startAnnotationJobSync } from '../services/annotationSaveService';
 import { startActivityLogSync } from '../services/offlineActivityLog';
 import { startBackgroundUploadService } from '../services/background/backgroundUploadService';
@@ -35,7 +36,7 @@ import {
   NO_MOBILE_ACCESS_MESSAGE,
   resolveMobileDashboard,
 } from '../utils/auth/dashboard-access';
-import { isNetworkError } from '../utils/network-error';
+import { httpStatusOf, isNetworkError } from '../utils/network-error';
 import { flushPendingLogs } from '../services/api/LoggerService';
 
 export function useAppInitialization() {
@@ -152,7 +153,12 @@ export function useAppInitialization() {
       }
     } catch (err: any) {
       const persistedUser = (store.getState() as any)?.auth?.user;
-      if (isNetworkError(err) && persistedUser && resolveMobileDashboard(persistedUser)) {
+      // ⚠️ Only a 401 proves the session is dead. A timeout, a 502/503/504 from a carrier gateway or
+      // a proxy's 403 says nothing about the token, and treating it as "signed out" sent a rep with
+      // a perfectly good session to the login screen (and orphaned their queued work) on a bad
+      // cellular start. The interceptor already handles a real 401.
+      const sessionStillTrusted = isNetworkError(err) || httpStatusOf(err) !== 401;
+      if (sessionStillTrusted && persistedUser && resolveMobileDashboard(persistedUser)) {
         adoptSessionOwner(persistedUser?._id || persistedUser?.id);
         dispatch(setInitial({ user: persistedUser }));
         FlashMessage.warning(
@@ -177,6 +183,7 @@ export function useAppInitialization() {
     startOfflineWorkSync();
 
     startPhotoQueueSync();
+    startLeadPhotoCacheSync();
     startAnnotationJobSync();
 
     startActivityLogSync();

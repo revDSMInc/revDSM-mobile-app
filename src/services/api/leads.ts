@@ -6,9 +6,12 @@ import { IDEMPOTENCY_FIELD, IDEMPOTENCY_HEADER } from '../../utils/upload-idempo
 /**
  * Photo uploads get their own timeout. The global 15s suits JSON; a 2-5 MB image on a weak
  * cell routinely needs longer, and timing out mid-store is exactly what created duplicates.
- * Matches the installer queue, which already used 120s.
+ * 5 min (was 120 s): a request that timed out threw away every byte already sent, and on a
+ * slow uplink the retry then timed out at the same point - an upload that could never finish.
+ * No resume exists (that needs the backend), so the only lever is to not give up on a transfer
+ * that is still moving.
  */
-const PHOTO_UPLOAD_TIMEOUT_MS = 120_000;
+const PHOTO_UPLOAD_TIMEOUT_MS = 300_000;
 
 export const resolveLeadCalculatorId = (lead: any): string | null =>
   lead?.selectedCalculatorId ||

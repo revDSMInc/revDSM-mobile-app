@@ -5730,3 +5730,9 @@ wizard showed a raw ISO install date".
   "changed?" test is permanently true. See the edit wizard's `scheduleChanged`.
 - `normalizeScheduleTimeForSubmit` stays the single place that converts *for the wire*; the
   formatter is display/compare only. Don't fold them together — one drops `reason`, the other must not.
+
+### Leads screen: just-synced card hand-off (see `docs/claude/offline.md`, "Offline lead list state")
+
+`screens/Leads/index.tsx` keeps a synced offline lead's card (`justLandedIds`) until the SERVER list contains its id (re-reading every 4 s, 45 s give-up) instead of releasing when the refetch settles; rows are keyed by `clientId` so the card does not remount when its id flips from client to server id. Full reasoning and the traps live in offline.md.
+
+Follow-up: the landed-effect in `screens/Leads/index.tsx` no longer keeps the give-up timer handle (`setTimeout(release, LEAD_HANDOFF_MAX_MS)` is fire-and-forget on purpose). Do not add a cleanup that clears it: the effect re-runs on every store update, so the cap would never fire.

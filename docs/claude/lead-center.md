@@ -2694,3 +2694,85 @@ Reported with a screenshot of the collapsing header caught mid-scroll: a grey sm
 `OperationalSections.tsx` label next to the bar was a fixed "Rendering". It now follows `renderPercent` via `utils/revrender-stage.ts` `revRenderStageWord`: 0-10 Warming up, 11-35 Engine running, 36-75 Rendering, 76-92 Hold On, 93-100 Almost Finished. The amber "Paused" label still wins while the status check cannot reach the server.
 
 Follow-up: the bar and word use a DISPLAYED percent (`stepShownPercent`, one stage per 700 ms tick), not the raw estimate, so a fast render still shows all five words. When the jobs finish, the bar runs to 100% (ending on "Almost Finished"), holds 1.2 s, then the card hides. A failed job cancels the sequence. Do NOT drive the label from `renderPercent` directly - it skips stages.
+
+## REVUIUX-587 - Shapes: a circle moved/resized by the wrong touch
+
+Ticket (Lance): *"I'm on the inside of the circle and it's changing size. Inside should allow me to change location, outside size."*
+- **Root cause:** a circle is stored as centre `p1` + edge point `p2`, and BOTH were resize handles (`hitShapeHandle` + two drawn dots). A touch near the
+  centre (inside the ring) grabbed `p1` and dragged the centre while the edge stayed - which reads as "the size changes".
+- **Fix (pure, `utils/annotation-shapes.ts`):** `hitShapeTouch` decides a selected shape's touch. Circle: on the ring / edge handle -> RESIZE (radius follows the
+  finger, centre fixed); anywhere inside -> MOVE (`moveShape`); outside the ring -> nothing (a new shape starts). The ring band is `min(24/zoom, r/2)` so a small circle
+  keeps an inner move area, and a zero-size circle can still be pulled out. `shapeHandles` gives a circle ONE drawn handle (edge). Other kinds are unchanged.
+  The screen (`ImageAnnotation/index.tsx` pan-responder grant) calls `hitShapeTouch`; the hint text for a selected circle says so.
+- Undo/redo, save format and export are untouched (a circle is still `p1` + `p2`). Not verified on device.
+- **Follow-up - deselected circle was "locked":** after a tap on empty canvas cleared the selection, a drag inside the circle started a NEW shape (only the
+  selected shape was grabbable). `pickShapeTouch` now also grabs any CIRCLE (topmost first) from inside / its ring when it is not selected: the grant selects it and
+  moves / resizes it in the same drag; a tap inside selects it. ⚠️ Trade-off: a new shape can no longer be STARTED by a drag that begins inside an existing circle
+  (start outside it); lines / arrows / boxes still need a tap to select first, so a box can still be drawn inside another box.
+
+## REVUIUX-588 - Annotate photo: the eraser needs a width control
+
+Ticket (Lance): *"eraser should have width functionality too."*
+- **Before:** an eraser stroke took `activeSize` (the PEN's width) and the Size row was rendered only for the pen (`showColorPanel && activeDrawTool === 'pen'`), so the
+  eraser could not be resized at all - and a pen size change silently changed the eraser.
+- **Now:** `eraserSize` state (default 14) beside `activeSize` (pen, default 5). Selecting Eraser shows its own Size row (8 / 14 / 24 / 40); the Pen keeps its colour + size
+  panel (3 / 5 / 8 / 12). Stroke width comes from `brushWidth(tool, penSize, eraserSize)`. Pure constants in `utils/annotation-brush.ts`, tests `__tests__/utils/annotation-brush.test.ts`.
+- Nothing else changes: an eraser stroke is still `{ isEraser: true, width }` in the saved doc (so older saved eraser strokes just keep the width they had), the live preview
+  mask and the export (`annotation-render-html.ts`, `lineWidth = stroke.width * scale`, `destination-out`) already honour a per-stroke width. Undo/redo/reset unaffected.
+- The eraser size is per editor session (not saved with the photo), like the pen size. Not verified on device.
+- **Follow-up - the eraser was invisible:** nothing showed where the eraser was or how wide it was. `AnnotationCanvas` now draws a ring (white outline + light fill, radius = eraser
+  width / 2, outline weight constant under zoom) at the LAST point of the live eraser stroke, outside the eraser mask so it is never itself erased. The eraser Size row also shows an
+  actual-size preview circle (capped at 44 px). The eraser mask paths got round caps/joins, matching the export (`lineCap = 'round'`), so a single tap now erases a dot like the saved image.
+  The ring is under the finger, so it is seen mostly at the larger sizes - use the toolbar preview to pick. Not verified on device.
+- **Follow-up - Eraser on the main toolbar:** a new **Eraser** button beside Draw opens Draw with the eraser selected (`enterDrawMode('eraser')`; Draw = `enterDrawMode('pen')`) - same
+  Size row, ring and cancel/commit/undo semantics, because it IS the Draw mode, just preselected; the Pen/Eraser switch inside Draw stays. It erases INK only (pen + older
+  eraser strokes); shapes and text notes sit above the eraser mask - remove them with Delete shape / the note's delete. ⚠️ Width budget: five tool buttons + undo/redo/reset
+  must fit a 375pt phone, so tool buttons are `w-[38px]` (labels `text-[9px]`), undo group `w-9`. Do not widen them back without re-counting: 5x38 + 4x6 + 3x36 + 2x6 + 32 gutter = 366.
+- **Follow-up - ONE eraser, partial, on ink AND shapes (supersedes a whole-mark "object eraser" tried first and rejected):** Lance-style feedback was that rubbing across a drawn circle removed the
+  whole circle in one touch. The eraser is now a real eraser everywhere (main-toolbar **Eraser** = `enterDrawMode('eraser')`, same as Draw > Eraser): it rubs out only the part you pass over.
+  - **Shapes are erasable.** They used to be painted ABOVE the eraser mask (and, in the export, straight onto the photo after the ink layer), so no eraser could touch them. Ink, eraser strokes and shapes are now ONE
+    chronological stack - `utils/annotation-layers.ts` (`orderedLayers` merges strokes + shapes by the time in their ids: pen `Date.now()`, shape `shape-<Date.now()>`; `layerBlocks` groups consecutive erasers so
+    a long session is a handful of masks). An eraser stroke rubs out what was drawn BEFORE it, never what is drawn after. Ids with no time (legacy) keep the old order: ink first, shapes last.
+  - **Three renderers share it, change them together:** the editor canvas (`AnnotationCanvas.renderLayers`, nested `Mask`/`G` per block), the pending-card preview (`AnnotationOverlayPreview.renderLayers`), and the saved JPEG
+    (`annotation-render-html.ts`: ink + shapes are painted onto the transparent layer in `data.order` - `[['s'|'h', index], ...]` built by `annotationRenderer.paintOrder` - so `destination-out` erases both, then the
+    layer goes over the photo; without `order` it falls back to ink-then-shapes). ⚠️ The old PREVIEW applied every eraser to every stroke (an erase then a re-draw in the same spot stayed blank) while the export applied
+    them in order; both are now order-correct, so ink drawn after an erase now shows in the preview as it always did in the saved image. The export script was syntax-checked and run against a mock canvas (ink, circle, eraser ->
+    `source-over`, `source-over`, `destination-out`).
+  - A shape rubbed out entirely still exists as an object (it can be selected / deleted); its handles are drawn even if nothing visible is left.
+  - **Text notes** are not pixels, so a note the eraser passes over is removed WHOLE as its own undo step (`utils/annotation-erase.ts`: `hitText` on an ESTIMATED box - the real one is measured inside `DraggableText` -
+    and `removalEntry`; history entry `{id, type:'text', removed:true, data}`: UNDO puts it back, REDO removes it). `compactStacks` / `restoreStacks` understand `removed` (the mark is kept in whichever stack holds it
+    while OFF the canvas, and the simulation expects mirrored presence) so a reopened photo can still undo it. ⚠️ Do not "simplify" `presentBefore = undo !== removed`. Draw's X now restores texts too. The text layer
+    is `pointerEvents="none"` while Draw is open (a drag that starts on a note erases / draws instead of grabbing it).
+  - Size row / ring / default sizes as in the REVUIUX-588 notes above. Not done: erase click-log. Not verified on device - check that the editor preview, the pending card and the final saved photo agree for a circle erased
+    along its edge, with and without zoom.
+
+## REVUIUX-590 - Annotate photos: pen transparency + thickness (like CamScanner)
+
+Ticket (Lance): *"pen - add transparency thickness like CamScanner has"*, with a reference panel (colour row, a checkerboard->colour transparency bar, a Size slider).
+- **Pen panel** (`ImageAnnotation/index.tsx`): the four fixed size buttons are replaced by an **opacity bar** (`OpacitySlider`, the one the text toolbar already uses) and a continuous **Size slider**
+  (`CustomSlider`, 2..30 px). Pure mapping in `utils/annotation-brush.ts` (`sizeFromSlider` / `opacityFromSlider` + inverses, `strokeOpacity`); opacity is clamped to **0.1..1** so a stroke can never be drawn invisible.
+  The pen now opens WITH its panel (`enterDrawMode('pen')` -> `showColorPanel`); tapping Pen toggles it. The eraser's size row is unchanged.
+- **Model:** a pen stroke saves `opacity` (only when < 1; absent = opaque, so every older saved photo reads as before). `cleanStroke` keeps it, so it survives save/reopen/undo/redo.
+- **Rendering, three places:** editor canvas + pending-card preview (`strokeOpacity` on the SVG `Path`), and the saved JPEG (`globalAlpha` around each stroke in `annotation-render-html.ts`). ⚠️ Opacity is applied PER STROKE
+  (one path, one alpha), so a stroke that crosses itself does not darken; two separate see-through strokes do overlap and darken - the same as CamScanner / a real highlighter.
+- Not done: a live preview swatch of the chosen size/opacity, shapes still share the pen's `activeSize` / colour (as before) but have no opacity; text keeps its own. Not verified on device.
+- **Layout fix (REVUIUX-590):** the opacity thumb (24px) and the "Size" label / slider overlapped because the sliders (30px tall, `flex: 1`) were stacked with only a 12px gap. Each slider now sits in a fixed 30px-tall wrapper with `mb-5` / `mb-1` spacing and `px-3` so the thumbs are not clipped at the panel edge. Keep fixed-height wrappers around `CustomSlider` / `OpacitySlider`: they size themselves with `flex: 1`.
+
+## REVUIUX-589 - Annotate photos: the colour palette icon did nothing
+
+Ticket (Lance): *"color palette not working"*. The palette icon at the end of every colour row was a DECORATIVE picture (a grey circle with a `palette` glyph in the Pen panel; a painted rainbow circle in the text panel; none in Shapes) - it had no `onPress`.
+- **Now it opens a full colour grid in ALL THREE tools** - Pen, Shapes (also when a shape is selected: it restyles that shape, undoable) and Text (restyles the selected note). Shared widgets in `widgets/components/LeadCenter/ColorPalette.tsx`
+  (`PaletteButton`, `PaletteGrid`); the colours are pure (`utils/annotation-colors.ts`: `paletteGrid` = greys + bright / light / dark of 8 hues, `isQuickColor`, `hslToHex`; tests `__tests__/utils/annotation-colors.test.ts`).
+- **Layout:** the grid REPLACES the panel's sliders/size row while open (no extra height on a small phone); picking a colour applies it and closes the grid. A grid colour is not one of the six quick swatches, so the palette
+  button itself turns into that colour (white ring) - otherwise nothing would look selected. Pen and Shapes share one `showFullPalette` flag (only one panel is on screen); it is reset on entering Draw / Shapes. Text keeps its own local state.
+- A pen colour picked here applies to the NEXT stroke (the transparency bar tints to it); strokes already drawn keep theirs. Not verified on device.
+- **Correction (same ticket): the palette button NEVER changes.** The first version turned the button into the picked colour. Now it is always the app's grey palette-glyph icon (the one the Pen panel always had; green ring only while the grid is open); a colour picked from the grid
+  REPLACES THE ACTIVE SWATCH in the quick row and becomes the active colour (`utils/annotation-colors.ts › replaceQuickColor`: already in the row -> just selected; active colour not in the row -> the last swatch is replaced; a second
+  pick replaces the first). The row (`quickColors` in `ImageAnnotation`) is shared by Pen, Shapes and the Text toolbar (`quickColors` / `onPickGridColor` props), so a picked colour shows in all three. It lasts for the editor session
+  (not saved with the photo - the photo keeps each mark's own colour). The `SHAPE_COLORS` constant is gone - Shapes reads the same row.
+
+### `useLeadsData`: a stale on-disk list no longer counts as fresh (see `offline.md`, "Offline lead list state")
+
+`hooks/useLeadsData.ts` keeps a `servedStale` flag: `cachedFetch` now reports (`onStaleFallback`) when an ONLINE fetch failed and the saved list was served instead, and the query then refetches every `STALE_RETRY_MS` (15 s) until a real fetch succeeds. Before, that snapshot was trusted for the whole 5-minute `staleTime`, so a weak-signal fetch left the list without just-synced leads.
+
+- WARNING: offline reads must NOT set the flag (the saved copy is the expected answer there), or the list would poll while offline.

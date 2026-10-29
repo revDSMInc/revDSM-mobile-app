@@ -39,8 +39,7 @@ import {
   MIN_SHAPE_DRAG_PX,
   SHAPE_KINDS,
   applyShapeChange,
-  hitShapeBody,
-  hitShapeHandle,
+  pickShapeTouch,
   makeShape,
   moveShape,
   moveShapeHandle,
@@ -50,11 +49,25 @@ import {
   type ShapeHandle,
   type ShapeKind,
 } from '../../utils/annotation-shapes';
+import { hitText, removalEntry } from '../../utils/annotation-erase';
+import {
+  DEFAULT_ERASER_SIZE,
+  DEFAULT_PEN_OPACITY,
+  DEFAULT_PEN_SIZE,
+  brushWidth,
+  opacityFromSlider,
+  sizeFromSlider,
+  sizesFor,
+  sliderFromOpacity,
+  sliderFromSize,
+} from '../../utils/annotation-brush';
+import { CustomSlider, OpacitySlider } from '../../widgets/components/LeadCenter/AnnotationSlider';
+import { PaletteButton, PaletteGrid } from '../../widgets/components/LeadCenter/ColorPalette';
+import { QUICK_COLORS, replaceQuickColor } from '../../utils/annotation-colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const MIN_POINT_DISTANCE_SQ = 2.25; // 1.5px
-const SHAPE_COLORS = ['#FF7043', '#4CBB17', '#42A5F5', '#FFB74D', '#FFFFFF', '#000000'];
 const SHAPE_SIZES = [3, 5, 8, 12];
 
 interface SectionImage {
@@ -117,7 +130,19 @@ export default function ImageAnnotationScreen() {
   
   const [activeDrawTool, setActiveDrawTool] = useState<'pen' | 'eraser'>('pen');
   const [activeColor, setActiveColor] = useState<string>('#4CBB17'); // Green
-  const [activeSize, setActiveSize] = useState<number>(5);
+  // The full colour grid (palette button) of the Pen / Shapes panels - one at a time is on screen, so one flag serves both (REVUIUX-589).
+  const [showFullPalette, setShowFullPalette] = useState<boolean>(false);
+  // The quick-colour row shared by Pen / Shapes / Text. A colour picked from the grid REPLACES the active swatch here (the palette button never changes).
+  const [quickColors, setQuickColors] = useState<string[]>(QUICK_COLORS);
+  const applyGridColor = (color: string, current: string | null | undefined, apply: (c: string) => void) => {
+    setQuickColors((row) => replaceQuickColor(row, current, color));
+    apply(color.toUpperCase());
+  };
+  const [activeSize, setActiveSize] = useState<number>(DEFAULT_PEN_SIZE);
+  // Pen transparency (REVUIUX-590): 0.1..1, saved on each stroke.
+  const [activeOpacity, setActiveOpacity] = useState<number>(DEFAULT_PEN_OPACITY);
+  // The eraser keeps its own width (REVUIUX-588) - it used to borrow the pen's and could not be resized.
+  const [eraserSize, setEraserSize] = useState<number>(DEFAULT_ERASER_SIZE);
   const [showColorPanel, setShowColorPanel] = useState<boolean>(false);
 
   // Re-edit seeds the canvas with the marks saved on the annotated copy; `initialCount` is the "nothing changed yet"
@@ -358,11 +383,14 @@ export default function ImageAnnotationScreen() {
     activeDrawTool,
     activeColor,
     activeSize,
+    activeOpacity,
+    eraserSize,
     photoId,
     canvasLayout,
     zoomScale,
     activeShapeKind,
     currentShapes,
+    currentTexts,
     selectedShapeId,
   });
 
@@ -372,11 +400,14 @@ export default function ImageAnnotationScreen() {
       activeDrawTool,
       activeColor,
       activeSize,
+      activeOpacity,
+      eraserSize,
       photoId,
       canvasLayout,
       zoomScale,
       activeShapeKind,
       currentShapes,
+      currentTexts,
       selectedShapeId,
     };
   });
@@ -466,6 +497,25 @@ export default function ImageAnnotationScreen() {
     })
   ).current;
 
+  // ---- Eraser vs text notes (REVUIUX-588) -------------------------------------------------------------------------------------
+  // The eraser rubs out ink and shapes pixel by pixel (the canvas mask / export layer), but a text note cannot be rubbed out in part: a note the
+  // eraser touches is removed WHOLE, as its own undo step. Reads only refs + stable setters: the pan responder below is created once and keeps
+  // these closures for good.
+  const erasedRef = useRef<Set<string>>(new Set());
+
+  const eraseTextsAt = (x: number, y: number) => {
+    const { photoId: pid, canvasLayout, eraserSize, currentTexts: texts } = stateRef.current;
+    if (!pid || !canvasLayout.width) return;
+    const radius = Math.max(eraserSize / 2, 6);
+    const hit = texts.filter((t) => !erasedRef.current.has(`text:${t.id}`) && hitText(t, x, y, canvasLayout.width, canvasLayout.height, radius));
+    if (hit.length === 0) return;
+    const ids = hit.map((t) => t.id);
+    ids.forEach((id) => erasedRef.current.add(`text:${id}`));
+    setTextsMap((tm) => ({ ...tm, [pid]: (tm[pid] || []).filter((m) => !ids.includes(m.id)) }));
+    setHistoryMap((hm) => ({ ...hm, [pid]: [...(hm[pid] || []), ...hit.map((t) => removalEntry('text', t))] }));
+    setRedoMap((rm) => ({ ...rm, [pid]: [] }));
+  };
+
   const panResponder = useRef(
     PanResponder.create({
       onPanResponderStart: (evt) => {
@@ -490,7 +540,7 @@ export default function ImageAnnotationScreen() {
       onPanResponderGrant: (evt, gestureState) => {
         multiTouchRef.current = evt.nativeEvent.touches.length > 1;
         if (multiTouchRef.current) return;
-        const { activeTool, activeDrawTool, activeColor, activeSize, photoId, canvasLayout } = stateRef.current;
+        const { activeTool, activeDrawTool, activeColor, activeSize, activeOpacity, eraserSize, photoId, canvasLayout } = stateRef.current;
         if (activeTool === 'draw') {
           if (!photoId) return;
           const { locationX, locationY } = evt.nativeEvent;
@@ -502,11 +552,14 @@ export default function ImageAnnotationScreen() {
             id: Date.now(),
             points: [{ px, py }],
             color: activeDrawTool === 'eraser' ? 'transparent' : activeColor,
-            width: activeSize,
+            width: brushWidth(activeDrawTool, activeSize, eraserSize),
             isEraser: activeDrawTool === 'eraser',
+            ...(activeDrawTool === 'pen' && activeOpacity < 1 ? { opacity: activeOpacity } : {}),
           };
           activeStrokeRef.current = newStroke;
           lastPointRef.current = { x: locationX, y: locationY };
+          erasedRef.current = new Set();
+          if (activeDrawTool === 'eraser') eraseTextsAt(locationX, locationY);
           cancelScheduledStroke();
           emitLiveStroke();
         } else if (activeTool === 'shape') {
@@ -518,17 +571,18 @@ export default function ImageAnnotationScreen() {
           const py = locationY / canvasLayout.height;
           // A touch on the SELECTED shape's handle resizes it, on its outline moves it; anywhere else draws a new one.
           // Tolerances are in screen px, so they are divided by the zoom to stay a finger-sized target.
-          const selected = currentShapes.find((sh) => sh.id === selectedShapeId) || null;
           let gesture: NonNullable<typeof shapeGestureRef.current> = {
             mode: 'new', startX: locationX, startY: locationY, original: null, handle: null, moved: false,
           };
-          if (selected) {
-            const handle = hitShapeHandle(selected, locationX, locationY, canvasLayout.width, canvasLayout.height, 24 / scale);
-            if (handle) {
-              gesture = { ...gesture, mode: 'resize', original: selected, handle };
-            } else if (hitShapeBody(selected, locationX, locationY, canvasLayout.width, canvasLayout.height, 20 / scale)) {
-              gesture = { ...gesture, mode: 'move', original: selected };
-            }
+          // The selected shape first, then any circle under the finger (grabbed from inside even when not selected).
+          const picked = pickShapeTouch(currentShapes, selectedShapeId, locationX, locationY, canvasLayout.width, canvasLayout.height, 24 / scale, 20 / scale);
+          const selected = picked?.shape || null;
+          if (picked) {
+            if (picked.shape.id !== selectedShapeId) setSelectedShapeId(picked.shape.id);
+            gesture =
+              picked.touch.mode === 'resize'
+                ? { ...gesture, mode: 'resize', original: picked.shape, handle: picked.touch.handle }
+                : { ...gesture, mode: 'move', original: picked.shape };
           }
           shapeGestureRef.current = gesture;
           liveShapeRef.current =
@@ -564,6 +618,11 @@ export default function ImageAnnotationScreen() {
           const px = Math.max(0, Math.min(1, curX / canvasLayout.width));
           const py = Math.max(0, Math.min(1, curY / canvasLayout.height));
           activeStrokeRef.current.points.push({ px, py });
+          if (activeStrokeRef.current.isEraser && last) {
+            // A text note cannot be rubbed out in part: any the eraser passes over goes whole. Walk the segment so a fast swipe cannot skip one.
+            const steps = Math.max(1, Math.ceil(Math.hypot(curX - last.x, curY - last.y) / 8));
+            for (let i = 1; i <= steps; i++) eraseTextsAt(last.x + ((curX - last.x) * i) / steps, last.y + ((curY - last.y) * i) / steps);
+          }
           scheduleLiveStroke();
         } else if (activeTool === 'shape' && shapeGestureRef.current && liveShapeRef.current) {
           const gesture = shapeGestureRef.current;
@@ -684,15 +743,16 @@ export default function ImageAnnotationScreen() {
       return { ...rm, [photoId]: [...existing, action] };
     });
 
+    // `removed` = the general eraser deleted this mark, so UNDO puts it back (and redo takes it away again).
     if (action.type === 'stroke') {
       setStrokesMap((sm) => {
-        const existing = sm[photoId] || [];
-        return { ...sm, [photoId]: existing.filter((s) => s.id !== action.id) };
+        const existing = (sm[photoId] || []).filter((s) => s.id !== action.id);
+        return { ...sm, [photoId]: action.removed ? [...existing, action.data] : existing };
       });
     } else if (action.type === 'text') {
       setTextsMap((tm) => {
-        const existing = tm[photoId] || [];
-        return { ...tm, [photoId]: existing.filter((t) => t.id !== action.id) };
+        const existing = (tm[photoId] || []).filter((t) => t.id !== action.id);
+        return { ...tm, [photoId]: action.removed ? [...existing, action.data] : existing };
       });
     } else if (action.type === 'shape') {
       setShapesMap((sm) => ({ ...sm, [photoId]: applyShapeChange(sm[photoId], action.id, action.before) }));
@@ -715,13 +775,13 @@ export default function ImageAnnotationScreen() {
 
     if (action.type === 'stroke') {
       setStrokesMap((sm) => {
-        const existing = sm[photoId] || [];
-        return { ...sm, [photoId]: [...existing, action.data] };
+        const existing = (sm[photoId] || []).filter((s) => s.id !== action.id);
+        return { ...sm, [photoId]: action.removed ? existing : [...existing, action.data] };
       });
     } else if (action.type === 'text') {
       setTextsMap((tm) => {
-        const existing = tm[photoId] || [];
-        return { ...tm, [photoId]: [...existing, action.data] };
+        const existing = (tm[photoId] || []).filter((t) => t.id !== action.id);
+        return { ...tm, [photoId]: action.removed ? existing : [...existing, action.data] };
       });
     } else if (action.type === 'shape') {
       setShapesMap((sm) => ({ ...sm, [photoId]: applyShapeChange(sm[photoId], action.id, action.after) }));
@@ -838,9 +898,14 @@ export default function ImageAnnotationScreen() {
     });
   };
 
-  const enterDrawMode = () => {
+  // `tool` lets the main toolbar's Eraser button open Draw with the eraser already selected (REVUIUX-588).
+  const enterDrawMode = (tool: 'pen' | 'eraser' = 'pen') => {
     backupStrokesRef.current = [...currentStrokes];
+    backupTextsRef.current = [...currentTexts]; // the eraser can remove a text note
     backupShapeHistoryRef.current = { history: [...(historyMap[photoId] || [])], redo: [...(redoMap[photoId] || [])] };
+    setActiveDrawTool(tool);
+    setShowFullPalette(false);
+    setShowColorPanel(tool === 'pen'); // the pen opens with its colour / transparency / size panel (REVUIUX-590)
     setActiveTool('draw');
   };
 
@@ -850,6 +915,7 @@ export default function ImageAnnotationScreen() {
 
   const cancelDrawMode = () => {
     setStrokesMap((sm) => ({ ...sm, [photoId]: backupStrokesRef.current }));
+    setTextsMap((tm) => ({ ...tm, [photoId]: backupTextsRef.current }));
     // The strokes drawn since Draw was entered are gone, so their undo steps must go with them (a saved step pointing at a stroke
     // that no longer exists would make Undo do nothing).
     const { history, redo } = backupShapeHistoryRef.current;
@@ -862,6 +928,7 @@ export default function ImageAnnotationScreen() {
     backupShapesRef.current = [...currentShapes];
     backupShapeHistoryRef.current = { history: [...(historyMap[photoId] || [])], redo: [...(redoMap[photoId] || [])] };
     setSelectedShapeId(null);
+    setShowFullPalette(false);
     setActiveTool('shape');
   };
 
@@ -1234,38 +1301,47 @@ export default function ImageAnnotationScreen() {
                   <TouchableOpacity
                     onPress={() => (isZoomed ? resetZoom() : setActiveTool('zoom'))}
                     accessibilityLabel={isZoomed ? 'Reset zoom' : 'Zoom'}
-                    className={`w-12 h-14 rounded-xl items-center justify-center ${
+                    className={`w-[38px] h-14 rounded-xl items-center justify-center ${
                       isZoomed || activeTool === 'zoom' ? 'bg-[#72BD00]' : 'bg-white/10'
                     }`}
                   >
                     <Icon name={isZoomed ? 'magnify-minus-outline' : 'magnify'} size={20} color="white" />
-                    <Text className="text-white text-[10px] font-bold mt-1">
+                    <Text className="text-white text-[9px] font-bold mt-1">
                       {isZoomed ? 'Reset' : 'Zoom'}
                     </Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={enterDrawMode}
-                    className="w-12 h-14 rounded-xl items-center justify-center bg-white/10"
+                    onPress={() => enterDrawMode('pen')}
+                    className="w-[38px] h-14 rounded-xl items-center justify-center bg-white/10"
                   >
                     <Icon name="pencil" size={20} color="white" />
-                    <Text className="text-white text-[10px] font-bold mt-1">Draw</Text>
+                    <Text className="text-white text-[9px] font-bold mt-1">Draw</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => enterDrawMode('eraser')}
+                    accessibilityLabel="Eraser"
+                    className="w-[38px] h-14 rounded-xl items-center justify-center bg-white/10"
+                  >
+                    <Icon name="eraser" size={20} color="white" />
+                    <Text className="text-white text-[9px] font-bold mt-1">Eraser</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
                     onPress={enterTextMode}
-                    className="w-12 h-14 rounded-xl items-center justify-center bg-white/10"
+                    className="w-[38px] h-14 rounded-xl items-center justify-center bg-white/10"
                   >
                     <Icon name="format-text" size={20} color="white" />
-                    <Text className="text-white text-[10px] font-bold mt-1">Text</Text>
+                    <Text className="text-white text-[9px] font-bold mt-1">Text</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
                     onPress={enterShapeMode}
-                    className="w-12 h-14 rounded-xl items-center justify-center bg-white/10"
+                    className="w-[38px] h-14 rounded-xl items-center justify-center bg-white/10"
                   >
                     <Icon name="shape-outline" size={20} color="white" />
-                    <Text className="text-white text-[10px] font-bold mt-1">Shapes</Text>
+                    <Text className="text-white text-[9px] font-bold mt-1">Shapes</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -1274,7 +1350,7 @@ export default function ImageAnnotationScreen() {
                   <TouchableOpacity
                     onPress={handleUndo}
                     disabled={!(historyMap[photoId]?.length > 0)}
-                    className="w-10 h-10 rounded-xl items-center justify-center bg-white/10"
+                    className="w-9 h-10 rounded-xl items-center justify-center bg-white/10"
                     style={{ opacity: (historyMap[photoId]?.length > 0) ? 1 : 0.35 }}
                   >
                     <Icon name="undo" size={20} color="white" />
@@ -1283,7 +1359,7 @@ export default function ImageAnnotationScreen() {
                   <TouchableOpacity
                     onPress={handleRedo}
                     disabled={!(redoMap[photoId]?.length > 0)}
-                    className="w-10 h-10 rounded-xl items-center justify-center bg-white/10"
+                    className="w-9 h-10 rounded-xl items-center justify-center bg-white/10"
                     style={{ opacity: (redoMap[photoId]?.length > 0) ? 1 : 0.35 }}
                   >
                     <Icon name="redo" size={20} color="white" />
@@ -1292,7 +1368,7 @@ export default function ImageAnnotationScreen() {
                   <TouchableOpacity
                     onPress={confirmResetCanvas}
                     accessibilityLabel="Undo my changes"
-                    className="w-10 h-10 rounded-xl items-center justify-center bg-white/10"
+                    className="w-9 h-10 rounded-xl items-center justify-center bg-white/10"
                   >
                     <Icon name="refresh" size={20} color="white" />
                   </TouchableOpacity>
@@ -1309,6 +1385,8 @@ export default function ImageAnnotationScreen() {
                 setShowFontDropdown={setShowFontDropdown}
                 // Done also hides the note's Edit / Adjust / Delete menu - it only shows while a note is selected.
                 onDone={() => setSelectedTextId(null)}
+                quickColors={quickColors}
+                onPickGridColor={(color) => applyGridColor(color, selectedText.color, (c) => updateSelectedText({ color: c }))}
               />
             )}
 
@@ -1333,7 +1411,7 @@ export default function ImageAnnotationScreen() {
                   <TouchableOpacity
                     onPress={() => {
                       setActiveDrawTool('eraser');
-                      setShowColorPanel(false);
+                      setShowColorPanel(false); // the eraser has its own size row (below)
                     }}
                     className={`flex-row items-center px-6 py-2.5 rounded-full ${
                       activeDrawTool === 'eraser' ? 'bg-[#72BD00]/25 border border-[#72BD00]' : 'bg-white/5 border border-white/10'
@@ -1347,7 +1425,7 @@ export default function ImageAnnotationScreen() {
                 {showColorPanel && activeDrawTool === 'pen' && (
                   <View className="bg-[#121614] border border-white/5 p-4 rounded-2xl mb-4">
                     <View className="flex-row justify-between mb-4">
-                      {['#FF7043', '#4CBB17', '#42A5F5', '#FFB74D', '#FFFFFF', '#000000'].map((color) => (
+                      {quickColors.map((color) => (
                         <TouchableOpacity
                           key={color}
                           onPress={() => setActiveColor(color)}
@@ -1359,27 +1437,76 @@ export default function ImageAnnotationScreen() {
                           className="w-8 h-8 rounded-full border border-white/10"
                         />
                       ))}
-                      <View className="w-8 h-8 rounded-full bg-white/5 items-center justify-center">
-                        <Icon name="palette" size={18} color="white" />
-                      </View>
+                      <PaletteButton open={showFullPalette} onPress={() => setShowFullPalette((v) => !v)} />
                     </View>
 
+                    {showFullPalette ? (
+                      <PaletteGrid
+                        value={activeColor}
+                        onPick={(color) => {
+                          applyGridColor(color, activeColor, setActiveColor);
+                          setShowFullPalette(false);
+                        }}
+                      />
+                    ) : (
+                      <>
+
+                    {/* Transparency (checkerboard -> colour), like CamScanner's: lighter = see-through ink (REVUIUX-590). */}
+                    <View className="mt-1 mb-5 px-3" style={{ height: 30 }}>
+                      <OpacitySlider
+                        value={sliderFromOpacity(activeOpacity)}
+                        onValueChange={(v) => setActiveOpacity(opacityFromSlider(v))}
+                        activeColor={activeColor}
+                      />
+                    </View>
+
+                    <View className="flex-row items-center justify-between px-3 mb-1">
+                      <Text className="text-white/60 text-xs font-bold">Size</Text>
+                      <Text className="text-white text-xs font-bold">{activeSize}</Text>
+                    </View>
+                    <View className="px-3" style={{ height: 30 }}>
+                      <CustomSlider
+                        value={sliderFromSize(activeSize)}
+                        onValueChange={(v) => setActiveSize(sizeFromSlider(v))}
+                        activeColor="#72BD00"
+                      />
+                    </View>
+                      </>
+                    )}
+                  </View>
+                )}
+
+                {activeDrawTool === 'eraser' && (
+                  <View className="bg-[#121614] border border-white/5 p-4 rounded-2xl mb-4">
                     <View className="flex-row items-center justify-between mt-1 px-1">
                       <Text className="text-white/60 text-xs font-bold">Size</Text>
                       <View className="flex-1 flex-row items-center justify-end gap-3 mx-4">
-                        {[3, 5, 8, 12].map((size) => (
+                        {sizesFor('eraser').map((size) => (
                           <TouchableOpacity
                             key={size}
-                            onPress={() => setActiveSize(size)}
-                            className={`w-7 h-7 rounded-full items-center justify-center ${
-                              activeSize === size ? 'bg-[#72BD00]' : 'bg-white/5'
+                            onPress={() => setEraserSize(size)}
+                            className={`w-8 h-8 rounded-full items-center justify-center ${
+                              eraserSize === size ? 'bg-[#72BD00]' : 'bg-white/5'
                             }`}
                           >
                             <Text className="text-white text-[10px] font-bold">{size}</Text>
                           </TouchableOpacity>
                         ))}
                       </View>
-                      <Text className="text-white text-xs font-bold">{activeSize}</Text>
+                      <Text className="text-white text-xs font-bold">{eraserSize}</Text>
+                      {/* Actual-size preview of the eraser (canvas px ~ screen px at 1x), so the size can be judged before touching the photo. */}
+                      <View className="w-12 h-12 items-center justify-center ml-2">
+                        <View
+                          style={{
+                            width: Math.min(eraserSize, 44),
+                            height: Math.min(eraserSize, 44),
+                            borderRadius: 22,
+                            backgroundColor: 'rgba(255,255,255,0.25)',
+                            borderWidth: 1.5,
+                            borderColor: '#FFFFFF',
+                          }}
+                        />
+                      </View>
                     </View>
                   </View>
                 )}
@@ -1419,7 +1546,7 @@ export default function ImageAnnotationScreen() {
 
                 <View className="bg-[#121614] border border-white/5 p-3 rounded-2xl mb-3">
                   <View className="flex-row justify-between mb-3">
-                    {SHAPE_COLORS.map((color) => {
+                    {quickColors.map((color) => {
                       const on = (selectedShape ? selectedShape.color : activeColor) === color;
                       return (
                         <TouchableOpacity
@@ -1430,7 +1557,21 @@ export default function ImageAnnotationScreen() {
                         />
                       );
                     })}
+                    <PaletteButton
+                      open={showFullPalette}
+                      onPress={() => setShowFullPalette((v) => !v)}
+                    />
                   </View>
+                  {showFullPalette ? (
+                    <PaletteGrid
+                      value={selectedShape ? selectedShape.color : activeColor}
+                      swatch={28}
+                      onPick={(color) => {
+                        applyGridColor(color, selectedShape ? selectedShape.color : activeColor, pickShapeColor);
+                        setShowFullPalette(false);
+                      }}
+                    />
+                  ) : (
                   <View className="flex-row items-center justify-between px-1">
                     <Text className="text-white/60 text-xs font-bold">Size</Text>
                     <View className="flex-1 flex-row items-center justify-end gap-3 mx-4">
@@ -1449,12 +1590,15 @@ export default function ImageAnnotationScreen() {
                     </View>
                     <Text className="text-white text-xs font-bold">{selectedShape ? selectedShape.width : activeSize}</Text>
                   </View>
+                  )}
                 </View>
 
                 <View className="items-center mb-3">
                   <Text className="text-white/60 text-xs font-bold text-center">
                     {selectedShape
-                      ? 'Drag a handle to resize, drag the outline to move, or change colour / size above'
+                      ? selectedShape.kind === 'circle'
+                        ? 'Drag inside the circle to move it, drag its edge to resize, or change colour / size above'
+                        : 'Drag a handle to resize, drag the outline to move, or change colour / size above'
                       : 'Drag on the image to draw. Tap a shape to select it.'}
                   </Text>
                 </View>

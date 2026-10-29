@@ -875,3 +875,7 @@ row (appointment photos, gallery, files, voice) gates itself.
 
 ### Merge note: poll branch into multi-tenant - lead-chat pins (2026-10-29)
 `useChatSession.ts` conflicted: the multi-tenant side had dropped the lead-chat pin request (left to `SocketManager.joinRoom`'s socket `get-pinned-messages`), the poll branch had replaced it with `ChatService.getPinnedMessages` (`GET /chat/v1/:chatId/pinned`, REVDSM-1313 removed the socket handler). Resolution: the REST read is kept, but it **merges** (`mergePins`) and only marks listed ids pinned - the branch's version replaced `pinnedMessages` and set every unlisted message `isPinned: false`, which is exactly the "pins vanish on reopen" bug recorded above. ⚠️ `getPinnedMessages` now returns a Promise; `widgets/components/chat/Chat.tsx` calls it fire-and-forget, so it carries a `.catch`. Not device-verified.
+
+### Pin icon in the chat header went back on the first tap
+- **Root cause:** the "Back to Leads/Channels" `Pressable` in `ChatHeader.tsx` was a full-width row with `hitSlop` 20 and `zIndex: 9999`. Its invisible bottom slop (20px) was larger than the `mb-4` gap (16px) to the title row, so the top of the pin icon sat inside the Back button's hit area and the first tap navigated back; tapping lower opened the pin list.
+- **Fix:** the Back row now hugs its content (`alignSelf: 'flex-start'`), the `zIndex` is gone and the bottom slop is 8px (inside the gap). ⚠️ Don't restore a full-width Back row or a bottom slop over 16px - it will swallow taps on the pin/participants icons again. Not device-verified.

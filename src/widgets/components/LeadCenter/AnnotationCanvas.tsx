@@ -18,7 +18,9 @@ import {
   zoomOrigin,
 } from '../../../utils/zoom-transform';
 import { DraggableText } from './DraggableText';
-import { arrowGeometry, circleRadiusPx, type AnnotationShape } from '../../../utils/annotation-shapes';
+import { strokeOpacity } from '../../../utils/annotation-brush';
+import { layerBlocks, orderedLayers, type LayerBlock } from '../../../utils/annotation-layers';
+import { arrowGeometry, circleRadiusPx, shapeHandles, type AnnotationShape } from '../../../utils/annotation-shapes';
 
 const MAX_ZOOM_SCALE = 5;
 
@@ -122,16 +124,12 @@ export const AnnotationCanvas = ({
       : [...base, liveShape];
   }, [currentShapes, liveShape]);
 
-  const committedPaths = useMemo(() => {
-    const eraser: Array<{ id: any; d: string; width: number }> = [];
-    const ink: Array<{ id: any; d: string; width: number; color: string }> = [];
-    (currentStrokes || []).forEach((stroke) => {
-      const d = getPathData(stroke.points);
-      if (stroke.isEraser) eraser.push({ id: stroke.id, d, width: stroke.width });
-      else ink.push({ id: stroke.id, d, width: stroke.width, color: stroke.color });
-    });
-    return { eraser, ink };
-  }, [currentStrokes, getPathData]);
+  // Chronological layers (utils/annotation-layers.ts): pen ink, eraser strokes and shapes are one stack, and an eraser stroke rubs out
+  // whatever was drawn BEFORE it - ink and shapes alike. Path strings are built once per change, not once per live-stroke frame.
+  const layerPlan = useMemo<LayerBlock[]>(() => {
+    const strokes = (currentStrokes || []).map((stroke) => ({ ...stroke, d: getPathData(stroke.points) }));
+    return layerBlocks(orderedLayers(strokes, shapesToRender));
+  }, [currentStrokes, shapesToRender, getPathData]);
 
   const reportScale = useCallback(
     (next: number) => {
@@ -325,6 +323,63 @@ export const AnnotationCanvas = ({
   const selectedShape = selectedShapeId ? shapesToRender.find((sh) => sh.id === selectedShapeId) : null;
   const handleR = 8 / (jsScale > 0 ? jsScale : 1);
 
+  // Walk the blocks oldest-first: wrap what is built so far in a group masked by the block's eraser strokes, then lay the block's own marks on top.
+  // The stroke being drawn right now joins at the end (a live eraser masks everything; live ink sits on top).
+  const renderLayers = () => {
+    const blocks: LayerBlock[] = layerPlan.map((b) => ({ erasers: b.erasers, items: [...b.items] }));
+    const last = blocks[blocks.length - 1];
+    if (drawingStroke?.isEraser && drawingStroke.points?.length > 0) {
+      if (last.items.length === 0) last.erasers = [...last.erasers, drawingStroke];
+      else blocks.push({ erasers: [drawingStroke], items: [] });
+    } else if (drawingStroke && !drawingStroke.isEraser && drawingStroke.points?.length > 0) {
+      last.items.push({ kind: 'stroke', item: { ...drawingStroke, d: getPathData(drawingStroke.points) } });
+    }
+    let content: React.ReactNode[] = [];
+    blocks.forEach((blk, bi) => {
+      if (blk.erasers.length) {
+        const id = `eraser-mask-${activeImageIndex}-${bi}`;
+        content = [
+          <Mask key={`m-${bi}`} id={id}>
+            <Rect x={0} y={0} width={canvasLayout.width} height={canvasLayout.height} fill="white" />
+            {blk.erasers.map((s: any) => (
+              <Path
+                key={s.id}
+                d={s.d ?? getPathData(s.points)}
+                stroke="black"
+                strokeWidth={s.width}
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            ))}
+          </Mask>,
+          <G key={`g-${bi}`} mask={`url(#${id})`}>
+            {content}
+          </G>,
+        ];
+      }
+      blk.items.forEach((l) => {
+        content.push(
+          l.kind === 'stroke' ? (
+            <Path
+              key={`s-${l.item.id}`}
+              d={l.item.d}
+              stroke={l.item.color}
+              strokeWidth={l.item.width}
+              strokeOpacity={strokeOpacity(l.item)}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          ) : (
+            renderShape(l.item)
+          ),
+        );
+      });
+    });
+    return content;
+  };
+
   const renderCanvas = () => {
     return (
       <View
@@ -370,57 +425,23 @@ export const AnnotationCanvas = ({
               width={canvasLayout.width}
               height={canvasLayout.height}
             >
-              <Mask id={`eraser-mask-${activeImageIndex}`}>
-                <Rect x={0} y={0} width={canvasLayout.width} height={canvasLayout.height} fill="white" />
-                {committedPaths.eraser.map(stroke => (
-                  <Path
-                    key={stroke.id}
-                    d={stroke.d}
-                    stroke="black"
-                    strokeWidth={stroke.width}
-                    fill="none"
-                  />
-                ))}
-                {drawingStroke?.isEraser && (
-                  <Path
-                    d={getPathData(drawingStroke.points)}
-                    stroke="black"
-                    strokeWidth={drawingStroke.width}
-                    fill="none"
-                  />
-                )}
-              </Mask>
+              {renderLayers()}
 
-              <G mask={`url(#eraser-mask-${activeImageIndex})`}>
-                {committedPaths.ink.map(stroke => (
-                  <Path
-                    key={stroke.id}
-                    d={stroke.d}
-                    stroke={stroke.color}
-                    strokeWidth={stroke.width}
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                ))}
-                {drawingStroke && !drawingStroke.isEraser && (
-                  <Path
-                    d={getPathData(drawingStroke.points)}
-                    stroke={drawingStroke.color}
-                    strokeWidth={drawingStroke.width}
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                )}
-              </G>
-
-              {/* Shapes sit above the ink and are not touched by the eraser mask. */}
-              {shapesToRender.map(renderShape)}
+              {/* The eraser's footprint (REVUIUX-588): the erased band is invisible, so a ring shows where it is and how wide, at constant outline weight under zoom. */}
+              {drawingStroke?.isEraser && drawingStroke.points?.length > 0 && (
+                <Circle
+                  cx={drawingStroke.points[drawingStroke.points.length - 1].px * canvasLayout.width}
+                  cy={drawingStroke.points[drawingStroke.points.length - 1].py * canvasLayout.height}
+                  r={Math.max(drawingStroke.width, 2) / 2}
+                  fill="rgba(255,255,255,0.25)"
+                  stroke="#FFFFFF"
+                  strokeWidth={1.5 / (jsScale > 0 ? jsScale : 1)}
+                />
+              )}
 
               {selectedShape && activeTool === 'shape' && (
                 <G>
-                  {([selectedShape.p1, selectedShape.p2] as const).map((pt, i) => (
+                  {shapeHandles(selectedShape).map((h) => selectedShape[h]).map((pt, i) => (
                     <Circle
                       key={i}
                       cx={pt.px * canvasLayout.width}
@@ -444,8 +465,8 @@ export const AnnotationCanvas = ({
             />
           )}
 
-          {/* Draggable Text Notes Layer - inert while placing shapes, so a drag that starts over a note still draws. */}
-          <View style={StyleSheet.absoluteFill} pointerEvents={activeTool === 'shape' ? 'none' : 'box-none'}>
+          {/* Draggable Text Notes Layer - inert while placing shapes or drawing / erasing, so a drag that starts over a note still draws (and the eraser can reach it). */}
+          <View style={StyleSheet.absoluteFill} pointerEvents={activeTool === 'shape' || activeTool === 'draw' ? 'none' : 'box-none'}>
           {currentTexts.map(text => (
             <DraggableText
               key={text.id}

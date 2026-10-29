@@ -54,6 +54,8 @@ const cleanStroke = (s: any) => ({
   isEraser: !!s.isEraser,
   color: s.color,
   width: s.width,
+  // Pen transparency (REVUIUX-590); absent on strokes saved before it = fully opaque.
+  opacity: s.opacity,
   points: s.points,
 });
 
@@ -86,19 +88,23 @@ const cleanShapeOrNull = (sh: any) => (sh && typeof sh === 'object' ? cleanShape
  * longer on the canvas). Shape entries are small and keep `before` / `after`. Only the newest MAX_PERSISTED_HISTORY steps go.
  */
 export const compactStacks = (stacks?: Partial<AnnotationStacks> | null): AnnotationStacks => {
-  const entry = (a: any, withData: boolean): any | null => {
+  // `removed` = the general eraser deleted the mark (REVUIUX-588). The mark is carried by whichever stack holds it while it is OFF the canvas:
+  // an add keeps it in redo, a removal keeps it in history - so `withData` flips for a removal.
+  const entry = (a: any, isRedo: boolean): any | null => {
     if (!a || a.id === undefined || a.id === null) return null;
     if (a.type === 'shape') return { id: a.id, type: 'shape', before: cleanShapeOrNull(a.before), after: cleanShapeOrNull(a.after) };
     if (a.type === 'stroke' || a.type === 'text') {
-      if (!withData) return { id: a.id, type: a.type };
+      const removed = a.removed === true;
+      const flag = removed ? { removed: true } : {};
+      if (isRedo === removed) return { id: a.id, type: a.type, ...flag };
       if (!a.data || typeof a.data !== 'object') return null;
-      return { id: a.id, type: a.type, data: a.type === 'stroke' ? cleanStroke(a.data) : cleanText(a.data) };
+      return { id: a.id, type: a.type, ...flag, data: a.type === 'stroke' ? cleanStroke(a.data) : cleanText(a.data) };
     }
     return null;
   };
-  const pack = (list: any[] | undefined, withData: boolean) =>
+  const pack = (list: any[] | undefined, isRedo: boolean) =>
     (Array.isArray(list) ? list : [])
-      .map((a) => entry(a, withData))
+      .map((a) => entry(a, isRedo))
       .filter(Boolean)
       .slice(-MAX_PERSISTED_HISTORY);
   return { history: pack(stacks?.history, false), redo: pack(stacks?.redo, true) };
@@ -162,10 +168,15 @@ export const restoreStacks = (raw: any, marks: AnnotationMarks): AnnotationStack
           after = undo ? !!before : !!aft;
           entry = { id: a.id, type: 'shape', before, after: aft };
         } else if (a.type === 'stroke' || a.type === 'text') {
-          const source = undo ? (a.type === 'stroke' ? strokeById : textById).get(key) : a.data;
-          ok = has(key) === undo && !!source && typeof source === 'object' && source.id === a.id;
-          after = !undo;
-          if (ok) entry = { id: a.id, type: a.type, data: a.type === 'stroke' ? cleanStroke(source) : cleanText(source) };
+          // An add is undone while present and redone while absent; a removal (general eraser) is the mirror image.
+          const removed = a.removed === true;
+          const presentBefore = undo !== removed;
+          const source = presentBefore ? (a.type === 'stroke' ? strokeById : textById).get(key) : a.data;
+          ok = has(key) === presentBefore && !!source && typeof source === 'object' && source.id === a.id;
+          after = !presentBefore;
+          if (ok) {
+            entry = { id: a.id, type: a.type, ...(removed ? { removed: true } : {}), data: a.type === 'stroke' ? cleanStroke(source) : cleanText(source) };
+          }
         } else {
           break;
         }

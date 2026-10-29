@@ -1966,3 +1966,75 @@ Added for the collapsed failure row in the Tools tab - full note in **`docs/clau
 - `dismissAllRevRenders` filters and persists once rather than calling `dismissRevRender` per job, which would write the store N times.
 - Both are no-ops when nothing is failed, so they are safe to call from a control that may be visible for a moment after the last job clears.
 - The per-job `retryRevRender` / `dismissRevRender` are unchanged and still exported - the UI simply no longer has a per-row control.
+
+### Offline lead list state: vanish / reappear after reconnect (audit group B)
+
+Found by the offline audit (code reading only; **not yet verified on a device** - no device was connected). Symptom: a lead made offline shows as a pending card, the card disappears when the drain finishes, and the lead only returns minutes later - at random on cellular.
+
+- **Root cause 1 - the refresh lived in a screen.** The only `['leads']` invalidation after a create was an effect in `screens/Leads/index.tsx`, which runs only while that screen is mounted. A rep who reconnected on the Map or in Lead Center had the card retire with no refetch. Now `refreshAfterLeadLanded()` in `services/offlineLeadStore.ts` invalidates `['leads']` and `['mapJobs']` right after the `lead` step and again when the work reaches `uploaded` (fire-and-forget; a slow refetch must not hold the next upload step).
+- **Root cause 2 - the card was released when the refetch SETTLED, not when the list CONTAINED the lead.** On a weak link the fetch can fail (and `cachedFetch` answers with the stale on-disk list) or return before the new lead is readable. Now the card (`justLandedIds`) is released only when `serverLeadIds` holds the lead's id; meanwhile the list is re-read every `LEAD_HANDOFF_RETRY_MS` (4 s), and `LEAD_HANDOFF_MAX_MS` (45 s, was 15 s) is only the give-up.
+- **Root cause 3 - a stale snapshot counted as fresh.** `cachedFetch` swallows an online fetch error and returns the saved copy, so the query kept it for its whole 5-minute `staleTime`. `cachedFetch` now takes `onStaleFallback`; `useLeadsData` flips `servedStale` and refetches every 15 s until a real fetch succeeds. Offline reads do NOT signal (the saved copy is the expected answer there).
+- **Root cause 4 - the row's key changed mid-sync.** `_id` is the client id until the `lead` step lands, then the server id, so the FlatList row remounted. `keyExtractor` now prefers `clientId` (set on offline cards).
+- WARNING: **do not move the release back to `.finally()` of the invalidation**, and **do not add a cleanup to the landed-effect that clears the give-up timer** - the effect re-runs on every store update, so the cap would never fire and the card could bridge forever.
+- Deliberately NOT changed (product / backend): failed and needs-review leads still show in the Today tab until midnight; an online create that times out can still duplicate until the client id + idempotency key are minted before the first online attempt (needs the backend to honour the key); offline leads still have no map pin.
+- Test: `__tests__/utils/offline-query-cache-stale.test.ts` (stale-fallback signal). The screen/store behaviour is not unit-testable here (React Native imports).
+
+### Cellular hardening: one failure rule for every queue (audit group A)
+
+Found by the offline audit; **code + unit tests only, not yet verified on a device**. Symptom: wifi / flight mode sync fine, real mobile data "fails, tries again, fails" and work lands in the backlog.
+
+- **The rule (`utils/transfer-failure.ts`, pure, tested).** `classifyTransferFailure` -> `auth` (401) / `transport` (no HTTP answer) / `transient` (408/425/429, any 5xx, and 403) / `rejected` (other 4xx). `transport` and `transient` are **free**: they spend NO attempt, back off (`transientBackoffMs`: 5 s doubling to 2 m, +-20% jitter) and are only **parked after 24 h** (`TRANSIENT_GIVE_UP_MS`) - parked = kept, visible, retryable, never deleted.
+- **Photo queue (`utils/uploadQueue.ts`).** Used to count every non-offline failure as one of `MAX_PHOTO_ATTEMPTS` (5) with 3-15 s waits, so ~30 s of weak signal parked a good photo until the rep tapped Retry. Now a free failure keeps the item, sets `nextAttemptAt`, **stops the pass** (the rest would hit the same dead link) and `scheduleNextRetry()` wakes the drain. `canDrain` skips an item still waiting; `releaseWaiting()` (on a real reconnect or foreground) makes them due. Only `rejected` still uses the attempt budget.
+- **Installer queue (`offlineUploadManager.ts`).** Same rule via `afterFreeFailure`; reconnect calls `makeDueNow`.
+- **Lead sync + activity logs.** `leavesWorkUndelivered` (transport, 408/429, 5xx; **not 403**) replaces `isNetworkError` as the "spend nothing" test in `offlineLeadStore.ts` and `offlineActivityLog.ts`. A 5xx used to spend an attempt, and five pushed the work to needs-review / deleted the log. 403 deliberately still counts, so a genuine permission refusal ends in the visible needs-review state instead of looping.
+- **Photo-delete queue.** Read `err.response.status`, which the api wrapper's normalised rejection does not have, so every failure looked statusless and five bad tries DROPPED the delete (photo stayed on the server). Now `httpStatusOf` + the rule; free failures keep the entry and stop the pass.
+- **Annotation jobs.** A 5xx / gateway error no longer burns the 3-attempt budget (it deleted the rep's annotation). A 60 s sweep was added: a 5xx leaves the link up, so no reconnect event would ever re-run a kept job.
+- **Silent drops removed.** A missing local photo file now PARKS the photo (reason shown in Pending Uploads) instead of deleting it; the installer queue no longer deletes a whole batch because one file is missing.
+- **Connectivity (`services/connectivity.ts`, `services/api/index.ts`).**
+  - Multipart (`FormData`) requests are tracked with `beginUpload/endUpload` and are NOT given to the stall watcher: a big upload on a weak uplink is legitimately slow, and was being taken for a dead channel (probe -> "offline" -> queue aborts -> file restarts from byte 0).
+  - While an upload is in flight, "connected but `isInternetReachable === false`" cannot flip the app offline (the `/health` GET loses the race against the upload). "Not connected" still does. Entries expire after 330 s so a leaked one can never pin the app online.
+  - Reconnect is **one coalesced, staggered event**: both firing paths (OS flag and probe status) merge, wait `RECONNECT_SETTLE_MS` (2 s, cancelled if the link drops again), then listeners start 400 ms apart. Previously a wifi->cellular hop or tower change started seven queues in the same instant.
+- **Photo timeout 120 s -> 300 s** (`services/api/leads.ts`): no resume exists, so the only lever is not abandoning a transfer that is still moving. True resumable upload needs the backend.
+- **Startup (`useAppInitialization.ts`).** A `getMe` failure other than 401 (timeout, 502/503/504, a proxy's 403) no longer signs a rep with a persisted session out; only a real 401 does.
+- WARNING: **never put a counter-spending branch back in front of the free-failure check**, and never classify a status-less error as `rejected` - the 5th "rejection" parks/deletes work the server never judged.
+- Not fixed (needs backend): resumable / chunked upload; idempotency keys on appointment, calculator, document, consent and refund POSTs; token refresh.
+- Tests: `__tests__/utils/transfer-failure.test.ts`.
+
+
+### Photo-capture logs lost after an offline sync: record the log durably before the queue item goes (2026-10-29)
+Files: `utils/pending-photo-log.ts` (pure rules), `utils/uploadQueue.ts` (`recordPhotoLog`, `settlePhotoLogs`). Test: `tests/offline/pending-photo-log.test.ts`.
+
+Reported: *"images captured offline upload fine on reconnect, but the logs created during the capture session are missing on the portal."*
+
+| Was | Fix |
+|---|---|
+| The `photo_uploaded` / `annotated_photo_uploaded` log needs the stored `s3url`, so it was built AFTER the upload by a fire-and-forget `logUploadSuccessAsync` that waited up to ~2 min **in memory** for the server row - while the queue item had already been removed. Backgrounding/killing the app in that window (normal at the end of a field session), or a dead lookup on weak cellular, lost the log; the photo itself was safe | `recordPhotoLog` writes a durable `pending_photo_logs` MMKV record (capture time, ids, slot, known url) BEFORE the item is removed. `settlePhotoLogs` does one lookup per record per pass and only then calls `logEvent` (which holds it durably offline); the record is deleted only after that hand-off |
+| Gave up after ~9 lookups | Up to `MAX_LOOKUP_PASSES` (30) passes, driven by reconnect, foreground, the 60 s sweep, app start and a 5 s timer. After the last pass the log goes WITHOUT an image rather than being dropped |
+
+- ⚠️ **Never move the record write after `removeItem`**, and never make it in-memory again.
+- `meta.occurredAt` stays the photo's capture time, so the portal timeline is in capture order, not reconnect order.
+- Offline capture-session actions that go through `logEvent` directly (deletes, annotation edits) were already queued; only this post-upload log had the gap.
+- Not verified on device (no signed-in session was available to drive a capture); the pure rules are tested.
+
+
+### Android upload notification: progress bar, and no "0 items left" (2026-10-29)
+Files: `utils/background-upload-policy.ts` (`uploadProgress`, `shouldShowUploadNotification`), `services/background/androidUploadService.ts`. Test: `tests/offline/pending-photo-log.test.ts`.
+- The foreground-service notification now carries a notifee `progress` bar: `max` = the most items seen waiting this run (`peakPending`, reset when the service ends; work added mid-run raises it), `current` = done so far. Text still says "N items left to upload."
+- `onProgress` with `pending <= 0` shows nothing; the service's `finally` cancels the notification. ⚠️ Do not display on zero: it produced a lingering "0 items left to upload." after a drain.
+- Not verified on device.
+
+
+### Photo cache holds only leads with offline work, and empties once they are delivered (2026-10-29)
+Files: `utils/lead-photo-index.ts` (pure rules), `services/leadPhotoIndex.ts` (MMKV index `lead_photo_cache_index`), `services/leadPhotoCache.ts` (`leadHasOfflineWork`, `pruneDeliveredLeadPhotos`, `startLeadPhotoCacheSync`), `hooks/usePrecacheLeadPhotos.ts`, `utils/uploadQueue.ts`, `utils/imageFileCache.ts` (`removeCachedPath`). Test: `tests/offline/lead-photo-index.test.ts`.
+
+Reported: Profile showed "24 photos saved on this device" while "Everything is uploaded"; leads worked online should not be stored.
+
+| Was | Fix |
+|---|---|
+| `usePrecacheLeadPhotos` warmed EVERY lead opened online into `imageFileCache`, and uploaded photos were adopted into it and never removed | The hook only warms a lead while `leadHasOfflineWork` (queued photos, a pending photo log, or offline lead work for it); it re-checks on queue / offline-work changes. Every file it warms or adopts is recorded per lead in the index |
+| Nothing ever freed those files except the 500 MB LRU or the manual Clear button | `pruneDeliveredLeadPhotos` deletes a lead's indexed files when it has no offline work left AND was last touched >= `PRUNE_GRACE_MS` (10 min) ago. Runs 30 s (debounced) after any queue / offline-work change, on foreground and at launch |
+
+- ⚠️ The grace period is what keeps the card the rep is looking at from blanking and reloading when its last upload lands. Do not drop it to 0.
+- ⚠️ `uploadQueue.ts` must not import `offlineLeadStore` (the store imports the queue); the combined "has work" check lives in `services/leadPhotoCache.ts`.
+- Files cached BEFORE this change are not in the index, so they stay until the rep taps Clear offline photos (the `revrender_` prefix is shared with pitch-book / logo / RevRender files, so they cannot be told apart safely). A lead's photos now come from the server when online, so a first open of a non-offline lead may show a loader.
+- Not verified on device.
