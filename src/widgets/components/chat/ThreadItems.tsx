@@ -329,7 +329,13 @@ export function ChannelThreadItem({ channel, onPress }: any) {
   const tint = colors.primary.main;
   // REVDSM-1313: a channel that requires read confirmation still has unread posts —
   // show the amber "Confirm needed" badge beside the counter (QA mockup, REP 1).
-  const confirmNeeded = requireAck && unreadCount > 0;
+  // Only a rep is asked for one, so only a rep is told one is waiting: the per-viewer
+  // `requires_ack` answers that, and the setting alone is the older server's answer.
+  const mustAck =
+    channel?.permissions?.requires_ack !== undefined
+      ? !!channel.permissions.requires_ack
+      : !!requireAck;
+  const confirmNeeded = mustAck && unreadCount > 0;
   const ackPalette = isDark ? ACK_AMBER.dark : ACK_AMBER.light;
 
   return (

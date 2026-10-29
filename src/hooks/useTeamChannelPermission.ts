@@ -11,6 +11,13 @@ export interface ChannelPermissions {
   can_edit_own: boolean;
   is_read_only: boolean;
   can_manage?: boolean;
+  /**
+   * Whether THIS viewer is asked to confirm a read, which is not the channel's
+   * own `require_ack`: the settings are written "Reps can ..." and the server
+   * enforces them on `sales_representative_dashboard` alone, so a manager or an
+   * installer reading a require_ack channel is never prompted.
+   */
+  requires_ack?: boolean;
 }
 
 export interface ChannelData {
@@ -81,7 +88,11 @@ export function useTeamChannelPermission(channel: ChannelData | null | undefined
       canEditOwn: permissions ? permissions.can_edit_own : true,
       isReadOnly: permissions ? permissions.is_read_only : !canPost,
       canManage: !!permissions?.can_manage,
-      requireAck: !!source?.require_ack,
+      // Per viewer; an older server without the flag answers from the setting.
+      requireAck:
+        permissions?.requires_ack !== undefined
+          ? !!permissions.requires_ack
+          : !!source?.require_ack,
       requireApproval: !!source?.require_approval,
     };
   }, [channel, live, source, permissions]);

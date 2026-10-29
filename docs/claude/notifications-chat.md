@@ -848,3 +848,20 @@ row (appointment photos, gallery, files, voice) gates itself.
   clone (the poll-draft suite this file previously claimed existed had been lost exactly that way).
 - Not device-verified: the sheet above the keyboard on iOS/Android, tapping an option (optimistic
   tick and bar), two devices voting at once, and "View votes".
+
+### Channel settings bind reps only (`permissions.requires_ack`)
+
+Every per-channel setting a manager edits is worded "Reps can …" — who may send, reactions and
+replies, photos and files, push notifications, require read confirmation, slow mode, self-edit,
+manager approval, retention. The server now enforces all of them on
+`sales_representative_dashboard` alone: a manager, an installer, a canvasser or a regional manager
+is held to none of them. Nothing in the app had to change for the message flags —
+`channel.permissions.can_post/can_reply/can_react/can_upload/can_edit_own/is_read_only` are
+per-viewer already and simply answer `true` for anyone who is not a rep.
+
+⚠️ **Read confirmation has two different questions now.** `channel.require_ack` says the channel
+asks for confirmations; the new `channel.permissions.requires_ack` says whether *this* viewer is
+asked for one. `useTeamChannelPermission` returns the second as `requireAck`, and
+`ChannelThreadItem`'s "Confirm needed" badge reads it too — a manager opening a require_ack channel
+must see no banner and no badge. Both fall back to `require_ack` when the flag is absent, so the app
+keeps working against a server that predates it; do not tidy that fallback away.
