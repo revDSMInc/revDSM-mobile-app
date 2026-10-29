@@ -24,6 +24,7 @@ import { logEvent } from '../../../services/api/LoggerService';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import { findLook } from '../../../utils/revrender-lighting/catalog';
 import { forgetWarmedUri, getLocalCachePath, getWarmedLocalUri, prefetchToLocalCache, verifyIndexedUri, warmToLocalCache } from '../../../utils/imageFileCache';
+import { pagerModeFor } from '../../../utils/render-pager';
 
 export { getLocalCachePath, prefetchToLocalCache };
 
@@ -439,6 +440,9 @@ export const RevRenderHistoryModal = ({
   };
 
   const screenWidth = Dimensions.get('window').width;
+  // Dots while they fit, a "3 / 11" counter when they do not - see `utils/render-pager`.
+  const pagerMode = pagerModeFor(runs.length, screenWidth);
+  const showDots = pagerMode === 'dots';
   const imageWidth = screenWidth - 40;
   const imageHeight = "75%";
 
@@ -737,17 +741,26 @@ export const RevRenderHistoryModal = ({
                 <Icon name="chevron-left" size={32} color="white" />
               </TouchableOpacity>
 
-              <View style={styles.pagination}>
-                {runs.map((_, i) => (
-                  <View
-                    key={i}
-                    style={[
-                      styles.dot,
-                      { backgroundColor: i === currentIndex ? '#72BD00' : 'rgba(255,255,255,0.3)' },
-                    ]}
-                  />
-                ))}
-              </View>
+              {showDots ? (
+                <View style={styles.pagination}>
+                  {runs.map((_, i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.dot,
+                        { backgroundColor: i === currentIndex ? '#72BD00' : 'rgba(255,255,255,0.3)' },
+                      ]}
+                    />
+                  ))}
+                </View>
+              ) : (
+                <View style={styles.counter}>
+                  <Text style={styles.counterText}>
+                    <Text style={styles.counterCurrent}>{currentIndex + 1}</Text>
+                    {` / ${runs.length}`}
+                  </Text>
+                </View>
+              )}
 
               <TouchableOpacity
                 onPress={handleNext}
@@ -958,13 +971,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 30,
+    // The row must never be wider than the screen, or the chevrons leave it (see `dotsFit`).
+    alignSelf: 'stretch',
+    paddingHorizontal: 8,
   },
   navBtn: {
     padding: 10,
+    // A chevron is the control that moves between renders: it keeps its size, the strip gives way.
+    flexGrow: 0,
+    flexShrink: 0,
   },
   pagination: {
     flexDirection: 'row',
     marginHorizontal: 20,
+    // Centred in whatever is left once both chevrons have taken theirs.
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  counter: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    marginHorizontal: 20,
+    alignItems: 'center',
+  },
+  counterText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 15,
+    fontWeight: 'normal',
+  },
+  counterCurrent: {
+    color: '#72BD00',
+    fontWeight: '700',
   },
   dot: {
     width: 20,

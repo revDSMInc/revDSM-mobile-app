@@ -2802,3 +2802,22 @@ Ticket (Lance): *"color palette not working"*. The palette icon at the end of ev
 `hooks/useLeadsData.ts` keeps a `servedStale` flag: `cachedFetch` now reports (`onStaleFallback`) when an ONLINE fetch failed and the saved list was served instead, and the query then refetches every `STALE_RETRY_MS` (15 s) until a real fetch succeeds. Before, that snapshot was trusted for the whole 5-minute `staleTime`, so a weak-signal fetch left the list without just-synced leads.
 
 - WARNING: offline reads must NOT set the flag (the saved copy is the expected answer there), or the list would poll while offline.
+
+## RevRender viewer footer: the chevrons were pushed off the screen
+
+**Reported:** in the render viewer, "the arrow head is going out from the screen from right side and left one is already gone" — with 11 renders, the right chevron was half cut off and the left one was not visible at all.
+
+**Cause.** `styles.navRow` was `flexDirection: 'row'` + `justifyContent: 'center'` with **nothing bounding its width**, and a dot is a **fixed 26 px** (20 wide + 3 margin each side). The row's natural width is therefore `count × 26 + 40 gutters + 104 for the two chevrons`. At 11 renders that is **430 px inside a 390 pt screen** — 40 px of overflow, split evenly by the centring, so ~20 px disappears off each end. The chevrons are the outermost children, so they are what goes. It was never a positioning bug; the row was simply wider than the phone.
+
+**Fix.**
+- `navRow` gets `alignSelf: 'stretch'` + `paddingHorizontal: 8` so it is bounded by the screen instead of by its content.
+- `navBtn` gets `flexGrow: 0, flexShrink: 0` — the chevrons are the controls that move between renders, so they keep their size and the strip gives way. (⚠️ longhands, not `flex: 0`: see the Save All note — a `flex` shorthand overwrites longhands in the same object whatever the key order.)
+- The dot strip gets `flexGrow/flexShrink: 1` + `minWidth: 0` and centres within what is left.
+
+**⚠️ Clamping alone is NOT the fix, and shrinking the dots is worse.** Bounding the row stops the chevrons escaping, but 15 dots squeezed into the remaining space become hairlines nobody can count — the overflow is traded for an unreadable strip. So the *representation* changes with the count: dots while they genuinely fit, and a **"3 / 11" counter** (current index in green, total in grey) when they do not. The counter is bounded at any number of renders, and it is what iOS Photos and Google Photos do for the same reason.
+
+**The rule is measured, not a magic number.** `pagerModeFor(count, screenWidth)` in `utils/render-pager.ts` compares `count × DOT_TOTAL_W` against `screenWidth - NAV_RESERVED_W`, because what competes for the space is the chevrons and the gutters — and that differs between a phone and an iPad (and between portrait and landscape, which iPad allows). Measured thresholds: **6 dots at 320 pt, 8 at 390 pt, 10 at 430 pt**, counter beyond.
+
+⚠️ `DOT_TOTAL_W` (26) and `NAV_RESERVED_W` mirror `styles.dot` and `styles.navBtn` in the modal. **Change one and you must change the other**, or the fit test silently stops matching what is drawn.
+
+**Tests:** `tests/lead-center/render-pager.test.ts` (6). The important one is not the per-count assertion but the invariant — *whenever* `dots` is chosen, across 320/390/820/1024 pt and 1–40 renders, the strip is asserted to fit in the available width. That is what fails if someone later grows the dot or the chevron. The rule lives in a pure util precisely so it can be tested: the modal itself reaches React Native and cannot be loaded under jest (CLAUDE.md §6).
