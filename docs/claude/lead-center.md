@@ -2770,3 +2770,9 @@ Ticket (Lance): *"color palette not working"*. The palette icon at the end of ev
   REPLACES THE ACTIVE SWATCH in the quick row and becomes the active colour (`utils/annotation-colors.ts › replaceQuickColor`: already in the row -> just selected; active colour not in the row -> the last swatch is replaced; a second
   pick replaces the first). The row (`quickColors` in `ImageAnnotation`) is shared by Pen, Shapes and the Text toolbar (`quickColors` / `onPickGridColor` props), so a picked colour shows in all three. It lasts for the editor session
   (not saved with the photo - the photo keeps each mark's own colour). The `SHAPE_COLORS` constant is gone - Shapes reads the same row.
+
+### `useLeadsData`: a stale on-disk list no longer counts as fresh (see `offline.md`, "Offline lead list state")
+
+`hooks/useLeadsData.ts` keeps a `servedStale` flag: `cachedFetch` now reports (`onStaleFallback`) when an ONLINE fetch failed and the saved list was served instead, and the query then refetches every `STALE_RETRY_MS` (15 s) until a real fetch succeeds. Before, that snapshot was trusted for the whole 5-minute `staleTime`, so a weak-signal fetch left the list without just-synced leads.
+
+- WARNING: offline reads must NOT set the flag (the saved copy is the expected answer there), or the list would poll while offline.

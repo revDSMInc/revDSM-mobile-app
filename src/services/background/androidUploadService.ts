@@ -1,6 +1,10 @@
 import { Platform } from 'react-native';
 import { runBackgroundDrain } from './uploadCoordinator';
-import { uploadNotificationText } from '../../utils/background-upload-policy';
+import {
+  shouldShowUploadNotification,
+  uploadNotificationText,
+  uploadProgress,
+} from '../../utils/background-upload-policy';
 
 export const UPLOAD_CHANNEL_ID = 'background-uploads';
 const UPLOAD_NOTIFICATION_ID = 'background-upload-service';
@@ -9,6 +13,7 @@ let registered = false;
 let serviceActive = false;
 let runnerOwned = false;
 let lastShownText = '';
+let peakPending = 0;
 
 const getNotifee = (): { notifee: any; module: any } | null => {
   if (Platform.OS !== 'android') return null;
@@ -30,6 +35,8 @@ const buildNotification = (
   asService: boolean
 ): Record<string, unknown> => {
   const { title, body } = uploadNotificationText(pending, online);
+  peakPending = Math.max(peakPending, pending);
+  const { max, current } = uploadProgress(peakPending, pending);
   return {
     id: UPLOAD_NOTIFICATION_ID,
     title,
@@ -45,6 +52,7 @@ const buildNotification = (
           }
         : {}),
       ongoing: true,
+      progress: { max, current, indeterminate: false },
       onlyAlertOnce: true,
       smallIcon: 'ic_launcher',
       pressAction: { id: 'default' },
@@ -66,8 +74,10 @@ export const registerAndroidUploadRunner = (): void => {
       await runBackgroundDrain('android-foreground-service', {
         onProgress: ({ pending, online }) => {
           if (!owner) return;
+          // ⚠️ Nothing left: show nothing. A late display after the cancel would bring a "0 items left" back.
+          if (!shouldShowUploadNotification(pending)) return;
           const { title, body } = uploadNotificationText(pending, online);
-          const text = `${title}|${body}`;
+          const text = `${title}|${body}|${peakPending}`;
           if (text === lastShownText) return;
           lastShownText = text;
           n.notifee
@@ -82,6 +92,7 @@ export const registerAndroidUploadRunner = (): void => {
         runnerOwned = false;
         serviceActive = false;
         lastShownText = '';
+        peakPending = 0;
         await n.notifee.stopForegroundService().catch(() => {});
         await n.notifee.cancelNotification(UPLOAD_NOTIFICATION_ID).catch(() => {});
       }

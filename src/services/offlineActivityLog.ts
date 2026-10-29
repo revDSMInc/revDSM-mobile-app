@@ -2,7 +2,7 @@ import { AppState } from 'react-native';
 import { Storage } from '../utils/storage';
 import { isOnline, onReconnect } from './connectivity';
 import { isUnauthorizedError } from '../utils/upload-retry-policy';
-import { isNetworkError } from '../utils/network-error';
+import { leavesWorkUndelivered } from '../utils/transfer-failure';
 import { findUnresolvedClientIds } from '../utils/offline-lead-work';
 import { sanitizeForLog } from '../utils/sanitize-for-log';
 import { getSessionOwner, registerSessionResetHook } from './sessionScope';
@@ -254,7 +254,7 @@ export const drainActivityLogs = async (): Promise<void> => {
         outcome = 'failed';
         // IMPORTANT: a timeout / DNS / reset is the log UNDELIVERED, not refused. Spending an
         // attempt on it deleted check-in and rollout logs after five bad moments on mobile data.
-        failure = isNetworkError(e) ? 'transport' : 'rejected';
+        failure = leavesWorkUndelivered(e) ? 'transport' : 'rejected';
         if (TRACE) {
           console.log(
             `${TAG} FAILED ${describe(body)} - ${e?.response?.status ?? 'no response'}: ${e?.message ?? e}\n` +

@@ -40,6 +40,7 @@ import {
   createdAtTheDoor,
   offlineCheckInModule,
   isSameLocalDay,
+  workLeadId,
 } from '../../utils/offline-lead-work';
 import {
   getOfflineWork,
@@ -73,7 +74,11 @@ import { LeadService } from '../../services/api/leads';
 import { triggerThresholdCrossing, prepareHaptic } from '../../utils/haptics';
 import { logEvent } from '../../services/api/LoggerService';
 
-const LEAD_HANDOFF_MAX_MS = 15000;
+// How long a just-synced lead's card is kept while the server list catches up, and how often the
+// list is re-read meanwhile. The card now retires when the server list CONTAINS the lead - the
+// cap is only the give-up for a read that never shows it (weak signal, replica lag).
+const LEAD_HANDOFF_MAX_MS = 45000;
+const LEAD_HANDOFF_RETRY_MS = 4000;
 
 export default function LeadsPage() {
   const queryClient = useQueryClient();
@@ -302,16 +307,35 @@ export default function LeadsPage() {
     const release = () =>
       setJustLandedIds((prev) => prev.filter((id) => !landed.includes(id)));
 
-    const cap = setTimeout(release, LEAD_HANDOFF_MAX_MS);
+    setTimeout(release, LEAD_HANDOFF_MAX_MS);
 
+    // ⚠️ Do NOT release when this refetch settles. "Settled" is not "the list has the lead": on a
+    // weak connection the fetch can fail (cachedFetch then answers with the stale on-disk list) or
+    // return before the new lead is readable, and releasing there made the card vanish and
+    // reappear later. The effects below release it once the server list holds the id.
     queryClient
       .invalidateQueries({ queryKey: ['leads'] })
-      .catch((err) => console.warn('[Leads] post-upload refresh failed:', err))
-      .finally(() => {
-        clearTimeout(cap);
-        release();
-      });
+      .catch((err) => console.warn('[Leads] post-upload refresh failed:', err));
   }, [offlineWork, queryClient]);
+
+  useEffect(() => {
+    if (!justLandedIds.length) return;
+    const onServer = new Set(serverLeadIds);
+    const settled = offlineWork
+      .filter((w) => justLandedIds.includes(w.clientId) && onServer.has(workLeadId(w)))
+      .map((w) => w.clientId);
+    if (settled.length) {
+      setJustLandedIds((prev) => prev.filter((id) => !settled.includes(id)));
+    }
+  }, [serverLeadIds, offlineWork, justLandedIds]);
+
+  useEffect(() => {
+    if (!justLandedIds.length) return undefined;
+    const timer = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] }).catch(() => {});
+    }, LEAD_HANDOFF_RETRY_MS);
+    return () => clearInterval(timer);
+  }, [justLandedIds.length, queryClient]);
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -755,7 +779,9 @@ export default function LeadsPage() {
         <FlatList
           data={filteredLeads}
           keyExtractor={(item, index) =>
-            String(item._id ?? (item as any).id ?? item.leadId ?? index)
+            String(
+              (item as any).clientId ?? item._id ?? (item as any).id ?? item.leadId ?? index
+            )
           }
           windowSize={15}
           initialNumToRender={8}

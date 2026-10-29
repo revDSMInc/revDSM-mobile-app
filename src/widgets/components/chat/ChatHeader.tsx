@@ -131,8 +131,10 @@ export const ChatHeader = ({
       <Pressable
         onPress={handleBack}
         className="flex-row items-center mb-4"
-        hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-        style={{ zIndex: 9999 }}
+        // Hug the content and keep the bottom slop inside the mb-4 gap - a full-width row with a 20px
+        // slop reached into the title row and swallowed the first tap on the pin icon (went back).
+        hitSlop={{ top: 20, bottom: 8, left: 20, right: 20 }}
+        style={{ alignSelf: 'flex-start' }}
       >
         <View
           className="w-8 h-8 rounded-full items-center justify-center mr-2"

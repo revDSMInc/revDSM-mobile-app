@@ -10,11 +10,26 @@ import { getSessionOwner, registerSessionResetHook } from '../services/sessionSc
 import { isOwnedBy } from './session-scope';
 import { adoptLocalFileAsCached, forgetWarmedUri } from './imageFileCache';
 import { resolveS3Url } from './s3-utils';
+import {
+  PendingPhotoLog,
+  buildPhotoLogDetails,
+  photoLogReady,
+  removePending,
+  upsertPending,
+} from './pending-photo-log';
 import { isCacheFile } from './image-cache-policy';
+import { trackLeadPhotoUrls } from '../services/leadPhotoIndex';
 import {
   MAX_PHOTO_ATTEMPTS,
   isUnauthorizedError,
 } from './upload-retry-policy';
+import {
+  afterFreeFailure,
+  classifyTransferFailure,
+  clearFreeFailure,
+  isFreeFailure,
+  makeDueNow,
+} from './transfer-failure';
 import {
   IDEMPOTENCY_FIELD,
   isDuplicateUploadResponse,
@@ -70,7 +85,18 @@ export interface UploadQueueItem {
   parkedAt?: string;
   lastError?: string;
   annotation?: UploadQueueAnnotation;
+  /**
+   * Free-failure streak (see utils/transfer-failure.ts). A timeout / reset / gateway error on a
+   * weak cellular link says nothing about the PHOTO, so it spends no `retryCount`: the item waits
+   * until `nextAttemptAt` (exponential backoff + jitter) and is only parked after a full day of
+   * failing. `canDrain` skips an item that is still waiting.
+   */
+  transientSince?: number;
+  transientCount?: number;
+  nextAttemptAt?: number;
 }
+
+const PENDING_PHOTO_LOGS_KEY = 'pending_photo_logs';
 
 class UploadQueueManager {
   private queue: UploadQueueItem[] = [];
@@ -131,7 +157,45 @@ class UploadQueueManager {
   }
 
   private canDrain(i: UploadQueueItem): boolean {
-    return !isClientId(i.leadId) && !i.parkedAt && this.ownedByCurrentSession(i);
+    return (
+      !isClientId(i.leadId) &&
+      !i.parkedAt &&
+      (i.nextAttemptAt ?? 0) <= Date.now() &&
+      this.ownedByCurrentSession(i)
+    );
+  }
+
+  /**
+   * A real reconnect / return to the foreground: every photo that was backing off is due now.
+   * (The backoff protects a link that is still bad; a link that just came back is a new fact.)
+   */
+  public releaseWaiting(): void {
+    let touched = false;
+    this.queue = this.queue.map((item) => {
+      const next = makeDueNow(item);
+      if (next !== item) touched = true;
+      return next;
+    });
+    if (touched) this.saveQueue();
+  }
+
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Wake the drain when the earliest backing-off photo becomes due (the 60 s sweep is the net). */
+  private scheduleNextRetry(): void {
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    const now = Date.now();
+    const waits = this.queue
+      .filter((i) => !i.parkedAt && this.ownedByCurrentSession(i) && (i.nextAttemptAt ?? 0) > now)
+      .map((i) => (i.nextAttemptAt as number) - now);
+    if (!waits.length) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.processQueue();
+    }, Math.max(1000, Math.min(...waits)));
   }
 
   public hasUploadableWork(): boolean {
@@ -162,7 +226,12 @@ class UploadQueueManager {
       if (!item.parkedAt || !this.ownedByCurrentSession(item)) return item;
       if (id && item.id !== id) return item;
       touched += 1;
-      return { ...item, retryCount: 0, parkedAt: undefined, lastError: undefined };
+      return {
+        ...clearFreeFailure(item),
+        retryCount: 0,
+        parkedAt: undefined,
+        lastError: undefined,
+      };
     });
     if (!touched) return 0;
     this.saveQueue();
@@ -344,10 +413,19 @@ class UploadQueueManager {
         console.log(`[UploadQueue] Upload success: ${activeItem.id}`);
       } catch (error) {
         if ((error as any)?.localFileMissing) {
-          console.warn(`[UploadQueue] Local file missing for ${activeItem.id}; dropping (photo must be re-taken).`);
-          this.removeItem(activeItem.id);
+          // ⚠️ PARK, never drop. This used to delete the item with only a console line, so a photo
+          // taken at a door vanished without the rep ever being told. A parked item stays on the
+          // Pending Uploads screen with its reason, where the rep can re-take or remove it.
+          console.warn(`[UploadQueue] Local file missing for ${activeItem.id}; parking (photo must be re-taken).`);
+          const at = this.queue.findIndex((i) => i.id === activeItem.id);
+          if (at !== -1) {
+            this.queue[at] = {
+              ...activeItem,
+              parkedAt: new Date().toISOString(),
+              lastError: 'The photo file is no longer on this device. Re-take it, or remove this entry.',
+            };
+          }
           this.saveQueue();
-          this.cleanupPersistedFile(activeItem);
           continue;
         }
         if (!this.checkOnline()) {
@@ -374,6 +452,29 @@ class UploadQueueManager {
           // The session is gone, not the photo. Keep it, spend no attempt, and stop: the next
           // login (same rep) drains it.
           console.log('[UploadQueue] Session expired during upload. Pausing; the photo is kept.');
+          break;
+        }
+
+        /**
+         * ⚠️ A failure that says nothing about the PHOTO (timeout, reset, DNS/TLS, 408/429, 5xx,
+         * a carrier's 403) is NOT an attempt. Spending one per failure parked a good photo after
+         * ~30 s of a weak cellular link. Keep it, back off with jitter, and stop this pass: the
+         * rest of the queue would hit the same dead link. It is parked only after a day of this.
+         */
+        const failure = classifyTransferFailure(error);
+        if (isFreeFailure(failure)) {
+          const reason = (error as any)?.message;
+          const at = this.queue.findIndex((i) => i.id === activeItem.id);
+          if (at !== -1) {
+            this.queue[at] = afterFreeFailure(activeItem, {
+              error: reason ? String(reason) : undefined,
+            });
+          }
+          this.saveQueue();
+          console.log(
+            `[UploadQueue] ${failure} failure for ${activeItem.id}; keeping it and backing off (no attempt spent).`
+          );
+          this.scheduleNextRetry();
           break;
         }
 
@@ -487,13 +588,16 @@ class UploadQueueManager {
       console.log(`[UploadQueue] ${item.id} was already stored (idempotent replay).`);
     }
 
-    this.logUploadSuccessAsync(item, response, coords, existingUrls);
+    this.recordPhotoLog(item, response, coords, existingUrls);
 
     try {
       const uploaded = this.matchUploadedPhoto(response, item, existingUrls);
       const uploadedUrl = uploaded?.secureUrl || resolveS3Url(uploaded?.s3url);
-      if (uploadedUrl) await adoptLocalFileAsCached(item.uri, uploadedUrl);
+      if (uploadedUrl && (await adoptLocalFileAsCached(item.uri, uploadedUrl))) {
+        trackLeadPhotoUrls(item.leadId, [uploadedUrl]);
+      }
       if (item.annotation && uploaded?.s3url) await this.adoptUnderEveryUrlForm(item.uri, uploaded.s3url, uploaded.bucketName);
+      if (item.annotation && uploaded?.s3url) trackLeadPhotoUrls(item.leadId, [resolveS3Url(uploaded.s3url)]);
     } catch (adoptErr) {
       console.warn('[UploadQueue] Could not adopt local file into image cache:', adoptErr);
     }
@@ -662,78 +766,136 @@ class UploadQueueManager {
     );
   }
 
-  private async logUploadSuccessAsync(
+  /**
+   * ⚠️ Recorded DURABLY before the queue item is removed (see utils/pending-photo-log.ts). The log used to
+   * be built in a fire-and-forget call that waited in memory for the server row, so closing or losing the
+   * app right after an offline sync lost it while the photo arrived.
+   */
+  private recordPhotoLog(
     item: UploadQueueItem,
     response: any,
     coords: { latitude: number; longitude: number },
     existingUrls: Set<string>
   ) {
+    if (!item.userId) return;
+    const immediate = this.matchUploadedPhoto(response, item, existingUrls);
+    const entry: PendingPhotoLog = {
+      id: item.id,
+      userId: item.userId,
+      leadId: item.leadId,
+      categoryName: item.categoryName,
+      subcategory: item.subcategory,
+      timestamp: item.timestamp,
+      coordinates: coords,
+      existingUrls: Array.from(existingUrls),
+      s3url: immediate?.s3url || '',
+      bucketName: immediate?.bucketName || '',
+      lookups: 0,
+    };
+    this.savePendingPhotoLogs(upsertPending(this.readPendingPhotoLogs(), entry));
+    void this.settlePhotoLogs();
+  }
+
+  private readPendingPhotoLogs(): PendingPhotoLog[] {
     try {
-      const userId = item.userId;
-      if (!userId) return;
+      const saved = storage.getString(PENDING_PHOTO_LOGS_KEY);
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
 
-      const isAnnotated = item.subcategory?.includes('(Annotated)');
-      let s3url = '';
-      let bucketName = '';
+  private savePendingPhotoLogs(list: PendingPhotoLog[]) {
+    try {
+      storage.set(PENDING_PHOTO_LOGS_KEY, JSON.stringify(list));
+    } catch (e) {
+      console.warn('[UploadQueue] Failed to save pending photo logs:', e);
+    }
+  }
 
-      const immediateMatch = this.matchUploadedPhoto(response, item, existingUrls);
+  public hasPendingPhotoLogsFor(leadId: string): boolean {
+    return this.readPendingPhotoLogs().some((p) => p.leadId === leadId);
+  }
 
-      if (immediateMatch && immediateMatch.s3url) {
-        s3url = immediateMatch.s3url;
-        bucketName = immediateMatch.bucketName || '';
-      } else {
-        // The server list can lag the upload, and after an offline sync many photos land at once. Wait
-        // for THIS photo's row (about two minutes at most) rather than send the log with no image:
-        // the portal draws the picture from `imageData.s3url`, so an empty one is an empty log.
-        const waits = [1000, 2000, 3000, 5000, 5000, 10000, 15000, 30000, 60000];
-        for (const wait of waits) {
-          await new Promise<void>((resolve) => setTimeout(resolve, wait));
+  public hasPendingPhotoLogs(): boolean {
+    return this.readPendingPhotoLogs().some((p) => isOwnedBy(p.userId, getSessionOwner()));
+  }
+
+  private settling = false;
+  private settleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * One lookup per pending log per pass. A log whose image url is known (or whose passes ran out) is
+   * handed to `logEvent`, which holds it durably when offline; only then is the record removed.
+   */
+  public async settlePhotoLogs(): Promise<void> {
+    if (this.settling) return;
+    this.settling = true;
+    let waiting = false;
+    try {
+      const mine = this.readPendingPhotoLogs().filter((p) => isOwnedBy(p.userId, getSessionOwner()));
+      for (const record of mine) {
+        let current = record;
+        if (!photoLogReady(current)) {
+          if (!isOnline()) {
+            waiting = true;
+            continue;
+          }
           try {
-            const leadRes = await LeadService.workLead(item.leadId, userId);
-            const refreshedLead = leadRes.data?.data || leadRes.data;
-            const rows = Array.isArray(refreshedLead?.salesPhotos) ? refreshedLead.salesPhotos : [];
-            const matched = this.pickUploadedPhoto(rows, item, existingUrls);
-            if (matched?.s3url) {
-              s3url = matched.s3url;
-              bucketName = matched.bucketName || '';
-              break;
-            }
+            const leadRes = await LeadService.workLead(current.leadId, current.userId);
+            const lead = leadRes.data?.data || leadRes.data;
+            const rows = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
+            const matched = this.pickUploadedPhoto(
+              rows,
+              {
+                categoryName: current.categoryName,
+                subcategory: current.subcategory,
+                timestamp: current.timestamp,
+              } as UploadQueueItem,
+              new Set(current.existingUrls)
+            );
+            current = {
+              ...current,
+              lookups: current.lookups + 1,
+              s3url: matched?.s3url || '',
+              bucketName: matched?.bucketName || '',
+            };
           } catch (err) {
+            // Not a spent pass: the lookup itself failed (no signal), the photo is still unlogged.
             console.warn('[UploadQueue] Photo lookup for the activity log failed:', err);
+            waiting = true;
+            continue;
+          }
+          if (!photoLogReady(current)) {
+            this.savePendingPhotoLogs(upsertPending(this.readPendingPhotoLogs(), current));
+            waiting = true;
+            continue;
+          }
+          if (!current.s3url) {
+            console.warn(`[UploadQueue] Could not find the uploaded photo for ${current.id}; logging it without an image url`);
           }
         }
-        if (!s3url) {
-          console.warn(`[UploadQueue] Could not find the uploaded photo for ${item.id}; logging it without an image url`);
+        try {
+          await logEvent('add', buildPhotoLogDetails(current));
+          this.savePendingPhotoLogs(removePending(this.readPendingPhotoLogs(), current.id));
+        } catch (logErr) {
+          console.warn('[UploadQueue] Analytics logging failed; will retry:', logErr);
+          waiting = true;
         }
       }
-
-      logEvent('add', {
-        user_id: userId,
-        module_type: isAnnotated ? 'annotated_photos' : 'inspection_photo',
-        created_by: userId,
-        meta: {
-          leadId: item.leadId,
-          category: item.categoryName,
-          subcategory: item.subcategory,
-          // The shared action-time key (see utils/offline-activity-log.ts); the photo's own capture time.
-          occurredAt: item.timestamp,
-          coordinates: coords,
-          size: 0,
-          action: isAnnotated ? 'annotated_photo_uploaded' : 'photo_uploaded',
-          image_url: s3url,
-          imageData: {
-            s3url,
-            bucketName,
-            category: item.categoryName,
-            subcategory: item.subcategory,
-            timestampTaken: item.timestamp,
-            coordinates: coords,
-          },
-        },
-      });
-    } catch (logErr) {
-      console.warn('[UploadQueue] Analytics logging failed:', logErr);
+    } finally {
+      this.settling = false;
     }
+    if (waiting) this.scheduleSettle();
+  }
+
+  private scheduleSettle() {
+    if (this.settleTimer) return;
+    this.settleTimer = setTimeout(() => {
+      this.settleTimer = null;
+      void this.settlePhotoLogs();
+    }, 5000);
   }
 }
 
@@ -749,17 +911,27 @@ export const startPhotoQueueSync = (): void => {
   if (photoSyncStarted) return;
   photoSyncStarted = true;
 
-  onReconnect(() => uploadQueueManager.processQueue());
+  onReconnect(() => {
+    uploadQueueManager.releaseWaiting();
+    void uploadQueueManager.processQueue();
+    void uploadQueueManager.settlePhotoLogs();
+  });
 
   AppState.addEventListener('change', (next) => {
-    if (next === 'active') uploadQueueManager.processQueue();
+    if (next !== 'active') return;
+    uploadQueueManager.releaseWaiting();
+    void uploadQueueManager.processQueue();
+    void uploadQueueManager.settlePhotoLogs();
   });
 
   setInterval(() => {
     if (!isOnline()) return;
+    if (uploadQueueManager.hasPendingPhotoLogs()) void uploadQueueManager.settlePhotoLogs();
     if (!uploadQueueManager.hasUploadableWork()) return;
     uploadQueueManager.processQueue();
   }, PHOTO_RETRY_SWEEP_MS);
 
   uploadQueueManager.processQueue();
+  // A log recorded before the app was closed is finished on the next launch.
+  void uploadQueueManager.settlePhotoLogs();
 };

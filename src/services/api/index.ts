@@ -12,6 +12,8 @@ import { findClientIdInUrl, leadNotSyncedError } from '../../utils/lead-sync-sta
 import SocketManager from '../SocketManager';
 import {
   beginRequest,
+  beginUpload,
+  endUpload,
   classifyRequestError,
   endRequest,
   isConnectionStable,
@@ -56,7 +58,14 @@ axiosInstance.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
     logTraffic(`→ ${config.method?.toUpperCase()}`, config.url, config.data);
-    (config as any).__inFlightId = beginRequest(config.url);
+    // ⚠️ A multipart upload is NOT judged by the stall watcher: on a weak uplink it is legitimately
+    // "slow" for a long time, and being mistaken for a dead channel made the app probe, call
+    // itself offline and restart the file. It is tracked as an upload instead (see connectivity).
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      (config as any).__uploadId = beginUpload();
+    } else {
+      (config as any).__inFlightId = beginRequest(config.url);
+    }
     return config;
   },
   (error) => Promise.reject(error)
@@ -68,11 +77,13 @@ const PARKED_NOTICE_COOLDOWN_MS = 60_000;
 axiosInstance.interceptors.response.use(
   (res) => {
     endRequest((res.config as any)?.__inFlightId ?? null, true);
+    endUpload((res.config as any)?.__uploadId);
     reportRequestSignal('success');
     logTraffic(`← ${res.status} ${res.config.method?.toUpperCase()}`, res.config.url, res.data);
     return res;
   },
   async (error) => {
+    endUpload((error.config as any)?.__uploadId);
     endRequest(
       (error.config as any)?.__inFlightId ?? null,
       typeof error?.response?.status === 'number'

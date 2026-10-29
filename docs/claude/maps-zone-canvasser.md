@@ -1238,3 +1238,10 @@ Report: tapping the funnel on the Zone Canvasser map "did nothing" - `ZoneCanvas
 `navigation/index.tsx` `RevRender.onGenerateAll` is now typed `Promise<{ accepted; failed; firstError? } | void>` so the RevRender screen can await the submit before clearing its queue (see `docs/claude/offline.md`, "revRender queue resilience"). No map behaviour changed.
 
 - No map change: `navigation/index.tsx` only widened the `RevRender.onGenerateAll` param type (see the entry above).
+
+### "Console Error: Mapbox [error] Unable to fetch region for region-florida" (dev red box)
+
+`@rnmapbox/maps` forwards every native log to `console.error` unless a log callback returns true, so a failed offline-region download raised the full-screen LogBox in dev. It is a **duplicate report of an already-handled failure**: `offlineMapManager` gets the same failure through the pack's `onError`, marks the area `error` (counted in `failed`) and the rep can retry it. `OfflineMapManager.init()` now installs `Mapbox.Logger.setLogCallback(mapboxLogCallback)` (`utils/mapbox-log-noise.ts`), which downgrades only the known offline-region / connectivity shapes to `console.log('[mapbox]')`.
+
+- WARNING: **do not widen the regex to all Mapbox errors** - a style-parse or auth error is a real fault and must still reach `console.error`.
+- The download itself is not "fixed" by this: a region that cannot be reached still ends as `error` and needs a retry on a better link. Test: `__tests__/utils/mapbox-log-noise.test.ts`.
