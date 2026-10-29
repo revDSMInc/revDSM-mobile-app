@@ -872,3 +872,6 @@ row (appointment photos, gallery, files, voice) gates itself.
   clone (the poll-draft suite this file previously claimed existed had been lost exactly that way).
 - Not device-verified: the sheet above the keyboard on iOS/Android, tapping an option (optimistic
   tick and bar), two devices voting at once, and "View votes".
+
+### Merge note: poll branch into multi-tenant - lead-chat pins (2026-10-29)
+`useChatSession.ts` conflicted: the multi-tenant side had dropped the lead-chat pin request (left to `SocketManager.joinRoom`'s socket `get-pinned-messages`), the poll branch had replaced it with `ChatService.getPinnedMessages` (`GET /chat/v1/:chatId/pinned`, REVDSM-1313 removed the socket handler). Resolution: the REST read is kept, but it **merges** (`mergePins`) and only marks listed ids pinned - the branch's version replaced `pinnedMessages` and set every unlisted message `isPinned: false`, which is exactly the "pins vanish on reopen" bug recorded above. ⚠️ `getPinnedMessages` now returns a Promise; `widgets/components/chat/Chat.tsx` calls it fire-and-forget, so it carries a `.catch`. Not device-verified.
