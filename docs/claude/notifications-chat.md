@@ -769,7 +769,7 @@ Ticket: add GIFs to chat. The attach menu (`+`) gets a **GIF** row that opens a 
 | send | `useChatLogic.sendGif` → `sendTextMessage` |
 | key | `GIPHY_API_KEY` in `.env` → `config/env.ts` (optional) |
 
-- **A GIF is a TEXT message whose whole body is a `media*.giphy.com` / `i.giphy.com` `.gif|.webp` URL.** The backend has no GIF type, so web and older builds show the link and nothing needed a server change. `isGifMessageText` is an exact-match on the trimmed body — ⚠️ do not loosen it to "contains": a sentence with a link in it must stay text.
+- **A GIF is SENT as a TEXT message whose whole body is a `media*.giphy.com` / `i.giphy.com` `.gif|.webp` URL** — that is still the request, but the server no longer stores it that way: see the S3 follow-up below. `isGifMessageText` is an exact-match on the trimmed body — ⚠️ do not loosen it to "contains": a sentence with a link in it must stay text.
 - ⚠️ **GIPHY is called with plain `fetch`, never the axios wrapper** — that attaches the revDSM bearer token to every request.
 - The sent URL is the `downsized` rendition with its query string stripped; the grid uses `fixed_width_small`. Rating is capped at `pg-13`.
 - **No key ⇒ the picker shows "not set up", the app does not throw** (`GIPHY_API_KEY` is deliberately not in `required()`). Production needs GIPHY's upgraded key and the "Powered by GIPHY" line, which the sheet renders.
@@ -778,6 +778,44 @@ Ticket: add GIFs to chat. The attach menu (`+`) gets a **GIF** row that opens a 
 - Tests: `__tests__/utils/gif-message.test.ts`. ⚠️ Needs a device check on iOS and Android: GIFs animate in the grid and bubble, the sheet sits above the keyboard, long-press on a GIF bubble opens the reaction bar, and a failed load falls back to the link.
 
 - **Android showed GIFs as a still frame (REVDSM-575 follow-up).** Root cause: React Native 0.84 does **not** bundle Fresco's animated decoders (`node_modules/react-native/gradle/libs.versions.toml` lists only `fresco`, `middleware`, `imagepipeline-okhttp3`, `ui-common`), so the stock `<Image>` decodes only the first frame on Android while iOS animates natively. Fix is in `android/app/build.gradle`: `animated-gif`, `animated-webp` and `webpsupport` at the SAME version as RN's `fresco`. ⚠️ Needs a **native rebuild** (`yarn android`) — Metro reload does nothing — and the three versions must be bumped together with every RN upgrade. This also makes any other animated GIF/WebP `<Image>` in the app animate on Android.
+
+### A sent GIF is kept in S3, not linked (REVDSM-575 follow-up)
+
+Storing the GIPHY URL stored a third party's link: outside the signed-URL boundary every other chat
+attachment sits behind, dead once GIPHY retires the rendition, and a bare link in any client that
+does not special-case the URL (the web portal showed exactly that). The server now fetches the URL
+once, on send, and keeps the bytes in S3 like a photo — backend `core/services/chat/gifAttachment.ts`,
+wired into `ChatHandler.sendMessage` and `ChannelChatHandler.send`.
+
+So a GIF comes back as a **captionless message carrying one `image/gif` file**: `message` is a single
+space (what a photo-only post has always been) and `files[0].filePath` is the S3 key the app signs
+through `url/v1/secure/multiple` like any other attachment. `utils/gif-message.ts` grew
+`isGifFile` / `isGifFileMessage` for that shape; `isGifMessageText` stays, and is **not** dead code —
+it is every GIF stored before this change (those rows were not backfilled) and the app's own
+optimistic bubble.
+
+- The bubble renders a stored GIF through the same `GifMessage`, from the signed URL (`gifUri` in
+  `ChatMessageBubble`), and the lone-photo branch is gated `!gifUri` so it is not also drawn as a
+  cropped still. ⚠️ `gifUri` waits for an `http(s):`/`file:` URL: handing `GifMessage` an unsigned
+  key would show the fallback link.
+- ⚠️ **`sendGif`'s optimistic bubble had to change shape too** (`sendTextMessage(url, reply, { asGif: true })`):
+  it carries the GIF as its single file with no text, because `useChatSession` matches a pending
+  message to the server's copy by text or by files — a URL-texted optimistic bubble matches neither
+  and the GIF arrives **twice**.
+- ⚠️ **A GIF is still not an upload for the channel settings.** The handler passes `isGif` so
+  `evaluatePost` sees `hasFiles: false`, exactly as a poll does — otherwise the attach `+` would offer
+  a GIF in a channel with uploads off and the server would refuse it with `UPLOADS_DISABLED`.
+- A GIF that cannot be fetched (timeout, non-GIF response, GIPHY down) falls back to posting the URL
+  as text, so a sender never loses the message; it then renders through `isGifMessageText` as before.
+- Previews read "Sent a GIF" / `GIF` off either shape (`ThreadItems`, `ChatBars`, the bubble's reply
+  quote), and the push body says "sent a GIF" instead of "shared 1 file(s)".
+- ⚠️ **A WebP counts as a GIF only under the server's `…/gifs/` key** — a GIPHY WebP rendition is
+  animated, but a still photo can carry the same extension, and it must keep the photo bubble.
+- Tests: `tests/chat/gif-message.test.ts` (both shapes, and the WebP rule). Backend side:
+  `src/core/services/chat/gifAttachment.test.ts` — the host allowlist there is what the server will
+  fetch from a caller-supplied body, so ⚠️ do not loosen it.
+- Not device-verified: a GIF sent from the app and from a channel (one bubble, animating, from the
+  S3 copy), an old URL-bodied GIF still rendering, and a GIF reply quote.
 
 ## Team-channel polls (REVUIUX-577)
 

@@ -9,7 +9,7 @@ import { buildJobNumber } from '../../../utils/office-initials';
 import { sortLeadThreadsByLeadTime } from '../../../utils/lead-thread-order';
 import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { ACK_AMBER } from './chat-confirmation';
-import { isGifMessageText } from '../../../utils/gif-message';
+import { isGifFileMessage, isGifMessageText } from '../../../utils/gif-message';
 
 export function MainTabOption({ label, active, onPress }: any) {
   const { colors } = useTheme();
@@ -222,7 +222,11 @@ export function LeadChatThreadItem({ chat, onPress, installerView }: any) {
   );
 
   const senderName = lastMsg?.senderDetails?.firstName || 'User';
-  const messageContent = isGifMessageText(lastMsg?.message) ? 'Sent a GIF' : lastMsg?.message?.trim() || 'Sent an attachment';
+  // A GIF reads as an attachment once it is stored as one, so both shapes are checked.
+  const messageContent =
+    isGifMessageText(lastMsg?.message) || isGifFileMessage(lastMsg)
+      ? 'Sent a GIF'
+      : lastMsg?.message?.trim() || 'Sent an attachment';
 
   return (
     <TouchableOpacity

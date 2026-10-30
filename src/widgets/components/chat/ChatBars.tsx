@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { GIF_REPLY_LABEL, isGifFileMessage, isGifMessageText } from '../../../utils/gif-message';
 
 interface ReplyBarProps {
   replyingTo: any;
@@ -53,7 +54,10 @@ export function ChatReplyBar({ replyingTo, currentUserId, onCancel }: ReplyBarPr
   let replyIcon = null;
   let replyLabel = replyingTo.text || replyingTo.message || '';
 
-  if (isReplyVoice) {
+  if (isGifMessageText(replyLabel) || isGifFileMessage(replyingTo)) {
+    replyIcon = 'images';
+    replyLabel = GIF_REPLY_LABEL;
+  } else if (isReplyVoice) {
     replyIcon = 'mic';
     replyLabel = `Voice Message ${replyingTo.duration ? `(${replyingTo.duration})` : ''}`;
   } else if (replyFileType === 'image' || replyingTo.image) {

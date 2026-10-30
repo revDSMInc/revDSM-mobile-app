@@ -36,7 +36,7 @@ import { VoiceNotePlayer } from './VoiceNotePlayer';
 import { DownloadProgressRing } from './DownloadProgressRing';
 import { ChatMessageText } from './ChatMessageText';
 import { GifMessage } from './GifMessage';
-import { GIF_REPLY_LABEL, isGifMessageText } from '../../../utils/gif-message';
+import { GIF_REPLY_LABEL, isGifFileMessage, isGifMessageText } from '../../../utils/gif-message';
 import { ScrollView } from 'react-native-gesture-handler';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -333,6 +333,16 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     }
     return resolved;
   }, [primaryFile, msg.image, msg.imageUrl, msg.video, msg.videoUrl, imageUrls]);
+
+  // A picked GIF is stored in S3 like a photo, so it arrives as a lone GIF
+  // attachment rather than a GIPHY URL in the body; it renders in the same
+  // inline bubble, from the signed URL `mediaUri` already resolved. Until that
+  // URL is in hand there is nothing to animate, and the photo branch shows its
+  // own placeholder.
+  const gifUri = useMemo(() => {
+    if (!isGifFileMessage(msg) || !/^(https?|file):/.test(mediaUri)) return '';
+    return mediaUri;
+  }, [msg, mediaUri]);
 
   const imageFiles = useMemo(() => {
     return files.filter((f: any) => {
@@ -635,7 +645,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     let replyIcon = null;
     let replyLabel = text;
 
-    if (isGifMessageText(text)) {
+    if (isGifMessageText(text) || isGifFileMessage(replyTo)) {
       replyIcon = 'images';
       replyLabel = GIF_REPLY_LABEL;
     } else if (isReplyVoice) {
@@ -1303,7 +1313,16 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                     </View>
                   )}
                   {imageFiles.length >= 2 && renderImageGrid()}
-                  {fileType === 'image' && imageFiles.length < 2 && (
+                  {!!gifUri && (
+                    <View className="p-2">
+                      <GifMessage
+                        url={gifUri}
+                        maxWidth={MAX_BUBBLE_WIDTH - 40}
+                        onLongPress={() => setShowReactionBar(true)}
+                      />
+                    </View>
+                  )}
+                  {fileType === 'image' && imageFiles.length < 2 && !gifUri && (
                     <View className="p-2 items-center">
                       <TouchableOpacity
                         onPress={() => handleMediaPress('image')}
