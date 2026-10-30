@@ -19,6 +19,8 @@ buildscript {
         // Firebase Cloud Messaging — reads android/app/google-services.json at build
         // time. Without this plugin the file is inert and FCM never initialises.
         classpath("com.google.gms:google-services:4.4.2")
+        // Crashlytics: uploads R8 mapping files so release stack traces are readable.
+        classpath("com.google.firebase:firebase-crashlytics-gradle:3.0.2")
     }
 }
 

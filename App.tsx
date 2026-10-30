@@ -41,6 +41,8 @@ import { queryClient } from './src/services/api/queryClient';
 import SplashScreen from './src/screens/Splash';
 import { useAuth } from './src/hooks/useAuth';
 import { AnnotationRenderHost } from './src/widgets/common/AnnotationRenderHost';
+import { AppErrorBoundary } from './src/widgets/common/AppErrorBoundary';
+import { logBreadcrumb, setCrashUser } from './src/services/crashReporting';
 
 const MAX_BOOTSTRAP_WAIT_MS = 8000;
 
@@ -50,7 +52,14 @@ function AppContent() {
   const { isDark, colors } = useTheme();
   const insets = useSafeAreaInsets();
   useSocketManager();
-  const { loading, isInitialized } = useAuth();
+  const { loading, isInitialized, user } = useAuth();
+
+  // Opaque ids only (no email/name) so a crash can be tied to a rep without storing PII; cleared on logout.
+  const crashUserId = user?._id || user?.id || null;
+  const crashRole = user?.role || user?.roleName || null;
+  React.useEffect(() => {
+    setCrashUser(crashUserId ? { id: String(crashUserId), role: crashRole && String(crashRole), company: user?.companyId ? String(user.companyId) : null } : null);
+  }, [crashUserId, crashRole, user?.companyId]);
 
   const [animationDone, setAnimationDone] = useState(false);
   const [bootstrapTimedOut, setBootstrapTimedOut] = useState(false);
@@ -108,6 +117,7 @@ function AppContent() {
         onReady={() => {
           const route = navigationRef.getCurrentRoute();
           setCurrentRouteName(route?.name || null);
+          if (route?.name) logBreadcrumb(`screen: ${route.name}`);
         }}
         onStateChange={(state) => {
           if (!state) return;
@@ -121,6 +131,7 @@ function AppContent() {
             }
           }
           setCurrentRouteName(route.name);
+          logBreadcrumb(`screen: ${route.name}`);
         }}
       >
         <RootNavigator currentRouteName={currentRouteName} />
@@ -143,6 +154,7 @@ function AppContent() {
 
 export default function App() {
   return (
+    <AppErrorBoundary>
     <SafeAreaProvider>
       <KeyboardProvider>
         <GestureHandlerRootView style={styles.root}>
@@ -160,6 +172,7 @@ export default function App() {
         </GestureHandlerRootView>
       </KeyboardProvider>
     </SafeAreaProvider>
+    </AppErrorBoundary>
   );
 }
 

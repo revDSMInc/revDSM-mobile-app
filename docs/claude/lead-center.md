@@ -2618,6 +2618,9 @@ Ticket: once a text note is placed and confirmed, it must not move any more; it 
 - Edit Text alone does NOT unlock dragging - only the open style panel does.
 - Not verified on device: that a one-finger drag that starts on a locked note does nothing (it does not pan the photo either - the note still holds the touch, as before).
 - **Follow-up - notes ARE draggable while the Text tool is active; the tick locks them.** The prop is now `textMoveMode` on `AnnotationCanvas` / `moveMode` on `DraggableText`: `'all'` while `activeTool === 'text'` (every note, before the tick), `'selected'` while the Adjust Style panel is open (that note only), else `'none'`. `commitTextMode` (the tick) also clears the selection and closes the style / font panels. Cancel (X) still restores the notes from before the mode was entered. Not verified on device.
+- **Follow-up - one editor, three entry points.** The classic `ManagePhotosModal`, `DynamicManagePhotosView` and the order sheet (`orderSheetAnnotation`) all navigate to the SAME `screens/ImageAnnotation`, so the locked-note rule, undo / redo and reset apply to all of them with no per-caller wiring. (The classic modal only creates NEW annotations, so it has no saved history to undo - only the session's own steps.)
+- **Reset (the refresh button) now asks first.** `confirmResetCanvas`: with changes since open it shows "Reset changes?" (Cancel / Reset); Reset runs `handleResetCanvas` = back to the marks and undo / redo stacks the screen OPENED with (saved annotations are kept - see `resetToBaseline`), closes the note menu / style panel, and returns the photo to its normal fit position (`resetZoom`). The dialog is shown EVERY time, also when nothing has changed (a skipped dialog read as 'the warning is missing'). Not verified on device.
+- **Follow-up - the reset warning uses the app's `ConfirmDialog`** (tone `warn`, Cancel / Reset, 'This cannot be undone.' note) instead of a native `Alert`, like the order-sheet 'Reset all changes'. State: `showResetConfirm`. Not verified on device.
 
 ## RevRender failures: five identical cards became one row
 
@@ -2664,3 +2667,20 @@ There is ONE editor (`screens/ImageAnnotation`) and ONE order-sheet opener (`ope
 - **Order sheet, Job docs** (Lead Center, and My Deals detail which reuses Lead Center): `JobDocsSection.handleAnnotateOrderSheet` -> `openOrderSheetEditor`; its list already warms each sheet (`resolveDocs`).
 - **Order sheet, job builder before submit AND the My Deals edit wizard:** `SummaryFinalizeCards.handleAnnotateOrderSheet` -> `openOrderSheetEditor` with the full doc (`filePath`, `bucketName`, `annotation`). ⚠️ This tile did NOT warm its sheets, so its pencil only worked offline if the Job-docs list had been opened first. It now runs `warmOrderSheetForOffline` over `orderSheetFiles` itself (server-held sheets only; also keeps the clean original of an annotated one).
 - A sheet that exists only locally (not yet uploaded / no `serverId`) has no pencil, by design (`canAnnotateOrderSheet`), so there is nothing to annotate offline before it lands on the server.
+
+### REVUIUX-571 follow-up - undo/redo missing on the 2nd open of a saved annotation
+
+- **Root cause:** the first save of an annotation (queue mode `new`, POST `images` with `annotations`) never refreshed the saved-annotation docs
+  (`['leadAnnotations', leadId]` + the MMKV `lead_annotations:<leadId>` copy). Only the re-edit PATCH path invalidated them, and `onSaveSuccess`
+  invalidates when the job is only ENQUEUED (before the upload). So the next open found no doc for the new photo, drew on the flattened copy with
+  no marks, and Undo/Redo had nothing to restore.
+- **Fix:** `uploadQueue.refreshAnnotationDocs(leadId)` re-reads `GET leads/:id/annotations`, writes the MMKV cache and `setQueryData`; called
+  after BOTH the `new` upload and the re-edit PATCH.
+- Not covered (by design): reopening a re-edit while its own save is still queued shows the pre-save doc; a pending `new` annotation has no server id
+  to reopen. Not verified on device.
+
+## RevRender progress shows a stage word
+
+`OperationalSections.tsx` label next to the bar was a fixed "Rendering". It now follows `renderPercent` via `utils/revrender-stage.ts` `revRenderStageWord`: 0-10 Warming up, 11-35 Engine running, 36-75 Rendering, 76-92 Hold On, 93-100 Almost Finished. The amber "Paused" label still wins while the status check cannot reach the server.
+
+Follow-up: the bar and word use a DISPLAYED percent (`stepShownPercent`, one stage per 700 ms tick), not the raw estimate, so a fast render still shows all five words. When the jobs finish, the bar runs to 100% (ending on "Almost Finished"), holds 1.2 s, then the card hides. A failed job cancels the sequence. Do NOT drive the label from `renderPercent` directly - it skips stages.

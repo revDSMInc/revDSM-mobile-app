@@ -5550,3 +5550,145 @@ row, its `data.blockers` replace this list; ask backend to treat a covered job a
 
 - WARNING: do not re-add a sync or error card to the lead list. The card put per-lead rows, progress counts, retry buttons and raw API errors on the screen a rep works from; failures are now deliberately silent outside Profile -> pending uploads.
 - `widgets/components/PendingLeadsBanner.tsx` is still in the tree but unreferenced, pending the client seeing the new strip. If they confirm, delete it; if they want the card back, it is one `ListHeaderComponent` line.
+
+## REVUIUX-584 - the drop-price GAUGE (`+ Nth Drop`)
+
+Lance's redesign of the drop-entry screen. The spec arrived as an interactive HTML prototype
+(artifact `DPEp77Tmk2wzAzFuCUNG7o`), NOT as screenshots: the hide/show rules only exist in its
+`dropSet()` / `rangeList()` functions, so the prototype's source is the spec. The ticket text
+describes the same rules loosely and in retail-only terms - read the code, not the prose.
+
+Pure rules in `utils/drop-gauge.ts`, drawn by `components/DropPriceGauge.tsx`, rendered above the
+inline drop field in `RolloutView.tsx`. Unit-tested in `tests/offline/drop-gauge.test.ts` (40
+cases) against the prototype's own figures (cost 1555 / par 3394 / retail 4933 / rollout 5000), so
+a regression surfaces as a disagreement with what the client signed off.
+
+- ⚠️ **THE PIN IS DISPLAY-ONLY - it is not a slider.** Confirmed by the repo owner: *"pin is
+  display only and it will depend on the drop price and will be changed accordingly"*. There is
+  deliberately no gesture handler in the component. A draggable pin would be a second way to set a
+  price, which contradicts the locked rollout the whole screen is built around.
+- ⚠️ **The editable rollout field in the prototype is a DEMO AFFORDANCE, not a requirement.** The
+  ticket is explicit: *"Do not allow reps to edit their rollout end prices. Keep how we have it how
+  it locks."* Lance made it editable only so the tier hide/show behaviour could be demonstrated.
+  Do not "restore" it.
+- ⚠️ **The gauge takes `tiers` (plan-fee-adjusted), NOT `logTiers`.** `RolloutView` holds both:
+  `tiers` applies `withPlanFee(plans, ..., method)` and feeds the COST / PAR / RETAIL tiles;
+  `logTiers` does not, because the activity log records pre-fee tiers. The gauge renders inches
+  below those tiles, so taking `logTiers` would print two different COST figures on one screen.
+- **Tier visibility cascades through every tier, not just retail.** A drop can never exceed the
+  rollout, so any tier above it is unreachable and is dropped rather than drawn as an unhittable
+  target: `retail < rollout` → 4 tiles; `retail === rollout` → 3 (no ROLLOUT tile, it would
+  duplicate RETAIL); `par < rollout` → COST/PAR/ROLLOUT; `cost < rollout` → COST/ROLLOUT; else
+  ROLLOUT alone. Every surviving tier is clamped to the rollout.
+- ⚠️ **The 55-60% / 60-65% bands are based on `min(retail, rollout)`, not on retail**, and the
+  upper band stops at **`par - 1`**, not at 65% of base. Both are the prototype's behaviour, and
+  both matter: the bands exist to describe BELOW-par pricing (the 2% and 5% commission tiers), so a
+  top band crossing par would tell a rep they are on reduced commission at a price that is
+  actually at par. They open on their own once a below-par price is typed.
+- ⚠️ **A band is NOT dropped just because the rollout is small.** An early test assumed a $500
+  rollout collapsed both bands; it does not - the base rebases onto the rollout and both windows
+  survive (275-300, 300-500). Verified against `rangeList()`. The real drop conditions are
+  `from >= rollout` or `to <= from`.
+- ⚠️ **The scale is piecewise-linear between tiles, not linear in dollars.** Each tile sits at an
+  even fraction of the width. Deliberate: the dollar gaps between tiers are arbitrary, and a
+  dollar-linear scale would crush the low tiers - exactly where the commission bands live and where
+  a rep most needs to read their position - into a sliver. With bands open the COST→PAR segment is
+  subdivided at the prototype's 0.22 / 0.5 / 0.78 stops. That **compresses** the band region rather
+  than widening it; the point is that the band edges land on fixed, legible stops.
+- **The prototype's `rate: 0.02` monthly is a stand-in and was NOT shipped.** The real figure comes
+  from `monthlyForPlan(plans[method], price)`, which honours the plan's payment factor, its
+  duration fallback and the per-plan minimums (`1148` / `1019` / `3198` / `1529`). A flat 2% here
+  would contradict every other monthly on the same screen. `gaugeMonthly` only ceils the plan's
+  figure - a monthly quoted a cent under what the lender charges is one the rep has to walk back.
+- **Offline: nothing was needed, and nothing should be added.** The gauge is a projection of
+  `tiers` + `calculator.price`, both computed locally from calculator entries; `verticals` and
+  `pricingConfig` reach the screen as props from `useCalculatorSchema`, which already goes through
+  `cachedFetch` / `OFFLINE_CACHE`. Adding a fetch here to "enrich" the tiers would make the gauge
+  the one part of the drop flow that needs a connection.
+- Scope was held to the entry screen (*"Do not change anything else"*): `RolloutView.tsx` changes
+  are purely additive, no deletions. The pending-status drop modal (cross button, PENDING in place
+  of Display) was already shipped and is recorded above.
+
+### The animated behaviour (second pass - the first pass missed it)
+
+⚠️ **A first read of the prototype produced a correct-but-STATIC gauge.** The arithmetic was right
+and the tests passed, but three behaviours live in the prototype's CSS and `replay()` rather than
+in `dropSet()` / `rangeList()`, so reading only the pricing functions missed them. If you are
+re-deriving anything here, read the stylesheet too, not just the script.
+
+- **Entry animation.** The block rises 20px and fades in (`@keyframes rise`, 500ms,
+  `cubic-bezier(.2,.9,.25,1)`, 320ms delay), and each tile's monthly counts up from `$0`.
+- ⚠️ **The count-up eases the VALUE, not the clock** - `to * (1 - (1-k)^3)` in the prototype's
+  `countUp`. `countUpValue()` therefore applies ease-out-cubic itself and **its driver must be
+  LINEAR**. Easing the `Animated.timing` as well applies the curve twice and makes the last third
+  of the count visibly crawl. This was caught and fixed during implementation; the asymmetry is
+  asserted in the tests (`countUpValue(100, 1/3) === 70`, not 33) so it cannot be re-broken.
+- **Timings are constants in `GAUGE_ENTER`**, lifted from the prototype (rise 500/320ms, count-up
+  700ms at `300 + i*80`ms, pin slide 280ms) rather than re-guessed, and asserted in the tests.
+- ⚠️ **The chevron on the COST tile is a tri-state, not a boolean.** The prototype's `rngOpen` is
+  `null` = follow the price (bands open on their own below par), or a boolean = the rep's explicit
+  choice, which wins until the gauge is re-entered. The repo owner: *"when rep write it will down
+  by default but he can hide it as well"*. Modelled as `bandsOverride: boolean | null`. Collapsing
+  it to a plain boolean would either stop the bands auto-opening or ignore the rep's tap.
+- ⚠️ **The chevron is the ONLY touch target on the gauge**, and it only exists on the COST tile
+  (`b._k !== 'c'` returns early in the prototype's click handler). The scale itself takes no
+  touches - see the display-only pin rule above.
+- ⚠️ **The pin's price bubble is HIDDEN** (`.sl-pin u { display: none }`). The pin is an 18px
+  filled dot with a 3px white ring and a soft shadow. An early build drew a price bubble; the
+  figure is already in the field the rep is typing into, so the bubble is redundant and was the
+  prototype author's own call to drop.
+- **The field and its live per-month sit SIDE BY SIDE**, not stacked (prototype: field 176px at
+  x=16, readout at x=206, both 56px). The gauge therefore RENDERS the field as `children` rather
+  than sitting above one the caller draws - owning the row is the only way to get that pairing
+  without duplicating the layout in `RolloutView`. The readout is 21px/900 in `#16A34A` with
+  `per month` beneath, and is absent until a price is typed.
+- **Offline is unaffected by all of this.** The animations are driven by local component state,
+  not by a response, so they run identically with no connection.
+
+### Visual fidelity (third pass - device screenshots vs the prototype)
+
+- ⚠️ **Tile labels are NOT flat grey.** The prototype mixes each label 62% toward grey from its own
+  tier colour (`color-mix(in srgb, var(--tc) 62%, #94a3b8)`), which React Native cannot express -
+  `mutedLabelColor()` computes it. This is how a tile is identifiable before a price is typed; flat
+  grey made all four read the same.
+- ⚠️ **The track spans CENTRE-TO-CENTRE of the first and last tiles, not edge to edge.** The
+  prototype's `paintScale` sets `left = L; width = Rr - L` from tile centres; its CSS inset
+  (`left/right: 22px`) is only a fallback. Running the track the full width pushes the end dots
+  half off each side - on a real device the ROLLOUT dot was clipped by the Done button. The
+  component derives the inset from the measured row width and tile count, so it holds for a 1-, 2-,
+  3- or 4-tile scale.
+- ⚠️ **The price badge under the pin IS shown, deliberately against the prototype's CSS.** The
+  stylesheet carries `.sl-pin u { display: none }`, but its JS still writes the figure into that
+  badge on every keystroke, and the client's own screenshots show it visible. The hide rule is
+  treated as a leftover. Requested directly: *"price badge also showing in the mockup but not
+  showing on my ui"*. If a later prototype revision clearly drops the badge, this is the one place
+  the implementation knowingly diverges - change it here, not by re-reading the CSS.
+- **Badge text colour is per-fill**, via `badgeTextColor()`: `#422006` on PAR yellow and `#7C2D12`
+  on the upper commission band, white everywhere else. White on either light fill is unreadable;
+  the prototype makes the same two exceptions.
+- **A 2-tile gauge is correct, not a bug.** Reported from a device as *"2 boxes are showing but in
+  mockup 4 boxes"* - that lead had rollout $232 against par $578 / retail $620, so both were
+  unreachable and were hidden by the cascade above. The rollout card higher up the screen still
+  shows COST / PAR / RETAIL as reference figures; only the gauge hides unreachable tiers.
+- ⚠️ **The fill bar is a GRADIENT through every tier already passed, not a flat colour.** At the
+  rollout it runs red → orange → yellow → green → blue, showing the whole journey rather than only
+  where the price landed. The prototype builds this as `linear-gradient(90deg, ...)` with one stop
+  per passed tier; `gaugeFillStops()` reproduces it and is unit-tested. A solid bar was shipped
+  first and reported from a device.
+- ⚠️ **Fill-stop offsets are fractions of the FILL WIDTH, not of the track.** The prototype divides
+  each tier's position by `fw` (the pin's distance from the start), so the stops re-space as the
+  bar grows - at retail, PAR sits at half the bar, not at a third. Dividing by the track width
+  bunches every colour at the left end. The SVG is therefore sized to the CURRENT fill, not to the
+  full span-and-clip, or the stops land in the wrong places.
+- **Rendered with `react-native-svg`** (already a dependency), since React Native has no gradient
+  primitive. The wrapper animates its width in step with the pin - a jumping bar beside a gliding
+  pin visibly separates the two mid-keystroke.
+- **Special cases in the gradient:** out of range collapses to flat red; inside the cost band with
+  the commission bands open it uses the BAND colours, because that is what the pin itself shows.
+- ⚠️ **`<LinearGradient>` needs `gradientUnits="userSpaceOnUse"` with `x2` set to the fill's PIXEL
+  width.** SVG's default is `objectBoundingBox`, where x1/x2 are 0..1 fractions, but
+  react-native-svg resolves bare numbers in USER SPACE - so the natural-looking `x1="0" x2="1"`
+  squeezes the entire gradient into the first pixel and paints the rest of the bar in the last
+  stop's colour. It renders as a flat bar in the pin's colour, which is exactly how this shipped
+  once and was reported as *"bar color is not showing"*. The Svg, the gradient's `x2` and the
+  `<Rect>` all take one shared `fillW` so they cannot drift apart.

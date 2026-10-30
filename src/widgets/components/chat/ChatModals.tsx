@@ -21,7 +21,20 @@ export const PinnedMessagesArea = ({
   imageUrls = {},
 }: any) => {
   const { colors, isDark } = useTheme();
-  if (pinnedMessages.length === 0) return null;
+  // ⚠️ Was `return null`, which left the pin sheet an invisible empty card: tapping the pin icon appeared to do nothing.
+  if (pinnedMessages.length === 0) {
+    return (
+      <View className="py-6 px-4 items-center">
+        <Icon name="pin-outline" size={22} color="#F59E0B" />
+        <Text className="text-[12px] font-bold mt-2" style={{ color: colors.text }}>
+          No pinned messages yet
+        </Text>
+        <Text className="text-[11px] mt-1 text-center opacity-60" style={{ color: colors.text }}>
+          Long-press a message and choose Pin to keep it here.
+        </Text>
+      </View>
+    );
+  }
 
   const getMessagePreview = (msg: any) => {
     if (msg.image || msg.imageUrl) return 'Shared Image';
