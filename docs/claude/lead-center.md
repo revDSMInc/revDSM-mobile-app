@@ -2837,3 +2837,60 @@ Ticket: *"add both brush sections - the eraser shape is either square or circle.
 ⚠️ `DOT_TOTAL_W` (26) and `NAV_RESERVED_W` mirror `styles.dot` and `styles.navBtn` in the modal. **Change one and you must change the other**, or the fit test silently stops matching what is drawn.
 
 **Tests:** `tests/lead-center/render-pager.test.ts` (6). The important one is not the per-count assertion but the invariant — *whenever* `dots` is chosen, across 320/390/820/1024 pt and 1–40 renders, the strip is asserted to fit in the available width. That is what fails if someone later grows the dot or the chevron. The rule lives in a pure util precisely so it can be tested: the modal itself reaches React Native and cannot be loaded under jest (CLAUDE.md §6).
+
+## revRender: "Failed to download house image" — a local `file://` path sent as an S3 key
+
+**Reported by the backend team.** In 24h for one company: 98 render jobs, **60 failed (61%)**, all the same error, the same user, the same photo, fired in **15 bursts of 4** over 18 minutes. Each died in under 4s. 109 occurrences since 24 Oct — ~90% of that company's render failures.
+
+Every failing request carried:
+
+```
+houseImageUrl: file:///var/mobile/.../Documents/pending_uploads/1793293776377_….jpg
+leadId:        work-1793293764989-fv1s2jfw8      ← an offline client id
+```
+
+**Cause — two faults that only combine offline.**
+
+1. **The payload fell back to the device path.** `item.photo?.s3url || item.photo?.uri` — a photo still in `pending_uploads` has `s3url: ''` (`utils/uploadQueue.ts`), so this used the local `uri`.
+2. **`extractS3Key` had no else branch.** It matched `^https?://host/(.+)` and otherwise did `return url`, passing the local path through as if it were a key. **Duplicated verbatim** in `screens/RevRender/index.tsx` and `widgets/modals/lead-center/RevRenderModal.tsx`.
+
+⚠️ **The backend cannot reject this for us.** `POST /rev-render/v1/batches` accepts `houseImageUrl` as *either* a full http(s) URL *or* a bare S3 key — anything non-http is presigned as a key. So a device path is not refused, it is turned into a key that cannot exist; the fetch 404s and the job dies before the model runs. **Validation has to happen on the device.**
+
+⚠️ **Offline is the normal case here**, which is why this was 61% and not a rare edge: photograph a house at a door with no signal and every render queued before the upload drains was guaranteed to fail.
+
+**Fix — one shared, strict validator: `utils/revrender-image-source.ts`.**
+
+- `extractS3Key` now returns **`string | null`**; `null` means *do not send*. It refuses `file:`/`content:`/`ph:`/`assets-library:`/`data:`, any path containing `pending_uploads`/`upload_queue`, any absolute POSIX path, and any other scheme. It also **strips the query string** — a presigned URL's signature is not part of the key.
+- `renderImageBlockReason(photo)` → `'uploading' | 'missing' | null`, and `blockedRenderItems(queue)` for the batch. ⚠️ The two reasons need different words: *uploading* resolves itself if the rep waits, *missing* never will.
+- Both `handleGenerateAll`s check `blockedRenderItems` **before** building payloads and show which renders did not go and why. ⚠️ Blocked, not silently dropped — a silent no-op is what makes a rep press Generate again.
+- The payload now reads **`s3url` only**. The `|| uri` fallback is deleted in both files.
+
+⚠️ **`null` is a refusal, not "use the original".** The whole bug was a fallback that substituted a bad value instead of stopping. The `string | null` return makes that a compile error at any new call site — the type is load-bearing, don't widen it back.
+
+**Why "Retry all" could never work** (the client's separate complaint — same root cause). A retry resubmits the **stored payload unchanged** (`services/revRenderJobs.submitJob`), so a request refused on its contents is refused identically, forever. That is the 15 bursts: a rep pressing Retry against a photo that had not uploaded.
+
+- `isRetryableFailure` / `retryableFailures` in `utils/revrender-jobs.ts`: `rejected` (4xx) and `auth` are **not** retryable. The Lead Center failure row now hides the Retry button for those and shows the server's own reason instead, wrapped to 2 lines.
+- ⚠️ **An unknown `errorKind` defaults to RETRYABLE.** An unclassified failure is usually transport; wrongly hiding Retry strands work a single tap would recover, while wrongly showing it costs a tap.
+- ⚠️ The 15 bursts were **not** an automatic client retry — there is no scheduled resubmit; `retryRevRender`/`retryAllRevRenders` only run from a button press. It was the rep.
+
+**Audited (backend's point d):** no other API payload used this fallback. The remaining `s3url || uri` hits (`lead-photo-counts.ts` `photoIdentity`, `JobDocsSection` dedup, `ManagePhotosModal` keys) are **local dedup identities, never sent to a server** — correct as they are. Only one `extractS3Key` definition now exists in the repo.
+
+**Tests:** `tests/lead-center/revrender-image-source.test.ts` (16) — including the exact path from the incident and the 4-render burst — and `tests/lead-center/revrender-retryable.test.ts` (7). Pure utils, because both call sites are screens that cannot load under jest (CLAUDE.md §6).
+
+**Not verified on device.** Needs the backend team's repro: go offline, shoot a Front photo, queue 4 looks and press Generate All without letting the upload drain — Generate must now block instead of emitting a `file:` payload.
+
+### Follow-up — the failure row, and the crash it caused in the Tools tab
+
+The Lead Center's single RevRender failure row (`widgets/components/LeadCenter/OperationalSections.tsx`) now distinguishes failures a Retry can fix from ones it cannot:
+
+- `retryableRenders` filters `failedRenders` through `retryableFailures` (`utils/revrender-jobs.ts`; rule and traps in [`offline.md`](offline.md) › "a retry that could NEVER succeed").
+- **The Retry / Retry all button renders only when that subset is non-empty.** With nothing retryable the row shows the **server's own error text** instead of the generic "RevRender failed (N)", and `numberOfLines` relaxes from 1 to 2 because the reason is then the row's only content.
+- **Dismiss is always available.** It is the rep's only way to clear a row that can never be retried — never gate it on the same condition.
+
+⚠️ **The call site guards on `typeof retryableFailures === 'function'`** and falls back to `failedRenders` (every failure retryable — the previous behaviour). This is not defensive noise. The first build after this landed **crashed the entire Tools tab** with `undefined is not a function` at that line: the running Metro bundle still held the old `revrender-jobs.ts` while Fast Refresh had already patched this component. The module is cycle-free (it imports only `network-error.ts`, which imports nothing) and the code was correct — a stale bundle alone was enough.
+
+⚠️ **The lesson is the placement, not the bundler.** This is the Tools tab's render path, so anything that throws here costs the rep the whole screen. A cosmetic button must never be able to do that. Hold the same bar for any new helper called during `ToolsSection` render.
+
+⚠️ **After pulling this change, restart Metro with `yarn start --reset-cache`.** A plain Fast Refresh can keep the old module and reproduce the crash. ⚠️ Note that **jest cannot catch this class of bug** — it resolves modules from disk, so the suite passed while the device crashed.
+
+Tests: `tests/lead-center/revrender-retryable.test.ts` (10) — the retry rule, plus a module-surface check that both helpers export as functions, that MMKV-shaped jobs with missing fields do not throw, and that the input array is not mutated.

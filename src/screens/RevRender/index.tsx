@@ -49,6 +49,7 @@ import {
 } from '../../widgets/components/lead-center/dynamic-inspection-schema-utils';
 import { IconifyIcon } from '../../widgets/common/IconifyIcon';
 import { FlashMessage } from '../../config/message';
+import { blockedRenderItems, extractS3Key, RENDER_BLOCK_MESSAGE } from '../../utils/revrender-image-source';
 import { isOnline } from '../../services/connectivity';
 import { offlineBlockFor } from '../../utils/offline-capability';
 import { forgetWarmedUri, getWarmedLocalUri, warmToLocalCache } from '../../utils/imageFileCache';
@@ -193,13 +194,6 @@ const toApiType = (type: string | null, sectionLabel: string): string | null => 
     cleaned = cleaned.slice(0, -(suffix.length)).trim();
   }
   return cleaned.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || null;
-};
-
-const extractS3Key = (url: string | undefined): string => {
-  if (!url) return '';
-  const match = url.match(/^https?:\/\/[^/]+\/(.+)/);
-  if (match && match[1]) return match[1];
-  return url;
 };
 
 const getFilename = (url: string | undefined): string => {
@@ -677,6 +671,30 @@ export default function RevRenderScreen() {
       FlashMessage.info(blocked.title, blocked.message);
       return;
     }
+
+    /**
+     * ⚠️ NEVER SUBMIT A PHOTO THAT HAS NOT FINISHED UPLOADING.
+     *
+     * A photo queued at the door keeps `s3url: ''` until the upload drains, and the payload
+     * used to fall back to its LOCAL `uri`. The backend treats a non-http value as an S3 key,
+     * presigns it, 404s, and the job dies as "Failed to download house image" - 60 of 98 jobs
+     * in one 24h window, all the same photo, retried 15 times because the payload is stored
+     * and a retry resends it unchanged.
+     *
+     * ⚠️ Blocked, not silently dropped: the rep must know WHICH renders did not go and
+     * why, or they press Generate again - which is exactly what produced the 15 bursts.
+     */
+    const unsendable = blockedRenderItems(renderQueue);
+    if (unsendable.length) {
+      const reason = unsendable[0].reason;
+      FlashMessage.warning(
+        unsendable.length === renderQueue.length
+          ? 'Photo not uploaded yet'
+          : `${unsendable.length} of ${renderQueue.length} renders not sent`,
+        RENDER_BLOCK_MESSAGE[reason]
+      );
+      return;
+    }
     try {
       const userId = user?._id || user?.id;
       if (userId) {
@@ -697,18 +715,25 @@ export default function RevRenderScreen() {
       const leadId = lead?._id || lead?.leadId || '';
 
       const payloads = renderQueue.map(item => {
-        const rawUrl = item.photo?.s3url || item.photo?.uri || '';
+        /**
+         * ⚠️ `s3url` ONLY - never `|| item.photo?.uri`. That fallback is what sent a
+         * `file:///.../pending_uploads/...` path to the backend. `blockedRenderItems` above
+         * has already proved every item has a usable key, so the `|| ''` is only here to
+         * satisfy the type - it is unreachable.
+         */
+        const rawUrl = item.photo?.s3url || '';
         const viewLabel = item.viewLabel || item.photo?.label || '';
+        const houseImageUrl = extractS3Key(rawUrl) || '';
 
         if (item.mode === 'lighting') {
           return {
-            ...toLookPayload(item.look, { houseImageUrl: extractS3Key(rawUrl), viewLabel, leadId }),
+            ...toLookPayload(item.look, { houseImageUrl, viewLabel, leadId }),
             sourceFileName: getFilename(rawUrl),
           };
         }
 
         return {
-          houseImageUrl: extractS3Key(rawUrl),
+          houseImageUrl,
           houseMimeType: 'image/jpeg',
           selections: item.selections,
           textureImageUrls: item.textureImageUrls,

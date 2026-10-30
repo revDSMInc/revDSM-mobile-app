@@ -20,7 +20,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { FlashMessage } from '../../../config/message';
 import { RevRenderHistoryModal } from '../../modals/lead-center/RevRenderHistoryModal';
 import { getWarmedLocalUri, warmToLocalCache } from '../../../utils/imageFileCache';
-import { queueCounts, queueProgress } from '../../../utils/revrender-jobs';
+import { queueCounts, queueProgress, retryableFailures } from '../../../utils/revrender-jobs';
 import { revRenderStageWord, stepShownPercent } from '../../../utils/revrender-stage';
 
 const QUEUED_FORM = { reportType: 'queued-offline', __queuedOffline: true } as const;
@@ -160,6 +160,22 @@ export const ToolsSection = ({
    * fails together and the rep's action is the same for all of them.
    */
   const failedRenders = revRenderJobs.filter((j: any) => j.status === 'failed');
+  /**
+   * ⚠️ Retry is only offered when it can WORK. A retry resends the stored payload
+   * unchanged, so a 4xx rejection (the classic one: a photo that never finished uploading,
+   * sent as a local file:// path) fails identically every time. The field saw a rep press
+   * "Retry all" 15 times against exactly that. An expired session is the same promise.
+   *
+   * ⚠️ Called through a local guard, NOT bare. This is the Tools tab's render path: if
+   * the helper is ever missing at runtime - a stale Metro bundle after a pull, a bad merge,
+   * a circular import - a bare call throws "undefined is not a function" and takes the WHOLE
+   * SCREEN down with it. A rep cannot open Tools at all for a cosmetic button. Falling back
+   * to "every failure is retryable" is the old behaviour, which is safe.
+   */
+  const retryableRenders =
+    typeof retryableFailures === 'function'
+      ? retryableFailures(failedRenders as any[])
+      : failedRenders;
   /** Any still-running render whose last status poll could not reach the server. */
   const revRenderWaiting = revRenderJobs.some(
     (j: any) => j.waiting && j.status !== 'completed' && j.status !== 'failed'
@@ -408,11 +424,15 @@ export const ToolsSection = ({
             <Text
               className="text-[13px] font-bold flex-1 ml-2"
               style={{ color: '#991B1B' }}
-              numberOfLines={1}
+              numberOfLines={retryableRenders.length === 0 ? 2 : 1}
             >
-              {failedRenders.length === 1
-                ? 'RevRender failed'
-                : `RevRender failed (${failedRenders.length})`}
+              {/* ⚠️ With no retry to offer, the row must say WHY - otherwise it is a dead
+                  red bar. The server’s own reason is the actionable part. */}
+              {retryableRenders.length === 0
+                ? failedRenders[0]?.error || 'RevRender failed'
+                : failedRenders.length === 1
+                  ? 'RevRender failed'
+                  : `RevRender failed (${failedRenders.length})`}
             </Text>
             <TouchableOpacity
               onPress={() => onDismissAllRevRenders?.()}
@@ -423,16 +443,18 @@ export const ToolsSection = ({
                 Dismiss
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => onRetryAllRevRenders?.()}
-              className="px-3 py-1.5 rounded-lg ml-1"
-              style={{ backgroundColor: '#B91C1C' }}
-              accessibilityLabel={failedRenders.length === 1 ? 'Retry render' : 'Retry all renders'}
-            >
-              <Text className="text-[12px] font-bold" style={{ color: '#FFFFFF' }}>
-                {failedRenders.length === 1 ? 'Retry' : 'Retry all'}
-              </Text>
-            </TouchableOpacity>
+            {retryableRenders.length > 0 && (
+              <TouchableOpacity
+                onPress={() => onRetryAllRevRenders?.()}
+                className="px-3 py-1.5 rounded-lg ml-1"
+                style={{ backgroundColor: '#B91C1C' }}
+                accessibilityLabel={retryableRenders.length === 1 ? 'Retry render' : 'Retry all renders'}
+              >
+                <Text className="text-[12px] font-bold" style={{ color: '#FFFFFF' }}>
+                  {retryableRenders.length === 1 ? 'Retry' : 'Retry all'}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 

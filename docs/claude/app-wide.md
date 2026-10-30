@@ -1684,3 +1684,26 @@ Ticket: *"after First/Last Name, tapping Phone leaves the old keyboard's space i
 - An already-cached url returns from `warmedPaths` before the queue is touched, so calling it at priority costs nothing when the work is already done - safe to call on every open.
 - The general rule for a new caller: warm what the screen needs to RENDER as a unit (a before/after pair together), not column by column across rows. `utils/warm-queue-order.ts` holds that rule, pure and tested.
 - ⚠️ `getWarmedLocalUri` reads the MMKV index SYNCHRONOUSLY and does not touch the filesystem. The index is a hint: cache files live in `CacheDir`, which iOS purges under storage pressure without telling the app. A caller that paints from it should also call `verifyIndexedUri` (async, once per session) and re-warm when the file has gone.
+
+## RevRender Generate: a photo that has not uploaded is now BLOCKED, not sent
+
+`screens/RevRender/index.tsx` (and the duplicate flow in `widgets/modals/lead-center/RevRenderModal.tsx`) built every render payload from
+
+```js
+const rawUrl = item.photo?.s3url || item.photo?.uri || '';   // ← the bug
+houseImageUrl: extractS3Key(rawUrl)
+```
+
+A photo still in `pending_uploads` has `s3url: ''`, so this fell through to the device-local `file:///…` path, and the screen's own `extractS3Key` returned any unmatched value unchanged. The backend presigns a non-http `houseImageUrl` as an S3 key, so the path became a key that cannot exist and the job died as "Failed to download house image" — **60 of 98 jobs in one 24h window.** Full incident, the shared validator and the retry consequences: [`lead-center.md`](lead-center.md) › "revRender: Failed to download house image".
+
+**What changed in this screen:**
+
+- `handleGenerateAll` calls `blockedRenderItems(renderQueue)` **before building any payload** and returns early with a `FlashMessage.warning` naming how many renders did not go and why. It sits directly after the existing `offlineBlockFor('revrender', …)` guard and follows the same shape.
+- The payload reads **`s3url` only**; the `|| item.photo?.uri` fallback is deleted.
+- The screen's local `extractS3Key` is **gone** — both copies now import the shared one from `utils/revrender-image-source.ts`.
+
+⚠️ **`extractS3Key` returns `string | null` now, and `null` means DO NOT SEND.** It is not "fall back to the original" — substituting a bad value is the entire bug. The nullable return is load-bearing: it makes a missed call site a compile error (it caught one while this landed). Do not widen it back to `string`, and do not paper over it with `?? rawUrl`.
+
+⚠️ **Block, never silently skip.** A render dropped without a message reads as a dead button, and the rep presses Generate again — which is how one un-uploaded photo produced 15 bursts of 4. The message must say *which* renders did not go and *why*.
+
+⚠️ **Do not re-add a local `extractS3Key` here.** The duplicate copy in `RevRenderModal.tsx` is how this bug reached production twice; there is now exactly one definition in the repo.

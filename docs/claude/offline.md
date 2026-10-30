@@ -1967,6 +1967,32 @@ Added for the collapsed failure row in the Tools tab - full note in **`docs/clau
 - Both are no-ops when nothing is failed, so they are safe to call from a control that may be visible for a moment after the last job clears.
 - The per-job `retryRevRender` / `dismissRevRender` are unchanged and still exported - the UI simply no longer has a per-row control.
 
+### Follow-up - a retry that could NEVER succeed (`isRetryableFailure`)
+
+The client reported "Retry button still not working": renders failed, and failing again on every Retry all. The button was firing correctly - the retry simply could not work.
+
+⚠️ **A retry resubmits the STORED payload unchanged** (`submitJob` reads `job.payload`). That is deliberate - a failure must never cost the rep their configuration - but it means a request the server refused *on its contents* will be refused identically, forever. The backend logged the same payload resubmitted **15 times in 18 minutes**, 4 jobs a burst, each dying in under 4s.
+
+The content was invalid because the photo had not finished uploading and its local `file://` path was sent as the S3 key; the device-side cause and fix are in [`lead-center.md`](lead-center.md) › "revRender: Failed to download house image".
+
+**Added to `utils/revrender-jobs.ts`:**
+
+- `isRetryableFailure(job)` - `false` for `errorKind: 'rejected'` (4xx: the payload itself is bad) and `'auth'` (401: signing in must come first). `true` for `timeout` / `network` / `busy` / `server` / `interrupted`.
+- `retryableFailures(jobs)` - the subset a Retry control should act on.
+- `widgets/components/LeadCenter/OperationalSections.tsx` hides the Retry button when that subset is empty and shows the server's own reason instead (wrapped to 2 lines, since it is then the row's only content).
+
+⚠️ **An unknown or absent `errorKind` defaults to RETRYABLE.** An unclassified failure is usually transport; wrongly hiding Retry strands work a single tap would recover, while wrongly offering it costs a tap. Do not invert this default.
+
+⚠️ **The bursts were NOT an automatic client retry.** There is no scheduled resubmit - `retryRevRender` / `retryAllRevRenders` only run from a button press. It was the rep pressing it, which is the behaviour the hidden button now prevents.
+
+⚠️ `retryAllRevRenders` itself is unchanged and still submits **every** failed job it is given. The filtering is a UI decision about what to OFFER, not a change to what the service does when called.
+
+⚠️ **The Tools tab call site guards on `typeof retryableFailures === 'function'`** and falls back to "every failure is retryable" (the old behaviour). This is not defensive noise: the first build after this landed crashed the WHOLE Tools tab with `undefined is not a function`, because the running Metro bundle still held the previous `revrender-jobs.ts`. The module is cycle-free and the code was correct - a stale bundle was enough. A cosmetic button must never be able to take down the screen a rep needs.
+
+⚠️ **After pulling this change, restart Metro with a cleared cache** (`yarn start --reset-cache`). A plain Fast Refresh can keep the old module and reproduce that crash.
+
+Tests: `tests/lead-center/revrender-retryable.test.ts` (10), including the 4-render burst from the incident and a module-surface check that both helpers are exported as functions.
+
 ### Offline lead list state: vanish / reappear after reconnect (audit group B)
 
 Found by the offline audit (code reading only; **not yet verified on a device** - no device was connected). Symptom: a lead made offline shows as a pending card, the card disappears when the drain finishes, and the lead only returns minutes later - at random on cellular.

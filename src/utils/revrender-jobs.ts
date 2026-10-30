@@ -215,6 +215,38 @@ export const queueProgress = (jobs: RevRenderJob[], now: number = Date.now()): n
 
 export const isTerminal = (job: Pick<RevRenderJob, 'status'>): boolean => job.status === 'completed' || job.status === 'failed';
 
+/**
+ * Kinds that CANNOT succeed by sending the same payload again.
+ *
+ * ⚠️ A retry resubmits the STORED payload unchanged (`services/revRenderJobs.submitJob`),
+ * so a request the server refused on its contents will be refused identically, forever. The
+ * field saw this as 15 bursts of 4 in 18 minutes - a rep pressing "Retry all" against a photo
+ * that had not uploaded, every attempt queueing a job that died in under 4 s.
+ *
+ * ⚠️ `auth` is here too but for a different reason: it CAN succeed later, just not until
+ * the rep signs in again. Offering Retry before that is the same false promise.
+ */
+const UNRETRYABLE_KINDS: readonly RenderErrorKind[] = ['rejected', 'auth'];
+
+/**
+ * Can this failed job be retried with any hope of succeeding?
+ *
+ * ⚠️ Unknown kinds default to RETRYABLE. A job whose failure we cannot classify is usually
+ * transport, and wrongly hiding Retry strands work that one tap would recover; wrongly showing
+ * it only costs a tap.
+ */
+export const isRetryableFailure = (job: Pick<RevRenderJob, 'status' | 'errorKind'>): boolean => {
+  if (job.status !== 'failed') return false;
+  if (!job.errorKind) return true;
+  return !UNRETRYABLE_KINDS.includes(job.errorKind);
+};
+
+/** The failed jobs a Retry control should actually act on. */
+export const retryableFailures = <T extends Pick<RevRenderJob, 'status' | 'errorKind'>>(
+  jobs: readonly T[]
+): T[] => jobs.filter((j) => isRetryableFailure(j));
+
+
 /** What the Lead Center shows over the queue: honest counts, never a percentage no server contact produced. */
 export const queueCounts = (jobs: RevRenderJob[]) => {
   const active = jobs.filter((j) => !isTerminal(j));

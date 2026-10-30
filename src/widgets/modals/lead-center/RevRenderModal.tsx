@@ -15,6 +15,8 @@ import { SafeAreaFrameContext, SafeAreaView, useSafeAreaInsets } from 'react-nat
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { REV_RENDER_VIEW_GROUPS } from '../../../constants/lead-center';
+import { FlashMessage } from '../../../config/message';
+import { blockedRenderItems, extractS3Key, RENDER_BLOCK_MESSAGE } from '../../../utils/revrender-image-source';
 
 interface RevRenderModalProps {
   visible: boolean;
@@ -80,13 +82,6 @@ const toApiType = (type: string | null, sectionLabel: string): string | null => 
     cleaned = cleaned.slice(0, -(suffix.length)).trim();
   }
   return cleaned.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || null;
-};
-
-const extractS3Key = (url: string | undefined): string => {
-  if (!url) return '';
-  const match = url.match(/^https?:\/\/[^/]+\/(.+)/);
-  if (match && match[1]) return match[1];
-  return url;
 };
 
 const getFilename = (url: string | undefined): string => {
@@ -195,12 +190,29 @@ export const RevRenderModal = ({
   };
 
   const handleGenerateAll = async () => {
+    /**
+     * ⚠️ Same guard as the RevRender screen - see `utils/revrender-image-source`. A photo
+     * still in `pending_uploads` has `s3url: ''`, and the old `|| item.photo?.uri` fallback
+     * sent its LOCAL file:// path as the S3 key: the backend presigned it, 404d, and the job
+     * failed as "Failed to download house image".
+     */
+    const unsendable = blockedRenderItems(renderQueue);
+    if (unsendable.length) {
+      FlashMessage.warning(
+        unsendable.length === renderQueue.length
+          ? 'Photo not uploaded yet'
+          : `${unsendable.length} of ${renderQueue.length} renders not sent`,
+        RENDER_BLOCK_MESSAGE[unsendable[0].reason]
+      );
+      return;
+    }
     try {
       const leadId = lead?._id || lead?.leadId || '';
       const payloads = renderQueue.map(item => {
-        const rawUrl = item.photo?.s3url || item.photo?.uri || '';
+        // ⚠️ `s3url` ONLY - the `|| uri` fallback is the bug. Guarded above.
+        const rawUrl = item.photo?.s3url || '';
         return {
-          houseImageUrl: extractS3Key(rawUrl),
+          houseImageUrl: extractS3Key(rawUrl) || '',
           houseMimeType: 'image/jpeg',
           selections: item.selections,
           textureImageUrls: item.textureImageUrls,
