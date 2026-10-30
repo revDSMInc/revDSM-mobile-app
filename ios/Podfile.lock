@@ -1660,6 +1660,8 @@ PODS:
     - Yoga
   - react-native-compass-heading (1.5.0):
     - React-Core
+  - react-native-create-thumbnail (2.2.0):
+    - React-Core
   - react-native-document-picker (12.0.2):
     - hermes-engine
     - RCTRequired
@@ -2974,6 +2976,7 @@ DEPENDENCIES:
   - "react-native-blur (from `../node_modules/@react-native-community/blur`)"
   - "react-native-cameraroll (from `../node_modules/@react-native-camera-roll/camera-roll`)"
   - react-native-compass-heading (from `../node_modules/react-native-compass-heading`)
+  - react-native-create-thumbnail (from `../node_modules/react-native-create-thumbnail`)
   - "react-native-document-picker (from `../node_modules/@react-native-documents/picker`)"
   - react-native-geolocation-service (from `../node_modules/react-native-geolocation-service`)
   - react-native-image-picker (from `../node_modules/react-native-image-picker`)
@@ -3157,6 +3160,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/@react-native-camera-roll/camera-roll"
   react-native-compass-heading:
     :path: "../node_modules/react-native-compass-heading"
+  react-native-create-thumbnail:
+    :path: "../node_modules/react-native-create-thumbnail"
   react-native-document-picker:
     :path: "../node_modules/@react-native-documents/picker"
   react-native-geolocation-service:
@@ -3353,6 +3358,7 @@ SPEC CHECKSUMS:
   react-native-blur: 1b00ef07fe0efdc0c40b37139a5268ccad73c72d
   react-native-cameraroll: bd1a177463acbba89365d09e81057294eba1e2f6
   react-native-compass-heading: a7c2275d2485522c86a8d62bbb9a46e218679f17
+  react-native-create-thumbnail: c15cedc37f3822777d44e6035be041f7961341ea
   react-native-document-picker: c47b71452024ab195e2aa09ddaef072c92086408
   react-native-geolocation-service: 32b2c2a3b91e70ce2a8d0c684801aaeb0a07e0ec
   react-native-image-picker: 48d850454b4a389753053e1d7378b624d3b47d77

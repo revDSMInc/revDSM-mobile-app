@@ -13,6 +13,7 @@ import {
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { IMAGE_CATEGORIES } from '../../../constants/lead-center';
 import { CustomCameraModal } from '../../modals/CustomCameraModal';
+import { PreviewMedia as SharedPreviewMedia } from '../../common/PreviewMedia';
 
 import { triggerSuccess } from '../../../utils/haptics';
 
@@ -768,6 +769,7 @@ export const TagPhotoModal = ({
         <View style={{ flex: 1, backgroundColor: '#0D1F1A', justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color="#72BD00" />
           <CustomCameraModal
+            allowVideo
             visible={customCameraVisible}
             onClose={() => {
               setLocalVisible(false);
@@ -890,11 +892,7 @@ export const TagPhotoModal = ({
                 onPress={() => setShowFullScreenPreview(true)}
                 className="w-[150px] h-full justify-center items-center"
               >
-                <Image
-                  source={{ uri: activePreviewUri }}
-                  className="w-full h-full"
-                  resizeMode="cover"
-                />
+                <SharedPreviewMedia uri={activePreviewUri} type={taggingAsset?.type} className="w-full h-full" resizeMode="cover" />
               </TouchableOpacity>
 
               {/* Right Column */}
@@ -934,11 +932,7 @@ export const TagPhotoModal = ({
 
           <View className="flex-1 justify-center items-center bg-black">
             {activePreviewUri && (
-              <Image
-                source={{ uri: activePreviewUri }}
-                className="w-full h-full"
-                resizeMode="contain"
-              />
+              <SharedPreviewMedia uri={activePreviewUri} type={taggingAsset?.type} className="w-full h-full" resizeMode="contain" controls />
             )}
           </View>
 
@@ -976,11 +970,9 @@ export const TagPhotoModal = ({
                     <Icon name="delete-outline" size={24} color="#EF4444" />
                   </View>
                   {activePreviewUri && (
-                    <Image
-                      source={{ uri: activePreviewUri }}
-                      className="w-12 h-12 rounded-xl bg-slate-800"
-                      resizeMode="cover"
-                    />
+                    <View className="w-12 h-12 rounded-xl bg-slate-800 overflow-hidden">
+                      <SharedPreviewMedia uri={activePreviewUri} type={taggingAsset?.type} className="w-12 h-12" resizeMode="cover" />
+                    </View>
                   )}
                 </View>
 
@@ -1023,6 +1015,7 @@ export const TagPhotoModal = ({
       </Modal>
 
       <CustomCameraModal
+        allowVideo
         visible={customCameraVisible}
         onClose={() => {
           setCustomCameraVisible(false);

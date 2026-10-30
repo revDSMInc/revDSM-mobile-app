@@ -1,0 +1,16 @@
+diff --git a/node_modules/react-native-create-thumbnail/android/src/main/java/com/createthumbnail/CreateThumbnailModule.java b/node_modules/react-native-create-thumbnail/android/src/main/java/com/createthumbnail/CreateThumbnailModule.java
+--- a/node_modules/react-native-create-thumbnail/android/src/main/java/com/createthumbnail/CreateThumbnailModule.java
++++ b/node_modules/react-native-create-thumbnail/android/src/main/java/com/createthumbnail/CreateThumbnailModule.java
+@@ -183,10 +183,10 @@
+ 
+         Bitmap image;
+         if (Build.VERSION.SDK_INT >= 27) {
+-            image = retriever.getScaledFrameAtTime(time * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, maxWidth, maxHeight);
++            image = retriever.getScaledFrameAtTime(time * 1000, (onlySyncedFrames ? MediaMetadataRetriever.OPTION_CLOSEST_SYNC : MediaMetadataRetriever.OPTION_CLOSEST), maxWidth, maxHeight);
+         } else {
+             // If on versions lower than API 27, use other methods to get frames
+-            image = retriever.getFrameAtTime(time * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
++            image = retriever.getFrameAtTime(time * 1000, (onlySyncedFrames ? MediaMetadataRetriever.OPTION_CLOSEST_SYNC : MediaMetadataRetriever.OPTION_CLOSEST));
+             if (image != null) {
+                 image = Bitmap.createScaledBitmap(image, maxWidth, maxHeight, true);
+             }

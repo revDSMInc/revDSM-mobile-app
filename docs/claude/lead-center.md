@@ -2792,3 +2792,68 @@ Ticket: *"add both brush sections - the eraser shape is either square or circle.
 - Square = filled sweep (`eraserSweepPath`); circle = the original round-capped stroked line. Both branches exist in `AnnotationCanvas`, `AnnotationOverlayPreview` and the export script (`annotation-render-html.ts` / `offline.md` note), keyed on `shape === 'square'`; the live footprint is a `Rect` with `rx` = half-width for the circle. Shape is per editor session, like the size. Not verified on device.
 - `AnnotationCanvas` mask: each eraser stroke picks its branch inside the `map` (`shape === 'square'` -> filled `eraserSweepPath`, else the stroked round path); ⚠️ the arrow body must stay an expression returning one `<Path>`, not a `{...}` block, or the file stops parsing.
 - **Compact eraser panel:** padding `p-4` -> `px-3 py-2`, shorter ticks, and the Square/Circle buttons share one row with a smaller (28 px cap) preview, so the panel is about half its former height. ⚠️ Keep the preview on that row; a separate row brought the height back.
+
+## Ticket 576 — first-run camera walkthrough (part 1 of 2; video capture is part 2)
+
+Ticket: after **Start / Continue Taking Photos**, offer a short guided tour of the camera: take-then-tag, the
+tag screen's section tabs, picking the slot, the self-timer, and (part 2) video-frame capture.
+
+**Where it lives (dynamic inspection flow only).** `DynamicInspectionView` owns the tour because it hosts BOTH the
+camera (`CustomCameraModal`) and the tag screen, and the tour hops between them.
+- `utils/camera-walkthrough.ts` — pure rules: step list (each step names its `screen` and spotlight `target`),
+  copy, the hidden-forever flag, spotlight clamp, tip placement. Tested in `__tests__/utils/camera-walkthrough.test.ts`.
+- `hooks/useCameraWalkthrough.ts` — state (`idle | intro | tour`), `targetRef(id)` registry, persisted "don't show
+  again" (`Storage` key `revdsm_camera_walkthrough_hidden_v1`; bump the suffix to re-show to everyone).
+- `widgets/common/WalkthroughOverlay.tsx` — intro popup, spotlight cut-out, tip card. Generic: nothing in it
+  knows about the camera.
+- `CustomCameraModal` takes an **opt-in** `walkthrough` prop (registers `shutter` + `timer`, grabs a sample frame).
+  Every other caller omits it and is unchanged.
+
+**Decisions / traps**
+- ⚠️ **The overlay is a plain absolute view, NOT a `Modal`.** A Modal is its own native tree: it would cover the
+  targets and `measureInWindow` could not line up. Mount one overlay per native tree that hosts a target, last child.
+  It measures target and its own root with `measureInWindow` and subtracts, so it is right inside any Modal.
+- The dim-with-a-hole is ONE view with a `borderWidth` as large as the screen and a rounded inner radius
+  (not four rectangles), so the cut-out has rounded corners / is a true circle for the shutter and timer.
+- Steps 2-3 need a photo on the tag screen. `pendingPhoto` is **derived**: while the tour is on the tag screen it is
+  the sample frame, otherwise the real `realPendingPhoto` state. Nothing is written to state, so Skip/finish leaves
+  nothing to upload or discard. ⚠️ Don't make the sample a real `setPendingPhoto` — it would leak into the upload flow.
+- The sample is one `takePhoto({ enableShutterSound: false })` kept in the cache dir (not copied to
+  `pending_uploads`), retried up to 4x while the camera spins up. If it never arrives the banner shows the label
+  over black (the `Image` is skipped when `uri` is empty).
+- "Pick the section" copy is built from the real tab labels (`joinLabels`), since tabs are schema-driven.
+- The video step has `requires: 'video'` and is filtered out until `useCameraWalkthrough({ features: { video: true } })`
+  is passed in `DynamicInspectionView`. It now is (`video: true`), and `CustomCameraModal` hangs `targetRef('modes')` on the
+  Photo/Video switch (`modeRow`) so step 5 ("Or record, then pick the shot") spotlights it. ⚠️ The switch only renders when
+  `allowVideo` is on, so a host that enables the video step must also pass `allowVideo` to its camera, or the spotlight has no target.
+- Not wired into the legacy `TagPhotoModal` flow (no schema): its camera and tag screen are separate Modals, so it
+  needs its own host. The pieces above are reusable for it.
+- Not verified on a device yet.
+
+### Camera: Photo / Video switch is opt-in (`CustomCameraModal`)
+
+Full write-up in `app-wide.md` › "Camera: Photo / Video switch". `CustomCameraModal` gained an `allowVideo` prop (default off) and hands back `{ type: 'video/*', duration, ... }` for a recording. ⚠️ **`TagPhotoModal`, `DynamicInspectionView` and `JobDocsSection` do not pass it**: their `onCapture` assets go to tagging, annotation, thumbnails and the pending-upload queue, all image-only, and `JobDocsSection.handleUpload` would send `asset.type` straight through. Enable it per flow only after that flow handles a video asset (skip annotation, show a video thumbnail, confirm the lead-photo endpoint accepts it). The walkthrough sample frame is untouched (still `takePhoto`).
+- **Follow-up - enabled in `TagPhotoModal`** (both of its `CustomCameraModal`s pass `allowVideo`). A video asset (`type` `video/*`) is previewed through the local `PreviewMedia` (paused first frame in the tag tile and discard dialog, controls in the full-screen preview) because `<Image>` renders nothing for a video file; `activeIsVideo` is read from `taggingAsset.type`. It then goes down the normal `handleUpload` -> upload queue path with its real `type`/`fileName`. ⚠️ Still NOT enabled in `DynamicInspectionView` / `JobDocsSection`'s own camera. ⚠️ Unverified: whether the lead-photo endpoint accepts a video, and whether the photo grids can show one (a video tagged here may come back as a broken thumbnail). Not verified on device.
+- **Follow-up - the Lead Center's "Start Taking Photos" opens `DynamicInspectionView` when the company has an inspection schema** (`JobDocsSection.handleStartTakingPhotos` -> `showDynamicCapture`), NOT `TagPhotoModal`, so that camera now passes `allowVideo` too. Previews moved to the shared `widgets/common/PreviewMedia.tsx` (`<Video>` for `type` `video/*`, else `<Image>`), used by both `TagPhotoModal` and `DynamicInspectionView` (pending tile, extra-picker row, discard dialog, full-screen preview with controls). ⚠️ A video goes through `useDynamicInspectionCapture.captureToSlot` / `tagAsExtraInCategory` like a photo; the slot grids and Manage Photos still render the saved result with `<Image>`, so a saved video may show a blank thumbnail, and the backend may reject it. Not verified on device. `JobDocsSection`'s own camera path is the legacy `TagPhotoModal` one.
+
+### Record-then-pick video frames (Ticket 576 part 2, inspection camera)
+
+Video mode in `DynamicInspectionView`'s camera no longer hands back a video. Record -> stop -> **`widgets/modals/VideoFramePicker.tsx`** (in-card overlay inside `CustomCameraModal`): drag the bar (`PanResponder`, 30 fps snap, helpers + tests in `utils/camera-video.ts`), tap the shutter to save that frame (`react-native-create-thumbnail`, full res), tag it, repeat; tapped thumbnails seek back, X removes. Done -> grid of tagged frames -> Done again copies each kept frame to `pending_uploads`, **deletes the video file**, and calls `onFramesDone`.
+- **Opt-in by props**: `CustomCameraModal` takes `onRequestFrameTag` + `onFramesDone`; without both, video behaves as before (Use Video preview). Only `DynamicInspectionView` passes them. ⚠️ `TagPhotoModal` still passes `allowVideo` WITHOUT them, so it still sends a video asset into its image-only pipeline; give it the same two props or drop its `allowVideo`.
+- **Tagging reuses the host's tag screen.** `requestFrameTag` sets `frameTagReq`; `pendingPhoto` is derived from it, so the existing banner / slot grid / extra picker show. Slot tap, extra pick and the trash (`confirmDiscardPending`) **resolve the request instead of uploading** (`resolveFrameTag`). Full slots (server photos + frames already queued for that key) flash instead of opening the conflict screen.
+- ⚠️ **The camera must stay mounted while a frame is tagged** (it owns the clip and frames). `DynamicInspectionView` renders `cameraNode` in slot 0 of one root for both branches, `display: 'none'` while tagging - do not turn it back into two early returns.
+- ⚠️ **Frames upload only on commit** (`handleFramesDone`), one per 80 ms tick through `captureRef.current`: `buildExtraSlot` numbers extras from the render it was created in, so a tight loop over a stale `capture` would give every Extra the same name.
+- Dependency: `react-native-create-thumbnail@2.2.0` + `patches/react-native-create-thumbnail+2.2.0.patch` (Android `OPTION_CLOSEST` when `onlySyncedFrames: false`; default sync-frame seeking snaps to keyframes and ignores the slider). Needs `bundle exec pod install` from `ios/`. Source of the design: `photo-module-upgrade/CameraThumbnailPicker.tsx`.
+- Walkthrough step 5 now describes real behaviour. Not verified on a device yet.
+
+### Recording timer lives in the black bar, not over the viewfinder (`CustomCameraModal`)
+
+The red `m:ss` recording badge (`formatRecordingTime`) used to be a child of the viewfinder and was invisible on Android (only a sliver showed). It is now `styles.recTimer`, rendered at the top of the bottom control section while `recording` (the Photo/Video switch is hidden then, so the space is free).
+- ⚠️ **Never put an overlay on top of the vision-camera preview on Android**: the camera surface paints over sibling views whatever their `zIndex`. Anything that must stay visible while the camera is live goes in the black bars around the viewfinder.
+- ⚠️ Also seen this session: `Cannot read property 'create' of null` from `VideoFramePicker` means the installed binary predates `react-native-create-thumbnail` (native module missing). Rebuild with `yarn android` / `yarn ios`; Metro reload is not enough.
+
+### Frame extraction goes through `utils/video-frame.ts`, never the library's own import
+
+`VideoFramePicker` calls `extractVideoFrame` (reads `NativeModules.CreateThumbnail` lazily). ⚠️ `react-native-create-thumbnail`'s index.js does `const { create } = NativeModules.CreateThumbnail` at import time, so on a binary built before the library was added a plain import crashes with "Cannot read property 'create' of null" (with a misleading source-mapped stack). The wrapper turns that into a danger flash "Rebuild the app". The real fix is still a native rebuild (`yarn android` / `bundle exec pod install` + `yarn ios`): check `android/app/build/generated/autolinking` for `createthumbnail`.
+- ⚠️ `FlashMessage.show` takes `(title, description?, type?)`, not an object (`config/message.ts`). The "slot is full" flash in `DynamicInspectionView` and the picker's error flash use `show(text, '', 'warning' | 'danger')`; an object argument silently shows nothing.
+- Frame-extraction errors now show **inside the picker's pill** (red, 6 s), not as a `FlashMessage`: the picker is an overlay in the camera tree and a flash can sit behind it, so a failed capture looked like "nothing happens". The tag screen (`frameTagReq`) only opens after a frame was actually extracted, so "capture does nothing" = the extractor failed (usually a stale native build, see above).

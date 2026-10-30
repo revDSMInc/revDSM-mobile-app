@@ -10,6 +10,8 @@ import {
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../../hooks/useAuth';
+import { useCameraWalkthrough } from '../../../hooks/useCameraWalkthrough';
+import { WalkthroughOverlay } from '../../common/WalkthroughOverlay';
 import { uploadQueueManager } from '../../../utils/uploadQueue';
 import {
   getTopTabs,
@@ -20,7 +22,9 @@ import {
   type InspectionSlot,
 } from './dynamic-inspection-schema-utils';
 import { CategoryTabStrip, CategoryBody, ProductDropdown, iconifyToMdi } from './DynamicInspectionRenderer';
-import { CustomCameraModal } from '../../modals/CustomCameraModal';
+import { CustomCameraModal, type FrameTag, type PickedFrame } from '../../modals/CustomCameraModal';
+import { FlashMessage } from '../../../config/message';
+import { PreviewMedia } from '../../common/PreviewMedia';
 import { DynamicMovePhotoModal, type MoveState } from './DynamicMovePhotoModal';
 import {
   useDynamicInspectionCapture,
@@ -43,6 +47,17 @@ interface PreviewState {
   subcategory?: string;
   key?: string;
   pending?: boolean;
+}
+
+/** What a video frame was tagged to: a schema slot, or "Extra" in a category. Read back when the frames are committed. */
+type FrameTarget =
+  | { kind: 'slot'; category: InspectionCategory; slot: InspectionSlot; key: string }
+  | { kind: 'extra'; category: InspectionCategory };
+
+interface FrameTagRequest {
+  uri: string;
+  queued: FrameTag[];
+  resolve: (tag: FrameTag | null) => void;
 }
 
 interface ReplaceConfirm {
@@ -89,6 +104,11 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   const activeCategory = topTabs[Math.min(activeTab, Math.max(topTabs.length - 1, 0))] || null;
   const extraPickerCategories = useMemo(() => getExtraPickerCategories(topTabs), [topTabs]);
 
+  // First-run camera walkthrough (Jira 576). It hops between the camera and this tag screen, so it is owned
+  // here, above both. `video` flips on when the video-capture module ships.
+  const tabLabels = useMemo(() => topTabs.map((t) => t.label), [topTabs]);
+  const walkthrough = useCameraWalkthrough({ features: { video: true }, tabLabels });
+
   useEffect(() => setActiveTab(0), [selectedProductId]);
 
   const capture = useDynamicInspectionCapture({
@@ -107,7 +127,19 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     return () => unsubscribe();
   }, [refetch]);
 
-  const [pendingPhoto, setPendingPhoto] = useState<PendingPhoto | null>(null);
+  const [realPendingPhoto, setPendingPhoto] = useState<PendingPhoto | null>(null);
+  // While the walkthrough shows the tag screen, a sample frame stands in for the pending photo. It is derived,
+  // never written to state, so ending the tour leaves nothing behind to upload or discard.
+  const tourOnTagScreen = walkthrough.screen === 'tag';
+  // A frame picked from a recorded video waits for its tag the same way a fresh photo does (see `requestFrameTag`).
+  const [frameTagReq, setFrameTagReq] = useState<FrameTagRequest | null>(null);
+  const pendingPhoto: PendingPhoto | null = tourOnTagScreen
+    ? { uri: walkthrough.sample ?? '' }
+    : frameTagReq
+      ? { uri: frameTagReq.uri, type: 'image/jpeg' }
+      : realPendingPhoto;
+  const captureRef = useRef(capture);
+  captureRef.current = capture;
   const [previewState, setPreviewState] = useState<PreviewState | null>(null);
   const [replaceConfirm, setReplaceConfirm] = useState<ReplaceConfirm | null>(null);
   const [conflict, setConflict] = useState<ConflictState | null>(null);
@@ -169,12 +201,61 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
 
   const clearPending = () => setPendingPhoto(null);
 
+  // Record-then-pick. The camera stays mounted (hidden) under the tag screen while a frame is tagged, so the picker
+  // keeps its clip and frames. The frame is NOT uploaded here: the tag only resolves the request, and the kept frames
+  // are committed together when the picker's Done is confirmed.
+  const requestFrameTag = (uri: string, queued: FrameTag[]) =>
+    new Promise<FrameTag | null>((resolve) => setFrameTagReq({ uri, queued, resolve }));
+
+  const resolveFrameTag = (tag: FrameTag | null) => {
+    frameTagReq?.resolve(tag);
+    setFrameTagReq(null);
+    setShowExtraPicker(false);
+  };
+
+  const handleFramesDone = async (frames: PickedFrame[]) => {
+    setCustomCameraVisible(false);
+    setCameraActive(false);
+    captureTargetRef.current = null;
+    // One at a time with a tick between: `buildExtraSlot` numbers extras from the render it was created in.
+    for (const f of frames) {
+      const target = f.target as FrameTarget;
+      const asset = { uri: f.uri, type: f.type, fileName: f.fileName };
+      if (target.kind === 'slot') {
+        captureRef.current.captureToSlot({
+          categoryLabel: target.category.label,
+          subcategory: target.slot.storageName,
+          key: target.key,
+          asset,
+        });
+      } else {
+        captureRef.current.tagAsExtraInCategory({ category: target.category, asset });
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise<void>((r) => setTimeout(r, 80));
+    }
+    setTimeout(() => openCapture(), 120);
+  };
+
   const onSlotClick = (category: InspectionCategory, slot: InspectionSlot, key: string) => {
     if (capture.deletingKeys[key]) return;
 
     const capacity = slotCapacity(category, slot);
     const photos = capture.getPhotos(category.label, slot.storageName);
     const hasRoom = photos.length < capacity;
+
+    if (frameTagReq) {
+      const queuedHere = frameTagReq.queued.filter((q) => {
+        const t = q.target as FrameTarget;
+        return t.kind === 'slot' && t.key === key;
+      }).length;
+      if (photos.length + queuedHere >= capacity) {
+        FlashMessage.show(`${slot.name} is full. Pick another spot or tag it as Extra.`, '', 'warning');
+        return;
+      }
+      resolveFrameTag({ label: slot.name, target: { kind: 'slot', category, slot, key } satisfies FrameTarget });
+      return;
+    }
 
     if (pendingPhoto) {
       if (hasRoom) {
@@ -287,6 +368,10 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
 
   const confirmDiscardPending = () => {
     setDiscardPending(false);
+    if (frameTagReq) {
+      resolveFrameTag(null);
+      return;
+    }
     setPendingPhoto(null);
     setTimeout(() => openCapture(), 120);
   };
@@ -302,6 +387,10 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   const handlePickExtraCategory = (pickerItem: { category: InspectionCategory }) => {
     if (!pendingPhoto || !pickerItem?.category) return;
     setShowExtraPicker(false);
+    if (frameTagReq) {
+      resolveFrameTag({ label: `${pickerItem.category.label} Extra`, target: { kind: 'extra', category: pickerItem.category } satisfies FrameTarget });
+      return;
+    }
     capture.tagAsExtraInCategory({ category: pickerItem.category, asset: pendingPhoto });
     clearPending();
     setTimeout(() => openCapture(), 120);
@@ -309,19 +398,36 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
 
   const showProductRow = products.length > 1;
 
-  if (!flowStarted || cameraActive) {
+  const showCamera = walkthrough.screen ? walkthrough.screen === 'camera' : !flowStarted || cameraActive;
+  const frameTagging = !!frameTagReq;
+  // The camera is the same element in both branches (slot 0 of the root), so tagging a video frame does not remount it.
+  const cameraNode = (
+    <View style={frameTagging ? { display: 'none' } : { flex: 1, backgroundColor: '#000' }}>
+      <CustomCameraModal
+        allowVideo
+        visible={customCameraVisible}
+        onClose={handleCameraClose}
+        onCapture={handleCameraCapture}
+        walkthrough={walkthrough}
+        onRequestFrameTag={requestFrameTag}
+        onFramesDone={handleFramesDone}
+      />
+      <WalkthroughOverlay controller={walkthrough} />
+    </View>
+  );
+
+  if (showCamera && !frameTagging) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#000' }}>
-        <CustomCameraModal
-          visible={customCameraVisible}
-          onClose={handleCameraClose}
-          onCapture={handleCameraCapture}
-        />
+      <View style={{ flex: 1 }}>
+        {cameraNode}
+        {null}
       </View>
     );
   }
 
   return (
+    <View style={{ flex: 1 }}>
+    {frameTagging ? cameraNode : null}
     <View style={{ flex: 1, backgroundColor: '#0D1F1A' }}>
       {/* Header: close + product name + counts. Top inset padding keeps the green
           header clear of the notch / status bar (safe area). */}
@@ -350,12 +456,14 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
 
       {/* Category tab strip */}
       {topTabs.length > 0 && !showExtraPicker && (
-        <CategoryTabStrip
-          categories={topTabs}
-          capture={capture}
-          active={Math.min(activeTab, Math.max(topTabs.length - 1, 0))}
-          onChange={setActiveTab}
-        />
+        <View ref={walkthrough.targetRef('tabs')} collapsable={false}>
+          <CategoryTabStrip
+            categories={topTabs}
+            capture={capture}
+            active={Math.min(activeTab, Math.max(topTabs.length - 1, 0))}
+            onChange={setActiveTab}
+          />
+        </View>
       )}
 
       {/* Photo banner (pending capture) */}
@@ -367,7 +475,9 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
         >
           {pendingPhoto ? (
             <>
-              <Image source={{ uri: pendingPhoto.uri }} style={{ width: '100%', height: 160 }} resizeMode="contain" />
+              {!!pendingPhoto.uri && (
+                <PreviewMedia uri={pendingPhoto.uri} type={pendingPhoto.type} style={{ width: '100%', height: 160 }} resizeMode="contain" />
+              )}
               <Text style={{ position: 'absolute', left: 12, bottom: 8, color: '#fff', fontWeight: '600', fontSize: 12 }}>
                 Tag this photo below
               </Text>
@@ -408,7 +518,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
               <Text style={{ color: GREEN, fontWeight: '700' }}>Back</Text>
             </TouchableOpacity>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 12, backgroundColor: '#16302A', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', marginBottom: 16 }}>
-              <Image source={{ uri: pendingPhoto.uri }} style={{ width: 52, height: 52, borderRadius: 8 }} />
+              <PreviewMedia uri={pendingPhoto.uri} type={pendingPhoto.type} style={{ width: 52, height: 52, borderRadius: 8 }} />
               <View style={{ flex: 1 }}>
                 <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '700', letterSpacing: 1, fontSize: 10, marginBottom: 2 }}>TAGGING AS EXTRA</Text>
                 <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 14 }}>Which category is this extra of?</Text>
@@ -433,12 +543,14 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
             </View>
           </View>
         ) : activeCategory ? (
-          <CategoryBody
-            category={activeCategory}
-            capture={capture}
-            onSlotClick={onSlotClick}
-            onTagAsExtra={handleTagAsExtraClick}
-          />
+          <View ref={walkthrough.targetRef('slots')} collapsable={false}>
+            <CategoryBody
+              category={activeCategory}
+              capture={capture}
+              onSlotClick={onSlotClick}
+              onTagAsExtra={handleTagAsExtraClick}
+            />
+          </View>
         ) : (
           <Text style={{ color: 'rgba(255,255,255,0.7)', textAlign: 'center', marginTop: 24 }}>No inspection categories configured.</Text>
         )}
@@ -451,7 +563,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
             <Icon name="close" size={28} color="#fff" />
           </TouchableOpacity>
           {previewState?.uri ? (
-            <Image source={{ uri: previewState.uri }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />
+            <PreviewMedia uri={previewState.uri} type={previewState.pending ? realPendingPhoto?.type : undefined} style={{ width: '100%', height: '80%' }} resizeMode="contain" controls />
           ) : null}
           {previewState?.deletable && (
             <TouchableOpacity
@@ -647,7 +759,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
                 <Icon name="delete-outline" size={24} color="#EF4444" />
               </View>
               {!!pendingPhoto?.uri && (
-                <Image source={{ uri: pendingPhoto.uri }} style={{ width: 48, height: 48, borderRadius: 8 }} resizeMode="cover" />
+                <PreviewMedia uri={pendingPhoto.uri} type={pendingPhoto.type} style={{ width: 48, height: 48, borderRadius: 8 }} resizeMode="cover" />
               )}
             </View>
             <Text style={{ fontWeight: '800', fontSize: 16, color: '#FFFFFF', marginBottom: 6 }}>Discard this photo?</Text>
@@ -677,6 +789,9 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
         onClose={() => setMoveExisting(null)}
         onMoved={() => setTimeout(() => openCapture(), 350)}
       />
+
+      <WalkthroughOverlay controller={walkthrough} />
+    </View>
     </View>
   );
 }
