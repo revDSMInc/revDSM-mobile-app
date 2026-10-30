@@ -36,11 +36,14 @@ import { VoiceNotePlayer } from './VoiceNotePlayer';
 import { DownloadProgressRing } from './DownloadProgressRing';
 import { ChatMessageText } from './ChatMessageText';
 import { GifMessage } from './GifMessage';
-import { GIF_REPLY_LABEL, isGifMessageText } from '../../../utils/gif-message';
+import { GIF_REPLY_LABEL, isGifFileMessage, isGifMessageText } from '../../../utils/gif-message';
 import { ScrollView } from 'react-native-gesture-handler';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const MAX_BUBBLE_WIDTH = SCREEN_WIDTH * 0.75;
+// A stored GIF's bubble is sized from the GIF (GifMessage draws min(maxWidth, 240)) + 8 padding each side (p-2) + 2 bubble padding each side + 1 border each side.
+const GIF_WIDTH = Math.min(MAX_BUBBLE_WIDTH - 40, 240);
+const GIF_BUBBLE_WIDTH = GIF_WIDTH + 22;
 
 const getDocStyleAndIcon = (fileName: string) => {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
@@ -334,6 +337,16 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     return resolved;
   }, [primaryFile, msg.image, msg.imageUrl, msg.video, msg.videoUrl, imageUrls]);
 
+  // A picked GIF is stored in S3 like a photo, so it arrives as a lone GIF
+  // attachment rather than a GIPHY URL in the body; it renders in the same
+  // inline bubble, from the signed URL `mediaUri` already resolved. Until that
+  // URL is in hand there is nothing to animate, and the photo branch shows its
+  // own placeholder.
+  const gifUri = useMemo(() => {
+    if (!isGifFileMessage(msg) || !/^(https?|file):/.test(mediaUri)) return '';
+    return mediaUri;
+  }, [msg, mediaUri]);
+
   const imageFiles = useMemo(() => {
     return files.filter((f: any) => {
       if (!f) return false;
@@ -385,7 +398,10 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
   }, [voiceUri, imageUrls, isMsgVoice]);
 
   // A GIF message is a text message whose body is a GIPHY url: never show that url, copy it or edit it.
+  // (A GIF the server stored carries no url to leak — it is a file, so the `fileType === 'text'` guards on
+  // Copy and Edit already hide both — but the long-press preview still has to show the picture.)
   const isGifMsg = isGifMessageText(msg.text);
+  const gifPreviewUri = isGifMsg ? msg.text.trim() : gifUri;
 
   const hasTextOrFiles = useMemo(() => {
     return !!((msg.text && msg.text.trim().length > 0) || files.length > 0 || isMsgVoice);
@@ -638,8 +654,14 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     let replyIcon = null;
     let replyLabel = text;
 
-    const replyGifUrl = isGifMessageText(text) ? text.trim() : null;
-    if (replyGifUrl) {
+    // A GIF reply shows the GIF itself, never its url: the GIPHY body, or a stored GIF's signed
+    // url, which `getGridSrc` resolves from `imageUrls` like any other attachment. With neither
+    // (not signed yet) the quote falls back to the GIF label.
+    const replyGifFile = isGifFileMessage(replyTo) ? replyFiles[0] : null;
+    const replyGifUrl = isGifMessageText(text)
+      ? text.trim()
+      : (replyGifFile && getGridSrc(replyGifFile)) || null;
+    if (replyGifUrl || replyGifFile) {
       replyIcon = 'images';
       replyLabel = GIF_REPLY_LABEL;
     } else if (isReplyVoice) {
@@ -1142,7 +1164,8 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
           marginVertical: isSameUser(currentMessage, previousMessage) ? 0.3 : 2,
           maxWidth: '100%',
           paddingHorizontal: 2,
-          paddingLeft: !isMe ? 2 : 2,
+          // A received GIF has no avatar column and starts at the same 12 dp as a poll card (6 here + 4 on the bubble wrapper + 2 margin).
+          paddingLeft: !isMe && (gifUri || isGifMsg) ? 6 : 2,
           overflow: 'visible',
         }}
       >
@@ -1173,7 +1196,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
           </View>
         )}
         <View className="flex-row items-end" style={{ flexShrink: 1, maxWidth: '100%' }}>
-          {!isMe && (
+          {!isMe && !gifUri && !isGifMsg && (
             <View
               style={{
                 width: 32,
@@ -1237,10 +1260,11 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                     borderBottomRightRadius: isMe ? 2 : (hasTextOrFiles ? 18 : 10),
                     borderBottomLeftRadius: isMe ? (hasTextOrFiles ? 18 : 10) : 2,
                     padding: 2,
+                    ...(gifUri || isGifMsg ? { width: GIF_BUBBLE_WIDTH, maxWidth: '100%' } : {}),
                     marginVertical: isSameUser(currentMessage, previousMessage) ? 0.5 : 2,
                     marginHorizontal: !isMe ? 2 : 2,
-                    overflow: (fileType === 'image' || fileType === 'video') ? 'hidden' : 'visible',
-                    minWidth: (fileType === 'image' || fileType === 'video')
+                    overflow: gifUri || isGifMsg || fileType === 'image' || fileType === 'video' ? 'hidden' : 'visible',
+                    minWidth: !gifUri && (fileType === 'image' || fileType === 'video')
                       ? SCREEN_WIDTH * 0.65 + 16
                       : (msg.replyToDetails || msg.replyTo) ? 200 : (hasTextOrFiles ? 50 : 50),
                   }}
@@ -1315,7 +1339,17 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                     </View>
                   )}
                   {imageFiles.length >= 2 && renderImageGrid()}
-                  {fileType === 'image' && imageFiles.length < 2 && (
+                  {!!gifUri && (
+                    <View className="p-2">
+                      <GifMessage
+                        url={gifUri}
+                        maxWidth={GIF_WIDTH}
+                        fill
+                        onLongPress={() => setShowReactionBar(true)}
+                      />
+                    </View>
+                  )}
+                  {fileType === 'image' && imageFiles.length < 2 && !gifUri && (
                     <View className="p-2 items-center">
                       <TouchableOpacity
                         onPress={() => handleMediaPress('image')}
@@ -1477,11 +1511,12 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                     const isSimpleText = !isMsgVoice && (!fileType || fileType === 'text');
                     if (msg.text && msg.text.trim().length > 0 && isSimpleText) {
                       return (
-                        <View className="px-2.5 pt-1 pb-0.5" style={{ minWidth: 50 }}>
+                        <View className={isGifMessageText(msg.text) ? 'px-2 pt-2 pb-0.5' : 'px-2.5 pt-1 pb-0.5'} style={{ minWidth: 50 }}>
                           {isGifMessageText(msg.text) ? (
                             <GifMessage
                               url={msg.text}
-                              maxWidth={MAX_BUBBLE_WIDTH - 40}
+                              maxWidth={GIF_WIDTH}
+                              fill
                               onLongPress={() => setShowReactionBar(true)}
                             />
                           ) : (
@@ -1719,13 +1754,13 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                 >
                   {isMe ? 'You' : msg.user?.name || 'Member'}
                 </Text>
-                {isGifMsg ? (
+                {gifPreviewUri ? (
                   <View
                     className="rounded-xl overflow-hidden mt-1 shadow-sm"
                     style={{ width: 150, height: 150, backgroundColor: 'rgba(0,0,0,0.08)' }}
                   >
                     <Image
-                      source={{ uri: msg.text.trim() }}
+                      source={{ uri: gifPreviewUri }}
                       style={{ width: '100%', height: '100%' }}
                       resizeMode="cover"
                     />

@@ -18,7 +18,7 @@ import {
   zoomOrigin,
 } from '../../../utils/zoom-transform';
 import { DraggableText } from './DraggableText';
-import { strokeOpacity } from '../../../utils/annotation-brush';
+import { eraserSweepPath, strokeOpacity } from '../../../utils/annotation-brush';
 import { layerBlocks, orderedLayers, type LayerBlock } from '../../../utils/annotation-layers';
 import { arrowGeometry, circleRadiusPx, shapeHandles, type AnnotationShape } from '../../../utils/annotation-shapes';
 
@@ -342,15 +342,11 @@ export const AnnotationCanvas = ({
           <Mask key={`m-${bi}`} id={id}>
             <Rect x={0} y={0} width={canvasLayout.width} height={canvasLayout.height} fill="white" />
             {blk.erasers.map((s: any) => (
-              <Path
-                key={s.id}
-                d={s.d ?? getPathData(s.points)}
-                stroke="black"
-                strokeWidth={s.width}
-                fill="none"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
+              s.shape === 'square' ? (
+                <Path key={s.id} d={eraserSweepPath(s.points, canvasLayout.width, canvasLayout.height, s.width)} fill="black" />
+              ) : (
+                <Path key={s.id} d={s.d ?? getPathData(s.points)} stroke="black" strokeWidth={s.width} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              )
             ))}
           </Mask>,
           <G key={`g-${bi}`} mask={`url(#${id})`}>
@@ -429,10 +425,12 @@ export const AnnotationCanvas = ({
 
               {/* The eraser's footprint (REVUIUX-588): the erased band is invisible, so a ring shows where it is and how wide, at constant outline weight under zoom. */}
               {drawingStroke?.isEraser && drawingStroke.points?.length > 0 && (
-                <Circle
-                  cx={drawingStroke.points[drawingStroke.points.length - 1].px * canvasLayout.width}
-                  cy={drawingStroke.points[drawingStroke.points.length - 1].py * canvasLayout.height}
-                  r={Math.max(drawingStroke.width, 2) / 2}
+                <Rect
+                  x={drawingStroke.points[drawingStroke.points.length - 1].px * canvasLayout.width - Math.max(drawingStroke.width, 2) / 2}
+                  y={drawingStroke.points[drawingStroke.points.length - 1].py * canvasLayout.height - Math.max(drawingStroke.width, 2) / 2}
+                  width={Math.max(drawingStroke.width, 2)}
+                  height={Math.max(drawingStroke.width, 2)}
+                  rx={drawingStroke.shape === 'square' ? 0 : Math.max(drawingStroke.width, 2) / 2}
                   fill="rgba(255,255,255,0.25)"
                   stroke="#FFFFFF"
                   strokeWidth={1.5 / (jsScale > 0 ? jsScale : 1)}

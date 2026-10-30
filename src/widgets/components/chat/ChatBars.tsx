@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, Image } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
-import { isGifMessageText } from '../../../utils/gif-message';
+import { GIF_REPLY_LABEL, isGifFileMessage, isGifMessageText } from '../../../utils/gif-message';
 
 interface ReplyBarProps {
   replyingTo: any;
@@ -53,11 +53,18 @@ export function ChatReplyBar({ replyingTo, currentUserId, onCancel }: ReplyBarPr
 
   let replyIcon = null;
   let replyLabel = replyingTo.text || replyingTo.message || '';
-  // A GIF reply shows the GIF itself, never its url.
-  const replyGifUrl = isGifMessageText(replyLabel) ? replyLabel.trim() : null;
+  // A GIF reply shows the GIF itself, never its url. A stored GIF carries an S3 key, which cannot be
+  // rendered, and this bar is handed no signed urls - so it falls back to the GIF label below.
+  const replyGifFile = isGifFileMessage(replyingTo) ? replyFiles[0] : null;
+  const replyGifUrl = isGifMessageText(replyLabel)
+    ? replyLabel.trim()
+    : [replyGifFile?.url, replyGifFile?.previewUrl].find(
+        (u: any) => typeof u === 'string' && /^(https?|file):/.test(u)
+      ) || null;
 
-  if (replyGifUrl) {
-    replyLabel = 'GIF';
+  if (replyGifUrl || replyGifFile) {
+    replyIcon = 'images';
+    replyLabel = GIF_REPLY_LABEL;
   } else if (isReplyVoice) {
     replyIcon = 'mic';
     replyLabel = `Voice Message ${replyingTo.duration ? `(${replyingTo.duration})` : ''}`;

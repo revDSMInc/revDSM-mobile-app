@@ -2803,6 +2803,22 @@ Ticket (Lance): *"color palette not working"*. The palette icon at the end of ev
 
 - WARNING: offline reads must NOT set the flag (the saved copy is the expected answer there), or the list would poll while offline.
 
+### Annotate: square eraser + 0..100 ruler (follow-up to REVUIUX-588)
+
+Ticket: *"eraser size on a 0 to 100 scale ruler, and the eraser shape circle -> square."*
+- **Size:** the four fixed chips are replaced by `CustomSlider` + a tick ruler (0-100, labelled every 20) in `screens/ImageAnnotation/index.tsx`. `eraserFromSlider` / `sliderFromEraser` in `utils/annotation-brush.ts`; floor is 1, because a 0-wide eraser would draw something that erases nothing. Default stays 14. `ERASER_SIZES` / `sizesFor` are kept only for the tests.
+- **Shape:** an eraser stroke is now a FILLED sweep of an axis-aligned square (`eraserSweepPath`: convex hull of two squares per segment), not a round-capped stroked line. A stroked line with square caps would rotate with the drag direction, so it is not used. Used by `AnnotationCanvas` (mask + the live footprint, now a `Rect`), `AnnotationOverlayPreview` (pending card) and the export script in `annotation-render-html.ts` (`eraseSquares`, plain canvas fill with `destination-out`).
+- ⚠️ The export script duplicates the hull maths: change `eraserSweepPath` and `hullOf` / `eraseSquares` together, or the editor and the saved JPEG disagree. The saved doc is unchanged (`{ isEraser: true, width }`), so older saved strokes now render square at their old width.
+- ⚠️ The text-note hit test (`eraseTextsAt` / `hitText`) still uses a circle of radius `eraserSize / 2`; harmless, deliberately not changed. Not verified on device.
+
+### Annotate: eraser shape choice (Square / Circle)
+
+Ticket: *"add both brush sections - the eraser shape is either square or circle."* A Square / Circle toggle sits under the eraser ruler (`screens/ImageAnnotation/index.tsx`, `eraserShape`, default **square**). A new eraser stroke carries `shape: 'square' | 'circle'`; `cleanStroke` (`annotation-restore.ts`) and `annotationSaveService` pass it through.
+- ⚠️ **A stroke with no `shape` is ROUND** (`eraserShapeOf`, `utils/annotation-brush.ts`): everything saved before the choice existed was a round eraser, so it must not turn square. This supersedes the line above saying old strokes "now render square".
+- Square = filled sweep (`eraserSweepPath`); circle = the original round-capped stroked line. Both branches exist in `AnnotationCanvas`, `AnnotationOverlayPreview` and the export script (`annotation-render-html.ts` / `offline.md` note), keyed on `shape === 'square'`; the live footprint is a `Rect` with `rx` = half-width for the circle. Shape is per editor session, like the size. Not verified on device.
+- `AnnotationCanvas` mask: each eraser stroke picks its branch inside the `map` (`shape === 'square'` -> filled `eraserSweepPath`, else the stroked round path); ⚠️ the arrow body must stay an expression returning one `<Path>`, not a `{...}` block, or the file stops parsing.
+- **Compact eraser panel:** padding `p-4` -> `px-3 py-2`, shorter ticks, and the Square/Circle buttons share one row with a smaller (28 px cap) preview, so the panel is about half its former height. ⚠️ Keep the preview on that row; a separate row brought the height back.
+
 ## RevRender viewer footer: the chevrons were pushed off the screen
 
 **Reported:** in the render viewer, "the arrow head is going out from the screen from right side and left one is already gone" — with 11 renders, the right chevron was half cut off and the left one was not visible at all.

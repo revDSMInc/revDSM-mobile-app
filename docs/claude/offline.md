@@ -2039,6 +2039,13 @@ Reported: Profile showed "24 photos saved on this device" while "Everything is u
 - Files cached BEFORE this change are not in the index, so they stay until the rep taps Clear offline photos (the `revrender_` prefix is shared with pitch-book / logo / RevRender files, so they cannot be told apart safely). A lead's photos now come from the server when online, so a first open of a non-offline lead may show a loader.
 - Not verified on device.
 
+### Annotation render: square eraser in the offline export (`annotation-render-html.ts`)
+
+Follow-up to the square-eraser ticket in `lead-center.md` (Annotate: square eraser + 0..100 ruler). The hidden-WebView renderer used by `annotationRenderer` / `annotationSaveService` (queued and offline annotation saves) now fills an axis-aligned square per eraser segment (`eraseSquares`, `destination-out`) instead of a round-capped stroked line, so a photo saved offline matches the editor.
+- ⚠️ The script duplicates the hull maths of `eraserSweepPath` (`utils/annotation-brush.ts`); change both together. The script is a plain template string: no `${}` or ES-module syntax inside it.
+- The stored payload is unchanged (`{ isEraser, width, points }`), so already-queued renders just come out square. Not verified on device.
+- Follow-up: the export only takes the square path when `stroke.shape === 'square'`; strokes without `shape` (and `'circle'`) keep the round stroked eraser. `annotationSaveService` forwards `shape`.
+
 ## "Offline" on two bars of LTE, and the raw `timeout of 15000ms exceeded` toast
 
 Client (Lance), on screenshots of both: *"I don't want to see this stuff. It's lowers confidence in app"*. Two separate defects, one screen. Reproduced on an iOS Simulator with Network Link Conditioner, custom profile **12 kbps / 35% packets dropped / 3000 ms delay** both directions — the profile is the useful artefact here, because the stock presets cannot produce either (`100% Loss` fails *instantly*, which is a `Network Error`, not a timeout).

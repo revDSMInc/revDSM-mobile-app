@@ -1245,3 +1245,8 @@ Report: tapping the funnel on the Zone Canvasser map "did nothing" - `ZoneCanvas
 
 - WARNING: **do not widen the regex to all Mapbox errors** - a style-parse or auth error is a real fault and must still reach `console.error`.
 - The download itself is not "fixed" by this: a region that cannot be reached still ends as `error` and needs a retry on a better link. Test: `__tests__/utils/mapbox-log-noise.test.ts`.
+
+### Lead Create: invisible keyboard gap under the number pad
+
+Ticket: *"after First/Last Name, tapping Phone leaves the old keyboard's space invisible and the pad is misplaced."* Full write-up in `app-wide.md` › "Lead Create: invisible keyboard gap". `widgets/modals/LeadCreate/index.tsx`: the sheet's keyboard-controller `KeyboardAvoidingView` no longer takes `enabled={!numPadActive}`.
+- ⚠️ Do not re-add the toggle: text -> numeric focus switch dismisses the system keyboard while the pad attaches, and a disabled avoider misses the hide event and keeps the keyboard-sized padding as a gap. Not verified on device.

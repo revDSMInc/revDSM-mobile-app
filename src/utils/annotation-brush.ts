@@ -39,3 +39,55 @@ export const strokeOpacity = (s: { opacity?: any } | null | undefined): number =
   const o = Number(s?.opacity);
   return Number.isFinite(o) && o > 0 && o <= 1 ? o : 1;
 };
+
+// ---- Square eraser, 0..100 ruler (follow-up to REVUIUX-588) -------------------------------------------------------------------
+// The eraser footprint is an axis-aligned SQUARE (side = the stroke width), not a round brush, and its size is a continuous 0..100 ruler.
+export type EraserShape = 'square' | 'circle';
+export const DEFAULT_ERASER_SHAPE: EraserShape = 'square';
+/** A saved eraser stroke with no `shape` predates the choice and was round, so it stays round. */
+export const eraserShapeOf = (s: { shape?: any } | null | undefined): EraserShape => (s?.shape === 'square' ? 'square' : 'circle');
+
+export const ERASER_MIN_SIZE = 1;
+export const ERASER_MAX_SIZE = 100;
+
+export const eraserFromSlider = (v: number): number =>
+  Math.max(ERASER_MIN_SIZE, Math.round(clamp01(v) * ERASER_MAX_SIZE));
+export const sliderFromEraser = (size: number): number => clamp01(size / ERASER_MAX_SIZE);
+
+type Pt = { x: number; y: number };
+
+const hull = (pts: Pt[]): Pt[] => {
+  const p = [...pts].sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (o: Pt, a: Pt, b: Pt) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower: Pt[] = [];
+  for (const q of p) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop();
+    lower.push(q);
+  }
+  const upper: Pt[] = [];
+  for (let i = p.length - 1; i >= 0; i--) {
+    const q = p[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop();
+    upper.push(q);
+  }
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+};
+
+/**
+ * SVG path (filled, not stroked) of an axis-aligned square of side `size` swept along `points` (normalised px/py): one convex hull of two
+ * squares per segment, so a drag leaves a solid band and a tap leaves one square. Same maths as the export script in annotation-render-html.ts.
+ */
+export const eraserSweepPath = (points: { px: number; py: number }[], w: number, h: number, size: number): string => {
+  if (!points || points.length === 0) return '';
+  const r = Math.max(size, 1) / 2;
+  const corners = (p: { px: number; py: number }): Pt[] => {
+    const x = p.px * w;
+    const y = p.py * h;
+    return [{ x: x - r, y: y - r }, { x: x + r, y: y - r }, { x: x + r, y: y + r }, { x: x - r, y: y + r }];
+  };
+  const toD = (poly: Pt[]) => poly.map((q, i) => `${i ? 'L' : 'M'}${q.x.toFixed(2)} ${q.y.toFixed(2)}`).join(' ') + ' Z';
+  if (points.length === 1) return toD(corners(points[0]));
+  const out: string[] = [];
+  for (let i = 1; i < points.length; i++) out.push(toD(hull([...corners(points[i - 1]), ...corners(points[i])])));
+  return out.join(' ');
+};

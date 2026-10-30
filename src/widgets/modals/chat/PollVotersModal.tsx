@@ -1,13 +1,16 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { TouchableOpacity } from 'react-native';
 import ChatService from '../../../services/api/ChatService';
 import { useBottomInset } from '../../../hooks/useBottomInset';
+import { ownVoteLast } from '../../../utils/channel-poll';
 
 interface Props {
   /** The poll message to report on, or null when the sheet is closed. */
   messageId: string | null;
+  /** The viewer's own user id: their row reads "You" instead of their name. */
+  currentUserId?: string | null;
   onClose: () => void;
 }
 
@@ -28,7 +31,7 @@ interface OptionRow {
  * Fetched when the sheet opens rather than carried on the message: a history
  * page never ships voter ids, so this endpoint is the only place names exist.
  */
-export const PollVotersModal = ({ messageId, onClose }: Props) => {
+export const PollVotersModal = ({ messageId, currentUserId, onClose }: Props) => {
   const [options, setOptions] = useState<OptionRow[] | null>(null);
   const [failed, setFailed] = useState(false);
   const bottomInset = useBottomInset();
@@ -54,6 +57,8 @@ export const PollVotersModal = ({ messageId, onClose }: Props) => {
       setFailed(true);
     }
   }, []);
+
+  const ordered = useMemo(() => (options ? ownVoteLast(options, currentUserId) : null), [options, currentUserId]);
 
   useEffect(() => {
     if (messageId) load(messageId);
@@ -87,9 +92,9 @@ export const PollVotersModal = ({ messageId, onClose }: Props) => {
               <Text style={styles.muted}>Could not load the votes. Close and try again.</Text>
             </View>
           )}
-          {options !== null && (
+          {ordered !== null && (
             <ScrollView contentContainerStyle={{ paddingBottom: 8 }}>
-              {options.map((option) => (
+              {ordered.map((option) => (
                 <View key={option.id} style={styles.optionBlock}>
                   <View style={styles.optionHead}>
                     <Text style={styles.optionText} numberOfLines={2}>
@@ -100,11 +105,18 @@ export const PollVotersModal = ({ messageId, onClose }: Props) => {
                   {option.voters.length === 0 ? (
                     <Text style={styles.muted}>No votes</Text>
                   ) : (
-                    option.voters.map((voter) => (
-                      <Text key={`${option.id}:${voter._id}`} style={styles.voter}>
-                        {voter.fullName}
-                      </Text>
-                    ))
+                    option.voters.map((voter) =>
+                      currentUserId && voter._id === String(currentUserId) ? (
+                        <View key={`${option.id}:${voter._id}`} style={styles.youRow}>
+                          <Icon name="checkmark-circle" size={18} color="#30D158" />
+                          <Text style={styles.youText}>You</Text>
+                        </View>
+                      ) : (
+                        <Text key={`${option.id}:${voter._id}`} style={styles.voter}>
+                          {voter.fullName}
+                        </Text>
+                      ),
+                    )
                   )}
                 </View>
               ))}
@@ -151,5 +163,12 @@ const styles = StyleSheet.create({
   },
   optionText: { flex: 1, color: '#fff', fontSize: 15, fontWeight: '700' },
   optionCount: { color: 'rgba(255,255,255,0.55)', fontSize: 13, marginLeft: 10 },
-  voter: { color: '#fff', fontSize: 15, paddingVertical: 5 },
+  voter: { color: 'rgba(255,255,255,0.8)', fontSize: 15, paddingVertical: 5 },
+  youRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingVertical: 5,
+  },
+  youText: { color: '#30D158', fontSize: 15, fontWeight: '800', marginLeft: 6 },
 });

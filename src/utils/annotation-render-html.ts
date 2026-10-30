@@ -49,8 +49,35 @@ export const ANNOTATION_RENDER_HTML = `
           ctx.drawImage(img, 0, 0, w, h);
 
           // One stroke on a context. Eraser = 'destination-out' (only meaningful on the transparent ink layer below).
+          // Square eraser footprint (stroke.shape === 'square'; absent = round, drawn by the stroked branch below) = axis-aligned SQUARE swept along the stroke (hull of two squares per segment) - keep in step with eraserSweepPath in utils/annotation-brush.ts.
+          function hullOf(pts) {
+            pts.sort(function (a, b) { return a.x - b.x || a.y - b.y; });
+            function cr(o, a, b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); }
+            var lo = [], up = [], i;
+            for (i = 0; i < pts.length; i++) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], pts[i]) <= 0) lo.pop(); lo.push(pts[i]); }
+            for (i = pts.length - 1; i >= 0; i--) { while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], pts[i]) <= 0) up.pop(); up.push(pts[i]); }
+            return lo.slice(0, -1).concat(up.slice(0, -1));
+          }
+          function eraseSquares(c, stroke) {
+            var r = Math.max(stroke.width, 1) * (w / data.layoutWidth) / 2;
+            function sq(p) {
+              var x = p.px * w, y = p.py * h;
+              return [{ x: x - r, y: y - r }, { x: x + r, y: y - r }, { x: x + r, y: y + r }, { x: x - r, y: y + r }];
+            }
+            c.globalCompositeOperation = 'destination-out';
+            c.fillStyle = '#000';
+            function fillPoly(poly) {
+              c.beginPath();
+              poly.forEach(function (q, k) { if (k === 0) c.moveTo(q.x, q.y); else c.lineTo(q.x, q.y); });
+              c.closePath();
+              c.fill();
+            }
+            if (stroke.points.length === 1) { fillPoly(sq(stroke.points[0])); return; }
+            for (var k = 1; k < stroke.points.length; k++) fillPoly(hullOf(sq(stroke.points[k - 1]).concat(sq(stroke.points[k]))));
+          }
           function drawStroke(c, stroke) {
             if (stroke.points.length === 0) return;
+            if (stroke.isEraser && stroke.shape === 'square') { eraseSquares(c, stroke); return; }
             c.beginPath();
             c.lineCap = 'round';
             c.lineJoin = 'round';
