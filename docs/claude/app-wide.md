@@ -543,7 +543,7 @@ is untouched until we roll it out.
 - Not verified on device from this session: check Android (IME really hidden when tapping from Email to Phone) and the
   iOS QuickType bar not appearing over the pad.
 - ⚠️ **Never `Pressable style={({pressed}) => ...}` here** - NativeWind drops the function form and the keys collapsed to bare text. Plain style object + `useState` (see `Key`). Look: 4-column pill grid, 3-column grid; bottom row = backspace / 0 / green check (Done), all the SAME pill size - a tall oval Done key looked wrong. Decimal fields get a `.` key and Done drops to its own row.
-- ⚠️ **`GlobalKeyboardAvoidingView` takes `enabled`; Lead Create turns it off while the pad is up** (`NumPadProvider onActiveChange`). iOS still reports the hidden system keyboard's height, which left a white gap under the pad.
+- ⚠️ **SUPERSEDED (see "Lead Create: invisible keyboard gap" below): Lead Create no longer disables its `KeyboardAvoidingView` while the pad is up.** Old note: `GlobalKeyboardAvoidingView` takes `enabled`; Lead Create turned it off while the pad is up (`NumPadProvider onActiveChange`). iOS still reports the hidden system keyboard's height, which left a white gap under the pad.
 - ⚠️ **Android re-raise guard**: while a pad owns focus, `keyboardDidShow` triggers `KeyboardController.dismiss({ keepFocus: true })` (Android only - on iOS it would resign the field).
 - **Slide animation**: `NumPadPanel` animates `height` (so the form above resizes smoothly) + `translateY` over ~220ms, JS driver (height can't be native). ⚠️ The provider keeps the last target in `shown` so the pad can finish sliding OUT before it unmounts; `open` flips first, `onClosed` unmounts. Height is computed (`rows * (key+gap)`), not measured - change both together if the key rows change.
 
@@ -1562,3 +1562,8 @@ Files: `utils/imageFileCache.ts` (`removeCachedPath`), used by `services/leadPho
 - New export that unlinks ONE cache file and clears its `imgcache:` index entry (through `forgetWarmedPath`). It refuses any path that is not a `revrender_` cache file and resolves `false` if the file is already gone.
 - ⚠️ Per-lead pruning must go through it, never a bare `unlink`: a stale MMKV index entry would point `getWarmedLocalUri` at a missing file and the tile would paint blank instead of falling back to its url.
 - The `revrender_` prefix is shared by lead photos, pitch-book, logo and RevRender files, so nothing may delete "all files not in the lead index" - only the paths the lead index recorded.
+
+### Lead Create: invisible keyboard gap under the pad
+
+Ticket: *"after First/Last Name, tapping Phone leaves the old keyboard's space invisible and the pad is misplaced."* The sheet's keyboard-controller `KeyboardAvoidingView` had `enabled={!numPadActive}`. Text -> numeric switch: the system keyboard is up (sheet shrunk by its height), the pad attaches and dismisses it with `keepFocus`, but the avoider was already disabled, missed the hide event and kept the keyboard-sized padding - a gray gap under the pad.
+- Fix: `LeadCreate/index.tsx` leaves the avoider always enabled. ⚠️ Do not re-add `enabled={!numPadActive}`; the pad is Android-only now, so the iOS stale-height reason for it is gone. Not verified on device.

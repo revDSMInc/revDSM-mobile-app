@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { Image, View } from 'react-native';
 import Svg, { Circle, G, Line, Mask, Path, Polygon, Rect, Text as SvgText } from 'react-native-svg';
 import { arrowGeometry, circleRadiusPx } from '../../../utils/annotation-shapes';
-import { strokeOpacity } from '../../../utils/annotation-brush';
+import { eraserSweepPath, strokeOpacity } from '../../../utils/annotation-brush';
 import { layerBlocks, orderedLayers } from '../../../utils/annotation-layers';
 import { coverBox, type PendingAnnotationJobView } from '../../../utils/pending-annotations';
 
@@ -89,7 +89,11 @@ export function AnnotationOverlayPreview({ job, width, height }: Props) {
           <Mask key={`m-${bi}`} id={id}>
             <Rect x={0} y={0} width={lw} height={lh} fill="white" />
             {blk.erasers.map((s, i) => (
-              <Path key={i} d={pathOf(s.points, lw, lh)} stroke="black" strokeWidth={s.width} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              s.shape === 'square' ? (
+                <Path key={i} d={eraserSweepPath(s.points, lw, lh, s.width)} fill="black" />
+              ) : (
+                <Path key={i} d={pathOf(s.points, lw, lh)} stroke="black" strokeWidth={s.width} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              )
             ))}
           </Mask>,
           <G key={`g-${bi}`} mask={`url(#${id})`}>

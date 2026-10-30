@@ -57,7 +57,10 @@ import {
   brushWidth,
   opacityFromSlider,
   sizeFromSlider,
-  sizesFor,
+  DEFAULT_ERASER_SHAPE,
+  EraserShape,
+  eraserFromSlider,
+  sliderFromEraser,
   sliderFromOpacity,
   sliderFromSize,
 } from '../../utils/annotation-brush';
@@ -143,6 +146,7 @@ export default function ImageAnnotationScreen() {
   const [activeOpacity, setActiveOpacity] = useState<number>(DEFAULT_PEN_OPACITY);
   // The eraser keeps its own width (REVUIUX-588) - it used to borrow the pen's and could not be resized.
   const [eraserSize, setEraserSize] = useState<number>(DEFAULT_ERASER_SIZE);
+  const [eraserShape, setEraserShape] = useState<EraserShape>(DEFAULT_ERASER_SHAPE);
   const [showColorPanel, setShowColorPanel] = useState<boolean>(false);
 
   // Re-edit seeds the canvas with the marks saved on the annotated copy; `initialCount` is the "nothing changed yet"
@@ -385,6 +389,7 @@ export default function ImageAnnotationScreen() {
     activeSize,
     activeOpacity,
     eraserSize,
+    eraserShape,
     photoId,
     canvasLayout,
     zoomScale,
@@ -402,6 +407,7 @@ export default function ImageAnnotationScreen() {
       activeSize,
       activeOpacity,
       eraserSize,
+      eraserShape,
       photoId,
       canvasLayout,
       zoomScale,
@@ -540,7 +546,7 @@ export default function ImageAnnotationScreen() {
       onPanResponderGrant: (evt, gestureState) => {
         multiTouchRef.current = evt.nativeEvent.touches.length > 1;
         if (multiTouchRef.current) return;
-        const { activeTool, activeDrawTool, activeColor, activeSize, activeOpacity, eraserSize, photoId, canvasLayout } = stateRef.current;
+        const { activeTool, activeDrawTool, activeColor, activeSize, activeOpacity, eraserSize, eraserShape, photoId, canvasLayout } = stateRef.current;
         if (activeTool === 'draw') {
           if (!photoId) return;
           const { locationX, locationY } = evt.nativeEvent;
@@ -554,6 +560,7 @@ export default function ImageAnnotationScreen() {
             color: activeDrawTool === 'eraser' ? 'transparent' : activeColor,
             width: brushWidth(activeDrawTool, activeSize, eraserSize),
             isEraser: activeDrawTool === 'eraser',
+            ...(activeDrawTool === 'eraser' ? { shape: eraserShape } : {}),
             ...(activeDrawTool === 'pen' && activeOpacity < 1 ? { opacity: activeOpacity } : {}),
           };
           activeStrokeRef.current = newStroke;
@@ -1477,30 +1484,59 @@ export default function ImageAnnotationScreen() {
                 )}
 
                 {activeDrawTool === 'eraser' && (
-                  <View className="bg-[#121614] border border-white/5 p-4 rounded-2xl mb-4">
-                    <View className="flex-row items-center justify-between mt-1 px-1">
+                  <View className="bg-[#121614] border border-white/5 px-3 py-2 rounded-2xl mb-2">
+                    <View className="flex-row items-center justify-between px-2">
                       <Text className="text-white/60 text-xs font-bold">Size</Text>
-                      <View className="flex-1 flex-row items-center justify-end gap-3 mx-4">
-                        {sizesFor('eraser').map((size) => (
-                          <TouchableOpacity
-                            key={size}
-                            onPress={() => setEraserSize(size)}
-                            className={`w-8 h-8 rounded-full items-center justify-center ${
-                              eraserSize === size ? 'bg-[#72BD00]' : 'bg-white/5'
-                            }`}
-                          >
-                            <Text className="text-white text-[10px] font-bold">{size}</Text>
-                          </TouchableOpacity>
+                      <Text className="text-white text-xs font-bold">{eraserSize}</Text>
+                    </View>
+                    <View className="px-2" style={{ height: 26 }}>
+                      <CustomSlider
+                        value={sliderFromEraser(eraserSize)}
+                        onValueChange={(v) => setEraserSize(eraserFromSlider(v))}
+                        activeColor="#72BD00"
+                      />
+                    </View>
+                    {/* 0..100 ruler under the slider: a tick every 5, a labelled long tick every 10. */}
+                    <View className="px-2">
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', height: 8 }}>
+                        {Array.from({ length: 21 }, (_, i) => (
+                          <View key={i} style={{ width: 1, height: i % 2 === 0 ? 8 : 4, backgroundColor: 'rgba(255,255,255,0.45)' }} />
                         ))}
                       </View>
-                      <Text className="text-white text-xs font-bold">{eraserSize}</Text>
-                      {/* Actual-size preview of the eraser (canvas px ~ screen px at 1x), so the size can be judged before touching the photo. */}
-                      <View className="w-12 h-12 items-center justify-center ml-2">
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        {[0, 20, 40, 60, 80, 100].map((n) => (
+                          <Text key={n} className="text-white/50 text-[9px] font-bold">{n}</Text>
+                        ))}
+                      </View>
+                    </View>
+                    {/* Shape toggle + footprint preview (capped at 28 px) share one row. */}
+                    <View className="flex-row items-center justify-center mt-2" style={{ gap: 8 }}>
+                      {(['square', 'circle'] as EraserShape[]).map((shape) => (
+                        <TouchableOpacity
+                          key={shape}
+                          onPress={() => setEraserShape(shape)}
+                          className={`flex-row items-center px-4 py-1.5 rounded-full ${
+                            eraserShape === shape ? 'bg-[#72BD00]/25 border border-[#72BD00]' : 'bg-white/5 border border-white/10'
+                          }`}
+                        >
+                          <View
+                            style={{
+                              width: 12,
+                              height: 12,
+                              borderRadius: shape === 'circle' ? 6 : 0,
+                              borderWidth: 1.5,
+                              borderColor: eraserShape === shape ? '#72BD00' : '#FFFFFF',
+                            }}
+                          />
+                          <Text className="text-white text-xs font-bold ml-2">{shape === 'square' ? 'Square' : 'Circle'}</Text>
+                        </TouchableOpacity>
+                      ))}
+                      <View className="items-center justify-center" style={{ width: 30, height: 30 }}>
                         <View
                           style={{
-                            width: Math.min(eraserSize, 44),
-                            height: Math.min(eraserSize, 44),
-                            borderRadius: 22,
+                            width: Math.min(eraserSize, 28),
+                            height: Math.min(eraserSize, 28),
+                            borderRadius: eraserShape === 'circle' ? 14 : 0,
                             backgroundColor: 'rgba(255,255,255,0.25)',
                             borderWidth: 1.5,
                             borderColor: '#FFFFFF',

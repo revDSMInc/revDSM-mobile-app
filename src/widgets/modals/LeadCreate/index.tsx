@@ -577,10 +577,10 @@ export default function LeadCreateModal({
     >
       {/* keyboard-controller's KeyboardAvoidingView (not RN's): KeyboardProvider makes the app edge-to-edge, so Android no longer
           resizes the window and RN's one (and a hand-measured lift) left the pinned button under the system keyboard. It shrinks the
-          sheet to the space above the keyboard; off while the in-app pad is up (the pad sizes the form itself). */}
+          sheet to the space above the keyboard. ⚠️ Never disable it while the in-app pad is up: it would miss the system keyboard's hide event
+          (text -> numeric field) and keep the keyboard-sized padding as an invisible gap under the pad. */}
       <KeyboardAvoidingView
         behavior="padding"
-        enabled={!numPadActive}
         style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.4)' }]}
       >
         <View style={[styles.modalContainer, { backgroundColor: isDark ? colors.surface : '#fff' }]}>

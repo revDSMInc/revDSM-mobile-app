@@ -56,6 +56,8 @@ const cleanStroke = (s: any) => ({
   width: s.width,
   // Pen transparency (REVUIUX-590); absent on strokes saved before it = fully opaque.
   opacity: s.opacity,
+  // Eraser footprint; absent = round (saved before the choice existed).
+  shape: s.shape,
   points: s.points,
 });
 

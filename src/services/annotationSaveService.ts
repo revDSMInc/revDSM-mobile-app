@@ -266,7 +266,7 @@ export const flattenMarks = (input: {
     backgroundImageBase64: input.backgroundBase64,
     layoutWidth: input.layoutWidth,
     layoutHeight: input.layoutHeight,
-    strokes: input.strokes.map((s) => ({ isEraser: s.isEraser, color: s.color, width: s.width, points: s.points })),
+    strokes: input.strokes.map((s) => ({ isEraser: s.isEraser, color: s.color, width: s.width, shape: s.shape, points: s.points })),
     texts: input.texts.map((t) => ({
       text: t.text,
       color: t.color,
