@@ -1513,7 +1513,7 @@ export default function ChatDetailScreen() {
       )}
 
       {isChannel && (
-        <PollVotersModal messageId={pollVotersFor} onClose={() => setPollVotersFor(null)} />
+        <PollVotersModal messageId={pollVotersFor} currentUserId={currentUserId || user?._id} onClose={() => setPollVotersFor(null)} />
       )}
 
       <GifPickerModal

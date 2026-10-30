@@ -156,3 +156,19 @@ export const messageWithPollUpdate = (message: any, update: any): any => {
   if (!poll) return message;
   return { ...message, poll: applyPollUpdate(poll, update) };
 };
+
+/**
+ * "View votes" order: the viewer's own vote always sits at the bottom. Options they voted for go after the others (otherwise keeping
+ * the poll's order), and inside an option their row goes last. Stable, and never drops or edits a row.
+ */
+export const ownVoteLast = <V extends { _id: string }, O extends { voters: V[] }>(
+  options: O[],
+  currentUserId?: string | null,
+): O[] => {
+  const me = currentUserId ? String(currentUserId) : '';
+  if (!me) return options;
+  const mine = (o: O) => o.voters.some((v) => v._id === me);
+  const withMeLast = (o: O): O =>
+    mine(o) ? { ...o, voters: [...o.voters.filter((v) => v._id !== me), ...o.voters.filter((v) => v._id === me)] } : o;
+  return [...options.filter((o) => !mine(o)), ...options.filter(mine)].map(withMeLast);
+};

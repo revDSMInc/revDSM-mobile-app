@@ -879,3 +879,9 @@ row (appointment photos, gallery, files, voice) gates itself.
 ### Pin icon in the chat header went back on the first tap
 - **Root cause:** the "Back to Leads/Channels" `Pressable` in `ChatHeader.tsx` was a full-width row with `hitSlop` 20 and `zIndex: 9999`. Its invisible bottom slop (20px) was larger than the `mb-4` gap (16px) to the title row, so the top of the pin icon sat inside the Back button's hit area and the first tap navigated back; tapping lower opened the pin list.
 - **Fix:** the Back row now hugs its content (`alignSelf: 'flex-start'`), the `zIndex` is gone and the bottom slop is 8px (inside the gap). ⚠️ Don't restore a full-width Back row or a bottom slop over 16px - it will swallow taps on the pin/participants icons again. Not device-verified.
+
+### Poll "View votes": the viewer's own row reads "You"
+
+`PollVotersModal` takes `currentUserId` (from `ChatDetail`) and shows **You** in place of the name on the row whose voter `_id` matches. Compare ids as strings (the voter `_id` is `String()`-ed on load). ⚠️ Display only: the rows still come from `GET /api/v1/channels/messages/:id/poll/votes` unchanged, so never filter or reorder by it. Not verified on device.
+- **Own vote always last:** `ownVoteLast` (`utils/channel-poll.ts`, tests `__tests__/utils/channel-poll-own-vote.test.ts`) moves the options the viewer voted for below the others and puts their row last inside an option. ⚠️ Display order only; it is stable and keeps the poll's order otherwise.
+- **Own row styling:** the viewer's "You" row is a check icon + heavy green text with NO pill/background/border (removed on request) while other voters are plain, slightly dimmed text. Styles `youRow` / `youText` in `PollVotersModal.tsx`. ⚠️ Keep `fontWeight: '800'` on a string weight so Android doesn't fall back to the device font.
