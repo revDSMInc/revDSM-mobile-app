@@ -769,7 +769,7 @@ Ticket: add GIFs to chat. The attach menu (`+`) gets a **GIF** row that opens a 
 | send | `useChatLogic.sendGif` → `sendTextMessage` |
 | key | `GIPHY_API_KEY` in `.env` → `config/env.ts` (optional) |
 
-- **A GIF is a TEXT message whose whole body is a `media*.giphy.com` / `i.giphy.com` `.gif|.webp` URL.** The backend has no GIF type, so web and older builds show the link and nothing needed a server change. `isGifMessageText` is an exact-match on the trimmed body — ⚠️ do not loosen it to "contains": a sentence with a link in it must stay text.
+- **A GIF is SENT as a TEXT message whose whole body is a `media*.giphy.com` / `i.giphy.com` `.gif|.webp` URL** — that is still the request, but the server no longer stores it that way: see the S3 follow-up below. `isGifMessageText` is an exact-match on the trimmed body — ⚠️ do not loosen it to "contains": a sentence with a link in it must stay text.
 - ⚠️ **GIPHY is called with plain `fetch`, never the axios wrapper** — that attaches the revDSM bearer token to every request.
 - The sent URL is the `downsized` rendition with its query string stripped; the grid uses `fixed_width_small`. Rating is capped at `pg-13`.
 - **No key ⇒ the picker shows "not set up", the app does not throw** (`GIPHY_API_KEY` is deliberately not in `required()`). Production needs GIPHY's upgraded key and the "Powered by GIPHY" line, which the sheet renders.
@@ -779,29 +779,45 @@ Ticket: add GIFs to chat. The attach menu (`+`) gets a **GIF** row that opens a 
 
 - **Android showed GIFs as a still frame (REVDSM-575 follow-up).** Root cause: React Native 0.84 does **not** bundle Fresco's animated decoders (`node_modules/react-native/gradle/libs.versions.toml` lists only `fresco`, `middleware`, `imagepipeline-okhttp3`, `ui-common`), so the stock `<Image>` decodes only the first frame on Android while iOS animates natively. Fix is in `android/app/build.gradle`: `animated-gif`, `animated-webp` and `webpsupport` at the SAME version as RN's `fresco`. ⚠️ Needs a **native rebuild** (`yarn android`) — Metro reload does nothing — and the three versions must be bumped together with every RN upgrade. This also makes any other animated GIF/WebP `<Image>` in the app animate on Android.
 
-- **GIF messages never expose their url (REVDSM-575 follow-up).** The long-press menu preview shows the GIF (not the link), and **Copy** and **Edit** are hidden for a GIF — Edit was the leak: it loaded the url into the composer. A reply to a GIF shows a thumbnail in the composer reply bar (`ChatBars.tsx`) and in the quoted bubble (`ChatMessageBubble`'s reply quote), not the url or a bare "GIF" label. All keyed on `isGifMessageText`. The pinned list (`PinnedMessagesArea` in `ChatModals.tsx`) shows the GIF as the row thumbnail with the label `GIF`. ⚠️ Message search still matches the raw url text; check on a device. Not device-verified.
+- **GIF messages never expose their url (REVDSM-575 follow-up).** The long-press menu preview shows the GIF (not the link), and **Copy** and **Edit** are hidden for a GIF — Edit was the leak: it loaded the url into the composer. A reply to a GIF shows a thumbnail in the composer reply bar (`ChatBars.tsx`) and in the quoted bubble (`ChatMessageBubble`'s reply quote), not the url or a bare "GIF" label. Keyed on `isGifMessageText` for a url-bodied GIF and on `isGifFileMessage` for one the server stored — for the stored shape Copy and Edit are already hidden by the `fileType === 'text'` guard on both rows (it is a file, not text), the long-press preview reads `gifPreviewUri`, and the reply thumbnails come from the signed url (`getGridSrc` in the bubble; the composer bar has none, so it shows the `GIF` label). ⚠️ Not covered: the pinned-messages list and message search still match on the raw text; check them on a device. Not device-verified.
 
-### Pinned messages list not showing (lead chat)
+### A sent GIF is kept in S3, not linked (REVDSM-575 follow-up)
 
-- **Two defects fixed, not reproduced on device:** (1) `PinnedMessagesArea` returned `null` for an empty list, so the pin sheet was an invisible card and the pin icon seemed dead - it now shows a "No pinned messages yet" state. (2) `useChatSession` sent a second `get-pinned-messages` with `{ chatId, channelId }` on top of the plain-id request `SocketManager.joinRoom` already makes (and the web sends); removed, so there is one request shape. Whether the server answered the object form with an empty list is **unverified** - if the list is still missing, log `pinned-messages-response` payloads next.
-- ⚠️ Channels deliberately have no pinning (REVDSM-1313): `!isChannel` gates the header icon, the modal and the socket listeners. Do NOT re-add it as part of this.
+Storing the GIPHY URL stored a third party's link: outside the signed-URL boundary every other chat
+attachment sits behind, dead once GIPHY retires the rendition, and a bare link in any client that
+does not special-case the URL (the web portal showed exactly that). The server now fetches the URL
+once, on send, and keeps the bytes in S3 like a photo — backend `core/services/chat/gifAttachment.ts`,
+wired into `ChatHandler.sendMessage` and `ChannelChatHandler.send`.
 
-### GIF bubble: play twice, freeze under a GIF badge, full screen while animating
+So a GIF comes back as a **captionless message carrying one `image/gif` file**: `message` is a single
+space (what a photo-only post has always been) and `files[0].filePath` is the S3 key the app signs
+through `url/v1/secure/multiple` like any other attachment. `utils/gif-message.ts` grew
+`isGifFile` / `isGifFileMessage` for that shape; `isGifMessageText` stays, and is **not** dead code —
+it is every GIF stored before this change (those rows were not backfilled) and the app's own
+optimistic bubble.
 
-- **Behaviour (WhatsApp-style):** the bubble animates for TWO plays, then swaps to a still frame under a translucent grey circle with a bold "GIF" (no scrim over the picture). Tap a frozen GIF = replay (two more plays). Tap an ANIMATING GIF = full-screen viewer (black, `contain`, loops, close X / tap / back). A frozen GIF never opens full screen - tapping it replays instead (requested).
-- **Why this shape:** React Native cannot pause or loop-count an animated `<Image>`. `utils/gif-playback.ts` (pure, `__tests__/utils/gif-playback.test.ts`) reads one play's length from the file's own frame delays (GIF GCE delays / animated-WebP ANMF durations); `GifMessage` starts the clock on `onLoad`, and at `2 x loop` (clamped 1-60 s, 3 s loop assumed if unreadable) unmounts the animated `<Image>` and shows the still. Replay remounts the `<Image>` (`key={runId}`), which restarts from frame 1.
-- ⚠️ The still is GIPHY's `_s` rendition of the same path (`giphy-downsized.gif` -> `giphy-downsized_s.gif`, `gifStillUrl`). If a url has no such convention (e.g. `i.giphy.com/<id>.gif`) or it 404s, the bubble shows a dark box under the badge instead - it never keeps animating behind it.
-- ⚠️ The length is fetched with `XMLHttpRequest` `arraybuffer` (RN's `FileReader` has no reliable `readAsArrayBuffer`), plain and unauthenticated - never the axios wrapper (bearer token). Cached per url; the picture itself is downloaded a second time by `<Image>` (HTTP cache usually serves it).
-- The full-screen `Modal` is its own native tree: insets floored, `StatusBar.setHidden` imperative (CLAUDE.md §6). It opens only from a bubble, so it never stacks on another Modal. Not device-verified on iOS or Android.
-
-### Pinned messages not showing / removed on reopen (lead chat)
-
-- **Root cause (mobile side, fixed):** `normalizeMessage` only read `m.isPinned`, so a backend that serialises the flag as `pinned` / `is_pinned` / `pinnedMessage` made every message look unpinned, and `pinnedMessages` was populated only from the socket's `pinned-messages-response` (which could be empty) - so the sheet stayed empty and pins vanished on reopen.
-- **Fixes:** (1) `ChatService.normalizeMessage` accepts `isPinned || pinned || is_pinned || pinnedMessage`. (2) `handlePin` updates `pinnedMessages` optimistically, so the sheet shows the pin immediately instead of waiting for the socket echo. (3) `message-pinned` / `message-unpinned` handlers now also handle a full message in the payload (covers pins outside the current page) and guard against a missing id. (4) A `useEffect` reconciles `pinnedMessages` with `messages` after every render: current-page pins come from `messages.isPinned`, older-page pins are retained, and an unpinned message is dropped - so an empty `pinned-messages-response` can no longer wipe the list. (5) `loadMessages` resets `pinnedMessages` first, so switching chats can't leak pins.
-- ⚠️ **Backend contract check:** mobile follows the web contract (`pin-message` / `unpin-message` with `{ messageId, chatId }` for lead chat, events `message-pinned` / `message-unpinned` / `pinned-messages-response`). If pins still disappear on reopen after this, verify the backend still persists `isPinned` on the message and broadcasts `message-pinned` - compare with the web portal, which uses the same events. Mobile no longer sends the `{ chatId, channelId }` object form of `get-pinned-messages` that the server may have answered differently.
-- Not device-verified.
-
-- **Follow-up - pins vanish on reopen / list empty:** the web lead chat NEVER sends `get-pinned-messages` and trusts each message's `isPinned`; only mobile asks for the list and used to REPLACE `pinnedMessages` (and set every other message `isPinned: false`) with whatever `pinned-messages-response` carried - so a short/empty reply wiped pins the message history already showed, and the REST page load could in turn drop older pins the socket reply had. Both paths now MERGE (`mergePins` in `useChatSession.ts`); removal is only the `message-unpinned` event / the Unpin button. Logs to read on a device: `[pins] REST page: N messages, M isPinned` and `[pins] pinned-messages-response: K pinned`. ⚠️ If a pin made and then re-opened shows `M = 0` AND `K = 0`, the BACKEND did not persist `pin-message` - nothing in the app can fix that; check the `pin-message` handler / the message's `isPinned` field. Not device-verified.
+- The bubble renders a stored GIF through the same `GifMessage`, from the signed URL (`gifUri` in
+  `ChatMessageBubble`), and the lone-photo branch is gated `!gifUri` so it is not also drawn as a
+  cropped still. ⚠️ `gifUri` waits for an `http(s):`/`file:` URL: handing `GifMessage` an unsigned
+  key would show the fallback link.
+- ⚠️ **`sendGif`'s optimistic bubble had to change shape too** (`sendTextMessage(url, reply, { asGif: true })`):
+  it carries the GIF as its single file with no text, because `useChatSession` matches a pending
+  message to the server's copy by text or by files — a URL-texted optimistic bubble matches neither
+  and the GIF arrives **twice**.
+- ⚠️ **A GIF is still not an upload for the channel settings.** The handler passes `isGif` so
+  `evaluatePost` sees `hasFiles: false`, exactly as a poll does — otherwise the attach `+` would offer
+  a GIF in a channel with uploads off and the server would refuse it with `UPLOADS_DISABLED`.
+- A GIF that cannot be fetched (timeout, non-GIF response, GIPHY down) falls back to posting the URL
+  as text, so a sender never loses the message; it then renders through `isGifMessageText` as before.
+- Previews read "Sent a GIF" / `GIF` off either shape (`ThreadItems`, `ChatBars`, the bubble's reply
+  quote), and the push body says "sent a GIF" instead of "shared 1 file(s)".
+- ⚠️ **A WebP counts as a GIF only under the server's `…/gifs/` key** — a GIPHY WebP rendition is
+  animated, but a still photo can carry the same extension, and it must keep the photo bubble.
+- Tests: `tests/chat/gif-message.test.ts` (both shapes, and the WebP rule). Backend side:
+  `src/core/services/chat/gifAttachment.test.ts` — the host allowlist there is what the server will
+  fetch from a caller-supplied body, so ⚠️ do not loosen it.
+- Not device-verified: a GIF sent from the app and from a channel (one bubble, animating, from the
+  S3 copy), an old URL-bodied GIF still rendering, and a GIF reply quote.
 
 ## Team-channel polls (REVUIUX-577)
 
@@ -885,3 +901,51 @@ row (appointment photos, gallery, files, voice) gates itself.
 `PollVotersModal` takes `currentUserId` (from `ChatDetail`) and shows **You** in place of the name on the row whose voter `_id` matches. Compare ids as strings (the voter `_id` is `String()`-ed on load). ⚠️ Display only: the rows still come from `GET /api/v1/channels/messages/:id/poll/votes` unchanged, so never filter or reorder by it. Not verified on device.
 - **Own vote always last:** `ownVoteLast` (`utils/channel-poll.ts`, tests `__tests__/utils/channel-poll-own-vote.test.ts`) moves the options the viewer voted for below the others and puts their row last inside an option. ⚠️ Display order only; it is stable and keeps the poll's order otherwise.
 - **Own row styling:** the viewer's "You" row is a check icon + heavy green text with NO pill/background/border (removed on request) while other voters are plain, slightly dimmed text. Styles `youRow` / `youText` in `PollVotersModal.tsx`. ⚠️ Keep `fontWeight: '800'` on a string weight so Android doesn't fall back to the device font.
+### Channel settings bind reps only (`permissions.requires_ack`)
+
+Every per-channel setting a manager edits is worded "Reps can …" — who may send, reactions and
+replies, photos and files, push notifications, require read confirmation, slow mode, self-edit,
+manager approval, retention. The server now enforces all of them on
+`sales_representative_dashboard` alone: a manager, an installer, a canvasser or a regional manager
+is held to none of them. Nothing in the app had to change for the message flags —
+`channel.permissions.can_post/can_reply/can_react/can_upload/can_edit_own/is_read_only` are
+per-viewer already and simply answer `true` for anyone who is not a rep.
+
+⚠️ **Read confirmation has two different questions now.** `channel.require_ack` says the channel
+asks for confirmations; the new `channel.permissions.requires_ack` says whether *this* viewer is
+asked for one. `useTeamChannelPermission` returns the second as `requireAck`, and
+`ChannelThreadItem`'s "Confirm needed" badge reads it too — a manager opening a require_ack channel
+must see no banner and no badge. Both fall back to `require_ack` when the flag is absent, so the app
+keeps working against a server that predates it; do not tidy that fallback away.
+
+### Pinned messages list not showing (lead chat)
+
+- **Two defects fixed, not reproduced on device:** (1) `PinnedMessagesArea` returned `null` for an empty list, so the pin sheet was an invisible card and the pin icon seemed dead - it now shows a "No pinned messages yet" state. (2) `useChatSession` sent a second `get-pinned-messages` with `{ chatId, channelId }` on top of the plain-id request `SocketManager.joinRoom` already makes (and the web sends); removed, so there is one request shape. Whether the server answered the object form with an empty list is **unverified** - if the list is still missing, log `pinned-messages-response` payloads next. ⚠️ **Superseded on merge with the poll branch:** REVDSM-1313 deleted the server's `get-pinned-messages` handler, so NOTHING answers either request shape; `useChatSession` now reads `GET /chat/v1/:chatId/pinned` on open (`ChatService.getPinnedMessages`) and that authoritative list is what fills the bar. The socket emit and the merging `pinned-messages-response` listener are left in place for a server that answers again.
+- ⚠️ Channels deliberately have no pinning (REVDSM-1313): `!isChannel` gates the header icon, the modal and the socket listeners. Do NOT re-add it as part of this.
+
+### GIF bubble: play twice, freeze under a GIF badge, full screen while animating
+
+- **Behaviour (WhatsApp-style):** the bubble animates for TWO plays, then swaps to a still frame under a translucent grey circle with a bold "GIF" (no scrim over the picture). Tap a frozen GIF = replay (two more plays). Tap an ANIMATING GIF = full-screen viewer (black, `contain`, loops, close X / tap / back). A frozen GIF never opens full screen - tapping it replays instead (requested).
+- **Why this shape:** React Native cannot pause or loop-count an animated `<Image>`. `utils/gif-playback.ts` (pure, `__tests__/utils/gif-playback.test.ts`) reads one play's length from the file's own frame delays (GIF GCE delays / animated-WebP ANMF durations); `GifMessage` starts the clock on `onLoad`, and at `2 x loop` (clamped 1-60 s, 3 s loop assumed if unreadable) unmounts the animated `<Image>` and shows the still. Replay remounts the `<Image>` (`key={runId}`), which restarts from frame 1.
+- ⚠️ The still is GIPHY's `_s` rendition of the same path (`giphy-downsized.gif` -> `giphy-downsized_s.gif`, `gifStillUrl`). If a url has no such convention (e.g. `i.giphy.com/<id>.gif`) or it 404s, the bubble shows a dark box under the badge instead - it never keeps animating behind it.
+- ⚠️ **A GIF the server stored has no still at all** (S3/CloudFront, no `_s`), which after the S3 change above is every new GIF. Freezing those would turn every GIF in chat into a dark box, so **no still ⇒ no freeze**: the freeze clock does not start (and the loop length is not measured, saving a second download of the file) and the GIF animates as it did before this behaviour existed. Tapping it still opens full screen. The way to get the freeze back for stored GIFs is a still beside the GIF — the server could fetch GIPHY's `_s` rendition at send time and store it as a second key for `gifStillUrl` to answer from. Not done.
+- ⚠️ The length is fetched with `XMLHttpRequest` `arraybuffer` (RN's `FileReader` has no reliable `readAsArrayBuffer`), plain and unauthenticated - never the axios wrapper (bearer token). Cached per url; the picture itself is downloaded a second time by `<Image>` (HTTP cache usually serves it).
+- The full-screen `Modal` is its own native tree: insets floored, `StatusBar.setHidden` imperative (CLAUDE.md §6). It opens only from a bubble, so it never stacks on another Modal. Not device-verified on iOS or Android.
+
+### Pinned messages not showing / removed on reopen (lead chat)
+
+- **Root cause (mobile side, fixed):** `normalizeMessage` only read `m.isPinned`, so a backend that serialises the flag as `pinned` / `is_pinned` / `pinnedMessage` made every message look unpinned, and `pinnedMessages` was populated only from the socket's `pinned-messages-response` (which could be empty) - so the sheet stayed empty and pins vanished on reopen.
+- **Fixes:** (1) `ChatService.normalizeMessage` accepts `isPinned || pinned || is_pinned || pinnedMessage`. (2) `handlePin` updates `pinnedMessages` optimistically, so the sheet shows the pin immediately instead of waiting for the socket echo. (3) `message-pinned` / `message-unpinned` handlers now also handle a full message in the payload (covers pins outside the current page) and guard against a missing id. (4) A `useEffect` reconciles `pinnedMessages` with `messages` after every render: current-page pins come from `messages.isPinned`, older-page pins are retained, and an unpinned message is dropped - so an empty `pinned-messages-response` can no longer wipe the list. (5) `loadMessages` resets `pinnedMessages` first, so switching chats can't leak pins.
+- ⚠️ **Backend contract check:** mobile follows the web contract (`pin-message` / `unpin-message` with `{ messageId, chatId }` for lead chat, events `message-pinned` / `message-unpinned` / `pinned-messages-response`). If pins still disappear on reopen after this, verify the backend still persists `isPinned` on the message and broadcasts `message-pinned` - compare with the web portal, which uses the same events. Mobile no longer sends the `{ chatId, channelId }` object form of `get-pinned-messages` that the server may have answered differently.
+- Not device-verified.
+
+- **Follow-up - pins vanish on reopen / list empty:** the web lead chat NEVER sends `get-pinned-messages` and trusts each message's `isPinned`; only mobile asks for the list and used to REPLACE `pinnedMessages` (and set every other message `isPinned: false`) with whatever `pinned-messages-response` carried - so a short/empty reply wiped pins the message history already showed, and the REST page load could in turn drop older pins the socket reply had. Both paths now MERGE (`mergePins` in `useChatSession.ts`); removal is only the `message-unpinned` event / the Unpin button. Logs to read on a device: `[pins] REST page: N messages, M isPinned` and `[pins] pinned-messages-response: K pinned`. ⚠️ If a pin made and then re-opened shows `M = 0` AND `K = 0`, the BACKEND did not persist `pin-message` - nothing in the app can fix that; check the `pin-message` handler / the message's `isPinned` field. Not device-verified.
+
+### A received GIF took ~65% of the screen width
+
+Ticket: *"fix the receiving GIF UI, it takes a lot of space from the start."* A stored GIF is a lone `image/gif` file, so `fileType === 'image'` gave its bubble the photo `minWidth` (`SCREEN_WIDTH * 0.65 + 16`) while `GifMessage` draws at most 240 px - an empty gutter beside the GIF. `ChatMessageBubble.tsx` now skips that `minWidth` when `gifUri` is set, so the bubble hugs the GIF.
+- ⚠️ Keep the `!gifUri` guard on that `minWidth`; photos and videos still need it. The legacy url-bodied GIF (`isGifMessageText`) is a text message and never had the photo minWidth. Not verified on device.
+- **Follow-up - GIF overflowed its bubble:** with the photo `minWidth` gone the bubble was content-sized and the fixed-width GIF could stick out of it. A stored GIF's bubble now gets an explicit `width` = `GIF_WIDTH + 22` (`GIF_BUBBLE_WIDTH` in `ChatMessageBubble.tsx`: 8 + 8 `p-2`, 2 + 2 bubble padding, 1 + 1 border). ⚠️ If `GifMessage`'s `Math.min(maxWidth, 240)` or the bubble's padding / border changes, change `GIF_BUBBLE_WIDTH` with it. Not verified on device.
+- **Follow-up - GIF still wider than its bubble:** the fixed-width GIF could still stick out when the bubble was laid out narrower than computed (screenshot: GIF 480 px inside a 424 px bubble). `GifMessage` gained `fill` (GIF + its `Pressable` are `width: '100%'`), used by the stored-GIF branch of `ChatMessageBubble`, whose bubble also got `maxWidth: '100%'` and `overflow: 'hidden'` for a GIF. ⚠️ `fill` is only for a parent that has its own width; the legacy url-bodied GIF branch still passes a fixed `maxWidth`. Not verified on device.
+- **Follow-up - the legacy url-bodied GIF had the same bug:** that branch (`isGifMessageText`, the text-message path) kept a fixed 240 px GIF with `px-2.5` padding in a content-sized bubble that could be narrower, so the GIF sat off-centre and overflowed. It now uses the same recipe as a stored GIF: bubble `width: GIF_BUBBLE_WIDTH` + `overflow: 'hidden'` (`gifUri || isGifMsg`), GIF `fill`, and `px-2 pt-2` so the padding is the 8 px `GIF_BUBBLE_WIDTH` assumes. ⚠️ This supersedes the line above that says the legacy branch keeps a fixed `maxWidth`. Not verified on device.
+- **Follow-up - received GIF started later than a poll card:** the avatar column (32 + 8 dp) pushed the GIF bubble in while a poll card starts 12 dp from the edge. A received GIF (`gifUri || isGifMsg`) now renders no avatar column, and the wrapper's `paddingLeft` is 6 (+4 +2 = 12 dp, the poll's offset). The sender name above it (`msg.user.name`, shown when the previous message is from someone else) still identifies the sender. ⚠️ A GIF that follows the same sender's message has no name label and no avatar - same as a poll. Not verified on device.

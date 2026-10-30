@@ -504,7 +504,7 @@ export const useChatLogic = (
   );
 
   const sendTextMessage = useCallback(
-    async (text: string, reply?: any) => {
+    async (text: string, reply?: any, opts?: { asGif?: boolean }) => {
       if (!chatId || !text?.trim()) return;
       const tempId = `temp_${Date.now()}`;
       if (user?._id) {
@@ -522,11 +522,18 @@ export const useChatLogic = (
           },
         });
       }
+      // A GIF is sent as a body that is nothing but the GIPHY URL, and the server
+      // stores it as a captionless one-file message (see utils/gif-message.ts). The
+      // optimistic bubble has to be that same shape, or the server's copy matches
+      // nothing pending and arrives as a second bubble.
       const optimistic = {
         _id: tempId,
-        text,
+        text: opts?.asGif ? '' : text,
         createdAt: new Date(),
         user: { _id: String(currentUserId), name: user?.firstName || 'Me' },
+        ...(opts?.asGif
+          ? { files: [{ name: 'GIF', type: 'image/gif', mimeType: 'image/gif', url: text }] }
+          : {}),
         pending: true,
         sent: false,
         replyTo: reply?._id,
@@ -624,7 +631,7 @@ export const useChatLogic = (
       const reply = replyingTo;
       setReplyingTo(null);
       try {
-        await sendTextMessage(url, reply);
+        await sendTextMessage(url, reply, { asGif: true });
       } catch (e) {
         console.warn('[Chat] sendGif failed:', e);
       }

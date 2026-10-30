@@ -239,9 +239,9 @@ export const useChatSession = (
           // the history page already carries per-message.
         });
     }
-    // ⚠️ Pins come from the REST read above. `SocketManager.joinRoom` still emits a plain-id `get-pinned-messages` on join; its
-    // `pinned-messages-response` (if the server ever answers) is MERGED below, never replacing. Do not re-add a second
-    // `{ chatId, channelId }` request shape.
+    // ⚠️ The endpoint above is the only thing that fills the bar on open. SocketManager.joinRoom still emits
+    // `get-pinned-messages` (plain chat id, on join ack / +800ms / reconnect) and the `pinned-messages-response`
+    // listener below still MERGES whatever answers it - but REVDSM-1313 deleted that handler, so today nothing does.
 
     // After a reconnect, pull what was missed while offline (latest page only) and merge it in.
     const resyncChannel = () => {

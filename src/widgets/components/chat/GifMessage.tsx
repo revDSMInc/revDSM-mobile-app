@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Image, Linking, Modal, Platform, Pressable, StatusBar, Text, useWindowDimensions, View } from 'react-native';
+import { DimensionValue, Image, Linking, Modal, Platform, Pressable, StatusBar, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { gifAspectRatio } from '../../../utils/gif-message';
@@ -49,10 +49,13 @@ const measureLoopMs = (url: string): Promise<number | null> => {
 export const GifMessage = ({
   url,
   maxWidth,
+  fill = false,
   onLongPress,
 }: {
   url: string;
   maxWidth: number;
+  /** Take the parent's width (a bubble that is sized elsewhere) instead of a fixed one, so the GIF can never stick out of it. */
+  fill?: boolean;
   onLongPress?: () => void;
 }) => {
   const [ratio, setRatio] = useState(1);
@@ -63,7 +66,7 @@ export const GifMessage = ({
   const [runId, setRunId] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [loopMs, setLoopMs] = useState<number | null>(loopMsCache.get(url.trim()) ?? null);
-  const width = Math.min(maxWidth, 240);
+  const width: DimensionValue = fill ? '100%' : Math.min(maxWidth, 240);
   const src = url.trim();
   const still = gifStillUrl(src);
   const mounted = useRef(true);
@@ -77,8 +80,12 @@ export const GifMessage = ({
 
   useEffect(() => {
     let live = true;
-    measureLoopMs(src).then((ms) => live && setLoopMs(ms));
-    if (still) Image.prefetch(still).catch(() => {});
+    // Measured only when there is a still to freeze on: otherwise it is a second download of the whole file for a
+    // deadline nothing uses (see the freeze effect below).
+    if (still) {
+      measureLoopMs(src).then((ms) => live && setLoopMs(ms));
+      Image.prefetch(still).catch(() => {});
+    }
     return () => {
       live = false;
     };
@@ -86,12 +93,15 @@ export const GifMessage = ({
 
   // The clock starts when the frame actually shows (onLoad), not at mount, so a slow download cannot eat the two plays.
   // A late-arriving loop length just moves the deadline; it never restarts the clock.
+  // ⚠️ No still ⇒ never freeze. Freezing without one leaves a dark box under the badge, and that is now the common
+  // case: a GIF the server stored is served from S3/CloudFront, which has no `_s` rendition. Those keep animating, as
+  // every GIF did before the freeze behaviour, until a still can be had for them.
   useEffect(() => {
-    if (startedAt === null || stopped || fullscreen) return;
+    if (startedAt === null || stopped || fullscreen || !still) return;
     const remaining = Math.max(0, freezeAfterMs(loopMs) - (Date.now() - startedAt));
     const t = setTimeout(() => mounted.current && setStopped(true), remaining);
     return () => clearTimeout(t);
-  }, [startedAt, loopMs, stopped, fullscreen]);
+  }, [startedAt, loopMs, stopped, fullscreen, still]);
 
   if (failed) {
     return (
@@ -112,7 +122,7 @@ export const GifMessage = ({
 
   return (
     <>
-      <Pressable onPress={onPress} onLongPress={onLongPress} delayLongPress={250}>
+      <Pressable onPress={onPress} onLongPress={onLongPress} delayLongPress={250} style={fill ? { width: '100%' } : undefined}>
         <View style={{ width, borderRadius: 10, overflow: 'hidden', backgroundColor: 'rgba(0,0,0,0.08)' }}>
           {stopped && still && !stillFailed ? (
             <Image
