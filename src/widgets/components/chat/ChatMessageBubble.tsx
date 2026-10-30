@@ -41,6 +41,9 @@ import { ScrollView } from 'react-native-gesture-handler';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const MAX_BUBBLE_WIDTH = SCREEN_WIDTH * 0.75;
+// A stored GIF's bubble is sized from the GIF (GifMessage draws min(maxWidth, 240)) + 8 padding each side (p-2) + 2 bubble padding each side + 1 border each side.
+const GIF_WIDTH = Math.min(MAX_BUBBLE_WIDTH - 40, 240);
+const GIF_BUBBLE_WIDTH = GIF_WIDTH + 22;
 
 const getDocStyleAndIcon = (fileName: string) => {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
@@ -1161,7 +1164,8 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
           marginVertical: isSameUser(currentMessage, previousMessage) ? 0.3 : 2,
           maxWidth: '100%',
           paddingHorizontal: 2,
-          paddingLeft: !isMe ? 2 : 2,
+          // A received GIF has no avatar column and starts at the same 12 dp as a poll card (6 here + 4 on the bubble wrapper + 2 margin).
+          paddingLeft: !isMe && (gifUri || isGifMsg) ? 6 : 2,
           overflow: 'visible',
         }}
       >
@@ -1192,7 +1196,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
           </View>
         )}
         <View className="flex-row items-end" style={{ flexShrink: 1, maxWidth: '100%' }}>
-          {!isMe && (
+          {!isMe && !gifUri && !isGifMsg && (
             <View
               style={{
                 width: 32,
@@ -1256,10 +1260,11 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                     borderBottomRightRadius: isMe ? 2 : (hasTextOrFiles ? 18 : 10),
                     borderBottomLeftRadius: isMe ? (hasTextOrFiles ? 18 : 10) : 2,
                     padding: 2,
+                    ...(gifUri || isGifMsg ? { width: GIF_BUBBLE_WIDTH, maxWidth: '100%' } : {}),
                     marginVertical: isSameUser(currentMessage, previousMessage) ? 0.5 : 2,
                     marginHorizontal: !isMe ? 2 : 2,
-                    overflow: (fileType === 'image' || fileType === 'video') ? 'hidden' : 'visible',
-                    minWidth: (fileType === 'image' || fileType === 'video')
+                    overflow: gifUri || isGifMsg || fileType === 'image' || fileType === 'video' ? 'hidden' : 'visible',
+                    minWidth: !gifUri && (fileType === 'image' || fileType === 'video')
                       ? SCREEN_WIDTH * 0.65 + 16
                       : (msg.replyToDetails || msg.replyTo) ? 200 : (hasTextOrFiles ? 50 : 50),
                   }}
@@ -1338,7 +1343,8 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                     <View className="p-2">
                       <GifMessage
                         url={gifUri}
-                        maxWidth={MAX_BUBBLE_WIDTH - 40}
+                        maxWidth={GIF_WIDTH}
+                        fill
                         onLongPress={() => setShowReactionBar(true)}
                       />
                     </View>
@@ -1505,11 +1511,12 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                     const isSimpleText = !isMsgVoice && (!fileType || fileType === 'text');
                     if (msg.text && msg.text.trim().length > 0 && isSimpleText) {
                       return (
-                        <View className="px-2.5 pt-1 pb-0.5" style={{ minWidth: 50 }}>
+                        <View className={isGifMessageText(msg.text) ? 'px-2 pt-2 pb-0.5' : 'px-2.5 pt-1 pb-0.5'} style={{ minWidth: 50 }}>
                           {isGifMessageText(msg.text) ? (
                             <GifMessage
                               url={msg.text}
-                              maxWidth={MAX_BUBBLE_WIDTH - 40}
+                              maxWidth={GIF_WIDTH}
+                              fill
                               onLongPress={() => setShowReactionBar(true)}
                             />
                           ) : (

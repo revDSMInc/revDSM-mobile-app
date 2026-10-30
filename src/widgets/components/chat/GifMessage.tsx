@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Image, Linking, Modal, Platform, Pressable, StatusBar, Text, useWindowDimensions, View } from 'react-native';
+import { DimensionValue, Image, Linking, Modal, Platform, Pressable, StatusBar, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { gifAspectRatio } from '../../../utils/gif-message';
@@ -49,10 +49,13 @@ const measureLoopMs = (url: string): Promise<number | null> => {
 export const GifMessage = ({
   url,
   maxWidth,
+  fill = false,
   onLongPress,
 }: {
   url: string;
   maxWidth: number;
+  /** Take the parent's width (a bubble that is sized elsewhere) instead of a fixed one, so the GIF can never stick out of it. */
+  fill?: boolean;
   onLongPress?: () => void;
 }) => {
   const [ratio, setRatio] = useState(1);
@@ -63,7 +66,7 @@ export const GifMessage = ({
   const [runId, setRunId] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [loopMs, setLoopMs] = useState<number | null>(loopMsCache.get(url.trim()) ?? null);
-  const width = Math.min(maxWidth, 240);
+  const width: DimensionValue = fill ? '100%' : Math.min(maxWidth, 240);
   const src = url.trim();
   const still = gifStillUrl(src);
   const mounted = useRef(true);
@@ -119,7 +122,7 @@ export const GifMessage = ({
 
   return (
     <>
-      <Pressable onPress={onPress} onLongPress={onLongPress} delayLongPress={250}>
+      <Pressable onPress={onPress} onLongPress={onLongPress} delayLongPress={250} style={fill ? { width: '100%' } : undefined}>
         <View style={{ width, borderRadius: 10, overflow: 'hidden', backgroundColor: 'rgba(0,0,0,0.08)' }}>
           {stopped && still && !stillFailed ? (
             <Image
