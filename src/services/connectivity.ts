@@ -1,5 +1,6 @@
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
 import {
+  isDefinitelyDisconnected,
   resolveOnline,
   transitionDelayMs,
   type ConnectivitySnapshot,
@@ -105,16 +106,35 @@ const clearPending = () => {
   }
 };
 
-const commit = (nextOnline: boolean) => {
+/**
+ * @param radioIsDown only `true` when the OS reports no usable interface (`isConnected === false`).
+ *   A failed REACHABILITY probe is not that - see `isDefinitelyDisconnected`.
+ */
+const commit = (nextOnline: boolean, radioIsDown: boolean = true) => {
   if (nextOnline === currentOnline) return;
   const cameBackOnline = nextOnline && !currentOnline;
   currentOnline = nextOnline;
   onlineSince = nextOnline ? Date.now() : null;
 
+  /**
+   * ⚠️ Only the RADIO may force the offline verdict.
+   *
+   * `applyOsDisconnected` force-settles past the dwell, so whatever reaches it is final. That is
+   * right for airplane mode and wrong for a slow `/health`: NetInfo gives that GET 8 s and has no
+   * way to say "slow", so a weak-but-working line reports `isInternetReachable === false` and the
+   * rep on two bars was told they were offline.
+   *
+   * When the radio is up we settle to `degraded` instead ("Weak connection"), which still gates
+   * the features that need a live server but keeps sync running (`shouldAttemptSync`) and lets
+   * `health-probe.ts` - the one component that can distinguish slow from dead, and that retries
+   * `PROBE_FAILURES_BEFORE_OFFLINE` times first - decide if this is really offline.
+   */
   setNetState(
     nextOnline
       ? applyOsConnected(netState, Date.now())
-      : applyOsDisconnected(netState, Date.now())
+      : radioIsDown
+        ? applyOsDisconnected(netState, Date.now())
+        : applyProbeResult(netState, 'slow', Date.now())
   );
 
   listeners.forEach((l) => {
@@ -130,6 +150,9 @@ const commit = (nextOnline: boolean) => {
 
 const applySnapshot = (snapshot: ConnectivitySnapshot | null | undefined) => {
   let nextOnline = resolveOnline(snapshot);
+  // Did the OS report NO INTERFACE, or did its reachability GET merely time out? Only the first
+  // is evidence of being offline; the second is what a weak line looks like. See `commit`.
+  const radioIsDown = isDefinitelyDisconnected(snapshot);
   // Only the reachability probe disagrees (the radio is still connected) while an upload is
   // actively moving bytes: that is the probe being starved, not the link being gone.
   if (!nextOnline && currentOnline && snapshot?.isConnected !== false && uploadIsInFlight()) {
@@ -149,7 +172,7 @@ const applySnapshot = (snapshot: ConnectivitySnapshot | null | undefined) => {
   if (delay === 0) {
     clearPending();
     if (nextOnline !== currentOnline) {
-      commit(nextOnline);
+      commit(nextOnline, radioIsDown);
     }
     if (nextWifi !== currentWifi) {
       currentWifi = nextWifi;
@@ -166,7 +189,7 @@ const applySnapshot = (snapshot: ConnectivitySnapshot | null | undefined) => {
   clearPending();
   pendingTransition = setTimeout(() => {
     pendingTransition = null;
-    commit(nextOnline);
+    commit(nextOnline, radioIsDown);
     if (nextWifi !== currentWifi) {
       currentWifi = nextWifi;
       lastNetInfoType = nextType;
@@ -207,8 +230,10 @@ const REACHABILITY_OK_MS = 60_000;
  *  - Google answering says nothing about our backend, so the app can insist it is online while
  *    every real request fails.
  *
- * `isInternetReachable === false` flows through `resolveOnline` into `applyOsDisconnected`, which
- * force-settles to offline past the dwell - so a wrong answer here is not a hint, it is a verdict.
+ * `isInternetReachable === false` flows through `resolveOnline` and drops the app out of the online
+ * state, so a wrong answer here is expensive. It is NO LONGER a straight verdict of "offline":
+ * `commit` only force-settles to offline when the RADIO is down, because this GET has just 8 s and
+ * a weak line makes a reachable /health look unreachable. A failed probe settles to `degraded`.
  *
  * ⚠️ Keep this in step with `health-probe.ts`: both must ask the SAME url, or the two halves
  * of connectivity can disagree about whether the rep is online.

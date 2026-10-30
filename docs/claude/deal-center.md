@@ -5802,3 +5802,39 @@ want the full screen swap.
 `screens/Leads/index.tsx` keeps a synced offline lead's card (`justLandedIds`) until the SERVER list contains its id (re-reading every 4 s, 45 s give-up) instead of releasing when the refetch settles; rows are keyed by `clientId` so the card does not remount when its id flips from client to server id. Full reasoning and the traps live in offline.md.
 
 Follow-up: the landed-effect in `screens/Leads/index.tsx` no longer keeps the give-up timer handle (`setTimeout(release, LEAD_HANDOFF_MAX_MS)` is fire-and-forget on purpose). Do not add a cleanup that clears it: the effect re-runs on every store update, so the cap would never fire.
+
+## Drop modal left a blank white card on dismissal (SM-A065F)
+
+**Reported:** in the rollout drop modal, pressing the **close (X)**, **Secure This Price** or **Decline** left an empty white card on screen instead of dismissing. Only on a Galaxy A06 (SM-A065F); other Androids and iOS were fine.
+
+⚠️ **First diagnosed wrong.** The initial report read as a layout problem ("modal renders blank"), and the fix below for `GestureHandlerRootView` was made on that basis. It is a real bug and is kept, but it is NOT what the rep was seeing - the card was blank because the modal was *going away and failing to*, not because its contents collapsed. **A screenshot of a broken modal does not say whether it is opening, open, or closing; establish which before reading the layout.**
+
+**Cause - two native-window problems in `DropOutcomeModal` (`RolloutView.tsx`), both on the dismissal path:**
+
+**1. `KeyboardAvoidingView` with `behavior="height"` wrapped the whole modal.** That behavior works by *animating the container's height*. When the modal tears down, the height animation and the window dismissal race; on a slow device the collapsed-height frame is what stays on screen. Android resizes the window for the keyboard itself (`adjustResize`), so the behavior was redundant as well as harmful. Replaced with a plain `View`.
+
+⚠️ This file **already recorded this exact lesson** at the `RolloutView` root ("`View`, not `KeyboardAvoidingView` — its `behavior="padding"` shrank this whole column"). The same trap reappeared one component away. Prefer a plain `View` in these modals; the down-payment field is inside a `ScrollView`, and numeric inputs use the in-app number pad rather than the system keyboard (CLAUDE.md §6), so nothing needed the avoider.
+
+**2. `DropAddPlanModal` is a `<Modal>` nested inside this `<Modal>`, and it was mounted unconditionally.** CLAUDE.md §6 says never to stack native Modals. Even at `visible={false}` the child attaches a second native window to the parent's; on the A06 that window outlived the parent's dismissal and kept its `DecorView` on screen. Now guarded with `{showPicker && (...)}`.
+
+⚠️ **Keep the `visible` prop as well as the guard.** The guard controls whether the native window exists; `visible` still drives the sheet's slide animation. Dropping it makes the picker appear with no transition.
+
+**Why only one device.** Both faults are teardown *races*, so they resolve differently with GPU speed, RAM and Android version - a faster phone finishes the dismissal before the stale frame can be shown. ⚠️ "Works on my device" is not evidence for a modal lifecycle bug; reproduce on the slowest device available.
+
+### Also fixed here: a bare `GestureHandlerRootView` is `flex: 1`
+
+Found while investigating the above, and worth keeping on its own.
+
+```js
+// react-native-gesture-handler/components/GestureHandlerRootView[.android].js
+style: style ?? styles.container      // styles.container = { flex: 1 }
+```
+
+The financing-plan list was wrapped in a bare `<GestureHandlerRootView>` (needed only to give `Swipeable` a root for swipe-to-delete). **Omitting the style prop does not mean "no style" - the library substitutes `flex: 1`.** Inside the modal's `ScrollView` the content height is unbounded, so that would let the plan list grow against its siblings. Fixed with `style={{ flexGrow: 0, flexShrink: 0, width: '100%' }}`.
+
+- ⚠️ Longhands, not `flex: 0`: a `flex` shorthand overwrites longhands in the same style object regardless of key order (same trap as the Save All button and the RevRender footer).
+- ⚠️ Do **not** "simplify" it back to a bare tag. The absent prop is the bug, and it is invisible at the call site.
+- **Audited app-wide:** all 13 `<GestureHandlerRootView>` usages now carry an explicit style. The other twelve wrap a full screen or modal where the `flex: 1` default is correct - this was the only bare one, and the only one inside a scroll view. `CalculatorSummary.tsx` (the legacy equivalent of this modal) already passed `flex: 1` explicitly.
+
+**Not verified on device** - needs retesting on the SM-A065F, which is the only device that reproduced it.
+

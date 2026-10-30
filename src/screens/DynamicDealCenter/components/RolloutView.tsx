@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Pressable, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Pressable, Platform, StyleSheet } from 'react-native';
 import { BlurView } from '@react-native-community/blur';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -374,7 +374,19 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      {/*
+        * ⚠️ `View`, NOT `KeyboardAvoidingView` - `behavior="height"` ANIMATES THIS CONTAINER'S
+        * HEIGHT, and on dismissal that is what left a blank white card on an SM-A065F: the
+        * card stayed on screen at a collapsed height instead of going away. Android already
+        * resizes the window for the keyboard (`adjustResize`), so the behavior is redundant
+        * there as well as harmful - the same conclusion this file reaches for the screen
+        * column below (see the `View, not KeyboardAvoidingView` note at the RolloutView root).
+        *
+        * ⚠️ The down-payment field inside still works: it is in a ScrollView, the window
+        * resizes under it, and numeric fields use the in-app number pad, not the system
+        * keyboard (CLAUDE.md section 6).
+        */}
+      <View style={{ flex: 1 }}>
         {/* Non-dismissable backdrop — tapping outside must NOT close the drop without
             saving; the rep has to choose Secure or Decline (web `DropPriceModal` passes
             NO `onClose` + `disableEscapeKeyDown`). And animationType="none" (web's
@@ -496,7 +508,11 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
                   </View>
                 </TouchableOpacity>
               )}
-              <GestureHandlerRootView>
+              {/* ⚠️ A bare <GestureHandlerRootView> is NOT unstyled - the library does
+                  `style ?? { flex: 1 }`. Inside this ScrollView that let the plan list grow
+                  unbounded. It only exists to give `Swipeable` a root, so it sizes to its
+                  children. Do NOT drop the style prop. */}
+              <GestureHandlerRootView style={{ flexGrow: 0, flexShrink: 0, width: '100%' }}>
                 {addedPlans.filter((k) => isFinancing(plans, k)).map((key) => {
                   const plan = plans[key] || ({} as DealPlan);
                   const sel = selectedPlan === key;
@@ -550,18 +566,31 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
               </View>
             </ScrollView>
 
-            <DropAddPlanModal
-              visible={showPicker}
-              price={dropPrice}
-              plans={plans}
-              categories={dropAddCategories}
-              added={addedPlans}
-              onAdd={addPlan}
-              onClose={() => setShowPicker(false)}
-            />
+            {/*
+              * ⚠️ MOUNTED ONLY WHILE OPEN - this is a Modal INSIDE a Modal, which the root
+              * guide says never to stack. Rendered unconditionally, the child keeps a second
+              * native window attached to this one even at `visible={false}`, and on an
+              * SM-A065F that window outlived the parent’s dismissal: pressing the close
+              * button (or Secure / Decline) left a blank white card on screen.
+              *
+              * ⚠️ The `visible` prop is KEPT as well as the guard. The guard controls the
+              * native window’s existence; `visible` still drives its slide animation, and
+              * dropping it would make the sheet appear with no transition.
+              */}
+            {showPicker && (
+              <DropAddPlanModal
+                visible={showPicker}
+                price={dropPrice}
+                plans={plans}
+                categories={dropAddCategories}
+                added={addedPlans}
+                onAdd={addPlan}
+                onClose={() => setShowPicker(false)}
+              />
+            )}
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }

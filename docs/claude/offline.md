@@ -2038,3 +2038,96 @@ Reported: Profile showed "24 photos saved on this device" while "Everything is u
 - ⚠️ `uploadQueue.ts` must not import `offlineLeadStore` (the store imports the queue); the combined "has work" check lives in `services/leadPhotoCache.ts`.
 - Files cached BEFORE this change are not in the index, so they stay until the rep taps Clear offline photos (the `revrender_` prefix is shared with pitch-book / logo / RevRender files, so they cannot be told apart safely). A lead's photos now come from the server when online, so a first open of a non-offline lead may show a loader.
 - Not verified on device.
+
+## "Offline" on two bars of LTE, and the raw `timeout of 15000ms exceeded` toast
+
+Client (Lance), on screenshots of both: *"I don't want to see this stuff. It's lowers confidence in app"*. Two separate defects, one screen. Reproduced on an iOS Simulator with Network Link Conditioner, custom profile **12 kbps / 35% packets dropped / 3000 ms delay** both directions — the profile is the useful artefact here, because the stock presets cannot produce either (`100% Loss` fails *instantly*, which is a `Network Error`, not a timeout).
+
+### 1. The false "Offline — showing saved data" bar
+
+⚠️ **The banner logic was never wrong.** `bannerFor('degraded')` returns "Weak connection" and only `'offline'` produces the amber offline bar. The state really was `offline`, and this is how:
+
+`NetInfo.configure` gives its reachability GET of `/health` `reachabilityRequestTimeout: 8_000`. **NetInfo has no "slow" verdict** — when that GET misses 8 s it can only report `isInternetReachable: false`, which is byte-identical to a dead link. That flowed through `resolveOnline` → `commit(false)` → `applyOsDisconnected`, which **force-settles past the `MIN_DWELL_MS` guard**. One slow `/health` was therefore a *verdict*, not a hint — exactly what the comment above `configureReachability` had warned about.
+
+The fix splits the two claims in `utils/connectivity-state.ts`:
+
+- `isConnected === false` → the OS says **no interface** (airplane mode, no signal). Still `applyOsDisconnected` → `offline`.
+- `isInternetReachable === false` → only the reachability **probe** failed. Now `applyProbeResult(state, 'slow')` → `degraded` → **"Weak connection"**.
+
+`commit(nextOnline, radioIsDown)` carries the distinction; `applySnapshot` computes it with `isDefinitelyDisconnected(snapshot)`.
+
+- ⚠️ `degraded` is **not** a softer online. `isEffectivelyOffline('degraded')` is still `true`, so every server-gated feature stays gated. What changes is that `shouldAttemptSync('degraded')` is `true` — the queues **keep draining on a weak line**, where settling to `offline` used to stop them. That is the real win, not the wording.
+- ⚠️ `health-probe.ts` is the only component that can tell slow from dead (`PROBE_SLOW_MS = 4_000`, and `PROBE_FAILURES_BEFORE_OFFLINE = 2` retries before it ever claims offline). After this change it is the **only** path to `offline` besides the radio. Do not re-add a second one.
+- ⚠️ Do NOT "fix" this by raising `REACHABILITY_TIMEOUT_MS`. Any finite timeout has the same flaw; the bug is treating a timeout as proof of absence. `applyOsDisconnected` now has exactly **one** call site — keep it that way.
+
+### 2. The raw `timeout of 15000ms exceeded` toast
+
+`normalizeApiError` (`services/api/index.ts`) **always** populates `.message`. So the ~48 sites written
+
+```js
+FlashMessage.error('Error', err?.message || 'Could not save the deal')
+```
+
+can never reach their fallback — `||` fires only on an empty value and there never is one. ~20 of those fallbacks are genuinely good copy that **has never once rendered**. On a timeout `.message` is axios's own string, so the rep read a millisecond count.
+
+Fixed at the single `emit()` chokepoint in `config/message.ts`, which every `FlashMessage.*` call passes through — all 48 sites at once, plus any added later. Rules live in `utils/transport-error-copy.ts` (pure, so it is testable; `config/message.ts` imports react-native-flash-message and cannot load under jest).
+
+- ⚠️ **Presentation only.** The error object is untouched, so `shouldAnnounceFailure`, `isNetworkError` and the upload retry policies still see the real transport failure. Never make this change the error itself.
+- ⚠️ A **server** message passes through verbatim — "Valid lead id is required" is the only useful thing a 400 gives us. Only transport wording is rewritten.
+- ⚠️ An **informative title is kept**: `('Could not upload photo', 'Network Error')` keeps its title and replaces only the description. That title is the one thing telling the rep *which* action failed. Only `Error`/`Failed`/`Oops`/empty are replaced (40 sites are titled exactly "Error").
+- 13 + 9 tests in `tests/offline/transport-error-copy.test.ts` and `tests/offline/weak-link-not-offline.test.ts`.
+- ⚠️ **Still bypassing `emit()`**: 13 `Alert.alert` and 15 `flashRef` sites. They need fixing individually.
+### The strip must be ONE line on every phone, and it now owns the connection message alone
+
+Client, on a two-line strip: *"i want to keep it in only one line in any phone"*. The copy was a
+title PLUS a detail sentence (`'Offline — showing saved data'` + `'Changes sync when you
+reconnect.'`, ~62 chars), rendered `numberOfLines={2}`. On a 320pt iPhone SE that wraps, so the
+strip changed height and the screen under it jumped every time the link flapped.
+
+Now one clause each, under `BANNER_MAX_CHARS` (40):
+
+| state | copy |
+|---|---|
+| `offline` | **Offline — changes sync when you reconnect** |
+| `degraded` | **Weak connection — things may be slow** |
+
+`OfflineBanner.tsx` renders `numberOfLines={1}` + `adjustsFontSizeToFit` with
+`minimumFontScale={0.85}`, so the longest string shrinks on the narrowest device rather than
+wrapping. ⚠️ Keep new copy under `BANNER_MAX_CHARS` (44) or it shrinks far enough to look faint;
+a test in `tests/offline/weak-link-not-offline.test.ts` enforces the length.
+
+⚠️ **Do not shorten these further for its own sake.** An intermediate attempt cut offline to
+"Offline — changes save to this device", which fits but is vague: it never tells the rep the work
+goes up BY ITSELF, which is the entire reassurance. The full clause measures ~234pt of the ~275pt
+a 320pt phone has, so the clarity cost nothing. What wrapped originally was the title PLUS a
+second detail sentence (~62 chars), not this line.
+
+⚠️ The copy still names what happens to THEIR WORK, not to the socket. "changes save to this
+device" is what decides whether the rep carries on; "showing saved data" described the app's
+behaviour, which is not their question.
+
+⚠️ The strip (and each screen's own inline state) is now the ONLY place a transport failure is
+communicated - the red toast is suppressed unconditionally at `emit()`, NOT gated on the strip
+being visible, because not every screen renders one and the status lags the first failure anyway.
+See [`app-wide.md`](app-wide.md).
+
+- Not verified on device — reproduced and fixed against the Simulator + NLC profile above.
+
+## Forced sign-out (second device) left the rep ON SITE on the portal
+
+**Reported:** a rep works a lead on phone 1, then logs in on phone 2 to finish up. Phone 1 is signed out automatically — but the portal still shows them on site at that door.
+
+**Cause.** "Leaving a lead" is TWO facts: the `work` release (`PUT /lead/.../work` with `workStartedBy: null`) and the `session_pause` activity log. Both are sent by `endActiveLeadWorkSession()` in `utils/lead-work-session.ts`. Every *deliberate* exit called it — the header home button (`MainHeader`), and manual logout (`useAuth.logout`). **The forced sign-out did not.** The 401 branch of the axios response interceptor (`services/api/index.ts`) cleared the session, the query cache, the socket and Redux, and never touched the work session. Nothing was sent, so the server kept the rep attached to the lead indefinitely. The installer equivalent (`endInstallerWorkSession`) had the same hole.
+
+**Fix.** `releaseActiveWorkOnForcedLogout()` in `services/api/index.ts`, awaited inside the 401 branch.
+
+- ⚠️ **ORDER IS THE WHOLE FIX: it must run BEFORE `clearSession()`.** `LeadService.endWorkLead` is gated on `hasSession()` and returns `Promise.resolve()` with no token; `logEvent` *holds* any log when `Storage.getItem('accessToken')` is empty. Move this call below the wipe and both become silent no-ops — which is precisely the bug being fixed, reintroduced invisibly (nothing throws, nothing logs).
+- ⚠️ It must also run **before `store.dispatch(logout())`**: the navigator swaps on `isAuthenticated`, which unmounts Lead Center, and `useLeadCenterData`'s cleanup calls `clearLeadWorkSession()` — wiping the MMKV record *without* releasing. Read the session first or there is nothing left to release.
+- ⚠️ **RE-ENTRANCY.** These requests go back through the same interceptor, and the token is already dead server-side, so they can 401 too. The `releasingWork` flag makes that inner 401 fall straight through (`if (releasingWork) return Promise.reject(...)`) instead of recursing into a second sign-out and a second "Session Expired" flash.
+- Both releases are individually `try`/`catch`ed and the whole thing is best-effort: a sign-out must never be blocked by a lead release.
+- **A release the dead token cannot complete is not lost.** `releaseWork`'s catch hands the lead to `queueLeadWorkEnd` via the injected `setWorkReleaseQueue` hook, and the queued work is written before `resetSessionStorage()` runs. `mine()` scopes offline work to the user, so it replays after the next login.
+- Imported with `require` at call time, not at the top of the module: both `lead-work-session` and `installer-work-session` reach React Native, and a top-level import would make the axios module unloadable under jest (CLAUDE.md §6).
+
+**Scope.** Only the 401 forced-logout branch changed. The deliberate-exit paths were already correct and are untouched, and the `isLoginRequest` / `isUserNotFound` / unstable-connection early-returns still short-circuit before any of this — a flaky-signal 401 parks as before and releases nothing.
+
+**Tests:** `tests/offline/forced-logout-work-release.test.ts` (5) — both facts sent; a failed PUT queues; a client id queues instead of PUTting; a no-op with no session; a deal session releases but logs no pause. `services/api/index.ts` itself cannot be loaded under jest (NetInfo via `queryClient`), so the ordering rules above are guarded by the ⚠️ comments in the source, not by a test.

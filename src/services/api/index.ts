@@ -100,6 +100,10 @@ axiosInstance.interceptors.response.use(
       const isLoginRequest = error.config?.url?.includes('/company/login');
       const alreadySignedOut = !store.getState().auth?.isAuthenticated;
 
+      // A 401 raised BY `releaseActiveWorkOnForcedLogout` itself (its token is already dead) must
+      // fall straight through, or the sign-out below re-enters and flashes 'Session Expired' twice.
+      if (releasingWork) return Promise.reject(normalizeApiError(error));
+
       // Do NOT trigger global logout logic for login failures
       if (!isLoginRequest && !alreadySignedOut) {
         const isUserNotFound =
@@ -130,6 +134,8 @@ axiosInstance.interceptors.response.use(
           } catch (pushErr) {
             console.warn('[Push] local teardown on 401 failed:', pushErr);
           }
+
+          await releaseActiveWorkOnForcedLogout();
 
           await clearSession();
           queryClient.clear();
@@ -190,6 +196,53 @@ const normalizeApiError = (error: any): Record<string, any> => {
 const clearSession = () => {
   Storage.removeItem('accessToken');
   delete axiosInstance.defaults.headers.common.Authorization;
+};
+
+/**
+ * Let go of whatever the rep had open BEFORE the forced sign-out wipes the token.
+ *
+ * A rep who opens their lead on phone 1 and then logs in on phone 2 is signed out of phone 1 by
+ * the next 401. Manual logout (`useAuth.logout`) ends the lead session first, but this path did
+ * not, so no `work` release and no `session_pause` log ever went out and the rep stayed ON SITE
+ * on the portal for a lead they had already left. Same for an installer still checked into a job.
+ *
+ * ⚠️ ORDER: this must run before `clearSession()`. `LeadService.endWorkLead` is gated on
+ * `hasSession()` and `logEvent` HOLDS any log with no token, so after the wipe both become
+ * silent no-ops - which is exactly the bug. It must also precede `store.dispatch(logout())`:
+ * that unmounts Lead Center, whose cleanup calls `clearLeadWorkSession()` and would leave
+ * nothing to release.
+ *
+ * ⚠️ RE-ENTRANCY: these requests go back through this same interceptor. The token is already
+ * dead server-side, so they can 401 too; `releasingWork` makes that inner 401 fall straight
+ * through instead of recursing into another sign-out (and another 'Session Expired' flash).
+ * The work release still queues offline via `lead-work-session`, so a release the dead token
+ * cannot complete is retried after the next login rather than lost.
+ *
+ * Required through `require` at call time: both modules reach React Native and importing them at
+ * the top of the axios module would make it unloadable under jest (CLAUDE.md section 6).
+ */
+let releasingWork = false;
+
+const releaseActiveWorkOnForcedLogout = async (): Promise<void> => {
+  if (releasingWork) return;
+  releasingWork = true;
+  try {
+    try {
+      const installer = require('../../utils/installer-work-session');
+      await installer?.endInstallerWorkSession?.('logout');
+    } catch (err) {
+      console.warn('[InstallerWork] Release on forced sign-out failed:', err);
+    }
+
+    try {
+      const leadWork = require('../../utils/lead-work-session');
+      await leadWork?.endActiveLeadWorkSession?.();
+    } catch (err) {
+      console.warn('[LeadWork] Release on forced sign-out failed:', err);
+    }
+  } finally {
+    releasingWork = false;
+  }
 };
 
 /**
