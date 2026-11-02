@@ -5838,3 +5838,48 @@ The financing-plan list was wrapped in a bare `<GestureHandlerRootView>` (needed
 
 **Not verified on device** - needs retesting on the SM-A065F, which is the only device that reproduced it.
 
+## Activity logs carried a calculator name no rep ever saw
+
+Client, from a DevTools payload: the log sent
+`"calculatorTitle": "📦 +G+Versa+S+FWrap+Light+Light Misc"` while the tab chip in the app
+read **`+Light+Light Misc`**. The portal's timeline therefore showed a name that appears nowhere
+in the app, and the same tab was named two different ways depending on which screen you read.
+
+**Why they differ.** A full-package tab STORES the long expansion (`computeDerivedTitles` joins
+every selected key, then prepends `FULL_PACKAGE_TITLE_PREFIX`), but `FullPackageTitle`
+(`components/FullPackageBadge.tsx`) RENDERS a cube glyph plus the EXTRAS only - it drops the keys
+the glyph already stands for (`G`, `S`, `FWrap` + whichever guard), exactly as
+`describeFullPackage` computes them. The logs sent the stored string.
+
+**Fixed at `logEvent` (`services/api/LoggerService.ts`)**, which is the ONE chokepoint every
+activity log passes through. `CALCULATOR_TITLE_KEYS` (`calculatorTitle`, `sourceCalculatorTitle`,
+`newCalculatorTitle`, `fromCalculatorTitle`, `toCalculatorTitle`) are each run through
+`calculatorLogTitle` from `utils/activity-log/calculator-log-title.ts`. One change covers field
+changes, `auto_rename`, funding, result and investment-centre logs.
+
+⚠️ **Derived from the TITLE STRING ALONE, on purpose.** `describeFullPackage` needs `entries` and
+`schemas`, which a logger reached from a dozen call sites does not have - and threading them
+through is what let the two names drift apart in the first place. The stored title already encodes
+the selection (`collectTabKeys` joined it with `+`), so the extras are recovered by splitting it
+back apart. ⚠️ Keep `FULL_PACKAGE_REQUIRED_KEYS` / `FULL_PACKAGE_GUARD_KEYS` in this file in step
+with `screens/DynamicDealCenter/utils/tab-naming.ts` - they are duplicated to avoid importing a
+screen module into the logger.
+
+⚠️ **The size rank is KEPT** (`+Light (LG)`). It is the only thing distinguishing two packages
+quoted at different prices, and the chip shows it too. The older `sanitizeCalculatorLogTitle`
+STRIPPED it - that function still exists for its other callers and is unchanged here.
+
+⚠️ **The 📦 glyph is KEPT.** A first pass stripped it on the theory that a web timeline should
+not carry an emoji; the client's answer was to put it back, and they are right - the chip renders a
+cube ICON, so the glyph IS part of what the rep sees, and without it a package reads as an ordinary
+tab that happens to carry those extras. The logged name follows the chip's own order: glyph, then
+extras, then rank (`📦 +Light+Light Misc`, `📦 +Light (LG)`). A bare package is the glyph alone,
+exactly as the chip shows it. Tests assert the glyph survives every package path AND is never added
+to a tab that is not a package.
+
+⚠️ **Idempotent** - re-formatting an already-formatted title is a no-op, so a replayed offline log
+is not stripped twice.
+
+A non-package tab name passes through unchanged: it is already what the rep sees.
+
+12 tests in `tests/offline/calculator-log-title.test.ts`. Not verified on device.

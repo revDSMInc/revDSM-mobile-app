@@ -2164,3 +2164,31 @@ See [`app-wide.md`](app-wide.md).
 **Scope.** Only the 401 forced-logout branch changed. The deliberate-exit paths were already correct and are untouched, and the `isLoginRequest` / `isUserNotFound` / unstable-connection early-returns still short-circuit before any of this — a flaky-signal 401 parks as before and releases nothing.
 
 **Tests:** `tests/offline/forced-logout-work-release.test.ts` (5) — both facts sent; a failed PUT queues; a client id queues instead of PUTting; a no-op with no session; a deal session releases but logs no pause. `services/api/index.ts` itself cannot be loaded under jest (NetInfo via `queryClient`), so the ordering rules above are guarded by the ⚠️ comments in the source, not by a test.
+
+## `logEvent` normalises every calculator title before it leaves the device
+
+`services/api/LoggerService.ts` gained one step in `logEvent`, beside `stampActionTime` and the
+`leadId` backfill: each key in `CALCULATOR_TITLE_KEYS` (`calculatorTitle`,
+`sourceCalculatorTitle`, `newCalculatorTitle`, `fromCalculatorTitle`, `toCalculatorTitle`) is run
+through `calculatorLogTitle` (`utils/activity-log/calculator-log-title.ts`), so a log carries the
+tab name the REP SEES (`📦 +Light+Light Misc`) rather than the stored expansion
+(`📦 +G+Versa+S+FWrap+Light+Light Misc`). ⚠️ The glyph is KEPT - the chip draws that cube icon.
+ Full reasoning, the key lists and the full-package
+rules: [`deal-center.md`](deal-center.md) § "Activity logs carried a calculator name no rep ever
+saw".
+
+⚠️ **It belongs in `logEvent`, not at the call sites.** This is the same argument as
+`stampActionTime`: `logEvent` is the ONE chokepoint every activity log passes through, online or
+queued, so normalising here cannot be skipped by a path that forgot to. A title arrives under
+several keys from a dozen call sites, and per-site normalisation is precisely what let the app and
+the portal disagree.
+
+⚠️ **It runs BEFORE the offline hold**, so a log queued at a door is stored already normalised and
+drains byte-identical to an online one. A replayed log is not re-processed, and `calculatorLogTitle`
+is idempotent anyway, so a double pass is harmless.
+
+⚠️ **Presentation only, and it must stay that way.** `calculatorId` / `appointmentId` are
+untouched - the portal joins on those. Only the human-readable name changes, so nothing that
+reconciles a queued log against a server row is affected.
+
+Not verified on device.
