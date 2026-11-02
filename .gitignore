@@ -132,3 +132,6 @@ screenshots/
 screenshot-*.png
 screenshot-*.jpg
 Screenshot*.png
+
+*.vscode
+.vscode
