@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { applyOfflineResult, isClientId } from '../utils/offline-lead-work';
 import { mergePendingIntoSections } from '../utils/pending-inspection-photos';
+import { keepDeviceOnlyPhotos } from '../utils/device-only-photos';
 import { uploadQueueManager } from '../utils/uploadQueue';
 import { getOfflineWork, subscribeOfflineWork } from '../services/offlineLeadStore';
 import { isOnline } from '../services/connectivity';
@@ -276,7 +277,24 @@ export const useLeadCenterData = (
           console.error('Failed to fetch secure URLs', error);
         }
       } else {
-        setSectionImages({});
+        /**
+         * ⚠️ KEEP THE PHOTOS THAT ARE ONLY ON THIS DEVICE. This used to be
+         * `setSectionImages({})`, which is right for a lead whose SERVER list is empty and wrong
+         * for every photo taken at a door with no signal.
+         *
+         * Reported as data loss: a rep shot four photos offline, closed the camera, and watched
+         * every count fall to 0 - then saw them come back after navigating away and returning.
+         * `handleUpload` writes each shot into `sectionImages` optimistically (local `uri`, no
+         * `s3url`) at the same time as it queues the upload. Closing the camera fires the queue
+         * listener, which calls `refetch()`; offline that hydrates from the cache and hands
+         * `lead.salesPhotos` a NEW ARRAY IDENTITY, so this effect re-ran, found no server photos
+         * and wiped the optimistic ones. Nothing was ever lost - the queue still held all four,
+         * which is why a remount restored them - but every grid and counter read 0.
+         *
+         * A photo with no `s3url` has never been to the server, so the server's list is no
+         * evidence about it. Only server-backed entries are cleared here.
+         */
+        setSectionImages((prev) => keepDeviceOnlyPhotos(prev));
       }
     };
     fetchSecureImages();

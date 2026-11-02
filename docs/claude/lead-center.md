@@ -2894,3 +2894,47 @@ The Lead Center's single RevRender failure row (`widgets/components/LeadCenter/O
 ⚠️ **After pulling this change, restart Metro with `yarn start --reset-cache`.** A plain Fast Refresh can keep the old module and reproduce the crash. ⚠️ Note that **jest cannot catch this class of bug** — it resolves modules from disk, so the suite passed while the device crashed.
 
 Tests: `tests/lead-center/revrender-retryable.test.ts` (10) — the retry rule, plus a module-surface check that both helpers export as functions, that MMKV-shaped jobs with missing fields do not throw, and that the input array is not mutated.
+
+## "I took a photo. It disappears." — offline shots wiped from every count on camera close
+
+Client (Lance), escalated as data loss: *"I take a photo. I tagged it. I hit X to close out of
+photo module ... I did see '(1) photos' in my manage. Then I look 10 mins later. Gone."* Timothy:
+*"Happens to me too."* Reproduced in-house as: **4 photos taken offline, close the camera modal,
+every count on every surface reads 0 — navigate away and back and they return.**
+
+⚠️ **NOTHING WAS EVER LOST.** The queue held all four the whole time, which is exactly why a
+remount restored them. This was a render bug, not a storage one — but it reads as data loss to a
+rep standing at a door, which is why it was escalated that way.
+
+**The chain** (`hooks/useLeadCenterData.ts`, `widgets/components/LeadCenter/JobDocsSection.tsx`):
+
+1. `JobDocsSection.handleUpload` does two things per shot: writes an OPTIMISTIC entry into
+   `sectionImages` (local `file://` uri, **no `s3url`**) and queues the upload.
+2. Closing the camera fires the upload-queue listener, which calls `refetch()`.
+3. Offline, `refetch()` is guarded — it calls `hydrateFromCache()`, which does
+   `setLead({...prev, ...saved})`. That hands `lead.salesPhotos` a **NEW ARRAY IDENTITY**.
+4. The effect keyed on `[lead?.salesPhotos]` re-runs, sees no server photos (correct — they were
+   never uploaded) and took the `else` branch: **`setSectionImages({})`**.
+5. `getTabCounts` → `getImagesForSection` → `sectionImages`, so every grid and counter read 0.
+
+**The rule, now in `utils/device-only-photos.ts` (`keepDeviceOnlyPhotos`, `isDeviceOnlyPhoto`):
+a photo with no `s3url` has never been to the server, so the server's list is no evidence about
+it.** Only server-backed entries are cleared by a server read.
+
+⚠️ **Do not "simplify" this back to `setSectionImages({})`.** That line is correct only for a lead
+whose SERVER list is empty AND which holds no device-only photos. A regression test
+(`never returns empty while a device-only photo is held`) fails if it comes back.
+
+⚠️ **Identity is load-bearing.** `keepDeviceOnlyPhotos` returns the SAME object when there is
+nothing to keep and nothing to clear — a fresh `{}` on every hydrate re-renders every photo grid.
+
+⚠️ The server-backed clear is UNCHANGED: a photo that really is on the server still disappears
+from `sectionImages` when the server stops listing it (that is how a deletion propagates).
+
+⚠️ A **separate, still-open** defect in the same area: `uploadQueue.processQueue` removes an item
+after `await refetchQueries(...)` even when that refetch THREW (the `catch` only warns), and the
+`recentlyCompleted` net that covers the gap expires after `RECENTLY_COMPLETED_TTL_MS` (60 s) and
+is only consulted by `JobDocsSection`, not Manage Photos or the Roofline Deck. That is the
+"uploaded but not yet listed" case, not this one. Not fixed here.
+
+11 tests in `tests/offline/device-only-photos.test.ts`. Not verified on device.
