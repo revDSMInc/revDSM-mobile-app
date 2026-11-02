@@ -5883,3 +5883,154 @@ is not stripped twice.
 A non-package tab name passes through unchanged: it is already what the rep sees.
 
 12 tests in `tests/offline/calculator-log-title.test.ts`. Not verified on device.
+
+## Calculator field logs: one per settled value, not one per keystroke (web parity)
+
+Client, comparing the portal timeline from mobile against the one from web: mobile wrote a log for
+EVERY keystroke. Typing `1487887` into `5" Gutter/DS/E` produced seven lines - `1`, `14`, `148`,
+`1487`, `14878`, `148788`, `1487887` - six of them struck through as superseded. Web wrote one.
+
+**Web's mechanism** (`src/sections/deal-center/components/ViewAllCalculators.js` in
+`mhalt-revDSM-sales-frontend`): `queueRolloutLog` keeps a `pendingRolloutChangesRef`, REPLACING any
+pending change for the same `calculator._id` + `fieldName`, and `useDebounce(rolloutChangeTrigger,
+1000)` flushes the queue once typing stops.
+
+**Mobile now does the same.** `handleEntryChange` (`screens/DynamicDealCenter/hooks/
+useDynamicCalculators.ts`) called `logCalculatorFieldEntry` synchronously inside the `setTabs`
+updater; it now calls `queueFieldLogRef.current(...)`, and a `FIELD_LOG_DEBOUNCE_MS` (1000, matching
+web) timer flushes through `flushFieldLogs`. The coalescing rules are pure, in
+`utils/activity-log/pending-field-logs.ts` (`queueFieldLog`, `settledFieldLogs`,
+`isRealFieldChange`).
+
+⚠️ **`oldValue` comes from the FIRST pending change, not the last.** This is the easy mistake and it
+is silent: keeping the newest both ways logs `148788 -> 1487887` (the last keystroke) instead of
+`0 -> 1487887` (the change the rep made). `queueFieldLog` carries the original `oldValue` forward
+explicitly.
+
+⚠️ **Keyed on calculator + field, never field alone.** Two tabs legitimately hold the same field id,
+and collapsing them would lose one tab's edit entirely.
+
+⚠️ **A pending log is FLUSHED ON UNMOUNT**, beside the existing save flush. Dropping it would lose
+the last value typed before the rep navigated away - the one most likely to matter.
+
+⚠️ **The SAVE debounce (`SAVE_DEBOUNCE_MS = 1500`, `saveTimers`) is untouched and separate.** Web
+debounces the save and the log separately too; folding them together would tie log timing to
+persistence and change when deals are written.
+
+⚠️ An edit that ends where it started is now NOT logged (`isRealFieldChange`) - typing `5` and
+deleting it used to leave `0 -> 5` and `5 -> 0` for a field the rep never altered.
+
+Scope: field-entry logs only. No other web/mobile differences were touched, by request.
+
+16 tests in `tests/offline/pending-field-logs.test.ts`. Not verified on device.
+
+### Follow-up — an emptied field must log as DELETED, not as `Added 0'`
+
+Client, comparing the two portals: clearing a field logged **`Added 0' GroundSpout`** from mobile,
+where web showed the same entry struck through with a red **DELETED** tag.
+
+**The portal decides from the logged value.** Web sends `''` for an empty box
+(`DealCenterContext.js`: `value === '' || null || undefined ? '' : Number(value)`), and an empty
+`newValue` is what the timeline renders as DELETED. Mobile sent `0`.
+
+⚠️ **The sanitizer alone could not fix this, and that is the whole subtlety.** `FieldRow`'s input
+does `onChange(parseFloat(cleaned) || 0)` - correct, because pricing and totals need a number - so
+by the time the log is written **an empty box is indistinguishable from a typed `0`**. The
+emptiness has to be carried from where the text is still known:
+
+- `FieldRow.onChange` gained a second argument, `isEmpty`, set from `cleaned.trim() === ''`;
+- `handleFieldChange` puts `inputCleared: true` on the entry when it is set;
+- `handleEntryChange` logs `loggedFieldValue(e.inputCleared ? '' : e.inputValue)`
+  (`utils/activity-log/pending-field-logs.ts`).
+
+⚠️ **`inputCleared` is LOG-ONLY.** `inputValue` stays numeric, and nothing that prices, totals or
+saves reads the flag - a grep confirms only `CalculatorView`, `useDynamicCalculators` and the log
+util mention it. Web draws the same line: `buildEntry` stays numeric and only the change record is
+sanitized. ⚠️ Do not start pricing off it.
+
+⚠️ **A deliberately typed `0` still logs as `0`.** Only an ABSENT value becomes `''` - a rep who
+types a literal zero said something, and web keeps that distinction (`Number('0') === 0`).
+
+⚠️ **Clearing an already-empty field logs nothing.** The guard around the queue still compares raw
+`inputValue`, so `0 -> cleared` never enters the queue, and `isRealFieldChange` drops it if it
+somehow does.
+
+⚠️ `loggedFieldValue` never returns `NaN` - unparseable input becomes `''`, because the portal
+would render a NaN as a value.
+
+Scope: the logged value only. No other web/mobile differences touched, by request.
+
+Tests extended to 23 in `tests/offline/pending-field-logs.test.ts`. Not verified on device.
+
+### Follow-up — Clear must log every field it emptied, not one line for the category
+
+Client: *"when we press the cleared button, log should be called for the fields which having the
+values and now become empty just like the web"*.
+
+`handleClearSection` sent a SINGLE `section cleared` log naming the category, so the portal could
+not say which fields were emptied or what they held. Web emits one `calculator_field_entry` per
+previously-filled field, carrying `newValue: ''` and the real `oldValue`
+(`verticals/VerticalsCalculatorView.js` `handleClearCard`; the client's payloads come from the
+per-field route in `context/DealCenterContext.js`, which is why they read
+`action: "calculator field changed"`).
+
+Mobile now captures each field's value BEFORE the reset (`clearedFields`) and queues a per-field
+log through `queueFieldLogRef` - the same debounced queue typing uses.
+
+⚠️ **NO category-level `section cleared` log is sent.** It used to be the only log a Clear
+produced, and an earlier pass kept it ALONGSIDE the new per-field logs, arguing it marked the
+Clear as one action. The client asked for it removed: the per-field logs already say exactly what
+was emptied, and the extra row (`fieldValue: 'cleared'`, `fieldLabel: 'Gutters'`) only repeated
+the category in a line the portal cannot render as a field change. Online AND offline.
+
+⚠️ `logSectionCleared` itself is UNCHANGED and still used by the legacy static Deal Center
+(`widgets/components/dealcenter/CalculatorForm.tsx`) - only the dynamic path stopped calling it.
+
+⚠️ **Routing Clear through the SAME queue is the point, not a shortcut.** The queue is keyed on
+calculator+field, so a Clear pressed straight after typing REPLACES the pending keystroke instead
+of racing it, and the one surviving log still reports the value the rep started from
+(`5 -> ''`, never `56 -> ''`). A test covers exactly that sequence.
+
+⚠️ **Only fields that HELD A VALUE are logged** - the existing `Number(e.inputValue || 0) !== 0`
+guard already picked those, and `settledFieldLogs` drops any that slip through.
+
+⚠️ **OFFLINE NEEDS NOTHING EXTRA, and that is verified, not assumed.** `logEvent` holds every log
+whose `module_type` is queueable, and `NON_QUEUEABLE_LOG_MODULES` is `['system']` only - so
+`calculator_field_entry` is held in `offlineActivityLog` and replayed in order with its
+`occurredAt` and `user_activity_log_id` intact. A Clear at a door therefore produces the same logs
+as a Clear online, just later. ⚠️ Do not add `calculator_field_entry` to that list.
+
+Scope: the Clear logs only. No other web/mobile differences touched, by request.
+
+Tests extended to 27 in `tests/offline/pending-field-logs.test.ts`. Not verified on device.
+
+### Follow-up — Clear did not empty the field that had FOCUS
+
+Client: *"I pressed the clear but current field in which i focused is not cleared, it is only
+cleared when i focus out"*.
+
+`FieldRow` (`components/CalculatorView.tsx`) keeps the box's text in local state and its sync
+effect opened with **`if (focused) return;`** - so a focused field ignored EVERY incoming value,
+the Clear included, until blur restored the sync.
+
+⚠️ **Deleting that guard is not the fix.** It is there because the parent echoes the field's own
+keystroke: without it, typing `6.` is rewritten to `6` the instant the dot lands, and a
+deliberately typed `0` is wiped.
+
+The real question is whether the incoming value is this field's OWN last report (an echo - ignore)
+or something else (external - accept). `FieldRow` now tracks `lastReported` and the decision lives
+in `utils/field-sync.ts` (`shouldAcceptExternalValue`, `fieldTextFor`), pure so it is testable.
+
+| focused | incoming vs lastReported | result |
+|---|---|---|
+| no | anything | parent wins |
+| yes | same (echo of own keystroke) | keep local text (`6.`, `0`) |
+| yes | different (Clear, or any external set) | **accept** |
+
+⚠️ `lastReported` is updated in BOTH places - on keystroke and when an external value is accepted -
+or the next echo would be misread as external and fight the rep's typing.
+
+⚠️ `fieldTextFor` keeps the existing "blank, not `0`" rendering; do not switch it to `String(value)`
+or every empty box shows a zero.
+
+9 tests in `tests/offline/field-sync.test.ts`. Not verified on device.

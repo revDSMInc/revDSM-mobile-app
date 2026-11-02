@@ -13,7 +13,14 @@ import {
   idlessDropSignature,
 } from '../utils/drop-prices';
 import { scopeSignature } from '../utils/scope-signature';
-import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logSectionCleared, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
+import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
+import {
+  FIELD_LOG_DEBOUNCE_MS,
+  loggedFieldValue,
+  queueFieldLog,
+  settledFieldLogs,
+  type PendingFieldLog,
+} from '../../../utils/activity-log/pending-field-logs';
 import { buildFieldLogLabel, findFieldStoryLabel } from '../utils/story-log-label';
 import { isOnline } from '../../../services/connectivity';
 import { logEvent } from '../../../services/api/LoggerService';
@@ -342,6 +349,37 @@ export function useDynamicCalculators(
   const [lastUpdated, setLastUpdated] = useState('');
 
   const saveTimers = useRef<Record<string, any>>({});
+
+  /**
+   * ⚠️ Pending calculator FIELD LOGS, coalesced per calculator+field and written once typing
+   * stops - the same shape web uses (`ViewAllCalculators.js`). Separate from `saveTimers`: the
+   * save and the log are different concerns and web debounces them separately too.
+   */
+  const pendingFieldLogs = useRef<PendingFieldLog[]>([]);
+  const fieldLogTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushFieldLogs = useCallback(() => {
+    if (fieldLogTimer.current) {
+      clearTimeout(fieldLogTimer.current);
+      fieldLogTimer.current = null;
+    }
+    const due = settledFieldLogs(pendingFieldLogs.current);
+    pendingFieldLogs.current = [];
+    // ⚠️ Fire-and-forget, exactly as before: a log must never block or fail an edit.
+    due.forEach((p) => logCalculatorFieldEntry(p.payload as any).catch(() => {}));
+  }, []);
+
+  const flushFieldLogsRef = useRef(flushFieldLogs);
+  flushFieldLogsRef.current = flushFieldLogs;
+
+  const queueFieldLogRef = useRef((next: PendingFieldLog) => {
+    pendingFieldLogs.current = queueFieldLog(pendingFieldLogs.current, next);
+    if (fieldLogTimer.current) clearTimeout(fieldLogTimer.current);
+    fieldLogTimer.current = setTimeout(() => {
+      fieldLogTimer.current = null;
+      flushFieldLogsRef.current();
+    }, FIELD_LOG_DEBOUNCE_MS);
+  });
   const saveInFlight = useRef<Record<string, boolean>>({});
   const needsFollowUp = useRef<Record<string, boolean>>({});
   const dirty = useRef<Record<string, boolean>>({});
@@ -1029,6 +1067,9 @@ export function useDynamicCalculators(
     return () => {
       Object.values(timers).forEach((t) => clearTimeout(t));
       if (offlineTimer.current) clearTimeout(offlineTimer.current);
+      // ⚠️ A log still waiting out its debounce when the rep leaves the screen must be WRITTEN,
+      // not dropped - otherwise the last value typed before navigating away never appears.
+      flushFieldLogsRef.current();
       // ⚠️ Only a pending change is flushed. The Investment Center mounts its own copy of this hook and
       // stays mounted under the Deal Center it opens, so an unconditional save here replaced the device
       // record with that copy's stale tabs when the rep finished the deal.
@@ -1057,19 +1098,33 @@ export function useDynamicCalculators(
           tabsRef.current = retitled; // let the debounced flush read this immediately
           markDirty(active.id);
           const e = entry as any;
+          /**
+           * ⚠️ DEBOUNCED, like web. Typing `1487887` fires this seven times; writing a log per
+           * keystroke put all seven in the portal's timeline, six struck through. Web coalesces
+           * per calculator+field and flushes 1 s after typing stops
+           * (`ViewAllCalculators.js`: `queueRolloutLog` + `useDebounce(trigger, 1000)`), so this
+           * does the same. The SAVE debounce is separate and unchanged.
+           */
           if (enteredBy && (oldEntry?.inputValue ?? '') !== (e?.inputValue ?? '')) {
-            logCalculatorFieldEntry({
-              userId: enteredBy,
+            queueFieldLogRef.current({
               calculatorId: (active as any).calculatorId || active.id,
-              appointmentId: (active as any).appointmentId,
-              calculatorTitle: active.title,
-              fieldLabel: buildFieldLogLabel(e?.label || fieldId, findFieldStoryLabel(fieldId, schemasRef.current)),
-              fieldValue: e?.inputValue,
-              fieldCategory: categoryNameOf(e?.categoryId),
-              oldValue: oldEntry?.inputValue ?? '',
-              newValue: e?.inputValue,
-              leadId: leadId || undefined,
-            }).catch(() => {});
+              fieldId,
+              payload: {
+                userId: enteredBy,
+                calculatorId: (active as any).calculatorId || active.id,
+                appointmentId: (active as any).appointmentId,
+                calculatorTitle: active.title,
+                fieldLabel: buildFieldLogLabel(e?.label || fieldId, findFieldStoryLabel(fieldId, schemasRef.current)),
+                // ⚠️ An EMPTIED box logs as `''`, not `0`, so the portal shows the row struck
+                // through as DELETED - web parity (`DealCenterContext.js` sanitizes the same way).
+                // `inputCleared` is set by `CalculatorView`'s FieldRow and is log-only.
+                fieldValue: loggedFieldValue((e as any)?.inputCleared ? '' : e?.inputValue),
+                fieldCategory: categoryNameOf(e?.categoryId),
+                oldValue: oldEntry?.inputValue ?? '',
+                newValue: loggedFieldValue((e as any)?.inputCleared ? '' : e?.inputValue),
+                leadId: leadId || undefined,
+              },
+            });
           }
         }
         return retitled;
@@ -1539,6 +1594,15 @@ export function useDynamicCalculators(
   const handleClearSection = useCallback(
     (categoryId: string, categoryLabel: string) => {
       let clearedTab: CalcTab | undefined;
+      /**
+       * ⚠️ Every field that HELD A VALUE gets its own log, exactly as web does. Mobile used to
+       * send a single `section cleared` line for the whole category, so the portal could not show
+       * WHICH fields were emptied - web emits one `calculator_field_entry` per previously-filled
+       * field with `newValue: ''` and the real `oldValue` (`VerticalsCalculatorView.js`
+       * `handleClearCard`, and the per-field route in `DealCenterContext.js`), which is what
+       * renders each row struck through as DELETED.
+       */
+      const clearedFields: Array<{ fieldId: string; entry: any; oldValue: any }> = [];
       setTabs((prev) => {
         const updated = prev.map((t) => {
           if (t.id !== activeTabId) return t;
@@ -1547,6 +1611,8 @@ export function useDynamicCalculators(
           Object.keys(entries).forEach((fid) => {
             const e = entries[fid] as any;
             if (e?.categoryId === categoryId && Number(e.inputValue || 0) !== 0) {
+              // Captured BEFORE the reset, so the log keeps the value the rep actually had.
+              clearedFields.push({ fieldId: fid, entry: e, oldValue: e.inputValue });
               entries[fid] = { ...e, inputValue: 0, computed: { cost: 0, par: 0, retail: 0 } };
               changed = true;
             }
@@ -1562,19 +1628,51 @@ export function useDynamicCalculators(
       if (clearedTab) {
         markDirty(clearedTab.id);
         if (enteredBy) {
-          logSectionCleared({
-            userId: enteredBy,
-            calculatorId: (clearedTab as any).calculatorId || clearedTab.id,
-            appointmentId: (clearedTab as any).appointmentId || appointmentId,
-            calculatorTitle: clearedTab.title,
-            fieldName: categoryLabel,
-            fieldLabel: categoryLabel,
-            fieldCategory: categoryNameOf(categoryId) || categoryLabel,
-          }).catch(() => {});
+          const calcId = (clearedTab as any).calculatorId || clearedTab.id;
+          const apptId = (clearedTab as any).appointmentId || appointmentId;
+
+          /**
+           * ⚠️ Queued through the SAME debounced path as typing, so a Clear immediately after an
+           * edit coalesces per field instead of racing it - the queue is keyed on
+           * calculator+field, so the clear replaces any pending keystroke for that field and the
+           * surviving log reads `<what they had> -> ''`.
+           *
+           * ⚠️ Offline needs nothing extra here: `logEvent` holds and replays these through
+           * `offlineActivityLog`, so a Clear at a door queues like any other field log.
+           */
+          clearedFields.forEach(({ fieldId, entry, oldValue }) => {
+            queueFieldLogRef.current({
+              calculatorId: calcId,
+              fieldId,
+              payload: {
+                userId: enteredBy,
+                calculatorId: calcId,
+                appointmentId: apptId,
+                calculatorTitle: clearedTab!.title,
+                fieldLabel: buildFieldLogLabel(
+                  entry?.label || fieldId,
+                  findFieldStoryLabel(fieldId, schemasRef.current)
+                ),
+                fieldValue: loggedFieldValue(''),
+                fieldCategory: categoryNameOf(entry?.categoryId) || categoryLabel,
+                oldValue: oldValue ?? '',
+                newValue: loggedFieldValue(''),
+                leadId: leadId || undefined,
+              },
+            });
+          });
+
+          /**
+           * ⚠️ NO category-level `section cleared` log. It used to be sent here (and an earlier
+           * pass kept it alongside the per-field logs), but the client asked for it gone: the
+           * per-field logs already say exactly what was emptied, and the extra line
+           * (`fieldValue: 'cleared'`, `fieldLabel: 'Gutters'`) only repeated the category in a
+           * row the portal cannot render as a field change. Online AND offline.
+           */
         }
       }
     },
-    [activeTabId, retitle, markDirty, enteredBy, appointmentId, categoryNameOf]
+    [activeTabId, retitle, markDirty, enteredBy, appointmentId, categoryNameOf, leadId]
   );
 
   const handleConfirmRollouts = useCallback(
