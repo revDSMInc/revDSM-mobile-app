@@ -5719,6 +5719,41 @@ Reported against Lighting -> Mounting Substrate: "Fascia is showing locked, it s
 - ⚠️ Separate latent bug fixed here: `optionsKey` used `join('<raw NUL>')` - a literal 0x00 in the source, which made git and grep treat the file as BINARY (`file` reported `data`). Now the escape `'\u0000'`, per CLAUDE.md section 6.
 - Not verified on device: tap the lone option to clear it and confirm it STAYS clear; a required field should then block Next; both job builders, online and offline.
 
+### Follow-up — the clearable one-option field must start EMPTY
+
+Client: *"if we saved nothing by default Fascia should be unselected, you can see currently it's
+selected by default"*. This REVERSES half of the fix above, so read both together.
+
+Ticket 520 made the clearable field seed its lone option **once per option list** (`seededForRef`),
+to stop the auto-select re-picking a value the rep had just cleared. The side effect: opening
+Lighting on a job with nothing saved showed **Fascia already selected** under Mounting Substrate -
+a value the rep never chose, which then reads as their answer on the summary and the agreement.
+
+The seeding is now GONE for the clearable field: `canClear` returns before ever calling
+`onChange`, so an unsaved field renders empty and stays empty.
+
+⚠️ **The padlocked branch still pins its lone option, and must.** There the value is imposed by
+the schema rather than offered, so a blank would be wrong. `allowsSingleOptionChoice` still gates
+which branch runs - the scope guard from the original ticket is untouched.
+
+⚠️ **`seededForRef` was deleted, not just bypassed.** With the seeding gone it was written
+(`= null`) but never read - dead state that would mislead the next reader into thinking the
+re-pick guard was still live. The re-pick it defended cannot happen any more: nothing auto-selects
+the clearable field, so there is nothing to re-pick.
+
+⚠️ `optionsKey` is KEPT - it is still the effect's dependency key, so a field whose options
+change is still re-evaluated.
+
+Offline is identical and that is verified, not assumed: neither `OptionToggleField` nor
+`DynamicTabRenderer` references connectivity at all, so the render path cannot differ.
+
+Tests extended to 7 in `tests/job-builder/single-option-choice.test.ts` - they pin the RULE
+(`canClear` -> never seeded; padlocked -> still pinned), since the component imports React Native
+and cannot be rendered under jest.
+
+Not verified on device: open Lighting on a job with nothing saved and confirm Mounting Substrate
+is EMPTY; tap Fascia to select, tap again to clear, and confirm a required field still blocks Next.
+
 ### `scheduleTime.date` has TWO shapes — and the job builder owns the conversion
 
 `DynamicJobBuilderScreen` keeps `jobState.scheduleTime.date` as **`M/d/yyyy`** while the rep is
