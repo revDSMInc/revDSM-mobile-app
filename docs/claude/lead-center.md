@@ -2938,3 +2938,323 @@ is only consulted by `JobDocsSection`, not Manage Photos or the Roofline Deck. T
 "uploaded but not yet listed" case, not this one. Not fixed here.
 
 11 tests in `tests/offline/device-only-photos.test.ts`. Not verified on device.
+
+### Follow-up — the same count fell to 0 on RECONNECT (a different trigger)
+
+Client: *"I uploaded 3 images in offline and become online by remaining on same screen... it become
+0 when I turn on the internet"*. The earlier fix (`keepDeviceOnlyPhotos`) covers the OFFLINE
+trigger - `hydrateFromCache` re-running the effect - and does not reach this one.
+
+**The reconnect chain:**
+
+1. offline, 3 photos sit in the upload queue; the count reads `server(0) + pending(3)` = 3;
+2. the link returns and the queue DRAINS - every upload succeeds, so `pending` drops to **0**;
+3. the lead read that follows is served a list that does not include them yet (read-after-write
+   lag, or a response that predates the uploads finishing);
+4. `setLead({ ...prev, ...full })` **replaced** `salesPhotos`, so 3 became 0;
+5. with the queue empty, the only thing left holding the number up was `recentlyCompleted` -
+   `RECENTLY_COMPLETED_TTL_MS` is 60 s and only `JobDocsSection` reads it - so after a minute every
+   surface read 0 until a manual refresh.
+
+**The rule, now in `utils/sales-photos-merge.ts` (`mergeSalesPhotos`, `salesPhotoKey`): a server
+read may ADD photos and may confirm them, but a SHORTER list is not evidence that a photo we
+already hold is gone.** Applied at all three `setLead` sites in `hooks/useLeadCenterData.ts` - the
+sales-portal detail, the `workLead` fallback, and `hydrateFromCache` (a cache written before the
+photos existed has the same hazard).
+
+⚠️ **DELETION STILL WORKS, and this is why it is safe.** A deleted photo is removed by the
+`deletedUrls` filter (`services/offlinePhotoDeleteQueue`, applied in `JobDocsSection`), NOT by its
+absence from the server list. The merge is purely additive and knows nothing about deletion, so
+retaining an unlisted photo cannot resurrect a deleted one. A test pins that contract.
+
+⚠️ **An ABSENT `salesPhotos` is "the server said nothing", not "the server said none".** A
+response that omits the field entirely keeps everything; only a present-but-shorter array triggers
+the merge.
+
+⚠️ **Identity is load-bearing.** `mergeSalesPhotos` returns the INCOMING array untouched whenever
+nothing had to be retained. A first pass rebuilt it with `.filter(Boolean)` on every call, which
+hands every consumer a new reference on each refetch and re-renders every photo grid - a test
+caught it (`returns the incoming array itself`).
+
+⚠️ A row with no `s3url`/`uri`/`_id` is NOT retained: it cannot be matched, so keeping it would
+duplicate on the next read.
+
+⚠️ The retained set does not grow without bound - it only ever holds photos this device knows
+about from this session, and the first read that does list them collapses the two lists by
+identity.
+
+⚠️ **Still open, same family:** `uploadQueue.processQueue` removes an item after
+`await refetchQueries(...)` even when that refetch THREW (the `catch` only warns). This merge makes
+that far less visible, but the item is still dropped from the queue without the server row being
+confirmed.
+
+15 tests in `tests/offline/sales-photos-merge.test.ts`. Not verified on device.
+
+### Follow-up — THE ACTUAL CAUSE: the open screen kept the CLIENT id after the create landed
+
+⚠️ Read this before the two notes above. Both of those are real fixes for real paths, and
+**neither one fixed the case the client kept reporting.** The tell was in the screenshot all
+along: the header reads **"Lead ID: N/A"**, which is a lead created at a door whose create has not
+drained - so the screen was holding a CLIENT id (`lead-1793...`), not a server one.
+
+**The chain:**
+
+1. offline, 3 photos are queued against the client id; the count reads them from the queue -> 3;
+2. the link returns and `offlineLeadStore` creates the lead, getting the real `_id`;
+3. it rekeys every QUEUE onto that id - `uploadQueueManager.rekeyLead`,
+   `offlinePhotoDeleteQueue.rekeyLead`, `rekeyLeadWorkflow`, `rekeyActivityLogs`;
+4. **nothing told the already-open Lead Center.** `refreshAfterLeadLanded` refreshes the lead
+   LISTS and `mapJobs` only;
+5. `JobDocsSection` filters the queue with `it.leadId === lead?._id` - new id on the items, old id
+   on the screen - so `pending` became `[]` and the count fell from 3 photos to **0**.
+
+A remount re-read the lead and picked up the real id, which is exactly why navigating away and
+back always appeared to fix it.
+
+**The fix** (`utils/lead-id-rekey.ts` -> `resolvedLeadIdFor`, wired into the existing
+`subscribeOfflineWork` effect in `hooks/useLeadCenterData.ts`): when the screen holds a
+device-minted id and the offline work for that same lead now records a real `serverIds.leadId`,
+the screen adopts it in place. Queue, counts and grid stay in agreement without a remount.
+
+⚠️ **A real id is NEVER replaced.** Only a `lead-/appt-/calc-/work-` id is eligible, so a synced
+lead can never be hijacked by unrelated work.
+
+⚠️ **Matched on EITHER key** - the work's own `clientId` or the `_id` of the lead payload it
+holds. A screen opened from the lead list carries the lead's `_id`, which is not always the work's
+`clientId`.
+
+⚠️ **A `serverIds.leadId` that is itself a client id is refused**, and an id that already agrees
+resolves to `null`, so the effect is idempotent and cannot loop.
+
+⚠️ `applyOfflineResult` is unaffected: it matches on EITHER id (`w.clientId === id ||
+w.serverIds.leadId === id`) and never writes `_id`, so the overlay keeps working across the
+switch - checked, not assumed.
+
+15 tests in `tests/offline/lead-id-rekey.test.ts`. Not verified on device.
+
+### Follow-up — Manage Photos opened EMPTY while the Lead Center counted 3
+
+With the id-rekey above in place the Lead Center count holds at 3, but opening **Manage Photos**
+showed "No photos in this section yet" until the rep left the screen and came back. Two sources
+disagreed, and both halves had to be fixed.
+
+**Why the grid was empty.** `useDynamicInspectionCapture` builds `displayPhotos` from
+
+```js
+photos.filter((p) => p && (p.s3url || p.secureUrl) && expectedCats.has(norm(p.category)))
+```
+
+A photo still in the upload queue has **neither** - only a local `file://` uri - so it was dropped
+before the grid was built. `getPhotos` then fell back to `capturedPreviews`, which is per-session
+capture state and empty for photos shot in an earlier session. Meanwhile `managePhotosCount` DOES
+count the queue (`indexPendingBySlot`), so the header read 3 over an empty grid.
+
+**Three changes, all in that one path:**
+
+1. `scoped` now admits `p.uri`, so a device-only photo reaches the grid.
+2. `buildMap` resolves its display url from `p.uri` when there is no `s3url` - the local file is on
+   disk and renders fine. It slots into the existing `secureUrl` -> secure-map -> capture-preview
+   -> direct-S3 fallback chain.
+3. ⚠️ `salesPhotosSignature` now keys on `p.s3url || p.uri`, not `p.s3url` alone. Without this,
+   three queued photos in one category produced three IDENTICAL signature entries, so the effect
+   never re-ran when the queue changed - the grid would have stayed empty even with (1) and (2).
+
+**And the grid is fed the queue at all:** `DynamicManagePhotosView` now passes
+`useLeadPhotosWithPending(lead.salesPhotos, leadId)` into the capture hook instead of the raw
+server list. ⚠️ That hook already existed for exactly this bug on the Pitch Book and the Roofline
+Deck ("Manage Photos marked Saved on device ... got No inspection photos available") - the same
+mistake had simply not been fixed on this screen. Prefer it over re-deriving the merge anywhere
+else.
+
+⚠️ The "Saved on device" badge is unaffected - it comes from `utils/pending-inspection-photos.ts`,
+which is the same merge this now uses.
+
+⚠️ This is the THIRD distinct cause behind one client report, and the first two fixes were both
+real but did not reach this one. When a count and a grid disagree, find which SOURCE each reads
+before changing either; the count included the queue and the grid did not.
+
+Not verified on device.
+
+### Follow-up — 4 offline photos rendered as 5 (the duplicate my own fix introduced)
+
+With the queue finally reaching the grid, the slot showed **more** photos than the rep took: 4
+offline shots rendered as 5, "Back" appeared three times, and a remount showed the true 4. This was
+caused by the previous change in this file, not by anything older.
+
+**Cause.** A photo taken offline has no `s3url`; when its upload lands the server returns the SAME
+shot WITH one. The dedupe in `useDynamicInspectionCapture.buildMap` was
+
+```js
+const idx = p.s3url ? list.findIndex((e) => e.s3url === p.s3url) : -1;  // -1 for every device copy
+```
+
+so a device-only record never matched anything and was pushed on every pass. `knownPhotosRef` is
+sticky across renders, so the stale queued copy sat beside its own uploaded twin until the screen
+was remounted - which is exactly why going back and returning "fixed" it.
+
+**The rule, now in `utils/slot-photo-dedupe.ts` (`dedupeSlotPhotos`, `deviceOnlyAllowance`): a slot
+holds `max(serverRows, deviceFiles)` photos, NOT their sum.** Server rows survive deduped by
+`s3url`; device copies are deduped by `uri` and kept only for the surplus the server has not caught
+up with. Same surplus logic `salesPhotosWithPending` applies one layer up.
+
+⚠️ **Two wrong formulas were tried first, and the tests caught both** - `all.length - server.length`
+(counts a photo twice, so the gap never closes) and `(server + device) - server` (circular, always
+keeps every copy). If this is ever revisited: the question is "how many photos does the slot have",
+and the answer is the MAX of the two counts.
+
+⚠️ `buildMap` now collects device-only records untouched and reconciles AFTER the loop, so the
+rule lives in one tested place instead of inside the push closure.
+
+⚠️ A record with neither `s3url` nor `uri` is KEPT (never silently dropped) but can never match
+another - losing a rep's photo is worse than one duplicate tile.
+
+### Reconnect now refreshes the open Lead Center
+
+Asked for directly: *"what if we auto pulled to reload the Lead center page when we become online
+by remaining this screen"*. The screen only refetched on MOUNT, so a rep who stayed put after
+reconnecting kept whatever the device had decided while offline.
+
+`hooks/useLeadCenterData.ts` now subscribes to `onReconnect`. ⚠️ Deliberately that, not a raw
+connectivity listener: `onReconnect` waits for the link to HOLD for `RECONNECT_SETTLE_MS`, merges
+every firing path into one and staggers its listeners, so this cannot re-fire on each tower hop or
+pile onto the upload drain that starts at the same moment. A drop before the settle cancels it.
+
+⚠️ The effect must sit AFTER `refetchRef` is assigned - a first pass placed it above and would have
+read `refetchRef.current` before the ref existed.
+
+`refetch` already no-ops while offline, for a client-id lead, and while another refresh is in
+flight, so this is additive and cannot double-fetch.
+
+15 tests in `tests/offline/slot-photo-dedupe.test.ts`. Not verified on device.
+
+### Manage Photos opened empty while the count read 3 (the retained-copy bug)
+
+Reported after the dedupe fix above: *"Manage Photos (3)"* on the Lead Center, but the modal opened
+at **(0)** and Download Images said *"There are no photos to download."* Twice in a row, and a
+pull-to-reload fixed it every time.
+
+**It was not the id rekey and not the reconnect refresh** - both of those were already working,
+which is precisely why the COUNT was right. The defect was in `mergeSalesPhotos` itself.
+
+`salesPhotoKey` prefers `s3url` and falls back to `uri`. A photo queued at the door is held under
+its local `file://` uri; the server row for **that same shot** comes back carrying an `s3url` and
+no `uri`. The two keys never collide, so `seen` never contained the local uri and the held
+device-only record was retained **alongside its own uploaded twin**.
+
+That single mistake produced both symptoms:
+
+- **"4 photos showed as 5"** - the twin and the local copy both counted;
+- **"Manage Photos (0) / nothing to download"** - `uploadQueue` unlinks the scratch file after a
+  successful upload (`isScratch && !isOwnedByCache && !isDurableQueueCopy`), so the retained record
+  still counted but pointed at a file that no longer existed. The grid resolved it to nothing and
+  the download handler found no `s3url` to fetch.
+
+⚠️ **The rule, and it is the same one as `utils/slot-photo-dedupe.ts`: a slot holds
+`max(server, device)` photos, never their sum.** A held photo with no `s3url` is retained only
+while the incoming list does not already cover its slot (`category||subcategory`), counted per
+slot. A held row that HAS an `s3url` the server omitted is still kept - that is a genuine
+read-after-write gap and its behaviour is unchanged.
+
+⚠️ Do NOT "simplify" this back to a url-keyed set. The whole point is that a photo's identity
+CHANGES when it uploads, so url equality cannot retire the local copy.
+
+22 tests in `tests/offline/sales-photos-merge.test.ts`, including the 4-stays-4 case, two shots
+into one slot where only one came back, and one slot not retiring another's photo. Not verified on
+device.
+
+### The actual cause: `resolveS3Url(undefined)` returns `''`
+
+Four rounds were spent on *"Manage Photos (3) opens at (0)"* / *"no photos to download"*. The
+merge, dedupe, id-rekey and reconnect-refresh work above was all real, but **none of it was the
+cause** - which is why the Lead Center count was always RIGHT while the modal and the download were
+wrong. Three surfaces, three different photo sources, and the broken one was `sectionImages`.
+
+In `useLeadCenterData`'s secure-url effect, each section image was rebuilt as:
+
+```ts
+const imageUri = secured?.secureUrl || resolveS3Url(photo.s3url);
+```
+
+`resolveS3Url` returns `''` for a falsy path. A device-only photo - no `s3url`, only a local
+`file://` uri - was therefore stored as `{ uri: '', s3url: undefined }`: **every identifying field
+blank**, with the real local uri discarded although it was right there on the record.
+
+- the download handler tests `img?.uri || img?.s3url`, so the row was skipped and the alert fired;
+- the grid had `''` to render;
+- `managePhotosCount` in `DynamicManagePhotosView` additionally keyed `seen` on `s3url` ALONE, so
+  device-only rows contributed nothing - the `(0)` in the modal title.
+
+⚠️ The effect's `else` branch is careful to preserve device-only photos, but the `if` branch runs
+whenever the server list is non-empty and **overwrote them**. Two halves of one effect disagreeing
+about whether a local photo counts. Retaining device copies in `mergeSalesPhotos` is what made the
+server list non-empty, so the earlier fix routed straight into this branch.
+
+Fixes, all in `utils/section-image-uri.ts` (pure, tested):
+- `sectionImageUri` - secure URL, then resolved S3 URL, then **the photo's own `uri`**;
+- `needsSecureUrl` - never ask `getSecureUrls` for `filePath: undefined`;
+- `isDisplayable` - the shape test that pins the blanked-out record as invalid.
+
+`managePhotosCount` now identifies by `p.s3url || p.uri`, matching the grid scoping in
+`useDynamicInspectionCapture` (`p.s3url || p.secureUrl || p.uri`).
+
+⚠️ **Any new surface that reads a photo must accept `uri` as an identity, not just `s3url`.** A
+photo's identity CHANGES when it uploads; code that assumes `s3url` silently drops every shot taken
+at a door. That single assumption caused all four rounds of this bug.
+
+13 tests in `tests/offline/section-image-uri.test.ts`. Not verified on device.
+
+### Reconnect on the open screen: the hook never refetched when its own uploads LANDED
+
+Sixth round of *"created a lead offline, took 3 photos, came back online on the same screen,
+Manage Photos is empty until a pull-to-refresh"*. The five notes above each fixed a real path,
+and after all of them the screenshot still read **"3 photos"** on the Lead Center and
+**"Manage Photos (0)"** in the modal. That pair of numbers is the whole diagnosis: the count was
+coming from the 60 s `recentlyCompleted` grace (which only `JobDocsSection` reads), and nothing
+had put the server rows into `lead.salesPhotos`.
+
+**Why nothing refetched after the uploads finished.** `lead` is local state in
+`hooks/useLeadCenterData.ts`; the only thing that puts a SERVER photo into it is `refetch`. Every
+trigger that existed fired too early:
+
+- mount, and the id-change effect (`[lead?._id]`) - fires the moment the screen adopts the real id,
+  which is BEFORE the drain has uploaded anything, so the server list it returns is empty;
+- `onReconnect` - fires once the link settles, also before the drain finishes;
+- `JobDocsSection`'s queue listener DID call `refetch()` on every queue change, but from a
+  `useEffect(..., [])` registered on mount, so it called the `refetch` prop captured on the FIRST
+  render. For a lead created offline that closure still held the CLIENT id, and `refetch` returns
+  early for a client id (`isClientId`) - so every "upload finished" signal was a no-op, forever.
+
+So the drain emptied the queue, the server list in state stayed `[]`, `useLeadPhotosWithPending`
+merged `[] + []`, and the grid was empty. A pull-to-refresh is simply a fresh `refetch` with the
+real id, which is why it always "fixed" it.
+
+**Three fixes:**
+
+1. **The hook refetches when an upload for THIS lead leaves the queue.** Its existing queue
+   listener now diffs the previous and next snapshots with `uploadsLeftQueueForLead`
+   (`utils/upload-queue-landed.ts`) and calls `refetchRef.current()` when the count is > 0.
+   ⚠️ Matched by item `id`, not `leadId`: a rekey rewrites `leadId` in place and keeps `id`, so it
+   must not read as "landed" (the id-change effect already covers that moment); a parked item
+   keeps its `id` too. Both the lead id and the snapshot live in refs so the listener, which is
+   registered once, never goes stale.
+2. **`JobDocsSection` calls `refetchRef.current()`**, not the prop it captured on mount.
+3. **A refetch asked for while one is in flight now runs ONCE MORE when it finishes**
+   (`refetchAgainRef`), instead of being dropped. Three uploads landing seconds apart each ask for
+   a refresh; before this, any request that arrived during an in-flight read was discarded, so
+   the final state could predate the last photo even with (1) and (2).
+
+⚠️ `refetchRef` is now declared ABOVE `refetch` (it is read inside `refetch`'s `finally`). The
+assignment `refetchRef.current = refetch` stays after the definition.
+
+⚠️ The extra refetch when the rep REMOVES an item on the Pending Uploads screen is deliberate and
+harmless - it also leaves the queue by id.
+
+⚠️ The `[DIAG]` blocks the previous rounds left in `useLeadCenterData`, `DynamicManagePhotosView`
+and `useDynamicInspectionCapture` (`globalThis.__leadHookHistory` etc.) are removed.
+
+⚠️ **When a count and a grid disagree on this screen, ask which SOURCE each reads**: the count
+reads `salesPhotos + queue + recentlyCompleted`, the grid reads `salesPhotos + queue`. A number
+that holds for exactly a minute and then drops is `recentlyCompleted` doing its job over a state
+that was never refreshed.
+
+7 tests in `tests/offline/upload-queue-landed.test.ts`. Not verified on device.

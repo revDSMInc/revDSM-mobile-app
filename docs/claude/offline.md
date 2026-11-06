@@ -2192,3 +2192,44 @@ untouched - the portal joins on those. Only the human-readable name changes, so 
 reconciles a queued log against a server row is affected.
 
 Not verified on device.
+
+### A photo queued AFTER its lead's create landed could never upload (orphaned client id)
+
+Five rounds were spent on *"Manage Photos (0)"* before this was found **on the device**, by
+attaching to the running app over the Metro CDP websocket and reading the real queue. Worth doing
+first next time: the earlier rounds all reasoned from code and fixed real-but-unrelated defects.
+
+What the live queue held: two photos, queued 9 hours apart, both with a `work-` CLIENT id. Both
+leads existed - their offline work records read `status: 'uploaded'` with a real
+`serverIds.leadId`. Only the photos were addressed to a name the server never knew.
+
+**The mechanism.** `rekeyLead` is called exactly ONCE per lead, from `offlineLeadStore`, the moment
+its create drains. `canDrain` refuses any item whose `leadId` is still a client id. So a photo
+queued AFTER that moment - while the open Lead Center still held the client id - is stamped with an
+id **nothing will ever rekey again**. It is not parked, not backing off, not retry-capped; it is
+simply invisible to the drain loop forever. No upload, so no server row, so the grid stays empty
+while the count (which reads the queue) says 3.
+
+⚠️ This is why a pull-to-reload appeared to fix it: the remount re-read the lead and the COUNT
+changed, but the photo still never uploaded.
+
+**Fix:** `uploadQueueManager.healOrphanedLeadIds()`, called at the top of `processQueue`. It
+resolves any client-id item against `getOfflineWork()` using `resolvedLeadIdFor`
+(`utils/lead-id-rekey.ts`) and rekeys it. Placed there deliberately - it is the one place that
+knows an item is blocked, and it repairs items queued before this fix shipped. It returns
+immediately when no client id is present.
+
+⚠️ `getOfflineWork` is `require`d LAZILY inside the method. `offlineLeadStore` imports this module
+at the top level (`uploadQueueManager.dropLead`), so a static import closes the cycle and whichever
+module initialises second sees `undefined`.
+
+**Verified live on an iPhone 12**: both stuck items rekeyed from `work-...` to their real ids on
+reload. They then parked with `localFileMissing` - correct behaviour, because the app had just been
+rebuilt and their `pending_uploads/` paths pointed into the previous container UUID. Those two
+photos were already lost; the heal is what makes future ones drain instead of accumulating.
+
+⚠️ A rebuild changes the app's container UUID, so every absolute `file://` path already in the
+queue is dead. Parking (not dropping) is what surfaces that on the Pending Uploads screen instead
+of losing the photo silently.
+
+20 tests in `tests/offline/lead-id-rekey.test.ts`, including the two real stuck ids.

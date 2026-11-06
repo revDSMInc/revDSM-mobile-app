@@ -4,6 +4,7 @@ import { LeadService } from '../services/api/leads';
 import { logEvent } from '../services/api/LoggerService';
 import { queryClient } from '../services/api/queryClient';
 import { isClientId } from './offline-lead-work';
+import { resolvedLeadIdFor, type LeadWorkIds } from './lead-id-rekey';
 import { AppState } from 'react-native';
 import { isOnline, onReconnect } from '../services/connectivity';
 import { getSessionOwner, registerSessionResetHook } from '../services/sessionScope';
@@ -368,9 +369,65 @@ class UploadQueueManager {
     return isOnline();
   }
 
+  /**
+   * ⚠️ SELF-HEAL AN ORPHANED CLIENT ID, every drain.
+   *
+   * `canDrain` refuses an item whose `leadId` is still a client id, and `rekeyLead` is called
+   * ONCE - from `offlineLeadStore` the moment a lead's create lands. A photo queued AFTER that
+   * moment, but while the open screen still held the client id, is therefore stamped with an id
+   * nothing will ever rekey again: it can never drain, and it is never retried, parked or
+   * failed. It simply sits there.
+   *
+   * Found on a device with two such items, 9 hours apart, both for leads whose offline work
+   * records read `status: 'uploaded'` with a real `serverIds.leadId`. The lead existed; only the
+   * photos were addressed to a name the server never knew. That is the "Manage Photos (0)"
+   * report: the photo is on the device, counted from the queue, and can never reach S3, so no
+   * server row ever arrives for it.
+   *
+   * Resolving here rather than at the call site is deliberate - this is the one place that KNOWS
+   * an item is blocked, and it repairs items queued before this fix shipped.
+   */
+  private healOrphanedLeadIds(): void {
+    const stuck = this.queue.filter((i) => isClientId(i.leadId));
+    if (!stuck.length) return;
+
+    let work: readonly LeadWorkIds[] = [];
+    try {
+      /**
+       * ⚠️ REQUIRED LAZILY, NOT IMPORTED. `offlineLeadStore` imports THIS module at the
+       * top level (`uploadQueueManager.dropLead`), so a static import here closes the cycle and
+       * whichever module initialises second sees `undefined`.
+       */
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { getOfflineWork } = require('../services/offlineLeadStore');
+      work = getOfflineWork() as unknown as readonly LeadWorkIds[];
+    } catch (e) {
+      console.warn('[UploadQueue] could not read offline work to heal a stuck photo:', e);
+      return;
+    }
+    if (!work.length) return;
+
+    const resolvedFor = new Map<string, string>();
+    new Set(stuck.map((i) => i.leadId)).forEach((clientId) => {
+      const real = resolvedLeadIdFor(clientId, work);
+      if (real) resolvedFor.set(clientId, real);
+    });
+    if (!resolvedFor.size) return;
+
+    resolvedFor.forEach((real, clientId) => {
+      console.log(`[UploadQueue] Healing orphaned photo(s) ${clientId} -> ${real}`);
+      this.rekeyLead(clientId, real);
+    });
+  }
+
   public async processQueue() {
     if (this.isProcessing) return;
     if (this.queue.length === 0) return;
+
+    // Before deciding nothing can drain, repair any item addressed to a lead that has since
+    // landed. Cheap: it returns immediately unless a client id is actually present.
+    this.healOrphanedLeadIds();
+
     this.isProcessing = true;
 
     console.log(`[UploadQueue] Processing started. Queue length: ${this.queue.length}`);

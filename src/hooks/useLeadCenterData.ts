@@ -2,9 +2,12 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { applyOfflineResult, isClientId } from '../utils/offline-lead-work';
 import { mergePendingIntoSections } from '../utils/pending-inspection-photos';
 import { keepDeviceOnlyPhotos } from '../utils/device-only-photos';
+import { mergeSalesPhotos } from '../utils/sales-photos-merge';
+import { resolvedLeadIdFor } from '../utils/lead-id-rekey';
+import { uploadsLeftQueueForLead } from '../utils/upload-queue-landed';
 import { uploadQueueManager } from '../utils/uploadQueue';
 import { getOfflineWork, subscribeOfflineWork } from '../services/offlineLeadStore';
-import { isOnline } from '../services/connectivity';
+import { isOnline, onReconnect } from '../services/connectivity';
 import { OFFLINE_CACHE, readOfflineCache, writeOfflineCache } from '../utils/offline-query-cache';
 import { leadDetailForCache, mergeLeadRow } from '../utils/offline-lead-detail-cache';
 import { AppState } from 'react-native';
@@ -12,6 +15,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
 import { onOrderSheetChanged } from '../utils/order-sheet-events';
 import { resolveS3Url } from '../utils/s3-utils';
+import { needsSecureUrl, sectionImageUri } from '../utils/section-image-uri';
 import { ENV } from '../config/env';
 import { IMAGE_CATEGORIES } from '../constants/lead-center';
 import { logLeadSessionEnter, persistActiveLeadId } from '../utils/lead-activity-log';
@@ -74,10 +78,19 @@ export const useLeadCenterData = (
       ...prev,
       ...saved,
       generatedReports: saved.generatedReports || prev?.generatedReports || [],
+      // ⚠️ Same rule as the server merge: a cache written BEFORE these photos existed must not
+      // delete them from the screen.
+      salesPhotos: mergeSalesPhotos(prev?.salesPhotos, saved.salesPhotos),
     }));
     return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead?._id, user?._id]);
+
+  // Always the CURRENT refetch. Listeners registered once (queue, reconnect, order sheet) must
+  // go through this, never through the closure they captured on mount - see the queue effect below.
+  const refetchRef = useRef<() => Promise<void>>(async () => {});
+  // A refetch asked for while one is in flight runs ONCE MORE when that one finishes.
+  const refetchAgainRef = useRef(false);
 
   const refetch = useCallback(async () => {
     if (!user?._id || !lead?._id) return;
@@ -87,7 +100,17 @@ export const useLeadCenterData = (
       hydrateFromCache();
       return;
     }
-    if (hydrateInFlightRef.current === lead._id) return;
+    /**
+     * ⚠️ COALESCE, DON'T DROP. This used to `return` and forget the request. Three uploads landing
+     * seconds apart each ask for a refresh; if the first is still in flight the others were
+     * discarded, and the state kept a list that predates the last photo. Remember that one was
+     * asked for and run it once more in `finally`, so the final state always reflects the last
+     * request made.
+     */
+    if (hydrateInFlightRef.current === lead._id) {
+      refetchAgainRef.current = true;
+      return;
+    }
     hydrateInFlightRef.current = lead._id;
     try {
       setIsRefreshing(true);
@@ -118,13 +141,30 @@ export const useLeadCenterData = (
           ...prev,
           ...full,
           generatedReports: full.generatedReports || prev?.generatedReports || [],
+          /**
+           * ⚠️ A SHORTER server list must not delete photos we already hold.
+           *
+           * The spread above replaced `salesPhotos` outright, which breaks the reconnect case:
+           * offline photos drain from the queue the moment the link returns, and the lead read
+           * that follows can legitimately not list them yet (read-after-write lag). With the
+           * queue now empty, nothing else held the count up and every surface fell to 0.
+           *
+           * A deletion still removes a photo - it travels separately through
+           * `offlinePhotoDeleteQueue` / `deletedUrls`, applied downstream - so retaining an
+           * unlisted photo here cannot resurrect a deleted one. See `utils/sales-photos-merge.ts`.
+           */
+          salesPhotos: mergeSalesPhotos(prev?.salesPhotos, full.salesPhotos),
         }));
       } else {
         const workRes = await LeadService.workLead(lead._id, user._id);
         const workData = workRes.data?.data || workRes.data;
         if (workData) {
           cacheLeadDetail(lead._id, workData, user._id);
-          setLead((prev: any) => ({ ...prev, ...workData }));
+          setLead((prev: any) => ({
+            ...prev,
+            ...workData,
+            salesPhotos: mergeSalesPhotos(prev?.salesPhotos, workData.salesPhotos),
+          }));
         }
       }
     } catch (err: any) {
@@ -140,6 +180,10 @@ export const useLeadCenterData = (
     } finally {
       hydrateInFlightRef.current = null;
       setIsRefreshing(false);
+      if (refetchAgainRef.current) {
+        refetchAgainRef.current = false;
+        void refetchRef.current();
+      }
     }
   }, [user?._id, lead?._id, hydrateFromCache]);
 
@@ -149,10 +193,33 @@ export const useLeadCenterData = (
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead?._id, user?._id]);
 
+
   // An order sheet was replaced in place (annotate / reset): this screen's copy of the lead still holds the old `filePath`.
   // `refetch` skips while another is in flight, so ask once more shortly after.
-  const refetchRef = useRef(refetch);
   refetchRef.current = refetch;
+  /**
+   * ⚠️ PULL FRESH DATA WHEN THE LINK COMES BACK, without the rep leaving the screen.
+   *
+   * Asked for directly: *"what if we auto pulled to reload the Lead center page when we become
+   * online by remaining this screen so we can see the real time data"*. Until now the screen only
+   * refetched on mount, so a rep who stayed put after reconnecting saw whatever the device had
+   * decided before the link returned, and had to navigate away and back to see the truth.
+   *
+   * ⚠️ `onReconnect` is used deliberately rather than a raw connectivity listener: it waits for
+   * the link to HOLD for `RECONNECT_SETTLE_MS`, merges every firing path into one, and staggers
+   * its listeners - so this cannot restart on each tower hop or pile onto the upload drain that
+   * fires at the same moment. A drop before the settle cancels it.
+   *
+   * `refetch` already no-ops while offline, for a client-id lead, and while another refresh is in
+   * flight, so this is additive and cannot double-fetch.
+   */
+  useEffect(() => {
+    if (!lead?._id || !user?._id) return;
+    return onReconnect(() => {
+      refetchRef.current();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead?._id, user?._id]);
   useEffect(() => {
     if (!lead?._id) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -175,10 +242,33 @@ export const useLeadCenterData = (
   const [sectionImages, setSectionImages] = useState<Record<string, any[]>>({});
 
   const [pendingUploads, setPendingUploads] = useState(() => uploadQueueManager.getQueue());
+  const leadIdRef = useRef<string | undefined>(lead?._id);
+  leadIdRef.current = lead?._id;
+  /**
+   * ⚠️ REFETCH WHEN AN UPLOAD FOR THIS LEAD LANDS. This is the fix for "created a lead offline,
+   * took 3 photos, came back online on the same screen, Manage Photos is empty until a pull".
+   *
+   * `lead` is local state; the only thing that puts a SERVER photo into it is `refetch`. Every
+   * trigger that existed - mount, id change, reconnect - fires before a reconnect drain has
+   * finished uploading, so the state kept the server's empty list while the queue emptied.
+   * `JobDocsSection` did call `refetch()` from its listener, but through the closure it captured
+   * on mount, which for an offline-created lead still held the CLIENT id - and `refetch` returns
+   * early for a client id. The count read 3 only through the 60 s `recentlyCompleted` grace,
+   * which Manage Photos does not consult, so the two surfaces disagreed.
+   *
+   * Matched by item `id` so a rekey (same ids, new `leadId`) does not fire this; the id-change
+   * effect covers that moment. See `utils/upload-queue-landed.ts`.
+   */
+  const queueSnapshotRef = useRef(uploadQueueManager.getQueue());
   useEffect(() => {
-    setPendingUploads([...uploadQueueManager.getQueue()]);
+    queueSnapshotRef.current = uploadQueueManager.getQueue();
+    setPendingUploads([...queueSnapshotRef.current]);
     return uploadQueueManager.addListener(() => {
-      setPendingUploads([...uploadQueueManager.getQueue()]);
+      const next = uploadQueueManager.getQueue();
+      const landed = uploadsLeftQueueForLead(queueSnapshotRef.current, next, leadIdRef.current);
+      queueSnapshotRef.current = next;
+      setPendingUploads([...next]);
+      if (landed > 0) void refetchRef.current();
     });
   }, []);
   const sectionImagesWithPending = useMemo(
@@ -197,7 +287,14 @@ export const useLeadCenterData = (
               .map((img) => img.s3url)
           );
 
-          const newPhotos = lead.salesPhotos.filter((p: any) => !existingS3Urls.has(p.s3url));
+          /**
+           * ⚠️ ONLY ROWS THAT ARE ACTUALLY ON S3. A photo taken at a door has no `s3url`
+           * until its upload drains, and asking `getSecureUrls` for `filePath: undefined` is both
+           * pointless and a way to fail the whole batch.
+           */
+          const newPhotos = lead.salesPhotos.filter((p: any) =>
+            needsSecureUrl(p, existingS3Urls as Set<string>)
+          );
 
           let updatedSecureData: any[] = [];
           if (newPhotos.length > 0) {
@@ -225,9 +322,12 @@ export const useLeadCenterData = (
 
             if (!map[normalizedCatKey]) map[normalizedCatKey] = [];
 
+            // Match on whichever id the photo actually carries - a device-only row has only `uri`.
             let imageData = Object.values(existingMap)
               .flat()
-              .find((img) => img.s3url === photo.s3url);
+              .find((img) =>
+                photo.s3url ? img.s3url === photo.s3url : !!photo.uri && img.uri === photo.uri
+              );
 
             if (!imageData) {
               let subIndex = -1;
@@ -259,12 +359,32 @@ export const useLeadCenterData = (
               const secured = updatedSecureData.find(
                 (s: any) => s.s3url === photo.s3url || s.filePath === photo.s3url
               );
-              const imageUri = secured?.secureUrl || resolveS3Url(photo.s3url);
+              /**
+               * ⚠️ FALL BACK TO THE PHOTO'S OWN LOCAL `uri`, and this is the bug behind
+               * "Manage Photos (0)" / "There are no photos to download" AFTER a reconnect.
+               *
+               * `resolveS3Url(undefined)` returns `''`. A device-only photo (no `s3url` yet) was
+               * therefore rebuilt here as `{ uri: '', s3url: undefined }` - every identifying
+               * field blank. The download handler tests `img.uri || img.s3url`, so the row was
+               * skipped and the alert said there was nothing to download, while the grid had an
+               * empty uri to render.
+               *
+               * This branch runs whenever the SERVER list is non-empty, so it overwrote the
+               * optimistic entries that the `else` branch below is careful to preserve - the two
+               * halves of the same effect disagreed.
+               *
+               * The local file is on disk and renders fine, so `photo.uri` is the right source.
+               */
+              const imageUri = sectionImageUri(
+                secured?.secureUrl,
+                resolveS3Url(photo.s3url),
+                photo
+              );
 
               imageData = {
                 uri: imageUri,
                 s3url: photo.s3url,
-                id: photo._id,
+                id: photo._id || photo.pendingId,
                 index: subIndex >= 0 ? subIndex : map[normalizedCatKey].length,
                 subcategory: photo.subcategory,
               };
@@ -330,6 +450,26 @@ export const useLeadCenterData = (
 
   const [offlineWork, setOfflineWork] = useState(getOfflineWork);
   useEffect(() => subscribeOfflineWork(() => setOfflineWork(getOfflineWork())), []);
+
+  /**
+   * ⚠️ FOLLOW THE LEAD'S ID WHEN ITS OFFLINE CREATE LANDS.
+   *
+   * A lead made at a door is keyed `lead-1793...` until its create drains (the header reads
+   * "Lead ID: N/A"). On reconnect `offlineLeadStore` rekeys every QUEUE onto the real server id,
+   * but nothing told an already-open Lead Center - so the screen kept the client id while the
+   * photo queue held the new one. `JobDocsSection` filters with `it.leadId === lead?._id`, so
+   * `pending` became empty and the count fell from 3 photos to 0. Navigating away and back
+   * "fixed" it only because the remount re-read the lead.
+   *
+   * `refreshAfterLeadLanded` refreshes the lead lists and the map; it does not reach this screen.
+   * This adopts the real id in place, so the queue, the counts and the grid stay in agreement
+   * without a remount. See `utils/lead-id-rekey.ts`.
+   */
+  useEffect(() => {
+    const resolved = resolvedLeadIdFor(lead?._id, offlineWork as any);
+    if (!resolved) return;
+    setLead((prev: any) => (prev && prev._id !== resolved ? { ...prev, _id: resolved } : prev));
+  }, [lead?._id, offlineWork]);
   const displayLead = useMemo(() => applyOfflineResult(lead, offlineWork), [lead, offlineWork]);
 
   return {
