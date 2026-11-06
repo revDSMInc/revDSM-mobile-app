@@ -2164,3 +2164,72 @@ See [`app-wide.md`](app-wide.md).
 **Scope.** Only the 401 forced-logout branch changed. The deliberate-exit paths were already correct and are untouched, and the `isLoginRequest` / `isUserNotFound` / unstable-connection early-returns still short-circuit before any of this — a flaky-signal 401 parks as before and releases nothing.
 
 **Tests:** `tests/offline/forced-logout-work-release.test.ts` (5) — both facts sent; a failed PUT queues; a client id queues instead of PUTting; a no-op with no session; a deal session releases but logs no pause. `services/api/index.ts` itself cannot be loaded under jest (NetInfo via `queryClient`), so the ordering rules above are guarded by the ⚠️ comments in the source, not by a test.
+
+## `logEvent` normalises every calculator title before it leaves the device
+
+`services/api/LoggerService.ts` gained one step in `logEvent`, beside `stampActionTime` and the
+`leadId` backfill: each key in `CALCULATOR_TITLE_KEYS` (`calculatorTitle`,
+`sourceCalculatorTitle`, `newCalculatorTitle`, `fromCalculatorTitle`, `toCalculatorTitle`) is run
+through `calculatorLogTitle` (`utils/activity-log/calculator-log-title.ts`), so a log carries the
+tab name the REP SEES (`📦 +Light+Light Misc`) rather than the stored expansion
+(`📦 +G+Versa+S+FWrap+Light+Light Misc`). ⚠️ The glyph is KEPT - the chip draws that cube icon.
+ Full reasoning, the key lists and the full-package
+rules: [`deal-center.md`](deal-center.md) § "Activity logs carried a calculator name no rep ever
+saw".
+
+⚠️ **It belongs in `logEvent`, not at the call sites.** This is the same argument as
+`stampActionTime`: `logEvent` is the ONE chokepoint every activity log passes through, online or
+queued, so normalising here cannot be skipped by a path that forgot to. A title arrives under
+several keys from a dozen call sites, and per-site normalisation is precisely what let the app and
+the portal disagree.
+
+⚠️ **It runs BEFORE the offline hold**, so a log queued at a door is stored already normalised and
+drains byte-identical to an online one. A replayed log is not re-processed, and `calculatorLogTitle`
+is idempotent anyway, so a double pass is harmless.
+
+⚠️ **Presentation only, and it must stay that way.** `calculatorId` / `appointmentId` are
+untouched - the portal joins on those. Only the human-readable name changes, so nothing that
+reconciles a queued log against a server row is affected.
+
+Not verified on device.
+
+### A photo queued AFTER its lead's create landed could never upload (orphaned client id)
+
+Five rounds were spent on *"Manage Photos (0)"* before this was found **on the device**, by
+attaching to the running app over the Metro CDP websocket and reading the real queue. Worth doing
+first next time: the earlier rounds all reasoned from code and fixed real-but-unrelated defects.
+
+What the live queue held: two photos, queued 9 hours apart, both with a `work-` CLIENT id. Both
+leads existed - their offline work records read `status: 'uploaded'` with a real
+`serverIds.leadId`. Only the photos were addressed to a name the server never knew.
+
+**The mechanism.** `rekeyLead` is called exactly ONCE per lead, from `offlineLeadStore`, the moment
+its create drains. `canDrain` refuses any item whose `leadId` is still a client id. So a photo
+queued AFTER that moment - while the open Lead Center still held the client id - is stamped with an
+id **nothing will ever rekey again**. It is not parked, not backing off, not retry-capped; it is
+simply invisible to the drain loop forever. No upload, so no server row, so the grid stays empty
+while the count (which reads the queue) says 3.
+
+⚠️ This is why a pull-to-reload appeared to fix it: the remount re-read the lead and the COUNT
+changed, but the photo still never uploaded.
+
+**Fix:** `uploadQueueManager.healOrphanedLeadIds()`, called at the top of `processQueue`. It
+resolves any client-id item against `getOfflineWork()` using `resolvedLeadIdFor`
+(`utils/lead-id-rekey.ts`) and rekeys it. Placed there deliberately - it is the one place that
+knows an item is blocked, and it repairs items queued before this fix shipped. It returns
+immediately when no client id is present.
+
+⚠️ `getOfflineWork` is `require`d LAZILY inside the method. `offlineLeadStore` imports this module
+at the top level (`uploadQueueManager.dropLead`), so a static import closes the cycle and whichever
+module initialises second sees `undefined`.
+
+**Verified live on an iPhone 12**: both stuck items rekeyed from `work-...` to their real ids on
+reload. They then parked with `localFileMissing` - correct behaviour, because the app had just been
+rebuilt and their `pending_uploads/` paths pointed into the previous container UUID. Those two
+photos were already lost; the heal is what makes future ones drain instead of accumulating.
+
+⚠️ A rebuild changes the app's container UUID, so every absolute `file://` path already in the
+queue is dead. Parking (not dropping) is what surfaces that on the Pending Uploads screen instead
+of losing the photo silently.
+
+20 tests in `tests/offline/lead-id-rekey.test.ts`, including the two real stuck ids.

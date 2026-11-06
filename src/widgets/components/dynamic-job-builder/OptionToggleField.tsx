@@ -52,15 +52,6 @@ export function OptionToggleField({
   // as binary (CLAUDE.md section 6). Only a separator that cannot occur in an option label.
   const optionsKey = visibleOptions.join('\u0000');
 
-  /**
-   * ⚠️ Has the lone option been offered to this field ALREADY?
-   *
-   * The auto-select below must seed a one-option field once, then stop. Without this it runs
-   * on every render, so clearing the value re-picks it instantly and the rep's tap looks
-   * broken - they tap to deselect and it comes straight back. Keyed by the option list, so a
-   * field whose options CHANGE (a dependency switched) is seeded again for the new list.
-   */
-  const seededForRef = useRef<string | null>(null);
   const canClear = allowsSingleOptionChoice(fieldLabel);
 
   useLayoutEffect(() => {
@@ -78,15 +69,19 @@ export function OptionToggleField({
         if (value !== only) onChangeRef.current?.(only);
         return;
       }
-      // Clearable field: seed once per option list; after that an empty value is the rep's choice.
-      if (!value && seededForRef.current !== optionsKey) {
-        seededForRef.current = optionsKey;
-        onChangeRef.current?.(only);
-      }
+      /**
+       * ⚠️ CLEARABLE FIELD: NEVER SEEDED. Nothing saved means nothing selected.
+       *
+       * This used to seed the lone option once per option list, so opening Lighting with no saved
+       * job showed **Fascia already selected** under Mounting Substrate - a value the rep never
+       * chose, which then reads as their answer on the summary and the agreement. Reported as
+       * "if we saved nothing by default Fascia should be unselected".
+       *
+       * ⚠️ The padlocked branch ABOVE still pins its lone option, and must: there the value is
+       * imposed by the schema, not offered. Only the scoped, deselectable field starts empty.
+       */
       return;
     }
-
-    seededForRef.current = null;
 
     if (!value) return;
 
