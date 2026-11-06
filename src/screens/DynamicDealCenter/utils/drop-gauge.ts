@@ -122,23 +122,38 @@ export function gaugeTiers(totals: TierTotals | null | undefined, rollout: numbe
  * if they're under par it'll be good to know those tiers as a rep"*. These are NOT extra tiers -
  * they subdivide the COST->PAR gap, the under-par region where a rep still earns something.
  *
- * ⚠️ The base is `min(retail, rollout)`, NOT retail. On a deal rolled out below retail the
- * percentages follow what was actually rolled out, matching the clamped tiles.
+ * ⚠️ THE BASE IS RETAIL, NOT `min(retail, rollout)` - a deliberate divergence from the prototype's
+ * `rangeList()`. Do NOT re-sync it. The client: *"These numbers should be greater than cost. Cost
+ * is 50% and in some cases like LeafFilter it's less than 50%."* The percentages are shares of
+ * RETAIL, the same scale COST (about 50%) and PAR (about 65%) are measured on. The prototype rebased
+ * them on the rollout, which only agreed with retail in its own demo (rollout 5000 > retail 4933).
+ * On a real deal rolled out BELOW retail it shrank both windows under cost: rollout $11,663 put
+ * "55-60%" at $6,415-$6,998 beside a COST tile of $7,613, a price the drop field itself refuses.
  *
- * ⚠️ The upper band stops at `par - 1`, not at 65% of base. The bands exist to describe
- * BELOW-par pricing; letting the top band cross par would overlap the PAR tile and tell the rep
- * they are earning a reduced commission on a price that is actually at or above par.
+ * ⚠️ A BAND NEVER STARTS AT OR BELOW COST. Cost is a SUM of per-field costs, so on some products it
+ * sits above 55% of retail. Each window is therefore floored at `cost + 1`; a window that floor
+ * empties is dropped rather than drawn as a range the rep cannot price into.
  *
- * A band is omitted when it starts at/above the rollout, or when it has collapsed to nothing.
+ * ⚠️ Neither band crosses `par - 1`. The bands exist to describe BELOW-par pricing; letting one
+ * cross par would overlap the PAR tile and tell the rep they are earning a reduced commission on a
+ * price that is actually at or above par.
+ *
+ * Both are clamped to the rollout. A band is omitted when it starts at/above the rollout, or when
+ * it has collapsed to nothing.
  */
 export function gaugeBands(totals: TierTotals | null | undefined, rollout: number): GaugeBand[] {
   const ro = Number(rollout) || 0;
+  const cost = Number(totals?.cost) || 0;
   const par = Number(totals?.par) || 0;
-  const base = Math.min(Number(totals?.retail) || 0, ro);
+  const retail = Number(totals?.retail) || 0;
+  const floor = cost > 0 ? cost + 1 : 0;
   const out: GaugeBand[] = [];
   ([[55, 60], [60, 65]] as Array<[number, number]>).forEach(([lowPct, highPct]) => {
-    const from = Math.round((base * lowPct) / 100);
-    const to = highPct === 65 ? Math.min(ro, par - 1) : Math.min(ro, Math.round((base * highPct) / 100));
+    const from = Math.max(Math.round((retail * lowPct) / 100), floor);
+    const to =
+      highPct === 65
+        ? Math.min(ro, par - 1)
+        : Math.min(ro, Math.round((retail * highPct) / 100), par > 0 ? par - 1 : Infinity);
     if (from >= ro || to <= from) return;
     out.push({ lowPct, highPct, from, to });
   });
@@ -322,6 +337,63 @@ export const GAUGE_ENTER = {
   RING_DELAY_MS: 520,
   RING_STAGGER_MS: 70,
 } as const;
+
+/**
+ * The FULL-SCREEN swap into the drop screen - the prototype's `openDrop()` / `flip()` /
+ * `closeDrop()`, which an earlier pass recorded as "not done".
+ *
+ * On `+ Nth Drop` the rollout card disappears and a full-height drop screen takes its place: the
+ * payment-plan box, the gauge and the field. The rollout card's COST / PAR / RETAIL tiles and its
+ * plan box MORPH into their new positions instead of appearing from nowhere:
+ *   `flip(dtile[i], rolloutTile[min(i, 2)], i * 45, 640)` and `flip(dplan, plan, 60, 640)`,
+ *   eased `cubic-bezier(.22,1,.36,1)`.
+ * Closing (Done, or the header back arrow) brings the card back with `fadeUp .4s` from 14px below.
+ */
+export const GAUGE_FLIP = {
+  MS: 640,
+  STAGGER_MS: 45,
+  PLAN_DELAY_MS: 60,
+  RETURN_MS: 400,
+  RETURN_PX: 14,
+} as const;
+
+/** A view's rectangle in WINDOW coordinates, as `measureInWindow` reports it. */
+export interface FlipRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Which rollout-card tile a gauge tile flies out of. The rollout tile has no source of its own,
+ *  so it leaves the RETAIL tile - the prototype's `bt[Math.min(i, 2)]`, matched by tier rather
+ *  than by index so a 2- or 3-tile gauge still pairs COST with COST. */
+export function flipSourceKey(key: GaugeTierKey): 'cost' | 'par' | 'retail' {
+  return key === 'rollout' ? 'retail' : key;
+}
+
+/**
+ * The transform that puts a view, laid out at `to`, exactly over `from`; animating it back to
+ * identity is the morph. Scaled uniformly by WIDTH, as the prototype does.
+ *
+ * ⚠️ React Native scales about the CENTRE, the prototype about the top-left
+ * (`transform-origin: 0 0`). The translation therefore carries a `(k - 1) * size / 2` correction,
+ * or every tile would start offset by half its growth. Returns `null` when either rect is
+ * unusable, so the caller just renders in place with no morph.
+ */
+export function flipStart(
+  from: FlipRect | null | undefined,
+  to: FlipRect | null | undefined,
+): { translateX: number; translateY: number; scale: number } | null {
+  if (!from || !to) return null;
+  if (!(from.width > 0) || !(to.width > 0) || !(to.height > 0)) return null;
+  const k = from.width / to.width;
+  return {
+    translateX: from.x - to.x + ((k - 1) * to.width) / 2,
+    translateY: from.y - to.y + ((k - 1) * to.height) / 2,
+    scale: k,
+  };
+}
 
 /**
  * The value to display part-way through a count-up, for `progress` in 0..1.

@@ -21,8 +21,12 @@ import {
   GAUGE_TIER_COLORS,
   GAUGE_BAND_COLORS,
   GAUGE_ENTER,
+  GAUGE_FLIP,
+  flipSourceKey,
+  type FlipRect,
   type TierTotals,
 } from '../utils/drop-gauge';
+import { FlipFromRect } from './FlipFromRect';
 
 /**
  * REVUIUX-584 - the drop-price gauge shown while a rep types a drop.
@@ -69,6 +73,13 @@ export interface DropPriceGaugeProps {
    * get that pairing without the caller duplicating the layout.
    */
   children?: React.ReactNode;
+  /**
+   * Window rects of the rollout card's COST / PAR / RETAIL tiles, captured as `+ Nth Drop` was
+   * tapped. When given, each tile MORPHS out of its rollout twin (the prototype's `flip()`), and
+   * the tiles skip the rise - in the prototype only the scale, field and readout rise; the tiles
+   * fly. Omitted, the gauge enters exactly as before.
+   */
+  flipFrom?: Partial<Record<'cost' | 'par' | 'retail', FlipRect>> | null;
 }
 
 /**
@@ -259,7 +270,7 @@ const TierTile: React.FC<{
   );
 };
 
-const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, monthlyFor, children }) => {
+const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, monthlyFor, children, flipFrom }) => {
   /**
    * The scale is laid out in PIXELS, so it needs its own measured width. `onLayout` fires after
    * the first paint; until then the track renders at zero width and only the tiles show.
@@ -353,32 +364,39 @@ const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, 
       ? { open: bandsOpen, onToggle: toggleBands }
       : undefined;
 
+  const riseStyle = {
+    opacity: enter,
+    transform: [{ translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+  };
+  const flipping = !!flipFrom;
+
   return (
-    <Animated.View
-      style={{
-        marginBottom: 14,
-        opacity: enter,
-        transform: [
-          { translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) },
-        ],
-      }}
-    >
-      {/* Tier tiles */}
-      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 10 }}>
+    <View style={{ marginBottom: 14 }}>
+      {/* Tier tiles. With `flipFrom` each one flies out of its rollout-card twin, staggered 45ms,
+          and the row does NOT rise - the prototype animates the tiles by FLIP alone. */}
+      <Animated.View style={[{ flexDirection: 'row', gap: 6, marginBottom: 10 }, flipping ? null : riseStyle]}>
         {tileSet.map((t, i) => (
-          <TierTile
+          <FlipFromRect
             key={t.key}
-            label={t.label}
-            price={t.price}
-            color={GAUGE_TIER_COLORS[t.key]}
-            monthly={gaugeMonthly(monthlyFor ? monthlyFor(t.price) : 0)}
-            index={i}
-            runKey={runKey}
-            isCurrent={hasPrice && !outOfRange && i === tierIdx}
-            bandsToggle={i === 0 ? costToggle : undefined}
-          />
+            from={flipFrom ? flipFrom[flipSourceKey(t.key)] : undefined}
+            delay={i * GAUGE_FLIP.STAGGER_MS}
+            style={{ flex: 1, flexBasis: 0, minWidth: 0 }}
+          >
+            <TierTile
+              label={t.label}
+              price={t.price}
+              color={GAUGE_TIER_COLORS[t.key]}
+              monthly={gaugeMonthly(monthlyFor ? monthlyFor(t.price) : 0)}
+              index={i}
+              runKey={runKey}
+              isCurrent={hasPrice && !outOfRange && i === tierIdx}
+              bandsToggle={i === 0 ? costToggle : undefined}
+            />
+          </FlipFromRect>
         ))}
-      </View>
+      </Animated.View>
+
+      <Animated.View style={riseStyle}>
 
       {/* Scale: track, per-tier dots, fill up to the pin, and the pin itself.
 
@@ -652,7 +670,8 @@ const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, 
             : `Below cost (${fmtMoney(tileSet[0].price)}).`}
         </Text>
       )}
-    </Animated.View>
+      </Animated.View>
+    </View>
   );
 };
 

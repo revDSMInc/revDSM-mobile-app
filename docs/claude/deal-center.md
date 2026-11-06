@@ -5580,7 +5580,7 @@ a regression surfaces as a disagreement with what the client signed off.
   target: `retail < rollout` → 4 tiles; `retail === rollout` → 3 (no ROLLOUT tile, it would
   duplicate RETAIL); `par < rollout` → COST/PAR/ROLLOUT; `cost < rollout` → COST/ROLLOUT; else
   ROLLOUT alone. Every surviving tier is clamped to the rollout.
-- ⚠️ **The 55-60% / 60-65% bands are based on `min(retail, rollout)`, not on retail**, and the
+- ⚠️ **SUPERSEDED - the bands are now based on RETAIL and floored above cost; see "REVUIUX-584 follow-up - bands above cost" at the end of this file.** Original note: **The 55-60% / 60-65% bands are based on `min(retail, rollout)`, not on retail**, and the
   upper band stops at **`par - 1`**, not at 65% of base. Both are the prototype's behaviour, and
   both matter: the bands exist to describe BELOW-par pricing (the 2% and 5% commission tiers), so a
   top band crossing par would tell a rep they are on reduced commission at a price that is
@@ -5824,7 +5824,7 @@ clears `dropText` and `showDropInput`.
   earlier attempt added `onStartShouldSetResponder` to the chevron for this and was removed - it
   was unnecessary and risked swallowing the press itself.
 
-**Not done: the shared-element (FLIP) transition.** The mockup morphs the rollout screen's
+**SUPERSEDED - now done; see "REVUIUX-584 follow-up - bands above cost, and the full-screen drop screen" at the end of this file.** Original note: **Not done: the shared-element (FLIP) transition.** The mockup morphs the rollout screen's
 COST/PAR/RETAIL tiles into the drop screen's tiles (`flip()`, 640ms, 45ms stagger,
 `cubic-bezier(.22,1,.36,1)`). The app's drop row expands inline below those tiles rather than
 replacing the screen, so there is no source-to-destination pairing to morph between — the tiles
@@ -6069,3 +6069,64 @@ or the next echo would be misread as external and fight the rep's typing.
 or every empty box shows a zero.
 
 9 tests in `tests/offline/field-sync.test.ts`. Not verified on device.
+
+## REVUIUX-584 follow-up - bands above cost, and the full-screen drop screen
+
+Client, against the shipped gauge: *"These numbers should be greater than cost. Cost is 50% and
+in some cases like LeafFilter it's less than 50%. I'm also still not seeing animation screen where
+it takes up full screen like my Claude mockup."*
+
+### 1. The 55-60% / 60-65% bands are now shares of RETAIL, floored above cost
+
+⚠️ **This reverses the "based on `min(retail, rollout)`" rule recorded in the REVUIUX-584 section
+above. Do NOT re-sync it to the prototype's `rangeList()`.** The prototype only looked right because
+its demo deal had rollout $5,000 above retail $4,933, so the two bases agreed. On the reported deal
+(Light+Light Misc: COST $7,613 / PAR $10,397 / ROLLOUT $11,663, retail above the rollout) the
+rollout base put "55-60%" at $6,415-$6,998, under the COST tile, at prices the drop field refuses.
+
+COST (about 50%) and PAR (about 65%) are shares of retail, so the bands must be too. Rules, all in
+`gaugeBands` (`utils/drop-gauge.ts`):
+
+- base = the fee-adjusted RETAIL tile (`gaugeTotals.retail`), the same scale as the tiles;
+- ⚠️ **every band starts at `cost + 1` at the lowest.** Cost is a SUM of per-field costs, so on some
+  products it sits above 55% of retail; a window that floor empties is dropped, not drawn;
+- neither band crosses `par - 1` (the lower one could, once 60% of retail exceeds par);
+- both are clamped to the rollout; a band starting at or above it is dropped. A rollout below cost
+  therefore shows no bands at all, which replaces the old "$500 rollout keeps both" test.
+
+### 2. `+ Nth Drop` is now a full-screen swap with the prototype's morph
+
+The earlier note said the FLIP transition was "not done" because the drop row expanded inline. It
+is done now, by swapping layouts inside the card rather than restructuring the screen:
+
+- **While `showDropInput` is set, `PremiumQuoteCard` renders ONLY `dropScreen`**: the plan box,
+  then the gauge (tiles, scale, field). The rest of the card is unmounted. `RolloutView` hides the
+  Confirm / Jobs Built footer and scrolls to the top. The tab strip stays, as in the mockup.
+- **The morph** (`FlipFromRect`, rule `flipStart` in `drop-gauge.ts`): `beginDrop` measures the
+  card's COST / PAR / RETAIL tiles and plan box in WINDOW space before swapping. Each drop-screen
+  copy then animates from that rect to its own (640ms, 45ms stagger, plan at 60ms,
+  `bezier(.22,1,.36,1)`). The gauge's ROLLOUT tile flies out of RETAIL (`flipSourceKey`).
+  - ⚠️ React Native scales about the CENTRE, the prototype about the top-left; `flipStart` carries
+    the `(k - 1) * size / 2` correction. A test checks the transformed view lands on the source.
+  - ⚠️ A morphing view is held at opacity 0 until `measureInWindow` answers, or it flashes at its
+    destination for one frame first.
+  - ⚠️ With `flipFrom`, the gauge's tile row does NOT rise; only the scale and field row do. The
+    prototype animates the tiles by FLIP alone. Without `flipFrom` the gauge enters as before.
+  - Measuring times out after 120ms per view, so a view that never answers just skips the morph.
+- **Closing.** Done keeps its existing path (`openDrop`: validate, save as pending, open the
+  outcome modal). The **header back arrow** (the prototype's `#back`) and Android hardware back
+  call `cancelDrop`, which discards. The card returns with `FadeUpOnMount` (fadeUp 400ms / 14px).
+  - ⚠️ **Back must not save.** On iPhone the field's BLUR is Done (`openDrop` on blur), so the blur
+    that follows a cancel would otherwise write a pending drop the rep walked away from.
+    `dropCancelled` swallows exactly that one call and is reset when the next drop screen opens.
+  - The parent routes back via `onDropScreenChange(close | null)`, so `RolloutView` never reaches
+    into the card's state.
+- The tiles keep their ring pulse and monthly count-up, so the cascade now plays over the morph,
+  as in the prototype.
+- No new native `Modal` (CLAUDE.md §6): the swap is a layout change in the same tree, so the in-app
+  number pad needs nothing new. Offline is unaffected; everything is local layout and state.
+
+Tests: `tests/offline/drop-gauge.test.ts`, now 82, including the reported deal, a LeafFilter-style
+deal, the cost floor, the par cap and the morph arithmetic. Not verified on device. Check the morph
+on a slow Android, back-without-saving on an iPhone, and a 2-tile gauge (rollout between cost and
+par).
