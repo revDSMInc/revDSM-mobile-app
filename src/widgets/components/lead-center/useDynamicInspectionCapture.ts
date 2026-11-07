@@ -14,6 +14,7 @@ import { hashString } from '../../../utils/imageFileCache';
 import { getCaptureCoords } from '../../../utils/capture-location';
 import { useIsOnline } from '../../../hooks/useIsOnline';
 import { resolveS3Url } from '../../../utils/s3-utils';
+import { dedupeSlotPhotos } from '../../../utils/slot-photo-dedupe';
 import { logEvent } from '../../../services/api/LoggerService';
 import { latestAnnotatedPerBase } from '../../../utils/annotation-restore';
 import {
@@ -213,7 +214,10 @@ export function useDynamicInspectionCapture({
   const salesPhotosSignature = useMemo(() => {
     const photos = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
     return photos
-      .map((p: any) => `${p?.s3url || ''}:${p?.category || ''}:${p?.subcategory || ''}`)
+      // ⚠️ `uri` is part of the identity, not just `s3url`. A photo still in the upload queue has
+      // no `s3url`, so keying on that alone made every queued shot in one category look identical
+      // - three of them collapsed to one signature entry and the effect never saw them change.
+      .map((p: any) => `${p?.s3url || p?.uri || ''}:${p?.category || ''}:${p?.subcategory || ''}`)
       .join('|');
   }, [lead?.salesPhotos]);
 
@@ -238,8 +242,21 @@ export function useDynamicInspectionCapture({
 
       const pfx = productKey ? `${productKey} — ` : '';
       const expectedCats = new Set(index.leafCategories.map((c) => norm(`${pfx}${c.label}`)));
+      /**
+       * ⚠️ A photo still in the UPLOAD QUEUE has neither `s3url` nor `secureUrl` - only a local
+       * `file://` uri - so requiring one of those dropped it from the grid entirely.
+       *
+       * Reported as: offline shots show "3 photos" on the Lead Center, then Manage Photos opens
+       * EMPTY, and the photos only appear after leaving the screen and coming back (by which time
+       * the uploads have landed and the server rows carry an `s3url`). The count and the grid read
+       * two different sources - the count includes the queue, the grid did not.
+       *
+       * The local file is on disk and renders fine, so `uri` is a perfectly good display source.
+       * `buildMap` below already falls back through `secureUrl` -> secure map -> capture preview
+       * -> direct S3; this adds the device copy to the set it can draw from.
+       */
       const scoped = photos.filter(
-        (p) => p && (p.s3url || p.secureUrl) && expectedCats.has(norm(p.category))
+        (p) => p && (p.s3url || p.secureUrl || p.uri) && expectedCats.has(norm(p.category))
       );
 
       const filePaths: { bucketName: string; filePath: string }[] = [];
@@ -264,6 +281,9 @@ export function useDynamicInspectionCapture({
               p.secureUrl ||
               secureMap[`${p.bucketName}:${p.s3url}`] ||
               capturedPreviewsRef.current[k] || // just-captured local uri (always loads)
+              // ⚠️ A queued photo's own device copy. Without this a shot taken offline has no
+              // display url at all until its upload lands.
+              (!p.s3url && p.uri ? p.uri : undefined) ||
               resolveS3Url(p.s3url), // direct S3 url so the tile never sits empty
           });
         });
@@ -274,7 +294,13 @@ export function useDynamicInspectionCapture({
           const list: CapturedPhoto[] = [];
           const push = (p: CapturedPhoto) => {
             if (p.s3url && pending.has(p.s3url)) return; // just deleted
-            const idx = p.s3url ? list.findIndex((e) => e.s3url && e.s3url === p.s3url) : -1;
+            // Device-only records are reconciled AFTER the loop by `dedupeSlotPhotos`, which owns
+            // the "max(server, device), not the sum" rule. Collect them here untouched.
+            if (!p.s3url) {
+              list.push(p);
+              return;
+            }
+            const idx = list.findIndex((e) => e.s3url && e.s3url === p.s3url);
             if (idx >= 0) {
               const existing = list[idx];
               const incomingUrl = p.secureUrl || '';
@@ -293,7 +319,14 @@ export function useDynamicInspectionCapture({
           };
           (knownPhotosRef.current[k] || []).forEach(push);
           (fresh[k] || []).forEach(push);
-          if (list.length) merged[k] = list;
+          /**
+           * ⚠️ A queued photo and its uploaded twin are the SAME shot. Pushing both left four
+           * offline photos rendering as five, with one slot showing the same shot three times -
+           * `knownPhotosRef` is sticky across renders, so the stale device copy survived beside
+           * the server row until the screen was remounted. See `utils/slot-photo-dedupe.ts`.
+           */
+          const reconciled = dedupeSlotPhotos(list);
+          if (reconciled.length) merged[k] = reconciled;
         });
         return merged;
       };

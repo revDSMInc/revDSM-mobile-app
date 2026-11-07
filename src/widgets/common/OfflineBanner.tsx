@@ -53,8 +53,19 @@ export const OfflineBanner: React.FC = () => {
     <View style={[styles.bar, { backgroundColor: offline ? OFFLINE_BG : UNSTABLE_BG }]}>
       <Icon name={copy.icon} size={15} color={fg} />
       {/* One weight, one colour, as the original bar had - a bold/regular split inside a
-          11pt line reads as two messages rather than one. */}
-      <Text style={[styles.text, { color: fg }]} numberOfLines={2}>
+          11pt line reads as two messages rather than one.
+
+          ⚠️ ONE LINE ON EVERY PHONE. This was `numberOfLines={2}` with a title + detail
+          sentence, which wrapped on a 320pt iPhone SE and made the strip change height - the
+          screen under it jumped every time the link flapped. `adjustsFontSizeToFit` shrinks the
+          longest copy on the narrowest device instead of wrapping it, and `minimumFontScale`
+          stops it shrinking into illegibility. Keep copy under `BANNER_MAX_CHARS`. */}
+      <Text
+        style={[styles.text, { color: fg }]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.85}
+      >
         {copy.detail ? `${copy.title}. ${copy.detail}` : copy.title}
       </Text>
     </View>

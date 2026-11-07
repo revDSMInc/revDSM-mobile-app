@@ -18,6 +18,7 @@ import { computeCalculatorTiers } from '../utils/dynamic-rollout-pricing';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 import { withPlanFee, type DealPlan } from '../hooks/useDealPricing';
 import { describeFullPackage, getPackageSizeLabel } from '../utils/tab-naming';
+import { fieldTextFor, shouldAcceptExternalValue } from '../utils/field-sync';
 import { FullPackageTitle, FullPackageInfoModal, type PackageAnchorRect } from './FullPackageBadge';
 import { useAuth } from '../../../hooks/useAuth';
 import { NUMERIC_KEYBOARD } from '../../../utils/keyboard-type';
@@ -106,7 +107,13 @@ function getVerticalStyle(schema: CalculatorSchema): CatStyle {
 function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, fixedValue }: {
   field: CalculatorField;
   value: number;
-  onChange: (val: number) => void;
+  /**
+   * ⚠️ `isEmpty` says the BOX IS BLANK, as distinct from a typed `0`. The value stays a number
+   * (pricing and totals need one), but an emptied field must LOG as `''` so the portal shows it
+   * struck through as DELETED - web sends the raw `''` for exactly this. See
+   * `utils/activity-log/pending-field-logs.ts`.
+   */
+  onChange: (val: number, isEmpty?: boolean) => void;
   readOnly?: boolean;
   highlightColor?: string | null;
   isFixed?: boolean;
@@ -117,6 +124,17 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
+  /**
+   * ⚠️ The number this field itself last reported upwards.
+   *
+   * It is what separates the parent ECHOING the user's own keystroke from the parent being changed
+   * from OUTSIDE (the category's Clear button). Without that distinction the sync effect could
+   * only do one of two wrong things while the box had focus: ignore everything - which is why
+   * pressing Clear left the focused field showing `66` until the rep tapped away - or accept
+   * everything, which rewrites in-progress input (`6.` becomes `6` the moment the dot is typed).
+   */
+  const lastReported = useRef<number>(value);
+
   useEffect(() => {
     if (!isFixed) return;
     const fv = fixedValue || 0;
@@ -124,8 +142,15 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
   }, [isFixed, fixedValue, value]);
 
   useEffect(() => {
-    if (focused) return;
-    const next = value > 0 ? String(value) : '';
+    /**
+     * ⚠️ A focused field still accepts an EXTERNAL change, which is what makes Clear work on the
+     * box the rep is typing in. `value === lastReported.current` means the parent is only
+     * reflecting this field's own last keystroke, so the local text (which may be mid-entry, like
+     * `6.` or a leading `0`) is left exactly as typed.
+     */
+    if (!shouldAcceptExternalValue({ focused, incoming: value, lastReported: lastReported.current })) return;
+    const next = fieldTextFor(value);
+    lastReported.current = value;
     if (next !== text) setText(next);
   }, [value, focused, text]);
 
@@ -146,7 +171,10 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
           onChangeText={(t) => {
             const cleaned = t.replace(/[^0-9.]/g, '');
             setText(cleaned);
-            onChange(parseFloat(cleaned) || 0);
+            const num = parseFloat(cleaned) || 0;
+            lastReported.current = num;
+            // ⚠️ The number is still `0` for an empty box - only the LOG is told it was blank.
+            onChange(num, cleaned.trim() === '');
           }}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
@@ -191,13 +219,15 @@ function CategoryCard({ category, entries, onEntryChange, onClearSection, readOn
   const categoryFields = [...directFields, ...getCategorySectionFields(category)];
   const filledCount = categoryFields.filter((f) => (entries[f.id]?.inputValue || 0) > 0).length;
 
-  const handleFieldChange = useCallback((field: CalculatorField, sectionId: string, value: number) => {
+  const handleFieldChange = useCallback((field: CalculatorField, sectionId: string, value: number, isEmpty?: boolean) => {
     const price = field.price || { cost: 0, par: 0, retail: 0 };
     const productName = (entries[field.id] as any)?.productName ?? (category as any)._productName ?? (category as any).productName ?? '';
     onEntryChange(field.id, {
       fieldId: field.id, categoryId: category.id, sectionId, productName,
       name: field.name, label: field.label, unit: field.unit || '',
       inputValue: value,
+      // ⚠️ LOG-ONLY marker: the box was blank, not set to zero. Nothing that prices reads it.
+      ...(isEmpty ? { inputCleared: true } : null),
       computed: { cost: value * price.cost, par: value * price.par, retail: value * price.retail },
       pricingAtTimeOfEntry: { cost: String(price.cost), par: String(price.par), retail: String(price.retail) },
     });
@@ -221,7 +251,7 @@ function CategoryCard({ category, entries, onEntryChange, onClearSection, readOn
         key={field.id}
         field={field}
         value={entries[field.id]?.inputValue || 0}
-        onChange={(val) => handleFieldChange(field, sectionId, val)}
+        onChange={(val, isEmpty) => handleFieldChange(field, sectionId, val, isEmpty)}
         readOnly={readOnly}
         highlightColor={highlightColor}
         isFixed={fixed}

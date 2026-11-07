@@ -1967,6 +1967,32 @@ Added for the collapsed failure row in the Tools tab - full note in **`docs/clau
 - Both are no-ops when nothing is failed, so they are safe to call from a control that may be visible for a moment after the last job clears.
 - The per-job `retryRevRender` / `dismissRevRender` are unchanged and still exported - the UI simply no longer has a per-row control.
 
+### Follow-up - a retry that could NEVER succeed (`isRetryableFailure`)
+
+The client reported "Retry button still not working": renders failed, and failing again on every Retry all. The button was firing correctly - the retry simply could not work.
+
+⚠️ **A retry resubmits the STORED payload unchanged** (`submitJob` reads `job.payload`). That is deliberate - a failure must never cost the rep their configuration - but it means a request the server refused *on its contents* will be refused identically, forever. The backend logged the same payload resubmitted **15 times in 18 minutes**, 4 jobs a burst, each dying in under 4s.
+
+The content was invalid because the photo had not finished uploading and its local `file://` path was sent as the S3 key; the device-side cause and fix are in [`lead-center.md`](lead-center.md) › "revRender: Failed to download house image".
+
+**Added to `utils/revrender-jobs.ts`:**
+
+- `isRetryableFailure(job)` - `false` for `errorKind: 'rejected'` (4xx: the payload itself is bad) and `'auth'` (401: signing in must come first). `true` for `timeout` / `network` / `busy` / `server` / `interrupted`.
+- `retryableFailures(jobs)` - the subset a Retry control should act on.
+- `widgets/components/LeadCenter/OperationalSections.tsx` hides the Retry button when that subset is empty and shows the server's own reason instead (wrapped to 2 lines, since it is then the row's only content).
+
+⚠️ **An unknown or absent `errorKind` defaults to RETRYABLE.** An unclassified failure is usually transport; wrongly hiding Retry strands work a single tap would recover, while wrongly offering it costs a tap. Do not invert this default.
+
+⚠️ **The bursts were NOT an automatic client retry.** There is no scheduled resubmit - `retryRevRender` / `retryAllRevRenders` only run from a button press. It was the rep pressing it, which is the behaviour the hidden button now prevents.
+
+⚠️ `retryAllRevRenders` itself is unchanged and still submits **every** failed job it is given. The filtering is a UI decision about what to OFFER, not a change to what the service does when called.
+
+⚠️ **The Tools tab call site guards on `typeof retryableFailures === 'function'`** and falls back to "every failure is retryable" (the old behaviour). This is not defensive noise: the first build after this landed crashed the WHOLE Tools tab with `undefined is not a function`, because the running Metro bundle still held the previous `revrender-jobs.ts`. The module is cycle-free and the code was correct - a stale bundle was enough. A cosmetic button must never be able to take down the screen a rep needs.
+
+⚠️ **After pulling this change, restart Metro with a cleared cache** (`yarn start --reset-cache`). A plain Fast Refresh can keep the old module and reproduce that crash.
+
+Tests: `tests/lead-center/revrender-retryable.test.ts` (10), including the 4-render burst from the incident and a module-surface check that both helpers are exported as functions.
+
 ### Offline lead list state: vanish / reappear after reconnect (audit group B)
 
 Found by the offline audit (code reading only; **not yet verified on a device** - no device was connected). Symptom: a lead made offline shows as a pending card, the card disappears when the drain finishes, and the lead only returns minutes later - at random on cellular.
@@ -2045,3 +2071,165 @@ Follow-up to the square-eraser ticket in `lead-center.md` (Annotate: square eras
 - ⚠️ The script duplicates the hull maths of `eraserSweepPath` (`utils/annotation-brush.ts`); change both together. The script is a plain template string: no `${}` or ES-module syntax inside it.
 - The stored payload is unchanged (`{ isEraser, width, points }`), so already-queued renders just come out square. Not verified on device.
 - Follow-up: the export only takes the square path when `stroke.shape === 'square'`; strokes without `shape` (and `'circle'`) keep the round stroked eraser. `annotationSaveService` forwards `shape`.
+
+## "Offline" on two bars of LTE, and the raw `timeout of 15000ms exceeded` toast
+
+Client (Lance), on screenshots of both: *"I don't want to see this stuff. It's lowers confidence in app"*. Two separate defects, one screen. Reproduced on an iOS Simulator with Network Link Conditioner, custom profile **12 kbps / 35% packets dropped / 3000 ms delay** both directions — the profile is the useful artefact here, because the stock presets cannot produce either (`100% Loss` fails *instantly*, which is a `Network Error`, not a timeout).
+
+### 1. The false "Offline — showing saved data" bar
+
+⚠️ **The banner logic was never wrong.** `bannerFor('degraded')` returns "Weak connection" and only `'offline'` produces the amber offline bar. The state really was `offline`, and this is how:
+
+`NetInfo.configure` gives its reachability GET of `/health` `reachabilityRequestTimeout: 8_000`. **NetInfo has no "slow" verdict** — when that GET misses 8 s it can only report `isInternetReachable: false`, which is byte-identical to a dead link. That flowed through `resolveOnline` → `commit(false)` → `applyOsDisconnected`, which **force-settles past the `MIN_DWELL_MS` guard**. One slow `/health` was therefore a *verdict*, not a hint — exactly what the comment above `configureReachability` had warned about.
+
+The fix splits the two claims in `utils/connectivity-state.ts`:
+
+- `isConnected === false` → the OS says **no interface** (airplane mode, no signal). Still `applyOsDisconnected` → `offline`.
+- `isInternetReachable === false` → only the reachability **probe** failed. Now `applyProbeResult(state, 'slow')` → `degraded` → **"Weak connection"**.
+
+`commit(nextOnline, radioIsDown)` carries the distinction; `applySnapshot` computes it with `isDefinitelyDisconnected(snapshot)`.
+
+- ⚠️ `degraded` is **not** a softer online. `isEffectivelyOffline('degraded')` is still `true`, so every server-gated feature stays gated. What changes is that `shouldAttemptSync('degraded')` is `true` — the queues **keep draining on a weak line**, where settling to `offline` used to stop them. That is the real win, not the wording.
+- ⚠️ `health-probe.ts` is the only component that can tell slow from dead (`PROBE_SLOW_MS = 4_000`, and `PROBE_FAILURES_BEFORE_OFFLINE = 2` retries before it ever claims offline). After this change it is the **only** path to `offline` besides the radio. Do not re-add a second one.
+- ⚠️ Do NOT "fix" this by raising `REACHABILITY_TIMEOUT_MS`. Any finite timeout has the same flaw; the bug is treating a timeout as proof of absence. `applyOsDisconnected` now has exactly **one** call site — keep it that way.
+
+### 2. The raw `timeout of 15000ms exceeded` toast
+
+`normalizeApiError` (`services/api/index.ts`) **always** populates `.message`. So the ~48 sites written
+
+```js
+FlashMessage.error('Error', err?.message || 'Could not save the deal')
+```
+
+can never reach their fallback — `||` fires only on an empty value and there never is one. ~20 of those fallbacks are genuinely good copy that **has never once rendered**. On a timeout `.message` is axios's own string, so the rep read a millisecond count.
+
+Fixed at the single `emit()` chokepoint in `config/message.ts`, which every `FlashMessage.*` call passes through — all 48 sites at once, plus any added later. Rules live in `utils/transport-error-copy.ts` (pure, so it is testable; `config/message.ts` imports react-native-flash-message and cannot load under jest).
+
+- ⚠️ **Presentation only.** The error object is untouched, so `shouldAnnounceFailure`, `isNetworkError` and the upload retry policies still see the real transport failure. Never make this change the error itself.
+- ⚠️ A **server** message passes through verbatim — "Valid lead id is required" is the only useful thing a 400 gives us. Only transport wording is rewritten.
+- ⚠️ An **informative title is kept**: `('Could not upload photo', 'Network Error')` keeps its title and replaces only the description. That title is the one thing telling the rep *which* action failed. Only `Error`/`Failed`/`Oops`/empty are replaced (40 sites are titled exactly "Error").
+- 13 + 9 tests in `tests/offline/transport-error-copy.test.ts` and `tests/offline/weak-link-not-offline.test.ts`.
+- ⚠️ **Still bypassing `emit()`**: 13 `Alert.alert` and 15 `flashRef` sites. They need fixing individually.
+### The strip must be ONE line on every phone, and it now owns the connection message alone
+
+Client, on a two-line strip: *"i want to keep it in only one line in any phone"*. The copy was a
+title PLUS a detail sentence (`'Offline — showing saved data'` + `'Changes sync when you
+reconnect.'`, ~62 chars), rendered `numberOfLines={2}`. On a 320pt iPhone SE that wraps, so the
+strip changed height and the screen under it jumped every time the link flapped.
+
+Now one clause each, under `BANNER_MAX_CHARS` (40):
+
+| state | copy |
+|---|---|
+| `offline` | **Offline — changes sync when you reconnect** |
+| `degraded` | **Weak connection — things may be slow** |
+
+`OfflineBanner.tsx` renders `numberOfLines={1}` + `adjustsFontSizeToFit` with
+`minimumFontScale={0.85}`, so the longest string shrinks on the narrowest device rather than
+wrapping. ⚠️ Keep new copy under `BANNER_MAX_CHARS` (44) or it shrinks far enough to look faint;
+a test in `tests/offline/weak-link-not-offline.test.ts` enforces the length.
+
+⚠️ **Do not shorten these further for its own sake.** An intermediate attempt cut offline to
+"Offline — changes save to this device", which fits but is vague: it never tells the rep the work
+goes up BY ITSELF, which is the entire reassurance. The full clause measures ~234pt of the ~275pt
+a 320pt phone has, so the clarity cost nothing. What wrapped originally was the title PLUS a
+second detail sentence (~62 chars), not this line.
+
+⚠️ The copy still names what happens to THEIR WORK, not to the socket. "changes save to this
+device" is what decides whether the rep carries on; "showing saved data" described the app's
+behaviour, which is not their question.
+
+⚠️ The strip (and each screen's own inline state) is now the ONLY place a transport failure is
+communicated - the red toast is suppressed unconditionally at `emit()`, NOT gated on the strip
+being visible, because not every screen renders one and the status lags the first failure anyway.
+See [`app-wide.md`](app-wide.md).
+
+- Not verified on device — reproduced and fixed against the Simulator + NLC profile above.
+
+## Forced sign-out (second device) left the rep ON SITE on the portal
+
+**Reported:** a rep works a lead on phone 1, then logs in on phone 2 to finish up. Phone 1 is signed out automatically — but the portal still shows them on site at that door.
+
+**Cause.** "Leaving a lead" is TWO facts: the `work` release (`PUT /lead/.../work` with `workStartedBy: null`) and the `session_pause` activity log. Both are sent by `endActiveLeadWorkSession()` in `utils/lead-work-session.ts`. Every *deliberate* exit called it — the header home button (`MainHeader`), and manual logout (`useAuth.logout`). **The forced sign-out did not.** The 401 branch of the axios response interceptor (`services/api/index.ts`) cleared the session, the query cache, the socket and Redux, and never touched the work session. Nothing was sent, so the server kept the rep attached to the lead indefinitely. The installer equivalent (`endInstallerWorkSession`) had the same hole.
+
+**Fix.** `releaseActiveWorkOnForcedLogout()` in `services/api/index.ts`, awaited inside the 401 branch.
+
+- ⚠️ **ORDER IS THE WHOLE FIX: it must run BEFORE `clearSession()`.** `LeadService.endWorkLead` is gated on `hasSession()` and returns `Promise.resolve()` with no token; `logEvent` *holds* any log when `Storage.getItem('accessToken')` is empty. Move this call below the wipe and both become silent no-ops — which is precisely the bug being fixed, reintroduced invisibly (nothing throws, nothing logs).
+- ⚠️ It must also run **before `store.dispatch(logout())`**: the navigator swaps on `isAuthenticated`, which unmounts Lead Center, and `useLeadCenterData`'s cleanup calls `clearLeadWorkSession()` — wiping the MMKV record *without* releasing. Read the session first or there is nothing left to release.
+- ⚠️ **RE-ENTRANCY.** These requests go back through the same interceptor, and the token is already dead server-side, so they can 401 too. The `releasingWork` flag makes that inner 401 fall straight through (`if (releasingWork) return Promise.reject(...)`) instead of recursing into a second sign-out and a second "Session Expired" flash.
+- Both releases are individually `try`/`catch`ed and the whole thing is best-effort: a sign-out must never be blocked by a lead release.
+- **A release the dead token cannot complete is not lost.** `releaseWork`'s catch hands the lead to `queueLeadWorkEnd` via the injected `setWorkReleaseQueue` hook, and the queued work is written before `resetSessionStorage()` runs. `mine()` scopes offline work to the user, so it replays after the next login.
+- Imported with `require` at call time, not at the top of the module: both `lead-work-session` and `installer-work-session` reach React Native, and a top-level import would make the axios module unloadable under jest (CLAUDE.md §6).
+
+**Scope.** Only the 401 forced-logout branch changed. The deliberate-exit paths were already correct and are untouched, and the `isLoginRequest` / `isUserNotFound` / unstable-connection early-returns still short-circuit before any of this — a flaky-signal 401 parks as before and releases nothing.
+
+**Tests:** `tests/offline/forced-logout-work-release.test.ts` (5) — both facts sent; a failed PUT queues; a client id queues instead of PUTting; a no-op with no session; a deal session releases but logs no pause. `services/api/index.ts` itself cannot be loaded under jest (NetInfo via `queryClient`), so the ordering rules above are guarded by the ⚠️ comments in the source, not by a test.
+
+## `logEvent` normalises every calculator title before it leaves the device
+
+`services/api/LoggerService.ts` gained one step in `logEvent`, beside `stampActionTime` and the
+`leadId` backfill: each key in `CALCULATOR_TITLE_KEYS` (`calculatorTitle`,
+`sourceCalculatorTitle`, `newCalculatorTitle`, `fromCalculatorTitle`, `toCalculatorTitle`) is run
+through `calculatorLogTitle` (`utils/activity-log/calculator-log-title.ts`), so a log carries the
+tab name the REP SEES (`📦 +Light+Light Misc`) rather than the stored expansion
+(`📦 +G+Versa+S+FWrap+Light+Light Misc`). ⚠️ The glyph is KEPT - the chip draws that cube icon.
+ Full reasoning, the key lists and the full-package
+rules: [`deal-center.md`](deal-center.md) § "Activity logs carried a calculator name no rep ever
+saw".
+
+⚠️ **It belongs in `logEvent`, not at the call sites.** This is the same argument as
+`stampActionTime`: `logEvent` is the ONE chokepoint every activity log passes through, online or
+queued, so normalising here cannot be skipped by a path that forgot to. A title arrives under
+several keys from a dozen call sites, and per-site normalisation is precisely what let the app and
+the portal disagree.
+
+⚠️ **It runs BEFORE the offline hold**, so a log queued at a door is stored already normalised and
+drains byte-identical to an online one. A replayed log is not re-processed, and `calculatorLogTitle`
+is idempotent anyway, so a double pass is harmless.
+
+⚠️ **Presentation only, and it must stay that way.** `calculatorId` / `appointmentId` are
+untouched - the portal joins on those. Only the human-readable name changes, so nothing that
+reconciles a queued log against a server row is affected.
+
+Not verified on device.
+
+### A photo queued AFTER its lead's create landed could never upload (orphaned client id)
+
+Five rounds were spent on *"Manage Photos (0)"* before this was found **on the device**, by
+attaching to the running app over the Metro CDP websocket and reading the real queue. Worth doing
+first next time: the earlier rounds all reasoned from code and fixed real-but-unrelated defects.
+
+What the live queue held: two photos, queued 9 hours apart, both with a `work-` CLIENT id. Both
+leads existed - their offline work records read `status: 'uploaded'` with a real
+`serverIds.leadId`. Only the photos were addressed to a name the server never knew.
+
+**The mechanism.** `rekeyLead` is called exactly ONCE per lead, from `offlineLeadStore`, the moment
+its create drains. `canDrain` refuses any item whose `leadId` is still a client id. So a photo
+queued AFTER that moment - while the open Lead Center still held the client id - is stamped with an
+id **nothing will ever rekey again**. It is not parked, not backing off, not retry-capped; it is
+simply invisible to the drain loop forever. No upload, so no server row, so the grid stays empty
+while the count (which reads the queue) says 3.
+
+⚠️ This is why a pull-to-reload appeared to fix it: the remount re-read the lead and the COUNT
+changed, but the photo still never uploaded.
+
+**Fix:** `uploadQueueManager.healOrphanedLeadIds()`, called at the top of `processQueue`. It
+resolves any client-id item against `getOfflineWork()` using `resolvedLeadIdFor`
+(`utils/lead-id-rekey.ts`) and rekeys it. Placed there deliberately - it is the one place that
+knows an item is blocked, and it repairs items queued before this fix shipped. It returns
+immediately when no client id is present.
+
+⚠️ `getOfflineWork` is `require`d LAZILY inside the method. `offlineLeadStore` imports this module
+at the top level (`uploadQueueManager.dropLead`), so a static import closes the cycle and whichever
+module initialises second sees `undefined`.
+
+**Verified live on an iPhone 12**: both stuck items rekeyed from `work-...` to their real ids on
+reload. They then parked with `localFileMissing` - correct behaviour, because the app had just been
+rebuilt and their `pending_uploads/` paths pointed into the previous container UUID. Those two
+photos were already lost; the heal is what makes future ones drain instead of accumulating.
+
+⚠️ A rebuild changes the app's container UUID, so every absolute `file://` path already in the
+queue is dead. Parking (not dropping) is what surfaces that on the Pending Uploads screen instead
+of losing the photo silently.
+
+20 tests in `tests/offline/lead-id-rekey.test.ts`, including the two real stuck ids.

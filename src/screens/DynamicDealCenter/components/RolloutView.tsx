@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Pressable, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Pressable, Platform, StyleSheet, BackHandler } from 'react-native';
 import { BlurView } from '@react-native-community/blur';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +15,8 @@ import { describeFullPackage } from '../utils/tab-naming';
 import { autoSecureLastDrop, dropPriceOf, DROP_PENDING, isPendingDrop, pendingDropIndex as findPendingDropIndex, appendDrop, supersededPendingDrops, newDropUid, findDropIndex, dedupeDrops } from '../utils/drop-prices';
 import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import DropPriceGauge from './DropPriceGauge';
+import { FlipFromRect, FadeUpOnMount } from './FlipFromRect';
+import { GAUGE_FLIP, type FlipRect } from '../utils/drop-gauge';
 import { FlashMessage } from '../../../config/message';
 import { allRolloutsConfirmed, rolloutCalculators } from '../../../utils/rollout-status';
 import { useAuth } from '../../../hooks/useAuth';
@@ -374,7 +376,19 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      {/*
+        * ⚠️ `View`, NOT `KeyboardAvoidingView` - `behavior="height"` ANIMATES THIS CONTAINER'S
+        * HEIGHT, and on dismissal that is what left a blank white card on an SM-A065F: the
+        * card stayed on screen at a collapsed height instead of going away. Android already
+        * resizes the window for the keyboard (`adjustResize`), so the behavior is redundant
+        * there as well as harmful - the same conclusion this file reaches for the screen
+        * column below (see the `View, not KeyboardAvoidingView` note at the RolloutView root).
+        *
+        * ⚠️ The down-payment field inside still works: it is in a ScrollView, the window
+        * resizes under it, and numeric fields use the in-app number pad, not the system
+        * keyboard (CLAUDE.md section 6).
+        */}
+      <View style={{ flex: 1 }}>
         {/* Non-dismissable backdrop — tapping outside must NOT close the drop without
             saving; the rep has to choose Secure or Decline (web `DropPriceModal` passes
             NO `onClose` + `disableEscapeKeyDown`). And animationType="none" (web's
@@ -496,7 +510,11 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
                   </View>
                 </TouchableOpacity>
               )}
-              <GestureHandlerRootView>
+              {/* ⚠️ A bare <GestureHandlerRootView> is NOT unstyled - the library does
+                  `style ?? { flex: 1 }`. Inside this ScrollView that let the plan list grow
+                  unbounded. It only exists to give `Swipeable` a root, so it sizes to its
+                  children. Do NOT drop the style prop. */}
+              <GestureHandlerRootView style={{ flexGrow: 0, flexShrink: 0, width: '100%' }}>
                 {addedPlans.filter((k) => isFinancing(plans, k)).map((key) => {
                   const plan = plans[key] || ({} as DealPlan);
                   const sel = selectedPlan === key;
@@ -550,18 +568,31 @@ function DropOutcomeModal({ visible, dropPrice, screensCount = 0, screensCost = 
               </View>
             </ScrollView>
 
-            <DropAddPlanModal
-              visible={showPicker}
-              price={dropPrice}
-              plans={plans}
-              categories={dropAddCategories}
-              added={addedPlans}
-              onAdd={addPlan}
-              onClose={() => setShowPicker(false)}
-            />
+            {/*
+              * ⚠️ MOUNTED ONLY WHILE OPEN - this is a Modal INSIDE a Modal, which the root
+              * guide says never to stack. Rendered unconditionally, the child keeps a second
+              * native window attached to this one even at `visible={false}`, and on an
+              * SM-A065F that window outlived the parent’s dismissal: pressing the close
+              * button (or Secure / Decline) left a blank white card on screen.
+              *
+              * ⚠️ The `visible` prop is KEPT as well as the guard. The guard controls the
+              * native window’s existence; `visible` still drives its slide animation, and
+              * dropping it would make the sheet appear with no transition.
+              */}
+            {showPicker && (
+              <DropAddPlanModal
+                visible={showPicker}
+                price={dropPrice}
+                plans={plans}
+                categories={dropAddCategories}
+                added={addedPlans}
+                onAdd={addPlan}
+                onClose={() => setShowPicker(false)}
+              />
+            )}
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
@@ -688,7 +719,7 @@ function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   );
 }
 
-function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, isRehashed = false, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, lockState, onResetJobBuilder, onDismissScopeWarning, onShowPackageInfo, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, isRehashed = false, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, lockState, onResetJobBuilder, onDismissScopeWarning, onShowPackageInfo, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange, onDropScreenChange }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
   isLowesLead: boolean;
@@ -711,6 +742,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   onDownPaymentChange: (id: string, downPayment: number) => void;
   onRendersChange: (id: string, renders: any[]) => void;
   onOneYearMonthlyChange: (id: string, plan: OneYearMonthlyValue) => void;
+  /** The drop screen opened (with a way to close it without saving) or closed (`null`). */
+  onDropScreenChange?: (close: (() => void) | null) => void;
 }) {
   const { user, refreshUser } = useAuth();
   const packageInfo = useMemo(
@@ -743,6 +776,74 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
    * report. A ref, not state: it has to be true for the rest of this tick, before any re-render.
    */
   const openingDrop = useRef(false);
+
+  /**
+   * ⚠️ THE DROP SCREEN IS FULL SCREEN - client: *"I'm also still not seeing animation screen where
+   * it takes up full screen like my Claude mockup"*. While `showDropInput` is set, this card renders
+   * ONLY the drop screen (plan box, gauge, field) and `RolloutView` hides its footer and routes the
+   * header back arrow here. See `GAUGE_FLIP` in `utils/drop-gauge.ts` for the prototype it follows.
+   *
+   * `flipFrom` holds the WINDOW rects of this card's COST / PAR / RETAIL tiles and plan box, taken
+   * the moment `+ Nth Drop` is tapped, so the drop screen's copies can morph out of them.
+   */
+  const [flipFrom, setFlipFrom] = useState<{ cost?: FlipRect; par?: FlipRect; retail?: FlipRect; plan?: FlipRect } | null>(null);
+  const tileRefs = useRef<Record<string, View | null>>({});
+  const planBtnRef = useRef<View | null>(null);
+  /**
+   * ⚠️ BACK MUST DISCARD, NOT SAVE. On iPhone the field's BLUR is its Done (`openDrop` on blur, the
+   * pad has no return key), so leaving the field by the back arrow would otherwise save a pending
+   * drop the rep just walked away from. The flag makes the blur that follows a cancel a no-op.
+   */
+  const dropCancelled = useRef(false);
+  const cancelDrop = useCallback(() => {
+    dropCancelled.current = true;
+    setShowDropInput(false);
+    setDropText('');
+  }, []);
+  const beginDrop = () => {
+    const measure = (v: View | null | undefined) =>
+      new Promise<FlipRect | undefined>((resolve) => {
+        if (!v) return resolve(undefined);
+        // A view that never answers must not strand the rep on the rollout card.
+        const t = setTimeout(() => resolve(undefined), 120);
+        v.measureInWindow((x, y, width, height) => {
+          clearTimeout(t);
+          resolve(width > 0 ? { x, y, width, height } : undefined);
+        });
+      });
+    Promise.all([
+      measure(tileRefs.current.COST),
+      measure(tileRefs.current.PAR),
+      measure(tileRefs.current.RETAIL),
+      measure(planBtnRef.current),
+    ]).then(([cost, par, retail, plan]) => {
+      dropCancelled.current = false;
+      setFlipFrom({ cost, par, retail, plan });
+      setDropText('');
+      setShowDropInput(true);
+    });
+  };
+  useEffect(() => {
+    if (!showDropInput) return undefined;
+    onDropScreenChange?.(cancelDrop);
+    // Android's hardware back closes the drop screen too, rather than leaving the rollout step.
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      cancelDrop();
+      return true;
+    });
+    return () => {
+      sub.remove();
+      onDropScreenChange?.(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDropInput]);
+  /** True on the render where the drop screen has just closed, so the card fades back up. */
+  const wasDropOpen = useRef(false);
+  const cardReturning = wasDropOpen.current && !showDropInput;
+  useEffect(() => {
+    wasDropOpen.current = showDropInput;
+  }, [showDropInput]);
+
   const [showChooser, setShowChooser] = useState(false);
   const [chooserPrice, setChooserPrice] = useState(0);
   const [declinedPrice, setDeclinedPrice] = useState<number | null>(null);
@@ -1121,8 +1222,30 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const openDrop = () => {
     // ⚠️ One tap, one row. See `openingDrop`.
     if (openingDrop.current) return;
+    // ⚠️ The rep left by the back arrow: the blur that follows is not a Done. See `dropCancelled`.
+    if (dropCancelled.current) {
+      dropCancelled.current = false;
+      return;
+    }
     const v = parseFloat(dropText) || 0;
-    if (v <= 0) return;
+    /**
+     * ⚠️ DONE WITH NO PRICE CLOSES THE ROW - it does not sit there doing nothing.
+     *
+     * Reported from the field: a rep who opened the drop row, thought better of it and pressed
+     * Done was left looking at the tiles and scale with an empty field, and the only way out was
+     * to type a price they did not want. Collapsing the row is the honest answer to "I am done
+     * here with nothing entered".
+     *
+     * ⚠️ NOTHING IS SAVED on this path - no drop row, no log, no server call. It is purely
+     * local UI state, so it behaves identically offline; there is no queue entry to make and
+     * nothing that could later sync a drop the rep never entered. Do not "improve" this by
+     * recording an empty or zero drop.
+     */
+    if (v <= 0) {
+      setShowDropInput(false);
+      setDropText('');
+      return;
+    }
     const cost = tiers.find((t) => t.label === 'COST')?.value ?? effectiveCostOf(calculator);
     if (v < cost) { FlashMessage.error('Invalid drop price', `Drop price must be at least the cost price (${fmt(cost)}).`); return; }
     if (priceNum > 0 && v === priceNum) {
@@ -1446,6 +1569,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         </View>
       </View>
       <TouchableOpacity
+        ref={planBtnRef as any}
         onPress={() => setShowPlanPicker(true)}
         style={{ minHeight: 56, backgroundColor: '#fff', borderWidth: 1, borderColor: '#DFE3E8', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
       >
@@ -1458,8 +1582,61 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     </View>
   );
 
+  /**
+   * The drop screen - the prototype's `#drop`: the plan box on top, then the gauge, which owns the
+   * tiles, the scale and the field row. Everything else on the card is gone while it is up.
+   */
+  const dropScreen = (
+    <View style={{ paddingTop: 2 }}>
+      <FlipFromRect from={flipFrom?.plan} delay={GAUGE_FLIP.PLAN_DELAY_MS}>
+        <TouchableOpacity
+          onPress={() => setShowPlanPicker(true)}
+          style={{ minHeight: 56, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#DFE3E8', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}
+        >
+          <View style={{ flex: 1, paddingRight: 16 }}>
+            <Text style={{ fontSize: 8, fontWeight: '900', color: '#637381', letterSpacing: 1.5, marginBottom: 2, textTransform: 'uppercase' }}>{methodAvailable ? (methodCategory?.title || 'BASIC') : 'PAYMENT METHOD'}</Text>
+            <Text style={{ fontSize: 10, fontWeight: '900', color: methodAvailable ? '#212B36' : '#919EAB' }}>{methodAvailable ? planLabelOf(plans, method) : 'Select payment method'}</Text>
+          </View>
+          <Ionicons name="chevron-down" size={16} color="#637381" />
+        </TouchableOpacity>
+      </FlipFromRect>
+      {/* REVUIUX-584 - the gauge OWNS this block: tiles, scale and commission pills above, then the
+          price field paired with its live per-month readout. Display-only - it reads `dropText`
+          and sets nothing. */}
+      <DropPriceGauge
+        price={parseFloat(dropText) || 0}
+        tiers={gaugeTotals}
+        rollout={gaugeRollout}
+        monthlyFor={gaugeMonthlyFor}
+        flipFrom={flipFrom}
+      >
+        <View style={{ backgroundColor: '#F4F6F8', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 16, height: 56, flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={{ fontSize: 14, fontWeight: '900', color: '#94A3B8', marginRight: 8 }}>$</Text>
+          <TextInput
+            style={{ flex: 1, fontSize: 14, fontWeight: '800', color: '#1C252E' }}
+            value={formatAmountInput(dropText)}
+            onChangeText={(t) => setDropText(stripAmount(t))}
+            onSubmitEditing={openDrop}
+            onBlur={
+              Platform.OS === 'ios' && !NUMERIC_KEYBOARD_HAS_RETURN_KEY
+                ? openDrop
+                : undefined
+            }
+            placeholder="Enter price..."
+            placeholderTextColor="#919EAB"
+            keyboardType={NUMERIC_KEYBOARD}
+            returnKeyType="done"
+            autoFocus
+          />
+        </View>
+      </DropPriceGauge>
+    </View>
+  );
+
   return (
     <>
+      {showDropInput ? dropScreen : (
+      <FadeUpOnMount animate={cardReturning}>
       {/* ── Main card ── */}
       {/* Ticket 409 — a resulted lead makes the WHOLE quote read-only, not just the two
           action buttons: web dims the entire card (see the reference screenshot, where the
@@ -1551,7 +1728,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         {/* 4. COST / PAR / RETAIL tiles */}
         <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginBottom: 14 }}>
           {tiers.map((tier) => (
-            <View key={tier.label} style={{ flex: 1, flexBasis: 0, minWidth: 0, alignItems: 'center', paddingVertical: 10, paddingHorizontal: 6, borderRadius: 12, backgroundColor: '#fff', borderWidth: tier.isRetail ? 1.5 : 1, borderColor: tier.isRetail ? '#16A34A' : '#DFE3E8', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+            <View key={tier.label} ref={(r) => { tileRefs.current[tier.label] = r; }} collapsable={false} style={{ flex: 1, flexBasis: 0, minWidth: 0, alignItems: 'center', paddingVertical: 10, paddingHorizontal: 6, borderRadius: 12, backgroundColor: '#fff', borderWidth: tier.isRetail ? 1.5 : 1, borderColor: tier.isRetail ? '#16A34A' : '#DFE3E8', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
               <Text style={{ fontSize: 9, fontWeight: '900', letterSpacing: 1.5, marginBottom: 4, color: '#94A3B8', textTransform: 'uppercase' }}>{tier.label}</Text>
               <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ alignSelf: 'stretch', textAlign: 'center', fontSize: 14, fontWeight: '900', color: tier.isRetail ? '#16A34A' : '#212B36' }}>{fmt(tier.value)}</Text>
             </View>
@@ -1852,40 +2029,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             );
           })}
 
-          {/* Inline drop input */}
-          {showDropInput && (
-            <View style={{ marginBottom: 16 }}>
-              {/* REVUIUX-584 - the gauge OWNS this row: tiles, scale and commission pills above,
-                  then the price field paired with its live per-month readout. Display-only - it
-                  reads `dropText` and sets nothing. */}
-              <DropPriceGauge
-                price={parseFloat(dropText) || 0}
-                tiers={gaugeTotals}
-                rollout={gaugeRollout}
-                monthlyFor={gaugeMonthlyFor}
-              >
-                <View style={{ backgroundColor: '#F4F6F8', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 16, height: 56, flexDirection: 'row', alignItems: 'center' }}>
-                  <Text style={{ fontSize: 14, fontWeight: '900', color: '#94A3B8', marginRight: 8 }}>$</Text>
-                  <TextInput
-                    style={{ flex: 1, fontSize: 14, fontWeight: '800', color: '#1C252E' }}
-                    value={formatAmountInput(dropText)}
-                    onChangeText={(t) => setDropText(stripAmount(t))}
-                    onSubmitEditing={openDrop}
-                    onBlur={
-                      Platform.OS === 'ios' && !NUMERIC_KEYBOARD_HAS_RETURN_KEY
-                        ? openDrop
-                        : undefined
-                    }
-                    placeholder="Enter price..."
-                    placeholderTextColor="#919EAB"
-                    keyboardType={NUMERIC_KEYBOARD}
-                    returnKeyType="done"
-                    autoFocus
-                  />
-                </View>
-              </DropPriceGauge>
-            </View>
-          )}
+          {/* The drop entry is no longer inline: `+ Nth Drop` swaps this whole card for the
+              full-screen `dropScreen` above. */}
 
           </View>
 
@@ -1899,14 +2044,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TouchableOpacity
               disabled={jobLock.isAnySubmitted}
-              onPress={() => {
-                if (showDropInput) {
-                  openDrop();
-                } else {
-                  setDropText('');
-                  setShowDropInput(true);
-                }
-              }}
+              onPress={beginDrop}
               style={{ flex: 1, minHeight: 64, paddingVertical: 8, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: jobLock.isAnySubmitted ? '#CBD5E1' : '#1976D2', backgroundColor: jobLock.isAnySubmitted ? '#F1F5F9' : '#fff', opacity: jobLock.isAnySubmitted ? 0.5 : 1 }}
             >
               <Text style={{ fontSize: 12, fontWeight: '900', color: jobLock.isAnySubmitted ? '#94A3B8' : '#1976D2' }}>
@@ -1944,6 +2082,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             )}
           </View>
         </View>
+      )}
+      </FadeUpOnMount>
       )}
 
       <PaymentPlanModal
@@ -2142,6 +2282,20 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   const systemKeyboardUp = useKeyboardState((st) => st.isVisible);
   const entryOpen = numPadActive || systemKeyboardUp;
 
+  /**
+   * The quote card's full-screen drop screen is up. While it is, the footer is hidden and the
+   * header back arrow closes the drop screen (without saving) instead of leaving the rollout step
+   * - the prototype's `#back` is that same arrow. The card hands over its close function.
+   */
+  const dropCloseRef = useRef<(() => void) | null>(null);
+  const [dropScreenOpen, setDropScreenOpen] = useState(false);
+  const onDropScreenChange = useCallback((close: (() => void) | null) => {
+    dropCloseRef.current = close;
+    setDropScreenOpen(!!close);
+    // The drop screen starts at the top of the scroll view, like the prototype's `sc.scrollTop = 0`.
+    if (close) quoteScrollRef.current?.scrollTo?.({ y: 0, animated: false });
+  }, []);
+
   return (
     <PhotoPeekScrollLockProvider>
     {/* `View`, not `KeyboardAvoidingView` — its `behavior="padding"` shrank this whole
@@ -2154,7 +2308,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
         its own `KeyboardAwareScrollView`s. */}
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
       <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#DFE3E8', backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center' }}>
-        <TouchableOpacity onPress={onBack} style={{ padding: 8, marginRight: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#DFE3E8', borderRadius: 12, backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+        <TouchableOpacity onPress={() => (dropCloseRef.current ? dropCloseRef.current() : onBack?.())} style={{ padding: 8, marginRight: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#DFE3E8', borderRadius: 12, backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
           <Ionicons name="arrow-back" size={18} color="#212B36" />
         </TouchableOpacity>
         {/*
@@ -2295,7 +2449,8 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               onDiscountChange={(id, d) => onDiscountChange?.(id, d)}
               onDownPaymentChange={(id, dp) => onDownPaymentChange?.(id, dp)}
               onRendersChange={(id, renders) => onRendersChange?.(id, renders)}
-              onOneYearMonthlyChange={(id, plan) => onOneYearMonthlyChange?.(id, plan)} />
+              onOneYearMonthlyChange={(id, plan) => onOneYearMonthlyChange?.(id, plan)}
+              onDropScreenChange={onDropScreenChange} />
           ) : (
             <View style={{ alignItems: 'center', paddingVertical: 80 }}>
               <Ionicons name="cube-outline" size={44} color="#CBD5E1" />
@@ -2306,7 +2461,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
         </View>
       </KeyboardAwareScrollView>
 
-      {visibleCalculators.length > 0 && !allConfirmed && !entryOpen && (
+      {visibleCalculators.length > 0 && !allConfirmed && !entryOpen && !dropScreenOpen && (
         <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16 }}>
           <View style={{ maxWidth: 1200, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 24 }}>
             <View style={{ flex: 1 }}>
@@ -2367,7 +2522,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
 
       {/* All rollouts confirmed → the jobs are built; a single CTA takes the rep back
           to the Lead Center tools to present (map / pitch book / Investment Center). */}
-      {visibleCalculators.length > 0 && allConfirmed && !entryOpen && (
+      {visibleCalculators.length > 0 && allConfirmed && !entryOpen && !dropScreenOpen && (
         <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16 }}>
           <TouchableOpacity
             onPress={() => onRolloutsConfirmedDone?.()}

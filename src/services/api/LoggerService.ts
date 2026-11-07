@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { ENV } from '../../config/env';
 import { Storage } from '../../utils/storage';
+import { calculatorLogTitle } from '../../utils/activity-log/calculator-log-title';
 import Geolocation from 'react-native-geolocation-service';
 import { isOnline } from '../connectivity';
 import { hasQueuedActivityLogs, queueActivityLog, setActivityLogSender } from '../offlineActivityLog';
@@ -173,6 +174,18 @@ export const clearPendingLogs = () => {
   pendingLogs.length = 0;
 };
 
+/**
+ * The meta keys that carry a calculator's name. Kept together so a new one cannot be added
+ * without deciding whether it needs the same treatment.
+ */
+const CALCULATOR_TITLE_KEYS = [
+  'calculatorTitle',
+  'sourceCalculatorTitle',
+  'newCalculatorTitle',
+  'fromCalculatorTitle',
+  'toCalculatorTitle',
+] as const;
+
 export const logEvent = async (eventType: string, details: any = {}) => {
   const userId = details.user_id;
   const isPublic = details.isPublic || false;
@@ -186,6 +199,22 @@ export const logEvent = async (eventType: string, details: any = {}) => {
   if (details.action && meta.action == null) {
     meta.action = details.action;
   }
+
+  /**
+   * ⚠️ Every calculator title goes out as the REP SEES IT on the tab chip.
+   *
+   * A full-package tab stores `📦 +G+Versa+S+FWrap+Light+Light Misc` but renders
+   * `+Light+Light Misc` (`components/FullPackageBadge.tsx` drops the keys the cube glyph stands
+   * for). Logs sent the stored string, so the portal timeline showed a name no rep ever saw.
+   *
+   * Done HERE because `logEvent` is the one chokepoint every activity log passes through - the
+   * title arrives under several keys from a dozen call sites (field change, auto-rename, funding,
+   * result, investment centre), and normalising at each of them is what let them drift apart in
+   * the first place. See `utils/activity-log/calculator-log-title.ts`.
+   */
+  CALCULATOR_TITLE_KEYS.forEach((key) => {
+    if (typeof meta[key] === 'string' && meta[key]) meta[key] = calculatorLogTitle(meta[key]);
+  });
 
   if (!meta.leadId && !ExcludedModuleTypes.includes(details.module_type)) {
     const storedLeadId = Storage.getItem('leadId');

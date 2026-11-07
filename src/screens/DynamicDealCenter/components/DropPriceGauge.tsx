@@ -16,12 +16,17 @@ import {
   countUpValue,
   mutedLabelColor,
   gaugeFillStops,
+  shouldShowPriceBadge,
   badgeTextColor,
   GAUGE_TIER_COLORS,
   GAUGE_BAND_COLORS,
   GAUGE_ENTER,
+  GAUGE_FLIP,
+  flipSourceKey,
+  type FlipRect,
   type TierTotals,
 } from '../utils/drop-gauge';
+import { FlipFromRect } from './FlipFromRect';
 
 /**
  * REVUIUX-584 - the drop-price gauge shown while a rep types a drop.
@@ -68,6 +73,13 @@ export interface DropPriceGaugeProps {
    * get that pairing without the caller duplicating the layout.
    */
   children?: React.ReactNode;
+  /**
+   * Window rects of the rollout card's COST / PAR / RETAIL tiles, captured as `+ Nth Drop` was
+   * tapped. When given, each tile MORPHS out of its rollout twin (the prototype's `flip()`), and
+   * the tiles skip the rise - in the prototype only the scale, field and readout rise; the tiles
+   * fly. Omitted, the gauge enters exactly as before.
+   */
+  flipFrom?: Partial<Record<'cost' | 'par' | 'retail', FlipRect>> | null;
 }
 
 /**
@@ -135,6 +147,27 @@ const TierTile: React.FC<{
   isCurrent: boolean;
   bandsToggle?: { open: boolean; onToggle: () => void };
 }> = ({ label, price, color, monthly, index, runKey, isCurrent, bandsToggle }) => {
+  /**
+   * The ring pulse - a green halo that expands out of each tile and fades, cascading left to
+   * right. See `GAUGE_ENTER.RING_*`: the mockup's own markup bug stops this ever playing there,
+   * so the stagger is implemented as the client's animation spec intends.
+   *
+   * Drawn as a sibling overlay because React Native has no spreading `box-shadow`.
+   */
+  const ring = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    ring.setValue(0);
+    const anim = Animated.timing(ring, {
+      toValue: 1,
+      duration: GAUGE_ENTER.RING_MS,
+      delay: GAUGE_ENTER.RING_DELAY_MS + index * GAUGE_ENTER.RING_STAGGER_MS,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    });
+    anim.start();
+    return () => anim.stop();
+  }, [runKey, index, ring]);
+
   const body = (
     <View
       style={{
@@ -151,6 +184,21 @@ const TierTile: React.FC<{
         borderColor: isCurrent ? color : '#DFE3E7',
       }}
     >
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+          borderRadius: 12,
+          borderWidth: 2,
+          borderColor: 'rgba(75,160,84,0.45)',
+          opacity: ring.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+          transform: [{ scale: ring.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) }],
+        }}
+      />
       {/* The coloured cap: how a tile says which tier it is even before a price is typed. */}
       <View
         style={{
@@ -222,7 +270,7 @@ const TierTile: React.FC<{
   );
 };
 
-const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, monthlyFor, children }) => {
+const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, monthlyFor, children, flipFrom }) => {
   /**
    * The scale is laid out in PIXELS, so it needs its own measured width. `onLayout` fires after
    * the first paint; until then the track renders at zero width and only the tiles show.
@@ -316,41 +364,57 @@ const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, 
       ? { open: bandsOpen, onToggle: toggleBands }
       : undefined;
 
+  const riseStyle = {
+    opacity: enter,
+    transform: [{ translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+  };
+  const flipping = !!flipFrom;
+
   return (
-    <Animated.View
-      style={{
-        marginBottom: 14,
-        opacity: enter,
-        transform: [
-          { translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) },
-        ],
-      }}
-    >
-      {/* Tier tiles */}
-      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 10 }}>
+    <View style={{ marginBottom: 14 }}>
+      {/* Tier tiles. With `flipFrom` each one flies out of its rollout-card twin, staggered 45ms,
+          and the row does NOT rise - the prototype animates the tiles by FLIP alone. */}
+      <Animated.View style={[{ flexDirection: 'row', gap: 6, marginBottom: 10 }, flipping ? null : riseStyle]}>
         {tileSet.map((t, i) => (
-          <TierTile
+          <FlipFromRect
             key={t.key}
-            label={t.label}
-            price={t.price}
-            color={GAUGE_TIER_COLORS[t.key]}
-            monthly={gaugeMonthly(monthlyFor ? monthlyFor(t.price) : 0)}
-            index={i}
-            runKey={runKey}
-            isCurrent={hasPrice && !outOfRange && i === tierIdx}
-            bandsToggle={i === 0 ? costToggle : undefined}
-          />
+            from={flipFrom ? flipFrom[flipSourceKey(t.key)] : undefined}
+            delay={i * GAUGE_FLIP.STAGGER_MS}
+            style={{ flex: 1, flexBasis: 0, minWidth: 0 }}
+          >
+            <TierTile
+              label={t.label}
+              price={t.price}
+              color={GAUGE_TIER_COLORS[t.key]}
+              monthly={gaugeMonthly(monthlyFor ? monthlyFor(t.price) : 0)}
+              index={i}
+              runKey={runKey}
+              isCurrent={hasPrice && !outOfRange && i === tierIdx}
+              bandsToggle={i === 0 ? costToggle : undefined}
+            />
+          </FlipFromRect>
         ))}
-      </View>
+      </Animated.View>
+
+      <Animated.View style={riseStyle}>
 
       {/* Scale: track, per-tier dots, fill up to the pin, and the pin itself.
 
           ⚠️ The track spans CENTRE-TO-CENTRE of the first and last tiles, not edge to edge
           (prototype `paintScale`: `ln.style.left = L; width = Rr - L`, where L/Rr are tile
           centres). Running it the full width pushes the end dots half off each side - the
-          ROLLOUT dot was clipped by the Done button on a real device. */}
+          ROLLOUT dot was clipped by the Done button on a real device.
+
+          ⚠️ THE ROW HEIGHT FOLLOWS THE BADGE, which is the only thing needing space below the
+          track (it sits at `top: 22`). With the bands open the badge is hidden - see
+          `shouldShowPriceBadge` - so reserving its height leaves a dead gap above the band pills.
+          The prototype sizes this block at 52u and places the pills at `top: 25u` INSIDE it, i.e.
+          tight under the track, not stacked below a badge-sized row. */}
       {tileSet.length > 1 && (
-        <View style={{ height: 50 }} onLayout={onTrackLayout}>
+        <View
+          style={{ height: shouldShowPriceBadge(p, bandsOpen) ? 50 : 20 }}
+          onLayout={onTrackLayout}
+        >
           {/* Track */}
           <View
             style={{
@@ -419,6 +483,38 @@ const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, 
               </Svg>
             </Animated.View>
           )}
+          {/* ⚠️ COMMISSION BANDS DRAWN ON THE TRACK ITSELF.
+
+              The prototype's `.sl-band` is `top: 6u; height: 10u` - a thick segment sitting ON
+              the line, between the track and the dots. Reported by the client as *"Missing 55-60
+              and 60-65 on timeline"*: the pills below carry the dollar ranges, but on their own
+              they read as a legend, and the segment that shows WHERE on the scale those ranges
+              fall was absent.
+
+              ⚠️ Unhit band = its colour at 38% (`color-mix(... 38%, transparent)`); the band
+              holding the price = the solid colour. A single flat opacity loses the "which band am
+              I in" signal the bands exist for. */}
+          {bandsOpen && trackWidth > 0 &&
+            bands.map((b, k) => {
+              const from = trackInset + pinFraction(b.from, tileSet, bands, true) * trackSpan;
+              const to = trackInset + pinFraction(b.to, tileSet, bands, true) * trackSpan;
+              return (
+                <View
+                  key={`band-${b.lowPct}-${b.highPct}`}
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    top: 5,
+                    left: from,
+                    width: Math.max(3, to - from),
+                    height: 10,
+                    borderRadius: 5,
+                    backgroundColor:
+                      bandIdx === k ? GAUGE_BAND_COLORS[k] : `${GAUGE_BAND_COLORS[k]}61`,
+                  }}
+                />
+              );
+            })}
           {/* Tier dots */}
           {trackWidth > 0 &&
             tileSet.map((t, i) => (
@@ -468,8 +564,18 @@ const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, 
             />
           )}
           {/* Price badge. Tracks the pin, and is clamped to the row so it stays readable at either
-              end instead of running off the edge. */}
-          {hasPrice && trackWidth > 0 && (
+              end instead of running off the edge.
+
+              ⚠️ HIDDEN WHILE THE COMMISSION BANDS ARE OPEN, and shown otherwise - the prototype's
+              `.dscl.rngon .sl-pin u { display: none }`. The two occupy the same strip directly
+              under the track, so showing both stacks the badge on top of the band pills. The
+              price is never lost by hiding it: it is in the field the rep is typing into, and the
+              highlighted band already says which range it falls in.
+
+              ⚠️ The rule is SCOPED TO `rngon`, not a blanket hide. An earlier read of an older
+              copy of the mockup saw only an unconditional `.sl-pin u { display: none }` and took
+              it for a leftover, so the badge was shown always. It is conditional. */}
+          {trackWidth > 0 && shouldShowPriceBadge(p, bandsOpen) && (
             <Animated.View
               pointerEvents="none"
               style={{
@@ -510,7 +616,7 @@ const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, 
           5% commission at these tiers respectively so if they're under par it'll be good to know
           those tiers as a rep"*. Open by default on a below-par price; the COST chevron hides them. */}
       {bandsOpen && bands.length > 0 && (
-        <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+        <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
           {bands.map((b, k) => (
             <View
               key={`lg-${b.lowPct}-${b.highPct}`}
@@ -564,7 +670,8 @@ const DropPriceGauge: React.FC<DropPriceGaugeProps> = ({ price, tiers, rollout, 
             : `Below cost (${fmtMoney(tileSet[0].price)}).`}
         </Text>
       )}
-    </Animated.View>
+      </Animated.View>
+    </View>
   );
 };
 

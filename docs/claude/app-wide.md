@@ -1502,6 +1502,112 @@ traffic by the thing it feeds. The probe uses bare `fetch`, not this instance, s
 reachable here if someone routes it through axios later — the guard is cheap insurance.
 
 
+### Follow-up — that timeout reached the rep as `timeout of 15000ms exceeded`
+
+Client (Lance), on a screenshot of the red toast: *"I don't want to see this stuff. It's lowers
+confidence in app"*. The 15 s ceiling above is correct and stays; what was wrong is that axios's
+own wording for it went straight to the glass, on a phone showing two bars of LTE.
+
+**Why the good copy never rendered.** `normalizeApiError` (`services/api/index.ts`) **always**
+populates `.message` — if the body gives nothing it falls back to `error.message`, and on a
+timeout that is axios's string. So the ~48 sites written
+
+```js
+FlashMessage.error('Error', err?.message || 'Could not save the deal')
+```
+
+can never reach their fallback: `||` fires only on an empty value and there never is one. ~20 of
+those fallbacks are genuinely good copy that **has never once rendered**. 40 toasts are titled
+exactly `"Error"`, which NN/g name as a non-informative title.
+
+**Fixed at `emit()` in `config/message.ts`** — the single chokepoint all 268 `FlashMessage.*`
+calls pass through, so every site is covered at once, including ones added later. The rules are
+pure and live in `utils/transport-error-copy.ts` (`isTransportCopy`, `scrubTransportCopy`,
+`TRANSPORT_TITLE`, `TRANSPORT_FALLBACK`), because `config/message.ts` imports
+react-native-flash-message and cannot load under jest (CLAUDE.md §6). Result:
+`Error` / `timeout of 15000ms exceeded` → **`Connection` / "Couldn't reach the server. Your work
+is saved on this device."**
+
+⚠️ **Presentation only.** The error object is NOT touched, so `shouldAnnounceFailure`,
+`isNetworkError` and the upload retry policies still see the real transport failure. Never move
+this into the error itself — the words on the glass and the retry decision are different
+questions.
+
+⚠️ **A server message passes through verbatim.** "Valid lead id is required" is the only useful
+thing a 400 gives us. Only transport wording is rewritten, matched on the TEXT (by the time a
+string reaches `emit()` the error object is long gone — the call site already reduced it to
+`err.message`, which is exactly why this has to be a text rule).
+
+⚠️ **An informative title is kept.** `('Could not upload photo', 'Network Error')` keeps its title
+and replaces only the description; that title is the one thing telling the rep WHICH action
+failed. Only `Error`/`Failed`/`Oops`/empty are replaced.
+
+⚠️ **13 `Alert.alert` and 15 `flashRef` sites bypass `emit()`** and are still unscrubbed. They
+need fixing individually.
+
+**Then the transport toast was dropped ENTIRELY.** Rewording was not enough - client: *"we
+already showing the offline banner so why we need to show this? it looks to the user something
+bad on the app"*. A red card announcing a connection problem is alarm without an action: nothing
+the rep can do about the link is served by it, and the work is queued either way.
+`shouldShowTransportToast(copy)` in `utils/transport-error-copy.ts` returns `false` for transport
+copy and `emit()` returns before showing anything.
+
+⚠️ **IT WAS FIRST GATED ON THE STRIP BEING VISIBLE, AND THAT WAS WRONG TWICE.** Do not reinstate
+the condition:
+
+ 1. the strip lives in `MainHeader`, and **not every screen renders one** - the Lead Center in the
+    client's screenshot has its own header, so there was nothing to defer to and the toast came
+    straight back;
+ 2. even where the strip does render, the status **LAGS**. A transport error needs
+    `FAILURES_BEFORE_LEAVING_ONLINE` failures plus `MIN_DWELL_MS` (5 s) before `netState` moves,
+    and the toast fires on the FIRST failure - so the check ran while the state still said
+    `online` and let it through.
+
+Unconditional removes both races, and removed the lazy `require` of `services/connectivity.ts`
+that the check had needed.
+
+⚠️ **Only transport copy is dropped.** A server rejection ("This deal has already been
+submitted") is ALWAYS shown: nothing else on screen carries it, and swallowing it would hide an
+answer the rep has to act on.
+
+⚠️ The connection is still communicated - by the strip where a screen renders one, and by each
+screen's own inline state (cached content, a disabled button, a queued badge) everywhere else.
+Both are calmer and more specific than a red card.
+
+⚠️ The 13 `Alert.alert` sites use hardcoded copy, not `err.message`, so none of them can leak an
+axios string; they were checked when this landed.
+
+Reproduced on the iOS Simulator with Network Link Conditioner, custom profile **12 kbps / 35%
+packets dropped / 3000 ms** both directions. ⚠️ The stock presets cannot produce this: `100% Loss`
+fails *instantly*, which is a `Network Error`, not a timeout. 13 tests in
+`tests/offline/transport-error-copy.test.ts`. The companion fix — the false "Offline" bar from the
+same screen, where NetInfo's 8 s reachability GET made a slow `/health` look like a dead one — is
+in [`offline.md`](offline.md). Not verified on device.
+
+### Follow-up - how `emit()` is actually wired
+
+`config/message.ts` `emit()` is where both rules are applied, and the order matters:
+
+1. `shouldShowTransportToast(raw)` - a transport toast returns early and is never shown.
+2. `scrubTransportCopy(raw)` - whatever survives gets its wording rewritten if it is still
+   machine copy (a transport TITLE with a server description, for instance).
+3. The scrubbed options are passed to the registered `FlashHost`s and to `showMessage`.
+
+⚠️ **`emit()` must stay the only path.** The scrub is affordable precisely because all
+~268 `FlashMessage.*` calls funnel through this one function - a call site that reaches
+`showMessage()` from react-native-flash-message directly bypasses both rules and leaks axios
+wording again. Route new banners through `FlashMessage.*`, never the library.
+
+⚠️ **The options object is reused when nothing changed** (`scrubbed.title === options.message`
+and the description likewise). That identity check is deliberate: `ModalFlashHost` and the
+app-root host receive the SAME object reference they would have had before this landed, so the
+modal-host routing above is unaffected. Do not replace it with an unconditional spread.
+
+⚠️ Presentation only - the error object is never touched, so `shouldAnnounceFailure`,
+`isNetworkError` and the upload retry policies still see the real transport failure.
+
+
+
 ## `AnnotationRenderHost` - an app-root hidden WebView
 
 `widgets/common/AnnotationRenderHost.tsx`, mounted once in `App.tsx` beside `FlashMessage`. Zero-size and invisible, it is the canvas `services/annotationRenderer.ts` draws on, so an annotated photo can be flattened after the annotation screen has closed (Save no longer blocks). ⚠️ Keep it mounted at the ROOT - a WebView inside the screen dies with the screen and takes in-flight renders with it. Its page is `utils/annotation-render-html.ts`. Details: `lead-center.md` § "Annotation Save".
@@ -1576,3 +1682,37 @@ Ticket: *"my camera only has picture functionality - let them switch between pho
 - Mic: `Camera.requestMicrophonePermission()` is asked when recording starts; a denial records a SILENT clip (`audio={isVideoMode && micGranted}`), it does not block. Closing the camera mid-recording calls `cancelRecording()`. Not verified on device (no jest for RN components).
 - Update: `TagPhotoModal` now passes `allowVideo` (see `lead-center.md`); the "No host passes `allowVideo`" warning above applies to the other flows.
 - **`widgets/common/PreviewMedia.tsx`** (new): `<Video>` when `type` starts with `video/`, else `<Image>`; paused first frame unless `controls`. ⚠️ Use it for any preview of a CAMERA capture - `<Image>` renders nothing for a video file. `TagPhotoModal` and `DynamicInspectionView` both pass `allowVideo` to the camera now (details and open risks in `lead-center.md`); `JobDocsSection`'s "Start Taking Photos" reaches `DynamicInspectionView` when the company has an inspection schema, else `TagPhotoModal`.
+
+## Image cache: the warm queue is FIFO, and now takes a priority flag
+
+`utils/imageFileCache.ts` runs at most `MAX_CONCURRENT_WARMS` (3) downloads at once; everything else waits in `warmQueue`. `warmToLocalCache(url, priority)` takes an optional second argument that `unshift`s the grant instead of pushing it.
+
+- ⚠️ **For any screen that queues several pictures at mount, the ORDER is a user-visible decision, not an implementation detail.** With three slots, whatever is queued first decides what is ready when the user taps. This is not theoretical: it is exactly how the RevRender viewer ended up spinning on a render whose thumbnail was visibly loaded (full write-up in `lead-center.md`, REVUIUX-586).
+- Use `priority: true` for the ONE picture the user is looking at right now - the item they opened. Do not use it for prefetching neighbours or a whole list; if everything is priority, nothing is.
+- ⚠️ Priority only reorders what has NOT STARTED. It cannot cancel or pause an in-flight download, so the worst case stays "wait for the current slots to drain". Don't describe it as instant.
+- An already-cached url returns from `warmedPaths` before the queue is touched, so calling it at priority costs nothing when the work is already done - safe to call on every open.
+- The general rule for a new caller: warm what the screen needs to RENDER as a unit (a before/after pair together), not column by column across rows. `utils/warm-queue-order.ts` holds that rule, pure and tested.
+- ⚠️ `getWarmedLocalUri` reads the MMKV index SYNCHRONOUSLY and does not touch the filesystem. The index is a hint: cache files live in `CacheDir`, which iOS purges under storage pressure without telling the app. A caller that paints from it should also call `verifyIndexedUri` (async, once per session) and re-warm when the file has gone.
+
+## RevRender Generate: a photo that has not uploaded is now BLOCKED, not sent
+
+`screens/RevRender/index.tsx` (and the duplicate flow in `widgets/modals/lead-center/RevRenderModal.tsx`) built every render payload from
+
+```js
+const rawUrl = item.photo?.s3url || item.photo?.uri || '';   // ← the bug
+houseImageUrl: extractS3Key(rawUrl)
+```
+
+A photo still in `pending_uploads` has `s3url: ''`, so this fell through to the device-local `file:///…` path, and the screen's own `extractS3Key` returned any unmatched value unchanged. The backend presigns a non-http `houseImageUrl` as an S3 key, so the path became a key that cannot exist and the job died as "Failed to download house image" — **60 of 98 jobs in one 24h window.** Full incident, the shared validator and the retry consequences: [`lead-center.md`](lead-center.md) › "revRender: Failed to download house image".
+
+**What changed in this screen:**
+
+- `handleGenerateAll` calls `blockedRenderItems(renderQueue)` **before building any payload** and returns early with a `FlashMessage.warning` naming how many renders did not go and why. It sits directly after the existing `offlineBlockFor('revrender', …)` guard and follows the same shape.
+- The payload reads **`s3url` only**; the `|| item.photo?.uri` fallback is deleted.
+- The screen's local `extractS3Key` is **gone** — both copies now import the shared one from `utils/revrender-image-source.ts`.
+
+⚠️ **`extractS3Key` returns `string | null` now, and `null` means DO NOT SEND.** It is not "fall back to the original" — substituting a bad value is the entire bug. The nullable return is load-bearing: it makes a missed call site a compile error (it caught one while this landed). Do not widen it back to `string`, and do not paper over it with `?? rawUrl`.
+
+⚠️ **Block, never silently skip.** A render dropped without a message reads as a dead button, and the rep presses Generate again — which is how one un-uploaded photo produced 15 bursts of 4. The message must say *which* renders did not go and *why*.
+
+⚠️ **Do not re-add a local `extractS3Key` here.** The duplicate copy in `RevRenderModal.tsx` is how this bug reached production twice; there is now exactly one definition in the repo.

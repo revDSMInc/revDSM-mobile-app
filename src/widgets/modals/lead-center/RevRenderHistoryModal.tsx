@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -23,15 +23,43 @@ import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import { findLook } from '../../../utils/revrender-lighting/catalog';
-import { forgetWarmedUri, getLocalCachePath, getWarmedLocalUri, prefetchToLocalCache, warmToLocalCache } from '../../../utils/imageFileCache';
+import { forgetWarmedUri, getLocalCachePath, getWarmedLocalUri, prefetchToLocalCache, verifyIndexedUri, warmToLocalCache } from '../../../utils/imageFileCache';
+import { pagerModeFor } from '../../../utils/render-pager';
 
 export { getLocalCachePath, prefetchToLocalCache };
 
 
 type RenderChip = { label: string; colorName: string; colorHex: string; swatches?: string[] };
 
-const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {
+/**
+ * REVUIUX-586: an already-downloaded render must open with NO spinner.
+ *
+ * ⚠️ The spinner was never waiting on a download. `OperationalSections` warms BOTH images of
+ * every run to disk as soon as the Tools list renders, so by the time the rep taps a thumbnail
+ * the bytes are usually already there - but the viewer still showed its loader until React
+ * Native fired `onLoad`, and if that never came (a purged cache file, a remount mid-load) the
+ * spinner stayed up for good.
+ *
+ * `onReady` fires SYNCHRONOUSLY when the file is already local, so the caller can clear its
+ * loader in the same commit as the first paint instead of waiting for an event.
+ */
+/**
+ * How long the viewer waits for an image event before giving up on the spinner.
+ * Generous: a cold render over LTE is a real wait, and clearing too early would flash an
+ * empty frame over a picture that was about to arrive.
+ */
+const IMAGE_LOAD_TIMEOUT_MS = 12_000;
+
+const CachedImage = ({ uri, style, resizeMode, onLoad, onError, onReady }: any) => {
   const [sourceUri, setSourceUri] = useState<string | null>(() => getWarmedLocalUri(uri));
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+
+  // Tell the caller at once when we already hold the file; `uri` in the deps so a new picture
+  // re-asks rather than inheriting the previous one's answer.
+  useEffect(() => {
+    if (uri && getWarmedLocalUri(uri)) onReadyRef.current?.();
+  }, [uri]);
 
   useEffect(() => {
     if (!uri) {
@@ -42,6 +70,22 @@ const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {
     const known = getWarmedLocalUri(uri);
     if (known) {
       setSourceUri(known);
+      /**
+       * ⚠️ The INDEX is a hint, not proof. Cache files live in `CacheDir`, which iOS purges
+       * under storage pressure WITHOUT telling the app - so the index can promise a file that
+       * is gone, and the <Image> then fails to a slow remote (or hangs). Confirm once per
+       * session and re-warm if it has vanished.
+       */
+      verifyIndexedUri(uri)
+        .then((ok) => {
+          if (ok) return;
+          setSourceUri(uri);
+          return warmToLocalCache(uri).then(() => {
+            const fresh = getWarmedLocalUri(uri);
+            if (fresh) setSourceUri(fresh);
+          });
+        })
+        .catch(() => {});
       return;
     }
 
@@ -154,6 +198,14 @@ export const RevRenderHistoryModal = ({
   const beforeImage = currentRun ? (currentRun.originalUrl || currentRun.s3UrlOriginal) : null;
   const afterImage = currentRun ? (currentRun.generatedUrl || currentRun.s3UrlGenerated) : null;
 
+  /**
+   * ⚠️ The <Image> key is the RUN, never the url. A signed S3 url changes every time the
+   * runs query refetches, and a changed key destroys and recreates the <Image> - throwing
+   * away a load that was already in flight and showing the spinner again for the SAME
+   * picture. The run identifies the picture; the url is just how we fetch it.
+   */
+  const runKey = String(currentRun?.runId || currentRun?._id || currentIndex);
+
   const renderColors = useMemo(() => {
     const run = currentRun;
     if (!run) return [] as RenderChip[];
@@ -218,6 +270,22 @@ export const RevRenderHistoryModal = ({
 
   const isCurrentLoaded = beforeLoaded && afterLoaded;
 
+  /**
+   * ⚠️ A LOADER MUST ALWAYS HAVE AN EXIT. The overlay clears only from `onLoad` / `onReady`,
+   * and both can fail to arrive - a cache file purged from `CacheDir` behind our back, a signed
+   * url that expired, a decode that quietly failed. The rep was then left on a spinner with
+   * nothing to do but close the modal. After this budget we show whatever did paint: a visible
+   * picture, or at worst an empty frame the rep can page away from.
+   */
+  useEffect(() => {
+    if (isCurrentLoaded) return;
+    const t = setTimeout(() => {
+      setBeforeLoaded(true);
+      setAfterLoaded(true);
+    }, IMAGE_LOAD_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [currentIndex, isCurrentLoaded]);
+
   const fadeOpacity = useSharedValue(0);
 
   const fadeAnimStyle = useAnimatedStyle(() => ({
@@ -238,6 +306,21 @@ export const RevRenderHistoryModal = ({
     }
   }, [runs, visible, onClose]);
 
+  /**
+   * ⚠️ THE RUN THE REP IS LOOKING AT JUMPS THE QUEUE (REVUIUX-586).
+   *
+   * Only three warms run at once, so the picture being opened could sit behind a screenful of
+   * pictures queued earlier by the Tools list - the rep taps a thumbnail that is visibly
+   * loaded and still waits. `priority` puts this run's two images at the FRONT of the waiting
+   * line. Already-cached urls return immediately, so this costs nothing when the work is done.
+   */
+  useEffect(() => {
+    if (!visible) return;
+    if (beforeImage) warmToLocalCache(beforeImage, true).catch(() => {});
+    if (afterImage) warmToLocalCache(afterImage, true).catch(() => {});
+  }, [visible, beforeImage, afterImage]);
+
+  // Neighbours at NORMAL priority: useful for paging, never ahead of the open render.
   useEffect(() => {
     if (visible && runs && runs.length > 0) {
       const adjacentIndices = [currentIndex - 1, currentIndex + 1];
@@ -357,6 +440,9 @@ export const RevRenderHistoryModal = ({
   };
 
   const screenWidth = Dimensions.get('window').width;
+  // Dots while they fit, a "3 / 11" counter when they do not - see `utils/render-pager`.
+  const pagerMode = pagerModeFor(runs.length, screenWidth);
+  const showDots = pagerMode === 'dots';
   const imageWidth = screenWidth - 40;
   const imageHeight = "75%";
 
@@ -537,7 +623,7 @@ export const RevRenderHistoryModal = ({
                 {/* AFTER — background */}
                 {afterImage && (
                   <CachedImage
-                    key={`after-${currentIndex}-${afterImage}`}
+                    key={`after-${runKey}`}
                     uri={afterImage}
                     style={{
                       position: 'absolute',
@@ -545,6 +631,13 @@ export const RevRenderHistoryModal = ({
                       height: "100%",
                     }}
                     resizeMode="contain"
+                    onReady={() => {
+                      setAfterLoaded(true);
+                      setLoadedImages((prev) => ({
+                        ...prev,
+                        [currentIndex]: { ...(prev[currentIndex] || { before: false, after: false }), after: true },
+                      }));
+                    }}
                     onLoad={() => {
                       setAfterLoaded(true);
                       setLoadedImages((prev) => ({
@@ -579,10 +672,17 @@ export const RevRenderHistoryModal = ({
                     ]}
                   >
                     <CachedImage
-                      key={`before-${currentIndex}-${beforeImage}`}
+                      key={`before-${runKey}`}
                       uri={beforeImage}
                       style={{ width: imageWidth, height: "100%" }}
                       resizeMode="contain"
+                      onReady={() => {
+                        setBeforeLoaded(true);
+                        setLoadedImages((prev) => ({
+                          ...prev,
+                          [currentIndex]: { ...(prev[currentIndex] || { before: false, after: false }), before: true },
+                        }));
+                      }}
                       onLoad={() => {
                         setBeforeLoaded(true);
                         setLoadedImages((prev) => ({
@@ -641,17 +741,26 @@ export const RevRenderHistoryModal = ({
                 <Icon name="chevron-left" size={32} color="white" />
               </TouchableOpacity>
 
-              <View style={styles.pagination}>
-                {runs.map((_, i) => (
-                  <View
-                    key={i}
-                    style={[
-                      styles.dot,
-                      { backgroundColor: i === currentIndex ? '#72BD00' : 'rgba(255,255,255,0.3)' },
-                    ]}
-                  />
-                ))}
-              </View>
+              {showDots ? (
+                <View style={styles.pagination}>
+                  {runs.map((_, i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.dot,
+                        { backgroundColor: i === currentIndex ? '#72BD00' : 'rgba(255,255,255,0.3)' },
+                      ]}
+                    />
+                  ))}
+                </View>
+              ) : (
+                <View style={styles.counter}>
+                  <Text style={styles.counterText}>
+                    <Text style={styles.counterCurrent}>{currentIndex + 1}</Text>
+                    {` / ${runs.length}`}
+                  </Text>
+                </View>
+              )}
 
               <TouchableOpacity
                 onPress={handleNext}
@@ -862,13 +971,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 30,
+    // The row must never be wider than the screen, or the chevrons leave it (see `dotsFit`).
+    alignSelf: 'stretch',
+    paddingHorizontal: 8,
   },
   navBtn: {
     padding: 10,
+    // A chevron is the control that moves between renders: it keeps its size, the strip gives way.
+    flexGrow: 0,
+    flexShrink: 0,
   },
   pagination: {
     flexDirection: 'row',
     marginHorizontal: 20,
+    // Centred in whatever is left once both chevrons have taken theirs.
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  counter: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    marginHorizontal: 20,
+    alignItems: 'center',
+  },
+  counterText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 15,
+    fontWeight: 'normal',
+  },
+  counterCurrent: {
+    color: '#72BD00',
+    fontWeight: '700',
   },
   dot: {
     width: 20,

@@ -257,12 +257,22 @@ export const JobDocsSection = ({
     uploadQueueManager.getRecentlyCompleted()
   );
 
+  /**
+   * ⚠️ The queue listener below is registered ONCE and must call the CURRENT `refetch`.
+   * It used to call the `refetch` prop captured on mount. For a lead created offline that
+   * closure still held the client id, and `refetch` returns early for a client id - so after
+   * the create landed and the photos uploaded, every "upload finished" signal was a no-op and
+   * Manage Photos stayed empty until a pull-to-refresh.
+   */
+  const refetchRef = useRef(refetch);
+  refetchRef.current = refetch;
+
   useEffect(() => {
     const unsubscribe = uploadQueueManager.addListener(() => {
       const currentQueue = uploadQueueManager.getQueue();
       setQueueItems([...currentQueue]);
       setRecentlyCompleted(uploadQueueManager.getRecentlyCompleted());
-      refetch();
+      refetchRef.current();
     });
 
     if (uploadQueueManager.getQueue().length > 0) {

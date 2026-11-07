@@ -22,6 +22,24 @@ export interface BannerCopy {
 }
 
 /**
+ * ⚠️ ONE LINE, ON EVERY PHONE. The strip used to carry a title AND a detail sentence
+ * ("Offline - showing saved data." + "Changes sync when you reconnect."), ~62 characters, which
+ * wrapped to two lines on a 320pt iPhone SE and pushed the screen down. A status strip that
+ * changes height is worse than a terse one: the content under it jumps as the link flaps.
+ *
+ * The copy is therefore ONE clause, and `OfflineBanner` renders it with `numberOfLines={1}` plus
+ * `adjustsFontSizeToFit`, so the longest string shrinks rather than wraps on the narrowest
+ * device. Keep new copy under ~40 characters or it will shrink far enough to look faint.
+ *
+ * ⚠️ Says what happens to THEIR WORK, and says it in full. A first attempt shortened offline to
+ * "changes save to this device", which fits but is vague - it does not tell the rep the work
+ * will go up by itself, which is the whole reassurance. "changes sync when you reconnect" is the
+ * original wording and measures ~234pt of the ~275pt a 320pt phone has, so the clarity cost
+ * nothing. Brevity is only worth it down to the point the sentence still answers the question.
+ */
+export const BANNER_MAX_CHARS = 44;
+
+/**
  * ⚠️ Offline keeps the ORIGINAL amber. A slate-grey bar was tried and reads as disabled
  * chrome rather than a notice - the rep's eye slides off it. Amber is the app's established
  * "read this" colour and offline is the state that most needs reading.
@@ -42,8 +60,8 @@ export const bannerFor = (status: NetworkStatus): BannerCopy => {
       return {
         tone: 'offline',
         icon: 'cloud-off-outline',
-        title: 'Offline — showing saved data',
-        detail: 'Changes sync when you reconnect.',
+        title: 'Offline — changes sync when you reconnect',
+        detail: undefined,
       };
     case 'degraded':
       // ⚠️ Never the word "offline" here. The rep CAN still work; saying offline would send
@@ -51,8 +69,8 @@ export const bannerFor = (status: NetworkStatus): BannerCopy => {
       return {
         tone: 'unstable',
         icon: 'signal-cellular-outline',
-        title: 'Weak connection',
-        detail: 'Things may be slow — your work is still saved.',
+        title: 'Weak connection — things may be slow',
+        detail: undefined,
       };
     default:
       return { tone: 'none', icon: '', title: '' };

@@ -33,6 +33,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CategoryTabStrip, ProductDropdown } from './DynamicInspectionRenderer';
 import { useDynamicInspectionCapture, type CapturedPhoto } from './useDynamicInspectionCapture';
+import { useLeadPhotosWithPending } from '../../../hooks/useLeadPhotosWithPending';
 import { DynamicMovePhotoModal, type MoveState } from './DynamicMovePhotoModal';
 import { PhotoPeekPressable } from '../../common/PhotoPeekPressable';
 import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../common/PhotoPeekScrollLock';
@@ -124,10 +125,18 @@ export function DynamicManagePhotosView({
     const all = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
     const removed = offlinePhotoDeleteQueue.deletedUrls(lead?._id || lead?.id);
     const photos = removed.size ? all.filter((p: any) => !removed.has(p?.s3url)) : all;
+    /**
+     * ⚠️ IDENTIFY BY `s3url` OR `uri`. Keying on `s3url` alone SKIPPED every device-only
+     * record, because a photo that has not uploaded yet has no `s3url` at all - so the modal
+     * title read "Manage Photos (0)" while the Lead Center button beside it read (3), and
+     * Download Images reported "no photos to download". Same bug, same shape, as the grid
+     * scoping in `useDynamicInspectionCapture` (`p.s3url || p.secureUrl || p.uri`).
+     */
     const seen = new Set<string>();
     photos.forEach((p: any) => {
-      if (!p?.s3url || seen.has(p.s3url)) return;
-      seen.add(p.s3url);
+      const id = p?.s3url || p?.uri;
+      if (!id || seen.has(id)) return;
+      seen.add(id);
     });
     let pending = 0;
     indexPendingBySlot(pendingUploads as any, lead?._id || lead?.id).forEach((items, slot) => {
@@ -164,8 +173,29 @@ export function DynamicManagePhotosView({
     [selectedProduct],
   );
 
+  /**
+   * ⚠️ The grid must see the UPLOAD QUEUE, not just the server list.
+   *
+   * Reported: offline shots read "3 photos" on the Lead Center, then Manage Photos opened EMPTY,
+   * and they appeared only after leaving the screen and returning (by which time the uploads had
+   * landed and the rows carried an `s3url`). The header count already included the queue
+   * (`indexPendingBySlot`); the GRID read `lead.salesPhotos`, which is the server's list, so the
+   * two disagreed.
+   *
+   * `useLeadPhotosWithPending` is the hook that already solves this for the Pitch Book and the
+   * Roofline Deck - same bug, same fix, one rule (`utils/pending-inspection-photos.ts`).
+   */
+  const photosWithPending = useLeadPhotosWithPending(
+    (lead as any)?.salesPhotos,
+    (lead as any)?._id || (lead as any)?.id
+  );
+  const leadWithPending = useMemo(
+    () => (lead ? { ...(lead as any), salesPhotos: photosWithPending } : lead),
+    [lead, photosWithPending]
+  );
+
   const capture = useDynamicInspectionCapture({
-    lead,
+    lead: leadWithPending,
     categories: activeCategories,
     productKey: (selectedProduct?.name as string) || (selectedProduct?.id as string) || undefined,
     userId: user?._id || user?.id,

@@ -819,6 +819,18 @@ optimistic bubble.
 - Not device-verified: a GIF sent from the app and from a channel (one bubble, animating, from the
   S3 copy), an old URL-bodied GIF still rendering, and a GIF reply quote.
 
+## Read confirmation: the time came back as a raw ISO string after a reload
+
+Reported with two screenshots: confirming showed "Confirmed - 5:10 PM", but leaving the channel and reopening it showed "Confirmed - 2026-10-28T11:58:48...".
+
+- **Cause** (`widgets/components/chat/ChatMessageAck.tsx`): the banner read `message?.acknowledgedAt || confirmationTimeOf(ackBy.find(...))`. The FALLBACK was formatted; the first branch was printed verbatim, and `acknowledgedAt` is a raw ISO string from the messages API.
+- **Why it looked intermittent:** the two branches are hit at different moments. A just-confirmed message has no `acknowledgedAt` yet, so it fell through to the formatted `ackBy` row and looked right; the reloaded message carries `acknowledgedAt` from the server, so the raw string won. Same bubble, different source.
+- **Fix:** `confirmationTimeLabel(message, currentUserId)` in `chat-confirmation.ts` runs BOTH sources through `confirmationTimeOf`, which now also accepts a bare timestamp (string / number / Date) as well as an `ackBy` entry.
+- ⚠️ Keep both sources. `acknowledgedAt` is the personal flag from the messages API and `ackBy` is the fuller manager/creator payload - either can be the only one present, so neither may be dropped; they just have to be formatted the same way.
+- ⚠️ Any new place that shows an ack time must call `confirmationTimeLabel`, never read `acknowledgedAt` directly. That raw read is the whole bug, and it is invisible until someone reopens the screen.
+- Tests: `tests/chat/confirmation-time.test.ts` (9) - both paths, the "never returns an ISO string" guard, midnight/noon as 12, and unparseable input.
+- Not verified on device: confirm a message, leave the channel and come back - the time must still read like "5:10 PM".
+
 ## Team-channel polls (REVUIUX-577)
 
 WhatsApp-style polls, **team channels only** — the Poll row never appears in a lead chat, and

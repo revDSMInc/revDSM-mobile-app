@@ -20,7 +20,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { FlashMessage } from '../../../config/message';
 import { RevRenderHistoryModal } from '../../modals/lead-center/RevRenderHistoryModal';
 import { getWarmedLocalUri, warmToLocalCache } from '../../../utils/imageFileCache';
-import { queueCounts, queueProgress } from '../../../utils/revrender-jobs';
+import { queueCounts, queueProgress, retryableFailures } from '../../../utils/revrender-jobs';
 import { revRenderStageWord, stepShownPercent } from '../../../utils/revrender-stage';
 
 const QUEUED_FORM = { reportType: 'queued-offline', __queuedOffline: true } as const;
@@ -160,6 +160,22 @@ export const ToolsSection = ({
    * fails together and the rep's action is the same for all of them.
    */
   const failedRenders = revRenderJobs.filter((j: any) => j.status === 'failed');
+  /**
+   * ⚠️ Retry is only offered when it can WORK. A retry resends the stored payload
+   * unchanged, so a 4xx rejection (the classic one: a photo that never finished uploading,
+   * sent as a local file:// path) fails identically every time. The field saw a rep press
+   * "Retry all" 15 times against exactly that. An expired session is the same promise.
+   *
+   * ⚠️ Called through a local guard, NOT bare. This is the Tools tab's render path: if
+   * the helper is ever missing at runtime - a stale Metro bundle after a pull, a bad merge,
+   * a circular import - a bare call throws "undefined is not a function" and takes the WHOLE
+   * SCREEN down with it. A rep cannot open Tools at all for a cosmetic button. Falling back
+   * to "every failure is retryable" is the old behaviour, which is safe.
+   */
+  const retryableRenders =
+    typeof retryableFailures === 'function'
+      ? retryableFailures(failedRenders as any[])
+      : failedRenders;
   /** Any still-running render whose last status poll could not reach the server. */
   const revRenderWaiting = revRenderJobs.some(
     (j: any) => j.waiting && j.status !== 'completed' && j.status !== 'failed'
@@ -180,19 +196,41 @@ export const ToolsSection = ({
     return [...pairs].reverse();
   }, [runs, lead?._id, isDeviceOnlyLead]);
 
+  /**
+   * Warm every run's pictures to disk so the viewer opens without a download (REVUIUX-586).
+   *
+   * ⚠️ ORDER MATTERS AS MUCH AS THE WARMING. Only three downloads run at once
+   * (`MAX_CONCURRENT_WARMS`), so this loop decides what is ready when the rep taps. It used to
+   * queue every run's BEFORE and AFTER in run order, and the thumbnails only need the AFTER -
+   * so the strip looked fully loaded while the before images were still queued, and opening a
+   * render waited on a download that had not started. Reported as "it says they're loaded
+   * already and I can see on the thumbnails it's loaded".
+   *
+   * Warming each run's PAIR together, run by run, means run 1 - the one almost always opened
+   * first - is openable after two downloads instead of after all of them. `runs.map` is already
+   * newest-first, which is the order the rep reads them in.
+   *
+   * ⚠️ Read the same url fields the viewer and the thumbnail read (`s3UrlGenerated` /
+   * `s3UrlOriginal`). A different spelling here warms a url nothing else asks for, and the
+   * cache silently never hits.
+   */
   React.useEffect(() => {
-    if (orderedRuns && orderedRuns.length > 0) {
-      orderedRuns.forEach((run: any) => {
-        const before = run.originalUrl || run.originalS3url;
-        const after = run.generatedUrl || run.generatedS3url;
-        if (before) {
-          warmToLocalCache(before).catch(() => {});
-        }
-        if (after) {
-          warmToLocalCache(after).catch(() => {});
-        }
-      });
-    }
+    if (!orderedRuns?.length) return;
+    /**
+     * ⚠️ FIRE AND FORGET, IN PAIR ORDER - do NOT await run-by-run.
+     *
+     * An earlier attempt awaited each run's pair before starting the next. That serialised the
+     * whole queue: the loop held slots and every other warm on the screen (the thumbnails' own)
+     * queued behind it, so a slow before-image kept a thumbnail spinning. Queue order is all we
+     * need - `acquireWarmSlot` already limits concurrency, and the queue is FIFO, so simply
+     * ENQUEUEING in pair order gives run 1 both its pictures first without blocking anyone.
+     */
+    orderedRuns.forEach((run: any) => {
+      const before = run.originalUrl || run.s3UrlOriginal || run.originalS3url;
+      const after = run.generatedUrl || run.s3UrlGenerated || run.generatedS3url;
+      if (before) warmToLocalCache(before).catch(() => {});
+      if (after) warmToLocalCache(after).catch(() => {});
+    });
   }, [orderedRuns]);
 
   const [historyModal, setHistoryModal] = useState({ visible: false, index: 0 });
@@ -386,11 +424,15 @@ export const ToolsSection = ({
             <Text
               className="text-[13px] font-bold flex-1 ml-2"
               style={{ color: '#991B1B' }}
-              numberOfLines={1}
+              numberOfLines={retryableRenders.length === 0 ? 2 : 1}
             >
-              {failedRenders.length === 1
-                ? 'RevRender failed'
-                : `RevRender failed (${failedRenders.length})`}
+              {/* ⚠️ With no retry to offer, the row must say WHY - otherwise it is a dead
+                  red bar. The server’s own reason is the actionable part. */}
+              {retryableRenders.length === 0
+                ? failedRenders[0]?.error || 'RevRender failed'
+                : failedRenders.length === 1
+                  ? 'RevRender failed'
+                  : `RevRender failed (${failedRenders.length})`}
             </Text>
             <TouchableOpacity
               onPress={() => onDismissAllRevRenders?.()}
@@ -401,16 +443,18 @@ export const ToolsSection = ({
                 Dismiss
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => onRetryAllRevRenders?.()}
-              className="px-3 py-1.5 rounded-lg ml-1"
-              style={{ backgroundColor: '#B91C1C' }}
-              accessibilityLabel={failedRenders.length === 1 ? 'Retry render' : 'Retry all renders'}
-            >
-              <Text className="text-[12px] font-bold" style={{ color: '#FFFFFF' }}>
-                {failedRenders.length === 1 ? 'Retry' : 'Retry all'}
-              </Text>
-            </TouchableOpacity>
+            {retryableRenders.length > 0 && (
+              <TouchableOpacity
+                onPress={() => onRetryAllRevRenders?.()}
+                className="px-3 py-1.5 rounded-lg ml-1"
+                style={{ backgroundColor: '#B91C1C' }}
+                accessibilityLabel={retryableRenders.length === 1 ? 'Retry render' : 'Retry all renders'}
+              >
+                <Text className="text-[12px] font-bold" style={{ color: '#FFFFFF' }}>
+                  {retryableRenders.length === 1 ? 'Retry' : 'Retry all'}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -648,9 +692,24 @@ const PulsingSkeleton = ({ isDark, label = 'AI\nRendering' }: { isDark: boolean;
   );
 };
 
+/**
+ * A run thumbnail.
+ *
+ * ⚠️ IT MUST NEVER WAIT FOR THE WARM TO FINISH. This used to leave `localUri` null until
+ * `warmToLocalCache` resolved, so the tile could only paint once the DOWNLOAD completed - and
+ * since only three warms run at once, a thumbnail queued behind other pictures sat on its
+ * spinner for as long as they took. Reported as a run stuck loading in the strip while its
+ * neighbour had already appeared.
+ *
+ * Now it paints from the remote url straight away (which React Native streams and caches at
+ * the native layer) and swaps to the local file if and when the warm lands. The warm is still
+ * worth doing - it is what makes the next open instant and works offline - but it is a
+ * BACKGROUND upgrade, never a gate on first paint.
+ */
 const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
   const seeded = getWarmedLocalUri(uri);
-  const [localUri, setLocalUri] = useState<string | null>(seeded);
+  // Paint immediately: the local copy when we have one, otherwise the remote url.
+  const [localUri, setLocalUri] = useState<string | null>(seeded || uri || null);
   const [loading, setLoading] = useState(!seeded);
 
   useEffect(() => {
@@ -662,14 +721,14 @@ const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
       return;
     }
     let cancelled = false;
-    setLoading(true);
+    // Show the remote image NOW; the spinner only covers the <Image>'s own load.
+    setLocalUri(uri);
     warmToLocalCache(uri)
       .then((file) => {
-        if (!cancelled) setLocalUri(file || uri);
+        // Only swap if the warm actually produced a file - never back to a null/!uri state.
+        if (!cancelled && file) setLocalUri(file);
       })
-      .catch(() => {
-        if (!cancelled) setLocalUri(uri);
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };

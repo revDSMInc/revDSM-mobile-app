@@ -5580,7 +5580,7 @@ a regression surfaces as a disagreement with what the client signed off.
   target: `retail < rollout` → 4 tiles; `retail === rollout` → 3 (no ROLLOUT tile, it would
   duplicate RETAIL); `par < rollout` → COST/PAR/ROLLOUT; `cost < rollout` → COST/ROLLOUT; else
   ROLLOUT alone. Every surviving tier is clamped to the rollout.
-- ⚠️ **The 55-60% / 60-65% bands are based on `min(retail, rollout)`, not on retail**, and the
+- ⚠️ **SUPERSEDED - the bands are now based on RETAIL and floored above cost; see "REVUIUX-584 follow-up - bands above cost" at the end of this file.** Original note: **The 55-60% / 60-65% bands are based on `min(retail, rollout)`, not on retail**, and the
   upper band stops at **`par - 1`**, not at 65% of base. Both are the prototype's behaviour, and
   both matter: the bands exist to describe BELOW-par pricing (the 2% and 5% commission tiers), so a
   top band crossing par would tell a rep they are on reduced commission at a price that is
@@ -5657,12 +5657,23 @@ re-deriving anything here, read the stylesheet too, not just the script.
   half off each side - on a real device the ROLLOUT dot was clipped by the Done button. The
   component derives the inset from the measured row width and tile count, so it holds for a 1-, 2-,
   3- or 4-tile scale.
-- ⚠️ **The price badge under the pin IS shown, deliberately against the prototype's CSS.** The
-  stylesheet carries `.sl-pin u { display: none }`, but its JS still writes the figure into that
-  badge on every keystroke, and the client's own screenshots show it visible. The hide rule is
-  treated as a leftover. Requested directly: *"price badge also showing in the mockup but not
-  showing on my ui"*. If a later prototype revision clearly drops the badge, this is the one place
-  the implementation knowingly diverges - change it here, not by re-reading the CSS.
+- ⚠️ **The price badge and the commission bands are MUTUALLY EXCLUSIVE** - the prototype's
+  `.dscl.rngon .sl-pin u { display: none }`, i.e. bands open → badge hidden, bands closed → badge
+  shown. Both occupy the same strip directly under the track, so drawing both stacks the badge
+  over the band pills. Hiding the badge loses nothing: the price is in the field the rep is typing
+  into, and the highlighted band already names the range. Rule lives in `shouldShowPriceBadge()`
+  with a test sweeping every price on the scale to prove the two never coexist.
+  - ⚠️ **CORRECTION to an earlier note here.** An older copy of the mockup carried what looked
+    like an unconditional `.sl-pin u { display: none }`; it was read as a dead leftover and the
+    badge was shown always, recorded as a deliberate divergence. That was wrong - the live mockup
+    shows the rule is scoped to `rngon`. The lesson: a bare `display:none` in that stylesheet may
+    be the *base* of a conditional pair, so check for a scoped override before calling it dead.
+  - ⚠️ **The scale row's HEIGHT must follow the badge too.** The badge is the only thing needing
+    space below the track (`top: 22`), so a fixed row height left a dead gap above the band pills
+    once the badge was conditionally hidden - reported as *"reduce the gap"*. The row is now 50
+    with the badge and 20 without. The prototype sizes this block at `52u` with the pills at
+    `top: 25u` INSIDE it; the port lands them at 24px (row 20 + 4 margin), i.e. tight under the
+    track rather than stacked below a badge-sized row.
 - **Badge text colour is per-fill**, via `badgeTextColor()`: `#422006` on PAR yellow and `#7C2D12`
   on the upper commission band, white everywhere else. White on either light fill is unreadable;
   the prototype makes the same two exceptions.
@@ -5708,6 +5719,41 @@ Reported against Lighting -> Mounting Substrate: "Fascia is showing locked, it s
 - ⚠️ Separate latent bug fixed here: `optionsKey` used `join('<raw NUL>')` - a literal 0x00 in the source, which made git and grep treat the file as BINARY (`file` reported `data`). Now the escape `'\u0000'`, per CLAUDE.md section 6.
 - Not verified on device: tap the lone option to clear it and confirm it STAYS clear; a required field should then block Next; both job builders, online and offline.
 
+### Follow-up — the clearable one-option field must start EMPTY
+
+Client: *"if we saved nothing by default Fascia should be unselected, you can see currently it's
+selected by default"*. This REVERSES half of the fix above, so read both together.
+
+Ticket 520 made the clearable field seed its lone option **once per option list** (`seededForRef`),
+to stop the auto-select re-picking a value the rep had just cleared. The side effect: opening
+Lighting on a job with nothing saved showed **Fascia already selected** under Mounting Substrate -
+a value the rep never chose, which then reads as their answer on the summary and the agreement.
+
+The seeding is now GONE for the clearable field: `canClear` returns before ever calling
+`onChange`, so an unsaved field renders empty and stays empty.
+
+⚠️ **The padlocked branch still pins its lone option, and must.** There the value is imposed by
+the schema rather than offered, so a blank would be wrong. `allowsSingleOptionChoice` still gates
+which branch runs - the scope guard from the original ticket is untouched.
+
+⚠️ **`seededForRef` was deleted, not just bypassed.** With the seeding gone it was written
+(`= null`) but never read - dead state that would mislead the next reader into thinking the
+re-pick guard was still live. The re-pick it defended cannot happen any more: nothing auto-selects
+the clearable field, so there is nothing to re-pick.
+
+⚠️ `optionsKey` is KEPT - it is still the effect's dependency key, so a field whose options
+change is still re-evaluated.
+
+Offline is identical and that is verified, not assumed: neither `OptionToggleField` nor
+`DynamicTabRenderer` references connectivity at all, so the render path cannot differ.
+
+Tests extended to 7 in `tests/job-builder/single-option-choice.test.ts` - they pin the RULE
+(`canClear` -> never seeded; padlocked -> still pinned), since the component imports React Native
+and cannot be rendered under jest.
+
+Not verified on device: open Lighting on a job with nothing saved and confirm Mounting Substrate
+is EMPTY; tap Fascia to select, tap again to clear, and confirm a required field still blocks Next.
+
 ### `scheduleTime.date` has TWO shapes — and the job builder owns the conversion
 
 `DynamicJobBuilderScreen` keeps `jobState.scheduleTime.date` as **`M/d/yyyy`** while the rep is
@@ -5731,8 +5777,356 @@ wizard showed a raw ISO install date".
 - `normalizeScheduleTimeForSubmit` stays the single place that converts *for the wire*; the
   formatter is display/compare only. Don't fold them together — one drops `reason`, the other must not.
 
+### REVUIUX-584 follow-up — bands on the timeline, and the ring pulse
+
+Two client reports against the shipped gauge. Both are additive; nothing else was touched.
+
+**1. "Missing 55-60 and 60-65 on timeline".** The band pills below the scale carry the dollar
+ranges, but on their own they read as a legend — the segment showing WHERE on the scale those
+ranges fall was absent. The prototype draws `.sl-band` as a thick segment ON the track
+(`top: 6u; height: 10u`), between the line and the dots. Added; the pills are kept, because the
+track segments cannot carry the dollar figures.
+- ⚠️ Unhit band = its colour at ~38% opacity; the band holding the price = solid. A single flat
+  opacity loses the "which band am I in" signal the bands exist for.
+
+**2. The ring pulse is implemented as the spec INTENDS, not as the mockup behaves.** The client's
+animation spec (§2.4) documents a bug in their own markup: duplicate `style` attributes drop
+`--i`, so `calc(520ms + var(--i) * 70ms)` is invalid and all four rings fire at 0ms with no
+stagger. The spec says to fix it in the port. `GAUGE_ENTER.RING_*` carries the intended
+520 / 590 / 660 / 730 cascade.
+- Drawn as a sibling overlay scaling to 1.12 and fading, because React Native has no spreading
+  `box-shadow`.
+- ⚠️ The first ring (520ms) deliberately lands BEFORE the last count-up (540ms) — the cascades
+  interleave rather than running in series, which keeps the entry under a second. A test pins
+  that relationship.
+
+**⚠️ A reverted mistake worth not repeating: the gauge must NOT be hidden until a price is typed.**
+An earlier attempt gated the tiles and scale on `hasPrice`. That is wrong — the mockup shows the
+full gauge with an empty field (`Enter price…`), and hiding it also broke the entry animation,
+because the mount-only `.enter` effect then ran against zero tiles. The gauge mounts with the drop
+row and animates once; leave it that way.
+
+**3. Done with an EMPTY field closes the drop row.** `openDrop` opened with `if (v <= 0) return;`,
+so a rep who opened the row, thought better of it and pressed Done was left staring at the tiles
+and scale above an empty field, with no way out but typing a price they did not want. It now
+clears `dropText` and `showDropInput`.
+
+- ⚠️ **Nothing is saved on that path** - no drop row, no activity log, no server call. It is purely
+  local UI state, so it behaves identically offline: there is no queue entry to make and nothing
+  that could later sync a drop the rep never entered. Do not "improve" this by recording an empty
+  or zero drop.
+- ⚠️ All three entry points funnel through `openDrop` - the keypad's Done (`onSubmitEditing`), the
+  iPhone blur path (`NUMERIC_KEYBOARD_HAS_RETURN_KEY` is false only on iPhone, where the in-app
+  pad has no return key, so blur IS Done), and a second tap on `+ Nth Drop`. One guard covers all
+  three; do not add a second one at a call site.
+- The chevron on the COST tile does not trip the blur path: both scroll containers already set
+  `keyboardShouldPersistTaps="handled"`, so a tap on a handled press does not dismiss the pad. An
+  earlier attempt added `onStartShouldSetResponder` to the chevron for this and was removed - it
+  was unnecessary and risked swallowing the press itself.
+
+**SUPERSEDED - now done; see "REVUIUX-584 follow-up - bands above cost, and the full-screen drop screen" at the end of this file.** Original note: **Not done: the shared-element (FLIP) transition.** The mockup morphs the rollout screen's
+COST/PAR/RETAIL tiles into the drop screen's tiles (`flip()`, 640ms, 45ms stagger,
+`cubic-bezier(.22,1,.36,1)`). The app's drop row expands inline below those tiles rather than
+replacing the screen, so there is no source-to-destination pairing to morph between — the tiles
+stay on screen throughout. Implementing it would mean restructuring the drop entry into a separate
+full-screen view, which is beyond "do not change anything else". Raise with the client if they
+want the full screen swap.
+
 ### Leads screen: just-synced card hand-off (see `docs/claude/offline.md`, "Offline lead list state")
 
 `screens/Leads/index.tsx` keeps a synced offline lead's card (`justLandedIds`) until the SERVER list contains its id (re-reading every 4 s, 45 s give-up) instead of releasing when the refetch settles; rows are keyed by `clientId` so the card does not remount when its id flips from client to server id. Full reasoning and the traps live in offline.md.
 
 Follow-up: the landed-effect in `screens/Leads/index.tsx` no longer keeps the give-up timer handle (`setTimeout(release, LEAD_HANDOFF_MAX_MS)` is fire-and-forget on purpose). Do not add a cleanup that clears it: the effect re-runs on every store update, so the cap would never fire.
+
+## Drop modal left a blank white card on dismissal (SM-A065F)
+
+**Reported:** in the rollout drop modal, pressing the **close (X)**, **Secure This Price** or **Decline** left an empty white card on screen instead of dismissing. Only on a Galaxy A06 (SM-A065F); other Androids and iOS were fine.
+
+⚠️ **First diagnosed wrong.** The initial report read as a layout problem ("modal renders blank"), and the fix below for `GestureHandlerRootView` was made on that basis. It is a real bug and is kept, but it is NOT what the rep was seeing - the card was blank because the modal was *going away and failing to*, not because its contents collapsed. **A screenshot of a broken modal does not say whether it is opening, open, or closing; establish which before reading the layout.**
+
+**Cause - two native-window problems in `DropOutcomeModal` (`RolloutView.tsx`), both on the dismissal path:**
+
+**1. `KeyboardAvoidingView` with `behavior="height"` wrapped the whole modal.** That behavior works by *animating the container's height*. When the modal tears down, the height animation and the window dismissal race; on a slow device the collapsed-height frame is what stays on screen. Android resizes the window for the keyboard itself (`adjustResize`), so the behavior was redundant as well as harmful. Replaced with a plain `View`.
+
+⚠️ This file **already recorded this exact lesson** at the `RolloutView` root ("`View`, not `KeyboardAvoidingView` — its `behavior="padding"` shrank this whole column"). The same trap reappeared one component away. Prefer a plain `View` in these modals; the down-payment field is inside a `ScrollView`, and numeric inputs use the in-app number pad rather than the system keyboard (CLAUDE.md §6), so nothing needed the avoider.
+
+**2. `DropAddPlanModal` is a `<Modal>` nested inside this `<Modal>`, and it was mounted unconditionally.** CLAUDE.md §6 says never to stack native Modals. Even at `visible={false}` the child attaches a second native window to the parent's; on the A06 that window outlived the parent's dismissal and kept its `DecorView` on screen. Now guarded with `{showPicker && (...)}`.
+
+⚠️ **Keep the `visible` prop as well as the guard.** The guard controls whether the native window exists; `visible` still drives the sheet's slide animation. Dropping it makes the picker appear with no transition.
+
+**Why only one device.** Both faults are teardown *races*, so they resolve differently with GPU speed, RAM and Android version - a faster phone finishes the dismissal before the stale frame can be shown. ⚠️ "Works on my device" is not evidence for a modal lifecycle bug; reproduce on the slowest device available.
+
+### Also fixed here: a bare `GestureHandlerRootView` is `flex: 1`
+
+Found while investigating the above, and worth keeping on its own.
+
+```js
+// react-native-gesture-handler/components/GestureHandlerRootView[.android].js
+style: style ?? styles.container      // styles.container = { flex: 1 }
+```
+
+The financing-plan list was wrapped in a bare `<GestureHandlerRootView>` (needed only to give `Swipeable` a root for swipe-to-delete). **Omitting the style prop does not mean "no style" - the library substitutes `flex: 1`.** Inside the modal's `ScrollView` the content height is unbounded, so that would let the plan list grow against its siblings. Fixed with `style={{ flexGrow: 0, flexShrink: 0, width: '100%' }}`.
+
+- ⚠️ Longhands, not `flex: 0`: a `flex` shorthand overwrites longhands in the same style object regardless of key order (same trap as the Save All button and the RevRender footer).
+- ⚠️ Do **not** "simplify" it back to a bare tag. The absent prop is the bug, and it is invisible at the call site.
+- **Audited app-wide:** all 13 `<GestureHandlerRootView>` usages now carry an explicit style. The other twelve wrap a full screen or modal where the `flex: 1` default is correct - this was the only bare one, and the only one inside a scroll view. `CalculatorSummary.tsx` (the legacy equivalent of this modal) already passed `flex: 1` explicitly.
+
+**Not verified on device** - needs retesting on the SM-A065F, which is the only device that reproduced it.
+
+## Activity logs carried a calculator name no rep ever saw
+
+Client, from a DevTools payload: the log sent
+`"calculatorTitle": "📦 +G+Versa+S+FWrap+Light+Light Misc"` while the tab chip in the app
+read **`+Light+Light Misc`**. The portal's timeline therefore showed a name that appears nowhere
+in the app, and the same tab was named two different ways depending on which screen you read.
+
+**Why they differ.** A full-package tab STORES the long expansion (`computeDerivedTitles` joins
+every selected key, then prepends `FULL_PACKAGE_TITLE_PREFIX`), but `FullPackageTitle`
+(`components/FullPackageBadge.tsx`) RENDERS a cube glyph plus the EXTRAS only - it drops the keys
+the glyph already stands for (`G`, `S`, `FWrap` + whichever guard), exactly as
+`describeFullPackage` computes them. The logs sent the stored string.
+
+**Fixed at `logEvent` (`services/api/LoggerService.ts`)**, which is the ONE chokepoint every
+activity log passes through. `CALCULATOR_TITLE_KEYS` (`calculatorTitle`, `sourceCalculatorTitle`,
+`newCalculatorTitle`, `fromCalculatorTitle`, `toCalculatorTitle`) are each run through
+`calculatorLogTitle` from `utils/activity-log/calculator-log-title.ts`. One change covers field
+changes, `auto_rename`, funding, result and investment-centre logs.
+
+⚠️ **Derived from the TITLE STRING ALONE, on purpose.** `describeFullPackage` needs `entries` and
+`schemas`, which a logger reached from a dozen call sites does not have - and threading them
+through is what let the two names drift apart in the first place. The stored title already encodes
+the selection (`collectTabKeys` joined it with `+`), so the extras are recovered by splitting it
+back apart. ⚠️ Keep `FULL_PACKAGE_REQUIRED_KEYS` / `FULL_PACKAGE_GUARD_KEYS` in this file in step
+with `screens/DynamicDealCenter/utils/tab-naming.ts` - they are duplicated to avoid importing a
+screen module into the logger.
+
+⚠️ **The size rank is KEPT** (`+Light (LG)`). It is the only thing distinguishing two packages
+quoted at different prices, and the chip shows it too. The older `sanitizeCalculatorLogTitle`
+STRIPPED it - that function still exists for its other callers and is unchanged here.
+
+⚠️ **The 📦 glyph is KEPT.** A first pass stripped it on the theory that a web timeline should
+not carry an emoji; the client's answer was to put it back, and they are right - the chip renders a
+cube ICON, so the glyph IS part of what the rep sees, and without it a package reads as an ordinary
+tab that happens to carry those extras. The logged name follows the chip's own order: glyph, then
+extras, then rank (`📦 +Light+Light Misc`, `📦 +Light (LG)`). A bare package is the glyph alone,
+exactly as the chip shows it. Tests assert the glyph survives every package path AND is never added
+to a tab that is not a package.
+
+⚠️ **Idempotent** - re-formatting an already-formatted title is a no-op, so a replayed offline log
+is not stripped twice.
+
+A non-package tab name passes through unchanged: it is already what the rep sees.
+
+12 tests in `tests/offline/calculator-log-title.test.ts`. Not verified on device.
+
+## Calculator field logs: one per settled value, not one per keystroke (web parity)
+
+Client, comparing the portal timeline from mobile against the one from web: mobile wrote a log for
+EVERY keystroke. Typing `1487887` into `5" Gutter/DS/E` produced seven lines - `1`, `14`, `148`,
+`1487`, `14878`, `148788`, `1487887` - six of them struck through as superseded. Web wrote one.
+
+**Web's mechanism** (`src/sections/deal-center/components/ViewAllCalculators.js` in
+`mhalt-revDSM-sales-frontend`): `queueRolloutLog` keeps a `pendingRolloutChangesRef`, REPLACING any
+pending change for the same `calculator._id` + `fieldName`, and `useDebounce(rolloutChangeTrigger,
+1000)` flushes the queue once typing stops.
+
+**Mobile now does the same.** `handleEntryChange` (`screens/DynamicDealCenter/hooks/
+useDynamicCalculators.ts`) called `logCalculatorFieldEntry` synchronously inside the `setTabs`
+updater; it now calls `queueFieldLogRef.current(...)`, and a `FIELD_LOG_DEBOUNCE_MS` (1000, matching
+web) timer flushes through `flushFieldLogs`. The coalescing rules are pure, in
+`utils/activity-log/pending-field-logs.ts` (`queueFieldLog`, `settledFieldLogs`,
+`isRealFieldChange`).
+
+⚠️ **`oldValue` comes from the FIRST pending change, not the last.** This is the easy mistake and it
+is silent: keeping the newest both ways logs `148788 -> 1487887` (the last keystroke) instead of
+`0 -> 1487887` (the change the rep made). `queueFieldLog` carries the original `oldValue` forward
+explicitly.
+
+⚠️ **Keyed on calculator + field, never field alone.** Two tabs legitimately hold the same field id,
+and collapsing them would lose one tab's edit entirely.
+
+⚠️ **A pending log is FLUSHED ON UNMOUNT**, beside the existing save flush. Dropping it would lose
+the last value typed before the rep navigated away - the one most likely to matter.
+
+⚠️ **The SAVE debounce (`SAVE_DEBOUNCE_MS = 1500`, `saveTimers`) is untouched and separate.** Web
+debounces the save and the log separately too; folding them together would tie log timing to
+persistence and change when deals are written.
+
+⚠️ An edit that ends where it started is now NOT logged (`isRealFieldChange`) - typing `5` and
+deleting it used to leave `0 -> 5` and `5 -> 0` for a field the rep never altered.
+
+Scope: field-entry logs only. No other web/mobile differences were touched, by request.
+
+16 tests in `tests/offline/pending-field-logs.test.ts`. Not verified on device.
+
+### Follow-up — an emptied field must log as DELETED, not as `Added 0'`
+
+Client, comparing the two portals: clearing a field logged **`Added 0' GroundSpout`** from mobile,
+where web showed the same entry struck through with a red **DELETED** tag.
+
+**The portal decides from the logged value.** Web sends `''` for an empty box
+(`DealCenterContext.js`: `value === '' || null || undefined ? '' : Number(value)`), and an empty
+`newValue` is what the timeline renders as DELETED. Mobile sent `0`.
+
+⚠️ **The sanitizer alone could not fix this, and that is the whole subtlety.** `FieldRow`'s input
+does `onChange(parseFloat(cleaned) || 0)` - correct, because pricing and totals need a number - so
+by the time the log is written **an empty box is indistinguishable from a typed `0`**. The
+emptiness has to be carried from where the text is still known:
+
+- `FieldRow.onChange` gained a second argument, `isEmpty`, set from `cleaned.trim() === ''`;
+- `handleFieldChange` puts `inputCleared: true` on the entry when it is set;
+- `handleEntryChange` logs `loggedFieldValue(e.inputCleared ? '' : e.inputValue)`
+  (`utils/activity-log/pending-field-logs.ts`).
+
+⚠️ **`inputCleared` is LOG-ONLY.** `inputValue` stays numeric, and nothing that prices, totals or
+saves reads the flag - a grep confirms only `CalculatorView`, `useDynamicCalculators` and the log
+util mention it. Web draws the same line: `buildEntry` stays numeric and only the change record is
+sanitized. ⚠️ Do not start pricing off it.
+
+⚠️ **A deliberately typed `0` still logs as `0`.** Only an ABSENT value becomes `''` - a rep who
+types a literal zero said something, and web keeps that distinction (`Number('0') === 0`).
+
+⚠️ **Clearing an already-empty field logs nothing.** The guard around the queue still compares raw
+`inputValue`, so `0 -> cleared` never enters the queue, and `isRealFieldChange` drops it if it
+somehow does.
+
+⚠️ `loggedFieldValue` never returns `NaN` - unparseable input becomes `''`, because the portal
+would render a NaN as a value.
+
+Scope: the logged value only. No other web/mobile differences touched, by request.
+
+Tests extended to 23 in `tests/offline/pending-field-logs.test.ts`. Not verified on device.
+
+### Follow-up — Clear must log every field it emptied, not one line for the category
+
+Client: *"when we press the cleared button, log should be called for the fields which having the
+values and now become empty just like the web"*.
+
+`handleClearSection` sent a SINGLE `section cleared` log naming the category, so the portal could
+not say which fields were emptied or what they held. Web emits one `calculator_field_entry` per
+previously-filled field, carrying `newValue: ''` and the real `oldValue`
+(`verticals/VerticalsCalculatorView.js` `handleClearCard`; the client's payloads come from the
+per-field route in `context/DealCenterContext.js`, which is why they read
+`action: "calculator field changed"`).
+
+Mobile now captures each field's value BEFORE the reset (`clearedFields`) and queues a per-field
+log through `queueFieldLogRef` - the same debounced queue typing uses.
+
+⚠️ **NO category-level `section cleared` log is sent.** It used to be the only log a Clear
+produced, and an earlier pass kept it ALONGSIDE the new per-field logs, arguing it marked the
+Clear as one action. The client asked for it removed: the per-field logs already say exactly what
+was emptied, and the extra row (`fieldValue: 'cleared'`, `fieldLabel: 'Gutters'`) only repeated
+the category in a line the portal cannot render as a field change. Online AND offline.
+
+⚠️ `logSectionCleared` itself is UNCHANGED and still used by the legacy static Deal Center
+(`widgets/components/dealcenter/CalculatorForm.tsx`) - only the dynamic path stopped calling it.
+
+⚠️ **Routing Clear through the SAME queue is the point, not a shortcut.** The queue is keyed on
+calculator+field, so a Clear pressed straight after typing REPLACES the pending keystroke instead
+of racing it, and the one surviving log still reports the value the rep started from
+(`5 -> ''`, never `56 -> ''`). A test covers exactly that sequence.
+
+⚠️ **Only fields that HELD A VALUE are logged** - the existing `Number(e.inputValue || 0) !== 0`
+guard already picked those, and `settledFieldLogs` drops any that slip through.
+
+⚠️ **OFFLINE NEEDS NOTHING EXTRA, and that is verified, not assumed.** `logEvent` holds every log
+whose `module_type` is queueable, and `NON_QUEUEABLE_LOG_MODULES` is `['system']` only - so
+`calculator_field_entry` is held in `offlineActivityLog` and replayed in order with its
+`occurredAt` and `user_activity_log_id` intact. A Clear at a door therefore produces the same logs
+as a Clear online, just later. ⚠️ Do not add `calculator_field_entry` to that list.
+
+Scope: the Clear logs only. No other web/mobile differences touched, by request.
+
+Tests extended to 27 in `tests/offline/pending-field-logs.test.ts`. Not verified on device.
+
+### Follow-up — Clear did not empty the field that had FOCUS
+
+Client: *"I pressed the clear but current field in which i focused is not cleared, it is only
+cleared when i focus out"*.
+
+`FieldRow` (`components/CalculatorView.tsx`) keeps the box's text in local state and its sync
+effect opened with **`if (focused) return;`** - so a focused field ignored EVERY incoming value,
+the Clear included, until blur restored the sync.
+
+⚠️ **Deleting that guard is not the fix.** It is there because the parent echoes the field's own
+keystroke: without it, typing `6.` is rewritten to `6` the instant the dot lands, and a
+deliberately typed `0` is wiped.
+
+The real question is whether the incoming value is this field's OWN last report (an echo - ignore)
+or something else (external - accept). `FieldRow` now tracks `lastReported` and the decision lives
+in `utils/field-sync.ts` (`shouldAcceptExternalValue`, `fieldTextFor`), pure so it is testable.
+
+| focused | incoming vs lastReported | result |
+|---|---|---|
+| no | anything | parent wins |
+| yes | same (echo of own keystroke) | keep local text (`6.`, `0`) |
+| yes | different (Clear, or any external set) | **accept** |
+
+⚠️ `lastReported` is updated in BOTH places - on keystroke and when an external value is accepted -
+or the next echo would be misread as external and fight the rep's typing.
+
+⚠️ `fieldTextFor` keeps the existing "blank, not `0`" rendering; do not switch it to `String(value)`
+or every empty box shows a zero.
+
+9 tests in `tests/offline/field-sync.test.ts`. Not verified on device.
+
+## REVUIUX-584 follow-up - bands above cost, and the full-screen drop screen
+
+Client, against the shipped gauge: *"These numbers should be greater than cost. Cost is 50% and
+in some cases like LeafFilter it's less than 50%. I'm also still not seeing animation screen where
+it takes up full screen like my Claude mockup."*
+
+### 1. The 55-60% / 60-65% bands are now shares of RETAIL, floored above cost
+
+⚠️ **This reverses the "based on `min(retail, rollout)`" rule recorded in the REVUIUX-584 section
+above. Do NOT re-sync it to the prototype's `rangeList()`.** The prototype only looked right because
+its demo deal had rollout $5,000 above retail $4,933, so the two bases agreed. On the reported deal
+(Light+Light Misc: COST $7,613 / PAR $10,397 / ROLLOUT $11,663, retail above the rollout) the
+rollout base put "55-60%" at $6,415-$6,998, under the COST tile, at prices the drop field refuses.
+
+COST (about 50%) and PAR (about 65%) are shares of retail, so the bands must be too. Rules, all in
+`gaugeBands` (`utils/drop-gauge.ts`):
+
+- base = the fee-adjusted RETAIL tile (`gaugeTotals.retail`), the same scale as the tiles;
+- ⚠️ **every band starts at `cost + 1` at the lowest.** Cost is a SUM of per-field costs, so on some
+  products it sits above 55% of retail; a window that floor empties is dropped, not drawn;
+- neither band crosses `par - 1` (the lower one could, once 60% of retail exceeds par);
+- both are clamped to the rollout; a band starting at or above it is dropped. A rollout below cost
+  therefore shows no bands at all, which replaces the old "$500 rollout keeps both" test.
+
+### 2. `+ Nth Drop` is now a full-screen swap with the prototype's morph
+
+The earlier note said the FLIP transition was "not done" because the drop row expanded inline. It
+is done now, by swapping layouts inside the card rather than restructuring the screen:
+
+- **While `showDropInput` is set, `PremiumQuoteCard` renders ONLY `dropScreen`**: the plan box,
+  then the gauge (tiles, scale, field). The rest of the card is unmounted. `RolloutView` hides the
+  Confirm / Jobs Built footer and scrolls to the top. The tab strip stays, as in the mockup.
+- **The morph** (`FlipFromRect`, rule `flipStart` in `drop-gauge.ts`): `beginDrop` measures the
+  card's COST / PAR / RETAIL tiles and plan box in WINDOW space before swapping. Each drop-screen
+  copy then animates from that rect to its own (640ms, 45ms stagger, plan at 60ms,
+  `bezier(.22,1,.36,1)`). The gauge's ROLLOUT tile flies out of RETAIL (`flipSourceKey`).
+  - ⚠️ React Native scales about the CENTRE, the prototype about the top-left; `flipStart` carries
+    the `(k - 1) * size / 2` correction. A test checks the transformed view lands on the source.
+  - ⚠️ A morphing view is held at opacity 0 until `measureInWindow` answers, or it flashes at its
+    destination for one frame first.
+  - ⚠️ With `flipFrom`, the gauge's tile row does NOT rise; only the scale and field row do. The
+    prototype animates the tiles by FLIP alone. Without `flipFrom` the gauge enters as before.
+  - Measuring times out after 120ms per view, so a view that never answers just skips the morph.
+- **Closing.** Done keeps its existing path (`openDrop`: validate, save as pending, open the
+  outcome modal). The **header back arrow** (the prototype's `#back`) and Android hardware back
+  call `cancelDrop`, which discards. The card returns with `FadeUpOnMount` (fadeUp 400ms / 14px).
+  - ⚠️ **Back must not save.** On iPhone the field's BLUR is Done (`openDrop` on blur), so the blur
+    that follows a cancel would otherwise write a pending drop the rep walked away from.
+    `dropCancelled` swallows exactly that one call and is reset when the next drop screen opens.
+  - The parent routes back via `onDropScreenChange(close | null)`, so `RolloutView` never reaches
+    into the card's state.
+- The tiles keep their ring pulse and monthly count-up, so the cascade now plays over the morph,
+  as in the prototype.
+- No new native `Modal` (CLAUDE.md §6): the swap is a layout change in the same tree, so the in-app
+  number pad needs nothing new. Offline is unaffected; everything is local layout and state.
+
+Tests: `tests/offline/drop-gauge.test.ts`, now 82, including the reported deal, a LeafFilter-style
+deal, the cost floor, the par cap and the morph arithmetic. Not verified on device. Check the morph
+on a slow Android, back-without-saving on an iPhone, and a 2-tile gauge (rollout between cost and
+par).

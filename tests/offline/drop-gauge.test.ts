@@ -12,12 +12,16 @@ import {
   countUpValue,
   mutedLabelColor,
   gaugeFillStops,
+  shouldShowPriceBadge,
   badgeTextColor,
   GAUGE_ENTER,
   GAUGE_LABEL_GREY,
   GAUGE_TIER_COLORS,
   GAUGE_BAND_COLORS,
   GAUGE_INVALID_COLOR,
+  GAUGE_FLIP,
+  flipStart,
+  flipSourceKey,
 } from '../../src/screens/DynamicDealCenter/utils/drop-gauge';
 
 /**
@@ -69,7 +73,7 @@ describe('gaugeTiers - which tiles survive', () => {
 });
 
 describe('gaugeBands - the 2% / 5% commission windows', () => {
-  it('builds both bands off min(retail, rollout)', () => {
+  it('builds both bands off retail', () => {
     const b = gaugeBands(M, ROLLOUT);
     expect(b).toHaveLength(2);
     expect(b[0]).toEqual({ lowPct: 55, highPct: 60, from: 2713, to: 2960 });
@@ -83,23 +87,62 @@ describe('gaugeBands - the 2% / 5% commission windows', () => {
     expect(b[1].to).toBeLessThan(M.par);
   });
 
-  it('follows the rollout, not retail, when the deal is rolled out below retail', () => {
+  it('stays on retail when the deal is rolled out BELOW retail (client: "should be greater than cost")', () => {
     const b = gaugeBands(M, 4000);
-    expect(b[0].from).toBe(Math.round(4000 * 0.55));
-    expect(b[0].to).toBe(Math.round(4000 * 0.6));
+    expect(b[0].from).toBe(Math.round(M.retail * 0.55));
+    expect(b[0].to).toBe(Math.round(M.retail * 0.6));
+  });
+
+  it('the reported deal: rollout $11,663 under retail no longer puts the bands under cost', () => {
+    // Light+Light Misc on device: COST 7,613 / PAR 10,397 / ROLLOUT 11,663, retail above it.
+    // The old min(retail, rollout) base gave 55-60% = $6,415-$6,998, below the COST tile.
+    const t = { cost: 7613, par: 10397, retail: 15226 };
+    const b = gaugeBands(t, 11663);
+    expect(b).toEqual([
+      { lowPct: 55, highPct: 60, from: 8374, to: 9136 },
+      { lowPct: 60, highPct: 65, from: 9136, to: 10396 },
+    ]);
+    b.forEach((x) => expect(x.from).toBeGreaterThan(t.cost));
+  });
+
+  it('a LeafFilter-style deal with cost under 50% keeps both bands above cost', () => {
+    const t = { cost: 4000, par: 6500, retail: 10000 };
+    expect(gaugeBands(t, 10000)).toEqual([
+      { lowPct: 55, highPct: 60, from: 5500, to: 6000 },
+      { lowPct: 60, highPct: 65, from: 6000, to: 6499 },
+    ]);
+  });
+
+  it('floors a band at cost + 1 when cost sits above 55% of retail, and drops one it empties', () => {
+    // 55-60% of 15,000 is 8,250-9,000, entirely at or below cost 9,000 -> gone.
+    const b = gaugeBands({ cost: 9000, par: 11000, retail: 15000 }, 15000);
+    expect(b).toEqual([{ lowPct: 60, highPct: 65, from: 9001, to: 10999 }]);
+  });
+
+  it('never returns a band that starts at or below cost', () => {
+    const sets = [M, { cost: 7613, par: 10397, retail: 15226 }, { cost: 9000, par: 11000, retail: 15000 }];
+    sets.forEach((t) =>
+      [500, 3000, 5000, 9000, 11663, 15226, 20000].forEach((ro) =>
+        gaugeBands(t, ro).forEach((x) => expect(x.from).toBeGreaterThan(t.cost))
+      )
+    );
+  });
+
+  it('caps the lower band below par too', () => {
+    // 60% of retail (7,200) is above par (7,000): the lower band must stop at par - 1.
+    const b = gaugeBands({ cost: 5000, par: 7000, retail: 12000 }, 12000);
+    expect(b[0]).toEqual({ lowPct: 55, highPct: 60, from: 6600, to: 6999 });
+    expect(b).toHaveLength(1);
   });
 
   it('omits a band that starts at or above the rollout', () => {
     expect(gaugeBands(M, 2000).every((b) => b.from < 2000)).toBe(true);
   });
 
-  it('still builds both bands on a tiny rollout, rebased on it', () => {
-    // base = min(retail, rollout) = 500, so the windows follow the rollout, and the upper band
-    // runs to the rollout because `par - 1` is far above it. Verified against the mockup.
-    expect(gaugeBands(M, 500)).toEqual([
-      { lowPct: 55, highPct: 60, from: 275, to: 300 },
-      { lowPct: 60, highPct: 65, from: 300, to: 500 },
-    ]);
+  it('builds no band on a rollout below cost - there is no under-par price left to describe', () => {
+    // The prototype rebased onto a $500 rollout and drew 275-300 / 300-500, all below COST 1,555,
+    // which the drop field refuses. Retail-based windows start above cost, so none survive.
+    expect(gaugeBands(M, 500)).toEqual([]);
   });
 
   it('never returns an inverted window', () => {
@@ -362,6 +405,28 @@ describe('GAUGE_ENTER - timings carried over from the prototype', () => {
     expect(GAUGE_ENTER.PIN_MS).toBe(280);
   });
 
+  it('stages the ring pulse in the cascade the spec intends, not as the mockup behaves', () => {
+    /**
+     * The mockup never plays this - duplicate `style` attributes leave `--i` unset, so every ring
+     * fires at 0ms. The client's animation spec (§2.4) calls that out as a bug to FIX in the
+     * port, so the intended 520 / 590 / 660 / 730 cascade is asserted here.
+     */
+    expect(GAUGE_ENTER.RING_MS).toBe(900);
+    const delays = [0, 1, 2, 3].map(
+      (i) => GAUGE_ENTER.RING_DELAY_MS + i * GAUGE_ENTER.RING_STAGGER_MS,
+    );
+    expect(delays).toEqual([520, 590, 660, 730]);
+  });
+
+  it('overlaps the rings with the tail of the count-up cascade, as the mockup does', () => {
+    // The first ring (520ms) lands between the 3rd count-up (460ms) and the 4th (540ms): the two
+    // cascades interleave rather than running in series, which keeps the entry under a second.
+    const firstRing = GAUGE_ENTER.RING_DELAY_MS;
+    const lastCountUp = GAUGE_ENTER.COUNT_UP_DELAY_MS + 3 * GAUGE_ENTER.COUNT_UP_STAGGER_MS;
+    expect(firstRing).toBeGreaterThan(GAUGE_ENTER.COUNT_UP_DELAY_MS);
+    expect(firstRing).toBeLessThan(lastCountUp);
+  });
+
   it('staggers four tiles inside the entry window, so none starts after the rise ends', () => {
     const last = GAUGE_ENTER.COUNT_UP_DELAY_MS + 3 * GAUGE_ENTER.COUNT_UP_STAGGER_MS;
     expect(last).toBe(540);
@@ -512,5 +577,76 @@ describe('gaugeFillStops - the fill is a gradient through every tier passed', ()
   it('does not divide by zero at the very first tier, where the fill has no width', () => {
     const stops = gaugeFillStops(M.cost, tiers, bands, false, ROLLOUT);
     stops.forEach((st) => expect(Number.isFinite(st.offset)).toBe(true));
+  });
+});
+
+describe('shouldShowPriceBadge - the badge and the bands never share the strip', () => {
+  /**
+   * `.dscl.rngon .sl-pin u { display: none }` - both sit directly under the track, so showing
+   * both stacks the badge over the band pills.
+   */
+  it('shows the badge when the bands are closed', () => {
+    expect(shouldShowPriceBadge(4000, false)).toBe(true);
+  });
+
+  it('hides the badge while the bands are open', () => {
+    expect(shouldShowPriceBadge(2800, true)).toBe(false);
+  });
+
+  it('never shows it before a price is typed, either way', () => {
+    expect(shouldShowPriceBadge(0, false)).toBe(false);
+    expect(shouldShowPriceBadge(0, true)).toBe(false);
+  });
+
+  it('is exclusive with the bands for every price on the scale', () => {
+    const tiers = gaugeTiers(M, ROLLOUT);
+    const bands = gaugeBands(M, ROLLOUT);
+    for (let p = M.cost; p <= ROLLOUT; p += 53) {
+      const open = shouldShowBands(p, M);
+      const badge = shouldShowPriceBadge(p, open);
+      // Exactly one of the two may occupy the strip under the track.
+      expect(badge && open).toBe(false);
+      if (!open) expect(badge).toBe(true);
+    }
+    expect(bands.length).toBe(2);
+    expect(tiers.length).toBe(4);
+  });
+});
+
+describe('the full-screen swap - flipStart / flipSourceKey', () => {
+  it('pairs every gauge tile with the rollout tile it flies out of', () => {
+    expect(flipSourceKey('cost')).toBe('cost');
+    expect(flipSourceKey('par')).toBe('par');
+    expect(flipSourceKey('retail')).toBe('retail');
+    expect(flipSourceKey('rollout')).toBe('retail');
+  });
+
+  it('is the identity when the view is already where it started', () => {
+    const r = { x: 10, y: 20, width: 100, height: 60 };
+    expect(flipStart(r, r)).toEqual({ translateX: 0, translateY: 0, scale: 1 });
+  });
+
+  it('lands the scaled view exactly on the source rect, despite RN scaling about the centre', () => {
+    const from = { x: 20, y: 400, width: 120, height: 50 };
+    const to = { x: 16, y: 120, width: 90, height: 80 };
+    const s = flipStart(from, to)!;
+    // Top-left of the transformed view = centre - k*size/2 + translation.
+    const left = to.x + to.width / 2 - (s.scale * to.width) / 2 + s.translateX;
+    const top = to.y + to.height / 2 - (s.scale * to.height) / 2 + s.translateY;
+    expect(left).toBeCloseTo(from.x, 6);
+    expect(top).toBeCloseTo(from.y, 6);
+    expect(s.scale * to.width).toBeCloseTo(from.width, 6);
+  });
+
+  it('returns null rather than a wild transform when a rect is missing or empty', () => {
+    const r = { x: 0, y: 0, width: 100, height: 50 };
+    expect(flipStart(null, r)).toBeNull();
+    expect(flipStart(r, undefined)).toBeNull();
+    expect(flipStart({ ...r, width: 0 }, r)).toBeNull();
+    expect(flipStart(r, { ...r, height: 0 })).toBeNull();
+  });
+
+  it('carries the prototype timings', () => {
+    expect(GAUGE_FLIP).toEqual({ MS: 640, STAGGER_MS: 45, PLAN_DELAY_MS: 60, RETURN_MS: 400, RETURN_PX: 14 });
   });
 });
