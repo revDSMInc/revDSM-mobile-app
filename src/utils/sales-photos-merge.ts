@@ -14,10 +14,18 @@
  *     holds the number up. `recentlyCompleted` covers 60 s and only `JobDocsSection` reads it,
  *     so after a minute every surface reads 0 until a manual refresh.
  *
- * The rule: **a server read may ADD photos and may confirm them, but a shorter list is not
- * evidence that a photo we already hold is gone.** A photo only leaves this list when the rep
- * deletes it, which travels separately through `offlinePhotoDeleteQueue` / `deletedUrls` and is
- * applied downstream - so keeping an unlisted photo here can never resurrect a deleted one.
+ * The rule: **a device-only photo (no `s3url`) survives a shorter list, because the server has
+ * never seen it. A photo WITH an `s3url` does not: only a server read can have put it here, so a
+ * later server read that omits it means it is gone.**
+ *
+ * ⚠️ A CACHE IS NOT A SERVER READ. `hydrateFromCache` can hand back a snapshot written before these
+ * photos existed, so it passes `keepUnlisted` and retains everything.
+ *
+ * ⚠️ DO NOT "RESTORE" RETENTION OF `s3url` ROWS ON A SERVER READ. This file used to keep them, on
+ * the claim that a delete always travels through `offlinePhotoDeleteQueue`. It does not: an ONLINE
+ * delete calls the API directly, so the deleted photo was retained on every refetch. Reported as
+ * *"I deleted one image, in header it was showing two ... both images were showing ... changes
+ * only reflect when I reload the app"*.
  *
  * ⚠️ This is NOT a cache that grows forever. The retained set is only ever photos the DEVICE
  * knows about from this session; the next read that does include them collapses the two lists
@@ -42,15 +50,17 @@ export const salesPhotoKey = (photo: SalesPhotoLike | null | undefined): string 
 /**
  * Merge an incoming server list over the list already held.
  *
- * Incoming rows win (they are fresher and carry server fields); rows we hold that the server did
- * not mention are KEPT, appended in their existing order.
+ * Incoming rows win (they are fresher and carry server fields). Held device-only rows the server
+ * has not accounted for are kept, appended in their existing order. Held `s3url` rows are kept only
+ * with `keepUnlisted`, for an incoming list that is not a fresh server read.
  *
  * ⚠️ Returns `incoming` itself when nothing had to be retained, so a caller's memo identity does
  * not churn on every refetch.
  */
 export const mergeSalesPhotos = <T extends SalesPhotoLike>(
   previous: readonly T[] | null | undefined,
-  incoming: readonly T[] | null | undefined
+  incoming: readonly T[] | null | undefined,
+  options?: { keepUnlisted?: boolean }
 ): T[] => {
   // ⚠️ An ABSENT list is "the server said nothing", not "the server said none". A detail
   // response that omits the field entirely must never clear what we hold.
@@ -101,9 +111,8 @@ export const mergeSalesPhotos = <T extends SalesPhotoLike>(
     const key = salesPhotoKey(p);
     if (!key || seen.has(key)) return false;
 
-    // A held row that HAS an `s3url` the server did not mention is a genuine read-after-write
-    // gap: keep it, exactly as before.
-    if (p?.s3url) return true;
+    // A held row that HAS an `s3url` came from a server read, so its absence now is a deletion.
+    if (p?.s3url) return !!options?.keepUnlisted;
 
     const k = slotKey(p);
     const covered = incomingPerSlot.get(k) || 0;

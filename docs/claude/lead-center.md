@@ -3040,7 +3040,7 @@ already hold is gone.** Applied at all three `setLead` sites in `hooks/useLeadCe
 sales-portal detail, the `workLead` fallback, and `hydrateFromCache` (a cache written before the
 photos existed has the same hazard).
 
-⚠️ **DELETION STILL WORKS, and this is why it is safe.** A deleted photo is removed by the
+⚠️ **SUPERSEDED - this reasoning was wrong; see "An online delete came back until the app was reloaded" below.** Original note: **DELETION STILL WORKS, and this is why it is safe.** A deleted photo is removed by the
 `deletedUrls` filter (`services/offlinePhotoDeleteQueue`, applied in `JobDocsSection`), NOT by its
 absence from the server list. The merge is purely additive and knows nothing about deletion, so
 retaining an unlisted photo cannot resurrect a deleted one. A test pins that contract.
@@ -3336,3 +3336,19 @@ that holds for exactly a minute and then drops is `recentlyCompleted` doing its 
 that was never refreshed.
 
 7 tests in `tests/offline/upload-queue-landed.test.ts`. Not verified on device.
+
+### An online delete came back until the app was reloaded (my merge caused it)
+
+Reported: *"I deleted one image, it was gone but in header it was showing two ... I came again to same screen both images was showing like it was not deleted, changes only reflect when I reload the app"*.
+
+**Cause: `mergeSalesPhotos`, not a local-storage copy.** `deletePhoto` calls `LeadService.deleteImage`, then refetches. The server answered correctly with the shorter list, and the merge kept the deleted row as a "read-after-write gap". `useDynamicInspectionCapture` hid it through its per-instance `pendingDeletesRef`, so the grid looked right while the header count (`lead.salesPhotos`) stayed at 2. Reopening Manage Photos built a new hook with an empty ref, so the photo came back. A reload dropped the held state.
+
+⚠️ The earlier note claimed deletions were safe because they travel through `offlinePhotoDeleteQueue`. Only OFFLINE deletes do. An online delete never enters that queue.
+
+**The rule now:** a held row with an `s3url` leaves on a server read that omits it. Nothing but a server read writes such a row, so its absence means it was deleted, here or on another device. A device-only row (no `s3url`) is retained as before, which is the offline-reconnect case.
+
+- ⚠️ `hydrateFromCache` passes `keepUnlisted: true`. A cache can predate the photos, so it is not evidence of a delete.
+- ⚠️ An ABSENT `salesPhotos` field still keeps everything. If the lead detail API omits the field once a lead has no photos, deleting the LAST photo would still come back. Check that case on a device.
+- Other delete paths that refetch afterwards get the same fix, and so does an offline delete once its queue drains.
+
+Tests in `tests/offline/sales-photos-merge.test.ts`. Not verified on device.

@@ -28,15 +28,14 @@ describe('salesPhotoKey', () => {
  * can legitimately not list the new photos yet. `{...prev, ...full}` then overwrote 3 with 0.
  */
 describe('mergeSalesPhotos — a shorter server list never deletes what we hold', () => {
-  it('⚠️ THE REPORTED CASE: keeps 3 photos when the server read comes back empty', () => {
-    const held = [server('a.jpg'), server('b.jpg'), server('c.jpg')];
+  it('⚠️ THE REPORTED CASE: keeps 3 device photos when the server read comes back empty', () => {
+    const held = [local('file:///a.jpg'), local('file:///b.jpg'), local('file:///c.jpg')];
     expect(mergeSalesPhotos(held, [])).toHaveLength(3);
   });
 
-  it('keeps the ones the server has not caught up with yet', () => {
+  it('a stale CACHE cannot remove photos a server read already listed', () => {
     const held = [server('a.jpg'), server('b.jpg'), server('c.jpg')];
-    const incoming = [server('a.jpg')];
-    const out = mergeSalesPhotos(held, incoming);
+    const out = mergeSalesPhotos(held, [server('a.jpg')], { keepUnlisted: true });
     expect(out.map((p) => p.s3url)).toEqual(['a.jpg', 'b.jpg', 'c.jpg']);
   });
 
@@ -105,23 +104,32 @@ describe('mergeSalesPhotos — a shorter server list never deletes what we hold'
   });
 
   it('is stable when applied repeatedly to its own output', () => {
-    const held = [server('a.jpg'), server('b.jpg')];
+    const held = [server('a.jpg'), { ...local('file:///b.jpg'), category: 'Back' }] as any[];
     const once = mergeSalesPhotos(held, [server('a.jpg')]);
     const twice = mergeSalesPhotos(once, [server('a.jpg')]);
     expect(twice).toHaveLength(2);
   });
 
   /**
-   * ⚠️ THE GUARD THAT KEEPS DELETION WORKING. A deleted photo is filtered downstream by
-   * `deletedUrls` (`offlinePhotoDeleteQueue`), NOT by its absence from the server list - so
-   * retention here cannot resurrect it. This pins the contract that makes that safe: the merge
-   * is purely additive and knows nothing about deletion.
+   * ⚠️ THE ONLINE DELETE. It calls the API directly and never enters `offlinePhotoDeleteQueue`, so
+   * this merge is the only thing between the server's answer and the screen. Client: *"I deleted
+   * one image, in header it was showing two ... changes only reflect when I reload the app"*.
    */
-  it('is additive only — deletion is somebody else’s job', () => {
+  it('a server read that omits an uploaded photo removes it: that is a delete', () => {
     const held = [server('a.jpg'), server('deleted.jpg')];
-    const out = mergeSalesPhotos(held, [server('a.jpg')]);
-    // Still present HERE; the deletedUrls filter is what removes it on screen.
-    expect(out.map((p) => p.s3url)).toContain('deleted.jpg');
+    const incoming = [server('a.jpg')];
+    const out = mergeSalesPhotos(held, incoming);
+    expect(out.map((p) => p.s3url)).toEqual(['a.jpg']);
+    expect(out).toBe(incoming);
+  });
+
+  it('deleting the last photo empties the list on a server read', () => {
+    expect(mergeSalesPhotos([server('only.jpg')], [])).toEqual([]);
+  });
+
+  it('a delete keeps a device photo that is still waiting to upload', () => {
+    const out = mergeSalesPhotos([server('deleted.jpg'), local('file:///queued.jpg')], []);
+    expect(out.map((p) => (p as any).uri)).toEqual(['file:///queued.jpg']);
   });
 });
 
@@ -186,11 +194,11 @@ describe('mergeSalesPhotos — a device copy retires when its own upload lands',
     expect(out.some((p) => p.uri === 'file:///tmp/a.jpg')).toBe(true);
   });
 
-  it('still keeps a held row that HAS an s3url the server omitted', () => {
-    // Read-after-write on an already-uploaded photo: unchanged behaviour.
+  it('drops a held row with an s3url the server omitted, unless the list is a cache', () => {
     const held = [srv('https://s3/a.jpg', 'Back')];
-    const out = mergeSalesPhotos(held, [srv('https://s3/b.jpg', 'Left')]);
-    expect(out).toHaveLength(2);
+    const incoming = [srv('https://s3/b.jpg', 'Left')];
+    expect(mergeSalesPhotos(held, incoming)).toHaveLength(1);
+    expect(mergeSalesPhotos(held, incoming, { keepUnlisted: true })).toHaveLength(2);
   });
 
   it('is stable when applied repeatedly to its own output', () => {

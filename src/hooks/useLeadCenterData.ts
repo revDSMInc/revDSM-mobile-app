@@ -80,7 +80,7 @@ export const useLeadCenterData = (
       generatedReports: saved.generatedReports || prev?.generatedReports || [],
       // ⚠️ Same rule as the server merge: a cache written BEFORE these photos existed must not
       // delete them from the screen.
-      salesPhotos: mergeSalesPhotos(prev?.salesPhotos, saved.salesPhotos),
+      salesPhotos: mergeSalesPhotos(prev?.salesPhotos, saved.salesPhotos, { keepUnlisted: true }),
     }));
     return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -142,16 +142,12 @@ export const useLeadCenterData = (
           ...full,
           generatedReports: full.generatedReports || prev?.generatedReports || [],
           /**
-           * ⚠️ A SHORTER server list must not delete photos we already hold.
+           * ⚠️ A shorter server list must not delete a photo the server has never seen.
            *
-           * The spread above replaced `salesPhotos` outright, which breaks the reconnect case:
-           * offline photos drain from the queue the moment the link returns, and the lead read
-           * that follows can legitimately not list them yet (read-after-write lag). With the
-           * queue now empty, nothing else held the count up and every surface fell to 0.
-           *
-           * A deletion still removes a photo - it travels separately through
-           * `offlinePhotoDeleteQueue` / `deletedUrls`, applied downstream - so retaining an
-           * unlisted photo here cannot resurrect a deleted one. See `utils/sales-photos-merge.ts`.
+           * The spread above replaced `salesPhotos` outright, which breaks the reconnect case: a
+           * queued offline photo has no server row yet, so the read that follows must not drop it.
+           * A photo that HAS an `s3url` and is now unlisted IS gone, and leaves here - that is what
+           * lets an online delete take effect without a reload. See `utils/sales-photos-merge.ts`.
            */
           salesPhotos: mergeSalesPhotos(prev?.salesPhotos, full.salesPhotos),
         }));
