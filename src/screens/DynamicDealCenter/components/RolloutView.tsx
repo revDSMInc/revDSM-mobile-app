@@ -5,7 +5,8 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
-import Animated, { useAnimatedStyle, LinearTransition, FadeOut } from 'react-native-reanimated';
+import Animated, { LinearTransition, FadeOut } from 'react-native-reanimated';
+import { SwipeDeleteAction } from './SwipeDeleteAction';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import type { CalculatorSchema } from '../types/calculator';
 import { resolveSchemaStyle } from '../utils/icon-color';
@@ -290,24 +291,6 @@ function DropAddPlanModal({ visible, price, plans, categories, added, onAdd, onC
         </Pressable>
       </Pressable>
     </Modal>
-  );
-}
-
-function SwipeDeleteAction({ drag, onDelete }: { drag: any; onDelete: () => void }) {
-  const styleAnimation = useAnimatedStyle(() => ({
-    transform: [{ translateX: drag.value + 80 }],
-  }));
-  return (
-    <View style={{ width: 80, marginLeft: 8, marginBottom: 12 }}>
-      <Animated.View style={styleAnimation}>
-        <TouchableOpacity
-          onPress={onDelete}
-          style={{ backgroundColor: '#FF5630', height: '100%', borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 12 }}>Delete</Text>
-        </TouchableOpacity>
-      </Animated.View>
-    </View>
   );
 }
 

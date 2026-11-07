@@ -29,6 +29,7 @@ import { formatAmountInput, stripAmount } from '../DynamicDealCenter/utils/forma
 import { resolveActiveDownPayment } from '../DynamicDealCenter/utils/drop-prices';
 import { ProgramCard } from './ProgramCard';
 import { OptInConfirmModal } from './OptInConfirmModal';
+import { optInMethodBadges, optInPlanOptions } from '../../utils/opt-in-methods';
 import { describeFullPackage } from '../DynamicDealCenter/utils/tab-naming';
 import {
   FullPackageTitle,
@@ -253,6 +254,21 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         .filter((k) => isFinancing(plans, k))
         .map((k) => ({ key: k, monthly: calcMonthly(plans, inHomeMonthlyBase, k), terms: compactPlanLabel(plans, k) })),
     [addedPlanKeys, plans, inHomeMonthlyBase],
+  );
+
+  const optInBadges = useMemo(
+    () => optInMethodBadges(basicBadges, paymentChoice, isLowesLead),
+    [basicBadges, paymentChoice, isLowesLead],
+  );
+  const optInPlans = useMemo(
+    () =>
+      optInPlanOptions(
+        inHomeShortlist,
+        selectedPlanKey
+          ? { key: selectedPlanKey, monthly: inHomeMonthly, terms: compactPlanLabel(plans, selectedPlanKey) }
+          : null,
+      ),
+    [inHomeShortlist, selectedPlanKey, inHomeMonthly, plans],
   );
 
   const persistInHome = (added: string[], selected: string, optInOverride?: 'inhome' | 'oneyear' | null) => {
@@ -606,6 +622,12 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     );
   };
   const inHomeDownEditor = renderDownEditor(downText, setDownText, showDownInput, setShowDownInput, endPrice, 'inhome');
+  // The popup's field is this same down payment, so it commits by the same rule as the card's.
+  const commitInHomeDown = () => {
+    let v = parseFloat(downText) || 0;
+    if (endPrice > 0 && v > endPrice) { v = endPrice; setDownText(String(v)); }
+    logDownPaymentChange('inhome', v);
+  };
   const oneYearDownEditor = renderDownEditor(oneYearDownText, setOneYearDownText, showOneYearDown, setShowOneYearDown, oneYearGrandTotal, 'oneyear');
 
   const oneYearRows = [
@@ -913,11 +935,23 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       <OptInConfirmModal
         visible={showConfirm}
         price={inHomeGrandTotal}
-        monthly={inHomeMonthly}
-        planLabel={inHomeMonthly > 0 ? compactPlanLabel(plans, inHomePlanKey) : undefined}
         downPayment={downPay}
+        downText={downText}
+        showDown={showDownInput}
+        onDownTextChange={setDownText}
+        onShowDown={setShowDownInput}
+        onCommitDown={commitInHomeDown}
         method={paymentChoice}
-        isLowesLead={lead?.lowesLead === true}
+        basicMethodKey={defaultChoice && !isFinancing(plans, defaultChoice) ? defaultChoice : undefined}
+        badges={optInBadges}
+        options={optInPlans}
+        plans={plans}
+        categories={pricing.dropAddCategories}
+        addedPlanKeys={addedPlanKeys}
+        addPlanPrice={inHomeMonthlyBase}
+        onSelectMethod={selectPaymentChoice}
+        onAddPlan={handleAddPlan}
+        onRemovePlan={handleRemovePlan}
         onConfirm={confirmInHome}
         onClose={() => {
           setShowConfirm(false);

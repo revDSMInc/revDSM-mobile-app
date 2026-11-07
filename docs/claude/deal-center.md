@@ -6157,3 +6157,7 @@ rollout is refused too.
   plan box on that same screen.
 
 7 new tests in `tests/offline/drop-gauge.test.ts`, 89 in total. Not verified on device.
+
+### `SwipeDeleteAction` moved to its own file
+
+`DropOutcomeModal`'s swipe-to-delete action now lives in `components/SwipeDeleteAction.tsx`, so REVUIUX-594's Secure This Price popup can share it without importing `RolloutView`. The drop popup's behaviour is unchanged. Details in `investment-center-job-tracker.md`.

@@ -709,3 +709,21 @@ Three defects, each able to produce it on its own:
 **Not verified here:** the warm itself cannot be tested under jest (the hook imports React Native). Confirm
 on a device by signing in as a rep who has never opened the Deal Center, going online once, then offline
 into the Investment Center.
+
+## REVUIUX-594 - switching payment method inside the Secure This Price popup
+
+Client: *"Investment center - opt in in home pre order - not letting me change payment method"*, then *"I should be able to switch between CK, CC, or the monthly payment plan(s) I added on investment center."*
+
+`OptInConfirmModal` was display only. It is now laid out like the rollout's `DropOutcomeModal`: tappable CK / CC badges, Add Down Payment with a Balance box, Monthly Options, swipe left to delete a plan, and + Add Plan. The list rules are in `utils/opt-in-methods.ts` (`optInMethodBadges`, `optInPlanOptions`).
+
+- ⚠️ **The popup owns no deal state.** Every control calls the card's own handler (`selectPaymentChoice`, `handleAddPlan`, `handleRemovePlan`, `commitInHomeDown`), and the down field shares the card's `downText`. So the card, the activity logs and `persistInHome` behave exactly as a tap on the card, `confirmInHome` reads the same values, and offline needs no branch of its own. Do not give the popup a local selection, which is how `DropOutcomeModal` works and would drift here.
+- ⚠️ **+ Add Plan uses `AddPlanModal` with `inline`**, an overlay inside this Modal's tree. Never a second native Modal (CLAUDE.md section 6; a stacked one left a blank card on the SM-A065F).
+- ⚠️ `GestureHandlerRootView` is required here, because a `Modal` is its own native tree, and it needs its explicit style. `SwipeDeleteAction` moved to `DynamicDealCenter/components/SwipeDeleteAction.tsx` so both popups share it.
+- **The backdrop is now inert**, matching the drop popup. The card holds a form, and a stray tap beside a row used to cancel the opt-in. The close button behaves as Decline.
+- ⚠️ **AMEX is shown only when already selected**, because the client named CK and CC. Without that, the popup could secure a price with no method highlighted.
+- `optInPlanOptions` adds the selected plan when `addedPlans` lacks it, since `paymentChoice` and `addedPlanKeys` are seeded separately.
+- The grand total does not change with the method: `computeRolloutResult` takes `plans[method]` from the calculator, not `paymentChoice`. Only the monthly differs.
+- ⚠️ This is a deliberate divergence from web, whose `opt-in-confirm-modal.js` stays display only. Do not re-sync.
+- ⚠️ Known and unchanged: `persistInHome` stores `planKey: ''` for CK / CC, so a rep who picks CK, declines and leaves returns to `defaultChoice`. The same is true of a tap on the card.
+
+Tests: `tests/offline/opt-in-methods.test.ts`. Not verified on device.
