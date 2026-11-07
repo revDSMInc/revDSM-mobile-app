@@ -16,7 +16,7 @@ import { autoSecureLastDrop, dropPriceOf, DROP_PENDING, isPendingDrop, pendingDr
 import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import DropPriceGauge from './DropPriceGauge';
 import { FlipFromRect, FadeUpOnMount } from './FlipFromRect';
-import { GAUGE_FLIP, type FlipRect } from '../utils/drop-gauge';
+import { GAUGE_FLIP, planBlocksDrop, planBlocksDropMessage, type FlipRect } from '../utils/drop-gauge';
 import { FlashMessage } from '../../../config/message';
 import { allRolloutsConfirmed, rolloutCalculators } from '../../../utils/rollout-status';
 import { useAuth } from '../../../hooks/useAuth';
@@ -147,9 +147,11 @@ function styleForKey(name: string, color?: string): CatStyle {
   return { color: c, icon: 'pricetag', bg: color ? `${c}1A` : '#F4F6F8' };
 }
 
-function PaymentPlanModal({ visible, selected, price, plans, categories, onSelect, onClose }: {
+function PaymentPlanModal({ visible, selected, price, plans, categories, blockedReason, onSelect, onClose }: {
   visible: boolean; selected: string; price: number;
   plans: Record<string, DealPlan>; categories: PayCategory[];
+  /** Why a plan cannot be picked here, or null. Only the drop screen passes this. */
+  blockedReason?: (key: string) => string | null;
   onSelect: (key: string) => void; onClose: () => void;
 }) {
   const bottomInset = useBottomInset();
@@ -176,29 +178,36 @@ function PaymentPlanModal({ visible, selected, price, plans, categories, onSelec
                   if (!plan) return null;
                   const min = plan.minPrice || 0;
                   const belowMin = planBelowMin(plans, key, price);
+                  const blocked = blockedReason?.(key) || null;
+                  const unavailable = belowMin || !!blocked;
                   const isSel = key === selected;
                   return (
                     <TouchableOpacity
                       key={key}
                       onPress={() => {
+                        if (blocked) { FlashMessage.warning('Payment plan', blocked); return; }
                         if (belowMin) { FlashMessage.warning('Payment plan', belowMinMsg(plans, key, price)); return; }
                         onSelect(key);
                       }}
                       style={{
                         padding: 14, borderRadius: 12, borderWidth: 1.5, marginBottom: 8,
                         borderColor: isSel ? '#4CBB17' : '#E2E8F0',
-                        backgroundColor: isSel ? '#4CBB170D' : belowMin ? '#F1F5F9' : '#fff',
-                        opacity: belowMin ? 0.6 : 1,
+                        backgroundColor: isSel ? '#4CBB170D' : unavailable ? '#F1F5F9' : '#fff',
+                        opacity: unavailable ? 0.6 : 1,
                       }}
                     >
                       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <Text style={{ flex: 1, paddingRight: 10, fontSize: 12.5, fontWeight: '800', color: isSel ? '#15803D' : belowMin ? '#94A3B8' : '#1C252E' }}>{plan.label}</Text>
+                        <Text style={{ flex: 1, paddingRight: 10, fontSize: 12.5, fontWeight: '800', color: isSel ? '#15803D' : unavailable ? '#94A3B8' : '#1C252E' }}>{plan.label}</Text>
                         {isSel && <Ionicons name="checkmark-circle" size={20} color="#4CBB17" />}
                       </View>
                       {/* Min-price hint: red "Requires $X+ (current: $Y)" ONLY when a price
                           is entered below the minimum; otherwise the plan's own grey note.
-                          No "enter end price first" lock — the plan is selectable at $0. */}
-                      {belowMin ? (
+                          No "enter end price first" lock — the plan is selectable at $0.
+                          The drop screen's cost block outranks both: the reason is on the row
+                          itself, because a flash raised from inside a Modal is easy to miss. */}
+                      {blocked ? (
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#EF4444', marginTop: 4 }}>{blocked}</Text>
+                      ) : belowMin ? (
                         <Text style={{ fontSize: 10, fontWeight: '700', color: '#EF4444', marginTop: 4 }}>
                           Requires ${min.toLocaleString()}+ (current: ${Number(price).toLocaleString()})
                         </Text>
@@ -1017,18 +1026,16 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     () => computeCalculatorTiers(calculator.entries, verticals, pricingConfig),
     [calculator.entries, verticals, pricingConfig],
   );
-  const tiers = useMemo(() => {
-    const hasItems = liveTotals.retail > 0;
-    const tierValue = (key: 'cost' | 'par' | 'retail') => {
-      const withFee = applyFeesToTier(liveTotals[key], key, pricingConfig, { hasLineItems: liveTotals[key] > 0 });
-      return floorTier(withPlanFee(plans, withFee, method), hasItems);
-    };
-    return [
-      { label: 'COST', value: tierValue('cost'), isRetail: false },
-      { label: 'PAR', value: tierValue('par'), isRetail: false },
-      { label: 'RETAIL', value: tierValue('retail'), isRetail: true },
-    ];
-  }, [liveTotals, method, plans, pricingConfig]);
+  /** One tier under ANY plan. The tiles and the drop-screen plan block must share this. */
+  const tierValueOn = useCallback((key: 'cost' | 'par' | 'retail', planKey: string) => {
+    const withFee = applyFeesToTier(liveTotals[key], key, pricingConfig, { hasLineItems: liveTotals[key] > 0 });
+    return floorTier(withPlanFee(plans, withFee, planKey), liveTotals.retail > 0);
+  }, [liveTotals, plans, pricingConfig]);
+  const tiers = useMemo(() => [
+    { label: 'COST', value: tierValueOn('cost', method), isRetail: false },
+    { label: 'PAR', value: tierValueOn('par', method), isRetail: false },
+    { label: 'RETAIL', value: tierValueOn('retail', method), isRetail: true },
+  ], [tierValueOn, method]);
 
   /**
    * REVUIUX-584 - inputs for the drop-price gauge.
@@ -1586,6 +1593,17 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
    * The drop screen - the prototype's `#drop`: the plan box on top, then the gauge, which owns the
    * tiles, the scale and the field row. Everything else on the card is gone while it is up.
    */
+  /**
+   * ⚠️ DROP SCREEN ONLY - the repo owner's call. On the rollout card a rep may be choosing a plan
+   * for the rollout itself, so `PaymentPlanModal` gets this only while `showDropInput` is set.
+   */
+  const dropPlanBlockedReason = (key: string): string | null => {
+    const planCost = tierValueOn('cost', key);
+    return planBlocksDrop(planCost, gaugeRollout) ? planBlocksDropMessage(planCost, gaugeRollout) : null;
+  };
+  /** The plan already selected can be the dead end, so the screen must say why nothing will save. */
+  const currentPlanBlocked = showDropInput ? dropPlanBlockedReason(method) : null;
+
   const dropScreen = (
     <View style={{ paddingTop: 2 }}>
       <FlipFromRect from={flipFrom?.plan} delay={GAUGE_FLIP.PLAN_DELAY_MS}>
@@ -1600,6 +1618,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           <Ionicons name="chevron-down" size={16} color="#637381" />
         </TouchableOpacity>
       </FlipFromRect>
+      {!!currentPlanBlocked && (
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 12 }}>
+          <Ionicons name="warning" size={16} color="#B45309" style={{ marginTop: 1 }} />
+          <Text style={{ flex: 1, fontSize: 11, fontWeight: '600', color: '#B45309', lineHeight: 15 }}>
+            {`${currentPlanBlocked} No drop is possible on this plan. Choose another plan above.`}
+          </Text>
+        </View>
+      )}
       {/* REVUIUX-584 - the gauge OWNS this block: tiles, scale and commission pills above, then the
           price field paired with its live per-month readout. Display-only - it reads `dropText`
           and sets nothing. */}
@@ -2092,6 +2118,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         price={priceNum}
         plans={plans}
         categories={pricing.categories}
+        blockedReason={showDropInput ? dropPlanBlockedReason : undefined}
         onSelect={(key) => {
           if (key !== method) {
             if (WELLS_FARGO_HIGH_KEYS.includes(key) && priceNum > 0 && priceNum < WF_HIGH_MIN_PRICE) {
