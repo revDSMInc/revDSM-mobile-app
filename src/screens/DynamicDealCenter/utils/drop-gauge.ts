@@ -339,6 +339,30 @@ export const GAUGE_ENTER = {
 } as const;
 
 /**
+ * Can a drop be entered at all on a plan with this cost?
+ *
+ * The client: *"When I change plan here for some it's not showing my cost price. If that's the
+ * case that any number I can input here would be less than cost than it should not allow me to
+ * click on plan."* A plan's bank fee raises COST, so a high-fee plan can lift it to or past the
+ * rollout. A drop must be at least cost and strictly below the rollout (`openDrop` refuses both),
+ * so on such a plan EVERY price fails, and `gaugeTiers` has already hidden the COST tile.
+ *
+ * ⚠️ `planCost` must be that plan's own cost, built exactly as the COST tile builds it (fees,
+ * plan gross-up, floor) and NOT rounded, because `openDrop` compares the unrounded value too.
+ * A rollout of 0 blocks nothing: there is no price to measure against yet.
+ */
+export function planBlocksDrop(planCost: number, rollout: number): boolean {
+  const ro = Number(rollout) || 0;
+  return ro > 0 && (Number(planCost) || 0) >= ro;
+}
+
+/** Why a plan is unavailable for a drop. Shared by the picker row and the drop screen note. */
+export function planBlocksDropMessage(planCost: number, rollout: number): string {
+  const money = (v: number): string => `$${Math.round(v).toLocaleString('en-US')}`;
+  return `Cost on this plan is ${money(planCost)}, at or above your ${money(rollout)} rollout.`;
+}
+
+/**
  * The FULL-SCREEN swap into the drop screen - the prototype's `openDrop()` / `flip()` /
  * `closeDrop()`, which an earlier pass recorded as "not done".
  *
