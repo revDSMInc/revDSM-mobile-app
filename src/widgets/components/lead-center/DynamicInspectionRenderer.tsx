@@ -240,6 +240,8 @@ function SlotButton({
   const deleting = !!capture.deletingKeys[key];
   const moving = !!capture.movingKeys?.[key];
   const filled = photos.length > 0;
+  // Frames already tagged here from the clip in hand. Not uploaded yet, so `photos` cannot show them.
+  const queuedFrames = capture.queuedFrameCount?.(key) || 0;
   const showSpinner = deleting || moving || (uploading && !filled);
   const disabled = deleting || moving || (!!moveFromKey && moveFromKey === key);
   const isMoveSource = !!moveFromKey && moveFromKey === key;
@@ -258,7 +260,7 @@ function SlotButton({
           alignItems: 'center',
           justifyContent: 'center',
           borderWidth: 1.5,
-          borderColor: isMoveSource ? FROM_YELLOW : filled ? GREEN : 'rgba(255,255,255,0.12)',
+          borderColor: isMoveSource || queuedFrames > 0 ? FROM_YELLOW : filled ? GREEN : 'rgba(255,255,255,0.12)',
           backgroundColor: isMoveSource
             ? 'rgba(250,204,21,0.18)'
             : filled
@@ -309,7 +311,15 @@ function SlotButton({
           </View>
         )}
       </TouchableOpacity>
-      {slot.isExtra && !filled && (
+      {queuedFrames > 0 && (
+        <View
+          pointerEvents="none"
+          style={{ position: 'absolute', top: -6, right: -4, width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: FROM_YELLOW }}
+        >
+          <Icon name="check" size={12} color="#422006" />
+        </View>
+      )}
+      {slot.isExtra && !filled && queuedFrames === 0 && (
         <TouchableOpacity
           onPress={() => capture.removeExtra(category, slot)}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}

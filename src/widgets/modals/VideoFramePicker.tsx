@@ -9,6 +9,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import Video, { type VideoRef } from 'react-native-video';
@@ -19,6 +20,7 @@ import {
   FRAME_PICKER_FPS,
   formatClipLength,
   formatScrubTime,
+  reviewTileSize,
   scrubFraction,
   snapFrameTime,
 } from '../../utils/camera-video';
@@ -70,6 +72,8 @@ const stripScheme = (p: string) => p.replace(/^file:\/\//, '');
  */
 export const VideoFramePicker = ({ clipUri, clipDuration, requestTag, onDone, onDiscard }: Props) => {
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const tile = reviewTileSize(windowWidth);
   const [screen, setScreen] = useState<'pick' | 'review'>('pick');
   const [duration, setDuration] = useState(Math.max(clipDuration, 1 / FRAME_PICKER_FPS));
   const [pickerT, setPickerT] = useState(0);
@@ -311,8 +315,8 @@ export const VideoFramePicker = ({ clipUri, clipDuration, requestTag, onDone, on
           </View>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.grid}>
             {shots.map((sh) => (
-              <View key={sh.id} style={styles.gridItem}>
-                <Image source={{ uri: sh.uri }} style={StyleSheet.absoluteFill} />
+              <View key={sh.id} style={[styles.gridItem, tile]}>
+                <Image source={{ uri: sh.uri }} style={tile} resizeMode="cover" />
                 <View style={styles.gridTag}>
                   <Text style={styles.gridTagText}>{sh.label}</Text>
                 </View>
@@ -363,7 +367,7 @@ const styles = StyleSheet.create({
   thumbX: { position: 'absolute', right: 0, top: 0, width: 24, height: 24, borderBottomLeftRadius: 8, backgroundColor: 'rgba(0,0,0,.6)', alignItems: 'center', justifyContent: 'center' },
   thumbXText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 24, paddingVertical: 8 },
-  gridItem: { width: '48.5%', aspectRatio: 804 / 948, borderRadius: 8, overflow: 'hidden', backgroundColor: '#222' },
+  gridItem: { borderRadius: 8, overflow: 'hidden', backgroundColor: '#222' },
   gridTag: { position: 'absolute', left: 6, bottom: 6, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, backgroundColor: 'rgba(0,0,0,.6)' },
   gridTagText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   summary: { color: '#d1d1d6', fontSize: 15, textAlign: 'center', paddingHorizontal: 24, paddingVertical: 14 },

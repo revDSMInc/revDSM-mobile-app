@@ -13,6 +13,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { useCameraWalkthrough } from '../../../hooks/useCameraWalkthrough';
 import { WalkthroughOverlay } from '../../common/WalkthroughOverlay';
 import { uploadQueueManager } from '../../../utils/uploadQueue';
+import { countQueuedFrames } from '../../../utils/camera-video';
 import {
   getTopTabs,
   slotCapacity,
@@ -245,10 +246,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     const hasRoom = photos.length < capacity;
 
     if (frameTagReq) {
-      const queuedHere = frameTagReq.queued.filter((q) => {
-        const t = q.target as FrameTarget;
-        return t.kind === 'slot' && t.key === key;
-      }).length;
+      const queuedHere = countQueuedFrames(frameTagReq.queued, key);
       if (photos.length + queuedHere >= capacity) {
         FlashMessage.show(`${slot.name} is full. Pick another spot or tag it as Extra.`, '', 'warning');
         return;
@@ -546,7 +544,11 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
           <View ref={walkthrough.targetRef('slots')} collapsable={false}>
             <CategoryBody
               category={activeCategory}
-              capture={capture}
+              capture={
+                frameTagReq
+                  ? { ...capture, queuedFrameCount: (key: string) => countQueuedFrames(frameTagReq.queued, key) }
+                  : capture
+              }
               onSlotClick={onSlotClick}
               onTagAsExtra={handleTagAsExtraClick}
             />

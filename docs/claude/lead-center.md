@@ -2858,3 +2858,15 @@ The red `m:ss` recording badge (`formatRecordingTime`) used to be a child of the
 - ⚠️ `FlashMessage.show` takes `(title, description?, type?)`, not an object (`config/message.ts`). The "slot is full" flash in `DynamicInspectionView` and the picker's error flash use `show(text, '', 'warning' | 'danger')`; an object argument silently shows nothing.
 - Frame-extraction errors now show **inside the picker's pill** (red, 6 s), not as a `FlashMessage`: the picker is an overlay in the camera tree and a flash can sit behind it, so a failed capture looked like "nothing happens". The tag screen (`frameTagReq`) only opens after a frame was actually extracted, so "capture does nothing" = the extractor failed (usually a stale native build, see above).
 - ⚠️ **Stale Android autolinking cache** (the real cause of "not in this build" after two `yarn android` runs): `android/build/generated/autolinking/autolinking.json` and `android/app/build/generated/autolinking/.../PackageList.java` were from before the library was added, and Gradle reported `generateAutolinkingPackageList UP-TO-DATE`, so the module was never compiled in. Fix: delete both `autolinking` dirs, run `cd android && ./gradlew :app:generateAutolinkingPackageList`, confirm `grep Thumbnail app/build/generated/autolinking/src/main/java/com/facebook/react/PackageList.java`, then `yarn android`. Do this after adding ANY native dependency if its module is "null" at runtime.
+
+### Ticket 576 follow-up: slot badge while tagging, and the empty review grid
+
+Two corrections from testing video capture.
+
+**1. A slot now shows when a frame from this clip is already tagged to it.** Frames are not uploaded until the picker's Done, so `capture.getPhotos` cannot see them and the tag screen showed every slot as empty. `DynamicInspectionView` passes `CategoryBody` a copy of `capture` carrying `queuedFrameCount` while a frame is being tagged, and `SlotButton` draws a yellow border plus a tick badge. The repo owner dropped the number: a tick is enough. The count rule is `countQueuedFrames` in `utils/camera-video.ts`, which the full-slot check now shares.
+- ⚠️ Set only while `frameTagReq` is live, so the normal photo flow and Manage Photos are untouched.
+- ⚠️ An Extra slot's remove button is hidden while a frame is queued to it. Removing it would strand that frame's target.
+
+**2. The review grid showed "2 Photos Added" over an empty screen.** Not even the tag labels appeared, so the tiles had no size, while the tray drew the same uri at a fixed size. `gridItem` used `width: '48.5%'` with `aspectRatio`. Tiles now take explicit pixels from `reviewTileSize(windowWidth)`. ⚠️ Do not go back to the percentage pair. The exact layout cause was not proven on a device.
+
+Tests: `tests/offline/camera-video-frames.test.ts`. These ran directly in Node, not through jest, because this branch's `tailwind.config.js` and `init` still carried the malware. Not verified on device.

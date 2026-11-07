@@ -71,6 +71,8 @@ const dedupeExtras = (...lists: (InspectionSlot | InspectionSlot[])[]): Inspecti
 };
 
 export interface DynamicInspectionCapture {
+  /** Frames from the clip being picked that are already tagged to this slot. Only set while tagging a frame. */
+  queuedFrameCount?: (key: string) => number;
   leadId: string | undefined;
   loading: boolean;
   online: boolean;
