@@ -20,6 +20,8 @@ import {
   GAUGE_BAND_COLORS,
   GAUGE_INVALID_COLOR,
   GAUGE_FLIP,
+  planBlocksDrop,
+  planBlocksDropMessage,
   flipStart,
   flipSourceKey,
 } from '../../src/screens/DynamicDealCenter/utils/drop-gauge';
@@ -610,6 +612,41 @@ describe('shouldShowPriceBadge - the badge and the bands never share the strip',
     }
     expect(bands.length).toBe(2);
     expect(tiers.length).toBe(4);
+  });
+});
+
+describe('planBlocksDrop - a plan whose cost leaves no possible drop', () => {
+  it('allows a plan with room between cost and rollout (the video: $682 under $686)', () => {
+    expect(planBlocksDrop(682, 686)).toBe(false);
+  });
+
+  it('blocks a plan whose fee lifts cost past the rollout', () => {
+    expect(planBlocksDrop(697, 686)).toBe(true);
+  });
+
+  it('blocks cost EQUAL to the rollout: a drop must be below the rollout and at least cost', () => {
+    expect(planBlocksDrop(686, 686)).toBe(true);
+  });
+
+  it('compares unrounded, as openDrop does', () => {
+    expect(planBlocksDrop(685.6, 686)).toBe(false);
+  });
+
+  it('blocks nothing before there is a rollout, and is safe on junk', () => {
+    expect(planBlocksDrop(697, 0)).toBe(false);
+    expect(planBlocksDrop(NaN, 686)).toBe(false);
+    expect(planBlocksDrop(697, NaN)).toBe(false);
+  });
+
+  it('agrees with the gauge: a blocked plan is exactly one with no COST tile', () => {
+    [[682, 686], [686, 686], [697, 686]].forEach(([cost, ro]) => {
+      const keys = gaugeTiers({ cost, par: cost + 500, retail: cost + 900 }, ro).map((t) => t.key);
+      expect(keys.includes('cost')).toBe(!planBlocksDrop(cost, ro));
+    });
+  });
+
+  it('names both figures, rounded', () => {
+    expect(planBlocksDropMessage(696.6, 686)).toBe('Cost on this plan is $697, at or above your $686 rollout.');
   });
 });
 

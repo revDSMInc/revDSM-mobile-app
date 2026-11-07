@@ -6130,3 +6130,30 @@ Tests: `tests/offline/drop-gauge.test.ts`, now 82, including the reported deal, 
 deal, the cost floor, the par cap and the morph arithmetic. Not verified on device. Check the morph
 on a slow Android, back-without-saving on an iPhone, and a 2-tile gauge (rollout between cost and
 par).
+
+### 3. A plan that leaves no possible drop cannot be picked on the drop screen
+
+Client, with a video: *"When I change plan here for some it's not showing my cost price. If that's
+the case that any number I can input here would be less than cost than it should not allow me to
+click on plan."*
+
+A plan's bank fee raises COST. A high-fee plan can lift it to or past the rollout, and then
+`gaugeTiers` hides the COST tile and every price fails: below cost is refused, and at or above the
+rollout is refused too.
+
+- **The rule:** `planBlocksDrop(planCost, rollout)` in `utils/drop-gauge.ts`, true when cost is at or
+  above the rollout. A test pins that a blocked plan is exactly a plan with no COST tile.
+- **`PaymentPlanModal` takes an optional `blockedReason(key)`.** A blocked row is greyed like a
+  below-minimum one and shows the reason on the row. Tapping it does not select the plan.
+- ⚠️ **DROP SCREEN ONLY, by the repo owner's decision.** `blockedReason` is passed only while
+  `showDropInput` is set. On the rollout card a rep may be choosing a plan for the rollout itself,
+  so do not widen this without asking.
+- ⚠️ **Each plan's cost comes from `tierValueOn(key, planKey)`**, which the tiles now use too, so
+  the picker and the COST tile cannot disagree. Do not rebuild the sum in a second place.
+- ⚠️ **Unrounded on purpose.** `openDrop` compares the raw cost, so rounding here could block a plan
+  that really accepts a drop.
+- **The selected plan can already be the dead end**, because the plan was chosen before the drop
+  screen opened. The drop screen stays open and shows an amber note, since the rep's way out is the
+  plan box on that same screen.
+
+7 new tests in `tests/offline/drop-gauge.test.ts`, 89 in total. Not verified on device.
