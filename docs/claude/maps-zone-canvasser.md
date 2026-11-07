@@ -1250,3 +1250,18 @@ Report: tapping the funnel on the Zone Canvasser map "did nothing" - `ZoneCanvas
 
 Ticket: *"after First/Last Name, tapping Phone leaves the old keyboard's space invisible and the pad is misplaced."* Full write-up in `app-wide.md` › "Lead Create: invisible keyboard gap". `widgets/modals/LeadCreate/index.tsx`: the sheet's keyboard-controller `KeyboardAvoidingView` no longer takes `enabled={!numPadActive}`.
 - ⚠️ Do not re-add the toggle: text -> numeric focus switch dismisses the system keyboard while the pad attaches, and a disabled avoider misses the hide event and keeps the keyboard-sized padding as a gap. Not verified on device.
+
+## REVUIUX-593 - the heading cone ignored map rotation
+
+Client: *"Footsteps - blue vision not accurate - I'm literally spinning the map but the blue vision is moving too and I'm not moving my phone at all"*.
+
+The cone in `widgets/components/ZoneCanvasser/UserLocationMarker.tsx` lives in a `MarkerView`, which is a React Native view drawn over the map, so it does not turn with the map. It was rotated by the compass heading alone. The compass measures from north and `rotate` measures from the top of the screen, so the two only agreed while north was up. In a spin the cone stayed still on screen while the ground turned under it.
+
+**Fix:** the cone rotates by `heading - mapBearing` (`coneRotationDeg` in `utils/zone-heading.ts`). `MapCanvas` reads the bearing from `MapView.onCameraChanged` (`state.properties.heading`).
+
+- ⚠️ **The bearing is an `Animated.Value`, never state.** `onCameraChanged` fires on every frame of a gesture, and state would re-render every pin on the map each time.
+- ⚠️ `initialBearing` exists because the marker only mounts once the first live fix arrives, which can be after the map was already rotated. A listener alone would start at 0 until the next camera event.
+- ⚠️ Only the cone uses this. The dot, the pulse and the accuracy ring have no direction, and the ring is a map layer that turns with the map anyway.
+- Offline is unaffected: compass and camera are both local.
+
+Tests: `tests/offline/zone-heading.test.ts`. Not verified on device.

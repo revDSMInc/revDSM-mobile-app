@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { View, Animated, Easing, StyleSheet } from 'react-native';
 import { ShapeSource, FillLayer, LineLayer, MarkerView } from '@rnmapbox/maps';
+import { coneRotationDeg } from '../../../utils/zone-heading';
 
 const BLUE = '#0D47A1';
 const RING_BLUE = '#1565C0';
@@ -26,10 +27,45 @@ type Props = {
   longitude: number;
   heading?: number | null;
   accuracy?: number | null;
+  /** Live map rotation in degrees. An Animated.Value, so a spin moves the cone without a render. */
+  mapBearing: Animated.Value;
+  /** The rotation when this marker mounts. It can mount after the map was already spun. */
+  initialBearing?: number;
 };
 
-export function UserLocationMarker({ latitude, longitude, heading = null, accuracy = null }: Props) {
+export function UserLocationMarker({
+  latitude,
+  longitude,
+  heading = null,
+  accuracy = null,
+  mapBearing,
+  initialBearing = 0,
+}: Props) {
   const pulse = useRef(new Animated.Value(0)).current;
+
+  /**
+   * ⚠️ The cone is a view over the map, so its `rotate` is from the top of the SCREEN while the
+   * compass is from NORTH. Spinning the map used to leave it still on screen while the ground
+   * turned under it. See `utils/zone-heading.ts`.
+   */
+  const bearingRef = useRef(initialBearing);
+  const headingRef = useRef(heading);
+  headingRef.current = heading;
+  const coneRotation = useRef(new Animated.Value(coneRotationDeg(heading, initialBearing))).current;
+
+  useEffect(() => {
+    const id = mapBearing.addListener(({ value }) => {
+      bearingRef.current = value;
+      coneRotation.setValue(coneRotationDeg(headingRef.current, value));
+    });
+    return () => mapBearing.removeListener(id);
+  }, [mapBearing, coneRotation]);
+
+  useEffect(() => {
+    coneRotation.setValue(coneRotationDeg(heading, bearingRef.current));
+  }, [heading, coneRotation]);
+
+  const coneRotate = coneRotation.interpolate({ inputRange: [0, 360], outputRange: ['0deg', '360deg'] });
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -83,12 +119,12 @@ export function UserLocationMarker({ latitude, longitude, heading = null, accura
           {/* Heading cone: a full-size square centred on the dot so rotating it
               spins the cone around the dot (apex at dot, fanning north by default). */}
           {showCone && (
-            <View
-              style={[styles.coneContainer, { transform: [{ rotate: `${heading}deg` }] }]}
+            <Animated.View
+              style={[styles.coneContainer, { transform: [{ rotate: coneRotate }] }]}
               pointerEvents="none"
             >
               <View style={styles.coneTriangle} />
-            </View>
+            </Animated.View>
           )}
 
           {/* Pulse ring */}

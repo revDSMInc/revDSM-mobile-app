@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Animated, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import Mapbox, {
   MapView,
   Camera,
@@ -10,6 +10,7 @@ import Mapbox, {
   MarkerView,
   UserLocation,
 } from '@rnmapbox/maps';
+import type { MapState } from '@rnmapbox/maps';
 import type { Region } from 'react-native-maps';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type Supercluster from 'supercluster';
@@ -129,6 +130,22 @@ export function MapCanvas({
       zoomLevel: regionToZoomLevel(r),
     };
   }, [initialRegion]);
+
+  /**
+   * The map's rotation, for the heading cone. Held in a ref and an Animated.Value rather than state:
+   * this fires on every frame of a gesture, and state would re-render every pin on the map each time.
+   */
+  const mapBearingRef = useRef(0);
+  const mapBearing = useRef(new Animated.Value(0)).current;
+  const handleCameraChanged = useCallback(
+    (state: MapState) => {
+      const bearing = state?.properties?.heading;
+      if (typeof bearing !== 'number' || bearing === mapBearingRef.current) return;
+      mapBearingRef.current = bearing;
+      mapBearing.setValue(bearing);
+    },
+    [mapBearing]
+  );
 
   const handleRegionChangeComplete = useCallback(
     (region: Region) => {
@@ -292,6 +309,7 @@ export function MapCanvas({
           styleURL={mapType === 'satellite' ? Mapbox.StyleURL.SatelliteStreet : Mapbox.StyleURL.Street}
           onPress={handleMapboxPress}
           onMapIdle={handleMapIdle}
+          onCameraChanged={handleCameraChanged}
           scaleBarEnabled={false}
           logoEnabled={false}
           attributionEnabled={false}
@@ -311,6 +329,8 @@ export function MapCanvas({
               longitude={liveLocation.longitude}
               heading={liveLocation.heading}
               accuracy={liveLocation.accuracy}
+              mapBearing={mapBearing}
+              initialBearing={mapBearingRef.current}
             />
           ) : (
             <UserLocation visible={true} />
